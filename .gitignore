@@ -28,3 +28,6 @@ Thumbs.db
 src-tauri/target/
 src-tauri/WixTools/
 src-tauri/Frameworks/
+
+# Claude
+.claude
