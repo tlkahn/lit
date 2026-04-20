@@ -2,6 +2,14 @@ import "@testing-library/jest-dom/vitest";
 import { vi } from "vitest";
 import { resetInvokeMock, resetListenMock } from "./tauri-mock";
 
+if (typeof globalThis.ResizeObserver === "undefined") {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
+}
+
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }));

@@ -1,8 +1,14 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useWorkspaceStore } from "../stores/workspace";
 import { readPage, writePage } from "../lib/ipc";
+import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
+import type { Theme } from "../hooks/useTheme";
 
-export function ContentArea() {
+interface ContentAreaProps {
+  theme: Theme;
+}
+
+export function ContentArea({ theme }: ContentAreaProps) {
   const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
   const [body, setBody] = useState("");
   const [title, setTitle] = useState("");
@@ -89,13 +95,7 @@ export function ContentArea() {
           </pre>
         )}
       </div>
-      <textarea
-        value={body}
-        onChange={(e) => handleChange(e.target.value)}
-        className="flex-1 resize-none bg-transparent px-6 py-4 font-mono text-sm text-neutral-800 outline-none dark:text-neutral-200"
-        data-testid="editor"
-        spellCheck={false}
-      />
+      <CodeMirrorEditor doc={body} theme={theme} onChange={handleChange} />
     </main>
   );
 }

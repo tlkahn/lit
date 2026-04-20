@@ -57,7 +57,7 @@ function App() {
           <SidebarPositionToggle position={position} onToggle={togglePosition} />
           <ThemeToggle theme={theme} onToggle={toggleTheme} />
         </header>
-        <ContentArea />
+        <ContentArea theme={theme} />
       </div>
     </div>
   );
