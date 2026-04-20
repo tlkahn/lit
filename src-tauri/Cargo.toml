@@ -12,8 +12,15 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml = "0.9"
+notify-debouncer-mini = "0.5"
+gray_matter = "0.2"
+unicode-normalization = "0.1"
+walkdir = "2"
 
 [dev-dependencies]
 serde_json = "1"
+tempfile = "3"

@@ -1,20 +1,53 @@
-import { useEffect, useState } from "react";
+import { useEffect, useCallback } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { ContentArea } from "./components/ContentArea";
+import { WorkspaceChooser } from "./components/WorkspaceChooser";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { SidebarPositionToggle } from "./components/SidebarPositionToggle";
 import { useTheme } from "./hooks/useTheme";
 import { useSidebarPosition } from "./hooks/useSidebarPosition";
-import { getAppInfo, type AppInfo } from "./lib/ipc";
+import { useFileWatcher } from "./hooks/useFileWatcher";
+import { useWorkspaceStore, getSavedWorkspacePath } from "./stores/workspace";
+import { readPage, getInitialWorkspace } from "./lib/ipc";
 
 function App() {
   const { theme, toggleTheme } = useTheme();
   const { position, togglePosition } = useSidebarPosition();
-  const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
+  const workspacePath = useWorkspaceStore((s) => s.workspacePath);
+  const openWorkspace = useWorkspaceStore((s) => s.openWorkspace);
+  const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
 
   useEffect(() => {
-    getAppInfo().then(setAppInfo);
-  }, []);
+    if (workspacePath) return;
+    const init = async () => {
+      const cliPath = await getInitialWorkspace().catch(() => null);
+      if (cliPath) {
+        openWorkspace(cliPath);
+        return;
+      }
+      const saved = getSavedWorkspacePath();
+      if (saved) {
+        openWorkspace(saved);
+      }
+    };
+    init();
+  }, [openWorkspace, workspacePath]);
+
+  const handleCurrentPageModified = useCallback(async () => {
+    if (!currentPagePath) return;
+    try {
+      const content = await readPage(currentPagePath);
+      void content;
+    } catch {
+      // page may have been deleted
+    }
+  }, [currentPagePath]);
+
+  useFileWatcher(handleCurrentPageModified);
+
+  if (!workspacePath) {
+    return <WorkspaceChooser />;
+  }
 
   return (
     <div className={`flex h-screen ${position === "right" ? "flex-row-reverse" : "flex-row"}`}>
@@ -24,7 +57,7 @@ function App() {
           <SidebarPositionToggle position={position} onToggle={togglePosition} />
           <ThemeToggle theme={theme} onToggle={toggleTheme} />
         </header>
-        <ContentArea appName={appInfo?.name} appVersion={appInfo?.version} />
+        <ContentArea />
       </div>
     </div>
   );

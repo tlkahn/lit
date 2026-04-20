@@ -19,7 +19,9 @@ cd src-tauri && cargo test # rust tests
 - **Rust owns data, JS owns pixels.** File I/O, parsing, indexing — Rust. UI rendering — React.
 - **IPC boundary:** Rust commands live in `src-tauri/src/commands/` (one file per command, re-exported through `mod.rs`). Frontend wrappers live in `src/lib/ipc.ts` with typed return values.
 - **Rust crate name is `lit_lib`** — `main.rs` calls `lit_lib::run()`. New commands must be registered in `lib.rs` via `generate_handler!` using full path (e.g. `commands::app_info::get_app_info`).
-- **State hooks** use localStorage for persistence (`lit-theme`, `lit-sidebar-position`).
+- **Workspace module:** `src-tauri/src/workspace/` — page types, frontmatter parsing, scanning, CRUD ops, file watcher. All pure-logic, testable without Tauri runtime.
+- **Managed state:** `AppState` (workspace root + file watcher) in `commands/workspace.rs`, registered via `.manage()` in `lib.rs`.
+- **Frontend state:** Zustand store in `src/stores/workspace.ts`. localStorage persists `lit-workspace-path`, `lit-theme`, `lit-sidebar-position`.
 
 ## Stack
 
@@ -28,6 +30,7 @@ cd src-tauri && cargo test # rust tests
 | Shell | Tauri 2 |
 | Frontend | React 18 + TypeScript + Vite 6 |
 | Styling | Tailwind CSS v4 (`@tailwindcss/vite` plugin, no config file) |
+| State | Zustand |
 | Package manager | bun |
 | Test (frontend) | Vitest + jsdom + @testing-library/react |
 | Test (backend) | cargo test |
@@ -59,7 +62,9 @@ beforeEach(() => {
 });
 ```
 
-`resetInvokeMock()` and `localStorage.clear()` run automatically before each test.
+`resetInvokeMock()`, `resetListenMock()`, and `localStorage.clear()` run automatically before each test.
+
+Tauri events (`@tauri-apps/api/event`) and dialog (`@tauri-apps/plugin-dialog`) are also globally mocked. Use `mockListen()`, `emitMockEvent()`, and `mockDialogOpen()` from `tauri-mock.ts`.
 
 ### Dark mode
 
@@ -79,4 +84,4 @@ Presentational components in `src/components/` — props-driven, no business log
 
 ## Roadmap
 
-See `doc/roadmap.md`. Stage 0 (bootstrap) is complete. Next: Stage 1 (markdown file backend).
+See `doc/roadmap.md`. Stages 0-1 complete. Next: Stage 2 (outliner block editor).

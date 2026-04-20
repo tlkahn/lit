@@ -1,0 +1,281 @@
+use super::frontmatter::{parse_frontmatter, serialize_frontmatter};
+use super::normalize::{filename_to_page_name, normalize_to_nfc, page_name_to_filename, validate_page_name};
+use super::page::{PageContent, PageMeta};
+use super::WorkspaceError;
+use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
+use std::time::UNIX_EPOCH;
+
+pub fn read_page(root: &Path, relative_path: &str) -> Result<PageContent, WorkspaceError> {
+    let full_path = root.join(relative_path);
+    if !full_path.exists() {
+        return Err(WorkspaceError::PageNotFound(relative_path.to_string()));
+    }
+    let raw = fs::read_to_string(&full_path)?;
+    let (frontmatter, body) = parse_frontmatter(&raw);
+
+    let file_name = full_path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let title = filename_to_page_name(&file_name);
+
+    let metadata = fs::metadata(&full_path)?;
+    let created_at = metadata
+        .created()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64);
+    let modified_at = metadata
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64);
+
+    Ok(PageContent {
+        meta: PageMeta {
+            title,
+            relative_path: normalize_to_nfc(relative_path),
+            frontmatter,
+            created_at,
+            modified_at,
+        },
+        body: body.to_string(),
+    })
+}
+
+pub fn write_page(
+    root: &Path,
+    relative_path: &str,
+    body: &str,
+    frontmatter: &HashMap<String, serde_yaml::Value>,
+) -> Result<(), WorkspaceError> {
+    let full_path = root.join(relative_path);
+    if let Some(parent) = full_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let content = serialize_frontmatter(frontmatter, body);
+    fs::write(&full_path, content)?;
+    Ok(())
+}
+
+pub fn create_page(
+    root: &Path,
+    name: &str,
+    parent_dir: Option<&str>,
+) -> Result<PageMeta, WorkspaceError> {
+    validate_page_name(name)?;
+    let filename = page_name_to_filename(name);
+    let relative_path = match parent_dir {
+        Some(dir) => format!("{dir}/{filename}"),
+        None => filename,
+    };
+
+    let full_path = root.join(&relative_path);
+    if full_path.exists() {
+        return Err(WorkspaceError::PageAlreadyExists(relative_path));
+    }
+    if let Some(parent) = full_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&full_path, "")?;
+
+    let metadata = fs::metadata(&full_path)?;
+    let created_at = metadata
+        .created()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64);
+    let modified_at = metadata
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64);
+
+    Ok(PageMeta {
+        title: name.to_string(),
+        relative_path: normalize_to_nfc(&relative_path),
+        frontmatter: HashMap::new(),
+        created_at,
+        modified_at,
+    })
+}
+
+pub fn rename_page(
+    root: &Path,
+    old_path: &str,
+    new_name: &str,
+) -> Result<String, WorkspaceError> {
+    validate_page_name(new_name)?;
+    let old_full = root.join(old_path);
+    if !old_full.exists() {
+        return Err(WorkspaceError::PageNotFound(old_path.to_string()));
+    }
+
+    let new_filename = page_name_to_filename(new_name);
+    let new_relative = match Path::new(old_path).parent() {
+        Some(parent) if parent != Path::new("") => {
+            format!("{}/{new_filename}", parent.to_string_lossy())
+        }
+        _ => new_filename,
+    };
+
+    let new_full = root.join(&new_relative);
+    if new_full.exists() {
+        return Err(WorkspaceError::PageAlreadyExists(new_relative));
+    }
+
+    if let Some(parent) = new_full.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::rename(&old_full, &new_full)?;
+    Ok(normalize_to_nfc(&new_relative))
+}
+
+pub fn delete_page(root: &Path, relative_path: &str) -> Result<(), WorkspaceError> {
+    let full_path = root.join(relative_path);
+    if !full_path.exists() {
+        return Err(WorkspaceError::PageNotFound(relative_path.to_string()));
+    }
+    fs::remove_file(&full_path)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn read_page_with_frontmatter() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("test.md"),
+            "---\ntitle: Hello\n---\n# Content\n",
+        )
+        .unwrap();
+
+        let page = read_page(dir.path(), "test.md").unwrap();
+        assert_eq!(page.meta.title, "test");
+        assert_eq!(page.body, "# Content\n");
+        assert!(page.meta.frontmatter.contains_key("title"));
+    }
+
+    #[test]
+    fn read_page_without_frontmatter() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("plain.md"), "# Just markdown\n").unwrap();
+
+        let page = read_page(dir.path(), "plain.md").unwrap();
+        assert!(page.meta.frontmatter.is_empty());
+        assert_eq!(page.body, "# Just markdown\n");
+    }
+
+    #[test]
+    fn read_nonexistent_page() {
+        let dir = TempDir::new().unwrap();
+        let result = read_page(dir.path(), "nope.md");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn write_page_with_frontmatter() {
+        let dir = TempDir::new().unwrap();
+        let mut fm = HashMap::new();
+        fm.insert(
+            "title".to_string(),
+            serde_yaml::Value::String("Test".to_string()),
+        );
+
+        write_page(dir.path(), "output.md", "# Body\n", &fm).unwrap();
+
+        let content = fs::read_to_string(dir.path().join("output.md")).unwrap();
+        assert!(content.contains("---"));
+        assert!(content.contains("title: Test"));
+        assert!(content.contains("# Body"));
+    }
+
+    #[test]
+    fn write_page_without_frontmatter() {
+        let dir = TempDir::new().unwrap();
+        write_page(dir.path(), "plain.md", "# Body\n", &HashMap::new()).unwrap();
+
+        let content = fs::read_to_string(dir.path().join("plain.md")).unwrap();
+        assert!(!content.contains("---"));
+        assert_eq!(content, "# Body\n");
+    }
+
+    #[test]
+    fn create_page_basic() {
+        let dir = TempDir::new().unwrap();
+        let meta = create_page(dir.path(), "New Page", None).unwrap();
+        assert_eq!(meta.title, "New Page");
+        assert_eq!(meta.relative_path, "New Page.md");
+        assert!(dir.path().join("New Page.md").exists());
+    }
+
+    #[test]
+    fn create_page_in_subdirectory() {
+        let dir = TempDir::new().unwrap();
+        let meta = create_page(dir.path(), "Entry", Some("journal")).unwrap();
+        assert_eq!(meta.relative_path, "journal/Entry.md");
+        assert!(dir.path().join("journal/Entry.md").exists());
+    }
+
+    #[test]
+    fn create_duplicate_page() {
+        let dir = TempDir::new().unwrap();
+        create_page(dir.path(), "Dupe", None).unwrap();
+        let result = create_page(dir.path(), "Dupe", None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn create_page_forbidden_chars() {
+        let dir = TempDir::new().unwrap();
+        let result = create_page(dir.path(), "bad/name", None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rename_page_success() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("old.md"), "content").unwrap();
+
+        let new_path = rename_page(dir.path(), "old.md", "new").unwrap();
+        assert_eq!(new_path, "new.md");
+        assert!(!dir.path().join("old.md").exists());
+        assert!(dir.path().join("new.md").exists());
+        assert_eq!(
+            fs::read_to_string(dir.path().join("new.md")).unwrap(),
+            "content"
+        );
+    }
+
+    #[test]
+    fn rename_to_existing() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("a.md"), "a").unwrap();
+        fs::write(dir.path().join("b.md"), "b").unwrap();
+
+        let result = rename_page(dir.path(), "a.md", "b");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn delete_page_success() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("doomed.md"), "bye").unwrap();
+
+        delete_page(dir.path(), "doomed.md").unwrap();
+        assert!(!dir.path().join("doomed.md").exists());
+    }
+
+    #[test]
+    fn delete_nonexistent_page() {
+        let dir = TempDir::new().unwrap();
+        let result = delete_page(dir.path(), "nope.md");
+        assert!(result.is_err());
+    }
+}

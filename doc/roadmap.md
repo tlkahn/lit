@@ -50,25 +50,35 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
 
 ---
 
-## Stage 1 — Markdown File Backend
+## Stage 1 — Markdown File Backend ✅
+
+**Status:** Complete (2026-04-20).
 
 **Goal:** Read and write a directory of markdown files as pages.
 
 ### Rust side
 
-- **Workspace** abstraction: a directory containing `.md` files (one file = one page)
-- Read all `.md` files, expose page list via Tauri command
-- Read single page content, write page content
-- File watcher (notify crate): detect external changes, push events to frontend
-- Create / rename / delete page (= create / rename / delete `.md` file)
-- Parse markdown into a block tree: each top-level bullet and its children become a block with a stable ID (derive from content hash or heading anchor)
+- [x] **Workspace** abstraction: a directory containing `.md` files (one file = one page)
+- [x] Read all `.md` files, expose page list via Tauri command (`scan_pages`, `list_pages`)
+- [x] Read single page content, write page content (`read_page`, `write_page`)
+- [x] File watcher (notify crate): detect external changes, push events to frontend
+- [x] Create / rename / delete page (`create_page`, `rename_page`, `delete_page`)
+- [x] YAML frontmatter parsing (gray_matter + serde_yaml, Obsidian-compatible)
+- [x] NFC Unicode normalization for filenames
+- [x] CLI argument support: `bun tauri dev -- -- /path/to/workspace`
+- [ ] Parse markdown into a block tree (deferred to Stage 2)
 
 ### Frontend
 
-- Sidebar: list pages, create new page, search/filter
-- Click page to load content into main pane (raw markdown for now)
-- Create / rename / delete page via UI
-- Handle file-watcher events: reload content when file changes externally
+- [x] Sidebar: list pages with collapsible folder tree, create new page, search/filter
+- [x] Click page to load content into main pane (raw markdown textarea)
+- [x] Create / rename / delete page via UI (context menu)
+- [x] Handle file-watcher events: reload content when file changes externally
+- [x] Workspace chooser: native folder picker on first launch
+- [x] Auto-reopen last workspace from localStorage
+- [x] Zustand workspace store for state management
+- [x] Debounced write-back (300ms) on edits
+- [x] 72 tests total (37 cargo + 35 vitest) — all passing
 
 **Deliverable:** Browse, create, edit, and delete markdown pages. External edits (e.g. from vim) reflect in the app within a second.
 
@@ -176,7 +186,10 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
 
 ## Future Stages (to be scoped later)
 
-These are listed for architectural awareness — they should not constrain current work, but current designs should not make them impossible.
+These are listed for architectural awareness — they should not constrain current work, but current designs should not make them impossible, e.g.
+
+- Agent-in-residence (AIR): a companion in-memory AI agent closely offer real-time assistance. Such a built-in tool offers synergy over have to use Claud Code with Obsidian.
+- Zotero-like bibliograph management
 
 | Stage | Feature | Notes |
 |---|---|---|
