@@ -8,11 +8,11 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
 |---|---|---|
 | Shell | Tauri 2 | Rust backend, native webview, small binary |
 | Frontend | React 18 + TypeScript + Vite | Fast dev loop, strong typing |
-| Editor | TipTap (ProseMirror) | Block editing, markdown serde, Yjs collab adapter |
+| Editor | CodeMirror 6 | Incremental parsing, live preview decorations, near-native speed, Yjs collab adapter |
 | State | Zustand | Minimal, no boilerplate |
 | Styling | Tailwind CSS | Utility-first, fast iteration |
 | Storage | Markdown files on disk | Interop, human-readable, git-friendly |
-| Markdown parse | pulldown-cmark (Rust) | Fast, CommonMark-compliant, streaming |
+| Markdown parse | @lezer/markdown (JS) + pulldown-cmark (Rust) | Lezer for live editor syntax tree; pulldown-cmark for Rust-side indexing |
 | File watch | notify (Rust) | Cross-platform fs events |
 | Future Datalog | Cozo (Rust) | Embeddable Datalog DB, SQLite-backed, closest to DataScript |
 | CRDT | Yjs + yrs | Proven collaborative editing, JS and Rust implementations share the same protocol |
@@ -30,7 +30,7 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
 
 ## Stage 0 — Project Bootstrap ✅
 
-**Status:** Complete (2026-04-20). See [[stage-0-bootstrap]] for full implementation details.
+**Status:** Complete (2026-04-20). See [[implementation/stage-0-bootstrap]] for full implementation details.
 
 **Goal:** Empty app runs, dev toolchain works end-to-end.
 
@@ -66,7 +66,7 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
 - [x] YAML frontmatter parsing (gray_matter + serde_yaml, Obsidian-compatible)
 - [x] NFC Unicode normalization for filenames
 - [x] CLI argument support: `bun tauri dev -- -- /path/to/workspace`
-- [ ] Parse markdown into a block tree (deferred to Stage 2)
+- [x] ~~Parse markdown into a block tree~~ → superseded: Stage 2 uses CM6's flat document model with Lezer incremental parsing instead
 
 ### Frontend
 
@@ -84,42 +84,66 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
 
 ---
 
-## Stage 2 — Outliner Block Editor
+## Stage 2 — CodeMirror 6 Live Preview Editor
 
-**Goal:** Edit pages as an indented block tree with Obsidian-style mode switching.
+**Goal:** Replace the raw textarea with a high-performance CodeMirror 6 editor featuring Obsidian-style live preview — formatted output rendered inline, raw markdown syntax revealed near the cursor. Editing speed should rival native editors (Sublime Text, Zed).
 
-### Block data model
+**Architecture:** CodeMirror 6 owns the live document model and all editing. The editor operates on raw markdown text — no block tree, no intermediate AST in the editing path. Lezer-based incremental parsing drives syntax highlighting and live preview decorations. Rust handles file I/O only during editing; Rust re-parses saved files in the background for link indexing, search, and metadata extraction (pulldown-cmark). This keeps the editing loop entirely in JS (zero IPC latency per keystroke) while Rust provides the knowledge layer.
 
-- A page is a tree of blocks. Each block holds a markdown string + children.
-- Serialize to markdown as nested bullet lists (`- ` with 2-space indent).
-- Blocks carry a transient ID (stable within a session, regenerated on load).
+**Decisions:** flat document model (not block-based), live preview via CM6 decoration plugins (not separate edit/preview modes), `@lezer/markdown` with custom extensions for Obsidian syntax, TDD throughout.
 
-### TipTap editor
+#### A1 — CM6 Foundation
 
-- Custom TipTap node type: `OutlinerBlock` (content: inline markdown, children: nested `OutlinerBlock` list).
-- **Edit mode:** focused block shows as editable markdown (TipTap inline editing with markdown input rules — bold, italic, code, links).
-- **Preview mode:** all blocks render as formatted rich text (TipTap read-only mode with markdown decorations).
-- Mode toggle: per-page, keyboard shortcut (`Ctrl/Cmd+E`).
-- Esc in edit mode → current block exits edit mode and renders as preview (analogous to Vim's Esc from insert mode). Focus stays on the block but it becomes read-only rendered markdown. Press Enter or click to re-enter edit mode.
+- Replace `<textarea>` in ContentArea with a React-wrapped CodeMirror 6 component
+- Markdown language support via `@codemirror/lang-markdown` + `@lezer/markdown`
+- Basic syntax highlighting: headings, emphasis, links, images, ordered/unordered/task lists, code spans, fenced code blocks, horizontal rules, blockquotes
+- CM6 theme (EditorTheme) for light and dark modes, matching existing Tailwind design tokens
+- Wire load/save to existing Rust IPC (`read_page` / `write_page`)
 
-### Outliner operations
+#### A2 — Live Preview Decoration Engine
 
-- Enter → new sibling block below
-- Backspace at start → merge with previous block
-- Tab → indent (become child of previous sibling)
-- Shift+Tab → outdent (become next sibling of parent)
-- Esc → exit edit mode for current block (render as preview)
-- Block folding/collapsing (toggle children visibility)
-- Drag-and-drop reorder
-- Multi-block selection + indent/outdent/delete
-- Undo/redo (per-page)
+- ViewPlugin-based decoration system: replace raw syntax with rendered output for non-cursor regions
+- Styled headings (font size/weight applied inline), bold/italic rendered (syntax markers hidden)
+- Links rendered as clickable text (URL hidden), images rendered as inline previews
+- Cursor proximity detection: reveal raw syntax within N characters of cursor position
+- Fenced code blocks with per-language syntax highlighting via `@codemirror/language-data`
 
-### Persistence
+#### A3 — Obsidian Markdown Extensions
 
-- On edit: debounced write-back to `.md` file via Tauri command (300ms after last keystroke)
-- On external change: re-parse and merge (or prompt if conflicts)
+- Custom Lezer markdown extensions: `[[wikilinks]]`, `#tags`
+- Callout rendering (`> [!type]`) with styled containers
+- YAML frontmatter block: syntax highlighting and visual separation
+- Math rendering: `$inline$` and `$$display$$` via KaTeX widget decorations
 
-**Deliverable:** Full outliner editing with keyboard-driven block manipulation and Obsidian-like edit/preview toggle. Changes persist as clean markdown.
+#### A4 — Mermaid Diagram Rendering
+
+- Detect ` ```mermaid ` fenced code blocks via Lezer syntax tree
+- Render diagrams inline as widget decorations using Mermaid.js (lazy-loaded for bundle size)
+- Live preview behavior: cursor inside the code block shows raw Mermaid source, cursor outside shows the rendered SVG diagram
+- Error handling: display Mermaid parse errors inline below the code block instead of a broken diagram
+- Dark mode support: pass current theme to Mermaid's `theme` config (`default` / `dark`)
+
+#### B1 — Auto-Save + File Sync
+
+- Debounced auto-save: `EditorView.updateListener` → 300ms idle → invoke Rust `write_page`
+- External change handling: file watcher events trigger CM6 state update (with conflict detection when local buffer is dirty)
+- Scroll position preservation: save/restore per page in Zustand store across page switches
+
+#### B2 — Editing Shortcuts + Folding + Performance
+
+- Markdown editing shortcuts: Cmd+B (bold), Cmd+I (italic), Cmd+K (insert link), Cmd+/ (toggle comment)
+- List-aware keyboard behavior: Enter continues list item, Tab/Shift+Tab indent/outdent in lists, Backspace at list start unindents
+- Search & replace via CM6 built-in panel (`@codemirror/search`)
+- Section folding: heading-based folds, code block folds, frontmatter fold (CM6 fold extension + custom fold providers)
+- Performance validation with large files (1000+ lines, target <16ms keystroke latency)
+
+### Phase C — Document Navigation
+
+- Heading outline panel: extract headings from CM6 syntax tree, render in sidebar, click to scroll
+- Breadcrumb bar showing current heading context as cursor moves
+- Cmd+G go-to-heading quick switcher (fuzzy match within current document)
+
+**Deliverable:** A fast, Obsidian-style live preview editor with full markdown syntax support (including Mermaid diagrams), auto-save, file sync, folding, and document navigation. Changes persist as clean markdown. No block tree — the markdown file is edited directly.
 
 ---
 
@@ -134,16 +158,16 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
 
 ### Frontend — inline links
 
-- TipTap extension: `PageReference` inline node.
-- In edit mode: `[[` triggers autocomplete dropdown (fuzzy match on page names).
-- In preview mode: rendered as clickable link, navigates to target page.
+- CM6 extension: wikilink autocomplete + navigation (builds on the `[[wikilink]]` Lezer extension from Stage 2).
+- Typing `[[` triggers autocomplete dropdown (fuzzy match on page names from Rust link index).
+- In live preview: rendered as clickable link, navigates to target page.
 - Clicking a reference to a non-existent page creates it.
 
 ### Frontend — backlinks panel
 
 - Bottom of page: collapsible "Linked References" section.
-- Shows every block from other pages that references the current page, with surrounding context.
-- Click a backlink to navigate to its source page and scroll to the block.
+- Shows every paragraph/section from other pages that references the current page, with surrounding context.
+- Click a backlink to navigate to its source page and scroll to the relevant position.
 
 ### Frontend — unlinked references (stretch)
 
@@ -168,10 +192,10 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
 ### Phase 4b — CRDT Document Sync
 
 - Integrate yrs (Rust Yjs) as the sync backend.
-- Each page's block tree maps to a Yjs `Y.XmlFragment` (or `Y.Array` of `Y.Map` blocks).
+- Each page maps to a Yjs `Y.Text` document (flat text model, matching CM6's document model).
 - On connection: exchange full document state vectors, sync deltas.
 - On edit: broadcast incremental Yjs updates to connected peers.
-- On receive: apply remote updates, TipTap re-renders via y-tiptap binding.
+- On receive: apply remote updates, CM6 re-renders via y-codemirror binding.
 - Offline edits merge automatically when peers reconnect.
 
 ### Phase 4c — Presence
@@ -180,7 +204,7 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
 - Show colored cursors / highlights for remote collaborators.
 - Sidebar shows who is connected and which page they are viewing.
 
-**Deliverable:** Open Lit on two laptops on the same Wi-Fi. Both see each other, open the same workspace, and co-edit blocks in real time with live cursors. No server, no internet required.
+**Deliverable:** Open Lit on two laptops on the same Wi-Fi. Both see each other, open the same workspace, and co-edit documents in real time with live cursors. No server, no internet required.
 
 ---
 
@@ -189,6 +213,7 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
 These are listed for architectural awareness — they should not constrain current work, but current designs should not make them impossible, e.g.
 
 - Agent-in-residence (AIR): a companion in-memory AI agent closely offer real-time assistance. Such a built-in tool offers synergy over have to use Claud Code with Obsidian.
+- Obsidian-like graph view (using D3.js for mature force field visual effects, rather than fresh homebrew).
 - Zotero-like bibliograph management
 
 | Stage | Feature | Notes |
@@ -214,5 +239,5 @@ These hold across all stages:
 1. **Markdown is canon.** The `.md` file is always the source of truth. Any index or cache is derived and rebuildable.
 2. **Rust owns data, JS owns pixels.** File I/O, parsing, indexing, sync — all in Rust. The frontend is a view layer.
 3. **No implicit network.** Every network operation (LAN discovery, future cloud sync) is opt-in and visible to the user.
-4. **Blocks are the atom.** The fundamental unit is a block (a markdown bullet), not a page. Pages are containers.
+4. **Text is the atom.** The fundamental unit is the raw markdown text, not a block AST. The editor operates on text directly; structure (headings, lists, links) is derived by incremental parsing, never imposed.
 5. **CRDTs from day one of collab.** No OT, no last-write-wins. Yjs/yrs everywhere sync touches data.
