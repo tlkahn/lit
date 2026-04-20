@@ -1,6 +1,15 @@
 import { useState, useEffect, useCallback } from "react";
 
-type Theme = "light" | "dark";
+export type Theme = "light" | "dark";
+
+async function syncNativeTitleBar(theme: Theme): Promise<void> {
+  try {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    await getCurrentWindow().setTheme(theme);
+  } catch {
+    // Tauri API unavailable (tests, plain browser dev)
+  }
+}
 
 const STORAGE_KEY = "lit-theme";
 
@@ -26,6 +35,7 @@ export function useTheme() {
     } else {
       root.classList.remove("dark");
     }
+    syncNativeTitleBar(theme);
   }, [theme]);
 
   const toggleTheme = useCallback(() => {

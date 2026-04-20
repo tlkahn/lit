@@ -16,6 +16,12 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: vi.fn(),
 }));
 
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: vi.fn(() => ({
+    setTheme: vi.fn(() => Promise.resolve()),
+  })),
+}));
+
 beforeEach(() => {
   resetInvokeMock();
   resetListenMock();

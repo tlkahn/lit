@@ -50,10 +50,10 @@ function App() {
   }
 
   return (
-    <div className={`flex h-screen ${position === "right" ? "flex-row-reverse" : "flex-row"}`}>
+    <div className={`flex h-screen bg-white dark:bg-neutral-900 ${position === "right" ? "flex-row-reverse" : "flex-row"}`}>
       <Sidebar />
       <div className="flex flex-1 flex-col">
-        <header className="flex items-center justify-end gap-2 border-b border-neutral-200 px-4 py-2 dark:border-neutral-700">
+        <header className="flex items-center justify-end gap-2 border-b border-neutral-200 bg-white px-4 py-2 dark:border-neutral-700 dark:bg-neutral-800">
           <SidebarPositionToggle position={position} onToggle={togglePosition} />
           <ThemeToggle theme={theme} onToggle={toggleTheme} />
         </header>

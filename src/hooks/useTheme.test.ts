@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { renderHook, act } from "@testing-library/react";
+import { renderHook, act, waitFor } from "@testing-library/react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useTheme } from "./useTheme";
 
 function mockMatchMedia(matches: boolean) {
@@ -66,5 +67,26 @@ describe("useTheme", () => {
     expect(result.current.theme).toBe("light");
     expect(document.documentElement.classList.contains("dark")).toBe(false);
     expect(localStorage.getItem("lit-theme")).toBe("light");
+  });
+
+  it("calls setTheme on the native window when theme changes", async () => {
+    mockMatchMedia(false);
+    const mockSetTheme = vi.fn(() => Promise.resolve());
+    vi.mocked(getCurrentWindow).mockReturnValue({
+      setTheme: mockSetTheme,
+    } as unknown as ReturnType<typeof getCurrentWindow>);
+
+    const { result } = renderHook(() => useTheme());
+    expect(result.current.theme).toBe("light");
+
+    await waitFor(() => {
+      expect(mockSetTheme).toHaveBeenCalledWith("light");
+    });
+
+    act(() => result.current.toggleTheme());
+
+    await waitFor(() => {
+      expect(mockSetTheme).toHaveBeenCalledWith("dark");
+    });
   });
 });
