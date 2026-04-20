@@ -4,6 +4,11 @@ node_modules/
 # Build output
 dist/
 target/
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+vitest.config.js
+vitest.config.d.ts
 
 # Bun
 bun.lock
