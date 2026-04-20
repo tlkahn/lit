@@ -3,7 +3,7 @@ use crate::workspace::scan::scan_pages;
 use crate::workspace::watcher::FileWatcher;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use tauri::State;
+use tauri::{Manager, State};
 
 pub struct AppState {
     pub workspace_root: Mutex<Option<PathBuf>>,
@@ -22,6 +22,11 @@ pub fn open_workspace(
     }
 
     let pages = scan_pages(&root).map_err(|e| e.to_string())?;
+
+    app_handle
+        .asset_protocol_scope()
+        .allow_directory(&root, true)
+        .map_err(|e| e.to_string())?;
 
     let watcher = FileWatcher::new(root.clone(), app_handle).ok();
 

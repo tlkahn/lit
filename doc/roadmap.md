@@ -94,19 +94,19 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
 
 #### A1 — CM6 Foundation
 
-- Replace `<textarea>` in ContentArea with a React-wrapped CodeMirror 6 component
-- Markdown language support via `@codemirror/lang-markdown` + `@lezer/markdown`
-- Basic syntax highlighting: headings, emphasis, links, images, ordered/unordered/task lists, code spans, fenced code blocks, horizontal rules, blockquotes
-- CM6 theme (EditorTheme) for light and dark modes, matching existing Tailwind design tokens
-- Wire load/save to existing Rust IPC (`read_page` / `write_page`)
+- [x] Replace `<textarea>` in ContentArea with a React-wrapped CodeMirror 6 component
+- [x] Markdown language support via `@codemirror/lang-markdown` + `@lezer/markdown`
+- [x] Basic syntax highlighting: headings, emphasis, links, images, ordered/unordered/task lists, code spans, fenced code blocks, horizontal rules, blockquotes
+- [x] CM6 theme (EditorTheme) for light and dark modes, matching existing Tailwind design tokens
+- [x] Wire load/save to existing Rust IPC (`read_page` / `write_page`)
 
 #### A2 — Live Preview Decoration Engine
 
-- ViewPlugin-based decoration system: replace raw syntax with rendered output for non-cursor regions
-- Styled headings (font size/weight applied inline), bold/italic rendered (syntax markers hidden)
-- Links rendered as clickable text (URL hidden), images rendered as inline previews
-- Cursor proximity detection: reveal raw syntax within N characters of cursor position
-- Fenced code blocks with per-language syntax highlighting via `@codemirror/language-data`
+- [x] ViewPlugin-based decoration system: replace raw syntax with rendered output for non-cursor regions
+- [x] Styled headings (font size/weight applied inline), bold/italic rendered (syntax markers hidden)
+- [x] Links rendered as clickable text (URL hidden), images rendered as inline previews
+- [x] Cursor proximity detection: reveal raw syntax within N characters of cursor position
+- [x] Fenced code blocks with per-language syntax highlighting via `@codemirror/language-data`
 
 #### A3 — Obsidian Markdown Extensions
 
@@ -144,6 +144,9 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
 - Cmd+G go-to-heading quick switcher (fuzzy match within current document)
 
 **Deliverable:** A fast, Obsidian-style live preview editor with full markdown syntax support (including Mermaid diagrams), auto-save, file sync, folding, and document navigation. Changes persist as clean markdown. No block tree — the markdown file is edited directly.
+
+> [!note]-
+> Extra: use oxide LSP for edit features like autocomplete, go to definition/references etc. Potential Phase D.
 
 ---
 

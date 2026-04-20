@@ -81,6 +81,7 @@ Presentational components in `src/components/` — props-driven, no business log
 - Tauri `generate_handler!` needs the **full module path** to the command function — `pub use` re-exports don't work because the macro also looks for hidden `__cmd__` symbols.
 - The icon at `src-tauri/icons/icon.png` must be RGBA format — `generate_context!()` panics otherwise.
 - Tauri 2 `app` config has no `title` field — window title goes in `app.windows[].title`.
+- Serving local files (images, etc.) in the webview requires three things in sync: `assetProtocol.enable` in `tauri.conf.json`, `protocol-asset` Cargo feature, and a runtime `allow_directory` call on the asset scope. See [[doc/tauri-asset-protocol]] for details.
 
 ## Roadmap
 

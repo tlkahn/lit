@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from "react";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { useWorkspaceStore } from "../stores/workspace";
 import { readPage, writePage } from "../lib/ipc";
 import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
@@ -8,8 +9,19 @@ interface ContentAreaProps {
   theme: Theme;
 }
 
+function resolveRelativePath(base: string, relative: string): string {
+  const segments = (base ? base + "/" + relative : relative).split("/");
+  const resolved: string[] = [];
+  for (const seg of segments) {
+    if (seg === "..") resolved.pop();
+    else if (seg !== "." && seg !== "") resolved.push(seg);
+  }
+  return resolved.join("/");
+}
+
 export function ContentArea({ theme }: ContentAreaProps) {
   const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
+  const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const [body, setBody] = useState("");
   const [title, setTitle] = useState("");
   const [frontmatter, setFrontmatter] = useState<Record<string, unknown>>({});
@@ -45,6 +57,16 @@ export function ContentArea({ theme }: ContentAreaProps) {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, [currentPagePath, loadPage]);
+
+  const resolveImageSrc = useCallback((src: string): string => {
+    if (/^(https?:|data:|blob:)/.test(src)) return src;
+    if (!workspacePath || !currentPagePath) return src;
+
+    const lastSlash = currentPagePath.lastIndexOf("/");
+    const fileDir = lastSlash >= 0 ? currentPagePath.substring(0, lastSlash) : "";
+    const absolutePath = workspacePath + "/" + resolveRelativePath(fileDir, src);
+    return convertFileSrc(absolutePath);
+  }, [workspacePath, currentPagePath]);
 
   const handleChange = (newBody: string) => {
     setBody(newBody);
@@ -95,7 +117,7 @@ export function ContentArea({ theme }: ContentAreaProps) {
           </pre>
         )}
       </div>
-      <CodeMirrorEditor doc={body} theme={theme} onChange={handleChange} />
+      <CodeMirrorEditor doc={body} theme={theme} onChange={handleChange} resolveImageSrc={resolveImageSrc} />
     </main>
   );
 }

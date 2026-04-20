@@ -4,6 +4,7 @@ import { EditorView } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { undo } from "@codemirror/commands";
 import { createExtensions } from "./extensions";
+import { livePreviewPlugin } from "./livePreview/plugin";
 
 function makeConfig(overrides?: { onChange?: (content: string) => void }) {
   return {
@@ -72,5 +73,25 @@ describe("createExtensions", () => {
     view.dispatch({ changes: { from: 0, insert: "typed" } });
     expect(onChange).toHaveBeenCalledWith("typed");
     view.destroy();
+  });
+
+  it("includes livePreviewPlugin", () => {
+    const exts = createExtensions(makeConfig());
+    const state = EditorState.create({ doc: "# Hello", extensions: exts });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    expect(view.plugin(livePreviewPlugin)).toBeDefined();
+    view.destroy();
+  });
+
+  it("parses CodeInfo for fenced code with language", () => {
+    const exts = createExtensions(makeConfig());
+    const state = EditorState.create({
+      doc: "```javascript\nconsole.log('hi')\n```",
+      extensions: exts,
+    });
+    const tree = syntaxTree(state);
+    const names: string[] = [];
+    tree.iterate({ enter: (node) => { names.push(node.name); } });
+    expect(names).toContain("CodeInfo");
   });
 });
