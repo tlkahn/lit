@@ -185,43 +185,57 @@ describe("DisplayMathWidget", () => {
 describe("TableWidget", () => {
   const basicTable = "| a | b |\n| --- | --- |\n| 1 | 2 |";
 
+  function makeTableView(doc?: string): EditorView {
+    const state = EditorState.create({ doc: doc ?? basicTable });
+    return new EditorView({ state, parent: document.createElement("div") });
+  }
+
   it("toDOM returns a container div with correct class", () => {
-    const widget = new TableWidget(basicTable);
-    const el = widget.toDOM();
+    const view = makeTableView();
+    const widget = new TableWidget(basicTable, 0);
+    const el = widget.toDOM(view);
     expect(el.tagName).toBe("DIV");
     expect(el.className).toBe("cm-preview-table-container");
+    view.destroy();
   });
 
   it("container holds a table with correct class", () => {
-    const widget = new TableWidget(basicTable);
-    const el = widget.toDOM();
+    const view = makeTableView();
+    const widget = new TableWidget(basicTable, 0);
+    const el = widget.toDOM(view);
     const table = el.querySelector("table");
     expect(table).not.toBeNull();
     expect(table!.className).toBe("cm-preview-table");
+    view.destroy();
   });
 
   it("header row renders th elements inside thead", () => {
-    const widget = new TableWidget(basicTable);
-    const el = widget.toDOM();
+    const view = makeTableView();
+    const widget = new TableWidget(basicTable, 0);
+    const el = widget.toDOM(view);
     const ths = el.querySelectorAll("thead th");
     expect(ths).toHaveLength(2);
     expect(ths[0]!.textContent).toBe("a");
     expect(ths[1]!.textContent).toBe("b");
+    view.destroy();
   });
 
   it("body rows render td elements inside tbody", () => {
-    const widget = new TableWidget(basicTable);
-    const el = widget.toDOM();
+    const view = makeTableView();
+    const widget = new TableWidget(basicTable, 0);
+    const el = widget.toDOM(view);
     const tds = el.querySelectorAll("tbody td");
     expect(tds).toHaveLength(2);
     expect(tds[0]!.textContent).toBe("1");
     expect(tds[1]!.textContent).toBe("2");
+    view.destroy();
   });
 
   it("applies text-align based on alignment", () => {
     const aligned = "| L | R | C |\n| :--- | ---: | :---: |\n| a | b | c |";
-    const widget = new TableWidget(aligned);
-    const el = widget.toDOM();
+    const view = makeTableView(aligned);
+    const widget = new TableWidget(aligned, 0);
+    const el = widget.toDOM(view);
     const ths = el.querySelectorAll<HTMLElement>("thead th");
     expect(ths[0]!.style.textAlign).toBe("left");
     expect(ths[1]!.style.textAlign).toBe("right");
@@ -230,39 +244,127 @@ describe("TableWidget", () => {
     expect(tds[0]!.style.textAlign).toBe("left");
     expect(tds[1]!.style.textAlign).toBe("right");
     expect(tds[2]!.style.textAlign).toBe("center");
+    view.destroy();
   });
 
   it("renders rich content in cells", () => {
     const rich = "| **bold** |\n| --- |\n| *italic* |";
-    const widget = new TableWidget(rich);
-    const el = widget.toDOM();
+    const view = makeTableView(rich);
+    const widget = new TableWidget(rich, 0);
+    const el = widget.toDOM(view);
     const th = el.querySelector("thead th");
     expect(th!.innerHTML).toContain("<strong>");
     const td = el.querySelector("tbody td");
     expect(td!.innerHTML).toContain("<em>");
+    view.destroy();
   });
 
-  it("eq returns true for same tableText", () => {
-    const a = new TableWidget(basicTable);
-    const b = new TableWidget(basicTable);
+  it("eq returns true for same tableText and from", () => {
+    const a = new TableWidget(basicTable, 0);
+    const b = new TableWidget(basicTable, 0);
     expect(a.eq(b)).toBe(true);
   });
 
   it("eq returns false for different tableText", () => {
-    const a = new TableWidget(basicTable);
-    const b = new TableWidget("| x |\n| --- |\n| y |");
+    const a = new TableWidget(basicTable, 0);
+    const b = new TableWidget("| x |\n| --- |\n| y |", 0);
     expect(a.eq(b)).toBe(false);
   });
 
-  it("ignoreEvent returns true", () => {
-    expect(new TableWidget(basicTable).ignoreEvent()).toBe(true);
+  it("eq returns false when from differs", () => {
+    expect(new TableWidget(basicTable, 0).eq(new TableWidget(basicTable, 10))).toBe(false);
+  });
+
+  it("ignoreEvent returns true for mousedown", () => {
+    const widget = new TableWidget(basicTable, 0);
+    expect(widget.ignoreEvent(new MouseEvent("mousedown"))).toBe(true);
+  });
+
+  it("ignoreEvent returns false for other events", () => {
+    const widget = new TableWidget(basicTable, 0);
+    expect(widget.ignoreEvent(new MouseEvent("click"))).toBe(false);
   });
 
   it("renders header-only table without tbody", () => {
     const headerOnly = "| H |\n| --- |";
-    const widget = new TableWidget(headerOnly);
-    const el = widget.toDOM();
+    const view = makeTableView(headerOnly);
+    const widget = new TableWidget(headerOnly, 0);
+    const el = widget.toDOM(view);
     expect(el.querySelector("thead")).not.toBeNull();
     expect(el.querySelector("tbody")).toBeNull();
+    view.destroy();
+  });
+
+  it("toDOM adds data-row and data-col to th elements", () => {
+    const view = makeTableView();
+    const widget = new TableWidget(basicTable, 0);
+    const el = widget.toDOM(view);
+    const ths = el.querySelectorAll("thead th");
+    expect(ths[0]!.getAttribute("data-row")).toBe("0");
+    expect(ths[0]!.getAttribute("data-col")).toBe("0");
+    expect(ths[1]!.getAttribute("data-row")).toBe("0");
+    expect(ths[1]!.getAttribute("data-col")).toBe("1");
+    view.destroy();
+  });
+
+  it("toDOM adds data-row and data-col to td elements", () => {
+    const view = makeTableView();
+    const widget = new TableWidget(basicTable, 0);
+    const el = widget.toDOM(view);
+    const tds = el.querySelectorAll("tbody td");
+    expect(tds[0]!.getAttribute("data-row")).toBe("1");
+    expect(tds[0]!.getAttribute("data-col")).toBe("0");
+    view.destroy();
+  });
+
+  it("toDOM assigns correct data-row for multiple body rows", () => {
+    const multiRow = "| h |\n| --- |\n| r1 |\n| r2 |";
+    const view = makeTableView(multiRow);
+    const widget = new TableWidget(multiRow, 0);
+    const el = widget.toDOM(view);
+    const tds = el.querySelectorAll("tbody td");
+    expect(tds[1]!.getAttribute("data-row")).toBe("2");
+    view.destroy();
+  });
+
+  it("mousedown on td dispatches cursor to cell position", () => {
+    const view = makeTableView();
+    const widget = new TableWidget(basicTable, 0);
+    const el = widget.toDOM(view);
+    const td = el.querySelector('td[data-row="1"][data-col="1"]')!;
+    td.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(view.state.selection.main.head).toBe(30);
+    view.destroy();
+  });
+
+  it("mousedown on th dispatches cursor to header position", () => {
+    const view = makeTableView();
+    const widget = new TableWidget(basicTable, 0);
+    const el = widget.toDOM(view);
+    const th = el.querySelector('th[data-row="0"][data-col="0"]')!;
+    th.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(view.state.selection.main.head).toBe(2);
+    view.destroy();
+  });
+
+  it("mousedown calls preventDefault", () => {
+    const view = makeTableView();
+    const widget = new TableWidget(basicTable, 0);
+    const el = widget.toDOM(view);
+    const td = el.querySelector('td[data-row="1"][data-col="0"]')!;
+    const event = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    td.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    view.destroy();
+  });
+
+  it("mousedown outside any cell does not dispatch", () => {
+    const view = makeTableView();
+    const widget = new TableWidget(basicTable, 0);
+    const el = widget.toDOM(view);
+    const headBefore = view.state.selection.main.head;
+    el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(view.state.selection.main.head).toBe(headBefore);
+    view.destroy();
   });
 });

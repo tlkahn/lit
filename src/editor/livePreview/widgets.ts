@@ -1,6 +1,6 @@
 import { type EditorView, WidgetType } from "@codemirror/view";
 import { getCalloutIcon, toggleCalloutEffect } from "./callout";
-import { parseTable, renderInlineMarkdown, type Alignment } from "./table";
+import { getCellPosition, parseTable, renderInlineMarkdown, type Alignment } from "./table";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 
@@ -138,11 +138,14 @@ export class DisplayMathWidget extends WidgetType {
 }
 
 export class TableWidget extends WidgetType {
-  constructor(readonly tableText: string) {
+  constructor(
+    readonly tableText: string,
+    readonly from: number,
+  ) {
     super();
   }
 
-  toDOM(): HTMLElement {
+  toDOM(view: EditorView): HTMLElement {
     const container = document.createElement("div");
     container.className = "cm-preview-table-container";
 
@@ -157,6 +160,8 @@ export class TableWidget extends WidgetType {
     parsed.headers.forEach((header, i) => {
       const th = document.createElement("th");
       th.innerHTML = renderInlineMarkdown(header);
+      th.dataset.row = "0";
+      th.dataset.col = String(i);
       applyAlignment(th, parsed.alignments[i]);
       headerRow.appendChild(th);
     });
@@ -165,29 +170,43 @@ export class TableWidget extends WidgetType {
 
     if (parsed.rows.length > 0) {
       const tbody = document.createElement("tbody");
+      let rowIndex = 1;
       for (const row of parsed.rows) {
         const tr = document.createElement("tr");
         row.forEach((cell, i) => {
           const td = document.createElement("td");
           td.innerHTML = renderInlineMarkdown(cell);
+          td.dataset.row = String(rowIndex);
+          td.dataset.col = String(i);
           applyAlignment(td, parsed.alignments[i]);
           tr.appendChild(td);
         });
         tbody.appendChild(tr);
+        rowIndex++;
       }
       table.appendChild(tbody);
     }
+
+    container.addEventListener("mousedown", (e) => {
+      const cell = (e.target as HTMLElement).closest("th, td") as HTMLElement | null;
+      if (!cell) return;
+      e.preventDefault();
+      const row = Number(cell.dataset.row);
+      const col = Number(cell.dataset.col);
+      const pos = getCellPosition(this.tableText, this.from, row, col);
+      view.dispatch({ selection: { anchor: pos } });
+    });
 
     container.appendChild(table);
     return container;
   }
 
   eq(other: TableWidget): boolean {
-    return this.tableText === other.tableText;
+    return this.tableText === other.tableText && this.from === other.from;
   }
 
-  ignoreEvent(): boolean {
-    return true;
+  ignoreEvent(event: Event): boolean {
+    return event.type === "mousedown";
   }
 }
 

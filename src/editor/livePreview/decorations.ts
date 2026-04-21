@@ -446,6 +446,6 @@ function addTableBlockReplacement(
   decos.push({
     from,
     to,
-    deco: Decoration.replace({ widget: new TableWidget(text) }),
+    deco: Decoration.replace({ widget: new TableWidget(text, from) }),
   });
 }

@@ -138,6 +138,43 @@ function escapeHtml(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
+export function getCellPosition(
+  tableText: string,
+  from: number,
+  row: number,
+  col: number,
+): number {
+  const lines = tableText.split("\n");
+  const rawLineIndex = row === 0 ? 0 : row + 1;
+  if (rawLineIndex >= lines.length) return from;
+
+  let lineOffset = 0;
+  for (let i = 0; i < rawLineIndex; i++) {
+    lineOffset += lines[i]!.length + 1;
+  }
+
+  const line = lines[rawLineIndex]!;
+  const hasLeadingPipe = line.trimStart().startsWith("|");
+
+  let pos = 0;
+  if (hasLeadingPipe) {
+    pos = line.indexOf("|") + 1;
+    for (let c = 0; c < col; c++) {
+      pos = line.indexOf("|", pos) + 1;
+    }
+  } else {
+    for (let c = 0; c < col; c++) {
+      pos = line.indexOf("|", pos) + 1;
+    }
+  }
+
+  const cellStart = pos;
+  while (pos < line.length && line[pos] === " ") pos++;
+  if (pos >= line.length || line[pos] === "|") pos = cellStart;
+
+  return from + lineOffset + pos;
+}
+
 function escapeSegments(text: string): string {
   const parts = text.split(/(￰PH\d+￰)/);
   return parts

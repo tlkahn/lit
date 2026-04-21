@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { parseTableAlignment, parseTable, renderInlineMarkdown } from "./table";
+import { parseTableAlignment, parseTable, renderInlineMarkdown, getCellPosition } from "./table";
 
 vi.mock("katex", () => ({
   default: {
@@ -181,5 +181,53 @@ describe("renderInlineMarkdown", () => {
 
   it("renders underscore bold", () => {
     expect(renderInlineMarkdown("__bold__")).toBe("<strong>bold</strong>");
+  });
+});
+
+describe("getCellPosition", () => {
+  const table = "| a | b |\n| --- | --- |\n| 1 | 2 |";
+
+  it("returns position of first header cell", () => {
+    expect(getCellPosition(table, 0, 0, 0)).toBe(2);
+  });
+
+  it("returns position of second header cell", () => {
+    expect(getCellPosition(table, 0, 0, 1)).toBe(6);
+  });
+
+  it("returns position of first body cell (skips delimiter)", () => {
+    expect(getCellPosition(table, 0, 1, 0)).toBe(26);
+  });
+
+  it("returns position of second body cell", () => {
+    expect(getCellPosition(table, 0, 1, 1)).toBe(30);
+  });
+
+  it("adds from offset", () => {
+    expect(getCellPosition("| a |\n| --- |\n| x |", 100, 0, 0)).toBe(102);
+  });
+
+  it("handles table without leading pipes", () => {
+    expect(getCellPosition("a | b\n---|---\n1 | 2", 0, 0, 0)).toBe(0);
+  });
+
+  it("handles second column without leading pipes", () => {
+    expect(getCellPosition("a | b\n---|---\n1 | 2", 0, 0, 1)).toBe(4);
+  });
+
+  it("skips leading whitespace after pipe", () => {
+    expect(getCellPosition("|  hello  |  world  |\n| --- | --- |", 0, 0, 0)).toBe(3);
+  });
+
+  it("positions cursor in empty cell at pipe+1", () => {
+    expect(getCellPosition("| a |  |\n| --- | --- |", 0, 0, 1)).toBe(5);
+  });
+
+  it("handles multiple body rows", () => {
+    expect(getCellPosition("| h |\n| --- |\n| r1 |\n| r2 |", 0, 2, 0)).toBe(23);
+  });
+
+  it("handles from offset with body cell", () => {
+    expect(getCellPosition("| a |\n| --- |\n| x |", 50, 1, 0)).toBe(66);
   });
 });
