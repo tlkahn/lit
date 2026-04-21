@@ -1,10 +1,10 @@
 import { EditorView } from "@codemirror/view";
 
 export const livePreviewBaseTheme = EditorView.baseTheme({
-  ".cm-preview-h1": { fontSize: "1.5em", fontWeight: "bold" },
-  ".cm-preview-h2": { fontSize: "1.3em", fontWeight: "bold" },
-  ".cm-preview-h3": { fontSize: "1.15em", fontWeight: "bold" },
-  ".cm-preview-h4": { fontSize: "1.05em", fontWeight: "bold" },
+  ".cm-preview-h1": { fontWeight: "bold" },
+  ".cm-preview-h2": { fontWeight: "bold" },
+  ".cm-preview-h3": { fontWeight: "bold" },
+  ".cm-preview-h4": { fontWeight: "bold" },
   ".cm-preview-h5": { fontWeight: "bold" },
   ".cm-preview-h6": { fontWeight: "bold" },
   ".cm-preview-bold": { fontWeight: "bold" },
