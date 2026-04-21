@@ -3,14 +3,13 @@ import { useCodeMirror } from "./useCodeMirror";
 
 interface CodeMirrorEditorProps {
   doc: string;
-  theme: "light" | "dark";
   onChange?: (content: string) => void;
   resolveImageSrc?: (src: string) => string;
 }
 
-export function CodeMirrorEditor({ doc, theme, onChange, resolveImageSrc }: CodeMirrorEditorProps) {
+export function CodeMirrorEditor({ doc, onChange, resolveImageSrc }: CodeMirrorEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  useCodeMirror({ containerRef, doc, theme, onChange, resolveImageSrc });
+  useCodeMirror({ containerRef, doc, onChange, resolveImageSrc });
   return (
     <div
       ref={containerRef}

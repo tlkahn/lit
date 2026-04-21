@@ -1,0 +1,133 @@
+/* Obsidian-compatible CSS variable contract.
+   Default values sourced from github-markdown-css 5.8.1.
+   Community themes override these. */
+
+.theme-light {
+  /* Backgrounds */
+  --background-primary: #ffffff;
+  --background-primary-alt: #f6f8fa;
+  --background-secondary: #f6f8fa;
+  --background-secondary-alt: #eaeef2;
+  --background-modifier-border: #d1d9e0;
+  --background-modifier-hover: #eaeef2;
+  --background-modifier-error: #ffebe9;
+
+  /* Text */
+  --text-normal: #1f2328;
+  --text-muted: #59636e;
+  --text-faint: #818b98;
+  --text-accent: #0969da;
+  --text-accent-hover: #0550ae;
+  --text-error: #d1242f;
+  --text-on-accent: #ffffff;
+  --text-selection: #ddf4ff;
+
+  /* Interactive */
+  --interactive-normal: #f6f8fa;
+  --interactive-hover: #eaeef2;
+  --interactive-accent: #0969da;
+  --interactive-accent-hover: #0550ae;
+
+  /* Nav */
+  --nav-item-color-active: #0550ae;
+  --nav-item-background-active: #ddf4ff;
+  --nav-item-color-hover: #1f2328;
+  --nav-item-background-hover: #eaeef2;
+
+  /* Code */
+  --code-background: #f6f8fa;
+  --code-normal: #1f2328;
+
+  /* Extended colors (callouts) */
+  --color-red: #cf222e;
+  --color-green: #1a7f37;
+  --color-blue: #0969da;
+  --color-orange: #bc4c00;
+  --color-yellow: #9a6700;
+  --color-purple: #8250df;
+  --color-cyan: #0550ae;
+
+  /* Fonts */
+  --font-text-theme: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+  --font-interface-theme: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+  --font-monospace-theme: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
+
+  /* Color base scale */
+  --color-base-00: #ffffff;
+  --color-base-05: #f6f8fa;
+  --color-base-10: #eaeef2;
+  --color-base-20: #d1d9e0;
+  --color-base-25: #afb8c1;
+  --color-base-30: #818b98;
+  --color-base-35: #6e7781;
+  --color-base-40: #59636e;
+  --color-base-50: #4d5561;
+  --color-base-60: #32383f;
+  --color-base-70: #24292f;
+  --color-base-100: #1f2328;
+}
+
+.theme-dark {
+  /* Backgrounds */
+  --background-primary: #0d1117;
+  --background-primary-alt: #151b23;
+  --background-secondary: #151b23;
+  --background-secondary-alt: #1c2128;
+  --background-modifier-border: #3d444d;
+  --background-modifier-hover: #1c2128;
+  --background-modifier-error: #3d1117;
+
+  /* Text */
+  --text-normal: #f0f6fc;
+  --text-muted: #9198a1;
+  --text-faint: #656c76;
+  --text-accent: #4493f8;
+  --text-accent-hover: #79c0ff;
+  --text-error: #f85149;
+  --text-on-accent: #ffffff;
+  --text-selection: #1f3a5f;
+
+  /* Interactive */
+  --interactive-normal: #151b23;
+  --interactive-hover: #3d444d;
+  --interactive-accent: #1f6feb;
+  --interactive-accent-hover: #4493f8;
+
+  /* Nav */
+  --nav-item-color-active: #4493f8;
+  --nav-item-background-active: #1a2332;
+  --nav-item-color-hover: #f0f6fc;
+  --nav-item-background-hover: #1c2128;
+
+  /* Code */
+  --code-background: #151b23;
+  --code-normal: #f0f6fc;
+
+  /* Extended colors (callouts) */
+  --color-red: #f85149;
+  --color-green: #3fb950;
+  --color-blue: #4493f8;
+  --color-orange: #d29922;
+  --color-yellow: #d29922;
+  --color-purple: #ab7df8;
+  --color-cyan: #79c0ff;
+
+  /* Fonts */
+  --font-text-theme: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+  --font-interface-theme: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+  --font-monospace-theme: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
+
+  /* Color base scale */
+  --color-base-00: #0d1117;
+  --color-base-05: #151b23;
+  --color-base-10: #1c2128;
+  --color-base-20: #3d444d;
+  --color-base-25: #484f58;
+  --color-base-30: #656c76;
+  --color-base-35: #9198a1;
+  --color-base-40: #9198a1;
+  --color-base-50: #b1bac4;
+  --color-base-60: #c9d1d9;
+  --color-base-70: #f0f6fc;
+  --color-base-100: #f0f6fc;
+}

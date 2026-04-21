@@ -73,3 +73,24 @@ export async function openWorkspaceWindow(path?: string): Promise<string> {
 export async function getPendingWorkspace(): Promise<string | null> {
   return invoke<string | null>("get_pending_workspace");
 }
+
+// Theme commands
+
+export interface ThemeInfo {
+  name: string;
+  version: string;
+  author: string;
+  directory_name: string;
+}
+
+export async function listThemes(): Promise<ThemeInfo[]> {
+  return invoke<ThemeInfo[]>("list_themes");
+}
+
+export async function readThemeCss(directoryName: string): Promise<string> {
+  return invoke<string>("read_theme_css", { directoryName });
+}
+
+export async function getThemesDirectory(): Promise<string> {
+  return invoke<string>("get_themes_directory");
+}

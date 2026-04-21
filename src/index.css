@@ -1,12 +1,50 @@
 @import "tailwindcss";
+@import "./themes/variables.css";
 
 @custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --default-font-family: var(--font-interface-theme, ui-sans-serif, system-ui, sans-serif);
+  --default-mono-font-family: var(--font-monospace-theme, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  --color-bg-primary: var(--background-primary);
+  --color-bg-primary-alt: var(--background-primary-alt);
+  --color-bg-secondary: var(--background-secondary);
+  --color-border: var(--background-modifier-border);
+  --color-bg-hover: var(--background-modifier-hover);
+  --color-text-normal: var(--text-normal);
+  --color-text-muted: var(--text-muted);
+  --color-text-faint: var(--text-faint);
+  --color-text-accent: var(--text-accent);
+  --color-text-error: var(--text-error);
+  --color-text-on-accent: var(--text-on-accent);
+  --color-interactive-accent: var(--interactive-accent);
+  --color-interactive-accent-hover: var(--interactive-accent-hover);
+  --color-interactive-hover: var(--interactive-hover);
+  --color-nav-active-bg: var(--nav-item-background-active);
+  --color-nav-active-text: var(--nav-item-color-active);
+}
 
 html, body, #root {
   height: 100%;
   overflow: hidden;
+  background-color: var(--background-primary);
+  color: var(--text-normal);
+  font-family: var(--font-interface-theme, ui-sans-serif, system-ui, sans-serif);
 }
 
-html.dark body {
-  background-color: #171717;
-}
+/* CodeMirror syntax highlighting — tok-* classes from classHighlighter */
+.tok-heading { font-weight: bold; }
+.tok-heading1 { font-weight: bold; font-size: 1.5em; }
+.tok-heading2 { font-weight: bold; font-size: 1.3em; }
+.tok-heading3 { font-weight: bold; font-size: 1.15em; }
+.tok-heading4 { font-weight: bold; font-size: 1.05em; }
+.tok-heading5 { font-weight: bold; }
+.tok-heading6 { font-weight: bold; }
+.tok-emphasis { font-style: italic; }
+.tok-strong { font-weight: bold; }
+.tok-link { color: var(--text-accent); text-decoration: underline; }
+.tok-url { color: var(--text-accent); }
+.tok-monospace { background-color: var(--code-background); border-radius: 3px; }
+.tok-meta { color: var(--text-faint); }
+.tok-quote { color: var(--text-muted); font-style: italic; }
+.tok-list { color: var(--text-muted); }

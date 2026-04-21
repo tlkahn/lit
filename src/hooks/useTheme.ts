@@ -31,9 +31,11 @@ export function useTheme() {
   useEffect(() => {
     const root = document.documentElement;
     if (theme === "dark") {
-      root.classList.add("dark");
+      root.classList.add("dark", "theme-dark");
+      root.classList.remove("theme-light");
     } else {
-      root.classList.remove("dark");
+      root.classList.remove("dark", "theme-dark");
+      root.classList.add("theme-light");
     }
     syncNativeTitleBar(theme);
   }, [theme]);

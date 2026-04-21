@@ -57,13 +57,13 @@ beforeEach(() => {
 
 describe("ContentArea", () => {
   it("shows empty state when no page selected", () => {
-    render(<ContentArea theme="light" />);
+    render(<ContentArea />);
     expect(screen.getByTestId("empty-state")).toBeInTheDocument();
   });
 
   it("loads page content into editor", async () => {
     useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
-    render(<ContentArea theme="light" />);
+    render(<ContentArea />);
 
     await waitFor(() => {
       const editor = screen.getByTestId("editor");
@@ -74,7 +74,7 @@ describe("ContentArea", () => {
 
   it("displays page title", async () => {
     useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
-    render(<ContentArea theme="light" />);
+    render(<ContentArea />);
 
     await waitFor(() => {
       expect(screen.getByTestId("page-title")).toHaveTextContent("Hello");
@@ -83,7 +83,7 @@ describe("ContentArea", () => {
 
   it("switches content on page change", async () => {
     useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
-    const { unmount } = render(<ContentArea theme="light" />);
+    const { unmount } = render(<ContentArea />);
 
     await waitFor(() => {
       expect(screen.getByTestId("editor").textContent).toContain("Some content");
@@ -91,7 +91,7 @@ describe("ContentArea", () => {
     unmount();
 
     useWorkspaceStore.setState({ currentPagePath: "Other.md" });
-    render(<ContentArea theme="light" />);
+    render(<ContentArea />);
 
     await waitFor(() => {
       expect(screen.getByTestId("page-title")).toHaveTextContent("Other");
@@ -102,7 +102,7 @@ describe("ContentArea", () => {
   it("calls writePage on edit (debounced 300ms)", async () => {
     vi.useFakeTimers();
     useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
-    render(<ContentArea theme="light" />);
+    render(<ContentArea />);
 
     await vi.waitFor(() => {
       expect(screen.getByTestId("editor").textContent).toContain("Some content");
@@ -133,7 +133,7 @@ describe("ContentArea", () => {
   it("debounces rapid changes (single writePage call)", async () => {
     vi.useFakeTimers();
     useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
-    render(<ContentArea theme="light" />);
+    render(<ContentArea />);
 
     await vi.waitFor(() => {
       expect(screen.getByTestId("editor").textContent).toContain("Some content");
@@ -165,7 +165,7 @@ describe("ContentArea", () => {
 
   it("frontmatter toggle works", async () => {
     useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
-    render(<ContentArea theme="light" />);
+    render(<ContentArea />);
 
     await waitFor(() => {
       expect(screen.getByText("Show frontmatter")).toBeInTheDocument();

@@ -1,19 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { EditorView } from "@codemirror/view";
 import { EditorState, Compartment } from "@codemirror/state";
-import { syntaxHighlighting } from "@codemirror/language";
 import { createExtensions } from "./extensions";
-import {
-  lightTheme,
-  darkTheme,
-  lightHighlightStyle,
-  darkHighlightStyle,
-} from "./theme";
+import { getThemeExtension } from "./theme";
 
 export interface UseCodeMirrorProps {
   containerRef: React.RefObject<HTMLDivElement | null>;
   doc: string;
-  theme: "light" | "dark";
   onChange?: (content: string) => void;
   resolveImageSrc?: (src: string) => string;
 }
@@ -21,11 +14,10 @@ export interface UseCodeMirrorProps {
 export function useCodeMirror(props: UseCodeMirrorProps): {
   view: EditorView | null;
 } {
-  const { containerRef, doc, theme, onChange, resolveImageSrc } = props;
+  const { containerRef, doc, onChange, resolveImageSrc } = props;
   const [view, setView] = useState<EditorView | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const themeCompartment = useRef(new Compartment());
-  const highlightCompartment = useRef(new Compartment());
   const suppressOnChange = useRef(false);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
@@ -36,10 +28,12 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
     const container = containerRef.current;
     if (!container) return;
 
+    const isDark = document.documentElement.classList.contains("dark");
+    const theme = isDark ? "dark" : "light";
+
     const extensions = createExtensions({
       theme,
       themeCompartment: themeCompartment.current,
-      highlightCompartment: highlightCompartment.current,
       onChange: (content) => {
         if (!suppressOnChange.current) {
           onChangeRef.current?.(content);
@@ -60,7 +54,7 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
       viewRef.current = null;
       setView(null);
     };
-  }, [containerRef]); // mount/unmount only — doc & theme synced in separate effects
+  }, [containerRef]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -80,19 +74,21 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
     const view = viewRef.current;
     if (!view) return;
 
-    const themeExt = theme === "light" ? lightTheme : darkTheme;
-    const hlStyle =
-      theme === "light" ? lightHighlightStyle : darkHighlightStyle;
-
-    view.dispatch({
-      effects: [
-        themeCompartment.current.reconfigure(themeExt),
-        highlightCompartment.current.reconfigure(
-          syntaxHighlighting(hlStyle),
-        ),
-      ],
+    const observer = new MutationObserver(() => {
+      const isDark = document.documentElement.classList.contains("dark");
+      const theme = isDark ? "dark" : "light";
+      view.dispatch({
+        effects: themeCompartment.current.reconfigure(getThemeExtension(theme)),
+      });
     });
-  }, [theme]);
+
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+
+    return () => observer.disconnect();
+  }, [view]);
 
   return { view };
 }

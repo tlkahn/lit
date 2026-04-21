@@ -6,10 +6,12 @@ import { ContentErrorFallback } from "./components/ContentErrorFallback";
 import { WorkspaceChooser } from "./components/WorkspaceChooser";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { SidebarPositionToggle } from "./components/SidebarPositionToggle";
+import { ThemeChooser } from "./components/ThemeChooser";
 import { useTheme } from "./hooks/useTheme";
 import { useSidebarPosition } from "./hooks/useSidebarPosition";
 import { useFileWatcher } from "./hooks/useFileWatcher";
 import { useWorkspaceStore, getRecentWorkspaces } from "./stores/workspace";
+import { useThemeStore } from "./stores/theme";
 import { readPage, getInitialWorkspace, getPendingWorkspace } from "./lib/ipc";
 
 function App() {
@@ -18,6 +20,11 @@ function App() {
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const openWorkspace = useWorkspaceStore((s) => s.openWorkspace);
   const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
+  const initThemes = useThemeStore((s) => s.loadThemes);
+
+  useEffect(() => {
+    initThemes();
+  }, [initThemes]);
 
   useEffect(() => {
     if (workspacePath) return;
@@ -57,15 +64,16 @@ function App() {
   }
 
   return (
-    <div className={`flex h-screen bg-white dark:bg-neutral-900 ${position === "right" ? "flex-row-reverse" : "flex-row"}`}>
+    <div className={`flex h-screen bg-bg-primary ${position === "right" ? "flex-row-reverse" : "flex-row"}`}>
       <Sidebar />
       <div className="flex min-h-0 flex-1 flex-col">
-        <header className="flex items-center justify-end gap-2 border-b border-neutral-200 bg-white px-4 py-2 dark:border-neutral-700 dark:bg-neutral-800">
+        <header className="flex items-center justify-end gap-2 border-b border-border bg-bg-primary-alt px-4 py-2">
+          <ThemeChooser />
           <SidebarPositionToggle position={position} onToggle={togglePosition} />
           <ThemeToggle theme={theme} onToggle={toggleTheme} />
         </header>
         <ErrorBoundary fallback={ContentErrorFallback} resetKey={currentPagePath}>
-          <ContentArea theme={theme} />
+          <ContentArea />
         </ErrorBoundary>
       </div>
     </div>

@@ -1,6 +1,6 @@
 import { EditorView } from "@codemirror/view";
-import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
-import { tags } from "@lezer/highlight";
+import { syntaxHighlighting } from "@codemirror/language";
+import { classHighlighter, tagHighlighter, tags } from "@lezer/highlight";
 import type { Extension } from "@codemirror/state";
 
 const shared = EditorView.baseTheme({
@@ -8,81 +8,61 @@ const shared = EditorView.baseTheme({
   ".cm-scroller": { overflow: "auto" },
   ".cm-content": {
     padding: "1rem 1.5rem",
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+    fontFamily: "var(--font-text-theme, var(--font-interface-theme, -apple-system, BlinkMacSystemFont, sans-serif))",
     fontSize: "0.875rem",
     lineHeight: "1.25rem",
   },
   ".cm-gutters": { display: "none" },
 });
 
-export const lightTheme: Extension = [
+export const editorTheme: Extension = [
   shared,
-  EditorView.theme(
-    {
-      "&": { backgroundColor: "#ffffff", color: "#262626" },
-      ".cm-cursor": { borderLeftColor: "#262626" },
-      "&.cm-focused .cm-selectionBackground, .cm-selectionBackground": {
-        backgroundColor: "#dbeafe",
-      },
+  EditorView.theme({
+    "&": {
+      backgroundColor: "var(--background-primary)",
+      color: "var(--text-normal)",
     },
-    { dark: false },
-  ),
+    ".cm-cursor": { borderLeftColor: "var(--text-normal)" },
+    "&.cm-focused .cm-selectionBackground, .cm-selectionBackground": {
+      backgroundColor: "var(--text-selection)",
+    },
+  }),
 ];
 
-export const darkTheme: Extension = [
+export const editorDarkTheme: Extension = [
   shared,
   EditorView.theme(
     {
-      "&": { backgroundColor: "#262626", color: "#e5e5e5" },
-      ".cm-cursor": { borderLeftColor: "#e5e5e5" },
+      "&": {
+        backgroundColor: "var(--background-primary)",
+        color: "var(--text-normal)",
+      },
+      ".cm-cursor": { borderLeftColor: "var(--text-normal)" },
       "&.cm-focused .cm-selectionBackground, .cm-selectionBackground": {
-        backgroundColor: "#1e3a8a",
+        backgroundColor: "var(--text-selection)",
       },
     },
     { dark: true },
   ),
 ];
 
-export const lightHighlightStyle = HighlightStyle.define([
-  { tag: tags.heading1, fontWeight: "bold", fontSize: "1.5em" },
-  { tag: tags.heading2, fontWeight: "bold", fontSize: "1.3em" },
-  { tag: tags.heading3, fontWeight: "bold", fontSize: "1.15em" },
-  { tag: tags.heading4, fontWeight: "bold", fontSize: "1.05em" },
-  { tag: tags.heading5, fontWeight: "bold" },
-  { tag: tags.heading6, fontWeight: "bold" },
-  { tag: tags.emphasis, fontStyle: "italic" },
-  { tag: tags.strong, fontWeight: "bold" },
-  { tag: tags.link, color: "#60a5fa", textDecoration: "underline" },
-  { tag: tags.url, color: "#60a5fa" },
-  { tag: tags.monospace, backgroundColor: "#f5f5f5", borderRadius: "3px" },
-  { tag: tags.meta, color: "#a3a3a3" },
-  { tag: tags.quote, color: "#737373", fontStyle: "italic" },
-  { tag: tags.list, color: "#737373" },
+const markdownHighlighter = tagHighlighter([
+  { tag: tags.heading1, class: "tok-heading1" },
+  { tag: tags.heading2, class: "tok-heading2" },
+  { tag: tags.heading3, class: "tok-heading3" },
+  { tag: tags.heading4, class: "tok-heading4" },
+  { tag: tags.heading5, class: "tok-heading5" },
+  { tag: tags.heading6, class: "tok-heading6" },
+  { tag: tags.monospace, class: "tok-monospace" },
+  { tag: tags.quote, class: "tok-quote" },
+  { tag: tags.list, class: "tok-list" },
 ]);
 
-export const darkHighlightStyle = HighlightStyle.define([
-  { tag: tags.heading1, fontWeight: "bold", fontSize: "1.5em" },
-  { tag: tags.heading2, fontWeight: "bold", fontSize: "1.3em" },
-  { tag: tags.heading3, fontWeight: "bold", fontSize: "1.15em" },
-  { tag: tags.heading4, fontWeight: "bold", fontSize: "1.05em" },
-  { tag: tags.heading5, fontWeight: "bold" },
-  { tag: tags.heading6, fontWeight: "bold" },
-  { tag: tags.emphasis, fontStyle: "italic" },
-  { tag: tags.strong, fontWeight: "bold" },
-  { tag: tags.link, color: "#60a5fa", textDecoration: "underline" },
-  { tag: tags.url, color: "#60a5fa" },
-  { tag: tags.monospace, backgroundColor: "#404040", borderRadius: "3px" },
-  { tag: tags.meta, color: "#a3a3a3" },
-  { tag: tags.quote, color: "#737373", fontStyle: "italic" },
-  { tag: tags.list, color: "#737373" },
-]);
+export const highlightExtension: Extension = [
+  syntaxHighlighting(classHighlighter),
+  syntaxHighlighting(markdownHighlighter),
+];
 
 export function getThemeExtension(theme: "light" | "dark"): Extension {
-  return theme === "light" ? lightTheme : darkTheme;
-}
-
-export function getHighlightExtension(theme: "light" | "dark"): Extension {
-  return syntaxHighlighting(
-    theme === "light" ? lightHighlightStyle : darkHighlightStyle,
-  );
+  return theme === "dark" ? editorDarkTheme : editorTheme;
 }

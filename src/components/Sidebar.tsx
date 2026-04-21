@@ -53,7 +53,7 @@ function FolderView({
       {node.name && (
         <button
           onClick={() => setCollapsed(!collapsed)}
-          className="flex w-full items-center gap-1 rounded px-2 py-1 text-left text-sm text-neutral-600 hover:bg-neutral-200 dark:text-neutral-300 dark:hover:bg-neutral-700"
+          className="flex w-full items-center gap-1 rounded px-2 py-1 text-left text-sm text-text-muted hover:bg-bg-hover"
           style={{ paddingLeft: `${depth * 12 + 8}px` }}
         >
           <span className="text-xs">{collapsed ? "▸" : "▾"}</span>
@@ -119,8 +119,8 @@ function PageItem({
         onClick={() => onSelect(page.relative_path)}
         className={`w-full truncate rounded px-2 py-1 text-left text-sm ${
           isActive
-            ? "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
-            : "text-neutral-700 hover:bg-neutral-200 dark:text-neutral-300 dark:hover:bg-neutral-700"
+            ? "bg-nav-active-bg text-nav-active-text"
+            : "text-text-normal hover:bg-bg-hover"
         }`}
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
         title={page.relative_path}
@@ -128,13 +128,13 @@ function PageItem({
         {page.title}
       </button>
       {showMenu && (
-        <div className="absolute right-2 top-0 z-10 rounded border border-neutral-200 bg-white shadow-lg dark:border-neutral-600 dark:bg-neutral-800">
+        <div className="absolute right-2 top-0 z-10 rounded border border-border bg-bg-primary shadow-lg">
           <button
             onClick={() => {
               setShowMenu(false);
               onRename(page.relative_path);
             }}
-            className="block w-full px-4 py-1 text-left text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-700"
+            className="block w-full px-4 py-1 text-left text-sm text-text-normal hover:bg-bg-hover"
           >
             Rename
           </button>
@@ -143,7 +143,7 @@ function PageItem({
               setShowMenu(false);
               onDelete(page.relative_path);
             }}
-            className="block w-full px-4 py-1 text-left text-sm text-red-600 hover:bg-neutral-100 dark:text-red-400 dark:hover:bg-neutral-700"
+            className="block w-full px-4 py-1 text-left text-sm text-text-error hover:bg-bg-hover"
           >
             Delete
           </button>
@@ -189,14 +189,14 @@ export function Sidebar() {
   };
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col border-r border-neutral-200 bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900">
-      <div className="flex items-center justify-between border-b border-neutral-200 p-2 dark:border-neutral-700">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+    <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-bg-secondary">
+      <div className="flex items-center justify-between border-b border-border p-2">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-text-faint">
           Pages
         </h2>
         <button
           onClick={handleNewPage}
-          className="rounded px-2 py-0.5 text-sm text-neutral-500 hover:bg-neutral-200 dark:text-neutral-400 dark:hover:bg-neutral-700"
+          className="rounded px-2 py-0.5 text-sm text-text-faint hover:bg-bg-hover"
           aria-label="New page"
         >
           +
@@ -208,7 +208,7 @@ export function Sidebar() {
           placeholder="Search..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="w-full rounded border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-800 dark:text-neutral-200"
+          className="w-full rounded border border-border bg-bg-primary px-2 py-1 text-sm text-text-normal"
           aria-label="Search pages"
         />
       </div>
@@ -222,7 +222,7 @@ export function Sidebar() {
           depth={0}
         />
       </div>
-      <div className="border-t border-neutral-200 p-2 dark:border-neutral-700">
+      <div className="border-t border-border p-2">
         <button
           onClick={async () => {
             const selected = await open({ directory: true });
@@ -230,7 +230,7 @@ export function Sidebar() {
               await openWorkspaceWindow(selected);
             }
           }}
-          className="w-full rounded px-2 py-1.5 text-left text-sm text-neutral-500 hover:bg-neutral-200 dark:text-neutral-400 dark:hover:bg-neutral-700"
+          className="w-full rounded px-2 py-1.5 text-left text-sm text-text-faint hover:bg-bg-hover"
         >
           Open Another Workspace
         </button>

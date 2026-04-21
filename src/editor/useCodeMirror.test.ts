@@ -27,10 +27,8 @@ describe("useCodeMirror", () => {
       useCodeMirror({
         containerRef: container.ref,
         doc: "hello",
-        theme: "light",
       }),
     );
-    // View is created asynchronously via useEffect, but renderHook runs effects
     const cmEditor = container.ref.current.querySelector(".cm-editor");
     expect(cmEditor).not.toBeNull();
     expect(result.current.view).toBeDefined();
@@ -41,7 +39,6 @@ describe("useCodeMirror", () => {
       useCodeMirror({
         containerRef: container.ref,
         doc: "hello",
-        theme: "light",
       }),
     );
     const cmEditor = container.ref.current.querySelector(".cm-editor");
@@ -55,7 +52,6 @@ describe("useCodeMirror", () => {
       useCodeMirror({
         containerRef: container.ref,
         doc: "initial content",
-        theme: "light",
       }),
     );
     const text = container.ref.current.querySelector(".cm-content")?.textContent;
@@ -68,7 +64,6 @@ describe("useCodeMirror", () => {
         useCodeMirror({
           containerRef: container.ref,
           doc,
-          theme: "light",
         }),
       { initialProps: { doc: "first" } },
     );
@@ -84,7 +79,6 @@ describe("useCodeMirror", () => {
         useCodeMirror({
           containerRef: container.ref,
           doc,
-          theme: "light",
         }),
       { initialProps: { doc: "same" } },
     );
@@ -102,7 +96,6 @@ describe("useCodeMirror", () => {
       useCodeMirror({
         containerRef: container.ref,
         doc: "",
-        theme: "light",
         onChange,
       }),
     );
@@ -122,7 +115,6 @@ describe("useCodeMirror", () => {
         useCodeMirror({
           containerRef: container.ref,
           doc,
-          theme: "light",
           onChange,
         }),
       { initialProps: { doc: "first" } },
@@ -133,43 +125,25 @@ describe("useCodeMirror", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it("reconfigures theme when theme prop changes", () => {
-    const { rerender } = renderHook(
-      ({ theme }: { theme: "light" | "dark" }) =>
-        useCodeMirror({
-          containerRef: container.ref,
-          doc: "hello",
-          theme,
-        }),
-      { initialProps: { theme: "light" as "light" | "dark" } },
+  it("reconfigures theme when dark class changes on document element", () => {
+    renderHook(() =>
+      useCodeMirror({
+        containerRef: container.ref,
+        doc: "hello",
+      }),
     );
 
     const cmEditor = container.ref.current.querySelector(".cm-editor")!;
     expect(cmEditor).not.toBeNull();
 
-    rerender({ theme: "dark" });
+    act(() => {
+      document.documentElement.classList.add("dark");
+    });
     expect(cmEditor).toBeInTheDocument();
-  });
-
-  it("preserves cursor position on theme change", () => {
-    const { result, rerender } = renderHook(
-      ({ theme }: { theme: "light" | "dark" }) =>
-        useCodeMirror({
-          containerRef: container.ref,
-          doc: "hello world",
-          theme,
-        }),
-      { initialProps: { theme: "light" as "light" | "dark" } },
-    );
 
     act(() => {
-      result.current.view!.dispatch({
-        selection: { anchor: 5 },
-      });
+      document.documentElement.classList.remove("dark");
     });
-    expect(result.current.view!.state.selection.main.anchor).toBe(5);
-
-    rerender({ theme: "dark" });
-    expect(result.current.view!.state.selection.main.anchor).toBe(5);
+    expect(cmEditor).toBeInTheDocument();
   });
 });

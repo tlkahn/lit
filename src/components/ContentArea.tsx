@@ -3,11 +3,6 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { useWorkspaceStore } from "../stores/workspace";
 import { readPage, writePage } from "../lib/ipc";
 import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
-import type { Theme } from "../hooks/useTheme";
-
-interface ContentAreaProps {
-  theme: Theme;
-}
 
 function resolveRelativePath(base: string, relative: string): string {
   const segments = (base ? base + "/" + relative : relative).split("/");
@@ -19,7 +14,7 @@ function resolveRelativePath(base: string, relative: string): string {
   return resolved.join("/");
 }
 
-export function ContentArea({ theme }: ContentAreaProps) {
+export function ContentArea() {
   const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const [body, setBody] = useState("");
@@ -87,10 +82,10 @@ export function ContentArea({ theme }: ContentAreaProps) {
   if (!currentPagePath) {
     return (
       <main
-        className="flex flex-1 items-center justify-center bg-white dark:bg-neutral-800"
+        className="flex flex-1 items-center justify-center bg-bg-primary-alt"
         data-testid="empty-state"
       >
-        <p className="text-neutral-400 dark:text-neutral-500">
+        <p className="text-text-faint">
           Select a page to start editing
         </p>
       </main>
@@ -98,10 +93,10 @@ export function ContentArea({ theme }: ContentAreaProps) {
   }
 
   return (
-    <main className="flex min-h-0 flex-1 flex-col bg-white dark:bg-neutral-800">
-      <div className="border-b border-neutral-200 px-6 py-3 dark:border-neutral-700">
+    <main className="flex min-h-0 flex-1 flex-col bg-bg-primary-alt">
+      <div className="border-b border-border px-6 py-3">
         <h1
-          className="text-lg font-semibold text-neutral-800 dark:text-neutral-100"
+          className="text-lg font-semibold text-text-normal"
           data-testid="page-title"
         >
           {title}
@@ -109,21 +104,21 @@ export function ContentArea({ theme }: ContentAreaProps) {
         {Object.keys(frontmatter).length > 0 && (
           <button
             onClick={() => setShowFrontmatter(!showFrontmatter)}
-            className="mt-1 text-xs text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300"
+            className="mt-1 text-xs text-text-faint hover:text-text-muted"
           >
             {showFrontmatter ? "Hide" : "Show"} frontmatter
           </button>
         )}
         {showFrontmatter && (
           <pre
-            className="mt-2 rounded bg-neutral-100 p-2 text-xs text-neutral-600 dark:bg-neutral-900 dark:text-neutral-400"
+            className="mt-2 rounded bg-bg-secondary p-2 text-xs text-text-muted"
             data-testid="frontmatter"
           >
             {JSON.stringify(frontmatter, null, 2)}
           </pre>
         )}
       </div>
-      <CodeMirrorEditor doc={body} theme={theme} onChange={handleChange} resolveImageSrc={resolveImageSrc} />
+      <CodeMirrorEditor doc={body} onChange={handleChange} resolveImageSrc={resolveImageSrc} />
     </main>
   );
 }

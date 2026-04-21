@@ -20,7 +20,6 @@ function makeConfig(overrides?: { onChange?: (content: string) => void }) {
   return {
     theme: "light" as const,
     themeCompartment: new Compartment(),
-    highlightCompartment: new Compartment(),
     ...overrides,
   };
 }

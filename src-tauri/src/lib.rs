@@ -22,6 +22,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(WorkspaceRegistry {
             workspaces: Mutex::new(HashMap::new()),
         })
@@ -39,6 +40,9 @@ pub fn run() {
             commands::page::create_page,
             commands::page::rename_page,
             commands::page::delete_page,
+            commands::theme::list_themes,
+            commands::theme::read_theme_css,
+            commands::theme::get_themes_directory,
             get_initial_workspace,
         ])
         .on_window_event(|window, event| {
