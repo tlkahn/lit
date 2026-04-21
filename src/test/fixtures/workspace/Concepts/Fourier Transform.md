@@ -22,7 +22,7 @@ The inverse transform recovers the original signal:
 
 $$f(t) = \frac{1}{2\pi} \int_{-\infty}^{\infty} \hat{f}(\omega) \, e^{i\omega t} \, d\omega$$
 
-> [!note] Notation
+> [!note]- Notation
 > Different fields use different conventions for the $2\pi$ factor. Physics typically puts it in the inverse transform; signal processing splits it as $\frac{1}{\sqrt{2\pi}}$ on both sides.
 
 ## Discrete Version
@@ -42,7 +42,7 @@ $$X_k = \sum_{n=0}^{N-1} x_n \, e^{-2\pi i k n / N}$$
 | Time shift | $f(t - t_0)$ | $e^{-i\omega t_0} \hat{f}(\omega)$ |
 | Convolution | $(f * g)(t)$ | $\hat{f}(\omega) \cdot \hat{g}(\omega)$ |
 
-> [!important] Convolution Theorem
+> [!important]+ Convolution Theorem
 > Convolution in the time domain equals multiplication in the frequency domain. This is why filtering is done in frequency space — it turns an $O(n^2)$ convolution into $O(n \log n)$ via FFT.
 
 ## Connections

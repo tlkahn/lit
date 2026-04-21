@@ -1,5 +1,5 @@
 import type { Extension } from "@codemirror/state";
-import { livePreviewPlugin } from "./plugin";
+import { livePreviewPlugin, blockReplacementField } from "./plugin";
 import { createLinkClickHandler } from "./linkHandler";
 import { livePreviewBaseTheme } from "./theme";
 import { imageResolverFacet, type ImageResolver } from "./imageResolver";
@@ -15,6 +15,7 @@ export function livePreviewExtension(config?: LivePreviewConfig): Extension {
   const openUrl = config?.openUrl ?? defaultOpenUrl;
   const exts: Extension[] = [
     livePreviewPlugin,
+    blockReplacementField,
     createLinkClickHandler(openUrl),
     livePreviewBaseTheme,
     calloutFoldField,

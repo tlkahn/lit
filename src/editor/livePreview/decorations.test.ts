@@ -3,7 +3,7 @@ import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { markdown } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
-import { buildDecorations } from "./decorations";
+import { buildDecorations, buildBlockReplacements } from "./decorations";
 import { WikiLink } from "../markdown/wikilink";
 import { Math as MathExt } from "../markdown/math";
 import { calloutFoldField } from "./callout";
@@ -341,16 +341,29 @@ describe("buildDecorations — display math", () => {
   it("replaces $$...$$ with DisplayMathWidget when cursor elsewhere", () => {
     const doc = "$$\nx^2\n$$\n\nother";
     const view = makeView(doc, doc.length - 1);
-    const decos = collectDecos(view);
-    const mathWidget = decos.find((d) => d.widget && d.from === 0);
+    const blockDecos = buildBlockReplacements(view.state);
+    const result: DecoInfo[] = [];
+    const iter = blockDecos.iter();
+    while (iter.value) {
+      const spec = iter.value.spec;
+      result.push({ from: iter.from, to: iter.to, type: "replace", widget: !!spec.widget });
+      iter.next();
+    }
+    const mathWidget = result.find((d) => d.widget && d.from === 0);
     expect(mathWidget).toBeDefined();
     view.destroy();
   });
 
   it("shows raw $$...$$ when cursor is on any line of block", () => {
     const view = makeView("$$\nx^2\n$$", 4);
-    const decos = collectDecos(view);
-    expect(decos).toHaveLength(0);
+    const blockDecos = buildBlockReplacements(view.state);
+    const result: DecoInfo[] = [];
+    const iter = blockDecos.iter();
+    while (iter.value) {
+      result.push({ from: iter.from, to: iter.to, type: "replace" });
+      iter.next();
+    }
+    expect(result).toHaveLength(0);
     view.destroy();
   });
 });

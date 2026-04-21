@@ -71,7 +71,7 @@ describe("CalloutHeaderWidget", () => {
 
   it("renders header with fold arrow, icon, and title", () => {
     const view = makeView();
-    const widget = new CalloutHeaderWidget("note", "Note Title", false, 0);
+    const widget = new CalloutHeaderWidget("note", "Note Title", false, true, 0);
     const el = widget.toDOM(view);
     expect(el.className).toBe("cm-callout-header");
     expect(el.querySelector(".cm-callout-fold-icon")!.textContent).toBe("▾");
@@ -82,15 +82,25 @@ describe("CalloutHeaderWidget", () => {
 
   it("shows collapsed arrow when isCollapsed", () => {
     const view = makeView();
-    const widget = new CalloutHeaderWidget("tip", "Tip", true, 0);
+    const widget = new CalloutHeaderWidget("tip", "Tip", true, true, 0);
     const el = widget.toDOM(view);
     expect(el.querySelector(".cm-callout-fold-icon")!.textContent).toBe("▸");
     view.destroy();
   });
 
+  it("omits fold arrow when not foldable", () => {
+    const view = makeView();
+    const widget = new CalloutHeaderWidget("note", "Note", false, false, 0);
+    const el = widget.toDOM(view);
+    expect(el.querySelector(".cm-callout-fold-icon")).toBeNull();
+    expect(el.querySelector(".cm-callout-icon")).toBeDefined();
+    expect(el.querySelector(".cm-callout-title")!.textContent).toBe("Note");
+    view.destroy();
+  });
+
   it("dispatches toggleCalloutEffect on arrow click", () => {
     const view = makeView();
-    const widget = new CalloutHeaderWidget("note", "Note", false, 42);
+    const widget = new CalloutHeaderWidget("note", "Note", false, true, 42);
     const el = widget.toDOM(view);
     const arrow = el.querySelector(".cm-callout-fold-icon")!;
     arrow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
@@ -100,20 +110,20 @@ describe("CalloutHeaderWidget", () => {
   });
 
   it("eq returns true for same props", () => {
-    const a = new CalloutHeaderWidget("note", "Title", false, 0);
-    const b = new CalloutHeaderWidget("note", "Title", false, 0);
+    const a = new CalloutHeaderWidget("note", "Title", false, true, 0);
+    const b = new CalloutHeaderWidget("note", "Title", false, true, 0);
     expect(a.eq(b)).toBe(true);
   });
 
   it("eq returns false for different type", () => {
-    const a = new CalloutHeaderWidget("note", "Title", false, 0);
-    const b = new CalloutHeaderWidget("warning", "Title", false, 0);
+    const a = new CalloutHeaderWidget("note", "Title", false, true, 0);
+    const b = new CalloutHeaderWidget("warning", "Title", false, true, 0);
     expect(a.eq(b)).toBe(false);
   });
 
   it("eq returns false for different collapse state", () => {
-    const a = new CalloutHeaderWidget("note", "Title", false, 0);
-    const b = new CalloutHeaderWidget("note", "Title", true, 0);
+    const a = new CalloutHeaderWidget("note", "Title", false, true, 0);
+    const b = new CalloutHeaderWidget("note", "Title", true, true, 0);
     expect(a.eq(b)).toBe(false);
   });
 });

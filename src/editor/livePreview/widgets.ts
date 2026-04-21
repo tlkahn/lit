@@ -35,6 +35,7 @@ export class CalloutHeaderWidget extends WidgetType {
     readonly calloutType: string,
     readonly title: string,
     readonly isCollapsed: boolean,
+    readonly foldable: boolean,
     readonly pos: number,
   ) {
     super();
@@ -44,13 +45,16 @@ export class CalloutHeaderWidget extends WidgetType {
     const header = document.createElement("div");
     header.className = "cm-callout-header";
 
-    const arrow = document.createElement("span");
-    arrow.className = "cm-callout-fold-icon";
-    arrow.textContent = this.isCollapsed ? "▸" : "▾";
-    arrow.addEventListener("mousedown", (e) => {
-      e.preventDefault();
-      view.dispatch({ effects: toggleCalloutEffect.of({ pos: this.pos }) });
-    });
+    if (this.foldable) {
+      const arrow = document.createElement("span");
+      arrow.className = "cm-callout-fold-icon";
+      arrow.textContent = this.isCollapsed ? "▸" : "▾";
+      arrow.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        view.dispatch({ effects: toggleCalloutEffect.of({ pos: this.pos }) });
+      });
+      header.appendChild(arrow);
+    }
 
     const icon = document.createElement("span");
     icon.className = "cm-callout-icon";
@@ -60,7 +64,6 @@ export class CalloutHeaderWidget extends WidgetType {
     title.className = "cm-callout-title";
     title.textContent = this.title;
 
-    header.appendChild(arrow);
     header.appendChild(icon);
     header.appendChild(title);
     return header;
@@ -70,7 +73,8 @@ export class CalloutHeaderWidget extends WidgetType {
     return (
       this.calloutType === other.calloutType &&
       this.title === other.title &&
-      this.isCollapsed === other.isCollapsed
+      this.isCollapsed === other.isCollapsed &&
+      this.foldable === other.foldable
     );
   }
 

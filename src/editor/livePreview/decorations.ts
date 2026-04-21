@@ -61,7 +61,11 @@ export function buildDecorations(view: EditorView): DecorationSet {
           return false;
         }
         if (node.name === "DisplayMath") {
-          addDisplayMathDecos(state, node.from, node.to, decos);
+          // Multi-line display math must be handled by a StateField (line-break-crossing replace).
+          // Single-line $$...$$ is fine here.
+          if (!state.doc.sliceString(node.from, node.to).includes("\n")) {
+            addDisplayMathDecos(state, node.from, node.to, decos);
+          }
           return false;
         }
       },
@@ -290,19 +294,12 @@ function addCalloutDecos(
     from: firstLine.from,
     to: firstLine.to,
     deco: Decoration.replace({
-      widget: new CalloutHeaderWidget(resolvedType, title, isCollapsed, from),
+      widget: new CalloutHeaderWidget(resolvedType, title, isCollapsed, calloutInfo.fold !== null, from),
     }),
   });
 
   if (isCollapsed) {
-    // Hide body when collapsed
-    if (firstLineNum < lastLineNum) {
-      decos.push({
-        from: firstLine.to,
-        to,
-        deco: Decoration.replace({}),
-      });
-    }
+    // Body hiding is done by blockReplacementField (StateField) since it crosses line breaks.
   } else {
     // Expanded: style body lines, hide quote marks
     for (let lineNum = firstLineNum + 1; lineNum <= lastLineNum; lineNum++) {
@@ -366,4 +363,56 @@ function addDisplayMathDecos(
     to,
     deco: Decoration.replace({ widget: new DisplayMathWidget(latex) }),
   });
+}
+
+/**
+ * Line-break-crossing replacements that must be provided via a StateField,
+ * not a ViewPlugin (CodeMirror restriction).
+ */
+export function buildBlockReplacements(state: EditorState): DecorationSet {
+  const decos: { from: number; to: number; deco: Decoration }[] = [];
+
+  syntaxTree(state).iterate({
+    enter: (node) => {
+      if (node.name === "Blockquote") {
+        addCollapsedCalloutBody(state, node.from, node.to, decos);
+      }
+      if (node.name === "DisplayMath") {
+        const text = state.doc.sliceString(node.from, node.to);
+        if (text.includes("\n")) {
+          addDisplayMathDecos(state, node.from, node.to, decos);
+        }
+      }
+    },
+  });
+
+  decos.sort((a, b) => a.from - b.from || a.to - b.to);
+  return RangeSet.of(decos.map((d) => d.deco.range(d.from, d.to)));
+}
+
+function addCollapsedCalloutBody(
+  state: EditorState,
+  from: number,
+  to: number,
+  decos: { from: number; to: number; deco: Decoration }[],
+) {
+  const firstLine = state.doc.lineAt(from);
+  const calloutInfo = parseCalloutType(firstLine.text);
+  if (!calloutInfo) return;
+  if (isCursorOnLine(state, from, to)) return;
+
+  const foldState = state.field(calloutFoldField, false);
+  const userToggle = foldState?.get(from);
+  const isCollapsed = userToggle ?? (calloutInfo.fold === "collapsed");
+  if (!isCollapsed) return;
+
+  const firstLineNum = firstLine.number;
+  const lastLine = state.doc.lineAt(to);
+  if (firstLineNum < lastLine.number) {
+    decos.push({
+      from: firstLine.to,
+      to,
+      deco: Decoration.replace({}),
+    });
+  }
 }
