@@ -117,6 +117,8 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
     - [x] failure/fail/missing, danger/error, bug, example, quote/cite
 - [x] YAML frontmatter block: syntax highlighting and visual separation
 - [x] Math rendering: `$inline$` and `$$display$$` via KaTeX widget decorations
+- [x] Support Obsidian theme plugin
+- [x] Use Github theme by default
 
 > [!note]
 > 1. [x] Callout fold doesn't work.
@@ -158,8 +160,6 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
 > turboref support
 > Extra: 
 > - use oxide LSP for edit features like autocomplete, go to definition/references etc. Potential Phase D.
-> - use an github theme by default
-> - Support Obsidian theme plugin
 > - Core feature: awesome and best-in-place multi-language and font support, e.g. indic languages (devanagari, śarada, tibetan), CJK, arabic, etc.
 
 ---

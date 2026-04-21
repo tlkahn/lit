@@ -35,17 +35,3 @@ bun run typecheck
 # Linting
 bun run lint
 ```
-
-## Project Structure
-
-```
-lit/
-├── src/                    # React frontend
-│   ├── components/         # UI components
-│   ├── hooks/              # React hooks (theme, sidebar position)
-│   ├── lib/                # IPC and utility modules
-│   └── test/               # Test setup and mocks
-├── src-tauri/              # Rust backend
-│   └── src/commands/       # Tauri IPC commands
-└── doc/                    # Documentation
-```
