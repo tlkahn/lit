@@ -19,6 +19,12 @@ export const livePreviewBaseTheme = EditorView.baseTheme({
     borderRadius: "4px",
     padding: "2px 0",
   },
+  ".cm-hidden-line": {
+    fontSize: "0",
+    lineHeight: "0",
+    height: "0",
+    overflow: "hidden",
+  },
 
   // Wikilinks
   ".cm-preview-wikilink": {

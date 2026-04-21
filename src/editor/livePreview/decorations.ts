@@ -205,18 +205,19 @@ function addFencedCodeDecos(
   const codeInfo = node.getChild("CodeInfo");
   const codeText = node.getChild("CodeText");
 
-  // Hide opening fence line (CodeMark + CodeInfo + newline)
   const openMark = codeMarks[0];
   if (openMark) {
     const openEnd = codeInfo ? codeInfo.to : openMark.to;
-    const lineEnd = state.doc.lineAt(openEnd).to;
-    decos.push({ from: openMark.from, to: Math.min(lineEnd + 1, to), deco: Decoration.replace({}) });
+    const line = state.doc.lineAt(openEnd);
+    decos.push({ from: openMark.from, to: line.to, deco: Decoration.replace({}) });
+    decos.push({ from: line.from, to: line.from, deco: Decoration.line({ class: "cm-hidden-line" }) });
   }
 
   const closeMark = codeMarks.length >= 2 ? codeMarks[codeMarks.length - 1] : undefined;
   if (closeMark) {
-    const lineStart = state.doc.lineAt(closeMark.from).from;
-    decos.push({ from: Math.max(lineStart - 1, from), to: closeMark.to, deco: Decoration.replace({}) });
+    const line = state.doc.lineAt(closeMark.from);
+    decos.push({ from: line.from, to: closeMark.to, deco: Decoration.replace({}) });
+    decos.push({ from: line.from, to: line.from, deco: Decoration.line({ class: "cm-hidden-line" }) });
   }
 
   // Mark code content
