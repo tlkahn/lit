@@ -44,7 +44,7 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
 
 ### Feature References
 - **Logseq:** Sidebar + main content split layout; Electron shell pattern (Lit uses Tauri instead for smaller binaries and a Rust backend).
-- **Obsidian:** Vault chooser on first launch — opening the app means opening a folder of files, identical philosophy to Lit's workspace concept.
+- **Obsidian:** Vault chooser on first launch — opening the app means opening a folder of files, identical philosophy to Lit's **workspace** concept.
 
 **Deliverable:** `bun tauri dev` opens a window with sidebar, content pane, theme toggle, sidebar position toggle, and "Lit v0.1.0".
 
@@ -118,6 +118,11 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
 - YAML frontmatter block: syntax highlighting and visual separation
 - Math rendering: `$inline$` and `$$display$$` via KaTeX widget decorations
 
+> [!note]
+> 1. Callout fold doesn't work.
+> 2. Latex in callouts doesn't render.
+> 3. A few fixture examples have errors (thus cannot render).
+
 #### A4 — Mermaid Diagram Rendering
 
 - Detect ` ```mermaid ` fenced code blocks via Lezer syntax tree
@@ -156,7 +161,7 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
 > - use an iAwriter like theme by default
 > - Support Obsidian theme plugin
 > - bug: in dark them, when the edit view is long enough to be viewable through scolling down, the revealed portion of the side bar will show as white background 
-> - Core feature: awesome, best-in-place multi-language and font support, e.g. indic languages (śarada, tibetan), CJK, arabic, etc.
+> - Core feature: awesome and best-in-place multi-language and font support, e.g. indic languages (devanagari, śarada, tibetan), CJK, arabic, etc.
 
 ---
 
