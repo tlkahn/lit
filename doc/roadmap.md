@@ -119,9 +119,9 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
 - [x] Math rendering: `$inline$` and `$$display$$` via KaTeX widget decorations
 
 > [!note]
-> 1. [ ] Callout fold doesn't work.
+> 1. [x] Callout fold doesn't work.
 > 2. [x] Latex in callouts doesn't render.
-> 3. [ ] A few fixture examples have errors (thus cannot render).
+> 3. [x] A few fixture examples have errors (thus cannot render).
 
 #### A4 — Mermaid Diagram Rendering
 

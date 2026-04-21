@@ -74,7 +74,8 @@ export class CalloutHeaderWidget extends WidgetType {
       this.calloutType === other.calloutType &&
       this.title === other.title &&
       this.isCollapsed === other.isCollapsed &&
-      this.foldable === other.foldable
+      this.foldable === other.foldable &&
+      this.pos === other.pos
     );
   }
 
