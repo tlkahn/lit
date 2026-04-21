@@ -1,0 +1,185 @@
+import { describe, it, expect, vi } from "vitest";
+import { parseTableAlignment, parseTable, renderInlineMarkdown } from "./table";
+
+vi.mock("katex", () => ({
+  default: {
+    renderToString: vi.fn((tex: string) => `<span class="katex">${tex}</span>`),
+  },
+}));
+
+vi.mock("katex/dist/katex.min.css", () => ({}));
+
+describe("parseTableAlignment", () => {
+  it("parses default alignment", () => {
+    expect(parseTableAlignment("| --- |")).toEqual(["default"]);
+  });
+
+  it("parses left alignment", () => {
+    expect(parseTableAlignment("| :--- |")).toEqual(["left"]);
+  });
+
+  it("parses right alignment", () => {
+    expect(parseTableAlignment("| ---: |")).toEqual(["right"]);
+  });
+
+  it("parses center alignment", () => {
+    expect(parseTableAlignment("| :---: |")).toEqual(["center"]);
+  });
+
+  it("parses mixed alignments", () => {
+    expect(parseTableAlignment("| :--- | ---: | :---: | --- |")).toEqual([
+      "left",
+      "right",
+      "center",
+      "default",
+    ]);
+  });
+
+  it("handles minimal separator", () => {
+    expect(parseTableAlignment("| - |")).toEqual(["default"]);
+  });
+});
+
+describe("parseTable", () => {
+  it("parses a basic 2x2 table", () => {
+    const result = parseTable("| a | b |\n| --- | --- |\n| 1 | 2 |");
+    expect(result).toEqual({
+      headers: ["a", "b"],
+      alignments: ["default", "default"],
+      rows: [["1", "2"]],
+    });
+  });
+
+  it("applies alignment markers correctly", () => {
+    const result = parseTable("| h1 | h2 |\n| :--- | ---: |\n| a | b |");
+    expect(result).not.toBeNull();
+    expect(result!.alignments).toEqual(["left", "right"]);
+  });
+
+  it("parses multiple body rows", () => {
+    const result = parseTable(
+      "| h |\n| --- |\n| r1 |\n| r2 |\n| r3 |",
+    );
+    expect(result).not.toBeNull();
+    expect(result!.rows).toEqual([["r1"], ["r2"], ["r3"]]);
+  });
+
+  it("trims leading/trailing whitespace in cells", () => {
+    const result = parseTable("|  a  |  b  |\n| --- | --- |\n|  1  |  2  |");
+    expect(result).not.toBeNull();
+    expect(result!.headers).toEqual(["a", "b"]);
+    expect(result!.rows[0]).toEqual(["1", "2"]);
+  });
+
+  it("preserves inline markdown as raw text", () => {
+    const result = parseTable("| **bold** |\n| --- |\n| *italic* |");
+    expect(result).not.toBeNull();
+    expect(result!.headers).toEqual(["**bold**"]);
+    expect(result!.rows[0]).toEqual(["*italic*"]);
+  });
+
+  it("returns null for single-line input", () => {
+    expect(parseTable("| a | b |")).toBeNull();
+  });
+
+  it("returns null for missing delimiter row", () => {
+    expect(parseTable("| a | b |\n| 1 | 2 |")).toBeNull();
+  });
+
+  it("parses header-only table (no body rows)", () => {
+    const result = parseTable("| H |\n| --- |");
+    expect(result).not.toBeNull();
+    expect(result!.headers).toEqual(["H"]);
+    expect(result!.rows).toEqual([]);
+  });
+
+  it("pads uneven columns with empty strings", () => {
+    const result = parseTable("| a | b | c |\n| --- | --- | --- |\n| 1 |");
+    expect(result).not.toBeNull();
+    expect(result!.rows[0]).toEqual(["1", "", ""]);
+  });
+
+  it("parses tables without leading/trailing pipes", () => {
+    const result = parseTable("a | b\n---|---\n1 | 2");
+    expect(result).not.toBeNull();
+    expect(result!.headers).toEqual(["a", "b"]);
+    expect(result!.rows).toEqual([["1", "2"]]);
+  });
+});
+
+describe("renderInlineMarkdown", () => {
+  it("returns plain text unchanged", () => {
+    expect(renderInlineMarkdown("hello world")).toBe("hello world");
+  });
+
+  it("escapes HTML entities", () => {
+    expect(renderInlineMarkdown("<script>")).toBe("&lt;script&gt;");
+  });
+
+  it("renders bold with **", () => {
+    expect(renderInlineMarkdown("**bold**")).toBe("<strong>bold</strong>");
+  });
+
+  it("renders italic with *", () => {
+    expect(renderInlineMarkdown("*italic*")).toBe("<em>italic</em>");
+  });
+
+  it("renders inline code", () => {
+    expect(renderInlineMarkdown("`code`")).toBe("<code>code</code>");
+  });
+
+  it("code protects content from other transforms", () => {
+    expect(renderInlineMarkdown("`**not bold**`")).toBe(
+      "<code>**not bold**</code>",
+    );
+  });
+
+  it("renders links", () => {
+    expect(renderInlineMarkdown("[text](url)")).toBe(
+      '<a href="url" class="cm-preview-link">text</a>',
+    );
+  });
+
+  it("renders wikilinks", () => {
+    expect(renderInlineMarkdown("[[Page]]")).toBe(
+      '<span class="cm-preview-wikilink">Page</span>',
+    );
+  });
+
+  it("renders wikilinks with alias", () => {
+    expect(renderInlineMarkdown("[[Page|Display]]")).toBe(
+      '<span class="cm-preview-wikilink">Display</span>',
+    );
+  });
+
+  it("renders inline math", () => {
+    const result = renderInlineMarkdown("$E=mc^2$");
+    expect(result).toContain("cm-preview-math-inline");
+    expect(result).toContain("E=mc^2");
+  });
+
+  it("math protects content from other transforms", () => {
+    const result = renderInlineMarkdown("$**not bold**$");
+    expect(result).not.toContain("<strong>");
+    expect(result).toContain("cm-preview-math-inline");
+  });
+
+  it("handles mixed inline types in one string", () => {
+    const result = renderInlineMarkdown("**bold** and *italic* and `code`");
+    expect(result).toContain("<strong>bold</strong>");
+    expect(result).toContain("<em>italic</em>");
+    expect(result).toContain("<code>code</code>");
+  });
+
+  it("returns empty string for empty input", () => {
+    expect(renderInlineMarkdown("")).toBe("");
+  });
+
+  it("renders underscore italic", () => {
+    expect(renderInlineMarkdown("_italic_")).toBe("<em>italic</em>");
+  });
+
+  it("renders underscore bold", () => {
+    expect(renderInlineMarkdown("__bold__")).toBe("<strong>bold</strong>");
+  });
+});

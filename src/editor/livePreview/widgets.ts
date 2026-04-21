@@ -1,5 +1,6 @@
 import { type EditorView, WidgetType } from "@codemirror/view";
 import { getCalloutIcon, toggleCalloutEffect } from "./callout";
+import { parseTable, renderInlineMarkdown, type Alignment } from "./table";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 
@@ -133,5 +134,65 @@ export class DisplayMathWidget extends WidgetType {
 
   ignoreEvent(): boolean {
     return true;
+  }
+}
+
+export class TableWidget extends WidgetType {
+  constructor(readonly tableText: string) {
+    super();
+  }
+
+  toDOM(): HTMLElement {
+    const container = document.createElement("div");
+    container.className = "cm-preview-table-container";
+
+    const parsed = parseTable(this.tableText);
+    if (!parsed) return container;
+
+    const table = document.createElement("table");
+    table.className = "cm-preview-table";
+
+    const thead = document.createElement("thead");
+    const headerRow = document.createElement("tr");
+    parsed.headers.forEach((header, i) => {
+      const th = document.createElement("th");
+      th.innerHTML = renderInlineMarkdown(header);
+      applyAlignment(th, parsed.alignments[i]);
+      headerRow.appendChild(th);
+    });
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    if (parsed.rows.length > 0) {
+      const tbody = document.createElement("tbody");
+      for (const row of parsed.rows) {
+        const tr = document.createElement("tr");
+        row.forEach((cell, i) => {
+          const td = document.createElement("td");
+          td.innerHTML = renderInlineMarkdown(cell);
+          applyAlignment(td, parsed.alignments[i]);
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody);
+    }
+
+    container.appendChild(table);
+    return container;
+  }
+
+  eq(other: TableWidget): boolean {
+    return this.tableText === other.tableText;
+  }
+
+  ignoreEvent(): boolean {
+    return true;
+  }
+}
+
+function applyAlignment(el: HTMLElement, alignment: Alignment | undefined) {
+  if (alignment && alignment !== "default") {
+    el.style.textAlign = alignment;
   }
 }

@@ -143,4 +143,28 @@ export const livePreviewBaseTheme = EditorView.baseTheme({
   "& .cm-line.cm-callout .cm-preview-italic": {
     fontStyle: "italic !important",
   },
+
+  // Tables
+  ".cm-preview-table-container": {
+    overflowX: "auto",
+    margin: "4px 0",
+  },
+  ".cm-preview-table": {
+    borderCollapse: "collapse",
+    width: "100%",
+    fontSize: "inherit",
+  },
+  ".cm-preview-table th": {
+    fontWeight: "bold",
+    backgroundColor: "var(--background-secondary, rgba(0,0,0,0.03))",
+    padding: "4px 8px",
+    border: "1px solid var(--background-modifier-border, #e0e0e0)",
+  },
+  ".cm-preview-table td": {
+    padding: "4px 8px",
+    border: "1px solid var(--background-modifier-border, #e0e0e0)",
+  },
+  ".cm-preview-table tr:hover": {
+    backgroundColor: "var(--background-secondary, rgba(0,0,0,0.02))",
+  },
 });

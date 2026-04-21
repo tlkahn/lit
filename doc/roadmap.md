@@ -117,6 +117,7 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
     - [x] failure/fail/missing, danger/error, bug, example, quote/cite
 - [x] YAML frontmatter block: syntax highlighting and visual separation
 - [x] Math rendering: `$inline$` and `$$display$$` via KaTeX widget decorations
+- [x] Markdown table
 - [x] Support Obsidian theme plugin
 - [x] Use Github theme by default
 
@@ -152,6 +153,7 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
 - Heading outline panel: extract headings from CM6 syntax tree, render in sidebar, click to scroll
 - Breadcrumb bar showing current heading context as cursor moves
 - Cmd+r go-to-heading quick switcher (fuzzy match within current document)
+- Add markdown table editing helpers (Tab/ctrl+tab to navigate cells, auto-align pipes, add/remove row/column shortcuts)
 
 **Deliverable:** A fast, Obsidian-style live preview editor with full markdown syntax support (including Mermaid diagrams), auto-save, file sync, folding, and document navigation. Changes persist as clean markdown. No block tree — the markdown file is edited directly.
 

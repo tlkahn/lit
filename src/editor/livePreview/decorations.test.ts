@@ -367,3 +367,81 @@ describe("buildDecorations — display math", () => {
     view.destroy();
   });
 });
+
+function collectBlockDecos(view: EditorView): DecoInfo[] {
+  const blockDecos = buildBlockReplacements(view.state);
+  const result: DecoInfo[] = [];
+  const iter = blockDecos.iter();
+  while (iter.value) {
+    const spec = iter.value.spec;
+    result.push({ from: iter.from, to: iter.to, type: "replace", widget: !!spec.widget });
+    iter.next();
+  }
+  return result;
+}
+
+describe("buildBlockReplacements — tables", () => {
+  it("replaces table with widget when cursor is outside", () => {
+    const doc = "| a | b |\n| --- | --- |\n| 1 | 2 |\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectBlockDecos(view);
+    const tableWidget = decos.find((d) => d.widget && d.from === 0);
+    expect(tableWidget).toBeDefined();
+    expect(tableWidget!.to).toBe(33);
+    view.destroy();
+  });
+
+  it("shows raw markdown when cursor is on header row", () => {
+    const doc = "| a | b |\n| --- | --- |\n| 1 | 2 |";
+    const view = makeView(doc, 3);
+    const decos = collectBlockDecos(view);
+    const tableWidget = decos.find((d) => d.widget);
+    expect(tableWidget).toBeUndefined();
+    view.destroy();
+  });
+
+  it("shows raw markdown when cursor is on delimiter row", () => {
+    const doc = "| a | b |\n| --- | --- |\n| 1 | 2 |";
+    const view = makeView(doc, 12);
+    const decos = collectBlockDecos(view);
+    const tableWidget = decos.find((d) => d.widget);
+    expect(tableWidget).toBeUndefined();
+    view.destroy();
+  });
+
+  it("shows raw markdown when cursor is on body row", () => {
+    const doc = "| a | b |\n| --- | --- |\n| 1 | 2 |";
+    const view = makeView(doc, 25);
+    const decos = collectBlockDecos(view);
+    const tableWidget = decos.find((d) => d.widget);
+    expect(tableWidget).toBeUndefined();
+    view.destroy();
+  });
+
+  it("renders widget for table at end of document when cursor before table", () => {
+    const doc = "some text\n\n| a |\n| --- |\n| 1 |";
+    const view = makeView(doc, 3);
+    const decos = collectBlockDecos(view);
+    const tableWidget = decos.find((d) => d.widget);
+    expect(tableWidget).toBeDefined();
+    view.destroy();
+  });
+
+  it("renders widgets for multiple tables", () => {
+    const doc = "| a |\n| --- |\n| 1 |\n\n| b |\n| --- |\n| 2 |\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectBlockDecos(view);
+    const tableWidgets = decos.filter((d) => d.widget);
+    expect(tableWidgets).toHaveLength(2);
+    view.destroy();
+  });
+
+  it("table widget coexists with display math widget", () => {
+    const doc = "| a |\n| --- |\n| 1 |\n\n$$\nx^2\n$$\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectBlockDecos(view);
+    const widgets = decos.filter((d) => d.widget);
+    expect(widgets).toHaveLength(2);
+    view.destroy();
+  });
+});

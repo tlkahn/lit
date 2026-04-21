@@ -2,7 +2,7 @@ import { type EditorState, RangeSet } from "@codemirror/state";
 import { Decoration, type DecorationSet, type EditorView } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { isCursorOnLine } from "./proximity";
-import { ImageWidget, CalloutHeaderWidget, InlineMathWidget, DisplayMathWidget } from "./widgets";
+import { ImageWidget, CalloutHeaderWidget, InlineMathWidget, DisplayMathWidget, TableWidget } from "./widgets";
 import { imageResolverFacet } from "./imageResolver";
 import { parseCalloutType, calloutFoldField } from "./callout";
 
@@ -396,6 +396,9 @@ export function buildBlockReplacements(state: EditorState): DecorationSet {
           addDisplayMathDecos(state, node.from, node.to, decos);
         }
       }
+      if (node.name === "Table") {
+        addTableBlockReplacement(state, node.from, node.to, decos);
+      }
     },
   });
 
@@ -429,4 +432,20 @@ function addCollapsedCalloutBody(
       deco: Decoration.replace({}),
     });
   }
+}
+
+function addTableBlockReplacement(
+  state: EditorState,
+  from: number,
+  to: number,
+  decos: { from: number; to: number; deco: Decoration }[],
+) {
+  if (isCursorOnLine(state, from, to)) return;
+
+  const text = state.doc.sliceString(from, to);
+  decos.push({
+    from,
+    to,
+    deco: Decoration.replace({ widget: new TableWidget(text) }),
+  });
 }

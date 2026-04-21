@@ -6,6 +6,7 @@ import {
   CalloutHeaderWidget,
   InlineMathWidget,
   DisplayMathWidget,
+  TableWidget,
 } from "./widgets";
 import { calloutFoldField } from "./callout";
 
@@ -14,6 +15,7 @@ vi.mock("katex", () => ({
     render: vi.fn((tex: string, el: HTMLElement) => {
       el.textContent = tex;
     }),
+    renderToString: vi.fn((tex: string) => `<span class="katex">${tex}</span>`),
   },
 }));
 
@@ -177,5 +179,90 @@ describe("DisplayMathWidget", () => {
 
   it("ignoreEvent returns true", () => {
     expect(new DisplayMathWidget("x").ignoreEvent()).toBe(true);
+  });
+});
+
+describe("TableWidget", () => {
+  const basicTable = "| a | b |\n| --- | --- |\n| 1 | 2 |";
+
+  it("toDOM returns a container div with correct class", () => {
+    const widget = new TableWidget(basicTable);
+    const el = widget.toDOM();
+    expect(el.tagName).toBe("DIV");
+    expect(el.className).toBe("cm-preview-table-container");
+  });
+
+  it("container holds a table with correct class", () => {
+    const widget = new TableWidget(basicTable);
+    const el = widget.toDOM();
+    const table = el.querySelector("table");
+    expect(table).not.toBeNull();
+    expect(table!.className).toBe("cm-preview-table");
+  });
+
+  it("header row renders th elements inside thead", () => {
+    const widget = new TableWidget(basicTable);
+    const el = widget.toDOM();
+    const ths = el.querySelectorAll("thead th");
+    expect(ths).toHaveLength(2);
+    expect(ths[0]!.textContent).toBe("a");
+    expect(ths[1]!.textContent).toBe("b");
+  });
+
+  it("body rows render td elements inside tbody", () => {
+    const widget = new TableWidget(basicTable);
+    const el = widget.toDOM();
+    const tds = el.querySelectorAll("tbody td");
+    expect(tds).toHaveLength(2);
+    expect(tds[0]!.textContent).toBe("1");
+    expect(tds[1]!.textContent).toBe("2");
+  });
+
+  it("applies text-align based on alignment", () => {
+    const aligned = "| L | R | C |\n| :--- | ---: | :---: |\n| a | b | c |";
+    const widget = new TableWidget(aligned);
+    const el = widget.toDOM();
+    const ths = el.querySelectorAll<HTMLElement>("thead th");
+    expect(ths[0]!.style.textAlign).toBe("left");
+    expect(ths[1]!.style.textAlign).toBe("right");
+    expect(ths[2]!.style.textAlign).toBe("center");
+    const tds = el.querySelectorAll<HTMLElement>("tbody td");
+    expect(tds[0]!.style.textAlign).toBe("left");
+    expect(tds[1]!.style.textAlign).toBe("right");
+    expect(tds[2]!.style.textAlign).toBe("center");
+  });
+
+  it("renders rich content in cells", () => {
+    const rich = "| **bold** |\n| --- |\n| *italic* |";
+    const widget = new TableWidget(rich);
+    const el = widget.toDOM();
+    const th = el.querySelector("thead th");
+    expect(th!.innerHTML).toContain("<strong>");
+    const td = el.querySelector("tbody td");
+    expect(td!.innerHTML).toContain("<em>");
+  });
+
+  it("eq returns true for same tableText", () => {
+    const a = new TableWidget(basicTable);
+    const b = new TableWidget(basicTable);
+    expect(a.eq(b)).toBe(true);
+  });
+
+  it("eq returns false for different tableText", () => {
+    const a = new TableWidget(basicTable);
+    const b = new TableWidget("| x |\n| --- |\n| y |");
+    expect(a.eq(b)).toBe(false);
+  });
+
+  it("ignoreEvent returns true", () => {
+    expect(new TableWidget(basicTable).ignoreEvent()).toBe(true);
+  });
+
+  it("renders header-only table without tbody", () => {
+    const headerOnly = "| H |\n| --- |";
+    const widget = new TableWidget(headerOnly);
+    const el = widget.toDOM();
+    expect(el.querySelector("thead")).not.toBeNull();
+    expect(el.querySelector("tbody")).toBeNull();
   });
 });
