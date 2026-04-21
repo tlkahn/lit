@@ -92,7 +92,7 @@ export function ContentArea({ theme }: ContentAreaProps) {
   }
 
   return (
-    <main className="flex flex-1 flex-col bg-white dark:bg-neutral-800">
+    <main className="flex min-h-0 flex-1 flex-col bg-white dark:bg-neutral-800">
       <div className="border-b border-neutral-200 px-6 py-3 dark:border-neutral-700">
         <h1
           className="text-lg font-semibold text-neutral-800 dark:text-neutral-100"
