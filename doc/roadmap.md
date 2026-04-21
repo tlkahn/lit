@@ -108,19 +108,19 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
 - [x] Cursor proximity detection: reveal raw syntax within N characters of cursor position
 - [x] Fenced code blocks with per-language syntax highlighting via `@codemirror/language-data`
 
-#### A3 — Obsidian Markdown Extensions
+#### A3 — Obsidian Markdown Extensions ✅
 
-- Custom Lezer markdown extensions: `[[wikilinks]]`, ~~`#tags`~~ (in-page implementation no longer required. `tags` should only be set in the document frontmatter. Roadmap doc to be updated.)
-- Callout rendering (`> [!type]`) with styled containers. Supported callout types (with aliases):
-    - note, abstract/summary/tldr, info, todo, tip/hint/important,
-    - success/check/done, question/help/faq, warning/caution/attention,
-    - failure/fail/missing, danger/error, bug, example, quote/cite
-- YAML frontmatter block: syntax highlighting and visual separation
-- Math rendering: `$inline$` and `$$display$$` via KaTeX widget decorations
+- [x] Custom Lezer markdown extensions: `[[wikilinks]]`, ~~`#tags`~~ (in-page implementation no longer required. `tags` should only be set in the document frontmatter. Roadmap doc to be updated.)
+- [x] Callout rendering (`> [!type]`) with styled containers. Supported callout types (with aliases):
+    - [x] note, abstract/summary/tldr, info, todo, tip/hint/important,
+    - [x] success/check/done, question/help/faq, warning/caution/attention,
+    - [x] failure/fail/missing, danger/error, bug, example, quote/cite
+- [x] YAML frontmatter block: syntax highlighting and visual separation
+- [x] Math rendering: `$inline$` and `$$display$$` via KaTeX widget decorations
 
 > [!note]
 > 1. Callout fold doesn't work.
-> 2. Latex in callouts doesn't render.
+> 2. [x] Latex in callouts doesn't render.
 > 3. A few fixture examples have errors (thus cannot render).
 
 #### A4 — Mermaid Diagram Rendering
@@ -149,7 +149,7 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
 
 - Heading outline panel: extract headings from CM6 syntax tree, render in sidebar, click to scroll
 - Breadcrumb bar showing current heading context as cursor moves
-- Cmd+G go-to-heading quick switcher (fuzzy match within current document)
+- Cmd+r go-to-heading quick switcher (fuzzy match within current document)
 
 **Deliverable:** A fast, Obsidian-style live preview editor with full markdown syntax support (including Mermaid diagrams), auto-save, file sync, folding, and document navigation. Changes persist as clean markdown. No block tree — the markdown file is edited directly.
 
@@ -158,9 +158,8 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
 > turboref support
 > Extra: 
 > - use oxide LSP for edit features like autocomplete, go to definition/references etc. Potential Phase D.
-> - use an iAwriter like theme by default
+> - use an github theme by default
 > - Support Obsidian theme plugin
-> - bug: in dark them, when the edit view is long enough to be viewable through scolling down, the revealed portion of the side bar will show as white background 
 > - Core feature: awesome and best-in-place multi-language and font support, e.g. indic languages (devanagari, śarada, tibetan), CJK, arabic, etc.
 
 ---

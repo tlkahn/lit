@@ -144,4 +144,22 @@ export const livePreviewBaseTheme = EditorView.baseTheme({
     color: "#f87171",
     fontStyle: "italic",
   },
+  ".cm-preview-math-inline .katex, .cm-preview-math-display .katex": {
+    fontSize: "1em",
+  },
+
+  // Override tags.quote gray/italic within callout body lines
+  "& .cm-line.cm-callout span": {
+    color: "inherit !important",
+    fontStyle: "normal !important",
+  },
+  "& .cm-line.cm-callout .cm-preview-link": {
+    color: "#60a5fa !important",
+  },
+  "& .cm-line.cm-callout .cm-preview-wikilink": {
+    color: "#a78bfa !important",
+  },
+  "& .cm-line.cm-callout .cm-preview-italic": {
+    fontStyle: "italic !important",
+  },
 });
