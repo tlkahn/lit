@@ -26,6 +26,7 @@ describe("WorkspaceStore", () => {
       workspacePath: null,
       pages: [],
       currentPagePath: null,
+      pendingTitleFocus: false,
       loading: false,
       error: null,
     });
@@ -88,6 +89,34 @@ describe("WorkspaceStore", () => {
     const state = useWorkspaceStore.getState();
     expect(state.pages).toHaveLength(1);
     expect(state.pages[0]!.title).toBe("New Page");
+  });
+
+  it("createPage auto-selects the new page", async () => {
+    await act(async () => {
+      await useWorkspaceStore.getState().createPage("New Page");
+    });
+
+    expect(useWorkspaceStore.getState().currentPagePath).toBe("New Page.md");
+  });
+
+  it("createPage sets pendingTitleFocus", async () => {
+    await act(async () => {
+      await useWorkspaceStore.getState().createPage("New Page");
+    });
+
+    expect(useWorkspaceStore.getState().pendingTitleFocus).toBe(true);
+  });
+
+  it("clearPendingTitleFocus resets the flag", async () => {
+    await act(async () => {
+      await useWorkspaceStore.getState().createPage("New Page");
+    });
+
+    act(() => {
+      useWorkspaceStore.getState().clearPendingTitleFocus();
+    });
+
+    expect(useWorkspaceStore.getState().pendingTitleFocus).toBe(false);
   });
 
   it("renamePage updates pages list and current selection", async () => {

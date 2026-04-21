@@ -17,12 +17,17 @@ function resolveRelativePath(base: string, relative: string): string {
 export function ContentArea() {
   const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
+  const pendingTitleFocus = useWorkspaceStore((s) => s.pendingTitleFocus);
+  const clearPendingTitleFocus = useWorkspaceStore((s) => s.clearPendingTitleFocus);
+  const renamePageAction = useWorkspaceStore((s) => s.renamePage);
   const [body, setBody] = useState("");
   const [title, setTitle] = useState("");
+  const [editingTitle, setEditingTitle] = useState("");
   const [frontmatter, setFrontmatter] = useState<Record<string, unknown>>({});
   const [showFrontmatter, setShowFrontmatter] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const currentPathRef = useRef<string | null>(null);
+  const titleInputRef = useRef<HTMLInputElement>(null);
 
   const loadPage = useCallback(async (path: string) => {
     try {
@@ -31,6 +36,7 @@ export function ContentArea() {
         console.debug("[ContentArea] loadPage OK:", path, "body length:", content.body.length);
         setBody(content.body);
         setTitle(content.meta.title);
+        setEditingTitle(content.meta.title);
         setFrontmatter(content.meta.frontmatter);
       } else {
         console.debug("[ContentArea] loadPage stale, ignoring:", path);
@@ -39,6 +45,7 @@ export function ContentArea() {
       console.error("[ContentArea] loadPage failed:", path, err);
       setBody("");
       setTitle("");
+      setEditingTitle("");
       setFrontmatter({});
     }
   }, []);
@@ -50,12 +57,21 @@ export function ContentArea() {
     } else {
       setBody("");
       setTitle("");
+      setEditingTitle("");
       setFrontmatter({});
     }
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, [currentPagePath, loadPage]);
+
+  useEffect(() => {
+    if (pendingTitleFocus && title) {
+      titleInputRef.current?.focus();
+      titleInputRef.current?.select();
+      clearPendingTitleFocus();
+    }
+  }, [pendingTitleFocus, title, clearPendingTitleFocus]);
 
   const resolveImageSrc = useCallback((src: string): string => {
     if (/^(https?:|data:|blob:)/.test(src)) return src;
@@ -66,6 +82,16 @@ export function ContentArea() {
     const absolutePath = workspacePath + "/" + resolveRelativePath(fileDir, src);
     return convertFileSrc(absolutePath);
   }, [workspacePath, currentPagePath]);
+
+  const commitTitle = () => {
+    const trimmed = editingTitle.trim();
+    if (trimmed && trimmed !== title && currentPagePath) {
+      renamePageAction(currentPagePath, trimmed);
+      setTitle(trimmed);
+    } else {
+      setEditingTitle(title);
+    }
+  };
 
   const handleChange = (newBody: string) => {
     setBody(newBody);
@@ -95,12 +121,24 @@ export function ContentArea() {
   return (
     <main className="flex min-h-0 flex-1 flex-col bg-bg-primary-alt">
       <div className="px-6 py-3">
-        <h1
-          className="text-lg font-semibold text-text-normal"
+        <input
+          ref={titleInputRef}
+          className="w-full bg-transparent text-lg font-semibold text-text-normal outline-none"
           data-testid="page-title"
-        >
-          {title}
-        </h1>
+          value={editingTitle}
+          onChange={(e) => setEditingTitle(e.target.value)}
+          onBlur={commitTitle}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              titleInputRef.current?.blur();
+            }
+            if (e.key === "Escape") {
+              setEditingTitle(title);
+              titleInputRef.current?.blur();
+            }
+          }}
+        />
         {Object.keys(frontmatter).length > 0 && (
           <button
             onClick={() => setShowFrontmatter(!showFrontmatter)}

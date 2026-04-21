@@ -2,6 +2,7 @@ import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useWorkspaceStore } from "../stores/workspace";
 import { openWorkspaceWindow } from "../lib/ipc";
+import { getNextUntitledName } from "../lib/naming";
 import type { PageMeta } from "../lib/ipc";
 
 interface FolderNode {
@@ -169,10 +170,8 @@ export function Sidebar() {
   const tree = buildTree(filtered);
 
   const handleNewPage = () => {
-    const name = window.prompt("Page name:");
-    if (name?.trim()) {
-      createPageAction(name.trim());
-    }
+    const name = getNextUntitledName(pages);
+    createPageAction(name);
   };
 
   const handleRename = (path: string) => {

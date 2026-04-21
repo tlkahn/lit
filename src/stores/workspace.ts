@@ -10,6 +10,7 @@ export interface WorkspaceStore {
   workspacePath: string | null;
   pages: PageMeta[];
   currentPagePath: string | null;
+  pendingTitleFocus: boolean;
   loading: boolean;
   error: string | null;
 
@@ -19,12 +20,14 @@ export interface WorkspaceStore {
   createPage: (name: string, parentDir?: string) => Promise<void>;
   renamePage: (oldPath: string, newName: string) => Promise<void>;
   deletePage: (relativePath: string) => Promise<void>;
+  clearPendingTitleFocus: () => void;
 }
 
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   workspacePath: null,
   pages: [],
   currentPagePath: null,
+  pendingTitleFocus: false,
   loading: false,
   error: null,
 
@@ -60,7 +63,11 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   createPage: async (name: string, parentDir?: string) => {
     try {
       const meta = await ipc.createPage(name, parentDir);
-      set((state) => ({ pages: [...state.pages, meta] }));
+      set((state) => ({
+        pages: [...state.pages, meta],
+        currentPagePath: meta.relative_path,
+        pendingTitleFocus: true,
+      }));
     } catch (e) {
       set({ error: String(e) });
     }
@@ -82,6 +89,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       set({ error: String(e) });
     }
   },
+
+  clearPendingTitleFocus: () => set({ pendingTitleFocus: false }),
 
   deletePage: async (relativePath: string) => {
     try {

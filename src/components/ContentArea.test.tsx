@@ -77,7 +77,7 @@ describe("ContentArea", () => {
     render(<ContentArea />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("page-title")).toHaveTextContent("Hello");
+      expect(screen.getByTestId("page-title")).toHaveValue("Hello");
     });
   });
 
@@ -94,7 +94,7 @@ describe("ContentArea", () => {
     render(<ContentArea />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("page-title")).toHaveTextContent("Other");
+      expect(screen.getByTestId("page-title")).toHaveValue("Other");
       expect(screen.getByTestId("editor").textContent).toContain("Different content");
     });
   });
