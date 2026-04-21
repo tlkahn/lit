@@ -73,7 +73,19 @@ export function buildDecorations(view: EditorView): DecorationSet {
   }
 
   decos.sort((a, b) => a.from - b.from || a.to - b.to);
-  return RangeSet.of(decos.map((d) => d.deco.range(d.from, d.to)));
+
+  const widgetReplaces = decos.filter(
+    (d) => d.deco.spec.widget && d.from < d.to,
+  );
+  const filtered = decos.filter((d) => {
+    if (d.deco.spec.widget) return true;
+    if (d.from === d.to) return true;
+    return !widgetReplaces.some(
+      (wr) => wr !== d && wr.from <= d.from && wr.to >= d.to,
+    );
+  });
+
+  return RangeSet.of(filtered.map((d) => d.deco.range(d.from, d.to)));
 }
 
 function addHeadingDecos(

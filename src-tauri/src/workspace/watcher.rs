@@ -47,12 +47,17 @@ impl FileWatcher {
                         .to_string_lossy()
                         .to_string();
 
-                    let payload = FileEvent { path: relative };
-
                     if let Some(win) = app_handle.get_webview_window(&window_label) {
                         match event.kind {
                             DebouncedEventKind::Any => {
-                                if path.exists() {
+                                let exists = path.exists();
+                                if exists {
+                                    eprintln!("[watcher] file-modified: {}", relative);
+                                } else {
+                                    eprintln!("[watcher] file-DELETED (exists=false): {}", relative);
+                                }
+                                let payload = FileEvent { path: relative };
+                                if exists {
                                     let _ = win.emit("workspace://file-modified", &payload);
                                 } else {
                                     let _ = win.emit("workspace://file-deleted", &payload);

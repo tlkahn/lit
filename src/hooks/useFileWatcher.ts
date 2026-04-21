@@ -17,12 +17,15 @@ export function useFileWatcher(onCurrentPageModified?: () => void) {
   useEffect(() => {
     if (!workspacePath) return;
 
+    let cancelled = false;
     const unlisteners: (() => void)[] = [];
 
     const setup = async () => {
       const unModified = await listen<FileEvent>(
         "workspace://file-modified",
         (event) => {
+          if (cancelled) return;
+          console.debug("[FileWatcher] file-modified:", event.payload.path);
           if (
             currentPageRef.current &&
             event.payload.path === currentPageRef.current
@@ -31,31 +34,40 @@ export function useFileWatcher(onCurrentPageModified?: () => void) {
           }
         },
       );
+      if (cancelled) { unModified(); return; }
       unlisteners.push(unModified);
 
       const unDeleted = await listen<FileEvent>(
         "workspace://file-deleted",
         (event) => {
+          if (cancelled) return;
+          console.debug("[FileWatcher] file-deleted:", event.payload.path, "current:", currentPageRef.current);
           if (currentPageRef.current === event.payload.path) {
+            console.warn("[FileWatcher] current page deleted, deselecting:", event.payload.path);
             selectPage(null);
           }
           refreshPages();
         },
       );
+      if (cancelled) { unDeleted(); return; }
       unlisteners.push(unDeleted);
 
       const unCreated = await listen<FileEvent>(
         "workspace://file-created",
-        () => {
+        (event) => {
+          if (cancelled) return;
+          console.debug("[FileWatcher] file-created:", event.payload.path);
           refreshPages();
         },
       );
+      if (cancelled) { unCreated(); return; }
       unlisteners.push(unCreated);
     };
 
     setup();
 
     return () => {
+      cancelled = true;
       for (const unlisten of unlisteners) {
         unlisten();
       }

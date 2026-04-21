@@ -52,8 +52,10 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
     const v = new EditorView({ state, parent: container });
     viewRef.current = v;
     setView(v);
+    console.debug("[useCodeMirror] editor mounted, doc length:", doc.length);
 
     return () => {
+      console.debug("[useCodeMirror] editor destroyed");
       v.destroy();
       viewRef.current = null;
       setView(null);
@@ -66,6 +68,7 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
     const current = view.state.doc.toString();
     if (current === doc) return;
 
+    console.debug("[useCodeMirror] doc prop changed, replacing editor content. old:", current.length, "new:", doc.length);
     suppressOnChange.current = true;
     view.dispatch({
       changes: { from: 0, to: view.state.doc.length, insert: doc },

@@ -51,6 +51,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   },
 
   selectPage: (relativePath: string | null) => {
+    if (relativePath === null) {
+      console.warn("[WorkspaceStore] selectPage(null) called — stack:", new Error().stack);
+    }
     set({ currentPagePath: relativePath });
   },
 

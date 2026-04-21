@@ -1,6 +1,8 @@
 import { useEffect, useCallback } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { ContentArea } from "./components/ContentArea";
+import { ErrorBoundary } from "./components/ErrorBoundary";
+import { ContentErrorFallback } from "./components/ContentErrorFallback";
 import { WorkspaceChooser } from "./components/WorkspaceChooser";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { SidebarPositionToggle } from "./components/SidebarPositionToggle";
@@ -62,7 +64,9 @@ function App() {
           <SidebarPositionToggle position={position} onToggle={togglePosition} />
           <ThemeToggle theme={theme} onToggle={toggleTheme} />
         </header>
-        <ContentArea theme={theme} />
+        <ErrorBoundary fallback={ContentErrorFallback} resetKey={currentPagePath}>
+          <ContentArea theme={theme} />
+        </ErrorBoundary>
       </div>
     </div>
   );

@@ -1,6 +1,6 @@
 import { type DecorationSet, EditorView } from "@codemirror/view";
 import { ViewPlugin, type ViewUpdate, type PluginValue } from "@codemirror/view";
-import { StateField } from "@codemirror/state";
+import { StateField, RangeSet } from "@codemirror/state";
 import { buildDecorations, buildBlockReplacements } from "./decorations";
 
 class LivePreviewPluginValue implements PluginValue {
@@ -23,11 +23,21 @@ export const livePreviewPlugin = ViewPlugin.fromClass(LivePreviewPluginValue, {
 
 export const blockReplacementField = StateField.define<DecorationSet>({
   create(state) {
-    return buildBlockReplacements(state);
+    try {
+      return buildBlockReplacements(state);
+    } catch (e) {
+      console.error("[blockReplacementField] create error:", e);
+      return RangeSet.empty;
+    }
   },
   update(value, tr) {
     if (tr.docChanged || tr.selection || tr.effects.length) {
-      return buildBlockReplacements(tr.state);
+      try {
+        return buildBlockReplacements(tr.state);
+      } catch (e) {
+        console.error("[blockReplacementField] update error:", e);
+        return RangeSet.empty;
+      }
     }
     return value;
   },

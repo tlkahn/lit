@@ -33,11 +33,15 @@ export function ContentArea({ theme }: ContentAreaProps) {
     try {
       const content = await readPage(path);
       if (currentPathRef.current === path) {
+        console.debug("[ContentArea] loadPage OK:", path, "body length:", content.body.length);
         setBody(content.body);
         setTitle(content.meta.title);
         setFrontmatter(content.meta.frontmatter);
+      } else {
+        console.debug("[ContentArea] loadPage stale, ignoring:", path);
       }
-    } catch {
+    } catch (err) {
+      console.error("[ContentArea] loadPage failed:", path, err);
       setBody("");
       setTitle("");
       setFrontmatter({});
@@ -73,7 +77,9 @@ export function ContentArea({ theme }: ContentAreaProps) {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       if (currentPagePath) {
-        writePage(currentPagePath, newBody, frontmatter);
+        writePage(currentPagePath, newBody, frontmatter).catch((err) => {
+          console.error("[ContentArea] writePage failed:", err);
+        });
       }
     }, 300);
   };
