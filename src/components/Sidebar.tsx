@@ -190,7 +190,7 @@ export function Sidebar() {
 
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-bg-secondary">
-      <div className="flex items-center justify-between border-b border-border p-2">
+      <div className="flex items-center justify-between p-2">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-text-faint">
           Pages
         </h2>
@@ -222,7 +222,7 @@ export function Sidebar() {
           depth={0}
         />
       </div>
-      <div className="border-t border-border p-2">
+      <div className="p-2">
         <button
           onClick={async () => {
             const selected = await open({ directory: true });

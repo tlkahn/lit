@@ -67,7 +67,7 @@ function App() {
     <div className={`flex h-screen bg-bg-primary ${position === "right" ? "flex-row-reverse" : "flex-row"}`}>
       <Sidebar />
       <div className="flex min-h-0 flex-1 flex-col">
-        <header className="flex items-center justify-end gap-2 border-b border-border bg-bg-primary-alt px-4 py-2">
+        <header className="flex items-center justify-end gap-2 bg-bg-primary-alt px-4 py-2">
           <ThemeChooser />
           <SidebarPositionToggle position={position} onToggle={togglePosition} />
           <ThemeToggle theme={theme} onToggle={toggleTheme} />
