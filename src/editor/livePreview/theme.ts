@@ -16,16 +16,15 @@ export const livePreviewBaseTheme = EditorView.baseTheme({
   },
   ".cm-preview-code-block": {
     backgroundColor: "var(--code-background)",
-    borderRadius: "4px",
-    padding: "2px 0",
   },
-  ".cm-hidden-line": {
-    fontSize: "0",
-    lineHeight: "0",
-    height: "0",
-    overflow: "hidden",
+  ".cm-code-fence-top": {
+    backgroundColor: "var(--code-background)",
+    borderRadius: "4px 4px 0 0",
   },
-
+  ".cm-code-fence-bottom": {
+    backgroundColor: "var(--code-background)",
+    borderRadius: "0 0 4px 4px",
+  },
   ".cm-preview-wikilink": {
     color: "var(--color-purple, var(--text-accent))",
     textDecoration: "underline",

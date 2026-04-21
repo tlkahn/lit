@@ -202,11 +202,11 @@ describe("buildDecorations — fenced code blocks", () => {
     // Closing fence hidden
     const closeReplace = decos.find((d) => d.type === "replace" && d.to === 14);
     expect(closeReplace).toBeDefined();
-    // Code content marked
+    // Code content lines marked
     const codeMark = decos.find((d) => d.class === "cm-preview-code-block");
     expect(codeMark).toBeDefined();
     expect(codeMark!.from).toBe(6);
-    expect(codeMark!.to).toBe(10);
+    expect(codeMark!.to).toBe(6);
     view.destroy();
   });
 

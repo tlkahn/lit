@@ -225,19 +225,24 @@ function addFencedCodeDecos(
     const openEnd = codeInfo ? codeInfo.to : openMark.to;
     const line = state.doc.lineAt(openEnd);
     decos.push({ from: openMark.from, to: line.to, deco: Decoration.replace({}) });
-    decos.push({ from: line.from, to: line.from, deco: Decoration.line({ class: "cm-hidden-line" }) });
+    decos.push({ from: line.from, to: line.from, deco: Decoration.line({ class: "cm-code-fence-top" }) });
   }
 
   const closeMark = codeMarks.length >= 2 ? codeMarks[codeMarks.length - 1] : undefined;
   if (closeMark) {
     const line = state.doc.lineAt(closeMark.from);
     decos.push({ from: line.from, to: closeMark.to, deco: Decoration.replace({}) });
-    decos.push({ from: line.from, to: line.from, deco: Decoration.line({ class: "cm-hidden-line" }) });
+    decos.push({ from: line.from, to: line.from, deco: Decoration.line({ class: "cm-code-fence-bottom" }) });
   }
 
-  // Mark code content
+  // Mark code content lines
   if (codeText) {
-    decos.push({ from: codeText.from, to: codeText.to, deco: Decoration.mark({ class: "cm-preview-code-block" }) });
+    const firstLine = state.doc.lineAt(codeText.from);
+    const lastLine = state.doc.lineAt(codeText.to);
+    for (let lineNum = firstLine.number; lineNum <= lastLine.number; lineNum++) {
+      const line = state.doc.line(lineNum);
+      decos.push({ from: line.from, to: line.from, deco: Decoration.line({ class: "cm-preview-code-block" }) });
+    }
   }
 }
 
