@@ -10,6 +10,8 @@ import {
   createPage,
   renamePage,
   deletePage,
+  openWorkspaceWindow,
+  getPendingWorkspace,
 } from "./ipc";
 
 const sampleMeta = {
@@ -41,6 +43,10 @@ describe("ipc", () => {
         case "rename_page":
           return "New.md";
         case "delete_page":
+          return null;
+        case "open_workspace_window":
+          return "workspace-1";
+        case "get_pending_workspace":
           return null;
         default:
           throw new Error(`Unknown command: ${cmd}`);
@@ -121,5 +127,23 @@ describe("ipc", () => {
     await deletePage("Doomed.md");
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("delete_page", { relativePath: "Doomed.md" });
+  });
+
+  it("openWorkspaceWindow calls with path", async () => {
+    const label = await openWorkspaceWindow("/new/workspace");
+    expect(label).toBe("workspace-1");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("open_workspace_window", { path: "/new/workspace" });
+  });
+
+  it("openWorkspaceWindow sends null when no path", async () => {
+    await openWorkspaceWindow();
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("open_workspace_window", { path: null });
+  });
+
+  it("getPendingWorkspace returns null by default", async () => {
+    const result = await getPendingWorkspace();
+    expect(result).toBeNull();
   });
 });

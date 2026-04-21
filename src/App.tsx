@@ -7,8 +7,8 @@ import { SidebarPositionToggle } from "./components/SidebarPositionToggle";
 import { useTheme } from "./hooks/useTheme";
 import { useSidebarPosition } from "./hooks/useSidebarPosition";
 import { useFileWatcher } from "./hooks/useFileWatcher";
-import { useWorkspaceStore, getSavedWorkspacePath } from "./stores/workspace";
-import { readPage, getInitialWorkspace } from "./lib/ipc";
+import { useWorkspaceStore, getRecentWorkspaces } from "./stores/workspace";
+import { readPage, getInitialWorkspace, getPendingWorkspace } from "./lib/ipc";
 
 function App() {
   const { theme, toggleTheme } = useTheme();
@@ -20,14 +20,19 @@ function App() {
   useEffect(() => {
     if (workspacePath) return;
     const init = async () => {
+      const pending = await getPendingWorkspace().catch(() => null);
+      if (pending) {
+        openWorkspace(pending);
+        return;
+      }
       const cliPath = await getInitialWorkspace().catch(() => null);
       if (cliPath) {
         openWorkspace(cliPath);
         return;
       }
-      const saved = getSavedWorkspacePath();
-      if (saved) {
-        openWorkspace(saved);
+      const recent = getRecentWorkspaces();
+      if (recent.length > 0) {
+        openWorkspace(recent[0]!);
       }
     };
     init();

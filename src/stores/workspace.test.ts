@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { mockInvoke } from "../test/tauri-mock";
-import { useWorkspaceStore, getSavedWorkspacePath } from "./workspace";
+import { useWorkspaceStore, getRecentWorkspaces, addRecentWorkspace } from "./workspace";
 import { act } from "@testing-library/react";
 
 const samplePages = [
@@ -66,11 +66,11 @@ describe("WorkspaceStore", () => {
     expect(state.error).toBeNull();
   });
 
-  it("openWorkspace persists path to localStorage", async () => {
+  it("openWorkspace adds path to recent workspaces", async () => {
     await act(async () => {
       await useWorkspaceStore.getState().openWorkspace("/my/workspace");
     });
-    expect(getSavedWorkspacePath()).toBe("/my/workspace");
+    expect(getRecentWorkspaces()).toContain("/my/workspace");
   });
 
   it("selectPage sets currentPagePath", () => {
@@ -139,5 +139,41 @@ describe("WorkspaceStore", () => {
     });
 
     expect(useWorkspaceStore.getState().pages).toHaveLength(2);
+  });
+});
+
+describe("getRecentWorkspaces", () => {
+  it("returns empty array when no data", () => {
+    expect(getRecentWorkspaces()).toEqual([]);
+  });
+
+  it("migrates legacy lit-workspace-path", () => {
+    localStorage.setItem("lit-workspace-path", "/old/path");
+    const result = getRecentWorkspaces();
+    expect(result).toEqual(["/old/path"]);
+    expect(localStorage.getItem("lit-workspace-path")).toBeNull();
+    expect(localStorage.getItem("lit-recent-workspaces")).toBe(JSON.stringify(["/old/path"]));
+  });
+
+  it("returns stored list", () => {
+    localStorage.setItem("lit-recent-workspaces", JSON.stringify(["/a", "/b"]));
+    expect(getRecentWorkspaces()).toEqual(["/a", "/b"]);
+  });
+});
+
+describe("addRecentWorkspace", () => {
+  it("deduplicates and prepends", () => {
+    addRecentWorkspace("/a");
+    addRecentWorkspace("/b");
+    addRecentWorkspace("/a");
+    expect(getRecentWorkspaces()).toEqual(["/a", "/b"]);
+  });
+
+  it("trims to max 10 entries", () => {
+    for (let i = 0; i < 15; i++) {
+      addRecentWorkspace(`/path/${i}`);
+    }
+    expect(getRecentWorkspaces()).toHaveLength(10);
+    expect(getRecentWorkspaces()[0]).toBe("/path/14");
   });
 });

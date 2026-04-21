@@ -65,3 +65,11 @@ export async function deletePage(relativePath: string): Promise<void> {
 export async function getInitialWorkspace(): Promise<string | null> {
   return invoke<string | null>("get_initial_workspace");
 }
+
+export async function openWorkspaceWindow(path?: string): Promise<string> {
+  return invoke<string>("open_workspace_window", { path: path ?? null });
+}
+
+export async function getPendingWorkspace(): Promise<string | null> {
+  return invoke<string | null>("get_pending_workspace");
+}

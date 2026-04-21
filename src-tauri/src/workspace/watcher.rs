@@ -4,7 +4,7 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 pub struct FileWatcher {
     _debouncer: notify_debouncer_mini::Debouncer<notify_debouncer_mini::notify::RecommendedWatcher>,
@@ -16,7 +16,7 @@ pub struct FileEvent {
 }
 
 impl FileWatcher {
-    pub fn new(root: PathBuf, app_handle: AppHandle) -> Result<Self, String> {
+    pub fn new(root: PathBuf, window_label: String, app_handle: AppHandle) -> Result<Self, String> {
         let root_clone = root.clone();
 
         let (tx, rx) = mpsc::channel();
@@ -49,15 +49,17 @@ impl FileWatcher {
 
                     let payload = FileEvent { path: relative };
 
-                    match event.kind {
-                        DebouncedEventKind::Any => {
-                            if path.exists() {
-                                let _ = app_handle.emit("workspace://file-modified", &payload);
-                            } else {
-                                let _ = app_handle.emit("workspace://file-deleted", &payload);
+                    if let Some(win) = app_handle.get_webview_window(&window_label) {
+                        match event.kind {
+                            DebouncedEventKind::Any => {
+                                if path.exists() {
+                                    let _ = win.emit("workspace://file-modified", &payload);
+                                } else {
+                                    let _ = win.emit("workspace://file-deleted", &payload);
+                                }
                             }
+                            DebouncedEventKind::AnyContinuous | _ => {}
                         }
-                        DebouncedEventKind::AnyContinuous | _ => {}
                     }
                 }
             }

@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/nicegram/nicegram-tauri/main/.schema/capabilities.json",
   "identifier": "default",
   "description": "Default capabilities for Lit",
-  "windows": ["main"],
+  "windows": ["main", "workspace-*"],
   "permissions": [
     "core:default",
     "core:window:allow-set-theme",

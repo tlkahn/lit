@@ -2,7 +2,9 @@ import { create } from "zustand";
 import * as ipc from "../lib/ipc";
 import type { PageMeta } from "../lib/ipc";
 
-const STORAGE_KEY = "lit-workspace-path";
+const RECENT_KEY = "lit-recent-workspaces";
+const LEGACY_KEY = "lit-workspace-path";
+const MAX_RECENT = 10;
 
 export interface WorkspaceStore {
   workspacePath: string | null;
@@ -31,7 +33,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     try {
       const pages = await ipc.openWorkspace(path);
       set({ workspacePath: path, pages, loading: false });
-      localStorage.setItem(STORAGE_KEY, path);
+      addRecentWorkspace(path);
     } catch (e) {
       set({ loading: false, error: String(e) });
     }
@@ -92,6 +94,29 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   },
 }));
 
-export function getSavedWorkspacePath(): string | null {
-  return localStorage.getItem(STORAGE_KEY);
+export function getRecentWorkspaces(): string[] {
+  const raw = localStorage.getItem(RECENT_KEY);
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    } catch {
+      // fall through to migration
+    }
+  }
+  const legacy = localStorage.getItem(LEGACY_KEY);
+  if (legacy) {
+    const list = [legacy];
+    localStorage.setItem(RECENT_KEY, JSON.stringify(list));
+    localStorage.removeItem(LEGACY_KEY);
+    return list;
+  }
+  return [];
+}
+
+export function addRecentWorkspace(path: string): void {
+  const list = getRecentWorkspaces().filter((p) => p !== path);
+  list.unshift(path);
+  if (list.length > MAX_RECENT) list.length = MAX_RECENT;
+  localStorage.setItem(RECENT_KEY, JSON.stringify(list));
 }

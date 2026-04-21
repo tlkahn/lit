@@ -1,9 +1,11 @@
 mod commands;
 pub mod workspace;
 
-use commands::workspace::AppState;
+use commands::workspace::{PendingWorkspaces, WorkspaceRegistry};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use tauri::Manager;
 
 pub struct InitialWorkspace(pub Mutex<Option<String>>);
 
@@ -20,16 +22,18 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .manage(AppState {
-            workspace_root: Mutex::new(None),
-            watcher: Mutex::new(None),
+        .manage(WorkspaceRegistry {
+            workspaces: Mutex::new(HashMap::new()),
         })
+        .manage(PendingWorkspaces(Mutex::new(HashMap::new())))
         .manage(InitialWorkspace(Mutex::new(cli_workspace)))
         .invoke_handler(tauri::generate_handler![
             commands::app_info::get_app_info,
             commands::workspace::open_workspace,
             commands::workspace::list_pages,
             commands::workspace::get_workspace_path,
+            commands::workspace::open_workspace_window,
+            commands::workspace::get_pending_workspace,
             commands::page::read_page,
             commands::page::write_page,
             commands::page::create_page,
@@ -37,6 +41,17 @@ pub fn run() {
             commands::page::delete_page,
             get_initial_workspace,
         ])
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                let label = window.label().to_string();
+                if let Some(registry) = window.try_state::<WorkspaceRegistry>() {
+                    registry.workspaces.lock().unwrap().remove(&label);
+                }
+                if let Some(pending) = window.try_state::<PendingWorkspaces>() {
+                    pending.0.lock().unwrap().remove(&label);
+                }
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -1,5 +1,7 @@
 import { useState } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useWorkspaceStore } from "../stores/workspace";
+import { openWorkspaceWindow } from "../lib/ipc";
 import type { PageMeta } from "../lib/ipc";
 
 interface FolderNode {
@@ -219,6 +221,19 @@ export function Sidebar() {
           onRename={handleRename}
           depth={0}
         />
+      </div>
+      <div className="border-t border-neutral-200 p-2 dark:border-neutral-700">
+        <button
+          onClick={async () => {
+            const selected = await open({ directory: true });
+            if (selected) {
+              await openWorkspaceWindow(selected);
+            }
+          }}
+          className="w-full rounded px-2 py-1.5 text-left text-sm text-neutral-500 hover:bg-neutral-200 dark:text-neutral-400 dark:hover:bg-neutral-700"
+        >
+          Open Another Workspace
+        </button>
       </div>
     </aside>
   );

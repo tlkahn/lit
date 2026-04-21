@@ -53,6 +53,8 @@ describe("App", () => {
           return samplePages;
         case "get_initial_workspace":
           return null;
+        case "get_pending_workspace":
+          return null;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -75,13 +77,34 @@ describe("App", () => {
     expect(screen.getByTestId("empty-state")).toBeInTheDocument();
   });
 
-  it("auto-opens workspace from localStorage", async () => {
-    localStorage.setItem("lit-workspace-path", "/saved/workspace");
+  it("auto-opens workspace from recent workspaces", async () => {
+    localStorage.setItem("lit-recent-workspaces", JSON.stringify(["/saved/workspace"]));
 
     render(<App />);
 
     await waitFor(() => {
       expect(useWorkspaceStore.getState().workspacePath).toBe("/saved/workspace");
+    });
+  });
+
+  it("auto-opens workspace from pending workspace", async () => {
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_pending_workspace":
+          return "/pending/workspace";
+        case "open_workspace":
+          return samplePages;
+        case "get_initial_workspace":
+          return null;
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().workspacePath).toBe("/pending/workspace");
     });
   });
 
