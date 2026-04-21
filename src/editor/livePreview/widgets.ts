@@ -194,6 +194,7 @@ export class TableWidget extends WidgetType {
       const row = Number(cell.dataset.row);
       const col = Number(cell.dataset.col);
       const pos = getCellPosition(this.tableText, this.from, row, col);
+      view.focus();
       view.dispatch({ selection: { anchor: pos } });
     });
 
