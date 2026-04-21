@@ -3,6 +3,7 @@ import { livePreviewPlugin } from "./plugin";
 import { createLinkClickHandler } from "./linkHandler";
 import { livePreviewBaseTheme } from "./theme";
 import { imageResolverFacet, type ImageResolver } from "./imageResolver";
+import { calloutFoldField } from "./callout";
 import { openUrl as defaultOpenUrl } from "@tauri-apps/plugin-opener";
 
 export interface LivePreviewConfig {
@@ -12,7 +13,12 @@ export interface LivePreviewConfig {
 
 export function livePreviewExtension(config?: LivePreviewConfig): Extension {
   const openUrl = config?.openUrl ?? defaultOpenUrl;
-  const exts: Extension[] = [livePreviewPlugin, createLinkClickHandler(openUrl), livePreviewBaseTheme];
+  const exts: Extension[] = [
+    livePreviewPlugin,
+    createLinkClickHandler(openUrl),
+    livePreviewBaseTheme,
+    calloutFoldField,
+  ];
   if (config?.resolveImageSrc) {
     exts.push(imageResolverFacet.of(config.resolveImageSrc));
   }

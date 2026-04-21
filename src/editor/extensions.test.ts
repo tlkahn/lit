@@ -6,6 +6,16 @@ import { undo } from "@codemirror/commands";
 import { createExtensions } from "./extensions";
 import { livePreviewPlugin } from "./livePreview/plugin";
 
+vi.mock("katex", () => ({
+  default: {
+    render: vi.fn((tex: string, el: HTMLElement) => {
+      el.textContent = tex;
+    }),
+  },
+}));
+
+vi.mock("katex/dist/katex.min.css", () => ({}));
+
 function makeConfig(overrides?: { onChange?: (content: string) => void }) {
   return {
     theme: "light" as const,
@@ -93,5 +103,55 @@ describe("createExtensions", () => {
     const names: string[] = [];
     tree.iterate({ enter: (node) => { names.push(node.name); } });
     expect(names).toContain("CodeInfo");
+  });
+
+  it("parses WikiLink nodes", () => {
+    const exts = createExtensions(makeConfig());
+    const state = EditorState.create({
+      doc: "See [[Another Page]] here.",
+      extensions: exts,
+    });
+    const tree = syntaxTree(state);
+    const names: string[] = [];
+    tree.iterate({ enter: (node) => { names.push(node.name); } });
+    expect(names).toContain("WikiLink");
+    expect(names).toContain("WikiLinkMark");
+  });
+
+  it("parses Frontmatter at doc start", () => {
+    const exts = createExtensions(makeConfig());
+    const state = EditorState.create({
+      doc: "---\ntitle: Test\n---\n\n# Hello",
+      extensions: exts,
+    });
+    const tree = syntaxTree(state);
+    const names: string[] = [];
+    tree.iterate({ enter: (node) => { names.push(node.name); } });
+    expect(names).toContain("Frontmatter");
+    expect(names).not.toContain("HorizontalRule");
+  });
+
+  it("parses InlineMath nodes", () => {
+    const exts = createExtensions(makeConfig());
+    const state = EditorState.create({
+      doc: "Inline $E=mc^2$ here.",
+      extensions: exts,
+    });
+    const tree = syntaxTree(state);
+    const names: string[] = [];
+    tree.iterate({ enter: (node) => { names.push(node.name); } });
+    expect(names).toContain("InlineMath");
+  });
+
+  it("parses DisplayMath nodes", () => {
+    const exts = createExtensions(makeConfig());
+    const state = EditorState.create({
+      doc: "$$\nx^2 + y^2 = z^2\n$$",
+      extensions: exts,
+    });
+    const tree = syntaxTree(state);
+    const names: string[] = [];
+    tree.iterate({ enter: (node) => { names.push(node.name); } });
+    expect(names).toContain("DisplayMath");
   });
 });

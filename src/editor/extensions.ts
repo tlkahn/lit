@@ -12,6 +12,9 @@ import {
   darkHighlightStyle,
 } from "./theme";
 import { livePreviewExtension } from "./livePreview";
+import { WikiLink } from "./markdown/wikilink";
+import { Frontmatter } from "./markdown/frontmatter";
+import { Math } from "./markdown/math";
 
 export interface ExtensionConfig {
   theme: "light" | "dark";
@@ -29,7 +32,10 @@ export function createExtensions(config: ExtensionConfig): Extension[] {
     config.theme === "light" ? lightHighlightStyle : darkHighlightStyle;
 
   return [
-    markdown({ extensions: GFM, codeLanguages: languages }),
+    markdown({
+      extensions: [GFM, WikiLink, Frontmatter, Math],
+      codeLanguages: languages,
+    }),
     config.themeCompartment.of(themeExt),
     config.highlightCompartment.of(syntaxHighlighting(hlStyle)),
     livePreviewExtension({ openUrl: config.openUrl, resolveImageSrc: config.resolveImageSrc }),

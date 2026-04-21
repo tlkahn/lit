@@ -2,8 +2,9 @@ import { type EditorState, RangeSet } from "@codemirror/state";
 import { Decoration, type DecorationSet, type EditorView } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { isCursorOnLine } from "./proximity";
-import { ImageWidget } from "./widgets";
+import { ImageWidget, CalloutHeaderWidget, InlineMathWidget, DisplayMathWidget } from "./widgets";
 import { imageResolverFacet } from "./imageResolver";
+import { parseCalloutType, calloutFoldField } from "./callout";
 
 const headingClass: Record<string, string> = {
   ATXHeading1: "cm-preview-h1",
@@ -46,6 +47,22 @@ export function buildDecorations(view: EditorView): DecorationSet {
         }
         if (node.name === "FencedCode") {
           addFencedCodeDecos(state, node.from, node.to, node.node, decos);
+          return false;
+        }
+        if (node.name === "WikiLink") {
+          addWikilinkDecos(state, node.from, node.to, node.node, decos);
+          return false;
+        }
+        if (node.name === "Blockquote") {
+          addCalloutDecos(state, node.from, node.to, node.node, decos);
+          return false;
+        }
+        if (node.name === "InlineMath") {
+          addInlineMathDecos(state, node.from, node.to, node.node, decos);
+          return false;
+        }
+        if (node.name === "DisplayMath") {
+          addDisplayMathDecos(state, node.from, node.to, decos);
           return false;
         }
       },
@@ -206,4 +223,147 @@ function addFencedCodeDecos(
   if (codeText) {
     decos.push({ from: codeText.from, to: codeText.to, deco: Decoration.mark({ class: "cm-preview-code-block" }) });
   }
+}
+
+function addWikilinkDecos(
+  state: EditorState,
+  from: number,
+  to: number,
+  node: ReturnType<typeof syntaxTree>["topNode"],
+  decos: { from: number; to: number; deco: Decoration }[],
+) {
+  if (isCursorOnLine(state, from, to)) return;
+
+  const marks = node.getChildren("WikiLinkMark");
+  if (marks.length < 2) return;
+
+  const openMark = marks[0]!;
+  const closeMark = marks[1]!;
+
+  const content = state.doc.sliceString(openMark.to, closeMark.from);
+  const pipeIndex = content.indexOf("|");
+
+  if (pipeIndex >= 0) {
+    const pipePos = openMark.to + pipeIndex;
+    decos.push({ from: openMark.from, to: pipePos + 1, deco: Decoration.replace({}) });
+    decos.push({ from: pipePos + 1, to: closeMark.from, deco: Decoration.mark({ class: "cm-preview-wikilink" }) });
+    decos.push({ from: closeMark.from, to: closeMark.to, deco: Decoration.replace({}) });
+  } else {
+    decos.push({ from: openMark.from, to: openMark.to, deco: Decoration.replace({}) });
+    decos.push({ from: openMark.to, to: closeMark.from, deco: Decoration.mark({ class: "cm-preview-wikilink" }) });
+    decos.push({ from: closeMark.from, to: closeMark.to, deco: Decoration.replace({}) });
+  }
+}
+
+function addCalloutDecos(
+  state: EditorState,
+  from: number,
+  to: number,
+  _node: ReturnType<typeof syntaxTree>["topNode"],
+  decos: { from: number; to: number; deco: Decoration }[],
+) {
+  const firstLine = state.doc.lineAt(from);
+  const calloutInfo = parseCalloutType(firstLine.text);
+  if (!calloutInfo) return;
+  if (isCursorOnLine(state, from, to)) return;
+
+  const foldState = state.field(calloutFoldField, false);
+  const userToggle = foldState?.get(from);
+  const isCollapsed = userToggle ?? (calloutInfo.fold === "collapsed");
+
+  const resolvedType = calloutInfo.resolvedType;
+  const title = calloutInfo.title ?? calloutInfo.type.charAt(0).toUpperCase() + calloutInfo.type.slice(1);
+
+  const firstLineNum = firstLine.number;
+  const lastLine = state.doc.lineAt(to);
+  const lastLineNum = lastLine.number;
+
+  // Line decoration for the header line
+  decos.push({
+    from: firstLine.from,
+    to: firstLine.from,
+    deco: Decoration.line({ class: `cm-callout cm-callout-${resolvedType}` }),
+  });
+
+  // Replace header line content with widget
+  decos.push({
+    from: firstLine.from,
+    to: firstLine.to,
+    deco: Decoration.replace({
+      widget: new CalloutHeaderWidget(resolvedType, title, isCollapsed, from),
+    }),
+  });
+
+  if (isCollapsed) {
+    // Hide body when collapsed
+    if (firstLineNum < lastLineNum) {
+      decos.push({
+        from: firstLine.to,
+        to,
+        deco: Decoration.replace({}),
+      });
+    }
+  } else {
+    // Expanded: style body lines, hide quote marks
+    for (let lineNum = firstLineNum + 1; lineNum <= lastLineNum; lineNum++) {
+      const line = state.doc.line(lineNum);
+      decos.push({
+        from: line.from,
+        to: line.from,
+        deco: Decoration.line({ class: `cm-callout cm-callout-${resolvedType}` }),
+      });
+      const quoteMarkMatch = line.text.match(/^(\s*>)\s?/);
+      if (quoteMarkMatch) {
+        decos.push({
+          from: line.from,
+          to: line.from + quoteMarkMatch[0].length,
+          deco: Decoration.replace({}),
+        });
+      }
+    }
+  }
+}
+
+function addInlineMathDecos(
+  state: EditorState,
+  from: number,
+  to: number,
+  node: { getChildren(type: string): { from: number; to: number }[] },
+  decos: { from: number; to: number; deco: Decoration }[],
+) {
+  if (isCursorOnLine(state, from, to)) return;
+
+  const marks = node.getChildren("InlineMathMark");
+  if (marks.length < 2) return;
+
+  const latex = state.doc.sliceString(marks[0]!.to, marks[1]!.from);
+  decos.push({
+    from,
+    to,
+    deco: Decoration.replace({ widget: new InlineMathWidget(latex) }),
+  });
+}
+
+function addDisplayMathDecos(
+  state: EditorState,
+  from: number,
+  to: number,
+  decos: { from: number; to: number; deco: Decoration }[],
+) {
+  if (isCursorOnLine(state, from, to)) return;
+
+  const text = state.doc.sliceString(from, to);
+  let latex: string;
+  if (text.startsWith("$$") && text.endsWith("$$") && text.length > 4) {
+    latex = text.slice(2, -2).trim();
+  } else {
+    const lines = text.split("\n");
+    latex = lines.slice(1, -1).join("\n").trim();
+  }
+
+  decos.push({
+    from,
+    to,
+    deco: Decoration.replace({ widget: new DisplayMathWidget(latex) }),
+  });
 }

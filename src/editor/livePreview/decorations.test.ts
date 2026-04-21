@@ -1,15 +1,31 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { markdown } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
 import { buildDecorations } from "./decorations";
+import { WikiLink } from "../markdown/wikilink";
+import { Math as MathExt } from "../markdown/math";
+import { calloutFoldField } from "./callout";
+
+vi.mock("katex", () => ({
+  default: {
+    render: vi.fn((tex: string, el: HTMLElement) => {
+      el.textContent = tex;
+    }),
+  },
+}));
+
+vi.mock("katex/dist/katex.min.css", () => ({}));
 
 function makeView(doc: string, cursor: number): EditorView {
   const state = EditorState.create({
     doc,
     selection: { anchor: cursor },
-    extensions: [markdown({ extensions: GFM })],
+    extensions: [
+      markdown({ extensions: [GFM, WikiLink, MathExt] }),
+      calloutFoldField,
+    ],
   });
   return new EditorView({ state, parent: document.createElement("div") });
 }
@@ -203,6 +219,125 @@ describe("buildDecorations — fenced code blocks", () => {
 
   it("shows fences when cursor is on fence line", () => {
     const view = makeView("```js\ncode\n```", 1); // cursor on opening fence
+    const decos = collectDecos(view);
+    expect(decos).toHaveLength(0);
+    view.destroy();
+  });
+});
+
+describe("buildDecorations — wikilinks", () => {
+  it("hides [[ and ]] and applies wikilink class when cursor elsewhere", () => {
+    const doc = "[[Page Name]]\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    // [[ hidden
+    expect(decos.some((d) => d.type === "replace" && d.from === 0 && d.to === 2)).toBe(true);
+    // ]] hidden
+    expect(decos.some((d) => d.type === "replace" && d.from === 11 && d.to === 13)).toBe(true);
+    // "Page Name" gets wikilink class
+    const wl = decos.find((d) => d.class === "cm-preview-wikilink");
+    expect(wl).toBeDefined();
+    expect(wl!.from).toBe(2);
+    expect(wl!.to).toBe(11);
+    view.destroy();
+  });
+
+  it("shows only display text for [[Page|Display]]", () => {
+    const doc = "[[Page|Display]]\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    // Everything from [[ through | hidden
+    expect(decos.some((d) => d.type === "replace" && d.from === 0 && d.to === 7)).toBe(true);
+    // ]] hidden
+    expect(decos.some((d) => d.type === "replace" && d.from === 14 && d.to === 16)).toBe(true);
+    // "Display" gets wikilink class
+    const wl = decos.find((d) => d.class === "cm-preview-wikilink");
+    expect(wl).toBeDefined();
+    expect(wl!.from).toBe(7);
+    expect(wl!.to).toBe(14);
+    view.destroy();
+  });
+
+  it("shows raw syntax when cursor is on wikilink line", () => {
+    const view = makeView("[[Page Name]]", 5);
+    const decos = collectDecos(view);
+    const wlDecos = decos.filter(
+      (d) => d.class === "cm-preview-wikilink" || (d.type === "replace" && d.from <= 13),
+    );
+    expect(wlDecos).toHaveLength(0);
+    view.destroy();
+  });
+});
+
+describe("buildDecorations — callouts", () => {
+  it("replaces callout header with widget when cursor elsewhere", () => {
+    const doc = "> [!note]\n> Content\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const headerWidget = decos.find((d) => d.widget && d.from === 0);
+    expect(headerWidget).toBeDefined();
+    view.destroy();
+  });
+
+  it("applies line decoration with callout class", () => {
+    const doc = "> [!note]\n> Content\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const lineDeco = decos.find((d) => d.class?.includes("cm-callout-note"));
+    expect(lineDeco).toBeDefined();
+    view.destroy();
+  });
+
+  it("does not decorate regular blockquotes as callouts", () => {
+    const doc = "> Normal quote\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const calloutDecos = decos.filter((d) => d.class?.includes("cm-callout"));
+    expect(calloutDecos).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("shows raw syntax when cursor is on callout", () => {
+    const view = makeView("> [!note]\n> Content", 5);
+    const decos = collectDecos(view);
+    const calloutDecos = decos.filter(
+      (d) => d.class?.includes("cm-callout") || (d.widget && d.from === 0),
+    );
+    expect(calloutDecos).toHaveLength(0);
+    view.destroy();
+  });
+});
+
+describe("buildDecorations — inline math", () => {
+  it("replaces $...$ with InlineMathWidget when cursor elsewhere", () => {
+    const doc = "$E=mc^2$\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const mathWidget = decos.find((d) => d.widget && d.from === 0 && d.to === 8);
+    expect(mathWidget).toBeDefined();
+    view.destroy();
+  });
+
+  it("shows raw $...$ when cursor is on line", () => {
+    const view = makeView("$E=mc^2$", 3);
+    const decos = collectDecos(view);
+    expect(decos).toHaveLength(0);
+    view.destroy();
+  });
+});
+
+describe("buildDecorations — display math", () => {
+  it("replaces $$...$$ with DisplayMathWidget when cursor elsewhere", () => {
+    const doc = "$$\nx^2\n$$\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const mathWidget = decos.find((d) => d.widget && d.from === 0);
+    expect(mathWidget).toBeDefined();
+    view.destroy();
+  });
+
+  it("shows raw $$...$$ when cursor is on any line of block", () => {
+    const view = makeView("$$\nx^2\n$$", 4);
     const decos = collectDecos(view);
     expect(decos).toHaveLength(0);
     view.destroy();

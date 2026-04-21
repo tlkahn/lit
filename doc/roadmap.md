@@ -92,7 +92,7 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
 
 **Decisions:** flat document model (not block-based), live preview via CM6 decoration plugins (not separate edit/preview modes), `@lezer/markdown` with custom extensions for Obsidian syntax, TDD throughout.
 
-#### A1 — CM6 Foundation
+#### A1 — CM6 Foundation ✅
 
 - [x] Replace `<textarea>` in ContentArea with a React-wrapped CodeMirror 6 component
 - [x] Markdown language support via `@codemirror/lang-markdown` + `@lezer/markdown`
@@ -100,7 +100,7 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
 - [x] CM6 theme (EditorTheme) for light and dark modes, matching existing Tailwind design tokens
 - [x] Wire load/save to existing Rust IPC (`read_page` / `write_page`)
 
-#### A2 — Live Preview Decoration Engine
+#### A2 — Live Preview Decoration Engine ✅
 
 - [x] ViewPlugin-based decoration system: replace raw syntax with rendered output for non-cursor regions
 - [x] Styled headings (font size/weight applied inline), bold/italic rendered (syntax markers hidden)
@@ -110,8 +110,11 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
 
 #### A3 — Obsidian Markdown Extensions
 
-- Custom Lezer markdown extensions: `[[wikilinks]]`, `#tags`
-- Callout rendering (`> [!type]`) with styled containers
+- Custom Lezer markdown extensions: `[[wikilinks]]`, ~~`#tags`~~ (in-page implementation no longer required. `tags` should only be set in the document frontmatter. Roadmap doc to be updated.)
+- Callout rendering (`> [!type]`) with styled containers. Supported callout types (with aliases):
+    - note, abstract/summary/tldr, info, todo, tip/hint/important,
+    - success/check/done, question/help/faq, warning/caution/attention,
+    - failure/fail/missing, danger/error, bug, example, quote/cite
 - YAML frontmatter block: syntax highlighting and visual separation
 - Math rendering: `$inline$` and `$$display$$` via KaTeX widget decorations
 
@@ -146,7 +149,14 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
 **Deliverable:** A fast, Obsidian-style live preview editor with full markdown syntax support (including Mermaid diagrams), auto-save, file sync, folding, and document navigation. Changes persist as clean markdown. No block tree — the markdown file is edited directly.
 
 > [!note]-
-> Extra: use oxide LSP for edit features like autocomplete, go to definition/references etc. Potential Phase D.
+> wikilinks are not rendered properly (double brackets still visible. mouse shape on hover not changed)
+> turboref support
+> Extra: 
+> - use oxide LSP for edit features like autocomplete, go to definition/references etc. Potential Phase D.
+> - use an iAwriter like theme by default
+> - Support Obsidian theme plugin
+> - bug: in dark them, when the edit view is long enough to be viewable through scolling down, the revealed portion of the side bar will show as white background 
+> - Core feature: awesome, best-in-place multi-language and font support, e.g. indic languages (śarada, tibetan), CJK, arabic, etc.
 
 ---
 
