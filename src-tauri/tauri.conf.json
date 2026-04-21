@@ -9,6 +9,12 @@
     "beforeDevCommand": "bun run dev",
     "beforeBuildCommand": "bun run build"
   },
+  "bundle": {
+    "resources": {
+      "../themes/lit-nordic/*": "bundled-themes/lit-nordic/",
+      "../themes/leuvburn/*": "bundled-themes/leuvburn/"
+    }
+  },
   "app": {
     "windows": [
       {

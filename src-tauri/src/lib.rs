@@ -28,6 +28,10 @@ pub fn run() {
         })
         .manage(PendingWorkspaces(Mutex::new(HashMap::new())))
         .manage(InitialWorkspace(Mutex::new(cli_workspace)))
+        .setup(|app| {
+            let _ = commands::theme::seed_bundled_themes(app.handle());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::app_info::get_app_info,
             commands::workspace::open_workspace,

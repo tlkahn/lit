@@ -77,6 +77,48 @@ pub fn get_themes_directory(app_handle: tauri::AppHandle) -> Result<String, Stri
     Ok(dir.to_string_lossy().to_string())
 }
 
+pub fn seed_bundled_themes(app_handle: &tauri::AppHandle) {
+    let resource_dir = match app_handle.path().resource_dir() {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+    let bundled_dir = resource_dir.join("bundled-themes");
+    if !bundled_dir.is_dir() {
+        return;
+    }
+    let user_themes_dir = match themes_dir(app_handle) {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+    let entries = match fs::read_dir(&bundled_dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let src = entry.path();
+        if !src.is_dir() {
+            continue;
+        }
+        let name = match src.file_name() {
+            Some(n) => n.to_os_string(),
+            None => continue,
+        };
+        let dest = user_themes_dir.join(&name);
+        if dest.exists() {
+            continue;
+        }
+        if fs::create_dir_all(&dest).is_err() {
+            continue;
+        }
+        for file in &["manifest.json", "theme.css"] {
+            let src_file = src.join(file);
+            if src_file.exists() {
+                let _ = fs::copy(&src_file, dest.join(file));
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
