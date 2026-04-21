@@ -36,3 +36,6 @@ src-tauri/Frameworks/
 
 # Claude
 .claude
+
+# playwright-cli
+.playwright-cli
