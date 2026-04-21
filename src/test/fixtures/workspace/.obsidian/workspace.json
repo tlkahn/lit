@@ -11,10 +11,14 @@
             "id": "32f64a0af9118f16",
             "type": "leaf",
             "state": {
-              "type": "empty",
-              "state": {},
+              "type": "markdown",
+              "state": {
+                "file": "Concepts/Fourier Transform.md",
+                "mode": "source",
+                "source": false
+              },
               "icon": "lucide-file",
-              "title": "New tab"
+              "title": "Fourier Transform"
             }
           }
         ]
@@ -178,6 +182,9 @@
   },
   "active": "32f64a0af9118f16",
   "lastOpenFiles": [
+    "Concepts/Euler Formula.md",
+    "attachments/photo.png",
+    "Archive/Alice Smith.md",
     "Ideas/Acme Project.md",
     "kg-graph.canvas",
     "People/Alice Smith.md",

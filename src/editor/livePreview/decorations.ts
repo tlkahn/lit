@@ -55,7 +55,6 @@ export function buildDecorations(view: EditorView): DecorationSet {
         }
         if (node.name === "Blockquote") {
           addCalloutDecos(state, node.from, node.to, node.node, decos);
-          return false;
         }
         if (node.name === "InlineMath") {
           addInlineMathDecos(state, node.from, node.to, node.node, decos);

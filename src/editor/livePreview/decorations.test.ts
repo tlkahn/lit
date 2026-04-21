@@ -308,6 +308,17 @@ describe("buildDecorations — callouts", () => {
   });
 });
 
+describe("buildDecorations — math inside callouts", () => {
+  it("renders inline math inside callout body", () => {
+    const doc = "> [!tip] FFT\n> The DFT is $O(N^2)$.\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const mathWidget = decos.find((d) => d.widget && d.from > 13);
+    expect(mathWidget).toBeDefined();
+    view.destroy();
+  });
+});
+
 describe("buildDecorations — inline math", () => {
   it("replaces $...$ with InlineMathWidget when cursor elsewhere", () => {
     const doc = "$E=mc^2$\n\nother";
