@@ -46,17 +46,6 @@ export class CalloutHeaderWidget extends WidgetType {
     const header = document.createElement("div");
     header.className = "cm-callout-header";
 
-    if (this.foldable) {
-      const arrow = document.createElement("span");
-      arrow.className = "cm-callout-fold-icon";
-      arrow.textContent = this.isCollapsed ? "▸" : "▾";
-      arrow.addEventListener("mousedown", (e) => {
-        e.preventDefault();
-        view.dispatch({ effects: toggleCalloutEffect.of({ pos: this.pos }) });
-      });
-      header.appendChild(arrow);
-    }
-
     const icon = document.createElement("span");
     icon.className = "cm-callout-icon";
     icon.textContent = getCalloutIcon(this.calloutType);
@@ -67,6 +56,31 @@ export class CalloutHeaderWidget extends WidgetType {
 
     header.appendChild(icon);
     header.appendChild(title);
+
+    if (this.foldable) {
+      const arrow = document.createElement("span");
+      arrow.className = "cm-callout-fold-icon";
+      if (this.isCollapsed) arrow.classList.add("is-collapsed");
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("width", "24");
+      svg.setAttribute("height", "24");
+      svg.setAttribute("viewBox", "0 0 24 24");
+      svg.setAttribute("fill", "none");
+      svg.setAttribute("stroke", "currentColor");
+      svg.setAttribute("stroke-width", "2");
+      svg.setAttribute("stroke-linecap", "round");
+      svg.setAttribute("stroke-linejoin", "round");
+      svg.classList.add("svg-icon");
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", "m6 9 6 6 6-6");
+      svg.appendChild(path);
+      arrow.appendChild(svg);
+      arrow.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        view.dispatch({ effects: toggleCalloutEffect.of({ pos: this.pos }) });
+      });
+      header.appendChild(arrow);
+    }
     return header;
   }
 

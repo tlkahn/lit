@@ -51,6 +51,17 @@ export const livePreviewBaseTheme = EditorView.baseTheme({
     cursor: "pointer",
     userSelect: "none",
     opacity: "0.7",
+    display: "flex",
+    alignItems: "center",
+  },
+  ".cm-callout-fold-icon .svg-icon": {
+    width: "18px",
+    height: "18px",
+    strokeWidth: "2",
+    transition: "transform 100ms ease-in-out",
+  },
+  ".cm-callout-fold-icon.is-collapsed .svg-icon": {
+    transform: "rotate(-90deg)",
   },
   ".cm-callout-icon": {
     fontSize: "1.1em",

@@ -76,17 +76,31 @@ describe("CalloutHeaderWidget", () => {
     const widget = new CalloutHeaderWidget("note", "Note Title", false, true, 0);
     const el = widget.toDOM(view);
     expect(el.className).toBe("cm-callout-header");
-    expect(el.querySelector(".cm-callout-fold-icon")!.textContent).toBe("▾");
+    const foldIcon = el.querySelector(".cm-callout-fold-icon")!;
+    expect(foldIcon.querySelector("svg.svg-icon")).not.toBeNull();
+    expect(foldIcon.classList.contains("is-collapsed")).toBe(false);
     expect(el.querySelector(".cm-callout-icon")).toBeDefined();
     expect(el.querySelector(".cm-callout-title")!.textContent).toBe("Note Title");
     view.destroy();
   });
 
-  it("shows collapsed arrow when isCollapsed", () => {
+  it("shows collapsed state when isCollapsed", () => {
     const view = makeView();
     const widget = new CalloutHeaderWidget("tip", "Tip", true, true, 0);
     const el = widget.toDOM(view);
-    expect(el.querySelector(".cm-callout-fold-icon")!.textContent).toBe("▸");
+    const foldIcon = el.querySelector(".cm-callout-fold-icon")!;
+    expect(foldIcon.classList.contains("is-collapsed")).toBe(true);
+    view.destroy();
+  });
+
+  it("places fold icon after title (at line end)", () => {
+    const view = makeView();
+    const widget = new CalloutHeaderWidget("note", "Note", false, true, 0);
+    const el = widget.toDOM(view);
+    const children = Array.from(el.children);
+    const foldIdx = children.findIndex((c) => c.classList.contains("cm-callout-fold-icon"));
+    const titleIdx = children.findIndex((c) => c.classList.contains("cm-callout-title"));
+    expect(foldIdx).toBeGreaterThan(titleIdx);
     view.destroy();
   });
 
