@@ -11,7 +11,7 @@ class LivePreviewPluginValue implements PluginValue {
   }
 
   update(update: ViewUpdate) {
-    if (update.docChanged || update.selectionSet) {
+    if (update.docChanged || update.selectionSet || update.transactions.some(tr => tr.effects.length > 0)) {
       this.decorations = buildDecorations(update.view);
     }
   }

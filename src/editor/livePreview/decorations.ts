@@ -272,8 +272,9 @@ function addCalloutDecos(
   if (isCursorOnLine(state, from, to)) return;
 
   const foldState = state.field(calloutFoldField, false);
-  const userToggle = foldState?.get(from);
-  const isCollapsed = userToggle ?? (calloutInfo.fold === "collapsed");
+  const flipped = foldState?.get(from) ?? false;
+  const defaultCollapsed = calloutInfo.fold === "collapsed";
+  const isCollapsed = flipped ? !defaultCollapsed : defaultCollapsed;
 
   const resolvedType = calloutInfo.resolvedType;
   const title = calloutInfo.title ?? calloutInfo.type.charAt(0).toUpperCase() + calloutInfo.type.slice(1);
@@ -402,8 +403,9 @@ function addCollapsedCalloutBody(
   if (isCursorOnLine(state, from, to)) return;
 
   const foldState = state.field(calloutFoldField, false);
-  const userToggle = foldState?.get(from);
-  const isCollapsed = userToggle ?? (calloutInfo.fold === "collapsed");
+  const flipped = foldState?.get(from) ?? false;
+  const defaultCollapsed = calloutInfo.fold === "collapsed";
+  const isCollapsed = flipped ? !defaultCollapsed : defaultCollapsed;
   if (!isCollapsed) return;
 
   const firstLineNum = firstLine.number;
