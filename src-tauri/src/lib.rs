@@ -32,6 +32,7 @@ pub fn run() {
         .manage(Arc::new(WriteHashRegistry::new()))
         .setup(|app| {
             let _ = commands::theme::seed_bundled_themes(app.handle());
+            commands::keymap::seed_default_keymaps(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -50,6 +51,10 @@ pub fn run() {
             commands::theme::list_themes,
             commands::theme::read_theme_css,
             commands::theme::get_themes_directory,
+            commands::keymap::get_keymaps,
+            commands::keymap::get_default_keymaps,
+            commands::keymap::get_user_keymaps_path,
+            commands::keymap::save_user_keymaps,
             get_initial_workspace,
         ])
         .on_window_event(|window, event| {

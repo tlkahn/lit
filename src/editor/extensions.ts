@@ -14,6 +14,8 @@ import { Comment } from "./markdown/comment";
 export interface ExtensionConfig {
   theme: "light" | "dark";
   themeCompartment: Compartment;
+  keymapCompartment: Compartment;
+  keymapBindings?: import("@codemirror/view").KeyBinding[];
   onChange?: (content: string) => void;
   openUrl?: (url: string) => void;
   resolveImageSrc?: (src: string) => string;
@@ -29,7 +31,9 @@ export function createExtensions(config: ExtensionConfig): Extension[] {
     highlightExtension,
     livePreviewExtension({ openUrl: config.openUrl, resolveImageSrc: config.resolveImageSrc }),
     history(),
-    keymap.of([...defaultKeymap, ...historyKeymap]),
+    config.keymapCompartment.of(
+      keymap.of([...(config.keymapBindings ?? []), ...defaultKeymap, ...historyKeymap]),
+    ),
     EditorView.lineWrapping,
     EditorView.updateListener.of((update) => {
       if (update.docChanged && config.onChange) {

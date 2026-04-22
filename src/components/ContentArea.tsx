@@ -8,6 +8,7 @@ import { extractHeadings } from "../lib/headings";
 import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
 import { ConflictDialog } from "./ConflictDialog";
 import { YamlHighlighter } from "./YamlHighlighter";
+import { useKeymaps } from "../hooks/useKeymaps";
 
 export function parseYamlErrorLocation(msg: string): { line: number; column: number } | null {
   const origin = msg.match(/while parsing .+ at line (\d+) column (\d+)/);
@@ -38,6 +39,7 @@ export function ContentArea() {
   const setDirty = useWorkspaceStore((s) => s.setDirty);
   const reloadTrigger = useWorkspaceStore((s) => s.reloadTrigger);
   const saveViewState = useWorkspaceStore((s) => s.saveViewState);
+  const { editorBindings } = useKeymaps();
   const editorViewRef = useRef<EditorView | null>(null);
   const [body, setBody] = useState("");
   const [showConflict, setShowConflict] = useState(false);
@@ -328,7 +330,7 @@ export function ContentArea() {
           )
         )}
       </div>
-      <CodeMirrorEditor doc={body} onChange={handleChange} resolveImageSrc={resolveImageSrc} viewRef={editorViewRef} onDocReplaced={handleDocReplaced} />
+      <CodeMirrorEditor doc={body} onChange={handleChange} resolveImageSrc={resolveImageSrc} viewRef={editorViewRef} onDocReplaced={handleDocReplaced} keymapBindings={editorBindings} />
       <ConflictDialog
         open={showConflict}
         onKeepMine={() => setShowConflict(false)}

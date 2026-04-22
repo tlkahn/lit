@@ -1,0 +1,7 @@
+[
+  { "key": "Mod-b", "command": "editor.toggleBold", "when": "editorFocus" },
+  { "key": "Mod-i", "command": "editor.toggleItalic", "when": "editorFocus" },
+  { "key": "Mod-k", "command": "editor.insertLink", "when": "editorFocus" },
+  { "key": "Mod-/", "command": "editor.toggleComment", "when": "editorFocus" },
+  { "key": "Mod-Shift-n", "command": "app.newPage" }
+]

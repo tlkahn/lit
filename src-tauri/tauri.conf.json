@@ -12,7 +12,8 @@
   "bundle": {
     "resources": {
       "../themes/lit-nordic/*": "bundled-themes/lit-nordic/",
-      "../themes/leuvburn/*": "bundled-themes/leuvburn/"
+      "../themes/leuvburn/*": "bundled-themes/leuvburn/",
+      "../keymaps/default.json": "bundled-keymaps/default.json"
     }
   },
   "app": {

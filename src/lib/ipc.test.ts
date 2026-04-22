@@ -13,6 +13,10 @@ import {
   parseRawYaml,
   openWorkspaceWindow,
   getPendingWorkspace,
+  getKeymaps,
+  getDefaultKeymaps,
+  getUserKeymapsPath,
+  saveUserKeymaps,
 } from "./ipc";
 
 const sampleMeta = {
@@ -50,6 +54,18 @@ describe("ipc", () => {
         case "open_workspace_window":
           return "workspace-1";
         case "get_pending_workspace":
+          return null;
+        case "get_keymaps":
+          return [
+            { key: "Mod-b", command: "editor.toggleBold", when: "editorFocus" },
+          ];
+        case "get_default_keymaps":
+          return [
+            { key: "Mod-b", command: "editor.toggleBold", when: "editorFocus" },
+          ];
+        case "get_user_keymaps_path":
+          return "/data/keymaps/user.json";
+        case "save_user_keymaps":
           return null;
         default:
           throw new Error(`Unknown command: ${cmd}`);
@@ -155,5 +171,29 @@ describe("ipc", () => {
   it("getPendingWorkspace returns null by default", async () => {
     const result = await getPendingWorkspace();
     expect(result).toBeNull();
+  });
+
+  it("getKeymaps returns merged keybindings", async () => {
+    const bindings = await getKeymaps();
+    expect(bindings).toHaveLength(1);
+    expect(bindings[0]!.command).toBe("editor.toggleBold");
+  });
+
+  it("getDefaultKeymaps returns default keybindings", async () => {
+    const bindings = await getDefaultKeymaps();
+    expect(bindings).toHaveLength(1);
+    expect(bindings[0]!.key).toBe("Mod-b");
+  });
+
+  it("getUserKeymapsPath returns a path string", async () => {
+    const path = await getUserKeymapsPath();
+    expect(path).toBe("/data/keymaps/user.json");
+  });
+
+  it("saveUserKeymaps sends bindings to save_user_keymaps", async () => {
+    const bindings = [{ key: "Mod-Shift-b", command: "editor.toggleBold" }];
+    await saveUserKeymaps(bindings);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("save_user_keymaps", { bindings });
   });
 });

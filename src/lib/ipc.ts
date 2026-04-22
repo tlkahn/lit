@@ -99,3 +99,27 @@ export async function readThemeCss(directoryName: string): Promise<string> {
 export async function getThemesDirectory(): Promise<string> {
   return invoke<string>("get_themes_directory");
 }
+
+// Keymap commands
+
+export interface KeyBinding {
+  key: string;
+  command: string;
+  when?: string;
+}
+
+export async function getKeymaps(): Promise<KeyBinding[]> {
+  return invoke<KeyBinding[]>("get_keymaps");
+}
+
+export async function getDefaultKeymaps(): Promise<KeyBinding[]> {
+  return invoke<KeyBinding[]>("get_default_keymaps");
+}
+
+export async function getUserKeymapsPath(): Promise<string> {
+  return invoke<string>("get_user_keymaps_path");
+}
+
+export async function saveUserKeymaps(bindings: KeyBinding[]): Promise<void> {
+  return invoke<void>("save_user_keymaps", { bindings });
+}

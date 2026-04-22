@@ -1,6 +1,6 @@
 import { useRef, useEffect } from "react";
 import { useCodeMirror } from "./useCodeMirror";
-import { EditorView } from "@codemirror/view";
+import { EditorView, type KeyBinding as CM6KeyBinding } from "@codemirror/view";
 
 interface CodeMirrorEditorProps {
   doc: string;
@@ -8,11 +8,12 @@ interface CodeMirrorEditorProps {
   resolveImageSrc?: (src: string) => string;
   viewRef?: React.RefObject<EditorView | null>;
   onDocReplaced?: () => void;
+  keymapBindings?: CM6KeyBinding[];
 }
 
-export function CodeMirrorEditor({ doc, onChange, resolveImageSrc, viewRef, onDocReplaced }: CodeMirrorEditorProps) {
+export function CodeMirrorEditor({ doc, onChange, resolveImageSrc, viewRef, onDocReplaced, keymapBindings }: CodeMirrorEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const { view } = useCodeMirror({ containerRef, doc, onChange, resolveImageSrc, onDocReplaced });
+  const { view } = useCodeMirror({ containerRef, doc, onChange, resolveImageSrc, onDocReplaced, keymapBindings });
 
   useEffect(() => {
     if (viewRef) {

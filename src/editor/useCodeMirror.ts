@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { EditorView } from "@codemirror/view";
+import { EditorView, keymap, type KeyBinding as CM6KeyBinding } from "@codemirror/view";
 import { EditorState, Compartment } from "@codemirror/state";
+import { defaultKeymap, historyKeymap } from "@codemirror/commands";
 import { createExtensions } from "./extensions";
 import { getThemeExtension } from "./theme";
 
@@ -10,15 +11,17 @@ export interface UseCodeMirrorProps {
   onChange?: (content: string) => void;
   resolveImageSrc?: (src: string) => string;
   onDocReplaced?: () => void;
+  keymapBindings?: CM6KeyBinding[];
 }
 
 export function useCodeMirror(props: UseCodeMirrorProps): {
   view: EditorView | null;
 } {
-  const { containerRef, doc, onChange, resolveImageSrc, onDocReplaced } = props;
+  const { containerRef, doc, onChange, resolveImageSrc, onDocReplaced, keymapBindings } = props;
   const [view, setView] = useState<EditorView | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const themeCompartment = useRef(new Compartment());
+  const keymapCompartment = useRef(new Compartment());
   const suppressOnChange = useRef(false);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
@@ -37,6 +40,8 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
     const extensions = createExtensions({
       theme,
       themeCompartment: themeCompartment.current,
+      keymapCompartment: keymapCompartment.current,
+      keymapBindings,
       onChange: (content) => {
         if (!suppressOnChange.current) {
           onChangeRef.current?.(content);
@@ -93,6 +98,16 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
 
     return () => observer.disconnect();
   }, [view]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      effects: keymapCompartment.current.reconfigure(
+        keymap.of([...(keymapBindings ?? []), ...defaultKeymap, ...historyKeymap]),
+      ),
+    });
+  }, [keymapBindings]);
 
   return { view };
 }
