@@ -30,6 +30,7 @@ describe("WorkspaceStore", () => {
       currentPageHeadings: [],
       isDirty: false,
       reloadTrigger: 0,
+      viewStates: {},
       loading: false,
       error: null,
     });
@@ -234,6 +235,86 @@ describe("WorkspaceStore", () => {
       useWorkspaceStore.getState().selectPage("Page A.md");
     });
     expect(useWorkspaceStore.getState().currentPageHeadings).toEqual([]);
+  });
+
+  it("viewStates defaults to {}", () => {
+    expect(useWorkspaceStore.getState().viewStates).toEqual({});
+  });
+
+  it("saveViewState stores scrollTop and cursor", () => {
+    act(() => {
+      useWorkspaceStore.getState().saveViewState("Page A.md", 150, 42);
+    });
+    expect(useWorkspaceStore.getState().viewStates["Page A.md"]).toEqual({ scrollTop: 150, cursor: 42 });
+  });
+
+  it("saveViewState overwrites previous value", () => {
+    act(() => {
+      useWorkspaceStore.getState().saveViewState("Page A.md", 100, 10);
+    });
+    act(() => {
+      useWorkspaceStore.getState().saveViewState("Page A.md", 250, 55);
+    });
+    expect(useWorkspaceStore.getState().viewStates["Page A.md"]).toEqual({ scrollTop: 250, cursor: 55 });
+  });
+
+  it("multiple pages stored independently", () => {
+    act(() => {
+      useWorkspaceStore.getState().saveViewState("Page A.md", 100, 10);
+    });
+    act(() => {
+      useWorkspaceStore.getState().saveViewState("Page B.md", 200, 20);
+    });
+    const vs = useWorkspaceStore.getState().viewStates;
+    expect(vs["Page A.md"]).toEqual({ scrollTop: 100, cursor: 10 });
+    expect(vs["Page B.md"]).toEqual({ scrollTop: 200, cursor: 20 });
+  });
+
+  it("deletePage clears viewState for deleted page", async () => {
+    useWorkspaceStore.setState({ pages: [...samplePages] });
+    act(() => {
+      useWorkspaceStore.getState().saveViewState("Page A.md", 100, 10);
+      useWorkspaceStore.getState().saveViewState("Page B.md", 200, 20);
+    });
+
+    await act(async () => {
+      await useWorkspaceStore.getState().deletePage("Page A.md");
+    });
+
+    const vs = useWorkspaceStore.getState().viewStates;
+    expect(vs["Page A.md"]).toBeUndefined();
+    expect(vs["Page B.md"]).toEqual({ scrollTop: 200, cursor: 20 });
+  });
+
+  it("renamePage transfers viewState to new path", async () => {
+    useWorkspaceStore.setState({
+      pages: [...samplePages],
+      currentPagePath: "Page A.md",
+    });
+    act(() => {
+      useWorkspaceStore.getState().saveViewState("Page A.md", 150, 42);
+    });
+
+    await act(async () => {
+      await useWorkspaceStore.getState().renamePage("Page A.md", "Renamed");
+    });
+
+    const vs = useWorkspaceStore.getState().viewStates;
+    expect(vs["Renamed.md"]).toEqual({ scrollTop: 150, cursor: 42 });
+    expect(vs["Page A.md"]).toBeUndefined();
+  });
+
+  it("renamePage with no prior viewState is a no-op for viewStates", async () => {
+    useWorkspaceStore.setState({
+      pages: [...samplePages],
+      currentPagePath: "Page A.md",
+    });
+
+    await act(async () => {
+      await useWorkspaceStore.getState().renamePage("Page A.md", "Renamed");
+    });
+
+    expect(useWorkspaceStore.getState().viewStates).toEqual({});
   });
 
   it("refreshPages re-fetches page list", async () => {

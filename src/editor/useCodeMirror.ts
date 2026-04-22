@@ -9,12 +9,13 @@ export interface UseCodeMirrorProps {
   doc: string;
   onChange?: (content: string) => void;
   resolveImageSrc?: (src: string) => string;
+  onDocReplaced?: () => void;
 }
 
 export function useCodeMirror(props: UseCodeMirrorProps): {
   view: EditorView | null;
 } {
-  const { containerRef, doc, onChange, resolveImageSrc } = props;
+  const { containerRef, doc, onChange, resolveImageSrc, onDocReplaced } = props;
   const [view, setView] = useState<EditorView | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const themeCompartment = useRef(new Compartment());
@@ -23,6 +24,8 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
   onChangeRef.current = onChange;
   const resolveImageSrcRef = useRef(resolveImageSrc);
   resolveImageSrcRef.current = resolveImageSrc;
+  const onDocReplacedRef = useRef(onDocReplaced);
+  onDocReplacedRef.current = onDocReplaced;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -68,6 +71,7 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
       changes: { from: 0, to: view.state.doc.length, insert: doc },
     });
     suppressOnChange.current = false;
+    onDocReplacedRef.current?.();
   }, [doc]);
 
   useEffect(() => {

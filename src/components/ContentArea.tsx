@@ -1,5 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import type { EditorView } from "@codemirror/view";
+import { EditorSelection } from "@codemirror/state";
 import { useWorkspaceStore } from "../stores/workspace";
 import { readPage, writePage, parseRawYaml } from "../lib/ipc";
 import { extractHeadings } from "../lib/headings";
@@ -35,6 +37,8 @@ export function ContentArea() {
   const isDirty = useWorkspaceStore((s) => s.isDirty);
   const setDirty = useWorkspaceStore((s) => s.setDirty);
   const reloadTrigger = useWorkspaceStore((s) => s.reloadTrigger);
+  const saveViewState = useWorkspaceStore((s) => s.saveViewState);
+  const editorViewRef = useRef<EditorView | null>(null);
   const [body, setBody] = useState("");
   const [showConflict, setShowConflict] = useState(false);
   const [title, setTitle] = useState("");
@@ -79,6 +83,11 @@ export function ContentArea() {
   }, [setCurrentPageHeadings]);
 
   useEffect(() => {
+    const previousPath = currentPathRef.current;
+    if (previousPath && editorViewRef.current) {
+      const view = editorViewRef.current;
+      saveViewState(previousPath, view.scrollDOM.scrollTop, view.state.selection.main.head);
+    }
     currentPathRef.current = currentPagePath;
     if (currentPagePath) {
       loadPage(currentPagePath);
@@ -97,7 +106,7 @@ export function ContentArea() {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       if (headingDebounceRef.current) clearTimeout(headingDebounceRef.current);
     };
-  }, [currentPagePath, loadPage]);
+  }, [currentPagePath, loadPage, saveViewState]);
 
   useEffect(() => {
     if (pendingTitleFocus && title) {
@@ -125,6 +134,23 @@ export function ContentArea() {
     const absolutePath = workspacePath + "/" + resolveRelativePath(fileDir, src);
     return convertFileSrc(absolutePath);
   }, [workspacePath, currentPagePath]);
+
+  const handleDocReplaced = useCallback(() => {
+    const path = currentPathRef.current;
+    if (!path) return;
+    const vs = useWorkspaceStore.getState().viewStates[path];
+    requestAnimationFrame(() => {
+      const view = editorViewRef.current;
+      if (!view) return;
+      view.scrollDOM.scrollTop = vs?.scrollTop ?? 0;
+      const cursor = Math.min(vs?.cursor ?? 0, view.state.doc.length);
+      view.dispatch({ selection: EditorSelection.cursor(cursor) });
+      const active = document.activeElement;
+      if (!(active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement)) {
+        view.focus();
+      }
+    });
+  }, []);
 
   const commitTitle = () => {
     const trimmed = editingTitle.trim();
@@ -302,7 +328,7 @@ export function ContentArea() {
           )
         )}
       </div>
-      <CodeMirrorEditor doc={body} onChange={handleChange} resolveImageSrc={resolveImageSrc} />
+      <CodeMirrorEditor doc={body} onChange={handleChange} resolveImageSrc={resolveImageSrc} viewRef={editorViewRef} onDocReplaced={handleDocReplaced} />
       <ConflictDialog
         open={showConflict}
         onKeepMine={() => setShowConflict(false)}

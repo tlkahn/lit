@@ -125,6 +125,53 @@ describe("useCodeMirror", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
+  it("calls onDocReplaced after external doc replacement", () => {
+    const onDocReplaced = vi.fn();
+    const { rerender } = renderHook(
+      ({ doc }) =>
+        useCodeMirror({
+          containerRef: container.ref,
+          doc,
+          onDocReplaced,
+        }),
+      { initialProps: { doc: "first" } },
+    );
+
+    onDocReplaced.mockClear();
+    rerender({ doc: "second" });
+    expect(onDocReplaced).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT call onDocReplaced when content already matches", () => {
+    const onDocReplaced = vi.fn();
+    const { rerender } = renderHook(
+      ({ doc }) =>
+        useCodeMirror({
+          containerRef: container.ref,
+          doc,
+          onDocReplaced,
+        }),
+      { initialProps: { doc: "same" } },
+    );
+
+    onDocReplaced.mockClear();
+    rerender({ doc: "same" });
+    expect(onDocReplaced).not.toHaveBeenCalled();
+  });
+
+  it("works without onDocReplaced (no regression)", () => {
+    const { rerender } = renderHook(
+      ({ doc }) =>
+        useCodeMirror({
+          containerRef: container.ref,
+          doc,
+        }),
+      { initialProps: { doc: "first" } },
+    );
+
+    expect(() => rerender({ doc: "second" })).not.toThrow();
+  });
+
   it("reconfigures theme when dark class changes on document element", () => {
     renderHook(() =>
       useCodeMirror({

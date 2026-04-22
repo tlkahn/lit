@@ -40,6 +40,7 @@ beforeEach(() => {
     currentPageHeadings: [],
     isDirty: false,
     reloadTrigger: 0,
+    viewStates: {},
     loading: false,
     error: null,
   });
@@ -524,6 +525,86 @@ describe("ContentArea headings", () => {
   it("when no page selected, headings are []", () => {
     render(<ContentArea />);
     expect(useWorkspaceStore.getState().currentPageHeadings).toEqual([]);
+  });
+});
+
+describe("ContentArea scroll position", () => {
+  it("saves scroll position on page switch", async () => {
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor").textContent).toContain("Some content");
+    });
+
+    act(() => {
+      useWorkspaceStore.getState().selectPage("Other.md");
+    });
+
+    await waitFor(() => {
+      const vs = useWorkspaceStore.getState().viewStates["Hello.md"];
+      expect(vs).toBeDefined();
+      expect(vs!.scrollTop).toBeDefined();
+      expect(vs!.cursor).toBeDefined();
+    });
+  });
+
+  it("no save when switching from null", async () => {
+    render(<ContentArea />);
+    expect(screen.getByTestId("empty-state")).toBeInTheDocument();
+
+    act(() => {
+      useWorkspaceStore.getState().selectPage("Hello.md");
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor").textContent).toContain("Some content");
+    });
+
+    expect(useWorkspaceStore.getState().viewStates).toEqual({});
+  });
+
+  it("saves when deselecting to null", async () => {
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor").textContent).toContain("Some content");
+    });
+
+    act(() => {
+      useWorkspaceStore.getState().selectPage(null);
+    });
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().viewStates["Hello.md"]).toBeDefined();
+    });
+  });
+
+  it("saves cursor position on page switch", async () => {
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor").textContent).toContain("Some content");
+    });
+
+    const cmEditor = screen.getByTestId("editor").querySelector(".cm-editor");
+    const { EditorView } = await import("@codemirror/view");
+    const { EditorSelection } = await import("@codemirror/state");
+    const view = EditorView.findFromDOM(cmEditor as HTMLElement)!;
+
+    act(() => {
+      view.dispatch({ selection: EditorSelection.cursor(5) });
+    });
+
+    act(() => {
+      useWorkspaceStore.getState().selectPage("Other.md");
+    });
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().viewStates["Hello.md"]?.cursor).toBe(5);
+    });
   });
 });
 

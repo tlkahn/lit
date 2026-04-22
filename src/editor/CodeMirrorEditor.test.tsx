@@ -1,6 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen, act } from "@testing-library/react";
+import { useRef } from "react";
 import { CodeMirrorEditor } from "./CodeMirrorEditor";
+import type { EditorView } from "@codemirror/view";
 
 describe("CodeMirrorEditor", () => {
   it("renders container with data-testid='editor'", () => {
@@ -45,5 +47,30 @@ describe("CodeMirrorEditor", () => {
         new CustomEvent("lit:scroll-to-line", { detail: { line: 0 } }),
       );
     }).not.toThrow();
+  });
+
+  it("viewRef is populated with EditorView", () => {
+    let capturedRef: React.RefObject<EditorView | null> = { current: null };
+    function Wrapper() {
+      const ref = useRef<EditorView | null>(null);
+      capturedRef = ref;
+      return <CodeMirrorEditor doc="test" viewRef={ref} />;
+    }
+    render(<Wrapper />);
+    expect(capturedRef.current).not.toBeNull();
+    expect(capturedRef.current!.scrollDOM).toBeDefined();
+  });
+
+  it("works without viewRef (no regression)", () => {
+    render(<CodeMirrorEditor doc="test" />);
+    expect(screen.getByTestId("editor")).toBeInTheDocument();
+  });
+
+  it("calls onDocReplaced when doc prop changes", () => {
+    const fn = vi.fn();
+    const { rerender } = render(<CodeMirrorEditor doc="first" onDocReplaced={fn} />);
+    fn.mockClear();
+    rerender(<CodeMirrorEditor doc="second" onDocReplaced={fn} />);
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 });

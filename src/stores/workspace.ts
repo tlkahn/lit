@@ -7,6 +7,11 @@ const RECENT_KEY = "lit-recent-workspaces";
 const LEGACY_KEY = "lit-workspace-path";
 const MAX_RECENT = 10;
 
+export interface ViewState {
+  scrollTop: number;
+  cursor: number;
+}
+
 export interface WorkspaceStore {
   workspacePath: string | null;
   pages: PageMeta[];
@@ -15,6 +20,7 @@ export interface WorkspaceStore {
   currentPageHeadings: Heading[];
   isDirty: boolean;
   reloadTrigger: number;
+  viewStates: Record<string, ViewState>;
   loading: boolean;
   error: string | null;
 
@@ -28,6 +34,7 @@ export interface WorkspaceStore {
   setCurrentPageHeadings: (headings: Heading[]) => void;
   setDirty: (dirty: boolean) => void;
   triggerReload: () => void;
+  saveViewState: (path: string, scrollTop: number, cursor: number) => void;
 }
 
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
@@ -38,6 +45,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   currentPageHeadings: [],
   isDirty: false,
   reloadTrigger: 0,
+  viewStates: {},
   loading: false,
   error: null,
 
@@ -86,15 +94,22 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   renamePage: async (oldPath: string, newName: string) => {
     try {
       const newPath = await ipc.renamePage(oldPath, newName);
-      set((state) => ({
-        pages: state.pages.map((p) =>
-          p.relative_path === oldPath
-            ? { ...p, title: newName, relative_path: newPath }
-            : p,
-        ),
-        currentPagePath:
-          state.currentPagePath === oldPath ? newPath : state.currentPagePath,
-      }));
+      set((state) => {
+        const { [oldPath]: viewState, ...restViewStates } = state.viewStates;
+        const newViewStates = viewState !== undefined
+          ? { ...restViewStates, [newPath]: viewState }
+          : restViewStates;
+        return {
+          pages: state.pages.map((p) =>
+            p.relative_path === oldPath
+              ? { ...p, title: newName, relative_path: newPath }
+              : p,
+          ),
+          currentPagePath:
+            state.currentPagePath === oldPath ? newPath : state.currentPagePath,
+          viewStates: newViewStates,
+        };
+      });
     } catch (e) {
       set({ error: String(e) });
     }
@@ -108,14 +123,25 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
 
   triggerReload: () => set((state) => ({ reloadTrigger: state.reloadTrigger + 1 })),
 
+  saveViewState: (path: string, scrollTop: number, cursor: number) =>
+    set((state) => ({
+      viewStates: { ...state.viewStates, [path]: { scrollTop, cursor } },
+    })),
+
   deletePage: async (relativePath: string) => {
     try {
       await ipc.deletePage(relativePath);
-      set((state) => ({
-        pages: state.pages.filter((p) => p.relative_path !== relativePath),
-        currentPagePath:
-          state.currentPagePath === relativePath ? null : state.currentPagePath,
-      }));
+      set((state) => {
+        const viewStates = Object.fromEntries(
+          Object.entries(state.viewStates).filter(([k]) => k !== relativePath),
+        );
+        return {
+          pages: state.pages.filter((p) => p.relative_path !== relativePath),
+          currentPagePath:
+            state.currentPagePath === relativePath ? null : state.currentPagePath,
+          viewStates,
+        };
+      });
     } catch (e) {
       set({ error: String(e) });
     }
