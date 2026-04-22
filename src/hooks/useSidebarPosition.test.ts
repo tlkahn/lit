@@ -1,29 +1,30 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useSidebarPosition } from "./useSidebarPosition";
+import { usePreferencesStore } from "../stores/preferences";
 
 describe("useSidebarPosition", () => {
-  it("defaults to left when no localStorage", () => {
+  beforeEach(() => {
+    usePreferencesStore.setState({ darkMode: false, colorTheme: null, sidebarLocation: "left", loaded: true });
+  });
+
+  it("defaults to left", () => {
     const { result } = renderHook(() => useSidebarPosition());
     expect(result.current.position).toBe("left");
   });
 
-  it("reads stored position from localStorage", () => {
-    localStorage.setItem("lit-sidebar-position", "right");
+  it("reads position from preferences store", () => {
+    usePreferencesStore.setState({ sidebarLocation: "right" });
     const { result } = renderHook(() => useSidebarPosition());
     expect(result.current.position).toBe("right");
   });
 
-  it("togglePosition switches left to right and persists", () => {
+  it("reacts to preferences store changes", () => {
+    usePreferencesStore.setState({ sidebarLocation: "left" });
     const { result } = renderHook(() => useSidebarPosition());
     expect(result.current.position).toBe("left");
 
-    act(() => result.current.togglePosition());
+    act(() => usePreferencesStore.setState({ sidebarLocation: "right" }));
     expect(result.current.position).toBe("right");
-    expect(localStorage.getItem("lit-sidebar-position")).toBe("right");
-
-    act(() => result.current.togglePosition());
-    expect(result.current.position).toBe("left");
-    expect(localStorage.getItem("lit-sidebar-position")).toBe("left");
   });
 });

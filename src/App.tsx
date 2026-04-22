@@ -4,26 +4,37 @@ import { ContentArea } from "./components/ContentArea";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ContentErrorFallback } from "./components/ContentErrorFallback";
 import { WorkspaceChooser } from "./components/WorkspaceChooser";
-import { MenuBar } from "./components/MenuBar";
 import { useTheme } from "./hooks/useTheme";
 import { useSidebarPosition } from "./hooks/useSidebarPosition";
 import { useFileWatcher } from "./hooks/useFileWatcher";
 import { useWorkspaceStore, getRecentWorkspaces } from "./stores/workspace";
 import { useThemeStore } from "./stores/theme";
+import { usePreferencesStore } from "./stores/preferences";
 import { getInitialWorkspace, getPendingWorkspace } from "./lib/ipc";
 
 function App() {
-  const { theme, toggleTheme } = useTheme();
-  const { position, togglePosition } = useSidebarPosition();
+  useTheme();
+  const { position } = useSidebarPosition();
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const openWorkspace = useWorkspaceStore((s) => s.openWorkspace);
   const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
   const triggerReload = useWorkspaceStore((s) => s.triggerReload);
   const initThemes = useThemeStore((s) => s.loadThemes);
+  const loadPreferences = usePreferencesStore((s) => s.loadPreferences);
+  const colorTheme = usePreferencesStore((s) => s.colorTheme);
+  const syncFromPreferences = useThemeStore((s) => s.syncFromPreferences);
+
+  useEffect(() => {
+    loadPreferences();
+  }, [loadPreferences]);
 
   useEffect(() => {
     initThemes();
   }, [initThemes]);
+
+  useEffect(() => {
+    syncFromPreferences();
+  }, [colorTheme, syncFromPreferences]);
 
   useEffect(() => {
     if (workspacePath) return;
@@ -54,7 +65,6 @@ function App() {
 
   return (
     <div className="flex h-screen flex-col bg-bg-primary">
-      <MenuBar theme={theme} toggleTheme={toggleTheme} position={position} togglePosition={togglePosition} />
       <div className={`flex min-h-0 flex-1 ${position === "right" ? "flex-row-reverse" : "flex-row"}`}>
         <Sidebar />
         <div className="flex min-h-0 flex-1 flex-col">

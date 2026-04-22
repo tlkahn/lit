@@ -123,3 +123,20 @@ export async function getUserKeymapsPath(): Promise<string> {
 export async function saveUserKeymaps(bindings: KeyBinding[]): Promise<void> {
   return invoke<void>("save_user_keymaps", { bindings });
 }
+
+// Preferences commands
+
+export interface Preferences {
+  "workbench.colorTheme": string | null;
+  "workbench.darkMode": boolean;
+  "workbench.sideBar.location": string;
+  [key: string]: unknown;
+}
+
+export async function getPreferences(): Promise<Preferences> {
+  return invoke<Preferences>("get_preferences");
+}
+
+export async function getPreferencesPath(): Promise<string> {
+  return invoke<string>("get_preferences_path");
+}

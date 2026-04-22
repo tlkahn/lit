@@ -2,8 +2,7 @@ import { create } from "zustand";
 import type { ThemeInfo } from "../lib/ipc";
 import { listThemes, readThemeCss } from "../lib/ipc";
 import { injectThemeCss, clearThemeCss } from "../lib/themeInjector";
-
-const STORAGE_KEY = "lit-active-theme";
+import { usePreferencesStore } from "./preferences";
 
 export interface ThemeStore {
   activeThemeId: string | null;
@@ -11,6 +10,7 @@ export interface ThemeStore {
   loadThemes: () => Promise<void>;
   activateTheme: (directoryName: string) => Promise<void>;
   deactivateTheme: () => void;
+  syncFromPreferences: () => Promise<void>;
 }
 
 export const useThemeStore = create<ThemeStore>((set, get) => ({
@@ -21,13 +21,19 @@ export const useThemeStore = create<ThemeStore>((set, get) => ({
     try {
       const themes = await listThemes();
       set({ availableThemes: themes });
-
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored && themes.some((t) => t.directory_name === stored)) {
-        await get().activateTheme(stored);
-      }
+      await get().syncFromPreferences();
     } catch {
       // IPC unavailable (tests, plain browser dev)
+    }
+  },
+
+  syncFromPreferences: async () => {
+    const colorTheme = usePreferencesStore.getState().colorTheme;
+    const themes = get().availableThemes;
+    if (colorTheme && themes.some((t) => t.directory_name === colorTheme)) {
+      await get().activateTheme(colorTheme);
+    } else if (!colorTheme && get().activeThemeId) {
+      get().deactivateTheme();
     }
   },
 
@@ -36,7 +42,6 @@ export const useThemeStore = create<ThemeStore>((set, get) => ({
       const css = await readThemeCss(directoryName);
       injectThemeCss(css);
       set({ activeThemeId: directoryName });
-      localStorage.setItem(STORAGE_KEY, directoryName);
     } catch (e) {
       console.error("[ThemeStore] Failed to activate theme:", e);
     }
@@ -45,6 +50,5 @@ export const useThemeStore = create<ThemeStore>((set, get) => ({
   deactivateTheme: () => {
     clearThemeCss();
     set({ activeThemeId: null });
-    localStorage.removeItem(STORAGE_KEY);
   },
 }));

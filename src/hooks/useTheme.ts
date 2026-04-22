@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
+import { useEffect } from "react";
+import { usePreferencesStore } from "../stores/preferences";
 
 export type Theme = "light" | "dark";
 
@@ -11,22 +12,9 @@ async function syncNativeTitleBar(theme: Theme): Promise<void> {
   }
 }
 
-const STORAGE_KEY = "lit-theme";
-
-function getSystemTheme(): Theme {
-  return window.matchMedia("(prefers-color-scheme: dark)").matches
-    ? "dark"
-    : "light";
-}
-
-function getInitialTheme(): Theme {
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (stored === "light" || stored === "dark") return stored;
-  return getSystemTheme();
-}
-
 export function useTheme() {
-  const [theme, setTheme] = useState<Theme>(getInitialTheme);
+  const darkMode = usePreferencesStore((s) => s.darkMode);
+  const theme: Theme = darkMode ? "dark" : "light";
 
   useEffect(() => {
     const root = document.documentElement;
@@ -40,13 +28,5 @@ export function useTheme() {
     syncNativeTitleBar(theme);
   }, [theme]);
 
-  const toggleTheme = useCallback(() => {
-    setTheme((prev) => {
-      const next = prev === "light" ? "dark" : "light";
-      localStorage.setItem(STORAGE_KEY, next);
-      return next;
-    });
-  }, []);
-
-  return { theme, toggleTheme } as const;
+  return { theme } as const;
 }

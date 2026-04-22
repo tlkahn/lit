@@ -2,91 +2,49 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useTheme } from "./useTheme";
-
-function mockMatchMedia(matches: boolean) {
-  Object.defineProperty(window, "matchMedia", {
-    writable: true,
-    value: vi.fn().mockImplementation((query: string) => ({
-      matches,
-      media: query,
-      onchange: null,
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-    })),
-  });
-}
+import { usePreferencesStore } from "../stores/preferences";
 
 describe("useTheme", () => {
   beforeEach(() => {
-    document.documentElement.classList.remove("dark");
-    mockMatchMedia(false);
+    document.documentElement.classList.remove("dark", "theme-dark", "theme-light");
+    usePreferencesStore.setState({ darkMode: false, colorTheme: null, sidebarLocation: "left", loaded: true });
   });
 
-  it("defaults to light when system prefers light", () => {
-    mockMatchMedia(false);
-    const { result } = renderHook(() => useTheme());
-    expect(result.current.theme).toBe("light");
+  it("applies light theme when darkMode is false", () => {
+    usePreferencesStore.setState({ darkMode: false });
+    renderHook(() => useTheme());
     expect(document.documentElement.classList.contains("dark")).toBe(false);
+    expect(document.documentElement.classList.contains("theme-light")).toBe(true);
   });
 
-  it("defaults to dark when system prefers dark", () => {
-    mockMatchMedia(true);
+  it("applies dark theme when darkMode is true", () => {
+    usePreferencesStore.setState({ darkMode: true });
     const { result } = renderHook(() => useTheme());
     expect(result.current.theme).toBe("dark");
     expect(document.documentElement.classList.contains("dark")).toBe(true);
+    expect(document.documentElement.classList.contains("theme-dark")).toBe(true);
   });
 
-  it("uses localStorage override over system preference", () => {
-    mockMatchMedia(false);
-    localStorage.setItem("lit-theme", "dark");
-    const { result } = renderHook(() => useTheme());
-    expect(result.current.theme).toBe("dark");
-    expect(document.documentElement.classList.contains("dark")).toBe(true);
-  });
-
-  it("toggles from light to dark", () => {
-    mockMatchMedia(false);
+  it("reacts to preferences store changes", () => {
+    usePreferencesStore.setState({ darkMode: false });
     const { result } = renderHook(() => useTheme());
     expect(result.current.theme).toBe("light");
 
-    act(() => result.current.toggleTheme());
+    act(() => usePreferencesStore.setState({ darkMode: true }));
     expect(result.current.theme).toBe("dark");
-    expect(document.documentElement.classList.contains("dark")).toBe(true);
-    expect(localStorage.getItem("lit-theme")).toBe("dark");
   });
 
-  it("toggles from dark to light", () => {
-    mockMatchMedia(true);
-    const { result } = renderHook(() => useTheme());
-    expect(result.current.theme).toBe("dark");
-
-    act(() => result.current.toggleTheme());
-    expect(result.current.theme).toBe("light");
-    expect(document.documentElement.classList.contains("dark")).toBe(false);
-    expect(localStorage.getItem("lit-theme")).toBe("light");
-  });
-
-  it("calls setTheme on the native window when theme changes", async () => {
-    mockMatchMedia(false);
+  it("calls setTheme on the native window", async () => {
+    usePreferencesStore.setState({ darkMode: false });
     const mockSetTheme = vi.fn(() => Promise.resolve());
     vi.mocked(getCurrentWindow).mockReturnValue({
       setTheme: mockSetTheme,
     } as unknown as ReturnType<typeof getCurrentWindow>);
 
-    const { result } = renderHook(() => useTheme());
-    expect(result.current.theme).toBe("light");
+    renderHook(() => useTheme());
 
     await waitFor(() => {
       expect(mockSetTheme).toHaveBeenCalledWith("light");
-    });
-
-    act(() => result.current.toggleTheme());
-
-    await waitFor(() => {
-      expect(mockSetTheme).toHaveBeenCalledWith("dark");
     });
   });
 });

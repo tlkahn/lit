@@ -1,4 +1,6 @@
 mod commands;
+mod menu;
+pub mod preferences;
 pub mod workspace;
 
 use commands::workspace::{PendingWorkspaces, WorkspaceRegistry};
@@ -33,7 +35,45 @@ pub fn run() {
         .setup(|app| {
             let _ = commands::theme::seed_bundled_themes(app.handle());
             commands::keymap::seed_default_keymaps(app.handle());
+            preferences::seed_default_if_missing(app.handle());
+
+            let menu = menu::build_menu(app.handle())?;
+            app.set_menu(menu)?;
+
+            if let Ok(watcher) = preferences::PreferencesWatcher::new(app.handle().clone()) {
+                app.manage(watcher);
+            }
+
             Ok(())
+        })
+        .on_menu_event(|app, event| {
+            match event.id().as_ref() {
+                "open_workspace" => {
+                    let handle = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        use tauri_plugin_dialog::DialogExt;
+                        let dialog = handle.dialog().clone();
+                        dialog.file().pick_folder(move |folder| {
+                            if let Some(path) = folder {
+                                let p = path.to_string();
+                                let _ = commands::workspace::create_workspace_window(&handle, Some(p));
+                            }
+                        });
+                    });
+                }
+                "open_preferences" => {
+                    let handle = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        preferences::seed_default_if_missing(&handle);
+                        let path = preferences::preferences_path(&handle);
+                        if let Some(path_str) = path.to_str() {
+                            use tauri_plugin_opener::OpenerExt;
+                            let _ = handle.opener().open_path(path_str, None::<&str>);
+                        }
+                    });
+                }
+                _ => {}
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::app_info::get_app_info,
@@ -55,6 +95,8 @@ pub fn run() {
             commands::keymap::get_default_keymaps,
             commands::keymap::get_user_keymaps_path,
             commands::keymap::save_user_keymaps,
+            commands::preferences::get_preferences,
+            commands::preferences::get_preferences_path,
             get_initial_workspace,
         ])
         .on_window_event(|window, event| {

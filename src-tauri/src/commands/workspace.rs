@@ -90,23 +90,32 @@ pub fn get_workspace_path(
 
 static WINDOW_COUNTER: AtomicU32 = AtomicU32::new(1);
 
-#[tauri::command]
-pub fn open_workspace_window(
+pub fn create_workspace_window(
+    app_handle: &tauri::AppHandle,
     path: Option<String>,
-    app_handle: tauri::AppHandle,
-    state: State<PendingWorkspaces>,
 ) -> Result<String, String> {
     let id = WINDOW_COUNTER.fetch_add(1, Ordering::Relaxed);
     let label = format!("workspace-{id}");
     if let Some(ref p) = path {
-        state.0.lock().unwrap().insert(label.clone(), p.clone());
+        if let Some(pending) = app_handle.try_state::<PendingWorkspaces>() {
+            pending.0.lock().unwrap().insert(label.clone(), p.clone());
+        }
     }
-    WebviewWindowBuilder::new(&app_handle, &label, tauri::WebviewUrl::default())
+    WebviewWindowBuilder::new(app_handle, &label, tauri::WebviewUrl::default())
         .title("Lit")
         .inner_size(1024.0, 768.0)
         .build()
         .map_err(|e| format!("Failed to create window: {e}"))?;
     Ok(label)
+}
+
+#[tauri::command]
+pub fn open_workspace_window(
+    path: Option<String>,
+    app_handle: tauri::AppHandle,
+    _state: State<PendingWorkspaces>,
+) -> Result<String, String> {
+    create_workspace_window(&app_handle, path)
 }
 
 #[tauri::command]

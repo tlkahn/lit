@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import App from "./App";
 import { mockInvoke, mockListen, emitMockEvent } from "./test/tauri-mock";
 import { useWorkspaceStore } from "./stores/workspace";
+import { usePreferencesStore } from "./stores/preferences";
 
 const samplePages = [
   {
@@ -15,25 +15,8 @@ const samplePages = [
   },
 ];
 
-function mockMatchMedia(matches: boolean) {
-  Object.defineProperty(window, "matchMedia", {
-    writable: true,
-    value: vi.fn().mockImplementation((query: string) => ({
-      matches,
-      media: query,
-      onchange: null,
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-    })),
-  });
-}
-
 describe("App", () => {
   beforeEach(() => {
-    mockMatchMedia(false);
     document.documentElement.classList.remove("dark");
     useWorkspaceStore.setState({
       workspacePath: null,
@@ -41,6 +24,13 @@ describe("App", () => {
       currentPagePath: null,
       loading: false,
       error: null,
+    });
+
+    usePreferencesStore.setState({
+      darkMode: false,
+      colorTheme: null,
+      sidebarLocation: "left",
+      loaded: true,
     });
 
     mockInvoke((cmd) => {
@@ -57,6 +47,12 @@ describe("App", () => {
           return null;
         case "list_themes":
           return [];
+        case "get_preferences":
+          return {
+            "workbench.colorTheme": null,
+            "workbench.darkMode": false,
+            "workbench.sideBar.location": "left",
+          };
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -110,13 +106,11 @@ describe("App", () => {
     });
   });
 
-  it("has a theme toggle that switches to dark mode", async () => {
+  it("applies dark mode from preferences", () => {
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [] });
+    usePreferencesStore.setState({ darkMode: true });
 
-    const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByText("View"));
-    await user.click(screen.getByText("Dark Mode"));
     expect(document.documentElement.classList.contains("dark")).toBe(true);
   });
 
@@ -129,13 +123,11 @@ describe("App", () => {
     expect(container.className).not.toContain("flex-row-reverse");
   });
 
-  it("position toggle moves sidebar to the right", async () => {
+  it("renders sidebar on the right from preferences", () => {
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [] });
+    usePreferencesStore.setState({ sidebarLocation: "right" });
 
-    const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByText("View"));
-    await user.click(screen.getByText("Sidebar Right"));
     const container = screen.getByText("Files").closest("aside")!.parentElement!;
     expect(container.className).toContain("flex-row-reverse");
   });
