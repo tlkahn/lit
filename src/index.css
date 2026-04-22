@@ -52,4 +52,5 @@ html, body, #root {
 .tok-string { color: var(--color-green); }
 .tok-number, .tok-bool, .tok-atom { color: var(--color-orange); }
 .tok-comment { color: var(--text-faint); font-style: italic; }
+.cm-preview-comment { color: var(--text-faint); font-style: italic; }
 .tok-typeName { color: var(--color-cyan); }

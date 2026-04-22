@@ -384,7 +384,14 @@ function collectBlockDecos(view: EditorView): DecoInfo[] {
   const iter = blockDecos.iter();
   while (iter.value) {
     const spec = iter.value.spec;
-    result.push({ from: iter.from, to: iter.to, type: "replace", widget: !!spec.widget });
+    const info: DecoInfo = {
+      from: iter.from,
+      to: iter.to,
+      type: spec.class ? "mark" : "replace",
+    };
+    if (spec.widget) info.widget = true;
+    if (spec.class) info.class = spec.class;
+    result.push(info);
     iter.next();
   }
   return result;
@@ -525,12 +532,13 @@ describe("buildBlockReplacements — mermaid", () => {
 });
 
 describe("buildDecorations — inline comments", () => {
-  it("replaces %%hidden%% entirely when cursor is elsewhere", () => {
+  it("marks %%hidden%% as faded when cursor is elsewhere", () => {
     const doc = "text %%hidden%% more\n\nother";
     const view = makeView(doc, doc.length - 1);
     const decos = collectDecos(view);
-    const replace = decos.find((d) => d.type === "replace" && d.from === 5 && d.to === 15);
-    expect(replace).toBeDefined();
+    const mark = decos.find((d) => d.type === "mark" && d.from === 5 && d.to === 15);
+    expect(mark).toBeDefined();
+    expect(mark!.class).toBe("cm-preview-comment");
     view.destroy();
   });
 
@@ -546,19 +554,21 @@ describe("buildDecorations — inline comments", () => {
     const doc = "before %%comment%% after\n\nother";
     const view = makeView(doc, doc.length - 1);
     const decos = collectDecos(view);
-    const replace = decos.find((d) => d.type === "replace" && d.from === 7 && d.to === 18);
-    expect(replace).toBeDefined();
+    const mark = decos.find((d) => d.type === "mark" && d.from === 7 && d.to === 18);
+    expect(mark).toBeDefined();
+    expect(mark!.class).toBe("cm-preview-comment");
     view.destroy();
   });
 });
 
 describe("buildBlockReplacements — block comments", () => {
-  it("hides multi-line block comment when cursor is elsewhere", () => {
+  it("marks multi-line block comment as faded when cursor is elsewhere", () => {
     const doc = "%%\nblock content\n%%\n\nother";
     const view = makeView(doc, doc.length - 1);
     const decos = collectBlockDecos(view);
-    const bc = decos.find((d) => d.from === 0);
+    const bc = decos.find((d) => d.from === 0 && d.type === "mark");
     expect(bc).toBeDefined();
+    expect(bc!.class).toBe("cm-preview-comment");
     view.destroy();
   });
 
@@ -589,12 +599,13 @@ describe("buildBlockReplacements — block comments", () => {
     view.destroy();
   });
 
-  it("single-line %%content%% at line start handled by buildDecorations", () => {
+  it("single-line %%content%% at line start marked as faded by buildDecorations", () => {
     const doc = "%%single line%%\n\nother";
     const view = makeView(doc, doc.length - 1);
     const decos = collectDecos(view);
-    const replace = decos.find((d) => d.type === "replace" && d.from === 0 && d.to === 15);
-    expect(replace).toBeDefined();
+    const mark = decos.find((d) => d.type === "mark" && d.from === 0 && d.to === 15);
+    expect(mark).toBeDefined();
+    expect(mark!.class).toBe("cm-preview-comment");
     view.destroy();
   });
 

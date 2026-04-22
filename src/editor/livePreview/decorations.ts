@@ -509,7 +509,7 @@ function addInlineCommentDecos(
   decos: { from: number; to: number; deco: Decoration }[],
 ) {
   if (isCursorOnLine(state, from, to)) return;
-  decos.push({ from, to, deco: Decoration.replace({}) });
+  decos.push({ from, to, deco: Decoration.mark({ class: "cm-preview-comment" }) });
 }
 
 function addBlockCommentDecos(
@@ -519,5 +519,5 @@ function addBlockCommentDecos(
   decos: { from: number; to: number; deco: Decoration }[],
 ) {
   if (isCursorOnLine(state, from, to)) return;
-  decos.push({ from, to, deco: Decoration.replace({}) });
+  decos.push({ from, to, deco: Decoration.mark({ class: "cm-preview-comment" }) });
 }
