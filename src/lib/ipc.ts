@@ -16,6 +16,7 @@ export interface PageMeta {
 export interface PageContent {
   meta: PageMeta;
   body: string;
+  raw_yaml: string;
 }
 
 export interface FileEvent {

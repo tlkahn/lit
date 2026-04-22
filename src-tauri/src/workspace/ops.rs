@@ -13,7 +13,7 @@ pub fn read_page(root: &Path, relative_path: &str) -> Result<PageContent, Worksp
         return Err(WorkspaceError::PageNotFound(relative_path.to_string()));
     }
     let raw = fs::read_to_string(&full_path)?;
-    let (frontmatter, body) = parse_frontmatter(&raw);
+    let parsed = parse_frontmatter(&raw);
 
     let file_name = full_path
         .file_name()
@@ -37,11 +37,12 @@ pub fn read_page(root: &Path, relative_path: &str) -> Result<PageContent, Worksp
         meta: PageMeta {
             title,
             relative_path: normalize_to_nfc(relative_path),
-            frontmatter,
+            frontmatter: parsed.map,
             created_at,
             modified_at,
         },
-        body: body.to_string(),
+        body: parsed.body.to_string(),
+        raw_yaml: parsed.raw_yaml,
     })
 }
 

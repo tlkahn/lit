@@ -3,6 +3,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { useWorkspaceStore } from "../stores/workspace";
 import { readPage, writePage } from "../lib/ipc";
 import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
+import { YamlHighlighter } from "./YamlHighlighter";
 
 function resolveRelativePath(base: string, relative: string): string {
   const segments = (base ? base + "/" + relative : relative).split("/");
@@ -24,6 +25,7 @@ export function ContentArea() {
   const [title, setTitle] = useState("");
   const [editingTitle, setEditingTitle] = useState("");
   const [frontmatter, setFrontmatter] = useState<Record<string, unknown>>({});
+  const [rawYaml, setRawYaml] = useState("");
   const [showFrontmatter, setShowFrontmatter] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const currentPathRef = useRef<string | null>(null);
@@ -38,6 +40,7 @@ export function ContentArea() {
         setTitle(content.meta.title);
         setEditingTitle(content.meta.title);
         setFrontmatter(content.meta.frontmatter);
+        setRawYaml(content.raw_yaml);
       } else {
         console.debug("[ContentArea] loadPage stale, ignoring:", path);
       }
@@ -47,6 +50,7 @@ export function ContentArea() {
       setTitle("");
       setEditingTitle("");
       setFrontmatter({});
+      setRawYaml("");
     }
   }, []);
 
@@ -59,6 +63,7 @@ export function ContentArea() {
       setTitle("");
       setEditingTitle("");
       setFrontmatter({});
+      setRawYaml("");
     }
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -148,12 +153,11 @@ export function ContentArea() {
           </button>
         )}
         {showFrontmatter && (
-          <pre
-            className="mt-2 rounded bg-bg-secondary p-2 text-xs text-text-muted"
+          <YamlHighlighter
+            code={rawYaml}
+            className="mt-2 rounded bg-bg-secondary p-2 text-xs"
             data-testid="frontmatter"
-          >
-            {JSON.stringify(frontmatter, null, 2)}
-          </pre>
+          />
         )}
       </div>
       <CodeMirrorEditor doc={body} onChange={handleChange} resolveImageSrc={resolveImageSrc} />

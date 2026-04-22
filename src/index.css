@@ -48,3 +48,8 @@ html, body, #root {
 .tok-meta { color: var(--text-faint); }
 .tok-quote { color: var(--text-muted); font-style: italic; }
 .tok-list { color: var(--text-muted); }
+.tok-propertyName { color: var(--color-blue); }
+.tok-string { color: var(--color-green); }
+.tok-number, .tok-bool, .tok-atom { color: var(--color-orange); }
+.tok-comment { color: var(--text-faint); font-style: italic; }
+.tok-typeName { color: var(--color-cyan); }

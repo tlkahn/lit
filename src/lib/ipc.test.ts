@@ -35,7 +35,7 @@ describe("ipc", () => {
         case "get_workspace_path":
           return "/workspace";
         case "read_page":
-          return { meta: sampleMeta, body: "# Hello" };
+          return { meta: sampleMeta, body: "# Hello", raw_yaml: "" };
         case "write_page":
           return null;
         case "create_page":

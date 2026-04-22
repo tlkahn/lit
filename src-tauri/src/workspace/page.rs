@@ -14,4 +14,5 @@ pub struct PageMeta {
 pub struct PageContent {
     pub meta: PageMeta,
     pub body: String,
+    pub raw_yaml: String,
 }

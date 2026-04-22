@@ -6,6 +6,7 @@ import { useWorkspaceStore } from "../stores/workspace";
 
 const samplePage = {
   body: "# Hello\nSome content",
+  raw_yaml: "tags:\n  - test\n",
   meta: {
     title: "Hello",
     frontmatter: { tags: ["test"] },
@@ -17,6 +18,7 @@ const samplePage = {
 
 const otherPage = {
   body: "# Other\nDifferent content",
+  raw_yaml: "",
   meta: {
     title: "Other",
     frontmatter: {},
@@ -175,6 +177,9 @@ describe("ContentArea", () => {
       screen.getByText("Show frontmatter").click();
     });
     expect(screen.getByTestId("frontmatter")).toBeInTheDocument();
-    expect(screen.getByTestId("frontmatter").textContent).toContain("test");
+    const text = screen.getByTestId("frontmatter").textContent!;
+    expect(text).toContain("test");
+    expect(text).toContain("tags:");
+    expect(text).not.toContain('"tags"');
   });
 });

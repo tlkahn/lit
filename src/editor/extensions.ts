@@ -7,7 +7,7 @@ import { GFM } from "@lezer/markdown";
 import { getThemeExtension, highlightExtension } from "./theme";
 import { livePreviewExtension } from "./livePreview";
 import { WikiLink } from "./markdown/wikilink";
-import { Frontmatter } from "./markdown/frontmatter";
+import { Frontmatter, FrontmatterYamlWrap } from "./markdown/frontmatter";
 import { Math } from "./markdown/math";
 
 export interface ExtensionConfig {
@@ -21,7 +21,7 @@ export interface ExtensionConfig {
 export function createExtensions(config: ExtensionConfig): Extension[] {
   return [
     markdown({
-      extensions: [GFM, WikiLink, Frontmatter, Math],
+      extensions: [GFM, WikiLink, Frontmatter, FrontmatterYamlWrap, Math],
       codeLanguages: languages,
     }),
     config.themeCompartment.of(getThemeExtension(config.theme)),
