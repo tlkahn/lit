@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useThemeStore } from "../stores/theme";
 import { getThemesDirectory } from "../lib/ipc";
 
@@ -8,6 +8,18 @@ export function ThemeChooser() {
   const activateTheme = useThemeStore((s) => s.activateTheme);
   const deactivateTheme = useThemeStore((s) => s.deactivateTheme);
   const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClick = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
 
   const handleOpenFolder = async () => {
     try {
@@ -24,7 +36,7 @@ export function ThemeChooser() {
   }
 
   return (
-    <div className="relative">
+    <div ref={containerRef} className="relative">
       <button
         onClick={() => setOpen(!open)}
         className="rounded px-2 py-1 text-sm text-text-muted hover:bg-bg-hover"
@@ -33,7 +45,7 @@ export function ThemeChooser() {
         Theme
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-20 mt-1 min-w-48 rounded border border-border bg-bg-primary shadow-lg">
+        <div className="absolute right-0 top-full z-20 mt-1 min-w-48 select-none rounded border border-border bg-bg-primary shadow-lg">
           <button
             onClick={() => {
               deactivateTheme();
@@ -58,8 +70,7 @@ export function ThemeChooser() {
                   : "text-text-normal hover:bg-bg-hover"
               }`}
             >
-              <span>{t.name}</span>
-              <span className="ml-2 text-text-faint">{t.author}</span>
+              {t.name}
             </button>
           ))}
           <div className="border-t border-border">
