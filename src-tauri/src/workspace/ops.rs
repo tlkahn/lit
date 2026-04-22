@@ -1,6 +1,7 @@
 use super::frontmatter::{parse_frontmatter, serialize_frontmatter};
 use super::normalize::{filename_to_page_name, normalize_to_nfc, page_name_to_filename, validate_page_name};
 use super::page::{PageContent, PageMeta};
+use super::write_hash::WriteHashRegistry;
 use super::WorkspaceError;
 use std::collections::HashMap;
 use std::fs;
@@ -51,13 +52,15 @@ pub fn write_page(
     relative_path: &str,
     body: &str,
     frontmatter: &HashMap<String, serde_yaml::Value>,
+    registry: &WriteHashRegistry,
 ) -> Result<(), WorkspaceError> {
     let full_path = root.join(relative_path);
     if let Some(parent) = full_path.parent() {
         fs::create_dir_all(parent)?;
     }
     let content = serialize_frontmatter(frontmatter, body);
-    fs::write(&full_path, content)?;
+    fs::write(&full_path, &content)?;
+    registry.record(&full_path, &content);
     Ok(())
 }
 
@@ -146,6 +149,7 @@ pub fn delete_page(root: &Path, relative_path: &str) -> Result<(), WorkspaceErro
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::workspace::frontmatter::serialize_frontmatter;
     use tempfile::TempDir;
 
     #[test]
@@ -183,13 +187,14 @@ mod tests {
     #[test]
     fn write_page_with_frontmatter() {
         let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
         let mut fm = HashMap::new();
         fm.insert(
             "title".to_string(),
             serde_yaml::Value::String("Test".to_string()),
         );
 
-        write_page(dir.path(), "output.md", "# Body\n", &fm).unwrap();
+        write_page(dir.path(), "output.md", "# Body\n", &fm, &registry).unwrap();
 
         let content = fs::read_to_string(dir.path().join("output.md")).unwrap();
         assert!(content.contains("---"));
@@ -200,11 +205,30 @@ mod tests {
     #[test]
     fn write_page_without_frontmatter() {
         let dir = TempDir::new().unwrap();
-        write_page(dir.path(), "plain.md", "# Body\n", &HashMap::new()).unwrap();
+        let registry = WriteHashRegistry::new();
+        write_page(dir.path(), "plain.md", "# Body\n", &HashMap::new(), &registry).unwrap();
 
         let content = fs::read_to_string(dir.path().join("plain.md")).unwrap();
         assert!(!content.contains("---"));
         assert_eq!(content, "# Body\n");
+    }
+
+    #[test]
+    fn write_page_records_hash() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        let mut fm = HashMap::new();
+        fm.insert(
+            "title".to_string(),
+            serde_yaml::Value::String("T".to_string()),
+        );
+        let body = "content\n";
+
+        write_page(dir.path(), "hashed.md", body, &fm, &registry).unwrap();
+
+        let expected_content = serialize_frontmatter(&fm, body);
+        let full_path = dir.path().join("hashed.md");
+        assert!(registry.check_and_clear(&full_path, &expected_content));
     }
 
     #[test]

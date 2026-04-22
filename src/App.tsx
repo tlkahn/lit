@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from "react";
+import { useEffect } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { ContentArea } from "./components/ContentArea";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -10,7 +10,7 @@ import { useSidebarPosition } from "./hooks/useSidebarPosition";
 import { useFileWatcher } from "./hooks/useFileWatcher";
 import { useWorkspaceStore, getRecentWorkspaces } from "./stores/workspace";
 import { useThemeStore } from "./stores/theme";
-import { readPage, getInitialWorkspace, getPendingWorkspace } from "./lib/ipc";
+import { getInitialWorkspace, getPendingWorkspace } from "./lib/ipc";
 
 function App() {
   const { theme, toggleTheme } = useTheme();
@@ -18,6 +18,7 @@ function App() {
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const openWorkspace = useWorkspaceStore((s) => s.openWorkspace);
   const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
+  const triggerReload = useWorkspaceStore((s) => s.triggerReload);
   const initThemes = useThemeStore((s) => s.loadThemes);
 
   useEffect(() => {
@@ -45,17 +46,7 @@ function App() {
     init();
   }, [openWorkspace, workspacePath]);
 
-  const handleCurrentPageModified = useCallback(async () => {
-    if (!currentPagePath) return;
-    try {
-      const content = await readPage(currentPagePath);
-      void content;
-    } catch {
-      // page may have been deleted
-    }
-  }, [currentPagePath]);
-
-  useFileWatcher(handleCurrentPageModified);
+  useFileWatcher(triggerReload);
 
   if (!workspacePath) {
     return <WorkspaceChooser />;

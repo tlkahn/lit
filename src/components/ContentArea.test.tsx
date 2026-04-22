@@ -38,6 +38,8 @@ beforeEach(() => {
     pages: [],
     currentPagePath: null,
     currentPageHeadings: [],
+    isDirty: false,
+    reloadTrigger: 0,
     loading: false,
     error: null,
   });
@@ -286,6 +288,222 @@ describe("frontmatter editing", () => {
     });
     await waitFor(() => {
       expect(screen.queryByTestId("frontmatter-editor")).not.toBeInTheDocument();
+    });
+  });
+});
+
+describe("ContentArea dirty tracking", () => {
+  it("buffer is clean after page load", async () => {
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor").textContent).toContain("Some content");
+    });
+    expect(useWorkspaceStore.getState().isDirty).toBe(false);
+  });
+
+  it("buffer becomes dirty on edit", async () => {
+    vi.useFakeTimers();
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("editor").textContent).toContain("Some content");
+    });
+
+    const cmEditor = screen.getByTestId("editor").querySelector(".cm-editor");
+    const { EditorView } = await import("@codemirror/view");
+    const view = EditorView.findFromDOM(cmEditor as HTMLElement)!;
+
+    act(() => {
+      view.dispatch({ changes: { from: view.state.doc.length, insert: " dirty" } });
+    });
+
+    expect(useWorkspaceStore.getState().isDirty).toBe(true);
+    vi.useRealTimers();
+  });
+
+  it("buffer becomes clean after debounced save", async () => {
+    vi.useFakeTimers();
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("editor").textContent).toContain("Some content");
+    });
+
+    const cmEditor = screen.getByTestId("editor").querySelector(".cm-editor");
+    const { EditorView } = await import("@codemirror/view");
+    const view = EditorView.findFromDOM(cmEditor as HTMLElement)!;
+
+    act(() => {
+      view.dispatch({ changes: { from: view.state.doc.length, insert: " saved" } });
+    });
+
+    expect(useWorkspaceStore.getState().isDirty).toBe(true);
+
+    await act(async () => { vi.advanceTimersByTime(300); });
+    await vi.waitFor(() => {
+      expect(useWorkspaceStore.getState().isDirty).toBe(false);
+    });
+
+    vi.useRealTimers();
+  });
+
+  it("rapid edits during writePage flight keep dirty flag", async () => {
+    vi.useFakeTimers();
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("editor").textContent).toContain("Some content");
+    });
+
+    const cmEditor = screen.getByTestId("editor").querySelector(".cm-editor");
+    const { EditorView } = await import("@codemirror/view");
+    const view = EditorView.findFromDOM(cmEditor as HTMLElement)!;
+
+    act(() => {
+      view.dispatch({ changes: { from: view.state.doc.length, insert: "a" } });
+    });
+
+    await act(async () => { vi.advanceTimersByTime(300); });
+
+    act(() => {
+      view.dispatch({ changes: { from: view.state.doc.length, insert: "b" } });
+    });
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(useWorkspaceStore.getState().isDirty).toBe(true);
+
+    vi.useRealTimers();
+  });
+});
+
+describe("ContentArea conflict handling", () => {
+  it("auto-reloads when reloadTrigger increments and buffer is clean", async () => {
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor").textContent).toContain("Some content");
+    });
+
+    expect(useWorkspaceStore.getState().isDirty).toBe(false);
+
+    act(() => {
+      useWorkspaceStore.getState().triggerReload();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor").textContent).toContain("Some content");
+    });
+    expect(screen.queryByTestId("conflict-dialog")).not.toBeInTheDocument();
+  });
+
+  it("shows conflict dialog when reloadTrigger increments and buffer is dirty", async () => {
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor").textContent).toContain("Some content");
+    });
+
+    act(() => {
+      useWorkspaceStore.getState().setDirty(true);
+    });
+
+    act(() => {
+      useWorkspaceStore.getState().triggerReload();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("conflict-dialog")).toBeInTheDocument();
+    });
+  });
+
+  it("Keep Mine dismisses dialog, keeps local content", async () => {
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor").textContent).toContain("Some content");
+    });
+
+    act(() => {
+      useWorkspaceStore.getState().setDirty(true);
+    });
+    act(() => {
+      useWorkspaceStore.getState().triggerReload();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("conflict-dialog")).toBeInTheDocument();
+    });
+
+    act(() => {
+      screen.getByTestId("conflict-keep-mine").click();
+    });
+
+    expect(screen.queryByTestId("conflict-dialog")).not.toBeInTheDocument();
+    expect(screen.getByTestId("editor").textContent).toContain("Some content");
+  });
+
+  it("Reload dismisses dialog, loads disk content, clears dirty", async () => {
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor").textContent).toContain("Some content");
+    });
+
+    act(() => {
+      useWorkspaceStore.getState().setDirty(true);
+    });
+    act(() => {
+      useWorkspaceStore.getState().triggerReload();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("conflict-dialog")).toBeInTheDocument();
+    });
+
+    act(() => {
+      screen.getByTestId("conflict-reload").click();
+    });
+
+    expect(screen.queryByTestId("conflict-dialog")).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().isDirty).toBe(false);
+    });
+  });
+
+  it("page switch dismisses conflict dialog", async () => {
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor").textContent).toContain("Some content");
+    });
+
+    act(() => {
+      useWorkspaceStore.getState().setDirty(true);
+    });
+    act(() => {
+      useWorkspaceStore.getState().triggerReload();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("conflict-dialog")).toBeInTheDocument();
+    });
+
+    act(() => {
+      useWorkspaceStore.getState().selectPage("Other.md");
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("conflict-dialog")).not.toBeInTheDocument();
     });
   });
 });

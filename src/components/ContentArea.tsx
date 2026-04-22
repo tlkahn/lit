@@ -4,6 +4,7 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { readPage, writePage, parseRawYaml } from "../lib/ipc";
 import { extractHeadings } from "../lib/headings";
 import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
+import { ConflictDialog } from "./ConflictDialog";
 import { YamlHighlighter } from "./YamlHighlighter";
 
 export function parseYamlErrorLocation(msg: string): { line: number; column: number } | null {
@@ -31,7 +32,11 @@ export function ContentArea() {
   const clearPendingTitleFocus = useWorkspaceStore((s) => s.clearPendingTitleFocus);
   const renamePageAction = useWorkspaceStore((s) => s.renamePage);
   const setCurrentPageHeadings = useWorkspaceStore((s) => s.setCurrentPageHeadings);
+  const isDirty = useWorkspaceStore((s) => s.isDirty);
+  const setDirty = useWorkspaceStore((s) => s.setDirty);
+  const reloadTrigger = useWorkspaceStore((s) => s.reloadTrigger);
   const [body, setBody] = useState("");
+  const [showConflict, setShowConflict] = useState(false);
   const [title, setTitle] = useState("");
   const [editingTitle, setEditingTitle] = useState("");
   const [frontmatter, setFrontmatter] = useState<Record<string, unknown>>({});
@@ -42,6 +47,7 @@ export function ContentArea() {
   const [yamlError, setYamlError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const headingDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const editGenRef = useRef(0);
   const currentPathRef = useRef<string | null>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -86,6 +92,7 @@ export function ContentArea() {
     setEditingYaml(false);
     setYamlDraft("");
     setYamlError(null);
+    setShowConflict(false);
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       if (headingDebounceRef.current) clearTimeout(headingDebounceRef.current);
@@ -99,6 +106,15 @@ export function ContentArea() {
       clearPendingTitleFocus();
     }
   }, [pendingTitleFocus, title, clearPendingTitleFocus]);
+
+  useEffect(() => {
+    if (reloadTrigger === 0 || !currentPagePath) return;
+    if (isDirty) {
+      setShowConflict(true);
+    } else {
+      loadPage(currentPagePath);
+    }
+  }, [reloadTrigger, currentPagePath, isDirty, loadPage]);
 
   const resolveImageSrc = useCallback((src: string): string => {
     if (/^(https?:|data:|blob:)/.test(src)) return src;
@@ -122,12 +138,18 @@ export function ContentArea() {
 
   const handleChange = (newBody: string) => {
     setBody(newBody);
+    setDirty(true);
+    const gen = ++editGenRef.current;
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       if (currentPagePath) {
-        writePage(currentPagePath, newBody, frontmatter).catch((err) => {
-          console.error("[ContentArea] writePage failed:", err);
-        });
+        writePage(currentPagePath, newBody, frontmatter)
+          .then(() => {
+            if (editGenRef.current === gen) setDirty(false);
+          })
+          .catch((err) => {
+            console.error("[ContentArea] writePage failed:", err);
+          });
       }
     }, 300);
     if (headingDebounceRef.current) clearTimeout(headingDebounceRef.current);
@@ -281,6 +303,17 @@ export function ContentArea() {
         )}
       </div>
       <CodeMirrorEditor doc={body} onChange={handleChange} resolveImageSrc={resolveImageSrc} />
+      <ConflictDialog
+        open={showConflict}
+        onKeepMine={() => setShowConflict(false)}
+        onReload={() => {
+          setShowConflict(false);
+          if (currentPagePath) {
+            loadPage(currentPagePath);
+            setDirty(false);
+          }
+        }}
+      />
     </main>
   );
 }

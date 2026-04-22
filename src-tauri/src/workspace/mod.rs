@@ -4,6 +4,7 @@ pub mod ops;
 pub mod page;
 pub mod scan;
 pub mod watcher;
+pub mod write_hash;
 
 use serde::Serialize;
 use std::fmt;

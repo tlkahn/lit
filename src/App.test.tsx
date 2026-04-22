@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
-import { mockInvoke } from "./test/tauri-mock";
+import { mockInvoke, mockListen, emitMockEvent } from "./test/tauri-mock";
 import { useWorkspaceStore } from "./stores/workspace";
 
 const samplePages = [
@@ -138,5 +138,28 @@ describe("App", () => {
     await user.click(screen.getByText("Sidebar Right"));
     const container = screen.getByText("Files").closest("aside")!.parentElement!;
     expect(container.className).toContain("flex-row-reverse");
+  });
+
+  it("file-modified event for current page triggers reload", async () => {
+    mockListen();
+    useWorkspaceStore.setState({
+      workspacePath: "/test",
+      pages: samplePages,
+      currentPagePath: "Test Page.md",
+      reloadTrigger: 0,
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Files")).toBeInTheDocument();
+    });
+
+    const before = useWorkspaceStore.getState().reloadTrigger;
+    emitMockEvent("workspace://file-modified", { path: "Test Page.md" });
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().reloadTrigger).toBe(before + 1);
+    });
   });
 });

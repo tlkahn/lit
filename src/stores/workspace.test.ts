@@ -28,6 +28,8 @@ describe("WorkspaceStore", () => {
       currentPagePath: null,
       pendingTitleFocus: false,
       currentPageHeadings: [],
+      isDirty: false,
+      reloadTrigger: 0,
       loading: false,
       error: null,
     });
@@ -174,6 +176,52 @@ describe("WorkspaceStore", () => {
       useWorkspaceStore.getState().setCurrentPageHeadings(headings);
     });
     expect(useWorkspaceStore.getState().currentPageHeadings).toEqual(headings);
+  });
+
+  it("isDirty defaults to false", () => {
+    expect(useWorkspaceStore.getState().isDirty).toBe(false);
+  });
+
+  it("setDirty(true) sets isDirty", () => {
+    act(() => {
+      useWorkspaceStore.getState().setDirty(true);
+    });
+    expect(useWorkspaceStore.getState().isDirty).toBe(true);
+  });
+
+  it("selectPage resets isDirty to false", () => {
+    act(() => {
+      useWorkspaceStore.getState().setDirty(true);
+    });
+    act(() => {
+      useWorkspaceStore.getState().selectPage("Page A.md");
+    });
+    expect(useWorkspaceStore.getState().isDirty).toBe(false);
+  });
+
+  it("reloadTrigger defaults to 0", () => {
+    expect(useWorkspaceStore.getState().reloadTrigger).toBe(0);
+  });
+
+  it("triggerReload increments reloadTrigger", () => {
+    act(() => {
+      useWorkspaceStore.getState().triggerReload();
+    });
+    expect(useWorkspaceStore.getState().reloadTrigger).toBe(1);
+    act(() => {
+      useWorkspaceStore.getState().triggerReload();
+    });
+    expect(useWorkspaceStore.getState().reloadTrigger).toBe(2);
+  });
+
+  it("selectPage resets reloadTrigger to 0", () => {
+    act(() => {
+      useWorkspaceStore.getState().triggerReload();
+    });
+    act(() => {
+      useWorkspaceStore.getState().selectPage("Page A.md");
+    });
+    expect(useWorkspaceStore.getState().reloadTrigger).toBe(0);
   });
 
   it("selectPage clears currentPageHeadings", () => {

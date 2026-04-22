@@ -1,10 +1,11 @@
 use crate::workspace::page::PageMeta;
 use crate::workspace::scan::scan_pages;
 use crate::workspace::watcher::FileWatcher;
+use crate::workspace::write_hash::WriteHashRegistry;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{Manager, State, WebviewWindowBuilder};
 
 pub struct WorkspaceEntry {
@@ -33,6 +34,7 @@ pub fn open_workspace(
     window: tauri::Window,
     state: State<WorkspaceRegistry>,
     app_handle: tauri::AppHandle,
+    registry: State<Arc<WriteHashRegistry>>,
 ) -> Result<Vec<PageMeta>, String> {
     let root = PathBuf::from(&path);
     if !root.is_dir() {
@@ -47,7 +49,13 @@ pub fn open_workspace(
         .map_err(|e| e.to_string())?;
 
     let label = window.label().to_string();
-    let watcher = FileWatcher::new(root.clone(), label.clone(), app_handle).ok();
+    let watcher = FileWatcher::new(
+        root.clone(),
+        label.clone(),
+        app_handle,
+        Arc::clone(&registry),
+    )
+    .ok();
 
     state.workspaces.lock().unwrap().insert(
         label,

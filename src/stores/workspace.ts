@@ -13,6 +13,8 @@ export interface WorkspaceStore {
   currentPagePath: string | null;
   pendingTitleFocus: boolean;
   currentPageHeadings: Heading[];
+  isDirty: boolean;
+  reloadTrigger: number;
   loading: boolean;
   error: string | null;
 
@@ -24,6 +26,8 @@ export interface WorkspaceStore {
   deletePage: (relativePath: string) => Promise<void>;
   clearPendingTitleFocus: () => void;
   setCurrentPageHeadings: (headings: Heading[]) => void;
+  setDirty: (dirty: boolean) => void;
+  triggerReload: () => void;
 }
 
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
@@ -32,6 +36,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   currentPagePath: null,
   pendingTitleFocus: false,
   currentPageHeadings: [],
+  isDirty: false,
+  reloadTrigger: 0,
   loading: false,
   error: null,
 
@@ -61,7 +67,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     if (relativePath === null) {
       console.warn("[WorkspaceStore] selectPage(null) called — stack:", new Error().stack);
     }
-    set({ currentPagePath: relativePath, currentPageHeadings: [] });
+    set({ currentPagePath: relativePath, currentPageHeadings: [], isDirty: false, reloadTrigger: 0 });
   },
 
   createPage: async (name: string, parentDir?: string) => {
@@ -97,6 +103,10 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   clearPendingTitleFocus: () => set({ pendingTitleFocus: false }),
 
   setCurrentPageHeadings: (headings: Heading[]) => set({ currentPageHeadings: headings }),
+
+  setDirty: (dirty: boolean) => set({ isDirty: dirty }),
+
+  triggerReload: () => set((state) => ({ reloadTrigger: state.reloadTrigger + 1 })),
 
   deletePage: async (relativePath: string) => {
     try {

@@ -4,8 +4,9 @@ pub mod workspace;
 use commands::workspace::{PendingWorkspaces, WorkspaceRegistry};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::Manager;
+use workspace::write_hash::WriteHashRegistry;
 
 pub struct InitialWorkspace(pub Mutex<Option<String>>);
 
@@ -28,6 +29,7 @@ pub fn run() {
         })
         .manage(PendingWorkspaces(Mutex::new(HashMap::new())))
         .manage(InitialWorkspace(Mutex::new(cli_workspace)))
+        .manage(Arc::new(WriteHashRegistry::new()))
         .setup(|app| {
             let _ = commands::theme::seed_bundled_themes(app.handle());
             Ok(())

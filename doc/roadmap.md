@@ -127,19 +127,19 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
 > 3. [x] A few fixture examples have errors (thus cannot render).
 > 4. [x] Clicking on the first line of Obsidian callout `> [!note] etc.` will not make the callout enter into edit (raw markdown) mode
 
-#### A4 — Mermaid Diagram Rendering
+#### A4 — Mermaid Diagram Rendering ✅
 
-- Detect ` ```mermaid ` fenced code blocks via Lezer syntax tree
-- Render diagrams inline as widget decorations using Mermaid.js (lazy-loaded for bundle size)
-- Live preview behavior: cursor inside the code block shows raw Mermaid source, cursor outside shows the rendered SVG diagram
-- Error handling: display Mermaid parse errors inline below the code block instead of a broken diagram
-- Dark mode support: pass current theme to Mermaid's `theme` config (`default` / `dark`)
+- [x] Detect ` ```mermaid ` fenced code blocks via Lezer syntax tree
+- [x] Render diagrams inline as widget decorations using Mermaid.js (lazy-loaded for bundle size)
+- [x] Live preview behavior: cursor inside the code block shows raw Mermaid source, cursor outside shows the rendered SVG diagram
+- [x] Error handling: display Mermaid parse errors inline below the code block instead of a broken diagram
+- [x] Dark mode support: pass current theme to Mermaid's `theme` config (`default` / `dark`)
 
 #### B1 — Auto-Save + File Sync
 
-- Debounced auto-save: `EditorView.updateListener` → 300ms idle → invoke Rust `write_page`
-- External change handling: file watcher events trigger CM6 state update (with conflict detection when local buffer is dirty)
-- Scroll position preservation: save/restore per page in Zustand store across page switches
+- [x] Debounced auto-save: `EditorView.updateListener` → 300ms idle → invoke Rust `write_page`
+- [~] External change handling: file watcher events trigger CM6 state update (with conflict detection when local buffer is dirty)
+- [ ] Scroll position preservation: save/restore per page in Zustand store across page switches
 
 #### B2 — Editing Shortcuts + Folding + Performance
 
@@ -151,8 +151,6 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
 
 ### Phase C — Document Navigation
 
-- Heading outline panel: extract headings from CM6 syntax tree, render in sidebar, click to scroll
-- Breadcrumb bar showing current heading context as cursor moves
 - Cmd+r go-to-heading quick switcher (fuzzy match within current document)
 - Add markdown table editing helpers (Tab/ctrl+tab to navigate cells, auto-align pipes, add/remove row/column shortcuts)
 
@@ -200,7 +198,7 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
 
 ## Stage 4 — Local Network Collaboration (Bonjour/mDNS)
 
-**Goal:** Two Lit instances on the same LAN can co-edit a shared workspace in real time, SubEthaEdit-style.
+**Goal:** Multiple Lit instances on the same LAN can co-edit a shared workspace in real time, SubEthaEdit-style.
 
 ### Phase 4a — Discovery & Connection
 
