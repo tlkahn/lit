@@ -306,17 +306,7 @@ export function Sidebar() {
       </div>
       {tab === "files" ? (
         <>
-          <div className="flex items-center justify-between p-2">
-            <div />
-            <button
-              onClick={handleNewPage}
-              className="rounded px-2 py-0.5 text-sm text-text-faint hover:bg-bg-hover"
-              aria-label="New page"
-            >
-              +
-            </button>
-          </div>
-          <div className="p-2 pt-0">
+          <div className="p-2">
             <input
               type="text"
               placeholder="Search..."
@@ -346,6 +336,15 @@ export function Sidebar() {
       ) : (
         <Outline />
       )}
+      <div className="border-t border-border p-2">
+        <button
+          onClick={handleNewPage}
+          className="w-full rounded px-2 py-1 text-sm text-text-faint hover:bg-bg-hover"
+          aria-label="New page"
+        >
+          + New Page
+        </button>
+      </div>
     </aside>
   );
 }
