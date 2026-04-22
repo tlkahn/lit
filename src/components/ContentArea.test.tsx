@@ -178,11 +178,11 @@ describe("ContentArea", () => {
     render(<ContentArea />);
 
     await waitFor(() => {
-      expect(screen.getByText("Show frontmatter")).toBeInTheDocument();
+      expect(screen.getByTitle("Show frontmatter")).toBeInTheDocument();
     });
 
     await act(async () => {
-      screen.getByText("Show frontmatter").click();
+      screen.getByTitle("Show frontmatter").click();
     });
     expect(screen.getByTestId("frontmatter")).toBeInTheDocument();
     const text = screen.getByTestId("frontmatter").textContent!;
@@ -197,10 +197,10 @@ describe("frontmatter editing", () => {
     useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
     render(<ContentArea />);
     await waitFor(() => {
-      expect(screen.getByText("Show frontmatter")).toBeInTheDocument();
+      expect(screen.getByTitle("Show frontmatter")).toBeInTheDocument();
     });
     await act(async () => {
-      screen.getByText("Show frontmatter").click();
+      screen.getByTitle("Show frontmatter").click();
     });
     expect(screen.getByTestId("frontmatter")).toBeInTheDocument();
   }

@@ -215,32 +215,35 @@ export function ContentArea() {
   return (
     <main className="flex min-h-0 flex-1 flex-col bg-bg-primary-alt">
       <div className="px-6 py-3">
-        <input
-          ref={titleInputRef}
-          className="w-full bg-transparent text-lg font-semibold text-text-normal outline-none"
-          data-testid="page-title"
-          value={editingTitle}
-          onChange={(e) => setEditingTitle(e.target.value)}
-          onBlur={commitTitle}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              titleInputRef.current?.blur();
-            }
-            if (e.key === "Escape") {
-              setEditingTitle(title);
-              titleInputRef.current?.blur();
-            }
-          }}
-        />
-        {Object.keys(frontmatter).length > 0 && (
-          <button
-            onClick={() => setShowFrontmatter(!showFrontmatter)}
-            className="mt-1 text-xs text-text-faint hover:text-text-muted"
-          >
-            {showFrontmatter ? "Hide" : "Show"} frontmatter
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          <input
+            ref={titleInputRef}
+            className="min-w-0 flex-1 bg-transparent text-lg font-semibold text-text-normal outline-none"
+            data-testid="page-title"
+            value={editingTitle}
+            onChange={(e) => setEditingTitle(e.target.value)}
+            onBlur={commitTitle}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                titleInputRef.current?.blur();
+              }
+              if (e.key === "Escape") {
+                setEditingTitle(title);
+                titleInputRef.current?.blur();
+              }
+            }}
+          />
+          {Object.keys(frontmatter).length > 0 && (
+            <button
+              onClick={() => setShowFrontmatter(!showFrontmatter)}
+              className="flex-shrink-0 text-text-faint hover:text-text-muted"
+              title={showFrontmatter ? "Hide frontmatter" : "Show frontmatter"}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>
+            </button>
+          )}
+        </div>
         {showFrontmatter && (
           editingYaml ? (
             <div className="mt-2">
