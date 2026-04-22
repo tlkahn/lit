@@ -235,6 +235,7 @@ These are listed for architectural awareness — they should not constrain curre
 - Agent-in-residence (AIR): a companion in-memory AI agent closely offer real-time assistance. Such a built-in tool offers synergy over have to use Claud Code with Obsidian.
 - Obsidian-like graph view (using D3.js for mature force field visual effects, rather than fresh homebrew).
 - Zotero-like bibliograph management
+- Typewriter mode
 
 | Stage | Feature | Notes |
 |---|---|---|

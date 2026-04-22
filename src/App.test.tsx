@@ -75,7 +75,7 @@ describe("App", () => {
     });
 
     render(<App />);
-    expect(screen.getByText("Pages")).toBeInTheDocument();
+    expect(screen.getByText("Files")).toBeInTheDocument();
     expect(screen.getByTestId("empty-state")).toBeInTheDocument();
   });
 
@@ -124,7 +124,7 @@ describe("App", () => {
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [] });
 
     render(<App />);
-    const container = screen.getByText("Pages").closest("aside")!.parentElement!;
+    const container = screen.getByText("Files").closest("aside")!.parentElement!;
     expect(container.className).toContain("flex-row");
     expect(container.className).not.toContain("flex-row-reverse");
   });
@@ -136,7 +136,7 @@ describe("App", () => {
     render(<App />);
     await user.click(screen.getByText("View"));
     await user.click(screen.getByText("Sidebar Right"));
-    const container = screen.getByText("Pages").closest("aside")!.parentElement!;
+    const container = screen.getByText("Files").closest("aside")!.parentElement!;
     expect(container.className).toContain("flex-row-reverse");
   });
 });

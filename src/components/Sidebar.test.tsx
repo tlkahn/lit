@@ -10,6 +10,7 @@ beforeEach(() => {
     workspacePath: "/workspace",
     pages: [],
     currentPagePath: null,
+    currentPageHeadings: [],
     loading: false,
     error: null,
   });
@@ -26,6 +27,48 @@ beforeEach(() => {
       };
     }
     throw new Error(`Unknown command: ${cmd}`);
+  });
+});
+
+describe("Sidebar tabs", () => {
+  it("renders Files and Outline tab buttons", () => {
+    render(<Sidebar />);
+    expect(screen.getByText("Files")).toBeInTheDocument();
+    expect(screen.getByText("Outline")).toBeInTheDocument();
+  });
+
+  it("Files tab is active by default", () => {
+    render(<Sidebar />);
+    expect(screen.getByLabelText("Search pages")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New page" })).toBeInTheDocument();
+  });
+
+  it("clicking Outline switches to outline; clicking Files switches back", async () => {
+    useWorkspaceStore.setState({ currentPagePath: null });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("Outline"));
+    expect(screen.getByText("No page selected")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Search pages")).not.toBeInTheDocument();
+
+    await user.click(screen.getByText("Files"));
+    expect(screen.getByLabelText("Search pages")).toBeInTheDocument();
+  });
+
+  it("Files tab shows search + tree; Outline tab shows Outline component", async () => {
+    useWorkspaceStore.setState({
+      currentPagePath: "test.md",
+      currentPageHeadings: [{ level: 1, text: "Hello", line: 0 }],
+    });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    expect(screen.getByLabelText("Search pages")).toBeInTheDocument();
+
+    await user.click(screen.getByText("Outline"));
+    expect(screen.queryByLabelText("Search pages")).not.toBeInTheDocument();
+    expect(screen.getByText("Hello")).toBeInTheDocument();
   });
 });
 

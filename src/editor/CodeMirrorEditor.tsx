@@ -1,5 +1,6 @@
-import { useRef } from "react";
+import { useRef, useEffect } from "react";
 import { useCodeMirror } from "./useCodeMirror";
+import { EditorView } from "@codemirror/view";
 
 interface CodeMirrorEditorProps {
   doc: string;
@@ -9,7 +10,23 @@ interface CodeMirrorEditorProps {
 
 export function CodeMirrorEditor({ doc, onChange, resolveImageSrc }: CodeMirrorEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  useCodeMirror({ containerRef, doc, onChange, resolveImageSrc });
+  const { view } = useCodeMirror({ containerRef, doc, onChange, resolveImageSrc });
+
+  useEffect(() => {
+    if (!view) return;
+    const handler = (e: Event) => {
+      const line = (e as CustomEvent<{ line: number }>).detail.line;
+      const doc = view.state.doc;
+      const lineNumber = Math.min(line + 1, doc.lines);
+      const pos = doc.line(lineNumber).from;
+      view.dispatch({
+        effects: EditorView.scrollIntoView(pos, { y: "start" }),
+      });
+    };
+    window.addEventListener("lit:scroll-to-line", handler);
+    return () => window.removeEventListener("lit:scroll-to-line", handler);
+  }, [view]);
+
   return (
     <div
       ref={containerRef}

@@ -37,6 +37,7 @@ beforeEach(() => {
     workspacePath: "/test",
     pages: [],
     currentPagePath: null,
+    currentPageHeadings: [],
     loading: false,
     error: null,
   });
@@ -286,6 +287,25 @@ describe("frontmatter editing", () => {
     await waitFor(() => {
       expect(screen.queryByTestId("frontmatter-editor")).not.toBeInTheDocument();
     });
+  });
+});
+
+describe("ContentArea headings", () => {
+  it("after page load, store has correct headings", async () => {
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      const headings = useWorkspaceStore.getState().currentPageHeadings;
+      expect(headings).toEqual([
+        { level: 1, text: "Hello", line: 0 },
+      ]);
+    });
+  });
+
+  it("when no page selected, headings are []", () => {
+    render(<ContentArea />);
+    expect(useWorkspaceStore.getState().currentPageHeadings).toEqual([]);
   });
 });
 

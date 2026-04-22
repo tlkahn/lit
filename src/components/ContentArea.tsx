@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useWorkspaceStore } from "../stores/workspace";
 import { readPage, writePage, parseRawYaml } from "../lib/ipc";
+import { extractHeadings } from "../lib/headings";
 import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
 import { YamlHighlighter } from "./YamlHighlighter";
 
@@ -29,6 +30,7 @@ export function ContentArea() {
   const pendingTitleFocus = useWorkspaceStore((s) => s.pendingTitleFocus);
   const clearPendingTitleFocus = useWorkspaceStore((s) => s.clearPendingTitleFocus);
   const renamePageAction = useWorkspaceStore((s) => s.renamePage);
+  const setCurrentPageHeadings = useWorkspaceStore((s) => s.setCurrentPageHeadings);
   const [body, setBody] = useState("");
   const [title, setTitle] = useState("");
   const [editingTitle, setEditingTitle] = useState("");
@@ -39,6 +41,7 @@ export function ContentArea() {
   const [yamlDraft, setYamlDraft] = useState("");
   const [yamlError, setYamlError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const headingDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const currentPathRef = useRef<string | null>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -54,6 +57,7 @@ export function ContentArea() {
         setEditingTitle(content.meta.title);
         setFrontmatter(content.meta.frontmatter);
         setRawYaml(content.raw_yaml);
+        setCurrentPageHeadings(extractHeadings(content.body));
       } else {
         console.debug("[ContentArea] loadPage stale, ignoring:", path);
       }
@@ -64,8 +68,9 @@ export function ContentArea() {
       setEditingTitle("");
       setFrontmatter({});
       setRawYaml("");
+      setCurrentPageHeadings([]);
     }
-  }, []);
+  }, [setCurrentPageHeadings]);
 
   useEffect(() => {
     currentPathRef.current = currentPagePath;
@@ -83,6 +88,7 @@ export function ContentArea() {
     setYamlError(null);
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
+      if (headingDebounceRef.current) clearTimeout(headingDebounceRef.current);
     };
   }, [currentPagePath, loadPage]);
 
@@ -124,6 +130,10 @@ export function ContentArea() {
         });
       }
     }, 300);
+    if (headingDebounceRef.current) clearTimeout(headingDebounceRef.current);
+    headingDebounceRef.current = setTimeout(() => {
+      setCurrentPageHeadings(extractHeadings(newBody));
+    }, 150);
   };
 
   const enterYamlEdit = () => {

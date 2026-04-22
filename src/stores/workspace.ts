@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import * as ipc from "../lib/ipc";
 import type { PageMeta } from "../lib/ipc";
+import type { Heading } from "../lib/headings";
 
 const RECENT_KEY = "lit-recent-workspaces";
 const LEGACY_KEY = "lit-workspace-path";
@@ -11,6 +12,7 @@ export interface WorkspaceStore {
   pages: PageMeta[];
   currentPagePath: string | null;
   pendingTitleFocus: boolean;
+  currentPageHeadings: Heading[];
   loading: boolean;
   error: string | null;
 
@@ -21,6 +23,7 @@ export interface WorkspaceStore {
   renamePage: (oldPath: string, newName: string) => Promise<void>;
   deletePage: (relativePath: string) => Promise<void>;
   clearPendingTitleFocus: () => void;
+  setCurrentPageHeadings: (headings: Heading[]) => void;
 }
 
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
@@ -28,6 +31,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   pages: [],
   currentPagePath: null,
   pendingTitleFocus: false,
+  currentPageHeadings: [],
   loading: false,
   error: null,
 
@@ -57,7 +61,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     if (relativePath === null) {
       console.warn("[WorkspaceStore] selectPage(null) called — stack:", new Error().stack);
     }
-    set({ currentPagePath: relativePath });
+    set({ currentPagePath: relativePath, currentPageHeadings: [] });
   },
 
   createPage: async (name: string, parentDir?: string) => {
@@ -91,6 +95,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   },
 
   clearPendingTitleFocus: () => set({ pendingTitleFocus: false }),
+
+  setCurrentPageHeadings: (headings: Heading[]) => set({ currentPageHeadings: headings }),
 
   deletePage: async (relativePath: string) => {
     try {

@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from "react";
 import { useWorkspaceStore } from "../stores/workspace";
 import { getNextUntitledName } from "../lib/naming";
+import { useSidebarTab } from "../hooks/useSidebarTab";
+import { Outline } from "./Outline";
 import type { PageMeta } from "../lib/ipc";
 
 interface FolderNode {
@@ -251,6 +253,7 @@ export function Sidebar() {
   const createPageAction = useWorkspaceStore((s) => s.createPage);
   const renamePageAction = useWorkspaceStore((s) => s.renamePage);
   const deletePageAction = useWorkspaceStore((s) => s.deletePage);
+  const { tab, setTab } = useSidebarTab();
   const [search, setSearch] = useState("");
   const [menuPath, setMenuPath] = useState<string | null>(null);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
@@ -279,44 +282,70 @@ export function Sidebar() {
 
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-bg-secondary">
-      <div className="flex items-center justify-between p-2">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-text-faint">
-          Pages
-        </h2>
+      <div className="flex items-center border-b border-border">
         <button
-          onClick={handleNewPage}
-          className="rounded px-2 py-0.5 text-sm text-text-faint hover:bg-bg-hover"
-          aria-label="New page"
+          onClick={() => setTab("files")}
+          className={`flex-1 px-3 py-2 text-sm font-medium ${
+            tab === "files"
+              ? "border-b-2 border-interactive-accent text-text-normal"
+              : "text-text-faint hover:text-text-muted"
+          }`}
         >
-          +
+          Files
+        </button>
+        <button
+          onClick={() => setTab("outline")}
+          className={`flex-1 px-3 py-2 text-sm font-medium ${
+            tab === "outline"
+              ? "border-b-2 border-interactive-accent text-text-normal"
+              : "text-text-faint hover:text-text-muted"
+          }`}
+        >
+          Outline
         </button>
       </div>
-      <div className="p-2">
-        <input
-          type="text"
-          placeholder="Search..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="w-full rounded border border-border bg-bg-primary px-2 py-1 text-sm text-text-normal"
-          aria-label="Search pages"
-        />
-      </div>
-      <div className="flex-1 overflow-y-auto px-1">
-        <FolderView
-          node={tree}
-          currentPagePath={currentPagePath}
-          menuPath={menuPath}
-          renamingPath={renamingPath}
-          onSelect={selectPage}
-          onDelete={handleDelete}
-          onMenuOpen={setMenuPath}
-          onMenuClose={() => setMenuPath(null)}
-          onRenameStart={setRenamingPath}
-          onRenameCommit={handleRenameCommit}
-          onRenameCancel={() => setRenamingPath(null)}
-          depth={0}
-        />
-      </div>
+      {tab === "files" ? (
+        <>
+          <div className="flex items-center justify-between p-2">
+            <div />
+            <button
+              onClick={handleNewPage}
+              className="rounded px-2 py-0.5 text-sm text-text-faint hover:bg-bg-hover"
+              aria-label="New page"
+            >
+              +
+            </button>
+          </div>
+          <div className="p-2 pt-0">
+            <input
+              type="text"
+              placeholder="Search..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full rounded border border-border bg-bg-primary px-2 py-1 text-sm text-text-normal"
+              aria-label="Search pages"
+            />
+          </div>
+          <div className="flex-1 overflow-y-auto px-1">
+            <FolderView
+              node={tree}
+              currentPagePath={currentPagePath}
+              menuPath={menuPath}
+              renamingPath={renamingPath}
+              onSelect={selectPage}
+              onDelete={handleDelete}
+              onMenuOpen={setMenuPath}
+              onMenuClose={() => setMenuPath(null)}
+              onRenameStart={setRenamingPath}
+              onRenameCommit={handleRenameCommit}
+              onRenameCancel={() => setRenamingPath(null)}
+              depth={0}
+            />
+          </div>
+        </>
+      ) : (
+        <Outline />
+      )}
     </aside>
   );
 }

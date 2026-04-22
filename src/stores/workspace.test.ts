@@ -27,6 +27,7 @@ describe("WorkspaceStore", () => {
       pages: [],
       currentPagePath: null,
       pendingTitleFocus: false,
+      currentPageHeadings: [],
       loading: false,
       error: null,
     });
@@ -158,6 +159,33 @@ describe("WorkspaceStore", () => {
     });
 
     expect(useWorkspaceStore.getState().currentPagePath).toBeNull();
+  });
+
+  it("initial currentPageHeadings is []", () => {
+    expect(useWorkspaceStore.getState().currentPageHeadings).toEqual([]);
+  });
+
+  it("setCurrentPageHeadings updates state", () => {
+    const headings = [
+      { level: 1, text: "Title", line: 0 },
+      { level: 2, text: "Sub", line: 3 },
+    ];
+    act(() => {
+      useWorkspaceStore.getState().setCurrentPageHeadings(headings);
+    });
+    expect(useWorkspaceStore.getState().currentPageHeadings).toEqual(headings);
+  });
+
+  it("selectPage clears currentPageHeadings", () => {
+    act(() => {
+      useWorkspaceStore.getState().setCurrentPageHeadings([
+        { level: 1, text: "Title", line: 0 },
+      ]);
+    });
+    act(() => {
+      useWorkspaceStore.getState().selectPage("Page A.md");
+    });
+    expect(useWorkspaceStore.getState().currentPageHeadings).toEqual([]);
   });
 
   it("refreshPages re-fetches page list", async () => {
