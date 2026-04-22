@@ -20,12 +20,50 @@ fn default_folding_show_controls() -> String {
     "mouseover".to_string()
 }
 
+fn default_dark_mode() -> String {
+    "auto".to_string()
+}
+
+fn deserialize_dark_mode<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de;
+
+    struct DarkModeVisitor;
+
+    impl<'de> de::Visitor<'de> for DarkModeVisitor {
+        type Value = String;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str(r#""light", "dark", "auto", or a boolean"#)
+        }
+
+        fn visit_bool<E: de::Error>(self, v: bool) -> Result<String, E> {
+            Ok(if v { "dark" } else { "light" }.to_string())
+        }
+
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<String, E> {
+            match v {
+                "light" | "dark" | "auto" => Ok(v.to_string()),
+                _ => Ok("auto".to_string()),
+            }
+        }
+    }
+
+    deserializer.deserialize_any(DarkModeVisitor)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Preferences {
     #[serde(rename = "workbench.colorTheme", default)]
     pub color_theme: Option<String>,
-    #[serde(rename = "workbench.darkMode", default)]
-    pub dark_mode: bool,
+    #[serde(
+        rename = "workbench.darkMode",
+        default = "default_dark_mode",
+        deserialize_with = "deserialize_dark_mode"
+    )]
+    pub dark_mode: String,
     #[serde(
         rename = "workbench.sideBar.location",
         default = "default_sidebar_location"
@@ -46,7 +84,7 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             color_theme: None,
-            dark_mode: false,
+            dark_mode: "auto".to_string(),
             sidebar_location: "left".to_string(),
             folding_enabled: true,
             folding_show_controls: "mouseover".to_string(),
@@ -151,7 +189,7 @@ mod tests {
     fn defaults() {
         let prefs = Preferences::default();
         assert_eq!(prefs.color_theme, None);
-        assert!(!prefs.dark_mode);
+        assert_eq!(prefs.dark_mode, "auto");
         assert_eq!(prefs.sidebar_location, "left");
         assert!(prefs.folding_enabled);
         assert_eq!(prefs.folding_show_controls, "mouseover");
@@ -162,33 +200,68 @@ mod tests {
     fn parse_empty_json() {
         let prefs: Preferences = serde_json::from_str("{}").unwrap();
         assert_eq!(prefs.color_theme, None);
-        assert!(!prefs.dark_mode);
+        assert_eq!(prefs.dark_mode, "auto");
         assert_eq!(prefs.sidebar_location, "left");
         assert!(prefs.folding_enabled);
         assert_eq!(prefs.folding_show_controls, "mouseover");
     }
 
     #[test]
-    fn parse_partial_json() {
+    fn parse_bool_true_becomes_dark() {
         let prefs: Preferences =
             serde_json::from_str(r#"{"workbench.darkMode": true}"#).unwrap();
-        assert!(prefs.dark_mode);
+        assert_eq!(prefs.dark_mode, "dark");
         assert_eq!(prefs.color_theme, None);
         assert_eq!(prefs.sidebar_location, "left");
+    }
+
+    #[test]
+    fn parse_bool_false_becomes_light() {
+        let prefs: Preferences =
+            serde_json::from_str(r#"{"workbench.darkMode": false}"#).unwrap();
+        assert_eq!(prefs.dark_mode, "light");
+    }
+
+    #[test]
+    fn parse_string_auto() {
+        let prefs: Preferences =
+            serde_json::from_str(r#"{"workbench.darkMode": "auto"}"#).unwrap();
+        assert_eq!(prefs.dark_mode, "auto");
+    }
+
+    #[test]
+    fn parse_string_dark() {
+        let prefs: Preferences =
+            serde_json::from_str(r#"{"workbench.darkMode": "dark"}"#).unwrap();
+        assert_eq!(prefs.dark_mode, "dark");
+    }
+
+    #[test]
+    fn parse_string_light() {
+        let prefs: Preferences =
+            serde_json::from_str(r#"{"workbench.darkMode": "light"}"#).unwrap();
+        assert_eq!(prefs.dark_mode, "light");
+    }
+
+    #[test]
+    fn parse_unknown_string_becomes_auto() {
+        let prefs: Preferences =
+            serde_json::from_str(r#"{"workbench.darkMode": "invalid"}"#).unwrap();
+        assert_eq!(prefs.dark_mode, "auto");
     }
 
     #[test]
     fn parse_full_json() {
         let json = r#"{
             "workbench.colorTheme": "lit-nordic",
-            "workbench.darkMode": true,
+            "workbench.darkMode": "dark",
             "workbench.sideBar.location": "right",
             "editor.folding.enabled": false,
             "editor.folding.showFoldingControls": "always"
         }"#;
         let prefs: Preferences = serde_json::from_str(json).unwrap();
         assert_eq!(prefs.color_theme, Some("lit-nordic".to_string()));
-        assert!(prefs.dark_mode);
+        assert_eq!(prefs.dark_mode, "dark");
         assert_eq!(prefs.sidebar_location, "right");
         assert!(!prefs.folding_enabled);
         assert_eq!(prefs.folding_show_controls, "always");
@@ -197,7 +270,7 @@ mod tests {
     #[test]
     fn unknown_keys_preserved() {
         let json = r#"{
-            "workbench.darkMode": false,
+            "workbench.darkMode": "light",
             "myCustom.setting": 42,
             "another.key": "hello"
         }"#;
@@ -225,7 +298,7 @@ mod tests {
         let path = dir.path().join("preferences.json");
 
         let mut prefs = Preferences::default();
-        prefs.dark_mode = true;
+        prefs.dark_mode = "dark".to_string();
         prefs.color_theme = Some("nord".to_string());
         prefs.sidebar_location = "right".to_string();
         prefs.extra.insert("custom.key".to_string(), serde_json::json!("value"));
@@ -261,7 +334,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("preferences.json");
 
-        let custom = r#"{"workbench.darkMode": true}"#;
+        let custom = r#"{"workbench.darkMode": "dark"}"#;
         fs::write(&path, custom).unwrap();
 
         // Simulating seed_default_if_missing: don't overwrite if exists
@@ -273,7 +346,7 @@ mod tests {
 
         let content = fs::read_to_string(&path).unwrap();
         let prefs: Preferences = serde_json::from_str(&content).unwrap();
-        assert!(prefs.dark_mode);
+        assert_eq!(prefs.dark_mode, "dark");
     }
 
     #[test]
@@ -297,7 +370,7 @@ mod tests {
 
     #[test]
     fn folding_defaults_when_omitted() {
-        let json = r#"{"workbench.darkMode": true}"#;
+        let json = r#"{"workbench.darkMode": "dark"}"#;
         let prefs: Preferences = serde_json::from_str(json).unwrap();
         assert!(prefs.folding_enabled);
         assert_eq!(prefs.folding_show_controls, "mouseover");

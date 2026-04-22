@@ -27,7 +27,7 @@ describe("App", () => {
     });
 
     usePreferencesStore.setState({
-      darkMode: false,
+      darkMode: "light",
       colorTheme: null,
       sidebarLocation: "left",
       loaded: true,
@@ -50,7 +50,7 @@ describe("App", () => {
         case "get_preferences":
           return {
             "workbench.colorTheme": null,
-            "workbench.darkMode": false,
+            "workbench.darkMode": "light",
             "workbench.sideBar.location": "left",
           };
         case "get_keymaps":
@@ -110,7 +110,7 @@ describe("App", () => {
 
   it("applies dark mode from preferences", () => {
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [] });
-    usePreferencesStore.setState({ darkMode: true });
+    usePreferencesStore.setState({ darkMode: "dark" });
 
     render(<App />);
     expect(document.documentElement.classList.contains("dark")).toBe(true);

@@ -1,12 +1,12 @@
 import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
-import type { Preferences } from "../lib/ipc";
+import type { DarkModePref, Preferences } from "../lib/ipc";
 import { getPreferences } from "../lib/ipc";
 
 export type FoldingShowControls = "mouseover" | "always" | "never";
 
 export interface PreferencesState {
-  darkMode: boolean;
+  darkMode: DarkModePref;
   colorTheme: string | null;
   sidebarLocation: "left" | "right";
   foldingEnabled: boolean;
@@ -24,9 +24,16 @@ function applyFoldingShowControls(val: string): FoldingShowControls {
   return "mouseover";
 }
 
+function applyDarkMode(val: unknown): DarkModePref {
+  if (val === "light" || val === "dark" || val === "auto") return val;
+  if (val === true) return "dark";
+  if (val === false) return "light";
+  return "auto";
+}
+
 function mapPreferences(prefs: Preferences) {
   return {
-    darkMode: prefs["workbench.darkMode"] ?? false,
+    darkMode: applyDarkMode(prefs["workbench.darkMode"]),
     colorTheme: prefs["workbench.colorTheme"] ?? null,
     sidebarLocation: applySidebarLocation(prefs["workbench.sideBar.location"] ?? "left"),
     foldingEnabled: prefs["editor.folding.enabled"] ?? true,
@@ -35,7 +42,7 @@ function mapPreferences(prefs: Preferences) {
 }
 
 export const usePreferencesStore = create<PreferencesState>((set) => ({
-  darkMode: false,
+  darkMode: "auto",
   colorTheme: null,
   sidebarLocation: "left",
   foldingEnabled: true,

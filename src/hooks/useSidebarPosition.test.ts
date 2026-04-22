@@ -5,7 +5,7 @@ import { usePreferencesStore } from "../stores/preferences";
 
 describe("useSidebarPosition", () => {
   beforeEach(() => {
-    usePreferencesStore.setState({ darkMode: false, colorTheme: null, sidebarLocation: "left", loaded: true });
+    usePreferencesStore.setState({ darkMode: "light", colorTheme: null, sidebarLocation: "left", loaded: true });
   });
 
   it("defaults to left", () => {

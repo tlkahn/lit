@@ -126,9 +126,11 @@ export async function saveUserKeymaps(bindings: KeyBinding[]): Promise<void> {
 
 // Preferences commands
 
+export type DarkModePref = "light" | "dark" | "auto";
+
 export interface Preferences {
   "workbench.colorTheme": string | null;
-  "workbench.darkMode": boolean;
+  "workbench.darkMode": DarkModePref;
   "workbench.sideBar.location": string;
   "editor.folding.enabled": boolean;
   "editor.folding.showFoldingControls": string;

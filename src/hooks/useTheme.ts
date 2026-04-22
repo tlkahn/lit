@@ -1,7 +1,23 @@
-import { useEffect } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { usePreferencesStore } from "../stores/preferences";
 
 export type Theme = "light" | "dark";
+
+function getMql(): MediaQueryList | null {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function")
+    return null;
+  return window.matchMedia("(prefers-color-scheme: dark)");
+}
+
+function getSystemDark(): boolean {
+  return getMql()?.matches ?? false;
+}
+
+function subscribeSystemTheme(cb: () => void): () => void {
+  const mql = getMql();
+  mql?.addEventListener("change", cb);
+  return () => mql?.removeEventListener("change", cb);
+}
 
 async function syncNativeTitleBar(theme: Theme): Promise<void> {
   try {
@@ -13,8 +29,17 @@ async function syncNativeTitleBar(theme: Theme): Promise<void> {
 }
 
 export function useTheme() {
-  const darkMode = usePreferencesStore((s) => s.darkMode);
-  const theme: Theme = darkMode ? "dark" : "light";
+  const darkModePref = usePreferencesStore((s) => s.darkMode);
+  const systemDark = useSyncExternalStore(subscribeSystemTheme, getSystemDark);
+
+  const theme: Theme =
+    darkModePref === "auto"
+      ? systemDark
+        ? "dark"
+        : "light"
+      : darkModePref === "dark"
+        ? "dark"
+        : "light";
 
   useEffect(() => {
     const root = document.documentElement;
