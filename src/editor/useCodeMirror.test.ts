@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
+import { openSearchPanel, closeSearchPanel } from "@codemirror/search";
 import { useCodeMirror } from "./useCodeMirror";
 
 function makeContainer() {
@@ -170,6 +171,22 @@ describe("useCodeMirror", () => {
     );
 
     expect(() => rerender({ doc: "second" })).not.toThrow();
+  });
+
+  it("search panel opens and closes via useCodeMirror", () => {
+    const { result } = renderHook(() =>
+      useCodeMirror({
+        containerRef: container.ref,
+        doc: "hello world",
+      }),
+    );
+    const view = result.current.view!;
+
+    act(() => { openSearchPanel(view); });
+    expect(container.ref.current.querySelector(".cm-search")).not.toBeNull();
+
+    act(() => { closeSearchPanel(view); });
+    expect(container.ref.current.querySelector(".cm-search")).toBeNull();
   });
 
   it("reconfigures theme when dark class changes on document element", () => {

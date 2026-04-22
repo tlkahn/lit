@@ -5,7 +5,8 @@ import { enterInList, indentListItem, outdentListItem } from "./listCommands";
 import { markdown } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
 import { GFM } from "@lezer/markdown";
-import { getThemeExtension, highlightExtension } from "./theme";
+import { getThemeExtension, highlightExtension, searchTheme } from "./theme";
+import { search, searchKeymap } from "@codemirror/search";
 import { livePreviewExtension } from "./livePreview";
 import { WikiLink } from "./markdown/wikilink";
 import { Frontmatter, FrontmatterYamlWrap } from "./markdown/frontmatter";
@@ -32,6 +33,9 @@ export function createExtensions(config: ExtensionConfig): Extension[] {
     highlightExtension,
     livePreviewExtension({ openUrl: config.openUrl, resolveImageSrc: config.resolveImageSrc }),
     history(),
+    search(),
+    keymap.of(searchKeymap),
+    searchTheme,
     Prec.highest(keymap.of([
       { key: "Enter", run: enterInList },
       { key: "Tab", run: indentListItem },

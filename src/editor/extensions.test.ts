@@ -3,6 +3,17 @@ import { EditorState, Compartment } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { undo } from "@codemirror/commands";
+import {
+  getSearchQuery,
+  openSearchPanel,
+  closeSearchPanel,
+  setSearchQuery,
+  findNext,
+  replaceNext,
+  replaceAll,
+  searchKeymap,
+  SearchQuery,
+} from "@codemirror/search";
 import { createExtensions } from "./extensions";
 import { livePreviewPlugin } from "./livePreview/plugin";
 
@@ -177,5 +188,65 @@ describe("createExtensions", () => {
     const names: string[] = [];
     tree.iterate({ enter: (node) => { names.push(node.name); } });
     expect(names).toContain("BlockComment");
+  });
+});
+
+function createViewWithSearch(doc: string, onChange?: (content: string) => void) {
+  const exts = createExtensions(makeConfig({ onChange }));
+  const state = EditorState.create({ doc, extensions: exts });
+  const parent = document.createElement("div");
+  document.body.appendChild(parent);
+  const view = new EditorView({ state, parent });
+  return { view, parent, destroy: () => { view.destroy(); parent.remove(); } };
+}
+
+describe("search & replace", () => {
+  it("search state field is present", () => {
+    const exts = createExtensions(makeConfig());
+    const state = EditorState.create({ doc: "hello", extensions: exts });
+    expect(() => getSearchQuery(state)).not.toThrow();
+  });
+
+  it("search panel opens and closes", () => {
+    const { view, parent, destroy } = createViewWithSearch("hello world");
+    openSearchPanel(view);
+    expect(parent.querySelector(".cm-search")).not.toBeNull();
+    closeSearchPanel(view);
+    expect(parent.querySelector(".cm-search")).toBeNull();
+    destroy();
+  });
+
+  it("replace triggers onChange", () => {
+    const onChange = vi.fn();
+    const { view, destroy } = createViewWithSearch("hello world", onChange);
+    view.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: "hello", replace: "goodbye" })) });
+    findNext(view);
+    replaceNext(view);
+    expect(onChange).toHaveBeenCalledWith("goodbye world");
+    destroy();
+  });
+
+  it("replaceAll triggers onChange with fully replaced content", () => {
+    const onChange = vi.fn();
+    const { view, destroy } = createViewWithSearch("foo bar foo baz foo", onChange);
+    view.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: "foo", replace: "qux" })) });
+    replaceAll(view);
+    const calls = onChange.mock.calls;
+    expect(calls[calls.length - 1]![0]).toBe("qux bar qux baz qux");
+    destroy();
+  });
+
+  it("search keybindings don't conflict with list commands", () => {
+    const listKeys = new Set(["Enter", "Tab", "Shift-Tab"]);
+    const conflicting = searchKeymap.filter((b) => b.key && listKeys.has(b.key));
+    expect(conflicting).toHaveLength(0);
+  });
+
+  it("search panel renders with themed container", () => {
+    const { view, parent, destroy } = createViewWithSearch("hello");
+    openSearchPanel(view);
+    expect(parent.querySelector(".cm-panels")).not.toBeNull();
+    expect(parent.querySelector(".cm-search")).not.toBeNull();
+    destroy();
   });
 });

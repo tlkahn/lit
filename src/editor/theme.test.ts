@@ -5,6 +5,7 @@ import {
   editorDarkTheme,
   highlightExtension,
   getThemeExtension,
+  searchTheme,
 } from "./theme";
 
 describe("theme", () => {
@@ -25,5 +26,9 @@ describe("theme", () => {
   it("getThemeExtension returns light/dark based on arg", () => {
     expect(getThemeExtension("light")).toBe(editorTheme);
     expect(getThemeExtension("dark")).toBe(editorDarkTheme);
+  });
+
+  it("searchTheme is a valid Extension", () => {
+    expect(() => EditorState.create({ extensions: [searchTheme] })).not.toThrow();
   });
 });

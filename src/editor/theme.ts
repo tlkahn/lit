@@ -66,3 +66,52 @@ export const highlightExtension: Extension = [
 export function getThemeExtension(theme: "light" | "dark"): Extension {
   return theme === "dark" ? editorDarkTheme : editorTheme;
 }
+
+export const searchTheme: Extension = EditorView.baseTheme({
+  ".cm-panels": {
+    backgroundColor: "var(--background-secondary)",
+    color: "var(--text-normal)",
+    borderBottom: "1px solid var(--background-modifier-border)",
+  },
+  ".cm-search": {
+    padding: "4px 8px",
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "4px",
+    alignItems: "center",
+  },
+  ".cm-search input": {
+    backgroundColor: "var(--background-primary)",
+    color: "var(--text-normal)",
+    border: "1px solid var(--background-modifier-border)",
+    borderRadius: "4px",
+    padding: "2px 6px",
+    fontSize: "0.8125rem",
+    outline: "none",
+  },
+  ".cm-search input:focus": {
+    borderColor: "var(--interactive-accent)",
+  },
+  ".cm-search button": {
+    backgroundColor: "var(--interactive-normal)",
+    color: "var(--text-normal)",
+    border: "1px solid var(--background-modifier-border)",
+    borderRadius: "4px",
+    padding: "2px 8px",
+    fontSize: "0.8125rem",
+    cursor: "pointer",
+  },
+  ".cm-search button:hover": {
+    backgroundColor: "var(--interactive-hover)",
+  },
+  ".cm-search label": {
+    fontSize: "0.8125rem",
+    color: "var(--text-muted)",
+  },
+  ".cm-searchMatch": {
+    backgroundColor: "var(--text-highlight-bg, rgba(255, 208, 0, 0.4))",
+  },
+  ".cm-searchMatch-selected": {
+    backgroundColor: "var(--text-selection)",
+  },
+});
