@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ContentArea } from "./ContentArea";
+import { ContentArea, parseYamlErrorLocation } from "./ContentArea";
 import { mockInvoke } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
 
@@ -56,7 +56,7 @@ beforeEach(() => {
     }
     if (cmd === "parse_raw_yaml") {
       const raw = (args as Record<string, unknown>)?.rawYaml as string;
-      if (raw.includes("[[[")) throw new Error("invalid YAML");
+      if (raw.includes("[[[")) throw new Error("did not find expected ',' or ']' at line 1 column 6");
       if (raw.trim() === "") return {};
       return { tags: ["test"] };
     }
@@ -256,7 +256,10 @@ describe("frontmatter editing", () => {
     await waitFor(() => {
       expect(screen.getByTestId("yaml-error")).toBeInTheDocument();
     });
-    expect(screen.getByTestId("frontmatter-editor")).toBeInTheDocument();
+    const ta = screen.getByTestId("frontmatter-editor") as HTMLTextAreaElement;
+    expect(ta).toBeInTheDocument();
+    expect(ta.selectionStart).toBe(0);
+    expect(ta.selectionEnd).toBe("bad: [[[".length);
   });
 
   it("editing to empty commits empty frontmatter", async () => {
@@ -283,5 +286,37 @@ describe("frontmatter editing", () => {
     await waitFor(() => {
       expect(screen.queryByTestId("frontmatter-editor")).not.toBeInTheDocument();
     });
+  });
+});
+
+describe("parseYamlErrorLocation", () => {
+  it("parses 'at line X column Y' at end of message", () => {
+    expect(
+      parseYamlErrorLocation("mapping values are not allowed in this context at line 1 column 8"),
+    ).toEqual({ line: 1, column: 8 });
+  });
+
+  it("prefers 'while parsing' origin location over detection location", () => {
+    expect(
+      parseYamlErrorLocation(
+        "did not find expected ',' or ']' at line 2 column 1, while parsing a flow sequence at line 1 column 6",
+      ),
+    ).toEqual({ line: 1, column: 6 });
+  });
+
+  it("parses multi-digit line and column", () => {
+    expect(
+      parseYamlErrorLocation("something went wrong at line 123 column 45"),
+    ).toEqual({ line: 123, column: 45 });
+  });
+
+  it("returns null for messages without location", () => {
+    expect(
+      parseYamlErrorLocation("invalid type: sequence, expected a map"),
+    ).toBeNull();
+  });
+
+  it("returns null for empty string", () => {
+    expect(parseYamlErrorLocation("")).toBeNull();
   });
 });

@@ -5,6 +5,14 @@ import { readPage, writePage, parseRawYaml } from "../lib/ipc";
 import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
 import { YamlHighlighter } from "./YamlHighlighter";
 
+export function parseYamlErrorLocation(msg: string): { line: number; column: number } | null {
+  const origin = msg.match(/while parsing .+ at line (\d+) column (\d+)/);
+  if (origin) return { line: parseInt(origin[1]!, 10), column: parseInt(origin[2]!, 10) };
+  const match = msg.match(/at line (\d+) column (\d+)/);
+  if (!match) return null;
+  return { line: parseInt(match[1]!, 10), column: parseInt(match[2]!, 10) };
+}
+
 function resolveRelativePath(base: string, relative: string): string {
   const segments = (base ? base + "/" + relative : relative).split("/");
   const resolved: string[] = [];
@@ -139,8 +147,23 @@ export function ContentArea() {
         });
       }
     } catch (err) {
-      setYamlError(err instanceof Error ? err.message : String(err));
-      textareaRef.current?.focus();
+      const msg = err instanceof Error ? err.message : String(err);
+      setYamlError(msg);
+      const ta = textareaRef.current;
+      if (ta) {
+        ta.focus();
+        const loc = parseYamlErrorLocation(msg);
+        if (loc) {
+          const lines = yamlDraft.split("\n");
+          let offset = 0;
+          for (let i = 0; i < loc.line - 1 && i < lines.length; i++) {
+            offset += lines[i]!.length + 1;
+          }
+          const lineStart = offset;
+          const lineEnd = offset + (lines[loc.line - 1]?.length ?? 0);
+          ta.setSelectionRange(lineStart, lineEnd);
+        }
+      }
     }
   };
 
