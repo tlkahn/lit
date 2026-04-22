@@ -5,6 +5,7 @@ import { livePreviewBaseTheme } from "./theme";
 import { imageResolverFacet, type ImageResolver } from "./imageResolver";
 import { calloutFoldField } from "./callout";
 import { createCalloutClickHandler } from "./calloutClickHandler";
+import { createWrappedLineClickFix } from "./clickFix";
 import { openUrl as defaultOpenUrl } from "@tauri-apps/plugin-opener";
 
 export interface LivePreviewConfig {
@@ -19,6 +20,7 @@ export function livePreviewExtension(config?: LivePreviewConfig): Extension {
     blockReplacementField,
     createLinkClickHandler(openUrl),
     createCalloutClickHandler(),
+    createWrappedLineClickFix(),
     livePreviewBaseTheme,
     calloutFoldField,
   ];
