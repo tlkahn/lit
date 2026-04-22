@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useWorkspaceStore } from "../stores/workspace";
 import { openWorkspaceWindow } from "../lib/ipc";
@@ -31,16 +31,28 @@ function buildTree(pages: PageMeta[]): FolderNode {
 function FolderView({
   node,
   currentPagePath,
+  menuPath,
+  renamingPath,
   onSelect,
   onDelete,
-  onRename,
+  onMenuOpen,
+  onMenuClose,
+  onRenameStart,
+  onRenameCommit,
+  onRenameCancel,
   depth,
 }: {
   node: FolderNode;
   currentPagePath: string | null;
+  menuPath: string | null;
+  renamingPath: string | null;
   onSelect: (path: string) => void;
   onDelete: (path: string) => void;
-  onRename: (path: string) => void;
+  onMenuOpen: (path: string) => void;
+  onMenuClose: () => void;
+  onRenameStart: (path: string) => void;
+  onRenameCommit: (path: string, newName: string) => void;
+  onRenameCancel: () => void;
   depth: number;
 }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -68,9 +80,15 @@ function FolderView({
               key={dirName}
               node={child}
               currentPagePath={currentPagePath}
+              menuPath={menuPath}
+              renamingPath={renamingPath}
               onSelect={onSelect}
               onDelete={onDelete}
-              onRename={onRename}
+              onMenuOpen={onMenuOpen}
+              onMenuClose={onMenuClose}
+              onRenameStart={onRenameStart}
+              onRenameCommit={onRenameCommit}
+              onRenameCancel={onRenameCancel}
               depth={depth + (node.name ? 1 : 0)}
             />
           ))}
@@ -79,9 +97,15 @@ function FolderView({
               key={page.relative_path}
               page={page}
               isActive={currentPagePath === page.relative_path}
+              showMenu={menuPath === page.relative_path}
+              isRenaming={renamingPath === page.relative_path}
               onSelect={onSelect}
               onDelete={onDelete}
-              onRename={onRename}
+              onMenuOpen={onMenuOpen}
+              onMenuClose={onMenuClose}
+              onRenameStart={onRenameStart}
+              onRenameCommit={onRenameCommit}
+              onRenameCancel={onRenameCancel}
               depth={depth + (node.name ? 1 : 0)}
             />
           ))}
@@ -94,46 +118,114 @@ function FolderView({
 function PageItem({
   page,
   isActive,
+  showMenu,
+  isRenaming,
   onSelect,
   onDelete,
-  onRename,
+  onMenuOpen,
+  onMenuClose,
+  onRenameStart,
+  onRenameCommit,
+  onRenameCancel,
   depth,
 }: {
   page: PageMeta;
   isActive: boolean;
+  showMenu: boolean;
+  isRenaming: boolean;
   onSelect: (path: string) => void;
   onDelete: (path: string) => void;
-  onRename: (path: string) => void;
+  onMenuOpen: (path: string) => void;
+  onMenuClose: () => void;
+  onRenameStart: (path: string) => void;
+  onRenameCommit: (path: string, newName: string) => void;
+  onRenameCancel: () => void;
   depth: number;
 }) {
-  const [showMenu, setShowMenu] = useState(false);
+  const [renameValue, setRenameValue] = useState(page.title);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showMenu) return;
+    const handleClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        onMenuClose();
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onMenuClose();
+    };
+    document.addEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [showMenu, onMenuClose]);
+
+  useEffect(() => {
+    if (isRenaming) {
+      setRenameValue(page.title);
+      requestAnimationFrame(() => {
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      });
+    }
+  }, [isRenaming, page.title]);
+
+  const commitRename = () => {
+    const trimmed = renameValue.trim();
+    if (trimmed && trimmed !== page.title) {
+      onRenameCommit(page.relative_path, trimmed);
+    } else {
+      onRenameCancel();
+    }
+  };
 
   return (
     <div
       className="group relative"
       onContextMenu={(e) => {
         e.preventDefault();
-        setShowMenu(!showMenu);
+        if (!isRenaming) onMenuOpen(page.relative_path);
       }}
     >
-      <button
-        onClick={() => onSelect(page.relative_path)}
-        className={`w-full truncate rounded px-2 py-1 text-left text-sm ${
-          isActive
-            ? "bg-nav-active-bg text-nav-active-text"
-            : "text-text-normal hover:bg-bg-hover"
-        }`}
-        style={{ paddingLeft: `${depth * 12 + 8}px` }}
-        title={page.relative_path}
-      >
-        {page.title}
-      </button>
+      {isRenaming ? (
+        <input
+          ref={inputRef}
+          value={renameValue}
+          onChange={(e) => setRenameValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commitRename();
+            if (e.key === "Escape") onRenameCancel();
+          }}
+          onBlur={commitRename}
+          className="w-full rounded border border-interactive-accent bg-bg-primary px-2 py-1 text-sm text-text-normal outline-none"
+          style={{ paddingLeft: `${depth * 12 + 8}px` }}
+        />
+      ) : (
+        <button
+          onClick={() => onSelect(page.relative_path)}
+          className={`w-full select-none truncate rounded px-2 py-1 text-left text-sm ${
+            isActive
+              ? "bg-nav-active-bg text-nav-active-text"
+              : showMenu
+                ? "bg-bg-hover text-text-normal"
+                : "text-text-normal hover:bg-bg-hover"
+          }`}
+          style={{ paddingLeft: `${depth * 12 + 8}px` }}
+          title={page.relative_path}
+        >
+          {page.title}
+        </button>
+      )}
       {showMenu && (
-        <div className="absolute right-2 top-0 z-10 rounded border border-border bg-bg-primary shadow-lg">
+        <div ref={menuRef} className="absolute right-2 top-0 z-10 select-none rounded border border-border bg-bg-primary shadow-lg">
           <button
             onClick={() => {
-              setShowMenu(false);
-              onRename(page.relative_path);
+              onMenuClose();
+              onRenameStart(page.relative_path);
             }}
             className="block w-full px-4 py-1 text-left text-sm text-text-normal hover:bg-bg-hover"
           >
@@ -141,7 +233,7 @@ function PageItem({
           </button>
           <button
             onClick={() => {
-              setShowMenu(false);
+              onMenuClose();
               onDelete(page.relative_path);
             }}
             className="block w-full px-4 py-1 text-left text-sm text-text-error hover:bg-bg-hover"
@@ -162,6 +254,8 @@ export function Sidebar() {
   const renamePageAction = useWorkspaceStore((s) => s.renamePage);
   const deletePageAction = useWorkspaceStore((s) => s.deletePage);
   const [search, setSearch] = useState("");
+  const [menuPath, setMenuPath] = useState<string | null>(null);
+  const [renamingPath, setRenamingPath] = useState<string | null>(null);
 
   const filtered = search
     ? pages.filter((p) => p.title.toLowerCase().includes(search.toLowerCase()))
@@ -174,11 +268,9 @@ export function Sidebar() {
     createPageAction(name);
   };
 
-  const handleRename = (path: string) => {
-    const newName = window.prompt("New name:");
-    if (newName?.trim()) {
-      renamePageAction(path, newName.trim());
-    }
+  const handleRenameCommit = (path: string, newName: string) => {
+    setRenamingPath(null);
+    renamePageAction(path, newName);
   };
 
   const handleDelete = (path: string) => {
@@ -215,9 +307,15 @@ export function Sidebar() {
         <FolderView
           node={tree}
           currentPagePath={currentPagePath}
+          menuPath={menuPath}
+          renamingPath={renamingPath}
           onSelect={selectPage}
           onDelete={handleDelete}
-          onRename={handleRename}
+          onMenuOpen={setMenuPath}
+          onMenuClose={() => setMenuPath(null)}
+          onRenameStart={setRenamingPath}
+          onRenameCommit={handleRenameCommit}
+          onRenameCancel={() => setRenamingPath(null)}
           depth={0}
         />
       </div>
