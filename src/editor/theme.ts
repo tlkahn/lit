@@ -12,7 +12,10 @@ const shared = EditorView.baseTheme({
     fontSize: "0.875rem",
     lineHeight: "1.25rem",
   },
-  ".cm-gutters": { display: "none" },
+  ".cm-gutters": {
+    backgroundColor: "transparent",
+    border: "none",
+  },
 });
 
 export const editorTheme: Extension = [

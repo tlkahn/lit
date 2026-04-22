@@ -123,6 +123,41 @@ export const livePreviewBaseTheme = EditorView.baseTheme({
     backgroundColor: "color-mix(in srgb, var(--color-blue) 8%, transparent)",
   },
 
+  // Fold gutter & placeholder
+  ".cm-foldGutter": {
+    width: "16px",
+  },
+  ".cm-foldGutter .cm-gutterElement": {
+    padding: "0",
+    cursor: "pointer",
+    color: "var(--text-faint)",
+    opacity: "0",
+    transition: "opacity 150ms ease",
+  },
+  ".cm-foldGutter .cm-gutterElement .cm-fold-marker": {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    height: "100%",
+  },
+  ".cm-foldGutter .cm-gutterElement .cm-fold-marker svg": {
+    width: "16px",
+    height: "16px",
+  },
+  "&:hover .cm-foldGutter .cm-gutterElement": {
+    opacity: "1",
+  },
+  ".cm-foldPlaceholder": {
+    backgroundColor: "var(--background-secondary, rgba(0,0,0,0.05))",
+    border: "1px solid var(--background-modifier-border, #e0e0e0)",
+    borderRadius: "4px",
+    padding: "0 4px",
+    margin: "0 4px",
+    color: "var(--text-faint)",
+    fontSize: "0.8em",
+    cursor: "pointer",
+  },
+
   // Math
   ".cm-preview-math-inline": {
     padding: "0 2px",

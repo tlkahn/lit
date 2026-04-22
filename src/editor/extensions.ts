@@ -8,6 +8,7 @@ import { GFM } from "@lezer/markdown";
 import { getThemeExtension, highlightExtension, searchTheme } from "./theme";
 import { search, searchKeymap } from "@codemirror/search";
 import { livePreviewExtension } from "./livePreview";
+import { foldExtension } from "./fold";
 import { WikiLink } from "./markdown/wikilink";
 import { Frontmatter, FrontmatterYamlWrap } from "./markdown/frontmatter";
 import { Math } from "./markdown/math";
@@ -32,6 +33,7 @@ export function createExtensions(config: ExtensionConfig): Extension[] {
     config.themeCompartment.of(getThemeExtension(config.theme)),
     highlightExtension,
     livePreviewExtension({ openUrl: config.openUrl, resolveImageSrc: config.resolveImageSrc }),
+    foldExtension(),
     history(),
     search(),
     keymap.of(searchKeymap),
