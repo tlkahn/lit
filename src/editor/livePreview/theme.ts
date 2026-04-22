@@ -139,6 +139,12 @@ export const livePreviewBaseTheme = EditorView.baseTheme({
     fontSize: "1em",
   },
 
+  // Comments
+  ".tok-comment": {
+    color: "var(--text-faint)",
+    opacity: "0.6",
+  },
+
   // Override tags.quote gray/italic within callout body lines
   "& .cm-line.cm-callout span": {
     color: "inherit !important",

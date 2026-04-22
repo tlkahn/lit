@@ -60,6 +60,16 @@ export function buildDecorations(view: EditorView): DecorationSet {
           addInlineMathDecos(state, node.from, node.to, node.node, decos);
           return false;
         }
+        if (node.name === "InlineComment") {
+          addInlineCommentDecos(state, node.from, node.to, decos);
+          return false;
+        }
+        if (node.name === "BlockComment") {
+          if (!state.doc.sliceString(node.from, node.to).includes("\n")) {
+            addBlockCommentDecos(state, node.from, node.to, decos);
+          }
+          return false;
+        }
         if (node.name === "DisplayMath") {
           // Multi-line display math must be handled by a StateField (line-break-crossing replace).
           // Single-line $$...$$ is fine here.
@@ -402,6 +412,12 @@ export function buildBlockReplacements(state: EditorState): DecorationSet {
           addDisplayMathDecos(state, node.from, node.to, decos);
         }
       }
+      if (node.name === "BlockComment") {
+        const text = state.doc.sliceString(node.from, node.to);
+        if (text.includes("\n")) {
+          addBlockCommentDecos(state, node.from, node.to, decos);
+        }
+      }
       if (node.name === "Table") {
         addTableBlockReplacement(state, node.from, node.to, decos);
       }
@@ -484,4 +500,24 @@ function addMermaidBlockReplacement(
     to,
     deco: Decoration.replace({ widget: new MermaidWidget(source, theme) }),
   });
+}
+
+function addInlineCommentDecos(
+  state: EditorState,
+  from: number,
+  to: number,
+  decos: { from: number; to: number; deco: Decoration }[],
+) {
+  if (isCursorOnLine(state, from, to)) return;
+  decos.push({ from, to, deco: Decoration.replace({}) });
+}
+
+function addBlockCommentDecos(
+  state: EditorState,
+  from: number,
+  to: number,
+  decos: { from: number; to: number; deco: Decoration }[],
+) {
+  if (isCursorOnLine(state, from, to)) return;
+  decos.push({ from, to, deco: Decoration.replace({}) });
 }

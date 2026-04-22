@@ -9,6 +9,7 @@ import { livePreviewExtension } from "./livePreview";
 import { WikiLink } from "./markdown/wikilink";
 import { Frontmatter, FrontmatterYamlWrap } from "./markdown/frontmatter";
 import { Math } from "./markdown/math";
+import { Comment } from "./markdown/comment";
 
 export interface ExtensionConfig {
   theme: "light" | "dark";
@@ -21,7 +22,7 @@ export interface ExtensionConfig {
 export function createExtensions(config: ExtensionConfig): Extension[] {
   return [
     markdown({
-      extensions: [GFM, WikiLink, Frontmatter, FrontmatterYamlWrap, Math],
+      extensions: [GFM, WikiLink, Frontmatter, FrontmatterYamlWrap, Math, Comment],
       codeLanguages: languages,
     }),
     config.themeCompartment.of(getThemeExtension(config.theme)),

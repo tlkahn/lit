@@ -153,4 +153,28 @@ describe("createExtensions", () => {
     tree.iterate({ enter: (node) => { names.push(node.name); } });
     expect(names).toContain("DisplayMath");
   });
+
+  it("parses InlineComment nodes", () => {
+    const exts = createExtensions(makeConfig());
+    const state = EditorState.create({
+      doc: "text %%hidden%% more",
+      extensions: exts,
+    });
+    const tree = syntaxTree(state);
+    const names: string[] = [];
+    tree.iterate({ enter: (node) => { names.push(node.name); } });
+    expect(names).toContain("InlineComment");
+  });
+
+  it("parses BlockComment nodes", () => {
+    const exts = createExtensions(makeConfig());
+    const state = EditorState.create({
+      doc: "%%\nblock comment\n%%",
+      extensions: exts,
+    });
+    const tree = syntaxTree(state);
+    const names: string[] = [];
+    tree.iterate({ enter: (node) => { names.push(node.name); } });
+    expect(names).toContain("BlockComment");
+  });
 });

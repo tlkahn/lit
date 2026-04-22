@@ -6,6 +6,7 @@ import { GFM } from "@lezer/markdown";
 import { buildDecorations, buildBlockReplacements } from "./decorations";
 import { WikiLink } from "../markdown/wikilink";
 import { Math as MathExt } from "../markdown/math";
+import { Comment as CommentExt } from "../markdown/comment";
 import { calloutFoldField } from "./callout";
 
 vi.mock("katex", () => ({
@@ -32,7 +33,7 @@ function makeView(doc: string, cursor: number): EditorView {
     doc,
     selection: { anchor: cursor },
     extensions: [
-      markdown({ extensions: [GFM, WikiLink, MathExt] }),
+      markdown({ extensions: [GFM, WikiLink, MathExt, CommentExt] }),
       calloutFoldField,
     ],
   });
@@ -519,6 +520,89 @@ describe("buildBlockReplacements — mermaid", () => {
       (d) => d.class === "cm-preview-code-block" || d.class === "cm-code-fence-top",
     );
     expect(fenceDecos).toHaveLength(0);
+    view.destroy();
+  });
+});
+
+describe("buildDecorations — inline comments", () => {
+  it("replaces %%hidden%% entirely when cursor is elsewhere", () => {
+    const doc = "text %%hidden%% more\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const replace = decos.find((d) => d.type === "replace" && d.from === 5 && d.to === 15);
+    expect(replace).toBeDefined();
+    view.destroy();
+  });
+
+  it("shows raw source when cursor is on line", () => {
+    const view = makeView("text %%hidden%% more", 8);
+    const decos = collectDecos(view);
+    const commentDecos = decos.filter((d) => d.from >= 5 && d.to <= 15);
+    expect(commentDecos).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("works mid-line alongside other text", () => {
+    const doc = "before %%comment%% after\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const replace = decos.find((d) => d.type === "replace" && d.from === 7 && d.to === 18);
+    expect(replace).toBeDefined();
+    view.destroy();
+  });
+});
+
+describe("buildBlockReplacements — block comments", () => {
+  it("hides multi-line block comment when cursor is elsewhere", () => {
+    const doc = "%%\nblock content\n%%\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectBlockDecos(view);
+    const bc = decos.find((d) => d.from === 0);
+    expect(bc).toBeDefined();
+    view.destroy();
+  });
+
+  it("shows raw on cursor-on-opening-line", () => {
+    const doc = "%%\nblock content\n%%";
+    const view = makeView(doc, 1);
+    const decos = collectBlockDecos(view);
+    const bc = decos.find((d) => d.from === 0);
+    expect(bc).toBeUndefined();
+    view.destroy();
+  });
+
+  it("shows raw on cursor-on-content-line", () => {
+    const doc = "%%\nblock content\n%%";
+    const view = makeView(doc, 5);
+    const decos = collectBlockDecos(view);
+    const bc = decos.find((d) => d.from === 0);
+    expect(bc).toBeUndefined();
+    view.destroy();
+  });
+
+  it("shows raw on cursor-on-closing-line", () => {
+    const doc = "%%\nblock content\n%%";
+    const view = makeView(doc, 18);
+    const decos = collectBlockDecos(view);
+    const bc = decos.find((d) => d.from === 0);
+    expect(bc).toBeUndefined();
+    view.destroy();
+  });
+
+  it("single-line %%content%% at line start handled by buildDecorations", () => {
+    const doc = "%%single line%%\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const replace = decos.find((d) => d.type === "replace" && d.from === 0 && d.to === 15);
+    expect(replace).toBeDefined();
+    view.destroy();
+  });
+
+  it("coexists with other block widgets (math, table)", () => {
+    const doc = "%%\ncomment\n%%\n\n| a |\n| --- |\n| 1 |\n\n$$\nx^2\n$$\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectBlockDecos(view);
+    expect(decos.length).toBeGreaterThanOrEqual(3);
     view.destroy();
   });
 });
