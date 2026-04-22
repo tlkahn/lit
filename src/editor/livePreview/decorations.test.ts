@@ -18,6 +18,15 @@ vi.mock("katex", () => ({
 
 vi.mock("katex/dist/katex.min.css", () => ({}));
 
+vi.mock("mermaid", () => ({
+  default: { initialize: vi.fn(), render: vi.fn(async () => ({ svg: "<svg/>" })) },
+}));
+
+vi.mock("./mermaid", () => ({
+  renderMermaid: vi.fn(async () => {}),
+  getMermaidCached: vi.fn(() => undefined),
+}));
+
 function makeView(doc: string, cursor: number): EditorView {
   const state = EditorState.create({
     doc,
@@ -442,6 +451,74 @@ describe("buildBlockReplacements — tables", () => {
     const decos = collectBlockDecos(view);
     const widgets = decos.filter((d) => d.widget);
     expect(widgets).toHaveLength(2);
+    view.destroy();
+  });
+});
+
+describe("buildBlockReplacements — mermaid", () => {
+  it("replaces mermaid block with widget when cursor is outside", () => {
+    const doc = "```mermaid\ngraph LR; A-->B\n```\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectBlockDecos(view);
+    const mermaidWidget = decos.find((d) => d.widget && d.from === 0);
+    expect(mermaidWidget).toBeDefined();
+    expect(mermaidWidget!.to).toBe(30);
+    view.destroy();
+  });
+
+  it("shows raw source when cursor is inside the mermaid block", () => {
+    const doc = "```mermaid\ngraph LR; A-->B\n```";
+    const view = makeView(doc, 15);
+    const decos = collectBlockDecos(view);
+    const mermaidWidget = decos.find((d) => d.widget);
+    expect(mermaidWidget).toBeUndefined();
+    view.destroy();
+  });
+
+  it("shows raw source when cursor is on opening fence line", () => {
+    const doc = "```mermaid\ngraph LR; A-->B\n```";
+    const view = makeView(doc, 3);
+    const decos = collectBlockDecos(view);
+    const mermaidWidget = decos.find((d) => d.widget);
+    expect(mermaidWidget).toBeUndefined();
+    view.destroy();
+  });
+
+  it("shows raw source when cursor is on closing fence line", () => {
+    const doc = "```mermaid\ngraph LR; A-->B\n```";
+    const view = makeView(doc, 28);
+    const decos = collectBlockDecos(view);
+    const mermaidWidget = decos.find((d) => d.widget);
+    expect(mermaidWidget).toBeUndefined();
+    view.destroy();
+  });
+
+  it("does not replace non-mermaid fenced code blocks", () => {
+    const doc = "```js\nconsole.log('hi')\n```\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectBlockDecos(view);
+    const widget = decos.find((d) => d.widget && d.from === 0);
+    expect(widget).toBeUndefined();
+    view.destroy();
+  });
+
+  it("mermaid widget coexists with table and math widgets", () => {
+    const doc = "```mermaid\ngraph LR; A-->B\n```\n\n| a |\n| --- |\n| 1 |\n\n$$\nx^2\n$$\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectBlockDecos(view);
+    const widgets = decos.filter((d) => d.widget);
+    expect(widgets).toHaveLength(3);
+    view.destroy();
+  });
+
+  it("does not add fence decorations for mermaid blocks when cursor is outside", () => {
+    const doc = "```mermaid\ngraph LR; A-->B\n```\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const fenceDecos = decos.filter(
+      (d) => d.class === "cm-preview-code-block" || d.class === "cm-code-fence-top",
+    );
+    expect(fenceDecos).toHaveLength(0);
     view.destroy();
   });
 });

@@ -2,7 +2,7 @@ import { type EditorState, RangeSet } from "@codemirror/state";
 import { Decoration, type DecorationSet, type EditorView } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { isCursorOnLine } from "./proximity";
-import { ImageWidget, CalloutHeaderWidget, InlineMathWidget, DisplayMathWidget, TableWidget } from "./widgets";
+import { ImageWidget, CalloutHeaderWidget, InlineMathWidget, DisplayMathWidget, TableWidget, MermaidWidget } from "./widgets";
 import { imageResolverFacet } from "./imageResolver";
 import { parseCalloutType, calloutFoldField } from "./callout";
 
@@ -218,6 +218,7 @@ function addFencedCodeDecos(
 
   const codeMarks = node.getChildren("CodeMark");
   const codeInfo = node.getChild("CodeInfo");
+  if (codeInfo && state.doc.sliceString(codeInfo.from, codeInfo.to).trim().toLowerCase() === "mermaid") return;
   const codeText = node.getChild("CodeText");
 
   const openMark = codeMarks[0];
@@ -404,6 +405,15 @@ export function buildBlockReplacements(state: EditorState): DecorationSet {
       if (node.name === "Table") {
         addTableBlockReplacement(state, node.from, node.to, decos);
       }
+      if (node.name === "FencedCode") {
+        const codeInfo = node.node.getChild("CodeInfo");
+        if (codeInfo) {
+          const lang = state.doc.sliceString(codeInfo.from, codeInfo.to).trim().toLowerCase();
+          if (lang === "mermaid") {
+            addMermaidBlockReplacement(state, node.from, node.to, node.node, decos);
+          }
+        }
+      }
     },
   });
 
@@ -452,5 +462,26 @@ function addTableBlockReplacement(
     from,
     to,
     deco: Decoration.replace({ widget: new TableWidget(text, from) }),
+  });
+}
+
+function addMermaidBlockReplacement(
+  state: EditorState,
+  from: number,
+  to: number,
+  node: ReturnType<typeof syntaxTree>["topNode"],
+  decos: { from: number; to: number; deco: Decoration }[],
+) {
+  if (isCursorOnLine(state, from, to)) return;
+
+  const codeText = node.getChild("CodeText");
+  if (!codeText) return;
+
+  const source = state.doc.sliceString(codeText.from, codeText.to);
+  const theme = document.documentElement.classList.contains("dark") ? "dark" : "default";
+  decos.push({
+    from,
+    to,
+    deco: Decoration.replace({ widget: new MermaidWidget(source, theme) }),
   });
 }

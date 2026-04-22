@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import {
@@ -7,8 +7,10 @@ import {
   InlineMathWidget,
   DisplayMathWidget,
   TableWidget,
+  MermaidWidget,
 } from "./widgets";
 import { calloutFoldField } from "./callout";
+import { renderMermaid, getMermaidCached } from "./mermaid";
 
 vi.mock("katex", () => ({
   default: {
@@ -20,6 +22,11 @@ vi.mock("katex", () => ({
 }));
 
 vi.mock("katex/dist/katex.min.css", () => ({}));
+
+vi.mock("./mermaid", () => ({
+  renderMermaid: vi.fn(async () => {}),
+  getMermaidCached: vi.fn(() => undefined),
+}));
 
 describe("ImageWidget", () => {
   it("toDOM returns an img element with correct src and alt", () => {
@@ -380,5 +387,77 @@ describe("TableWidget", () => {
     el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     expect(view.state.selection.main.head).toBe(headBefore);
     view.destroy();
+  });
+});
+
+describe("MermaidWidget", () => {
+  beforeEach(() => {
+    vi.mocked(getMermaidCached).mockReturnValue(undefined);
+    vi.mocked(renderMermaid).mockResolvedValue("<svg>ok</svg>");
+  });
+
+  it("toDOM returns a div with class cm-preview-mermaid", () => {
+    const widget = new MermaidWidget("graph LR; A-->B", "default");
+    const el = widget.toDOM();
+    expect(el.tagName).toBe("DIV");
+    expect(el.className).toBe("cm-preview-mermaid");
+  });
+
+  it("toDOM shows spinner when cache is empty", () => {
+    const widget = new MermaidWidget("graph LR; A-->B", "default");
+    const el = widget.toDOM();
+    const loading = el.querySelector(".cm-preview-mermaid-loading");
+    expect(loading).not.toBeNull();
+    expect(loading!.querySelector("svg")).not.toBeNull();
+  });
+
+  it("toDOM shows cached SVG immediately when cache has a value", () => {
+    vi.mocked(getMermaidCached).mockReturnValue("<svg>cached</svg>");
+    const widget = new MermaidWidget("graph LR; A-->B", "default");
+    const el = widget.toDOM();
+    expect(el.innerHTML).toBe("<svg>cached</svg>");
+    expect(el.querySelector(".cm-preview-mermaid-loading")).toBeNull();
+  });
+
+  it("toDOM calls renderMermaid to populate cache asynchronously", () => {
+    const widget = new MermaidWidget("graph LR; A-->B", "dark");
+    widget.toDOM();
+    expect(renderMermaid).toHaveBeenCalledWith("graph LR; A-->B", "dark");
+  });
+
+  it("toDOM shows error container on render failure", async () => {
+    vi.mocked(renderMermaid).mockRejectedValue(new Error("bad diagram"));
+    const widget = new MermaidWidget("bad", "default");
+    const el = widget.toDOM();
+    document.body.appendChild(el);
+    await vi.waitFor(() => {
+      const error = el.querySelector(".cm-preview-mermaid-error");
+      expect(error).not.toBeNull();
+      expect(error!.textContent).toBe("bad diagram");
+    });
+    el.remove();
+  });
+
+  it("eq returns true for same source and theme", () => {
+    const a = new MermaidWidget("graph LR; A-->B", "default");
+    const b = new MermaidWidget("graph LR; A-->B", "default");
+    expect(a.eq(b)).toBe(true);
+  });
+
+  it("eq returns false for different source", () => {
+    const a = new MermaidWidget("graph LR; A-->B", "default");
+    const b = new MermaidWidget("graph LR; C-->D", "default");
+    expect(a.eq(b)).toBe(false);
+  });
+
+  it("eq returns false for different theme", () => {
+    const a = new MermaidWidget("graph LR; A-->B", "default");
+    const b = new MermaidWidget("graph LR; A-->B", "dark");
+    expect(a.eq(b)).toBe(false);
+  });
+
+  it("ignoreEvent returns true", () => {
+    const widget = new MermaidWidget("graph LR; A-->B", "default");
+    expect(widget.ignoreEvent()).toBe(true);
   });
 });

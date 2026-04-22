@@ -1,8 +1,11 @@
 import { type EditorView, WidgetType } from "@codemirror/view";
 import { getCalloutIcon, toggleCalloutEffect } from "./callout";
 import { getCellPosition, parseTable, renderInlineMarkdown, type Alignment } from "./table";
+import { renderMermaid, getMermaidCached } from "./mermaid";
 import katex from "katex";
 import "katex/dist/katex.min.css";
+
+const SPINNER_SVG = `<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><style>.spinner{transform-origin:center;animation:rotate .75s linear infinite}@keyframes rotate{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}</style><g class="spinner"><circle cx="12" cy="2.5" r="1.5" opacity=".14"/><circle cx="16.75" cy="3.77" r="1.5" opacity=".29"/><circle cx="20.23" cy="7.25" r="1.5" opacity=".43"/><circle cx="21.5" cy="12" r="1.5" opacity=".57"/><circle cx="20.23" cy="16.75" r="1.5" opacity=".71"/><circle cx="16.75" cy="20.23" r="1.5" opacity=".86"/><circle cx="12" cy="21.5" r="1.5"/></g></svg>`;
 
 export class ImageWidget extends WidgetType {
   constructor(
@@ -222,6 +225,55 @@ export class TableWidget extends WidgetType {
 
   ignoreEvent(event: Event): boolean {
     return event.type === "mousedown";
+  }
+}
+
+export class MermaidWidget extends WidgetType {
+  constructor(
+    readonly source: string,
+    readonly theme: "default" | "dark",
+  ) {
+    super();
+  }
+
+  toDOM(): HTMLElement {
+    const container = document.createElement("div");
+    container.className = "cm-preview-mermaid";
+
+    const cached = getMermaidCached(this.source, this.theme);
+    if (cached) {
+      container.innerHTML = cached;
+      return container;
+    }
+
+    const loading = document.createElement("div");
+    loading.className = "cm-preview-mermaid-loading";
+    loading.innerHTML = SPINNER_SVG;
+    container.appendChild(loading);
+
+    renderMermaid(this.source, this.theme)
+      .then((svg) => {
+        if (!container.isConnected) return;
+        container.innerHTML = svg;
+      })
+      .catch((err) => {
+        if (!container.isConnected) return;
+        container.innerHTML = "";
+        const error = document.createElement("div");
+        error.className = "cm-preview-mermaid-error";
+        error.textContent = err instanceof Error ? err.message : String(err);
+        container.appendChild(error);
+      });
+
+    return container;
+  }
+
+  eq(other: MermaidWidget): boolean {
+    return this.source === other.source && this.theme === other.theme;
+  }
+
+  ignoreEvent(): boolean {
+    return true;
   }
 }
 

@@ -177,4 +177,34 @@ export const livePreviewBaseTheme = EditorView.baseTheme({
   ".cm-preview-table tr:hover": {
     backgroundColor: "var(--background-secondary, rgba(0,0,0,0.02))",
   },
+
+  // Mermaid diagrams
+  ".cm-preview-mermaid": {
+    textAlign: "center",
+    padding: "8px 0",
+  },
+  ".cm-preview-mermaid svg": {
+    maxWidth: "100%",
+  },
+  ".cm-preview-mermaid-loading": {
+    display: "flex",
+    justifyContent: "center",
+    padding: "16px 0",
+    color: "var(--text-faint)",
+  },
+  ".cm-preview-mermaid-loading svg": {
+    width: "24px",
+    height: "24px",
+  },
+  ".cm-preview-mermaid-error": {
+    color: "var(--text-error, #e53e3e)",
+    fontStyle: "italic",
+    padding: "8px",
+    backgroundColor: "color-mix(in srgb, var(--text-error, #e53e3e) 8%, transparent)",
+    borderRadius: "4px",
+    fontFamily: "monospace",
+    fontSize: "0.85em",
+    whiteSpace: "pre-wrap",
+    textAlign: "left",
+  },
 });
