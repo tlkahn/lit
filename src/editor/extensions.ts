@@ -1,6 +1,7 @@
-import { type Extension, Compartment } from "@codemirror/state";
+import { type Extension, Compartment, Prec } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { enterInList, indentListItem, outdentListItem } from "./listCommands";
 import { markdown } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
 import { GFM } from "@lezer/markdown";
@@ -31,6 +32,11 @@ export function createExtensions(config: ExtensionConfig): Extension[] {
     highlightExtension,
     livePreviewExtension({ openUrl: config.openUrl, resolveImageSrc: config.resolveImageSrc }),
     history(),
+    Prec.highest(keymap.of([
+      { key: "Enter", run: enterInList },
+      { key: "Tab", run: indentListItem },
+      { key: "Shift-Tab", run: outdentListItem },
+    ])),
     config.keymapCompartment.of(
       keymap.of([...(config.keymapBindings ?? []), ...defaultKeymap, ...historyKeymap]),
     ),
