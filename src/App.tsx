@@ -4,9 +4,7 @@ import { ContentArea } from "./components/ContentArea";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ContentErrorFallback } from "./components/ContentErrorFallback";
 import { WorkspaceChooser } from "./components/WorkspaceChooser";
-import { ThemeToggle } from "./components/ThemeToggle";
-import { SidebarPositionToggle } from "./components/SidebarPositionToggle";
-import { ThemeChooser } from "./components/ThemeChooser";
+import { MenuBar } from "./components/MenuBar";
 import { useTheme } from "./hooks/useTheme";
 import { useSidebarPosition } from "./hooks/useSidebarPosition";
 import { useFileWatcher } from "./hooks/useFileWatcher";
@@ -64,17 +62,15 @@ function App() {
   }
 
   return (
-    <div className={`flex h-screen bg-bg-primary ${position === "right" ? "flex-row-reverse" : "flex-row"}`}>
-      <Sidebar />
-      <div className="flex min-h-0 flex-1 flex-col">
-        <header className="flex items-center justify-end gap-2 bg-bg-primary-alt px-4 py-2">
-          <ThemeChooser />
-          <SidebarPositionToggle position={position} onToggle={togglePosition} />
-          <ThemeToggle theme={theme} onToggle={toggleTheme} />
-        </header>
-        <ErrorBoundary fallback={ContentErrorFallback} resetKey={currentPagePath}>
-          <ContentArea />
-        </ErrorBoundary>
+    <div className="flex h-screen flex-col bg-bg-primary">
+      <MenuBar theme={theme} toggleTheme={toggleTheme} position={position} togglePosition={togglePosition} />
+      <div className={`flex min-h-0 flex-1 ${position === "right" ? "flex-row-reverse" : "flex-row"}`}>
+        <Sidebar />
+        <div className="flex min-h-0 flex-1 flex-col">
+          <ErrorBoundary fallback={ContentErrorFallback} resetKey={currentPagePath}>
+            <ContentArea />
+          </ErrorBoundary>
+        </div>
       </div>
     </div>
   );

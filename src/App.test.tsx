@@ -55,6 +55,8 @@ describe("App", () => {
           return null;
         case "get_pending_workspace":
           return null;
+        case "list_themes":
+          return [];
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -113,8 +115,8 @@ describe("App", () => {
 
     const user = userEvent.setup();
     render(<App />);
-    const toggle = screen.getByLabelText("Switch to dark mode");
-    await user.click(toggle);
+    await user.click(screen.getByText("View"));
+    await user.click(screen.getByText("Dark Mode"));
     expect(document.documentElement.classList.contains("dark")).toBe(true);
   });
 
@@ -132,8 +134,8 @@ describe("App", () => {
 
     const user = userEvent.setup();
     render(<App />);
-    const toggle = screen.getByLabelText("Move sidebar to right");
-    await user.click(toggle);
+    await user.click(screen.getByText("View"));
+    await user.click(screen.getByText("Sidebar Right"));
     const container = screen.getByText("Pages").closest("aside")!.parentElement!;
     expect(container.className).toContain("flex-row-reverse");
   });

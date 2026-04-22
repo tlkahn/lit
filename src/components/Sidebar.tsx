@@ -1,7 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
 import { useWorkspaceStore } from "../stores/workspace";
-import { openWorkspaceWindow } from "../lib/ipc";
 import { getNextUntitledName } from "../lib/naming";
 import type { PageMeta } from "../lib/ipc";
 
@@ -318,19 +316,6 @@ export function Sidebar() {
           onRenameCancel={() => setRenamingPath(null)}
           depth={0}
         />
-      </div>
-      <div className="p-2">
-        <button
-          onClick={async () => {
-            const selected = await open({ directory: true });
-            if (selected) {
-              await openWorkspaceWindow(selected);
-            }
-          }}
-          className="w-full rounded px-2 py-1.5 text-left text-sm text-text-faint hover:bg-bg-hover"
-        >
-          Open Another Workspace
-        </button>
       </div>
     </aside>
   );
