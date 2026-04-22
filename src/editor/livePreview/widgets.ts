@@ -242,8 +242,45 @@ function createEditableCell(
   cell.spellcheck = false;
   applyAlignment(cell, alignment);
 
+  let pendingSelect: { start: number; end: number } | null = null;
+
+  cell.addEventListener("mousedown", (e) => {
+    const mathSpan = (e.target as HTMLElement).closest?.(".cm-preview-math-inline");
+    if (!mathSpan) { pendingSelect = null; return; }
+    const allMath = cell.querySelectorAll(".cm-preview-math-inline");
+    const mathIndex = Array.from(allMath).indexOf(mathSpan as Element);
+    if (mathIndex < 0) { pendingSelect = null; return; }
+    const raw = cell.dataset.raw ?? "";
+    const re = /\$([^$]+)\$/g;
+    let match: RegExpExecArray | null;
+    let idx = 0;
+    while ((match = re.exec(raw)) !== null) {
+      if (idx === mathIndex) {
+        pendingSelect = { start: match.index, end: match.index + match[0].length };
+        return;
+      }
+      idx++;
+    }
+    pendingSelect = null;
+  });
+
   cell.addEventListener("focus", () => {
-    cell.textContent = cell.dataset.raw ?? "";
+    const raw = cell.dataset.raw ?? "";
+    cell.textContent = raw;
+    const sel = window.getSelection();
+    if (sel && cell.firstChild) {
+      const range = document.createRange();
+      if (pendingSelect) {
+        range.setStart(cell.firstChild, pendingSelect.start);
+        range.setEnd(cell.firstChild, pendingSelect.end);
+        pendingSelect = null;
+      } else {
+        range.selectNodeContents(cell);
+        range.collapse(false);
+      }
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
   });
 
   cell.addEventListener("blur", () => {

@@ -321,7 +321,7 @@ describe("EditableTableWidget", () => {
     view.destroy();
   });
 
-  it("focusing a cell replaces innerHTML with raw text", () => {
+  it("focusing a cell replaces innerHTML with raw text and places cursor", () => {
     const rich = "| **bold** |\n| --- |\n| text |";
     const view = makeTableView(rich);
     const widget = new EditableTableWidget(rich, 0);
@@ -331,6 +331,50 @@ describe("EditableTableWidget", () => {
     th.dispatchEvent(new FocusEvent("focus"));
     expect(th.textContent).toBe("**bold**");
     expect(th.innerHTML).not.toContain("<strong>");
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0) {
+      const range = sel.getRangeAt(0);
+      expect(range.collapsed).toBe(true);
+      expect(range.startContainer.parentElement).toBe(th);
+    }
+    view.destroy();
+  });
+
+  it("clicking a math expression selects the raw $...$ text on focus", () => {
+    const mathTable = "| $E=mc^2$ |\n| --- |\n| text |";
+    const view = makeTableView(mathTable);
+    const widget = new EditableTableWidget(mathTable, 0);
+    const el = widget.toDOM(view);
+    document.body.appendChild(el);
+    const th = el.querySelector("thead th") as HTMLElement;
+    const mathSpan = th.querySelector(".cm-preview-math-inline")!;
+    expect(mathSpan).not.toBeNull();
+    mathSpan.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    th.dispatchEvent(new FocusEvent("focus"));
+    expect(th.textContent).toBe("$E=mc^2$");
+    const sel = window.getSelection();
+    expect(sel).not.toBeNull();
+    expect(sel!.rangeCount).toBeGreaterThan(0);
+    const range = sel!.getRangeAt(0);
+    expect(range.collapsed).toBe(false);
+    expect(range.toString()).toBe("$E=mc^2$");
+    el.remove();
+    view.destroy();
+  });
+
+  it("clicking non-math content does not select on focus", () => {
+    const view = makeTableView();
+    const widget = new EditableTableWidget(basicTable, 0);
+    const el = widget.toDOM(view);
+    document.body.appendChild(el);
+    const th = el.querySelector("thead th") as HTMLElement;
+    th.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    th.dispatchEvent(new FocusEvent("focus"));
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0) {
+      expect(sel.getRangeAt(0).collapsed).toBe(true);
+    }
+    el.remove();
     view.destroy();
   });
 
