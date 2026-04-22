@@ -408,30 +408,30 @@ describe("buildBlockReplacements — tables", () => {
     view.destroy();
   });
 
-  it("shows raw markdown when cursor is on header row", () => {
+  it("replaces table with widget when cursor is on a table line", () => {
     const doc = "| a | b |\n| --- | --- |\n| 1 | 2 |";
     const view = makeView(doc, 3);
     const decos = collectBlockDecos(view);
     const tableWidget = decos.find((d) => d.widget);
-    expect(tableWidget).toBeUndefined();
+    expect(tableWidget).toBeDefined();
     view.destroy();
   });
 
-  it("shows raw markdown when cursor is on delimiter row", () => {
+  it("replaces table with widget when cursor is on delimiter row", () => {
     const doc = "| a | b |\n| --- | --- |\n| 1 | 2 |";
     const view = makeView(doc, 12);
     const decos = collectBlockDecos(view);
     const tableWidget = decos.find((d) => d.widget);
-    expect(tableWidget).toBeUndefined();
+    expect(tableWidget).toBeDefined();
     view.destroy();
   });
 
-  it("shows raw markdown when cursor is on body row", () => {
+  it("replaces table with widget when cursor is on body row", () => {
     const doc = "| a | b |\n| --- | --- |\n| 1 | 2 |";
     const view = makeView(doc, 25);
     const decos = collectBlockDecos(view);
     const tableWidget = decos.find((d) => d.widget);
-    expect(tableWidget).toBeUndefined();
+    expect(tableWidget).toBeDefined();
     view.destroy();
   });
 

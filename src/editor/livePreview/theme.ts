@@ -183,6 +183,15 @@ export const livePreviewBaseTheme = EditorView.baseTheme({
   ".cm-preview-table tr:hover": {
     backgroundColor: "var(--background-secondary, rgba(0,0,0,0.02))",
   },
+  ".cm-preview-table [contenteditable]": {
+    outline: "none",
+    cursor: "text",
+    minWidth: "40px",
+  },
+  ".cm-preview-table [contenteditable]:focus": {
+    outline: "2px solid var(--text-selection, rgba(59, 130, 246, 0.3))",
+    outlineOffset: "-2px",
+  },
 
   // Mermaid diagrams
   ".cm-preview-mermaid": {

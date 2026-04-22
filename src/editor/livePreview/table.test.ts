@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { parseTableAlignment, parseTable, renderInlineMarkdown, getCellPosition } from "./table";
+import { parseTableAlignment, parseTable, renderInlineMarkdown, getCellPosition, serializeTable } from "./table";
 
 vi.mock("katex", () => ({
   default: {
@@ -181,6 +181,74 @@ describe("renderInlineMarkdown", () => {
 
   it("renders underscore bold", () => {
     expect(renderInlineMarkdown("__bold__")).toBe("<strong>bold</strong>");
+  });
+});
+
+describe("serializeTable", () => {
+  it("serializes basic table (headers + one row)", () => {
+    expect(
+      serializeTable({
+        headers: ["h1", "h2"],
+        alignments: ["default", "default"],
+        rows: [["c1", "c2"]],
+      }),
+    ).toBe("| h1 | h2 |\n| --- | --- |\n| c1 | c2 |");
+  });
+
+  it("serializes multiple rows", () => {
+    expect(
+      serializeTable({
+        headers: ["a"],
+        alignments: ["default"],
+        rows: [["r1"], ["r2"], ["r3"]],
+      }),
+    ).toBe("| a |\n| --- |\n| r1 |\n| r2 |\n| r3 |");
+  });
+
+  it("produces correct delimiters for all alignment types", () => {
+    const result = serializeTable({
+      headers: ["L", "R", "C", "D"],
+      alignments: ["left", "right", "center", "default"],
+      rows: [],
+    });
+    expect(result).toBe("| L | R | C | D |\n| :--- | ---: | :---: | --- |");
+  });
+
+  it("escapes pipe characters in cell content", () => {
+    expect(
+      serializeTable({
+        headers: ["a|b"],
+        alignments: ["default"],
+        rows: [["x|y"]],
+      }),
+    ).toBe("| a\\|b |\n| --- |\n| x\\|y |");
+  });
+
+  it("handles empty cells", () => {
+    expect(
+      serializeTable({
+        headers: ["h1", "h2"],
+        alignments: ["default", "default"],
+        rows: [["", ""]],
+      }),
+    ).toBe("| h1 | h2 |\n| --- | --- |\n|  |  |");
+  });
+
+  it("round-trip: parseTable(serializeTable(parsed)) preserves data", () => {
+    const original = {
+      headers: ["Name", "Value"],
+      alignments: ["left" as const, "right" as const],
+      rows: [
+        ["alpha", "1"],
+        ["beta", "2"],
+      ],
+    };
+    const serialized = serializeTable(original);
+    const reparsed = parseTable(serialized);
+    expect(reparsed).not.toBeNull();
+    expect(reparsed!.headers).toEqual(original.headers);
+    expect(reparsed!.alignments).toEqual(original.alignments);
+    expect(reparsed!.rows).toEqual(original.rows);
   });
 });
 

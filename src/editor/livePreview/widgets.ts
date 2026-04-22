@@ -1,6 +1,6 @@
 import { type EditorView, WidgetType } from "@codemirror/view";
 import { getCalloutIcon, toggleCalloutEffect } from "./callout";
-import { getCellPosition, parseTable, renderInlineMarkdown, type Alignment } from "./table";
+import { parseTable, renderInlineMarkdown, serializeTable, type Alignment, type ParsedTable } from "./table";
 import { renderMermaid, getMermaidCached } from "./mermaid";
 import katex from "katex";
 import "katex/dist/katex.min.css";
@@ -154,7 +154,7 @@ export class DisplayMathWidget extends WidgetType {
   }
 }
 
-export class TableWidget extends WidgetType {
+export class EditableTableWidget extends WidgetType {
   constructor(
     readonly tableText: string,
     readonly from: number,
@@ -172,14 +172,29 @@ export class TableWidget extends WidgetType {
     const table = document.createElement("table");
     table.className = "cm-preview-table";
 
+    const commitCell = (row: number, col: number, nextValue: string) => {
+      const updated: ParsedTable = {
+        headers: [...parsed.headers],
+        alignments: [...parsed.alignments],
+        rows: parsed.rows.map((r) => [...r]),
+      };
+      if (row === 0) {
+        updated.headers[col] = nextValue;
+      } else {
+        updated.rows[row - 1]![col] = nextValue;
+      }
+      const newMarkdown = serializeTable(updated);
+      view.dispatch({
+        changes: { from: this.from, to: this.from + this.tableText.length, insert: newMarkdown },
+      });
+    };
+
     const thead = document.createElement("thead");
     const headerRow = document.createElement("tr");
     parsed.headers.forEach((header, i) => {
-      const th = document.createElement("th");
-      th.innerHTML = renderInlineMarkdown(header);
+      const th = createEditableCell("th", header, parsed.alignments[i], (next) => commitCell(0, i, next));
       th.dataset.row = "0";
       th.dataset.col = String(i);
-      applyAlignment(th, parsed.alignments[i]);
       headerRow.appendChild(th);
     });
     thead.appendChild(headerRow);
@@ -187,45 +202,74 @@ export class TableWidget extends WidgetType {
 
     if (parsed.rows.length > 0) {
       const tbody = document.createElement("tbody");
-      let rowIndex = 1;
-      for (const row of parsed.rows) {
+      parsed.rows.forEach((row, ri) => {
+        const rowIndex = ri + 1;
         const tr = document.createElement("tr");
         row.forEach((cell, i) => {
-          const td = document.createElement("td");
-          td.innerHTML = renderInlineMarkdown(cell);
+          const td = createEditableCell("td", cell, parsed.alignments[i], (next) => commitCell(rowIndex, i, next));
           td.dataset.row = String(rowIndex);
           td.dataset.col = String(i);
-          applyAlignment(td, parsed.alignments[i]);
           tr.appendChild(td);
         });
         tbody.appendChild(tr);
-        rowIndex++;
-      }
+      });
       table.appendChild(tbody);
     }
-
-    container.addEventListener("mousedown", (e) => {
-      const cell = (e.target as HTMLElement).closest("th, td") as HTMLElement | null;
-      if (!cell) return;
-      e.preventDefault();
-      const row = Number(cell.dataset.row);
-      const col = Number(cell.dataset.col);
-      const pos = getCellPosition(this.tableText, this.from, row, col);
-      view.focus();
-      view.dispatch({ selection: { anchor: pos } });
-    });
 
     container.appendChild(table);
     return container;
   }
 
-  eq(other: TableWidget): boolean {
+  eq(other: EditableTableWidget): boolean {
     return this.tableText === other.tableText && this.from === other.from;
   }
 
-  ignoreEvent(event: Event): boolean {
-    return event.type === "mousedown";
+  ignoreEvent(): boolean {
+    return true;
   }
+}
+
+function createEditableCell(
+  tag: "th" | "td",
+  value: string,
+  alignment: Alignment | undefined,
+  onCommit: (next: string) => void,
+): HTMLTableCellElement {
+  const cell = document.createElement(tag);
+  cell.innerHTML = renderInlineMarkdown(value);
+  cell.dataset.raw = value;
+  cell.setAttribute("contenteditable", "true");
+  cell.spellcheck = false;
+  applyAlignment(cell, alignment);
+
+  cell.addEventListener("focus", () => {
+    cell.textContent = cell.dataset.raw ?? "";
+  });
+
+  cell.addEventListener("blur", () => {
+    const next = cell.textContent ?? "";
+    const raw = cell.dataset.raw ?? "";
+    if (next !== raw) {
+      cell.dataset.raw = next;
+      onCommit(next);
+    }
+    cell.innerHTML = renderInlineMarkdown(cell.dataset.raw ?? "");
+  });
+
+  cell.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const next = cell.textContent ?? "";
+      const raw = cell.dataset.raw ?? "";
+      if (next !== raw) {
+        cell.dataset.raw = next;
+        onCommit(next);
+      }
+      cell.blur();
+    }
+  });
+
+  return cell;
 }
 
 export class MermaidWidget extends WidgetType {

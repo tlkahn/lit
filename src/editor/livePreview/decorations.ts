@@ -2,7 +2,7 @@ import { type EditorState, RangeSet } from "@codemirror/state";
 import { Decoration, type DecorationSet, type EditorView } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { isCursorOnLine } from "./proximity";
-import { ImageWidget, CalloutHeaderWidget, InlineMathWidget, DisplayMathWidget, TableWidget, MermaidWidget } from "./widgets";
+import { ImageWidget, CalloutHeaderWidget, InlineMathWidget, DisplayMathWidget, EditableTableWidget, MermaidWidget } from "./widgets";
 import { imageResolverFacet } from "./imageResolver";
 import { parseCalloutType, calloutFoldField } from "./callout";
 
@@ -471,13 +471,11 @@ function addTableBlockReplacement(
   to: number,
   decos: { from: number; to: number; deco: Decoration }[],
 ) {
-  if (isCursorOnLine(state, from, to)) return;
-
   const text = state.doc.sliceString(from, to);
   decos.push({
     from,
     to,
-    deco: Decoration.replace({ widget: new TableWidget(text, from) }),
+    deco: Decoration.replace({ widget: new EditableTableWidget(text, from) }),
   });
 }
 

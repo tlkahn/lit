@@ -175,6 +175,26 @@ export function getCellPosition(
   return from + lineOffset + pos;
 }
 
+function escapeCell(value: string): string {
+  return value.replace(/\|/g, "\\|").trim();
+}
+
+function alignmentToDelimiter(a: Alignment): string {
+  if (a === "left") return ":---";
+  if (a === "right") return "---:";
+  if (a === "center") return ":---:";
+  return "---";
+}
+
+export function serializeTable(data: ParsedTable): string {
+  const headerLine = `| ${data.headers.map(escapeCell).join(" | ")} |`;
+  const delimiterLine = `| ${data.alignments.map(alignmentToDelimiter).join(" | ")} |`;
+  const rowLines = data.rows.map(
+    (row) => `| ${row.map(escapeCell).join(" | ")} |`,
+  );
+  return [headerLine, delimiterLine, ...rowLines].join("\n");
+}
+
 function escapeSegments(text: string): string {
   const parts = text.split(/(￰PH\d+￰)/);
   return parts
