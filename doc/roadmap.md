@@ -125,7 +125,7 @@ A local-first outliner with bidirectional linking, built with Rust/Tauri and Rea
 > 1. [x] Callout fold doesn't work.
 > 2. [x] Latex in callouts doesn't render.
 > 3. [x] A few fixture examples have errors (thus cannot render).
-> 4. [ ] Clicking on the first line of Obsidian callout `> [!note] etc.` will not make the callout enter into edit (raw markdown) mode
+> 4. [x] Clicking on the first line of Obsidian callout `> [!note] etc.` will not make the callout enter into edit (raw markdown) mode
 
 #### A4 — Mermaid Diagram Rendering
 
