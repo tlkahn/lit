@@ -19,6 +19,7 @@ function makeView(doc: string, cursorPos: number): EditorView {
     theme: "light" as const,
     themeCompartment: new Compartment(),
     keymapCompartment: new Compartment(),
+    foldCompartment: new Compartment(),
   };
   const state = EditorState.create({
     doc,

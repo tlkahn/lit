@@ -12,6 +12,14 @@ fn default_sidebar_location() -> String {
     "left".to_string()
 }
 
+const fn default_true() -> bool {
+    true
+}
+
+fn default_folding_show_controls() -> String {
+    "mouseover".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Preferences {
     #[serde(rename = "workbench.colorTheme", default)]
@@ -23,6 +31,13 @@ pub struct Preferences {
         default = "default_sidebar_location"
     )]
     pub sidebar_location: String,
+    #[serde(rename = "editor.folding.enabled", default = "default_true")]
+    pub folding_enabled: bool,
+    #[serde(
+        rename = "editor.folding.showFoldingControls",
+        default = "default_folding_show_controls"
+    )]
+    pub folding_show_controls: String,
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
 }
@@ -33,6 +48,8 @@ impl Default for Preferences {
             color_theme: None,
             dark_mode: false,
             sidebar_location: "left".to_string(),
+            folding_enabled: true,
+            folding_show_controls: "mouseover".to_string(),
             extra: HashMap::new(),
         }
     }
@@ -136,6 +153,8 @@ mod tests {
         assert_eq!(prefs.color_theme, None);
         assert!(!prefs.dark_mode);
         assert_eq!(prefs.sidebar_location, "left");
+        assert!(prefs.folding_enabled);
+        assert_eq!(prefs.folding_show_controls, "mouseover");
         assert!(prefs.extra.is_empty());
     }
 
@@ -145,6 +164,8 @@ mod tests {
         assert_eq!(prefs.color_theme, None);
         assert!(!prefs.dark_mode);
         assert_eq!(prefs.sidebar_location, "left");
+        assert!(prefs.folding_enabled);
+        assert_eq!(prefs.folding_show_controls, "mouseover");
     }
 
     #[test]
@@ -161,12 +182,16 @@ mod tests {
         let json = r#"{
             "workbench.colorTheme": "lit-nordic",
             "workbench.darkMode": true,
-            "workbench.sideBar.location": "right"
+            "workbench.sideBar.location": "right",
+            "editor.folding.enabled": false,
+            "editor.folding.showFoldingControls": "always"
         }"#;
         let prefs: Preferences = serde_json::from_str(json).unwrap();
         assert_eq!(prefs.color_theme, Some("lit-nordic".to_string()));
         assert!(prefs.dark_mode);
         assert_eq!(prefs.sidebar_location, "right");
+        assert!(!prefs.folding_enabled);
+        assert_eq!(prefs.folding_show_controls, "always");
     }
 
     #[test]
@@ -266,5 +291,15 @@ mod tests {
         assert!(json.contains("workbench.colorTheme"));
         assert!(json.contains("workbench.darkMode"));
         assert!(json.contains("workbench.sideBar.location"));
+        assert!(json.contains("editor.folding.enabled"));
+        assert!(json.contains("editor.folding.showFoldingControls"));
+    }
+
+    #[test]
+    fn folding_defaults_when_omitted() {
+        let json = r#"{"workbench.darkMode": true}"#;
+        let prefs: Preferences = serde_json::from_str(json).unwrap();
+        assert!(prefs.folding_enabled);
+        assert_eq!(prefs.folding_show_controls, "mouseover");
     }
 }

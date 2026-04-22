@@ -8,7 +8,7 @@ import { GFM } from "@lezer/markdown";
 import { getThemeExtension, highlightExtension, searchTheme } from "./theme";
 import { search, searchKeymap } from "@codemirror/search";
 import { livePreviewExtension } from "./livePreview";
-import { foldExtension } from "./fold";
+import { foldExtension, type FoldConfig } from "./fold";
 import { WikiLink } from "./markdown/wikilink";
 import { Frontmatter, FrontmatterYamlWrap } from "./markdown/frontmatter";
 import { Math } from "./markdown/math";
@@ -18,6 +18,8 @@ export interface ExtensionConfig {
   theme: "light" | "dark";
   themeCompartment: Compartment;
   keymapCompartment: Compartment;
+  foldCompartment: Compartment;
+  foldConfig?: FoldConfig;
   keymapBindings?: import("@codemirror/view").KeyBinding[];
   onChange?: (content: string) => void;
   openUrl?: (url: string) => void;
@@ -33,7 +35,7 @@ export function createExtensions(config: ExtensionConfig): Extension[] {
     config.themeCompartment.of(getThemeExtension(config.theme)),
     highlightExtension,
     livePreviewExtension({ openUrl: config.openUrl, resolveImageSrc: config.resolveImageSrc }),
-    foldExtension(),
+    config.foldCompartment.of(foldExtension(config.foldConfig)),
     history(),
     search(),
     keymap.of(searchKeymap),

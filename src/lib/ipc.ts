@@ -130,6 +130,8 @@ export interface Preferences {
   "workbench.colorTheme": string | null;
   "workbench.darkMode": boolean;
   "workbench.sideBar.location": string;
+  "editor.folding.enabled": boolean;
+  "editor.folding.showFoldingControls": string;
   [key: string]: unknown;
 }
 

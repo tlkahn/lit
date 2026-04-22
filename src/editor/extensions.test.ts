@@ -32,6 +32,7 @@ function makeConfig(overrides?: { onChange?: (content: string) => void }) {
     theme: "light" as const,
     themeCompartment: new Compartment(),
     keymapCompartment: new Compartment(),
+    foldCompartment: new Compartment(),
     ...overrides,
   };
 }

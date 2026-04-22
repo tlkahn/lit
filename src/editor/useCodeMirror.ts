@@ -4,6 +4,8 @@ import { EditorState, Compartment } from "@codemirror/state";
 import { defaultKeymap, historyKeymap } from "@codemirror/commands";
 import { createExtensions } from "./extensions";
 import { getThemeExtension } from "./theme";
+import { foldExtension } from "./fold";
+import { usePreferencesStore } from "../stores/preferences";
 
 export interface UseCodeMirrorProps {
   containerRef: React.RefObject<HTMLDivElement | null>;
@@ -22,6 +24,7 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
   const viewRef = useRef<EditorView | null>(null);
   const themeCompartment = useRef(new Compartment());
   const keymapCompartment = useRef(new Compartment());
+  const foldCompartment = useRef(new Compartment());
   const suppressOnChange = useRef(false);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
@@ -36,11 +39,14 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
 
     const isDark = document.documentElement.classList.contains("dark");
     const theme = isDark ? "dark" : "light";
+    const { foldingEnabled, foldingShowControls } = usePreferencesStore.getState();
 
     const extensions = createExtensions({
       theme,
       themeCompartment: themeCompartment.current,
       keymapCompartment: keymapCompartment.current,
+      foldCompartment: foldCompartment.current,
+      foldConfig: { enabled: foldingEnabled, showControls: foldingShowControls },
       keymapBindings,
       onChange: (content) => {
         if (!suppressOnChange.current) {
@@ -97,6 +103,23 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
     });
 
     return () => observer.disconnect();
+  }, [view]);
+
+  useEffect(() => {
+    const v = viewRef.current;
+    if (!v) return;
+    let prev = {
+      enabled: usePreferencesStore.getState().foldingEnabled,
+      showControls: usePreferencesStore.getState().foldingShowControls,
+    };
+    return usePreferencesStore.subscribe((s) => {
+      const next = { enabled: s.foldingEnabled, showControls: s.foldingShowControls };
+      if (next.enabled === prev.enabled && next.showControls === prev.showControls) return;
+      prev = next;
+      v.dispatch({
+        effects: foldCompartment.current.reconfigure(foldExtension(next)),
+      });
+    });
   }, [view]);
 
   useEffect(() => {
