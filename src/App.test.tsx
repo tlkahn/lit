@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, act } from "@testing-library/react";
 import App from "./App";
 import { mockInvoke, mockListen, emitMockEvent } from "./test/tauri-mock";
 import { useWorkspaceStore } from "./stores/workspace";
@@ -53,6 +53,8 @@ describe("App", () => {
             "workbench.darkMode": false,
             "workbench.sideBar.location": "left",
           };
+        case "get_keymaps":
+          return [];
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -130,6 +132,38 @@ describe("App", () => {
     render(<App />);
     const container = screen.getByText("Files").closest("aside")!.parentElement!;
     expect(container.className).toContain("flex-row-reverse");
+  });
+
+  it("quick switcher not visible by default", () => {
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [] });
+    render(<App />);
+    expect(screen.queryByTestId("quick-switcher-backdrop")).not.toBeInTheDocument();
+  });
+
+  it("dispatching lit:toggle-quick-switcher shows the quick switcher", async () => {
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [] });
+    render(<App />);
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent("lit:toggle-quick-switcher"));
+    });
+
+    expect(screen.getByTestId("quick-switcher-backdrop")).toBeInTheDocument();
+  });
+
+  it("dispatching lit:toggle-quick-switcher twice hides it", async () => {
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [] });
+    render(<App />);
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent("lit:toggle-quick-switcher"));
+    });
+    expect(screen.getByTestId("quick-switcher-backdrop")).toBeInTheDocument();
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent("lit:toggle-quick-switcher"));
+    });
+    expect(screen.queryByTestId("quick-switcher-backdrop")).not.toBeInTheDocument();
   });
 
   it("file-modified event for current page triggers reload", async () => {

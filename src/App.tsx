@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { ContentArea } from "./components/ContentArea";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -11,6 +11,7 @@ import { useWorkspaceStore, getRecentWorkspaces } from "./stores/workspace";
 import { useThemeStore } from "./stores/theme";
 import { usePreferencesStore } from "./stores/preferences";
 import { getInitialWorkspace, getPendingWorkspace } from "./lib/ipc";
+import { HeadingQuickSwitcher } from "./components/HeadingQuickSwitcher";
 
 function App() {
   useTheme();
@@ -57,6 +58,21 @@ function App() {
     init();
   }, [openWorkspace, workspacePath]);
 
+  const currentPageHeadings = useWorkspaceStore((s) => s.currentPageHeadings);
+  const [quickSwitcherOpen, setQuickSwitcherOpen] = useState(false);
+
+  useEffect(() => {
+    const handler = () => setQuickSwitcherOpen((prev) => !prev);
+    window.addEventListener("lit:toggle-quick-switcher", handler);
+    return () => window.removeEventListener("lit:toggle-quick-switcher", handler);
+  }, []);
+
+  const handleQuickSwitcherSelect = useCallback((line: number) => {
+    window.dispatchEvent(
+      new CustomEvent("lit:scroll-to-line", { detail: { line, cursor: true } }),
+    );
+  }, []);
+
   useFileWatcher(triggerReload);
 
   if (!workspacePath) {
@@ -73,6 +89,12 @@ function App() {
           </ErrorBoundary>
         </div>
       </div>
+      <HeadingQuickSwitcher
+        open={quickSwitcherOpen}
+        onClose={() => setQuickSwitcherOpen(false)}
+        onSelect={handleQuickSwitcherSelect}
+        headings={currentPageHeadings}
+      />
     </div>
   );
 }

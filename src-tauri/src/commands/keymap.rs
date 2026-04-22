@@ -66,7 +66,11 @@ pub fn seed_default_keymaps(app_handle: &tauri::AppHandle) {
     };
     let dest = dir.join("default.json");
     if dest.exists() {
-        return;
+        let bundled_content = fs::read(&bundled).unwrap_or_default();
+        let dest_content = fs::read(&dest).unwrap_or_default();
+        if bundled_content == dest_content {
+            return;
+        }
     }
     let _ = fs::copy(&bundled, &dest);
 }

@@ -12,6 +12,9 @@ function ensureCommandsRegistered() {
   commandRegistry.register("editor.toggleItalic", (view) => toggleItalic(view as EditorView));
   commandRegistry.register("editor.insertLink", (view) => insertLink(view as EditorView));
   commandRegistry.register("editor.toggleComment", (view) => toggleComment(view as EditorView));
+  commandRegistry.register("app.gotoHeading", () => {
+    window.dispatchEvent(new CustomEvent("lit:toggle-quick-switcher"));
+  });
 }
 
 function keyStringFromEvent(e: KeyboardEvent): string {

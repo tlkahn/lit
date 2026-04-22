@@ -14,6 +14,7 @@ describe("useKeymaps", () => {
           { key: "Mod-k", command: "editor.insertLink", when: "editorFocus" },
           { key: "Mod-/", command: "editor.toggleComment", when: "editorFocus" },
           { key: "Mod-Shift-n", command: "app.newPage" },
+          { key: "Mod-r", command: "app.gotoHeading" },
         ];
       }
       throw new Error(`Unknown command: ${cmd}`);
@@ -46,6 +47,20 @@ describe("useKeymaps", () => {
     for (const binding of result.current.editorBindings) {
       expect(typeof binding.run).toBe("function");
     }
+  });
+
+  it("app.gotoHeading is registered in the command registry", async () => {
+    await loadHook();
+    expect(commandRegistry.has("app.gotoHeading")).toBe(true);
+  });
+
+  it("executing app.gotoHeading dispatches lit:toggle-quick-switcher", async () => {
+    await loadHook();
+    const listener = vi.fn();
+    window.addEventListener("lit:toggle-quick-switcher", listener);
+    commandRegistry.execute("app.gotoHeading");
+    window.removeEventListener("lit:toggle-quick-switcher", listener);
+    expect(listener).toHaveBeenCalledTimes(1);
   });
 
   it("app keydown handler dispatches matching command", async () => {
