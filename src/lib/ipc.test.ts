@@ -10,6 +10,7 @@ import {
   createPage,
   renamePage,
   deletePage,
+  parseRawYaml,
   openWorkspaceWindow,
   getPendingWorkspace,
 } from "./ipc";
@@ -44,6 +45,8 @@ describe("ipc", () => {
           return "New.md";
         case "delete_page":
           return null;
+        case "parse_raw_yaml":
+          return { title: "Hello" };
         case "open_workspace_window":
           return "workspace-1";
         case "get_pending_workspace":
@@ -140,6 +143,13 @@ describe("ipc", () => {
     await openWorkspaceWindow();
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("open_workspace_window", { path: null });
+  });
+
+  it("parseRawYaml invokes parse_raw_yaml", async () => {
+    const result = await parseRawYaml("title: Hello\n");
+    expect(result).toEqual({ title: "Hello" });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("parse_raw_yaml", { rawYaml: "title: Hello\n" });
   });
 
   it("getPendingWorkspace returns null by default", async () => {

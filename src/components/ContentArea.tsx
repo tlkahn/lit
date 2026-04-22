@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useWorkspaceStore } from "../stores/workspace";
-import { readPage, writePage } from "../lib/ipc";
+import { readPage, writePage, parseRawYaml } from "../lib/ipc";
 import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
 import { YamlHighlighter } from "./YamlHighlighter";
 
@@ -27,9 +27,14 @@ export function ContentArea() {
   const [frontmatter, setFrontmatter] = useState<Record<string, unknown>>({});
   const [rawYaml, setRawYaml] = useState("");
   const [showFrontmatter, setShowFrontmatter] = useState(false);
+  const [editingYaml, setEditingYaml] = useState(false);
+  const [yamlDraft, setYamlDraft] = useState("");
+  const [yamlError, setYamlError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const currentPathRef = useRef<string | null>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const cancelledRef = useRef(false);
 
   const loadPage = useCallback(async (path: string) => {
     try {
@@ -65,6 +70,9 @@ export function ContentArea() {
       setFrontmatter({});
       setRawYaml("");
     }
+    setEditingYaml(false);
+    setYamlDraft("");
+    setYamlError(null);
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
@@ -110,6 +118,54 @@ export function ContentArea() {
     }, 300);
   };
 
+  const enterYamlEdit = () => {
+    setYamlDraft(rawYaml);
+    setYamlError(null);
+    setEditingYaml(true);
+    cancelledRef.current = false;
+  };
+
+  const commitYamlEdit = async () => {
+    if (cancelledRef.current) return;
+    try {
+      const parsed = await parseRawYaml(yamlDraft);
+      setFrontmatter(parsed);
+      setRawYaml(yamlDraft);
+      setEditingYaml(false);
+      setYamlError(null);
+      if (currentPagePath) {
+        writePage(currentPagePath, body, parsed).catch((err) => {
+          console.error("[ContentArea] writePage failed:", err);
+        });
+      }
+    } catch (err) {
+      setYamlError(err instanceof Error ? err.message : String(err));
+      textareaRef.current?.focus();
+    }
+  };
+
+  const cancelYamlEdit = () => {
+    cancelledRef.current = true;
+    setYamlDraft("");
+    setYamlError(null);
+    setEditingYaml(false);
+  };
+
+  const autoResizeTextarea = useCallback(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = "0";
+    ta.style.height = ta.scrollHeight + "px";
+  }, []);
+
+  useEffect(() => {
+    if (editingYaml && textareaRef.current) {
+      textareaRef.current.focus();
+      textareaRef.current.select();
+      autoResizeTextarea();
+    }
+  }, [editingYaml, autoResizeTextarea]);
+
   if (!currentPagePath) {
     return (
       <main
@@ -153,11 +209,39 @@ export function ContentArea() {
           </button>
         )}
         {showFrontmatter && (
-          <YamlHighlighter
-            code={rawYaml}
-            className="mt-2 rounded bg-bg-secondary p-2 text-xs"
-            data-testid="frontmatter"
-          />
+          editingYaml ? (
+            <div className="mt-2">
+              <textarea
+                ref={textareaRef}
+                data-testid="frontmatter-editor"
+                className="w-full resize-none overflow-hidden rounded bg-bg-secondary p-2 font-mono text-xs text-text-normal outline-none ring-1 ring-interactive-accent"
+                value={yamlDraft}
+                onChange={(e) => {
+                  setYamlDraft(e.target.value);
+                  autoResizeTextarea();
+                }}
+                onBlur={commitYamlEdit}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    cancelYamlEdit();
+                  }
+                }}
+              />
+              {yamlError && (
+                <p className="mt-1 text-xs text-red-500" data-testid="yaml-error">
+                  {yamlError}
+                </p>
+              )}
+            </div>
+          ) : (
+            <YamlHighlighter
+              code={rawYaml}
+              className="mt-2 cursor-pointer rounded bg-bg-secondary p-2 text-xs"
+              data-testid="frontmatter"
+              onClick={enterYamlEdit}
+            />
+          )
         )}
       </div>
       <CodeMirrorEditor doc={body} onChange={handleChange} resolveImageSrc={resolveImageSrc} />

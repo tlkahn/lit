@@ -44,6 +44,7 @@ pub fn run() {
             commands::page::create_page,
             commands::page::rename_page,
             commands::page::delete_page,
+            commands::page::parse_raw_yaml,
             commands::theme::list_themes,
             commands::theme::read_theme_css,
             commands::theme::get_themes_directory,

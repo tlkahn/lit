@@ -5,6 +5,7 @@ import { yamlLanguage } from "@codemirror/lang-yaml";
 interface Props {
   code: string;
   className?: string;
+  onClick?: React.MouseEventHandler<HTMLPreElement>;
   "data-testid"?: string;
 }
 

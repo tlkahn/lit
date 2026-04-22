@@ -75,6 +75,13 @@ fn find_closing_fence(s: &str) -> Option<(usize, usize)> {
     None
 }
 
+pub fn parse_raw_yaml(raw: &str) -> Result<HashMap<String, serde_yaml::Value>, String> {
+    if raw.trim().is_empty() {
+        return Ok(HashMap::new());
+    }
+    serde_yaml::from_str(raw).map_err(|e| e.to_string())
+}
+
 pub fn serialize_frontmatter(
     frontmatter: &HashMap<String, serde_yaml::Value>,
     body: &str,
@@ -157,6 +164,38 @@ mod tests {
         let raw = format!("---\ntitle: X\n---\n{body_content}");
         let parsed = parse_frontmatter(&raw);
         assert_eq!(parsed.body, body_content);
+    }
+
+    #[test]
+    fn parse_raw_yaml_valid() {
+        let result = parse_raw_yaml("title: Hello\ntags:\n  - rust\n").unwrap();
+        assert_eq!(
+            result.get("title"),
+            Some(&serde_yaml::Value::String("Hello".to_string()))
+        );
+        assert!(result.get("tags").unwrap().is_sequence());
+    }
+
+    #[test]
+    fn parse_raw_yaml_invalid() {
+        let result = parse_raw_yaml("title: :\n  bad yaml [[[");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_raw_yaml_empty() {
+        let result = parse_raw_yaml("").unwrap();
+        assert!(result.is_empty());
+        let result2 = parse_raw_yaml("   \n  ").unwrap();
+        assert!(result2.is_empty());
+    }
+
+    #[test]
+    fn parse_raw_yaml_non_mapping() {
+        let result = parse_raw_yaml("- one\n- two\n");
+        assert!(result.is_err());
+        let result2 = parse_raw_yaml("just a scalar");
+        assert!(result2.is_err());
     }
 
     #[test]

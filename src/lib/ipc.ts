@@ -63,6 +63,10 @@ export async function deletePage(relativePath: string): Promise<void> {
   return invoke<void>("delete_page", { relativePath });
 }
 
+export async function parseRawYaml(rawYaml: string): Promise<Record<string, unknown>> {
+  return invoke<Record<string, unknown>>("parse_raw_yaml", { rawYaml });
+}
+
 export async function getInitialWorkspace(): Promise<string | null> {
   return invoke<string | null>("get_initial_workspace");
 }

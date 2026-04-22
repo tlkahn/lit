@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor, act } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { ContentArea } from "./ContentArea";
 import { mockInvoke } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
@@ -52,6 +53,12 @@ beforeEach(() => {
         body: (args as Record<string, unknown>)?.body as string,
       });
       return null;
+    }
+    if (cmd === "parse_raw_yaml") {
+      const raw = (args as Record<string, unknown>)?.rawYaml as string;
+      if (raw.includes("[[[")) throw new Error("invalid YAML");
+      if (raw.trim() === "") return {};
+      return { tags: ["test"] };
     }
     throw new Error(`Unknown command: ${cmd}`);
   });
@@ -181,5 +188,100 @@ describe("ContentArea", () => {
     expect(text).toContain("test");
     expect(text).toContain("tags:");
     expect(text).not.toContain('"tags"');
+  });
+});
+
+describe("frontmatter editing", () => {
+  async function showFrontmatterPanel() {
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+    await waitFor(() => {
+      expect(screen.getByText("Show frontmatter")).toBeInTheDocument();
+    });
+    await act(async () => {
+      screen.getByText("Show frontmatter").click();
+    });
+    expect(screen.getByTestId("frontmatter")).toBeInTheDocument();
+  }
+
+  it("clicking frontmatter enters edit mode with textarea", async () => {
+    await showFrontmatterPanel();
+    await userEvent.click(screen.getByTestId("frontmatter"));
+    expect(screen.getByTestId("frontmatter-editor")).toBeInTheDocument();
+  });
+
+  it("textarea is pre-filled with rawYaml and focused", async () => {
+    await showFrontmatterPanel();
+    await userEvent.click(screen.getByTestId("frontmatter"));
+    const textarea = screen.getByTestId("frontmatter-editor") as HTMLTextAreaElement;
+    expect(textarea.value).toBe("tags:\n  - test\n");
+    expect(document.activeElement).toBe(textarea);
+  });
+
+  it("Escape cancels without saving", async () => {
+    await showFrontmatterPanel();
+    await userEvent.click(screen.getByTestId("frontmatter"));
+    const textarea = screen.getByTestId("frontmatter-editor");
+    await userEvent.clear(textarea);
+    await userEvent.type(textarea, "changed: true");
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByTestId("frontmatter-editor")).not.toBeInTheDocument();
+    expect(screen.getByTestId("frontmatter").textContent).toContain("tags:");
+  });
+
+  it("blur commits valid YAML and triggers save", async () => {
+    await showFrontmatterPanel();
+    await userEvent.click(screen.getByTestId("frontmatter"));
+    const textarea = screen.getByTestId("frontmatter-editor");
+    await userEvent.clear(textarea);
+    await userEvent.type(textarea, "newtag: value");
+    await act(async () => {
+      textarea.blur();
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("frontmatter-editor")).not.toBeInTheDocument();
+    });
+    expect(writePageCalls.length).toBeGreaterThan(0);
+  });
+
+  it("blur with invalid YAML shows error and stays in edit mode", async () => {
+    await showFrontmatterPanel();
+    await userEvent.click(screen.getByTestId("frontmatter"));
+    const textarea = screen.getByTestId("frontmatter-editor");
+    await userEvent.clear(textarea);
+    await userEvent.type(textarea, "bad: {[}{[}{[}");
+    await act(async () => {
+      textarea.blur();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("yaml-error")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("frontmatter-editor")).toBeInTheDocument();
+  });
+
+  it("editing to empty commits empty frontmatter", async () => {
+    await showFrontmatterPanel();
+    await userEvent.click(screen.getByTestId("frontmatter"));
+    const textarea = screen.getByTestId("frontmatter-editor");
+    await userEvent.clear(textarea);
+    await act(async () => {
+      textarea.blur();
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("frontmatter-editor")).not.toBeInTheDocument();
+    });
+  });
+
+  it("page switch resets edit state", async () => {
+    await showFrontmatterPanel();
+    await userEvent.click(screen.getByTestId("frontmatter"));
+    expect(screen.getByTestId("frontmatter-editor")).toBeInTheDocument();
+
+    await act(async () => {
+      useWorkspaceStore.setState({ currentPagePath: "Other.md" });
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("frontmatter-editor")).not.toBeInTheDocument();
+    });
   });
 });

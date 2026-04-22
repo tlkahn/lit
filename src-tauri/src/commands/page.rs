@@ -5,6 +5,11 @@ use std::collections::HashMap;
 use tauri::State;
 
 #[tauri::command]
+pub fn parse_raw_yaml(raw_yaml: String) -> Result<HashMap<String, serde_yaml::Value>, String> {
+    crate::workspace::frontmatter::parse_raw_yaml(&raw_yaml)
+}
+
+#[tauri::command]
 pub fn read_page(
     relative_path: String,
     window: tauri::Window,

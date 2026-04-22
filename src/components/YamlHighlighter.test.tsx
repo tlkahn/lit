@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { YamlHighlighter } from "./YamlHighlighter";
 
 describe("YamlHighlighter", () => {
@@ -29,5 +30,14 @@ describe("YamlHighlighter", () => {
   it("handles empty string", () => {
     render(<YamlHighlighter code="" data-testid="yaml" />);
     expect(screen.getByTestId("yaml").textContent).toBe("");
+  });
+
+  it("forwards onClick to pre element", async () => {
+    const handleClick = vi.fn();
+    render(
+      <YamlHighlighter code="a: 1\n" data-testid="yaml" onClick={handleClick} />,
+    );
+    await userEvent.click(screen.getByTestId("yaml"));
+    expect(handleClick).toHaveBeenCalledTimes(1);
   });
 });
