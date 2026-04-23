@@ -1,7 +1,7 @@
 import { type EditorState, RangeSet } from "@codemirror/state";
 import { Decoration, type DecorationSet, type EditorView } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
-import { isCursorOnLine } from "./proximity";
+import { isCursorOnLine, isCursorInRange } from "./proximity";
 import { ImageWidget, CalloutHeaderWidget, InlineMathWidget, DisplayMathWidget, EditableTableWidget, MermaidWidget } from "./widgets";
 import { imageResolverFacet } from "./imageResolver";
 import { parseCalloutType, calloutFoldField } from "./callout";
@@ -136,7 +136,7 @@ function addEmphasisDecos(
   node: ReturnType<typeof syntaxTree>["topNode"],
   decos: { from: number; to: number; deco: Decoration }[],
 ) {
-  if (isCursorOnLine(state, from, to)) return;
+  if (isCursorInRange(state, from, to)) return;
 
   const marks = node.getChildren("EmphasisMark");
   let contentFrom = from;
@@ -171,7 +171,7 @@ function addImageDecos(
   node: ReturnType<typeof syntaxTree>["topNode"],
   decos: { from: number; to: number; deco: Decoration }[],
 ) {
-  if (isCursorOnLine(state, from, to)) return;
+  if (isCursorInRange(state, from, to)) return;
 
   const urlNode = node.getChild("URL");
   const src = urlNode ? state.doc.sliceString(urlNode.from, urlNode.to) : "";
@@ -200,7 +200,7 @@ function addLinkDecos(
   node: ReturnType<typeof syntaxTree>["topNode"],
   decos: { from: number; to: number; deco: Decoration }[],
 ) {
-  if (isCursorOnLine(state, from, to)) return;
+  if (isCursorInRange(state, from, to)) return;
 
   const linkMarks = node.getChildren("LinkMark");
   const urlNode = node.getChild("URL");
@@ -268,7 +268,7 @@ function addWikilinkDecos(
   node: ReturnType<typeof syntaxTree>["topNode"],
   decos: { from: number; to: number; deco: Decoration }[],
 ) {
-  if (isCursorOnLine(state, from, to)) return;
+  if (isCursorInRange(state, from, to)) return;
 
   const marks = node.getChildren("WikiLinkMark");
   if (marks.length < 2) return;
@@ -345,15 +345,13 @@ function addCalloutDecos(
         to: line.from,
         deco: Decoration.line({ class: `cm-callout cm-callout-${resolvedType}` }),
       });
-      if (cursorLine !== lineNum) {
-        const quoteMarkMatch = line.text.match(/^(\s*>)\s?/);
-        if (quoteMarkMatch) {
-          decos.push({
-            from: line.from,
-            to: line.from + quoteMarkMatch[0].length,
-            deco: Decoration.replace({}),
-          });
-        }
+      const quoteMarkMatch = line.text.match(/^(\s*>)\s?/);
+      if (quoteMarkMatch) {
+        decos.push({
+          from: line.from,
+          to: line.from + quoteMarkMatch[0].length,
+          deco: Decoration.replace({}),
+        });
       }
     }
   }
@@ -366,7 +364,7 @@ function addInlineMathDecos(
   node: { getChildren(type: string): { from: number; to: number }[] },
   decos: { from: number; to: number; deco: Decoration }[],
 ) {
-  if (isCursorOnLine(state, from, to)) return;
+  if (isCursorInRange(state, from, to)) return;
 
   const marks = node.getChildren("InlineMathMark");
   if (marks.length < 2) return;

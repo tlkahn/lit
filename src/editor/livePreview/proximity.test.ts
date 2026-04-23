@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { EditorState } from "@codemirror/state";
-import { isCursorOnLine } from "./proximity";
+import { isCursorOnLine, isCursorInRange } from "./proximity";
 
 function stateWith(doc: string, cursor: number): EditorState {
   return EditorState.create({ doc, selection: { anchor: cursor } });
@@ -39,5 +39,29 @@ describe("isCursorOnLine", () => {
     const state = stateWith(doc, 6); // cursor on the empty line
     expect(isCursorOnLine(state, 6, 6)).toBe(true);
     expect(isCursorOnLine(state, 0, 5)).toBe(false);
+  });
+});
+
+describe("isCursorInRange", () => {
+  it("returns true when cursor is inside node range", () => {
+    const state = stateWith("**bold** text", 3);
+    expect(isCursorInRange(state, 0, 8)).toBe(true);
+  });
+
+  it("returns true at range boundaries", () => {
+    const state = stateWith("**bold** text", 0);
+    expect(isCursorInRange(state, 0, 8)).toBe(true);
+    const state2 = stateWith("**bold** text", 8);
+    expect(isCursorInRange(state2, 0, 8)).toBe(true);
+  });
+
+  it("returns false when cursor is outside node range on same line", () => {
+    const state = stateWith("**bold** text", 10);
+    expect(isCursorInRange(state, 0, 8)).toBe(false);
+  });
+
+  it("returns false when cursor is on a different line", () => {
+    const state = stateWith("**bold**\nother", 10);
+    expect(isCursorInRange(state, 0, 8)).toBe(false);
   });
 });

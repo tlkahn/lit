@@ -1,6 +1,6 @@
 # Lit
 
-Local-first outliner with bidirectional linking. Tauri 2 desktop app — Rust backend, React/TypeScript frontend.
+Local-first notetaker and knowledge graph manager. Tauri 2 desktop app — Rust backend, React/TypeScript frontend.
 
 ## Quick Reference
 
@@ -74,6 +74,13 @@ Tailwind v4 class-based dark mode via `@custom-variant dark (&:where(.dark, .dar
 
 Presentational components in `src/components/` — props-driven, no business logic. State hooks in `src/hooks/`.
 
+### CodeMirror 6 widgets and decorations
+
+- **Never use CSS `margin` on line decorations or widget containers.** CM6 measures line heights via `offsetHeight`/`getBoundingClientRect()`, neither of which includes CSS margins. Use `padding` instead — it is included in `offsetHeight`, so the height map stays accurate. Margin creates a systematic error that corrupts `coordsAtPos()`/`posAtCoords()` for all positions below the affected element, causing arrow-key navigation to skip lines or land at wrong positions.
+- **Always provide `estimatedHeight` on `WidgetType` subclasses.** This helps CM6 estimate widget height before DOM measurement, reducing initial height-map error and scroll jitter.
+- **Avoid all-or-nothing decoration toggles.** If entering any line of a multi-line construct (e.g. a callout blockquote) removes all decorations simultaneously, the massive layout shift corrupts cursor positioning at the boundary. Prefer per-line proximity checks: keep line classes stable (background/border always visible), and only toggle the current line's content decorations (widget replacements, quote-mark hiding).
+- **Click handlers on decorated lines must be scoped narrowly.** If `.cm-callout` line classes are always present (because line decorations are stable), a click handler that intercepts all `.cm-callout` clicks will prevent normal cursor placement on body lines. Scope click interception to specific interactive elements (e.g. `.cm-callout-header` widget) and let body-line clicks fall through to CM6's default handling.
+
 ## Gotchas
 
 - `bun test` runs bun's built-in test runner, not vitest. Always use `bun run test` (which calls `bunx vitest run`).
@@ -85,4 +92,4 @@ Presentational components in `src/components/` — props-driven, no business log
 
 ## Roadmap
 
-See `doc/roadmap.md`. Stages 0-1 complete. Next: Stage 2 (outliner block editor).
+See `doc/roadmap.md`.

@@ -11,3 +11,12 @@ export function isCursorOnLine(
   const cursorLine = state.doc.lineAt(sel.head).number;
   return cursorLine >= nodeStartLine && cursorLine <= nodeEndLine;
 }
+
+export function isCursorInRange(
+  state: EditorState,
+  from: number,
+  to: number,
+): boolean {
+  const head = state.selection.main.head;
+  return head >= from && head <= to;
+}

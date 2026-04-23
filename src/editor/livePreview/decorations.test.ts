@@ -136,10 +136,23 @@ describe("buildDecorations — bold and italic", () => {
     view.destroy();
   });
 
-  it("does not hide markers when cursor is on same line", () => {
+  it("does not hide markers when cursor is inside element", () => {
     const view = makeView("**bold** text", 3); // cursor within bold
     const decos = collectDecos(view);
     expect(decos).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("keeps decorations on other elements when cursor is on same line", () => {
+    const doc = "**bold** and *italic*";
+    const view = makeView(doc, 3); // cursor inside bold, not italic
+    const decos = collectDecos(view);
+    // bold markers should be raw (cursor inside bold)
+    const boldMark = decos.find((d) => d.class === "cm-preview-bold");
+    expect(boldMark).toBeUndefined();
+    // italic should still be decorated (cursor not inside italic)
+    const italic = decos.find((d) => d.class === "cm-preview-italic");
+    expect(italic).toBeDefined();
     view.destroy();
   });
 
@@ -173,7 +186,7 @@ describe("buildDecorations — links", () => {
     view.destroy();
   });
 
-  it("reveals full syntax when cursor is on same line", () => {
+  it("reveals full syntax when cursor is inside link", () => {
     const view = makeView("[Click me](https://example.com)", 5);
     const decos = collectDecos(view);
     expect(decos).toHaveLength(0);
@@ -193,7 +206,7 @@ describe("buildDecorations — images", () => {
     view.destroy();
   });
 
-  it("shows raw syntax when cursor is on image line", () => {
+  it("shows raw syntax when cursor is inside image", () => {
     const view = makeView("![alt text](img.png)", 5);
     const decos = collectDecos(view);
     expect(decos).toHaveLength(0);
@@ -268,13 +281,25 @@ describe("buildDecorations — wikilinks", () => {
     view.destroy();
   });
 
-  it("shows raw syntax when cursor is on wikilink line", () => {
+  it("shows raw syntax when cursor is inside wikilink", () => {
     const view = makeView("[[Page Name]]", 5);
     const decos = collectDecos(view);
     const wlDecos = decos.filter(
       (d) => d.class === "cm-preview-wikilink" || (d.type === "replace" && d.from <= 13),
     );
     expect(wlDecos).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("keeps other wikilinks decorated when cursor is inside one", () => {
+    const doc = "[[Alpha]] and [[Beta]]";
+    // cursor inside [[Alpha]] (pos 3), [[Beta]] should stay decorated
+    const view = makeView(doc, 3);
+    const decos = collectDecos(view);
+    const wlDecos = decos.filter((d) => d.class === "cm-preview-wikilink");
+    expect(wlDecos).toHaveLength(1);
+    expect(wlDecos[0]!.from).toBe(16);
+    expect(wlDecos[0]!.to).toBe(20);
     view.destroy();
   });
 });
@@ -326,7 +351,7 @@ describe("buildDecorations — callouts", () => {
     view.destroy();
   });
 
-  it("hides quote marks only on cursor's body line, not other body lines", () => {
+  it("always hides quote marks on body lines regardless of cursor position", () => {
     const doc = "> [!note]\n> Line one\n> Line two";
     // cursor on "> Line one" (position 12, inside "Line one")
     const view = makeView(doc, 12);
@@ -337,13 +362,12 @@ describe("buildDecorations — callouts", () => {
     // Header widget should be present (cursor is not on header)
     const headerWidget = decos.find((d) => d.widget && d.from === 0);
     expect(headerWidget).toBeDefined();
-    // Quote mark on line 2 (cursor line) should NOT be replaced
+    // Quote marks on BOTH body lines should be replaced (no per-line toggle)
     const line2 = view.state.doc.line(2);
     const line2Replace = decos.find(
       (d) => d.type === "replace" && !d.widget && d.from === line2.from,
     );
-    expect(line2Replace).toBeUndefined();
-    // Quote mark on line 3 (non-cursor line) SHOULD be replaced
+    expect(line2Replace).toBeDefined();
     const line3 = view.state.doc.line(3);
     const line3Replace = decos.find(
       (d) => d.type === "replace" && !d.widget && d.from === line3.from,
@@ -374,7 +398,7 @@ describe("buildDecorations — inline math", () => {
     view.destroy();
   });
 
-  it("shows raw $...$ when cursor is on line", () => {
+  it("shows raw $...$ when cursor is inside math", () => {
     const view = makeView("$E=mc^2$", 3);
     const decos = collectDecos(view);
     expect(decos).toHaveLength(0);
