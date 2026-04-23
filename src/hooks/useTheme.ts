@@ -19,7 +19,7 @@ function subscribeSystemTheme(cb: () => void): () => void {
   return () => mql?.removeEventListener("change", cb);
 }
 
-async function syncNativeTitleBar(theme: Theme): Promise<void> {
+async function syncNativeTitleBar(theme: Theme | null): Promise<void> {
   try {
     const { getCurrentWindow } = await import("@tauri-apps/api/window");
     await getCurrentWindow().setTheme(theme);
@@ -50,8 +50,8 @@ export function useTheme() {
       root.classList.remove("dark", "theme-dark");
       root.classList.add("theme-light");
     }
-    syncNativeTitleBar(theme);
-  }, [theme]);
+    syncNativeTitleBar(darkModePref === "auto" ? null : theme);
+  }, [theme, darkModePref]);
 
   return { theme } as const;
 }

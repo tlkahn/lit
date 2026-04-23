@@ -111,4 +111,55 @@ describe("useTheme", () => {
       expect(mockSetTheme).toHaveBeenCalledWith("light");
     });
   });
+
+  it("calls setTheme(null) when darkMode is auto", async () => {
+    matchMediaMatches = false;
+    usePreferencesStore.setState({ darkMode: "auto" });
+    const mockSetTheme = vi.fn(() => Promise.resolve());
+    vi.mocked(getCurrentWindow).mockReturnValue({
+      setTheme: mockSetTheme,
+    } as unknown as ReturnType<typeof getCurrentWindow>);
+
+    renderHook(() => useTheme());
+
+    await waitFor(() => {
+      expect(mockSetTheme).toHaveBeenCalledWith(null);
+    });
+  });
+
+  it("calls setTheme with explicit theme when darkMode is dark", async () => {
+    usePreferencesStore.setState({ darkMode: "dark" });
+    const mockSetTheme = vi.fn(() => Promise.resolve());
+    vi.mocked(getCurrentWindow).mockReturnValue({
+      setTheme: mockSetTheme,
+    } as unknown as ReturnType<typeof getCurrentWindow>);
+
+    renderHook(() => useTheme());
+
+    await waitFor(() => {
+      expect(mockSetTheme).toHaveBeenCalledWith("dark");
+    });
+  });
+
+  it("switches from explicit to auto calls setTheme(null)", async () => {
+    matchMediaMatches = true;
+    usePreferencesStore.setState({ darkMode: "dark" });
+    const mockSetTheme = vi.fn(() => Promise.resolve());
+    vi.mocked(getCurrentWindow).mockReturnValue({
+      setTheme: mockSetTheme,
+    } as unknown as ReturnType<typeof getCurrentWindow>);
+
+    const { result } = renderHook(() => useTheme());
+    await waitFor(() => {
+      expect(mockSetTheme).toHaveBeenCalledWith("dark");
+    });
+
+    mockSetTheme.mockClear();
+    act(() => usePreferencesStore.setState({ darkMode: "auto" }));
+
+    expect(result.current.theme).toBe("dark");
+    await waitFor(() => {
+      expect(mockSetTheme).toHaveBeenCalledWith(null);
+    });
+  });
 });
