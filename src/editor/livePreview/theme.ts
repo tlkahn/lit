@@ -128,7 +128,10 @@ export const livePreviewBaseTheme = EditorView.baseTheme({
   },
   ".cm-preview-math-display": {
     textAlign: "center",
-    padding: "8px 0",
+    padding: "4px 0",
+  },
+  ".cm-preview-math-display .katex-display": {
+    margin: "0.2em 0",
   },
   ".cm-preview-math-error": {
     color: "var(--text-error)",
