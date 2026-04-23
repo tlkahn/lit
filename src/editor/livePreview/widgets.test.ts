@@ -177,8 +177,8 @@ describe("InlineMathWidget", () => {
     expect(a.eq(b)).toBe(false);
   });
 
-  it("ignoreEvent returns true", () => {
-    expect(new InlineMathWidget("x").ignoreEvent()).toBe(true);
+  it("ignoreEvent returns false to allow click-to-edit", () => {
+    expect(new InlineMathWidget("x").ignoreEvent()).toBe(false);
   });
 });
 
@@ -203,8 +203,8 @@ describe("DisplayMathWidget", () => {
     expect(a.eq(b)).toBe(false);
   });
 
-  it("ignoreEvent returns true", () => {
-    expect(new DisplayMathWidget("x").ignoreEvent()).toBe(true);
+  it("ignoreEvent returns false to allow click-to-edit", () => {
+    expect(new DisplayMathWidget("x").ignoreEvent()).toBe(false);
   });
 });
 

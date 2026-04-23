@@ -128,7 +128,7 @@ export class InlineMathWidget extends WidgetType {
   }
 
   ignoreEvent(): boolean {
-    return true;
+    return false;
   }
 }
 
@@ -154,7 +154,7 @@ export class DisplayMathWidget extends WidgetType {
   }
 
   ignoreEvent(): boolean {
-    return true;
+    return false;
   }
 }
 
