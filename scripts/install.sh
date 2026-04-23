@@ -33,8 +33,7 @@ if [ -w /usr/local/bin ]; then
     mv /tmp/lit-cli /usr/local/bin/lit
     chmod 755 /usr/local/bin/lit
 else
-    sudo mv /tmp/lit-cli /usr/local/bin/lit
-    sudo chmod 755 /usr/local/bin/lit
+    osascript -e 'do shell script "mv /tmp/lit-cli /usr/local/bin/lit && chmod 755 /usr/local/bin/lit" with administrator privileges'
 fi
 
 echo "==> Done"
