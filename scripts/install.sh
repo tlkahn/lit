@@ -10,6 +10,9 @@ cd "$(dirname "$0")/.."
 echo "==> Installing dependencies"
 bun install
 
+echo "==> Cleaning stale bundle"
+rm -rf "$BUNDLE_DIR"
+
 echo "==> Building release bundle"
 bun tauri build
 
@@ -22,7 +25,8 @@ cp -R "$BUNDLE_DIR/$APP_NAME" "$INSTALL_DIR/$APP_NAME"
 echo "==> Installing 'lit' CLI to /usr/local/bin"
 cat > /tmp/lit-cli <<'SCRIPT'
 #!/bin/bash
-exec "/Applications/Lit.app/Contents/MacOS/Lit" "$@"
+"/Applications/Lit.app/Contents/MacOS/Lit" "$@" &>/dev/null &
+disown
 SCRIPT
 
 if [ -w /usr/local/bin ]; then

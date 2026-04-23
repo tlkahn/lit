@@ -45,7 +45,8 @@ pub fn generate_cli_script(app_binary: &str) -> String {
 # Lit command-line launcher
 # Opens files and directories in the Lit app
 
-exec "{}" "$@"
+"{}" "$@" &>/dev/null &
+disown
 "#,
         app_binary
     )
@@ -163,7 +164,8 @@ mod tests {
         let script = generate_cli_script("/Applications/Lit.app/Contents/MacOS/Lit");
         assert!(script.starts_with("#!/bin/bash"));
         assert!(script.contains("/Applications/Lit.app/Contents/MacOS/Lit"));
-        assert!(script.contains("exec"));
+        assert!(script.contains("&>/dev/null &"));
+        assert!(script.contains("disown"));
         assert!(script.contains("\"$@\""));
     }
 
