@@ -13,6 +13,11 @@ import {
   parseRawYaml,
   openWorkspaceWindow,
   getPendingWorkspace,
+  getInitialFile,
+  getPendingFile,
+  installCli,
+  uninstallCli,
+  isCliInstalled,
   getKeymaps,
   getDefaultKeymaps,
   getUserKeymapsPath,
@@ -55,6 +60,16 @@ describe("ipc", () => {
           return "workspace-1";
         case "get_pending_workspace":
           return null;
+        case "get_initial_file":
+          return "notes.md";
+        case "get_pending_file":
+          return null;
+        case "install_cli":
+          return null;
+        case "uninstall_cli":
+          return null;
+        case "is_cli_installed":
+          return true;
         case "get_keymaps":
           return [
             { key: "Mod-b", command: "editor.toggleBold", when: "editorFocus" },
@@ -195,5 +210,32 @@ describe("ipc", () => {
     await saveUserKeymaps(bindings);
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("save_user_keymaps", { bindings });
+  });
+
+  it("getInitialFile returns the initial file", async () => {
+    const file = await getInitialFile();
+    expect(file).toBe("notes.md");
+  });
+
+  it("getPendingFile returns null by default", async () => {
+    const file = await getPendingFile();
+    expect(file).toBeNull();
+  });
+
+  it("installCli invokes install_cli", async () => {
+    await installCli();
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("install_cli");
+  });
+
+  it("uninstallCli invokes uninstall_cli", async () => {
+    await uninstallCli();
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("uninstall_cli");
+  });
+
+  it("isCliInstalled returns boolean", async () => {
+    const result = await isCliInstalled();
+    expect(result).toBe(true);
   });
 });

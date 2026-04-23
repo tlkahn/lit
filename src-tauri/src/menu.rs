@@ -10,6 +10,8 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         &[
             &PredefinedMenuItem::about(app, Some("About Lit"), None)?,
             &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(app, "install_cli", "Install Command Line Tool\u{2026}", true, None::<&str>)?,
+            &PredefinedMenuItem::separator(app)?,
             &PredefinedMenuItem::quit(app, Some("Quit Lit"))?,
         ],
     )?;

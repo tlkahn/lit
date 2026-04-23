@@ -43,7 +43,11 @@ describe("App", () => {
           return samplePages;
         case "get_initial_workspace":
           return null;
+        case "get_initial_file":
+          return null;
         case "get_pending_workspace":
+          return null;
+        case "get_pending_file":
           return null;
         case "list_themes":
           return [];
@@ -164,6 +168,114 @@ describe("App", () => {
       window.dispatchEvent(new CustomEvent("lit:toggle-quick-switcher"));
     });
     expect(screen.queryByTestId("quick-switcher-backdrop")).not.toBeInTheDocument();
+  });
+
+  it("auto-selects initial file after CLI workspace opens", async () => {
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_pending_workspace":
+          return null;
+        case "get_pending_file":
+          return null;
+        case "get_initial_workspace":
+          return "/cli/workspace";
+        case "get_initial_file":
+          return "notes.md";
+        case "open_workspace":
+          return samplePages;
+        case "list_themes":
+          return [];
+        case "get_preferences":
+          return {
+            "workbench.colorTheme": null,
+            "workbench.darkMode": "light",
+            "workbench.sideBar.location": "left",
+          };
+        case "get_keymaps":
+          return [];
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().workspacePath).toBe("/cli/workspace");
+      expect(useWorkspaceStore.getState().currentPagePath).toBe("notes.md");
+    });
+  });
+
+  it("does not select file when get_initial_file returns null", async () => {
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_pending_workspace":
+          return null;
+        case "get_pending_file":
+          return null;
+        case "get_initial_workspace":
+          return "/cli/workspace";
+        case "get_initial_file":
+          return null;
+        case "open_workspace":
+          return samplePages;
+        case "list_themes":
+          return [];
+        case "get_preferences":
+          return {
+            "workbench.colorTheme": null,
+            "workbench.darkMode": "light",
+            "workbench.sideBar.location": "left",
+          };
+        case "get_keymaps":
+          return [];
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().workspacePath).toBe("/cli/workspace");
+    });
+    expect(useWorkspaceStore.getState().currentPagePath).toBeNull();
+  });
+
+  it("auto-selects pending file in second-instance window", async () => {
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_pending_workspace":
+          return "/pending/workspace";
+        case "get_pending_file":
+          return "readme.md";
+        case "get_initial_workspace":
+          return null;
+        case "get_initial_file":
+          return null;
+        case "open_workspace":
+          return samplePages;
+        case "list_themes":
+          return [];
+        case "get_preferences":
+          return {
+            "workbench.colorTheme": null,
+            "workbench.darkMode": "light",
+            "workbench.sideBar.location": "left",
+          };
+        case "get_keymaps":
+          return [];
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().workspacePath).toBe("/pending/workspace");
+      expect(useWorkspaceStore.getState().currentPagePath).toBe("readme.md");
+    });
   });
 
   it("file-modified event for current page triggers reload", async () => {

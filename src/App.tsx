@@ -10,7 +10,7 @@ import { useFileWatcher } from "./hooks/useFileWatcher";
 import { useWorkspaceStore, getRecentWorkspaces } from "./stores/workspace";
 import { useThemeStore } from "./stores/theme";
 import { usePreferencesStore } from "./stores/preferences";
-import { getInitialWorkspace, getPendingWorkspace } from "./lib/ipc";
+import { getInitialWorkspace, getInitialFile, getPendingWorkspace, getPendingFile } from "./lib/ipc";
 import { HeadingQuickSwitcher } from "./components/HeadingQuickSwitcher";
 
 function App() {
@@ -18,6 +18,7 @@ function App() {
   const { position } = useSidebarPosition();
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const openWorkspace = useWorkspaceStore((s) => s.openWorkspace);
+  const selectPage = useWorkspaceStore((s) => s.selectPage);
   const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
   const triggerReload = useWorkspaceStore((s) => s.triggerReload);
   const initThemes = useThemeStore((s) => s.loadThemes);
@@ -42,12 +43,16 @@ function App() {
     const init = async () => {
       const pending = await getPendingWorkspace().catch(() => null);
       if (pending) {
-        openWorkspace(pending);
+        await openWorkspace(pending);
+        const file = await getPendingFile().catch(() => null);
+        if (file) selectPage(file);
         return;
       }
       const cliPath = await getInitialWorkspace().catch(() => null);
       if (cliPath) {
-        openWorkspace(cliPath);
+        await openWorkspace(cliPath);
+        const file = await getInitialFile().catch(() => null);
+        if (file) selectPage(file);
         return;
       }
       const recent = getRecentWorkspaces();
@@ -56,7 +61,7 @@ function App() {
       }
     };
     init();
-  }, [openWorkspace, workspacePath]);
+  }, [openWorkspace, selectPage, workspacePath]);
 
   const currentPageHeadings = useWorkspaceStore((s) => s.currentPageHeadings);
   const [quickSwitcherOpen, setQuickSwitcherOpen] = useState(false);

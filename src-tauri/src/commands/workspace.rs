@@ -19,6 +19,7 @@ pub struct WorkspaceRegistry {
 }
 
 pub struct PendingWorkspaces(pub Mutex<HashMap<String, String>>);
+pub struct PendingFiles(pub Mutex<HashMap<String, String>>);
 
 pub fn get_workspace_root(registry: &WorkspaceRegistry, label: &str) -> Result<PathBuf, String> {
     let workspaces = registry.workspaces.lock().unwrap();
@@ -93,12 +94,18 @@ static WINDOW_COUNTER: AtomicU32 = AtomicU32::new(1);
 pub fn create_workspace_window(
     app_handle: &tauri::AppHandle,
     path: Option<String>,
+    file: Option<String>,
 ) -> Result<String, String> {
     let id = WINDOW_COUNTER.fetch_add(1, Ordering::Relaxed);
     let label = format!("workspace-{id}");
     if let Some(ref p) = path {
         if let Some(pending) = app_handle.try_state::<PendingWorkspaces>() {
             pending.0.lock().unwrap().insert(label.clone(), p.clone());
+        }
+    }
+    if let Some(ref f) = file {
+        if let Some(pending) = app_handle.try_state::<PendingFiles>() {
+            pending.0.lock().unwrap().insert(label.clone(), f.clone());
         }
     }
     WebviewWindowBuilder::new(app_handle, &label, tauri::WebviewUrl::default())
@@ -115,13 +122,21 @@ pub fn open_workspace_window(
     app_handle: tauri::AppHandle,
     _state: State<PendingWorkspaces>,
 ) -> Result<String, String> {
-    create_workspace_window(&app_handle, path)
+    create_workspace_window(&app_handle, path, None)
 }
 
 #[tauri::command]
 pub fn get_pending_workspace(
     window: tauri::Window,
     state: State<PendingWorkspaces>,
+) -> Option<String> {
+    state.0.lock().unwrap().remove(window.label())
+}
+
+#[tauri::command]
+pub fn get_pending_file(
+    window: tauri::Window,
+    state: State<PendingFiles>,
 ) -> Option<String> {
     state.0.lock().unwrap().remove(window.label())
 }

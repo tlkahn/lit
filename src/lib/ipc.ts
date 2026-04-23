@@ -79,6 +79,26 @@ export async function getPendingWorkspace(): Promise<string | null> {
   return invoke<string | null>("get_pending_workspace");
 }
 
+export async function getInitialFile(): Promise<string | null> {
+  return invoke<string | null>("get_initial_file");
+}
+
+export async function getPendingFile(): Promise<string | null> {
+  return invoke<string | null>("get_pending_file");
+}
+
+export async function installCli(): Promise<void> {
+  return invoke<void>("install_cli");
+}
+
+export async function uninstallCli(): Promise<void> {
+  return invoke<void>("uninstall_cli");
+}
+
+export async function isCliInstalled(): Promise<boolean> {
+  return invoke<boolean>("is_cli_installed");
+}
+
 // Theme commands
 
 export interface ThemeInfo {
