@@ -12,7 +12,8 @@
     "test": "bunx vitest run",
     "test:watch": "bunx vitest",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "bench": "bunx vitest bench"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.3",

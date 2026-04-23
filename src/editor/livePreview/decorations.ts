@@ -5,6 +5,7 @@ import { isCursorOnLine } from "./proximity";
 import { ImageWidget, CalloutHeaderWidget, InlineMathWidget, DisplayMathWidget, EditableTableWidget, MermaidWidget } from "./widgets";
 import { imageResolverFacet } from "./imageResolver";
 import { parseCalloutType, calloutFoldField } from "./callout";
+import { perfMark, perfMeasure } from "./perf";
 
 const headingClass: Record<string, string> = {
   ATXHeading1: "cm-preview-h1",
@@ -16,6 +17,7 @@ const headingClass: Record<string, string> = {
 };
 
 export function buildDecorations(view: EditorView): DecorationSet {
+  perfMark("buildDecorations:start");
   const { state } = view;
   const decos: { from: number; to: number; deco: Decoration }[] = [];
 
@@ -95,7 +97,9 @@ export function buildDecorations(view: EditorView): DecorationSet {
     );
   });
 
-  return RangeSet.of(filtered.map((d) => d.deco.range(d.from, d.to)));
+  const result = RangeSet.of(filtered.map((d) => d.deco.range(d.from, d.to)));
+  perfMeasure("buildDecorations", "buildDecorations:start");
+  return result;
 }
 
 function addHeadingDecos(
@@ -399,6 +403,7 @@ function addDisplayMathDecos(
  * not a ViewPlugin (CodeMirror restriction).
  */
 export function buildBlockReplacements(state: EditorState): DecorationSet {
+  perfMark("buildBlockReplacements:start");
   const decos: { from: number; to: number; deco: Decoration }[] = [];
 
   syntaxTree(state).iterate({
@@ -434,7 +439,9 @@ export function buildBlockReplacements(state: EditorState): DecorationSet {
   });
 
   decos.sort((a, b) => a.from - b.from || a.to - b.to);
-  return RangeSet.of(decos.map((d) => d.deco.range(d.from, d.to)));
+  const result = RangeSet.of(decos.map((d) => d.deco.range(d.from, d.to)));
+  perfMeasure("buildBlockReplacements", "buildBlockReplacements:start");
+  return result;
 }
 
 function addCollapsedCalloutBody(

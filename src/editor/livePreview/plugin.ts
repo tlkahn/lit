@@ -2,6 +2,7 @@ import { type DecorationSet, EditorView } from "@codemirror/view";
 import { ViewPlugin, type ViewUpdate, type PluginValue } from "@codemirror/view";
 import { StateField, RangeSet } from "@codemirror/state";
 import { buildDecorations, buildBlockReplacements } from "./decorations";
+import { perfMark, perfMeasure } from "./perf";
 
 class LivePreviewPluginValue implements PluginValue {
   decorations: DecorationSet;
@@ -11,9 +12,11 @@ class LivePreviewPluginValue implements PluginValue {
   }
 
   update(update: ViewUpdate) {
+    perfMark("livePreview:update:start");
     if (update.docChanged || update.selectionSet || update.transactions.some(tr => tr.effects.length > 0)) {
       this.decorations = buildDecorations(update.view);
     }
+    perfMeasure("livePreview:update", "livePreview:update:start");
   }
 }
 

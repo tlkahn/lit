@@ -19,6 +19,33 @@ jobs:
       - run: bun run lint
       - run: bun run test
 
+  bench-frontend:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - name: Run benchmarks
+        run: bunx vitest bench --reporter=verbose 2>&1 | tee bench-output.txt
+      - name: Post benchmark results
+        uses: actions/github-script@v7
+        if: always()
+        with:
+          script: |
+            const fs = require('fs');
+            const output = fs.readFileSync('bench-output.txt', 'utf8');
+            const body = `## Benchmark Results\n\n\`\`\`\n${output.slice(-3000)}\n\`\`\`\n`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });
+
   check-rust:
     runs-on: ubuntu-latest
     steps:
