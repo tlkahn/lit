@@ -100,6 +100,10 @@ export class CalloutHeaderWidget extends WidgetType {
   ignoreEvent(): boolean {
     return true;
   }
+
+  get estimatedHeight(): number {
+    return 30;
+  }
 }
 
 export class InlineMathWidget extends WidgetType {

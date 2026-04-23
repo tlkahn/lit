@@ -301,7 +301,8 @@ function addCalloutDecos(
   const firstLine = state.doc.lineAt(from);
   const calloutInfo = parseCalloutType(firstLine.text);
   if (!calloutInfo) return;
-  if (isCursorOnLine(state, from, to)) return;
+
+  const cursorLine = state.doc.lineAt(state.selection.main.head).number;
 
   const foldState = state.field(calloutFoldField, false);
   const flipped = foldState?.get(from) ?? false;
@@ -315,26 +316,28 @@ function addCalloutDecos(
   const lastLine = state.doc.lineAt(to);
   const lastLineNum = lastLine.number;
 
-  // Line decoration for the header line
+  // Line decoration for the header line (always applied)
   decos.push({
     from: firstLine.from,
     to: firstLine.from,
     deco: Decoration.line({ class: `cm-callout cm-callout-${resolvedType}` }),
   });
 
-  // Replace header line content with widget
-  decos.push({
-    from: firstLine.from,
-    to: firstLine.to,
-    deco: Decoration.replace({
-      widget: new CalloutHeaderWidget(resolvedType, title, isCollapsed, calloutInfo.fold !== null, from),
-    }),
-  });
+  // Replace header line content with widget (only when cursor is not on header)
+  if (cursorLine !== firstLineNum) {
+    decos.push({
+      from: firstLine.from,
+      to: firstLine.to,
+      deco: Decoration.replace({
+        widget: new CalloutHeaderWidget(resolvedType, title, isCollapsed, calloutInfo.fold !== null, from),
+      }),
+    });
+  }
 
   if (isCollapsed) {
     // Body hiding is done by blockReplacementField (StateField) since it crosses line breaks.
   } else {
-    // Expanded: style body lines, hide quote marks
+    // Expanded: style body lines, hide quote marks per-line
     for (let lineNum = firstLineNum + 1; lineNum <= lastLineNum; lineNum++) {
       const line = state.doc.line(lineNum);
       decos.push({
@@ -342,13 +345,15 @@ function addCalloutDecos(
         to: line.from,
         deco: Decoration.line({ class: `cm-callout cm-callout-${resolvedType}` }),
       });
-      const quoteMarkMatch = line.text.match(/^(\s*>)\s?/);
-      if (quoteMarkMatch) {
-        decos.push({
-          from: line.from,
-          to: line.from + quoteMarkMatch[0].length,
-          deco: Decoration.replace({}),
-        });
+      if (cursorLine !== lineNum) {
+        const quoteMarkMatch = line.text.match(/^(\s*>)\s?/);
+        if (quoteMarkMatch) {
+          decos.push({
+            from: line.from,
+            to: line.from + quoteMarkMatch[0].length,
+            deco: Decoration.replace({}),
+          });
+        }
       }
     }
   }

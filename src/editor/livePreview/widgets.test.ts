@@ -149,6 +149,11 @@ describe("CalloutHeaderWidget", () => {
     const b = new CalloutHeaderWidget("note", "Title", true, true, 0);
     expect(a.eq(b)).toBe(false);
   });
+
+  it("has estimatedHeight of 30", () => {
+    const widget = new CalloutHeaderWidget("note", "Title", false, true, 0);
+    expect(widget.estimatedHeight).toBe(30);
+  });
 });
 
 describe("InlineMathWidget", () => {

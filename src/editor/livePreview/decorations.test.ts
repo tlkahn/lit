@@ -307,13 +307,48 @@ describe("buildDecorations — callouts", () => {
     view.destroy();
   });
 
-  it("shows raw syntax when cursor is on callout", () => {
+  it("keeps callout line decorations when cursor is on header", () => {
     const view = makeView("> [!note]\n> Content", 5);
     const decos = collectDecos(view);
-    const calloutDecos = decos.filter(
-      (d) => d.class?.includes("cm-callout") || (d.widget && d.from === 0),
+    const lineDecos = decos.filter((d) => d.class?.includes("cm-callout"));
+    expect(lineDecos.length).toBeGreaterThanOrEqual(2);
+    const headerWidget = decos.find((d) => d.widget && d.from === 0);
+    expect(headerWidget).toBeUndefined();
+    view.destroy();
+  });
+
+  it("shows raw header syntax only when cursor is on header line", () => {
+    const doc = "> [!note]\n> Content\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const headerWidget = decos.find((d) => d.widget && d.from === 0);
+    expect(headerWidget).toBeDefined();
+    view.destroy();
+  });
+
+  it("hides quote marks only on cursor's body line, not other body lines", () => {
+    const doc = "> [!note]\n> Line one\n> Line two";
+    // cursor on "> Line one" (position 12, inside "Line one")
+    const view = makeView(doc, 12);
+    const decos = collectDecos(view);
+    // Line decorations should be present for all lines
+    const lineDecos = decos.filter((d) => d.class?.includes("cm-callout"));
+    expect(lineDecos.length).toBeGreaterThanOrEqual(3);
+    // Header widget should be present (cursor is not on header)
+    const headerWidget = decos.find((d) => d.widget && d.from === 0);
+    expect(headerWidget).toBeDefined();
+    // Quote mark on line 2 (cursor line) should NOT be replaced
+    const line2 = view.state.doc.line(2);
+    const line2Replace = decos.find(
+      (d) => d.type === "replace" && !d.widget && d.from === line2.from,
     );
-    expect(calloutDecos).toHaveLength(0);
+    expect(line2Replace).toBeUndefined();
+    // Quote mark on line 3 (non-cursor line) SHOULD be replaced
+    const line3 = view.state.doc.line(3);
+    const line3Replace = decos.find(
+      (d) => d.type === "replace" && !d.widget && d.from === line3.from,
+    );
+    expect(line3Replace).toBeDefined();
     view.destroy();
   });
 });

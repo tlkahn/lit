@@ -26,17 +26,17 @@ export function createCalloutClickHandler(): Extension {
 
       if (target.closest(".cm-callout-fold-icon")) return false;
 
-      const calloutLine = target.closest(".cm-callout") as HTMLElement | null;
-      if (!calloutLine) return false;
+      const calloutHeader = target.closest(".cm-callout-header") as HTMLElement | null;
+      if (!calloutHeader) return false;
 
-      const pos = view.posAtDOM(calloutLine);
+      const pos = view.posAtDOM(calloutHeader);
       const range = findCalloutRange(view.state, pos);
       if (!range) return false;
 
       event.preventDefault();
       view.focus();
       view.dispatch({
-        selection: { anchor: range.from, head: range.to },
+        selection: { anchor: range.from },
       });
       return true;
     },

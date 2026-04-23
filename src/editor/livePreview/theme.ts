@@ -35,8 +35,7 @@ export const livePreviewBaseTheme = EditorView.baseTheme({
   ".cm-callout": {
     borderLeft: "3px solid var(--text-faint)",
     borderRadius: "4px",
-    padding: "0 8px",
-    margin: "2px 0",
+    padding: "2px 8px",
     backgroundColor: "color-mix(in srgb, var(--text-faint) 8%, transparent)",
   },
   ".cm-callout-header": {
