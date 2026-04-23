@@ -24,13 +24,7 @@
     }
   },
   "app": {
-    "windows": [
-      {
-        "title": "Lit",
-        "width": 1024,
-        "height": 768
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null,
       "assetProtocol": {

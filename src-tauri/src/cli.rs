@@ -55,6 +55,16 @@ pub fn cli_script_path() -> PathBuf {
     PathBuf::from("/usr/local/bin/lit")
 }
 
+pub fn cli_init_script(workspace: &Option<String>, file: &Option<String>) -> Option<String> {
+    if workspace.is_none() && file.is_none() {
+        return None;
+    }
+    Some(format!(
+        "window.__LIT_CLI__ = {};",
+        serde_json::json!({ "workspace": workspace, "file": file })
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

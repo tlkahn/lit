@@ -108,9 +108,15 @@ pub fn create_workspace_window(
             pending.0.lock().unwrap().insert(label.clone(), f.clone());
         }
     }
-    WebviewWindowBuilder::new(app_handle, &label, tauri::WebviewUrl::default())
+    let mut builder = WebviewWindowBuilder::new(app_handle, &label, tauri::WebviewUrl::default())
         .title("Lit")
-        .inner_size(1024.0, 768.0)
+        .inner_size(1024.0, 768.0);
+
+    if let Some(script) = crate::cli::cli_init_script(&path, &file) {
+        builder = builder.initialization_script(&script);
+    }
+
+    builder
         .build()
         .map_err(|e| format!("Failed to create window: {e}"))?;
     Ok(label)

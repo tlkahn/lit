@@ -13,6 +13,17 @@ import { usePreferencesStore } from "./stores/preferences";
 import { getInitialWorkspace, getInitialFile, getPendingWorkspace, getPendingFile } from "./lib/ipc";
 import { HeadingQuickSwitcher } from "./components/HeadingQuickSwitcher";
 
+interface LitCliArgs {
+  workspace: string | null;
+  file: string | null;
+}
+
+declare global {
+  interface Window {
+    __LIT_CLI__?: LitCliArgs;
+  }
+}
+
 function App() {
   useTheme();
   const { position } = useSidebarPosition();
@@ -41,6 +52,15 @@ function App() {
   useEffect(() => {
     if (workspacePath) return;
     const init = async () => {
+      const cliArgs = window.__LIT_CLI__;
+      if (cliArgs) {
+        delete window.__LIT_CLI__;
+        if (cliArgs.workspace) {
+          await openWorkspace(cliArgs.workspace);
+          if (cliArgs.file) selectPage(cliArgs.file);
+          return;
+        }
+      }
       const pending = await getPendingWorkspace().catch(() => null);
       if (pending) {
         await openWorkspace(pending);

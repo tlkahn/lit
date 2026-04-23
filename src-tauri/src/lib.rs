@@ -7,7 +7,7 @@ pub mod workspace;
 use commands::workspace::{PendingFiles, PendingWorkspaces, WorkspaceRegistry};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use tauri::Manager;
+use tauri::{Manager, WebviewWindowBuilder};
 use workspace::write_hash::WriteHashRegistry;
 
 pub struct InitialWorkspace(pub Mutex<Option<String>>);
@@ -44,6 +44,9 @@ pub fn run() {
         None => (None, None),
     };
 
+    let setup_workspace = cli_workspace.clone();
+    let setup_file = cli_file.clone();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             match cli::process_instance_args(&args, &cwd) {
@@ -76,7 +79,7 @@ pub fn run() {
         .manage(InitialWorkspace(Mutex::new(cli_workspace)))
         .manage(InitialFile(Mutex::new(cli_file)))
         .manage(Arc::new(WriteHashRegistry::new()))
-        .setup(|app| {
+        .setup(move |app| {
             let _ = commands::theme::seed_bundled_themes(app.handle());
             commands::keymap::seed_default_keymaps(app.handle());
             preferences::seed_default_if_missing(app.handle());
@@ -87,6 +90,17 @@ pub fn run() {
             if let Ok(watcher) = preferences::PreferencesWatcher::new(app.handle().clone()) {
                 app.manage(watcher);
             }
+
+            let mut builder =
+                WebviewWindowBuilder::new(app.handle(), "main", tauri::WebviewUrl::default())
+                    .title("Lit")
+                    .inner_size(1024.0, 768.0);
+
+            if let Some(script) = cli::cli_init_script(&setup_workspace, &setup_file) {
+                builder = builder.initialization_script(&script);
+            }
+
+            builder.build()?;
 
             Ok(())
         })
