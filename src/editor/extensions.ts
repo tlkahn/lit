@@ -9,6 +9,7 @@ import { getThemeExtension, highlightExtension, searchTheme } from "./theme";
 import { search, searchKeymap } from "@codemirror/search";
 import { livePreviewExtension, frontmatterFacet, noteDirFacet } from "./livePreview";
 import { foldExtension, type FoldConfig } from "./fold";
+import { jumpHistoryExtension } from "./jumpHistory";
 import { WikiLink } from "./markdown/wikilink";
 import { Frontmatter, FrontmatterYamlWrap } from "./markdown/frontmatter";
 import { Math } from "./markdown/math";
@@ -54,6 +55,7 @@ export function createExtensions(config: ExtensionConfig): Extension[] {
     config.keymapCompartment.of(
       keymap.of([...(config.keymapBindings ?? []), ...defaultKeymap, ...historyKeymap]),
     ),
+    jumpHistoryExtension(),
     EditorView.lineWrapping,
     EditorView.updateListener.of((update) => {
       if (update.docChanged && config.onChange) {

@@ -6,6 +6,7 @@ import { createExtensions } from "./extensions";
 import { getThemeExtension } from "./theme";
 import { foldExtension } from "./fold";
 import { frontmatterFacet, noteDirFacet } from "./livePreview";
+import { docReplaced } from "./jumpHistory";
 import { usePreferencesStore } from "../stores/preferences";
 
 export interface UseCodeMirrorProps {
@@ -89,6 +90,7 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
     suppressOnChange.current = true;
     view.dispatch({
       changes: { from: 0, to: view.state.doc.length, insert: doc },
+      annotations: docReplaced.of(true),
     });
     suppressOnChange.current = false;
     onDocReplacedRef.current?.();

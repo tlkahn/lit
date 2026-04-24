@@ -11,6 +11,7 @@ import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
 import { ConflictDialog } from "./ConflictDialog";
 import { YamlHighlighter } from "./YamlHighlighter";
 import { useKeymaps } from "../hooks/useKeymaps";
+import { globalJumpTracker } from "../editor/jumpTracker";
 
 export function parseYamlErrorLocation(msg: string): { line: number; column: number } | null {
   const origin = msg.match(/while parsing .+ at line (\d+) column (\d+)/);
@@ -171,6 +172,7 @@ export function ContentArea() {
       if (!(active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement)) {
         view.focus();
       }
+      globalJumpTracker.isNavigating = false;
     });
   }, []);
 
