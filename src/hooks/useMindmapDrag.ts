@@ -19,6 +19,7 @@ export interface DragState {
   draggingId: string | null;
   dropTarget: DropTarget | null;
   invalidIds: Set<string>;
+  cursorPos: Point | null;
 }
 
 const IDLE_STATE: DragState = {
@@ -26,6 +27,7 @@ const IDLE_STATE: DragState = {
   draggingId: null,
   dropTarget: null,
   invalidIds: new Set(),
+  cursorPos: null,
 };
 
 interface UseMindmapDragParams {
@@ -78,12 +80,12 @@ export function useMindmapDrag({ svgRef, descendants, tree, nodeRects, gapZones,
         dragOccurredRef.current = true;
         const draggingId = pendingIdRef.current;
         const invalidIds = getDescendantIds(draggingId, tree);
-        setDragState({ isDragging: true, draggingId, dropTarget: null, invalidIds });
+        setDragState({ isDragging: true, draggingId, dropTarget: null, invalidIds, cursorPos: currentPos });
         svgRef.current?.setPointerCapture?.(e.pointerId);
       }
 
       const dropTarget = resolveDropTarget(currentPos, nodeRects, gapZones);
-      setDragState((prev) => ({ ...prev, dropTarget }));
+      setDragState((prev) => ({ ...prev, dropTarget, cursorPos: currentPos }));
     },
     [getSvgPoint, tree, nodeRects, gapZones, svgRef],
   );

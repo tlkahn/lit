@@ -94,6 +94,23 @@ describe("useMindmapDrag", () => {
     expect(result.current.dragState.draggingId).toBe(nodeId);
   });
 
+  it("cursorPos updates during drag", () => {
+    const { result } = renderDragHook();
+    const nodeId = layout.descendants[0]!.data.id;
+    act(() => {
+      result.current.handlers.onPointerDown(nodeId, pointerEvent({ clientX: 0, clientY: 0 }));
+    });
+    expect(result.current.dragState.cursorPos).toBeNull();
+    act(() => {
+      result.current.handlers.onPointerMove(pointerEvent({ clientX: 10, clientY: 10 }));
+    });
+    expect(result.current.dragState.cursorPos).not.toBeNull();
+    act(() => {
+      result.current.handlers.onPointerMove(pointerEvent({ clientX: 20, clientY: 25 }));
+    });
+    expect(result.current.dragState.cursorPos).toEqual({ x: 20, y: 25 });
+  });
+
   it("below threshold stays idle", () => {
     const { result } = renderDragHook();
     const nodeId = layout.descendants[0]!.data.id;

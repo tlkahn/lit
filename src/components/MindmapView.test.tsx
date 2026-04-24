@@ -154,6 +154,55 @@ describe("MindmapView drag-and-drop", () => {
     expect(svg.classList.contains("cursor-grabbing")).toBe(true);
   });
 
+  it("ghost element appears during drag", () => {
+    const tree = makeTree("# A\n## B\n## C");
+    const props = defaultProps();
+    const { container } = render(<MindmapView tree={tree} {...props} />);
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
+
+    expect(container.querySelector("[data-mindmap-ghost]")).toBeNull();
+
+    firePointer(nodeB, "pointerdown", { clientX: 0, clientY: 0 });
+    firePointer(svg, "pointermove", { clientX: 50, clientY: 50 });
+
+    const ghost = container.querySelector("[data-mindmap-ghost]");
+    expect(ghost).toBeTruthy();
+    expect(ghost!.getAttribute("pointer-events")).toBe("none");
+    expect(ghost!.querySelector("text")!.textContent).toBe("B");
+  });
+
+  it("ghost element disappears after drop", () => {
+    const tree = makeTree("# A\n## B\n## C");
+    const props = defaultProps();
+    const { container } = render(<MindmapView tree={tree} {...props} />);
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
+
+    firePointer(nodeB, "pointerdown", { clientX: 0, clientY: 0 });
+    firePointer(svg, "pointermove", { clientX: 50, clientY: 50 });
+    expect(container.querySelector("[data-mindmap-ghost]")).toBeTruthy();
+
+    firePointer(svg, "pointerup", { clientX: 50, clientY: 50 });
+    expect(container.querySelector("[data-mindmap-ghost]")).toBeNull();
+  });
+
+  it("dragged node gets opacity-[0.3] during drag", () => {
+    const tree = makeTree("# A\n## B\n## C");
+    const props = defaultProps();
+    const { container } = render(<MindmapView tree={tree} {...props} />);
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
+
+    firePointer(nodeB, "pointerdown", { clientX: 0, clientY: 0 });
+    firePointer(svg, "pointermove", { clientX: 50, clientY: 50 });
+
+    const dragging = container.querySelector("[data-mindmap-dragging]")!;
+    const cls = dragging.getAttribute("class") ?? "";
+    expect(cls).toContain("opacity-[0.3]");
+    expect(cls).not.toContain("opacity-50");
+  });
+
   it("short click still fires onNodeClick", () => {
     const tree = makeTree("# A\n## B");
     const props = defaultProps();

@@ -136,10 +136,10 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: Min
                 {...(isDropTarget ? { "data-mindmap-drop-target": true } : {})}
                 {...(isInvalid ? { "data-mindmap-drop-invalid": true } : {})}
                 className={
-                  isInvalid
-                    ? "cursor-not-allowed"
-                    : isDragging
-                      ? "cursor-grabbing opacity-50"
+                  isDragging
+                    ? "cursor-grabbing opacity-[0.3]"
+                    : isInvalid
+                      ? "cursor-not-allowed"
                       : "cursor-pointer"
                 }
                 onClick={() => {
@@ -163,12 +163,9 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: Min
                   className={
                     isDropTarget
                       ? "fill-blue-100 dark:fill-blue-900 stroke-blue-500 dark:stroke-blue-400"
-                      : isDragging
-                        ? "fill-white dark:fill-neutral-800 stroke-dashed stroke-neutral-400 dark:stroke-neutral-500"
-                        : "fill-white dark:fill-neutral-800 stroke-neutral-300 dark:stroke-neutral-600"
+                      : "fill-white dark:fill-neutral-800 stroke-neutral-300 dark:stroke-neutral-600"
                   }
                   strokeWidth={isDropTarget ? 2 : 1}
-                  strokeDasharray={isDragging ? "4 2" : undefined}
                 />
                 {isEditing ? (
                   <foreignObject x={-2} y={-fontSize / 2 - 2} width={NODE_WIDTH - 4} height={fontSize + 4}>
@@ -215,6 +212,37 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: Min
               data-mindmap-gap-indicator
             />
           )}
+          {dragState.cursorPos && dragState.draggingId && (() => {
+            const draggedNode = descendants.find(d => d.data.id === dragState.draggingId);
+            if (!draggedNode) return null;
+            const fontSize = FONT_SIZES[Math.min(draggedNode.data.level - 1, FONT_SIZES.length - 1)]!;
+            const rectH = fontSize + 8;
+            return (
+              <g
+                data-mindmap-ghost
+                transform={`translate(${dragState.cursorPos.x - NODE_WIDTH / 2},${dragState.cursorPos.y - rectH / 2})`}
+                opacity={0.6}
+                pointerEvents="none"
+              >
+                <rect
+                  x={-4}
+                  y={-fontSize / 2 - 4}
+                  width={NODE_WIDTH}
+                  height={rectH}
+                  rx={4}
+                  className="fill-white dark:fill-neutral-800 stroke-blue-500 dark:stroke-blue-400"
+                  strokeWidth={1.5}
+                />
+                <text
+                  dy="0.35em"
+                  fontSize={fontSize}
+                  className="fill-neutral-900 dark:fill-neutral-100 select-none"
+                >
+                  {draggedNode.data.text}
+                </text>
+              </g>
+            );
+          })()}
         </g>
       </svg>
     </div>
