@@ -9,15 +9,15 @@ interface CodeMirrorEditorProps {
   resolveImageSrc?: (src: string) => string;
   viewRef?: React.RefObject<EditorView | null>;
   onDocReplaced?: () => void;
-  onReady?: (view: EditorView) => void;
   keymapBindings?: CM6KeyBinding[];
   frontmatter?: Record<string, unknown>;
   noteDir?: string;
+  style?: React.CSSProperties;
 }
 
-export function CodeMirrorEditor({ doc, onChange, resolveImageSrc, viewRef, onDocReplaced, onReady, keymapBindings, frontmatter, noteDir }: CodeMirrorEditorProps) {
+export function CodeMirrorEditor({ doc, onChange, resolveImageSrc, viewRef, onDocReplaced, keymapBindings, frontmatter, noteDir, style }: CodeMirrorEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const { view } = useCodeMirror({ containerRef, doc, onChange, resolveImageSrc, onDocReplaced, onReady, keymapBindings, frontmatter, noteDir });
+  const { view } = useCodeMirror({ containerRef, doc, onChange, resolveImageSrc, onDocReplaced, keymapBindings, frontmatter, noteDir });
 
   useEffect(() => {
     if (viewRef) {
@@ -47,6 +47,7 @@ export function CodeMirrorEditor({ doc, onChange, resolveImageSrc, viewRef, onDo
       ref={containerRef}
       data-testid="editor"
       className="flex-1 overflow-hidden"
+      style={style}
     />
   );
 }

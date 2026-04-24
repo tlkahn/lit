@@ -664,13 +664,13 @@ describe("ContentArea mindmap toggle", () => {
 
     const mindmapBtn = screen.getByRole("button", { name: /mindmap/i });
     await user.click(mindmapBtn);
-    expect(screen.queryByTestId("editor")).not.toBeInTheDocument();
-    expect(screen.getByTestId("mindmap-view")).toBeInTheDocument();
+    expect(screen.getByTestId("editor")).not.toBeVisible();
+    expect(screen.getByTestId("mindmap-view")).toBeVisible();
 
     const editorBtn = screen.getByRole("button", { name: /editor/i });
     await user.click(editorBtn);
-    expect(screen.getByTestId("editor")).toBeInTheDocument();
-    expect(screen.queryByTestId("mindmap-view")).not.toBeInTheDocument();
+    expect(screen.getByTestId("editor")).toBeVisible();
+    expect(screen.getByTestId("mindmap-view")).not.toBeVisible();
   });
 
   it("clicking a mindmap node scrolls editor to the heading line", async () => {
@@ -699,19 +699,19 @@ describe("ContentArea mindmap toggle", () => {
     expect(screen.getByTestId("mindmap-view")).toBeInTheDocument();
 
     // Click the "## Second" node (line index 2 in the doc, 0-based)
-    const secondNode = screen.getByText("Second");
+    const mindmapContainer = screen.getByTestId("mindmap-view");
+    const { within } = await import("@testing-library/react");
+    const secondNode = within(mindmapContainer).getByText("Second");
     await user.click(secondNode);
 
-    // Editor should remount with cursor at the "## Second" heading
-    await waitFor(() => {
-      expect(screen.getByTestId("editor")).toBeInTheDocument();
-    });
-
+    // Editor is always mounted (hidden via display:none), viewMode switches back
     const cmEditor = screen.getByTestId("editor").querySelector(".cm-editor");
     const { EditorView } = await import("@codemirror/view");
     const view = EditorView.findFromDOM(cmEditor as HTMLElement)!;
 
     // "# First\nContent\n## Second\nMore" — "## Second" starts at position 16
-    expect(view.state.selection.main.head).toBe(16);
+    await waitFor(() => {
+      expect(view.state.selection.main.head).toBe(16);
+    });
   });
 });

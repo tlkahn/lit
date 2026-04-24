@@ -283,6 +283,23 @@ export function ContentArea() {
   });
 
   useEffect(() => {
+    if (viewMode !== "editor") return;
+    const view = editorViewRef.current;
+    if (!view) return;
+    view.requestMeasure();
+    const line = pendingScrollLineRef.current;
+    if (line == null) return;
+    pendingScrollLineRef.current = null;
+    const lineNum = Math.min(line + 1, view.state.doc.lines);
+    const pos = view.state.doc.line(lineNum).from;
+    view.dispatch({
+      selection: EditorSelection.cursor(pos),
+      effects: EditorView.scrollIntoView(pos, { y: "start" }),
+    });
+    view.focus();
+  }, [viewMode]);
+
+  useEffect(() => {
     let unlisten: (() => void) | undefined;
     listen("menu://open-in-external-editor", () => {
       const view = editorViewRef.current;
@@ -392,48 +409,38 @@ export function ContentArea() {
           )
         )}
       </div>
-      {viewMode === "editor" ? (
-        <CodeMirrorEditor
-          doc={body}
-          onChange={handleChange}
-          resolveImageSrc={resolveImageSrc}
-          viewRef={editorViewRef}
-          onDocReplaced={handleDocReplaced}
-          onReady={(view) => {
-            const line = pendingScrollLineRef.current;
-            if (line == null) return;
-            requestAnimationFrame(() => { pendingScrollLineRef.current = null; });
-            const lineNum = Math.min(line + 1, view.state.doc.lines);
-            const pos = view.state.doc.line(lineNum).from;
-            view.dispatch({
-              selection: EditorSelection.cursor(pos),
-              effects: EditorView.scrollIntoView(pos, { y: "start" }),
-            });
-            view.focus();
+      <CodeMirrorEditor
+        doc={body}
+        onChange={handleChange}
+        resolveImageSrc={resolveImageSrc}
+        viewRef={editorViewRef}
+        onDocReplaced={handleDocReplaced}
+        keymapBindings={editorBindings}
+        frontmatter={frontmatter}
+        noteDir={noteDir}
+        style={viewMode !== "editor" ? { display: "none" } : undefined}
+      />
+      <div
+        data-testid="mindmap-view"
+        className="flex-1 min-h-0"
+        style={viewMode !== "mindmap" ? { display: "none" } : undefined}
+      >
+        <MindmapView
+          tree={headingTree}
+          onNodeClick={(node) => {
+            pendingScrollLineRef.current = node.line;
+            setViewMode("editor");
           }}
-          keymapBindings={editorBindings}
-          frontmatter={frontmatter}
-          noteDir={noteDir}
+          onNodeRename={(node, newText) => {
+            const newBody = applyRename(body, node, newText);
+            handleChange(newBody);
+          }}
+          onNodeMove={(sourceId, targetParentId, targetIndex) => {
+            const newBody = applyMove(body, headingTree, sourceId, targetParentId, targetIndex);
+            handleChange(newBody);
+          }}
         />
-      ) : (
-        <div data-testid="mindmap-view" className="flex-1 min-h-0">
-          <MindmapView
-            tree={headingTree}
-            onNodeClick={(node) => {
-              pendingScrollLineRef.current = node.line;
-              setViewMode("editor");
-            }}
-            onNodeRename={(node, newText) => {
-              const newBody = applyRename(body, node, newText);
-              handleChange(newBody);
-            }}
-            onNodeMove={(sourceId, targetParentId, targetIndex) => {
-              const newBody = applyMove(body, headingTree, sourceId, targetParentId, targetIndex);
-              handleChange(newBody);
-            }}
-          />
-        </div>
-      )}
+      </div>
       <ConflictDialog
         open={showConflict}
         onKeepMine={() => setShowConflict(false)}
