@@ -203,6 +203,21 @@ describe("MindmapView drag-and-drop", () => {
     expect(cls).not.toContain("opacity-50");
   });
 
+  it("SVG has no viewBox attribute", () => {
+    const tree = makeTree("# A\n## B");
+    const { container } = render(<MindmapView tree={tree} {...defaultProps()} />);
+    const svg = container.querySelector("svg");
+    expect(svg?.getAttribute("viewBox")).toBeNull();
+  });
+
+  it("zoom control buttons exist", () => {
+    const tree = makeTree("# A\n## B");
+    const { container } = render(<MindmapView tree={tree} {...defaultProps()} />);
+    expect(container.querySelector("[data-mindmap-zoom-in]")).toBeTruthy();
+    expect(container.querySelector("[data-mindmap-zoom-out]")).toBeTruthy();
+    expect(container.querySelector("[data-mindmap-zoom-fit]")).toBeTruthy();
+  });
+
   it("short click still fires onNodeClick", () => {
     const tree = makeTree("# A\n## B");
     const props = defaultProps();

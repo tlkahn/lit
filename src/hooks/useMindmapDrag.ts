@@ -1,9 +1,9 @@
 import { useCallback, useRef, useState } from "react";
 import type { HeadingNode } from "../lib/headingTree";
+import type { ZoomTransformLike } from "../lib/mindmapZoom";
 import {
   classifyDrag,
-  svgPointFromClient,
-  parseViewBox,
+  svgPointFromClientWithZoom,
   resolveDropTarget,
   isDescendantOf,
   getDescendantIds,
@@ -37,9 +37,10 @@ interface UseMindmapDragParams {
   nodeRects: NodeRect[];
   gapZones: GapZone[];
   onNodeMove: (sourceId: string, targetParentId: string, targetIndex: number) => void;
+  zoomTransformRef: React.RefObject<ZoomTransformLike>;
 }
 
-export function useMindmapDrag({ svgRef, descendants, tree, nodeRects, gapZones, onNodeMove }: UseMindmapDragParams) {
+export function useMindmapDrag({ svgRef, descendants, tree, nodeRects, gapZones, onNodeMove, zoomTransformRef }: UseMindmapDragParams) {
   const [dragState, setDragState] = useState<DragState>(IDLE_STATE);
   const startPosRef = useRef<Point | null>(null);
   const pendingIdRef = useRef<string | null>(null);
@@ -50,12 +51,9 @@ export function useMindmapDrag({ svgRef, descendants, tree, nodeRects, gapZones,
       const svg = svgRef.current;
       if (!svg) return { x: clientX, y: clientY };
       const rect = svg.getBoundingClientRect();
-      const vbAttr = svg.getAttribute("viewBox");
-      if (!vbAttr) return { x: clientX, y: clientY };
-      const viewBox = parseViewBox(vbAttr);
-      return svgPointFromClient(clientX, clientY, rect, viewBox);
+      return svgPointFromClientWithZoom(clientX, clientY, rect, zoomTransformRef.current ?? { k: 1, x: 0, y: 0 });
     },
-    [svgRef],
+    [svgRef, zoomTransformRef],
   );
 
   const onPointerDown = useCallback(

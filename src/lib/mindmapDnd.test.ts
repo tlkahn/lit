@@ -6,6 +6,7 @@ import {
   classifyDrag,
   parseViewBox,
   svgPointFromClient,
+  svgPointFromClientWithZoom,
   buildNodeRects,
   buildGapZones,
   hitTestNode,
@@ -59,6 +60,28 @@ describe("svgPointFromClient", () => {
     const pt = svgPointFromClient(150, 200, rect, viewBox);
     expect(pt.x).toBe(150);
     expect(pt.y).toBe(200);
+  });
+});
+
+describe("svgPointFromClientWithZoom", () => {
+  const rect = { left: 100, top: 50, width: 800, height: 600 };
+
+  it("identity transform → subtracts SVG offset", () => {
+    const pt = svgPointFromClientWithZoom(300, 250, rect, { k: 1, x: 0, y: 0 });
+    expect(pt.x).toBeCloseTo(200);
+    expect(pt.y).toBeCloseTo(200);
+  });
+
+  it("zoomed in (k=2) → inverts scale", () => {
+    const pt = svgPointFromClientWithZoom(300, 250, rect, { k: 2, x: 0, y: 0 });
+    expect(pt.x).toBeCloseTo(100);
+    expect(pt.y).toBeCloseTo(100);
+  });
+
+  it("zoomed out (k=0.5) → inverts scale", () => {
+    const pt = svgPointFromClientWithZoom(300, 250, rect, { k: 0.5, x: 0, y: 0 });
+    expect(pt.x).toBeCloseTo(400);
+    expect(pt.y).toBeCloseTo(400);
   });
 });
 

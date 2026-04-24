@@ -1,5 +1,6 @@
 import type { HierarchyPointNode } from "d3-hierarchy";
 import type { HeadingNode } from "./headingTree";
+import { invertPoint, type ZoomTransformLike } from "./mindmapZoom";
 
 export type PointNode = HierarchyPointNode<HeadingNode>;
 
@@ -60,6 +61,17 @@ export function svgPointFromClient(
     x: viewBox.x + (clientX - svgRect.left) * scaleX,
     y: viewBox.y + (clientY - svgRect.top) * scaleY,
   };
+}
+
+export function svgPointFromClientWithZoom(
+  clientX: number,
+  clientY: number,
+  svgRect: { left: number; top: number },
+  transform: ZoomTransformLike,
+): Point {
+  const localX = clientX - svgRect.left;
+  const localY = clientY - svgRect.top;
+  return invertPoint(localX, localY, transform);
 }
 
 export function classifyDrag(start: Point, current: Point, threshold = DRAG_THRESHOLD): boolean {

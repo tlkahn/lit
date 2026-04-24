@@ -52,6 +52,8 @@ describe("useMindmapDrag", () => {
     onNodeMove = vi.fn();
   });
 
+  const zoomTransformRef = { current: { k: 1, x: 0, y: 0 } };
+
   function renderDragHook() {
     return renderHook(() =>
       useMindmapDrag({
@@ -61,6 +63,7 @@ describe("useMindmapDrag", () => {
         nodeRects: layout.nodeRects,
         gapZones: layout.gapZones,
         onNodeMove,
+        zoomTransformRef,
       }),
     );
   }
@@ -201,6 +204,7 @@ describe("useMindmapDrag", () => {
         nodeRects: deepLayout.nodeRects,
         gapZones: deepLayout.gapZones,
         onNodeMove: deepOnNodeMove,
+        zoomTransformRef: { current: { k: 1, x: 0, y: 0 } },
       }),
     );
 

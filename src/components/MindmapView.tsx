@@ -1,9 +1,11 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { hierarchy, tree as d3tree } from "d3-hierarchy";
 import { linkHorizontal } from "d3-shape";
 import type { HeadingNode } from "../lib/headingTree";
 import { buildNodeRects, buildGapZones, type PointNode } from "../lib/mindmapDnd";
+import type { ContentBounds } from "../lib/mindmapZoom";
 import { useMindmapDrag } from "../hooks/useMindmapDrag";
+import { useMindmapZoom } from "../hooks/useMindmapZoom";
 
 interface MindmapViewProps {
   tree: HeadingNode;
@@ -17,7 +19,6 @@ const NODE_HEIGHT = 32;
 const FONT_SIZES = [16, 15, 14, 13, 12, 11];
 
 export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: MindmapViewProps) {
-  const svgRef = useRef<SVGSVGElement>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
 
@@ -44,6 +45,21 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: Min
     return { descendants, links };
   }, [tree, allNodes.length]);
 
+  const contentBounds: ContentBounds | null = useMemo(() => {
+    if (!layout) return null;
+    const { descendants } = layout;
+    const xs = descendants.map((d) => d.x);
+    const ys = descendants.map((d) => d.y);
+    const minX = Math.min(...xs) - NODE_HEIGHT;
+    const maxX = Math.max(...xs) + NODE_HEIGHT;
+    const minY = Math.min(...ys) - NODE_WIDTH / 2;
+    const maxY = Math.max(...ys) + NODE_WIDTH;
+    return { x: minY, y: minX, width: maxY - minY, height: maxX - minX };
+  }, [layout]);
+
+  const hasContent = allNodes.length > 0;
+  const { svgRef, gRef, transformRef, fitContent, zoomIn, zoomOut } = useMindmapZoom(contentBounds, hasContent);
+
   const nodeRects = useMemo(() => {
     if (!layout) return [];
     return buildNodeRects(layout.descendants, NODE_WIDTH, FONT_SIZES);
@@ -61,6 +77,7 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: Min
     nodeRects,
     gapZones,
     onNodeMove,
+    zoomTransformRef: transformRef,
   });
 
   if (allNodes.length === 0) {
@@ -79,15 +96,6 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: Min
     .x((d) => d.y)
     .y((d) => d.x);
 
-  const xs = descendants.map((d) => d.x!);
-  const ys = descendants.map((d) => d.y!);
-  const minX = Math.min(...xs) - NODE_HEIGHT;
-  const maxX = Math.max(...xs) + NODE_HEIGHT;
-  const minY = Math.min(...ys) - NODE_WIDTH / 2;
-  const maxY = Math.max(...ys) + NODE_WIDTH;
-
-  const viewBox = `${minY - 20} ${minX - 20} ${maxY - minY + 40} ${maxX - minX + 40}`;
-
   const activeGap =
     dragState.isDragging && dragState.dropTarget?.kind === "gap" ? dragState.dropTarget : null;
   const activeGapZone = activeGap
@@ -95,18 +103,17 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: Min
     : null;
 
   return (
-    <div className="w-full h-full overflow-auto">
+    <div className="w-full h-full overflow-hidden relative">
       <svg
         ref={svgRef}
-        viewBox={viewBox}
-        className={`w-full h-full min-w-[600px] min-h-[400px] ${dragState.isDragging ? "cursor-grabbing" : ""}`}
+        className={`w-full h-full ${dragState.isDragging ? "cursor-grabbing" : ""}`}
         onPointerMove={handlers.onPointerMove}
         onPointerUp={handlers.onPointerUp}
         onKeyDown={handlers.onKeyDown}
         tabIndex={0}
         data-mindmap-svg
       >
-        <g>
+        <g ref={gRef}>
           {links.map((l, i) => (
             <path
               key={i}
@@ -245,6 +252,29 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: Min
           })()}
         </g>
       </svg>
+      <div className="absolute bottom-4 right-4 flex gap-1">
+        <button
+          data-mindmap-zoom-in
+          onClick={zoomIn}
+          className="w-8 h-8 flex items-center justify-center rounded bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-700"
+        >
+          +
+        </button>
+        <button
+          data-mindmap-zoom-out
+          onClick={zoomOut}
+          className="w-8 h-8 flex items-center justify-center rounded bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-700"
+        >
+          −
+        </button>
+        <button
+          data-mindmap-zoom-fit
+          onClick={fitContent}
+          className="h-8 px-2 flex items-center justify-center rounded bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-700 text-sm"
+        >
+          Fit
+        </button>
+      </div>
     </div>
   );
 }
