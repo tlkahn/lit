@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildHeadingTree, sectionRange, applyRename, applyMove } from "./headingTree";
+import { buildHeadingTree, sectionRange, applyRename, applyMove, findNode, findParent } from "./headingTree";
 
 describe("buildHeadingTree", () => {
   it("returns virtual root with no children for empty doc", () => {
@@ -111,6 +111,39 @@ describe("applyRename", () => {
     const node = root.children[0]!;
     const result = applyRename(body, node, "Plain heading");
     expect(result).toBe("## Plain heading");
+  });
+});
+
+describe("findNode", () => {
+  it("finds an existing node by ID", () => {
+    const root = buildHeadingTree("# A\n## B\n### C");
+    const nodeC = root.children[0]!.children[0]!.children[0]!;
+    expect(findNode(root, nodeC.id)).toBe(nodeC);
+  });
+
+  it("returns null for a missing ID", () => {
+    const root = buildHeadingTree("# A\n## B");
+    expect(findNode(root, "h-999")).toBeNull();
+  });
+});
+
+describe("findParent", () => {
+  it("finds the parent of a nested node", () => {
+    const root = buildHeadingTree("# A\n## B\n### C");
+    const nodeB = root.children[0]!.children[0]!;
+    const nodeC = nodeB.children[0]!;
+    expect(findParent(root, nodeC.id)).toBe(nodeB);
+  });
+
+  it("returns root for a top-level heading", () => {
+    const root = buildHeadingTree("# A\n## B");
+    const nodeA = root.children[0]!;
+    expect(findParent(root, nodeA.id)).toBe(root);
+  });
+
+  it("returns null for the root node itself", () => {
+    const root = buildHeadingTree("# A");
+    expect(findParent(root, "root")).toBeNull();
   });
 });
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MindmapView } from "./MindmapView";
 import { buildHeadingTree } from "../lib/headingTree";
@@ -92,5 +92,80 @@ describe("MindmapView", () => {
     await user.type(input, "changed{Escape}");
     expect(props.onNodeRename).not.toHaveBeenCalled();
     expect(container.querySelector("[data-mindmap-edit]")).toBeNull();
+  });
+});
+
+function firePointer(el: Element, type: string, overrides: Record<string, unknown> = {}) {
+  const event = new MouseEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    button: 0,
+    clientX: 0,
+    clientY: 0,
+    ...overrides,
+  });
+  Object.defineProperty(event, "pointerId", { value: 1 });
+  fireEvent(el, event);
+}
+
+describe("MindmapView drag-and-drop", () => {
+
+  it("dragged node gets data-mindmap-dragging", () => {
+    const tree = makeTree("# A\n## B\n## C");
+    const props = defaultProps();
+    const { container } = render(<MindmapView tree={tree} {...props} />);
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
+
+    firePointer(nodeB, "pointerdown", { clientX: 0, clientY: 0 });
+    firePointer(svg, "pointermove", { clientX: 50, clientY: 50 });
+
+    const dragging = container.querySelector("[data-mindmap-dragging]");
+    expect(dragging).toBeTruthy();
+    expect(dragging!.getAttribute("data-mindmap-node")).toBe(tree.children[0]!.children[0]!.id);
+  });
+
+  it("descendant gets data-mindmap-drop-invalid", () => {
+    const tree = makeTree("# A\n## B\n### C");
+    const props = defaultProps();
+    const { container } = render(<MindmapView tree={tree} {...props} />);
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    const nodeA = container.querySelector(`[data-mindmap-node="${tree.children[0]!.id}"]`)!;
+
+    firePointer(nodeA, "pointerdown", { clientX: 0, clientY: 0 });
+    firePointer(svg, "pointermove", { clientX: 50, clientY: 50 });
+
+    const invalidNodes = container.querySelectorAll("[data-mindmap-drop-invalid]");
+    expect(invalidNodes.length).toBeGreaterThan(0);
+  });
+
+  it("SVG gets cursor-grabbing class during drag", () => {
+    const tree = makeTree("# A\n## B\n## C");
+    const props = defaultProps();
+    const { container } = render(<MindmapView tree={tree} {...props} />);
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
+
+    expect(svg.classList.contains("cursor-grabbing")).toBe(false);
+
+    firePointer(nodeB, "pointerdown", { clientX: 0, clientY: 0 });
+    firePointer(svg, "pointermove", { clientX: 50, clientY: 50 });
+
+    expect(svg.classList.contains("cursor-grabbing")).toBe(true);
+  });
+
+  it("short click still fires onNodeClick", () => {
+    const tree = makeTree("# A\n## B");
+    const props = defaultProps();
+    const { container } = render(<MindmapView tree={tree} {...props} />);
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
+
+    firePointer(nodeB, "pointerdown", { clientX: 5, clientY: 5 });
+    firePointer(svg, "pointerup", { clientX: 6, clientY: 6 });
+    fireEvent.click(nodeB);
+
+    expect(props.onNodeClick).toHaveBeenCalledWith(tree.children[0]!.children[0]!);
+    expect(props.onNodeMove).not.toHaveBeenCalled();
   });
 });

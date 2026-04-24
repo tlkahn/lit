@@ -140,7 +140,7 @@ export function flattenTree(root: HeadingNode): HeadingNode[] {
   return result;
 }
 
-function findNode(tree: HeadingNode, id: string): HeadingNode | null {
+export function findNode(tree: HeadingNode, id: string): HeadingNode | null {
   if (tree.id === id) return tree;
   for (const child of tree.children) {
     const found = findNode(child, id);
@@ -149,7 +149,7 @@ function findNode(tree: HeadingNode, id: string): HeadingNode | null {
   return null;
 }
 
-function findParent(tree: HeadingNode, id: string): HeadingNode | null {
+export function findParent(tree: HeadingNode, id: string): HeadingNode | null {
   for (const child of tree.children) {
     if (child.id === id) return tree;
     const found = findParent(child, id);

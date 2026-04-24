@@ -1,7 +1,9 @@
 import { useMemo, useRef, useState } from "react";
-import { hierarchy, tree as d3tree, type HierarchyPointNode } from "d3-hierarchy";
+import { hierarchy, tree as d3tree } from "d3-hierarchy";
 import { linkHorizontal } from "d3-shape";
 import type { HeadingNode } from "../lib/headingTree";
+import { buildNodeRects, buildGapZones, type PointNode } from "../lib/mindmapDnd";
+import { useMindmapDrag } from "../hooks/useMindmapDrag";
 
 interface MindmapViewProps {
   tree: HeadingNode;
@@ -14,9 +16,7 @@ const NODE_WIDTH = 160;
 const NODE_HEIGHT = 32;
 const FONT_SIZES = [16, 15, 14, 13, 12, 11];
 
-type PointNode = HierarchyPointNode<HeadingNode>;
-
-export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove: _onNodeMove }: MindmapViewProps) {
+export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: MindmapViewProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
@@ -38,11 +38,30 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove: _onNo
     const treeLayout = d3tree<HeadingNode>().nodeSize([NODE_HEIGHT + 12, NODE_WIDTH + 40]);
     treeLayout(root);
 
-    const descendants = root.descendants().filter((d) => d.data.level > 0);
+    const descendants = (root.descendants() as PointNode[]).filter((d) => d.data.level > 0);
     const links = root.links().filter((l) => l.source.data.level > 0);
 
     return { descendants, links };
   }, [tree, allNodes.length]);
+
+  const nodeRects = useMemo(() => {
+    if (!layout) return [];
+    return buildNodeRects(layout.descendants, NODE_WIDTH, FONT_SIZES);
+  }, [layout]);
+
+  const gapZones = useMemo(() => {
+    if (!layout) return [];
+    return buildGapZones(layout.descendants);
+  }, [layout]);
+
+  const { dragState, dragOccurredRef, handlers } = useMindmapDrag({
+    svgRef,
+    descendants: layout?.descendants ?? [],
+    tree,
+    nodeRects,
+    gapZones,
+    onNodeMove,
+  });
 
   if (allNodes.length === 0) {
     return (
@@ -69,9 +88,24 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove: _onNo
 
   const viewBox = `${minY - 20} ${minX - 20} ${maxY - minY + 40} ${maxX - minX + 40}`;
 
+  const activeGap =
+    dragState.isDragging && dragState.dropTarget?.kind === "gap" ? dragState.dropTarget : null;
+  const activeGapZone = activeGap
+    ? gapZones.find((g) => g.parentId === activeGap.parentId && g.index === activeGap.index)
+    : null;
+
   return (
     <div className="w-full h-full overflow-auto">
-      <svg ref={svgRef} viewBox={viewBox} className="w-full h-full min-w-[600px] min-h-[400px]">
+      <svg
+        ref={svgRef}
+        viewBox={viewBox}
+        className={`w-full h-full min-w-[600px] min-h-[400px] ${dragState.isDragging ? "cursor-grabbing" : ""}`}
+        onPointerMove={handlers.onPointerMove}
+        onPointerUp={handlers.onPointerUp}
+        onKeyDown={handlers.onKeyDown}
+        tabIndex={0}
+        data-mindmap-svg
+      >
         <g>
           {links.map((l, i) => (
             <path
@@ -86,21 +120,39 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove: _onNo
           {descendants.map((d) => {
             const fontSize = FONT_SIZES[Math.min(d.data.level - 1, FONT_SIZES.length - 1)]!;
             const isEditing = editingId === d.data.id;
+            const isDragging = dragState.draggingId === d.data.id;
+            const isDropTarget =
+              dragState.isDragging &&
+              dragState.dropTarget?.kind === "node" &&
+              dragState.dropTarget.nodeId === d.data.id;
+            const isInvalid = dragState.isDragging && dragState.invalidIds.has(d.data.id);
 
             return (
               <g
                 key={d.data.id}
                 transform={`translate(${d.y},${d.x})`}
                 data-mindmap-node={d.data.id}
-                className="cursor-pointer"
+                {...(isDragging ? { "data-mindmap-dragging": true } : {})}
+                {...(isDropTarget ? { "data-mindmap-drop-target": true } : {})}
+                {...(isInvalid ? { "data-mindmap-drop-invalid": true } : {})}
+                className={
+                  isInvalid
+                    ? "cursor-not-allowed"
+                    : isDragging
+                      ? "cursor-grabbing opacity-50"
+                      : "cursor-pointer"
+                }
                 onClick={() => {
-                  if (!isEditing) onNodeClick(d.data);
+                  if (!isEditing && !dragOccurredRef.current) onNodeClick(d.data);
                 }}
                 onDoubleClick={(e) => {
                   e.stopPropagation();
-                  setEditingId(d.data.id);
-                  setEditText(d.data.text);
+                  if (!dragOccurredRef.current) {
+                    setEditingId(d.data.id);
+                    setEditText(d.data.text);
+                  }
                 }}
+                onPointerDown={(e) => handlers.onPointerDown(d.data.id, e)}
               >
                 <rect
                   x={-4}
@@ -108,8 +160,15 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove: _onNo
                   width={NODE_WIDTH}
                   height={fontSize + 8}
                   rx={4}
-                  className="fill-white dark:fill-neutral-800 stroke-neutral-300 dark:stroke-neutral-600"
-                  strokeWidth={1}
+                  className={
+                    isDropTarget
+                      ? "fill-blue-100 dark:fill-blue-900 stroke-blue-500 dark:stroke-blue-400"
+                      : isDragging
+                        ? "fill-white dark:fill-neutral-800 stroke-dashed stroke-neutral-400 dark:stroke-neutral-500"
+                        : "fill-white dark:fill-neutral-800 stroke-neutral-300 dark:stroke-neutral-600"
+                  }
+                  strokeWidth={isDropTarget ? 2 : 1}
+                  strokeDasharray={isDragging ? "4 2" : undefined}
                 />
                 {isEditing ? (
                   <foreignObject x={-2} y={-fontSize / 2 - 2} width={NODE_WIDTH - 4} height={fontSize + 4}>
@@ -144,6 +203,18 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove: _onNo
               </g>
             );
           })}
+          {activeGapZone && (
+            <line
+              x1={activeGapZone.left}
+              y1={activeGapZone.top + activeGapZone.height / 2}
+              x2={activeGapZone.left + activeGapZone.width}
+              y2={activeGapZone.top + activeGapZone.height / 2}
+              className="stroke-blue-500 dark:stroke-blue-400"
+              strokeWidth={2}
+              strokeDasharray="6 3"
+              data-mindmap-gap-indicator
+            />
+          )}
         </g>
       </svg>
     </div>
