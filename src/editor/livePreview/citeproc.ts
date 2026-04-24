@@ -101,6 +101,16 @@ export function scanCiteprocCitations(text: string): CiteprocMatch[] {
   return results;
 }
 
+export const citeprocMatchesField = StateField.define<CiteprocMatch[]>({
+  create(state) {
+    return scanCiteprocCitations(state.doc.toString());
+  },
+  update(value, tr) {
+    if (!tr.docChanged) return value;
+    return scanCiteprocCitations(tr.state.doc.toString());
+  },
+});
+
 function extractBibPaths(frontmatter: Record<string, unknown>): string[] {
   const bib = frontmatter["bibliography"];
   if (!bib) return [];
@@ -161,7 +171,7 @@ const citeprocPlugin = ViewPlugin.fromClass(
 );
 
 const citeprocDecorationProvider = EditorView.decorations.compute(
-  [bibEntriesField, "selection"],
+  [bibEntriesField, citeprocMatchesField, "selection"],
   (state) => {
     const bibData = state.field(bibEntriesField);
     const docLen = state.doc.length;
@@ -174,8 +184,7 @@ const citeprocDecorationProvider = EditorView.decorations.compute(
       return Decoration.none;
     }
 
-    const text = state.doc.toString();
-    const matches = scanCiteprocCitations(text);
+    const matches = state.field(citeprocMatchesField);
     const decos: { from: number; to: number; deco: Decoration }[] = [];
 
     for (const match of matches) {
@@ -215,7 +224,7 @@ const citeprocDecorationProvider = EditorView.decorations.compute(
       }
 
       const renderedText = renderedParts.join("; ");
-      const original = text.substring(match.from, match.to);
+      const original = state.doc.sliceString(match.from, match.to);
 
       decos.push({
         from: match.from,
@@ -243,5 +252,5 @@ const citeprocDecorationProvider = EditorView.decorations.compute(
 );
 
 export function citeprocExtension(): Extension {
-  return [bibEntriesField, citeprocPlugin, citeprocDecorationProvider];
+  return [bibEntriesField, citeprocMatchesField, citeprocPlugin, citeprocDecorationProvider];
 }

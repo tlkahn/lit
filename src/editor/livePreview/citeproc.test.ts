@@ -7,6 +7,7 @@ import {
   noteDirFacet,
   scanCiteprocCitations,
   citeprocExtension,
+  citeprocMatchesField,
   type BibData,
 } from "./citeproc";
 import { frontmatterFacet } from "./crossref";
@@ -129,6 +130,75 @@ describe("scanCiteprocCitations", () => {
     expect(results).toHaveLength(1);
     expect(results[0]!.keys[0]!.key).toBe("smith2020");
     expect(results[0]!.keys[0]!.locator).toBe("p. 5");
+  });
+});
+
+describe("citeprocMatchesField", () => {
+  it("initializes with scan results from doc containing citations", () => {
+    const state = EditorState.create({
+      doc: "See [@smith2020] here",
+      extensions: [citeprocMatchesField],
+    });
+    const matches = state.field(citeprocMatchesField);
+    expect(matches).toHaveLength(1);
+    expect(matches[0]).toEqual({
+      from: 4,
+      to: 16,
+      keys: [{ key: "smith2020", suppressed: false, locator: undefined }],
+    });
+  });
+
+  it("initializes as empty for doc with no citations", () => {
+    const state = EditorState.create({
+      doc: "No citations here",
+      extensions: [citeprocMatchesField],
+    });
+    expect(state.field(citeprocMatchesField)).toHaveLength(0);
+  });
+
+  it("initializes as empty for empty doc", () => {
+    const state = EditorState.create({
+      doc: "",
+      extensions: [citeprocMatchesField],
+    });
+    expect(state.field(citeprocMatchesField)).toHaveLength(0);
+  });
+
+  it("recomputes on doc change — insert new citation", () => {
+    const state = EditorState.create({
+      doc: "See [@a] here",
+      extensions: [citeprocMatchesField],
+    });
+    expect(state.field(citeprocMatchesField)).toHaveLength(1);
+    const newState = state.update({
+      changes: { from: state.doc.length, insert: " and [@b]" },
+    }).state;
+    expect(newState.field(citeprocMatchesField)).toHaveLength(2);
+  });
+
+  it("recomputes on doc change — delete all citations", () => {
+    const state = EditorState.create({
+      doc: "See [@a] here",
+      extensions: [citeprocMatchesField],
+    });
+    expect(state.field(citeprocMatchesField)).toHaveLength(1);
+    const newState = state.update({
+      changes: { from: 0, to: state.doc.length, insert: "no citations" },
+    }).state;
+    expect(newState.field(citeprocMatchesField)).toHaveLength(0);
+  });
+
+  it("does NOT recompute on selection-only change (reference equality)", () => {
+    const state = EditorState.create({
+      doc: "See [@a] here",
+      extensions: [citeprocMatchesField],
+    });
+    const matchesBefore = state.field(citeprocMatchesField);
+    const newState = state.update({
+      selection: { anchor: 5 },
+    }).state;
+    const matchesAfter = newState.field(citeprocMatchesField);
+    expect(matchesAfter).toBe(matchesBefore);
   });
 });
 
