@@ -39,6 +39,24 @@ describe("crossref CSS variables in variables.css", () => {
   }
 });
 
+describe("horizontal rule theme spec", () => {
+  it("livePreviewThemeSpec contains .cm-preview-hr key", () => {
+    expect(livePreviewThemeSpec[".cm-preview-hr"]).toBeDefined();
+  });
+
+  it(".cm-preview-hr uses height 1lh to match text line height", () => {
+    const rule = livePreviewThemeSpec[".cm-preview-hr"] as Record<string, string>;
+    expect(rule.border).toBe("none");
+    expect(rule.height).toBe("1lh");
+  });
+
+  it(".cm-preview-hr draws centered 1px line via background", () => {
+    const rule = livePreviewThemeSpec[".cm-preview-hr"] as Record<string, string>;
+    expect(rule.backgroundSize).toBe("100% 1px");
+    expect(rule.backgroundPosition).toBe("center");
+  });
+});
+
 describe("crossref theme spec", () => {
   it("exports livePreviewThemeSpec as an object", () => {
     expect(typeof livePreviewThemeSpec).toBe("object");

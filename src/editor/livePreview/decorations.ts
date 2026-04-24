@@ -2,7 +2,7 @@ import { type EditorState, RangeSet } from "@codemirror/state";
 import { Decoration, type DecorationSet, type EditorView } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { isCursorOnLine, isCursorInRange } from "./proximity";
-import { ImageWidget, CalloutHeaderWidget, InlineMathWidget, DisplayMathWidget, EditableTableWidget, MermaidWidget } from "./widgets";
+import { ImageWidget, CalloutHeaderWidget, InlineMathWidget, DisplayMathWidget, EditableTableWidget, MermaidWidget, HorizontalRuleWidget } from "./widgets";
 import { imageResolverFacet } from "./imageResolver";
 import { parseCalloutType, calloutFoldField } from "./callout";
 import { perfMark, perfMeasure } from "./perf";
@@ -74,6 +74,10 @@ export function buildDecorations(view: EditorView): DecorationSet {
           if (!state.doc.sliceString(node.from, node.to).includes("\n")) {
             addBlockCommentDecos(state, node.from, node.to, decos);
           }
+          return false;
+        }
+        if (node.name === "HorizontalRule") {
+          addHorizontalRuleDecos(state, node.from, node.to, decos);
           return false;
         }
         if (node.name === "DisplayMath") {
@@ -548,6 +552,20 @@ function addInlineCommentDecos(
 ) {
   if (isCursorOnLine(state, from, to)) return;
   decos.push({ from, to, deco: Decoration.mark({ class: "cm-preview-comment" }) });
+}
+
+function addHorizontalRuleDecos(
+  state: EditorState,
+  from: number,
+  to: number,
+  decos: { from: number; to: number; deco: Decoration }[],
+) {
+  if (isCursorOnLine(state, from, to)) return;
+  decos.push({
+    from,
+    to,
+    deco: Decoration.replace({ widget: new HorizontalRuleWidget() }),
+  });
 }
 
 function addBlockCommentDecos(

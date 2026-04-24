@@ -33,6 +33,10 @@ export class ImageWidget extends WidgetType {
   ignoreEvent(): boolean {
     return false;
   }
+
+  get estimatedHeight(): number {
+    return 200;
+  }
 }
 
 export class CalloutHeaderWidget extends WidgetType {
@@ -131,6 +135,10 @@ export class InlineMathWidget extends WidgetType {
   ignoreEvent(): boolean {
     return false;
   }
+
+  get estimatedHeight(): number {
+    return -1;
+  }
 }
 
 export class DisplayMathWidget extends WidgetType {
@@ -156,6 +164,10 @@ export class DisplayMathWidget extends WidgetType {
 
   ignoreEvent(): boolean {
     return false;
+  }
+
+  get estimatedHeight(): number {
+    return 60;
   }
 }
 
@@ -231,6 +243,11 @@ export class EditableTableWidget extends WidgetType {
 
   ignoreEvent(): boolean {
     return true;
+  }
+
+  get estimatedHeight(): number {
+    const rowCount = this.tableText.split("\n").length - 1;
+    return Math.max(60, rowCount * 33 + 40);
   }
 }
 
@@ -343,6 +360,31 @@ export class MermaidWidget extends WidgetType {
 
   ignoreEvent(): boolean {
     return true;
+  }
+
+  get estimatedHeight(): number {
+    return 200;
+  }
+}
+
+export class HorizontalRuleWidget extends WidgetType {
+  toDOM(): HTMLElement {
+    const hr = document.createElement("hr");
+    hr.className = "cm-preview-hr";
+    hr.style.margin = "0";
+    return hr;
+  }
+
+  eq(_other: HorizontalRuleWidget): boolean {
+    return true;
+  }
+
+  ignoreEvent(): boolean {
+    return false;
+  }
+
+  get estimatedHeight(): number {
+    return 20;
   }
 }
 

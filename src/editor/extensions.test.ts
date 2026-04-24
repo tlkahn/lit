@@ -145,6 +145,42 @@ describe("createExtensions", () => {
     expect(names).not.toContain("HorizontalRule");
   });
 
+  it("parses HorizontalRule from ---", () => {
+    const exts = createExtensions(makeConfig());
+    const state = EditorState.create({
+      doc: "text\n\n---\n\nmore",
+      extensions: exts,
+    });
+    const tree = syntaxTree(state);
+    const names: string[] = [];
+    tree.iterate({ enter: (node) => { names.push(node.name); } });
+    expect(names).toContain("HorizontalRule");
+  });
+
+  it("parses HorizontalRule from ***", () => {
+    const exts = createExtensions(makeConfig());
+    const state = EditorState.create({
+      doc: "text\n\n***\n\nmore",
+      extensions: exts,
+    });
+    const tree = syntaxTree(state);
+    const names: string[] = [];
+    tree.iterate({ enter: (node) => { names.push(node.name); } });
+    expect(names).toContain("HorizontalRule");
+  });
+
+  it("parses HorizontalRule from ___", () => {
+    const exts = createExtensions(makeConfig());
+    const state = EditorState.create({
+      doc: "text\n\n___\n\nmore",
+      extensions: exts,
+    });
+    const tree = syntaxTree(state);
+    const names: string[] = [];
+    tree.iterate({ enter: (node) => { names.push(node.name); } });
+    expect(names).toContain("HorizontalRule");
+  });
+
   it("parses InlineMath nodes", () => {
     const exts = createExtensions(makeConfig());
     const state = EditorState.create({

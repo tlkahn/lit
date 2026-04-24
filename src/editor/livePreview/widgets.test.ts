@@ -8,6 +8,7 @@ import {
   DisplayMathWidget,
   EditableTableWidget,
   MermaidWidget,
+  HorizontalRuleWidget,
 } from "./widgets";
 import { calloutFoldField } from "./callout";
 import { renderMermaid, getMermaidCached } from "./mermaid";
@@ -425,6 +426,35 @@ describe("EditableTableWidget", () => {
   it("ignoreEvent returns true for all events", () => {
     const widget = new EditableTableWidget(basicTable, 0);
     expect(widget.ignoreEvent()).toBe(true);
+  });
+});
+
+describe("HorizontalRuleWidget", () => {
+  it("toDOM returns an <hr> with class cm-preview-hr", () => {
+    const widget = new HorizontalRuleWidget();
+    const el = widget.toDOM();
+    expect(el.tagName).toBe("HR");
+    expect(el.className).toBe("cm-preview-hr");
+  });
+
+  it("sets margin to 0 to avoid CM6 height-map corruption", () => {
+    const widget = new HorizontalRuleWidget();
+    const el = widget.toDOM();
+    expect(el.style.margin).toBe("0px");
+  });
+
+  it("eq returns true (all HRs are identical)", () => {
+    const a = new HorizontalRuleWidget();
+    const b = new HorizontalRuleWidget();
+    expect(a.eq(b)).toBe(true);
+  });
+
+  it("ignoreEvent returns false", () => {
+    expect(new HorizontalRuleWidget().ignoreEvent()).toBe(false);
+  });
+
+  it("estimatedHeight returns 20", () => {
+    expect(new HorizontalRuleWidget().estimatedHeight).toBe(20);
   });
 });
 

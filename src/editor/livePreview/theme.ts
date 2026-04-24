@@ -255,6 +255,18 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
     textDecoration: "underline wavy",
   },
 
+  // Horizontal rules
+  ".cm-preview-hr": {
+    border: "none",
+    padding: "0",
+    height: "1lh",
+    boxSizing: "border-box",
+    backgroundImage: "linear-gradient(to right, var(--text-faint), var(--text-faint))",
+    backgroundSize: "100% 1px",
+    backgroundPosition: "center",
+    backgroundRepeat: "no-repeat",
+  },
+
   ".cm-preview-mermaid-error": {
     color: "var(--text-error, #e53e3e)",
     fontStyle: "italic",

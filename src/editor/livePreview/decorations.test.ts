@@ -627,6 +627,53 @@ describe("buildBlockReplacements — mermaid", () => {
   });
 });
 
+describe("buildDecorations — horizontal rules", () => {
+  it("replaces --- with HorizontalRuleWidget when cursor is elsewhere", () => {
+    const doc = "text\n\n---\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const hr = decos.find((d) => d.widget && d.from === 6 && d.to === 9);
+    expect(hr).toBeDefined();
+    view.destroy();
+  });
+
+  it("shows raw --- when cursor is on the line", () => {
+    const doc = "text\n\n---\n\nother";
+    const view = makeView(doc, 7);
+    const decos = collectDecos(view);
+    const hr = decos.find((d) => d.widget && d.from === 6);
+    expect(hr).toBeUndefined();
+    view.destroy();
+  });
+
+  it("replaces *** variant with widget", () => {
+    const doc = "text\n\n***\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const hr = decos.find((d) => d.widget && d.from === 6 && d.to === 9);
+    expect(hr).toBeDefined();
+    view.destroy();
+  });
+
+  it("replaces ___ variant with widget", () => {
+    const doc = "text\n\n___\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const hr = decos.find((d) => d.widget && d.from === 6 && d.to === 9);
+    expect(hr).toBeDefined();
+    view.destroy();
+  });
+
+  it("decorates multiple HRs in one document", () => {
+    const doc = "text\n\n---\n\nmiddle\n\n***\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const hrs = decos.filter((d) => d.widget);
+    expect(hrs).toHaveLength(2);
+    view.destroy();
+  });
+});
+
 describe("buildDecorations — inline comments", () => {
   it("marks %%hidden%% as faded when cursor is elsewhere", () => {
     const doc = "text %%hidden%% more\n\nother";
