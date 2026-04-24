@@ -2,11 +2,15 @@ import type { EditorState, Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 
-export function findMathRange(state: EditorState, pos: number): { from: number; to: number } | null {
+function findNodeRange(
+  state: EditorState,
+  pos: number,
+  nodeNames: string[],
+): { from: number; to: number } | null {
   let result: { from: number; to: number } | null = null;
   syntaxTree(state).iterate({
     enter: (node) => {
-      if ((node.name === "InlineMath" || node.name === "DisplayMath") && node.from <= pos && node.to >= pos) {
+      if (nodeNames.includes(node.name) && node.from <= pos && node.to >= pos) {
         result = { from: node.from, to: node.to };
         return false;
       }
@@ -15,15 +19,20 @@ export function findMathRange(state: EditorState, pos: number): { from: number; 
   return result;
 }
 
-export function createMathClickHandler(): Extension {
+export function createLinkSelectHandler(): Extension {
   return EditorView.domEventHandlers({
     mousedown(event, view) {
-      const target = event.target as HTMLElement;
-      const mathEl = target.closest(".cm-preview-math-inline, .cm-preview-math-display") as HTMLElement | null;
-      if (!mathEl) return false;
+      if (event.ctrlKey || event.metaKey) return false;
 
-      const pos = view.posAtDOM(mathEl);
-      const range = findMathRange(view.state, pos);
+      const target = event.target as HTMLElement;
+      const el = target.closest(".cm-preview-link, .cm-preview-wikilink") as HTMLElement | null;
+      if (!el) return false;
+
+      const pos = view.posAtDOM(el);
+      const nodeNames = el.classList.contains("cm-preview-wikilink")
+        ? ["WikiLink"]
+        : ["Link"];
+      const range = findNodeRange(view.state, pos, nodeNames);
       if (!range) return false;
 
       event.preventDefault();

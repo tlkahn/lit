@@ -63,9 +63,9 @@ describe("ImageWidget", () => {
     expect(a.eq(b)).toBe(false);
   });
 
-  it("ignoreEvent returns true", () => {
+  it("ignoreEvent returns false to allow click-to-edit", () => {
     const widget = new ImageWidget("x.png", "x");
-    expect(widget.ignoreEvent()).toBe(true);
+    expect(widget.ignoreEvent()).toBe(false);
   });
 });
 

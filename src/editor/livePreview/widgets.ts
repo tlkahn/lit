@@ -17,6 +17,7 @@ export class ImageWidget extends WidgetType {
 
   toDOM(): HTMLElement {
     const img = document.createElement("img");
+    img.className = "cm-preview-image";
     img.src = this.src;
     img.alt = this.alt;
     img.style.maxWidth = "100%";
@@ -30,7 +31,7 @@ export class ImageWidget extends WidgetType {
   }
 
   ignoreEvent(): boolean {
-    return true;
+    return false;
   }
 }
 
