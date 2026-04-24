@@ -7,6 +7,8 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
+use turboref_core::config::DocumentConfig;
+use turboref_core::i18n::{self, Locale};
 
 fn default_sidebar_location() -> String {
     "left".to_string()
@@ -178,6 +180,139 @@ impl PreferencesWatcher {
             _debouncer: debouncer,
         })
     }
+}
+
+pub fn crossref_config_from_preferences(
+    prefs: &Preferences,
+    frontmatter: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> DocumentConfig {
+    let locale = prefs
+        .extra
+        .get("crossref.locale")
+        .and_then(|v| v.as_str())
+        .and_then(|s| match s {
+            "zh" => Some(Locale::Zh),
+            "en" => Some(Locale::En),
+            _ => None,
+        })
+        .unwrap_or(Locale::En);
+
+    let mut config = i18n::localized_defaults(locale);
+
+    fn get_string<'a>(
+        prefs: &'a Preferences,
+        fm: Option<&'a serde_json::Map<String, serde_json::Value>>,
+        pref_key: &str,
+        fm_key: &str,
+    ) -> Option<&'a str> {
+        if let Some(fm) = fm {
+            if let Some(v) = fm.get(fm_key).and_then(|v| v.as_str()) {
+                return Some(v);
+            }
+        }
+        prefs.extra.get(pref_key).and_then(|v| v.as_str())
+    }
+
+    fn get_prefix(
+        prefs: &Preferences,
+        fm: Option<&serde_json::Map<String, serde_json::Value>>,
+        pref_key: &str,
+        fm_key: &str,
+    ) -> Option<Vec<String>> {
+        let source = if let Some(fm) = fm {
+            fm.get(fm_key).or_else(|| prefs.extra.get(pref_key))
+        } else {
+            prefs.extra.get(pref_key)
+        };
+        source.and_then(|v| {
+            if let Some(s) = v.as_str() {
+                Some(vec![s.to_string()])
+            } else if let Some(arr) = v.as_array() {
+                Some(arr.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+            } else {
+                None
+            }
+        })
+    }
+
+    fn get_bool(
+        prefs: &Preferences,
+        fm: Option<&serde_json::Map<String, serde_json::Value>>,
+        pref_key: &str,
+        fm_key: &str,
+    ) -> Option<bool> {
+        if let Some(fm) = fm {
+            if let Some(v) = fm.get(fm_key).and_then(|v| v.as_bool()) {
+                return Some(v);
+            }
+        }
+        prefs.extra.get(pref_key).and_then(|v| v.as_bool())
+    }
+
+    if let Some(v) = get_string(prefs, frontmatter, "crossref.figureTitle", "figureTitle") {
+        config.figure_title = v.to_string();
+    }
+    if let Some(v) = get_string(prefs, frontmatter, "crossref.tableTitle", "tableTitle") {
+        config.table_title = v.to_string();
+    }
+    if let Some(v) = get_string(prefs, frontmatter, "crossref.listingTitle", "listingTitle") {
+        config.listing_title = v.to_string();
+    }
+    if let Some(v) = get_string(prefs, frontmatter, "crossref.equationTitle", "equationTitle") {
+        config.equation_title = v.to_string();
+    }
+
+    if let Some(v) = get_prefix(prefs, frontmatter, "crossref.figPrefix", "figPrefix") {
+        config.fig_prefix = v;
+    }
+    if let Some(v) = get_prefix(prefs, frontmatter, "crossref.tblPrefix", "tblPrefix") {
+        config.tbl_prefix = v;
+    }
+    if let Some(v) = get_prefix(prefs, frontmatter, "crossref.eqPrefix", "eqPrefix") {
+        config.eq_prefix = v;
+    }
+    if let Some(v) = get_prefix(prefs, frontmatter, "crossref.lstPrefix", "lstPrefix") {
+        config.lst_prefix = v;
+    }
+    if let Some(v) = get_prefix(prefs, frontmatter, "crossref.secPrefix", "secPrefix") {
+        config.sec_prefix = v;
+    }
+
+    if let Some(v) = get_bool(prefs, frontmatter, "crossref.linkReferences", "linkReferences") {
+        config.link_references = v;
+    }
+    if let Some(v) = get_bool(prefs, frontmatter, "crossref.nameInLink", "nameInLink") {
+        config.name_in_link = v;
+    }
+    if let Some(v) = get_bool(prefs, frontmatter, "crossref.subfigGrid", "subfigGrid") {
+        config.subfig_grid = v;
+    }
+
+    // Frontmatter locale overrides preferences locale
+    if let Some(fm) = frontmatter {
+        if let Some(locale_str) = fm.get("crossref-locale").and_then(|v| v.as_str()) {
+            let fm_locale = match locale_str {
+                "zh" => Some(Locale::Zh),
+                "en" => Some(Locale::En),
+                _ => None,
+            };
+            if let Some(l) = fm_locale {
+                if l != locale {
+                    config = i18n::localized_defaults(l);
+                    // Re-apply any explicit overrides from prefs/frontmatter on top of new locale
+                    // (recursive would be cleaner but this is a simple two-level override)
+                    if let Some(v) = get_string(prefs, Some(fm), "crossref.figureTitle", "figureTitle") {
+                        config.figure_title = v.to_string();
+                    }
+                    if let Some(v) = get_prefix(prefs, Some(fm), "crossref.figPrefix", "figPrefix") {
+                        config.fig_prefix = v;
+                    }
+                }
+            }
+        }
+    }
+
+    config
 }
 
 #[cfg(test)]
@@ -374,5 +509,68 @@ mod tests {
         let prefs: Preferences = serde_json::from_str(json).unwrap();
         assert!(prefs.folding_enabled);
         assert_eq!(prefs.folding_show_controls, "mouseover");
+    }
+
+    #[test]
+    fn crossref_config_defaults_when_no_crossref_keys() {
+        let prefs = Preferences::default();
+        let config = crossref_config_from_preferences(&prefs, None);
+        assert_eq!(config.figure_title, "Figure");
+        assert_eq!(config.fig_prefix, vec!["Fig.", "Figs."]);
+        assert_eq!(config.locale, Locale::En);
+        assert!(!config.link_references);
+    }
+
+    #[test]
+    fn crossref_config_custom_prefix_overrides() {
+        let json = r#"{
+            "crossref.figPrefix": ["Figure", "Figures"],
+            "crossref.figureTitle": "Abbildung"
+        }"#;
+        let prefs: Preferences = serde_json::from_str(json).unwrap();
+        let config = crossref_config_from_preferences(&prefs, None);
+        assert_eq!(config.fig_prefix, vec!["Figure", "Figures"]);
+        assert_eq!(config.figure_title, "Abbildung");
+        // Others remain default
+        assert_eq!(config.tbl_prefix, vec!["Table", "Tables"]);
+    }
+
+    #[test]
+    fn crossref_config_frontmatter_takes_precedence() {
+        let json = r#"{"crossref.figPrefix": "Fig."}"#;
+        let prefs: Preferences = serde_json::from_str(json).unwrap();
+
+        let mut fm = serde_json::Map::new();
+        fm.insert("figPrefix".to_string(), serde_json::json!(["Abb.", "Abbn."]));
+
+        let config = crossref_config_from_preferences(&prefs, Some(&fm));
+        assert_eq!(config.fig_prefix, vec!["Abb.", "Abbn."]);
+    }
+
+    #[test]
+    fn crossref_config_locale_detection() {
+        let json = r#"{"crossref.locale": "zh"}"#;
+        let prefs: Preferences = serde_json::from_str(json).unwrap();
+        let config = crossref_config_from_preferences(&prefs, None);
+        assert_eq!(config.locale, Locale::Zh);
+        assert_eq!(config.figure_title, "图");
+        assert_eq!(config.fig_prefix, vec!["图"]);
+    }
+
+    #[test]
+    fn crossref_config_bool_overrides() {
+        let json = r#"{"crossref.linkReferences": true, "crossref.nameInLink": true}"#;
+        let prefs: Preferences = serde_json::from_str(json).unwrap();
+        let config = crossref_config_from_preferences(&prefs, None);
+        assert!(config.link_references);
+        assert!(config.name_in_link);
+    }
+
+    #[test]
+    fn crossref_config_string_prefix_becomes_single_element_vec() {
+        let json = r#"{"crossref.eqPrefix": "Equation"}"#;
+        let prefs: Preferences = serde_json::from_str(json).unwrap();
+        let config = crossref_config_from_preferences(&prefs, None);
+        assert_eq!(config.eq_prefix, vec!["Equation"]);
     }
 }

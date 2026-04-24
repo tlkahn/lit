@@ -164,3 +164,104 @@ export async function getPreferences(): Promise<Preferences> {
 export async function getPreferencesPath(): Promise<string> {
   return invoke<string>("get_preferences_path");
 }
+
+// Crossref commands
+
+export interface ResolvedCitation {
+  char_start: number;
+  char_end: number;
+  rendered_text: string;
+  is_valid: boolean;
+  original: string;
+  target_line: number | null;
+  target_char_offset: number | null;
+}
+
+export interface ResolvedDefinitionTag {
+  char_start: number;
+  char_end: number;
+  rendered_text: string;
+  is_valid: boolean;
+  original: string;
+  ref_type: string;
+  id: string;
+}
+
+export interface AllDecorations {
+  citations: ResolvedCitation[];
+  definition_tags: ResolvedDefinitionTag[];
+}
+
+export interface DefinitionInfo {
+  ref_type: string;
+  id: string;
+  number: unknown;
+  caption: string | null;
+  line: number;
+  char_offset: number;
+}
+
+export interface BibEntry {
+  key: string;
+  authors: string[];
+  title: string;
+  year: string;
+  entry_type: string;
+  line_number: number;
+  bib_file?: string;
+}
+
+export async function resolveAllDecorations(
+  content: string,
+  frontmatter?: Record<string, unknown>,
+): Promise<AllDecorations> {
+  return invoke<AllDecorations>("resolve_all_decorations", {
+    content,
+    frontmatter: frontmatter ?? null,
+  });
+}
+
+export async function getDefinitions(
+  content: string,
+  frontmatter?: Record<string, unknown>,
+): Promise<DefinitionInfo[]> {
+  return invoke<DefinitionInfo[]>("get_definitions", {
+    content,
+    frontmatter: frontmatter ?? null,
+  });
+}
+
+export async function expandTemplate(
+  template: string,
+  filename?: string,
+  index?: number,
+  ext?: string,
+): Promise<string> {
+  return invoke<string>("expand_template", {
+    template,
+    filename: filename ?? null,
+    index: index ?? null,
+    ext: ext ?? null,
+  });
+}
+
+export async function resolveBibEntries(
+  bibPaths: string[],
+  noteDir: string,
+): Promise<BibEntry[]> {
+  return invoke<BibEntry[]>("resolve_bib_entries", { bibPaths, noteDir });
+}
+
+export async function renderBibCitations(
+  entries: BibEntry[],
+): Promise<Record<string, string>> {
+  return invoke<Record<string, string>>("render_bib_citations", { entries });
+}
+
+export async function openBibFile(
+  file: string,
+  line: number,
+  commandTemplate: string,
+): Promise<void> {
+  return invoke<void>("open_bib_file", { file, line, commandTemplate });
+}

@@ -22,6 +22,12 @@ import {
   getDefaultKeymaps,
   getUserKeymapsPath,
   saveUserKeymaps,
+  resolveAllDecorations,
+  getDefinitions,
+  expandTemplate,
+  resolveBibEntries,
+  renderBibCitations,
+  openBibFile,
 } from "./ipc";
 
 const sampleMeta = {
@@ -81,6 +87,60 @@ describe("ipc", () => {
         case "get_user_keymaps_path":
           return "/data/keymaps/user.json";
         case "save_user_keymaps":
+          return null;
+        case "resolve_all_decorations":
+          return {
+            citations: [
+              {
+                char_start: 10,
+                char_end: 20,
+                rendered_text: "Fig. 1",
+                is_valid: true,
+                original: "[@fig:cat]",
+                target_line: 0,
+                target_char_offset: 0,
+              },
+            ],
+            definition_tags: [
+              {
+                char_start: 0,
+                char_end: 9,
+                rendered_text: "#Fig. 1",
+                is_valid: true,
+                original: "{#fig:cat}",
+                ref_type: "fig",
+                id: "cat",
+              },
+            ],
+          };
+        case "get_definitions":
+          return [
+            {
+              ref_type: "fig",
+              id: "cat",
+              number: { Simple: 1 },
+              caption: "A cat",
+              line: 0,
+              char_offset: 0,
+            },
+          ];
+        case "expand_template":
+          return "fig-test-001";
+        case "resolve_bib_entries":
+          return [
+            {
+              key: "smith2020",
+              authors: ["Smith, John"],
+              title: "A Study",
+              year: "2020",
+              entry_type: "article",
+              line_number: 0,
+              bib_file: "/path/refs.bib",
+            },
+          ];
+        case "render_bib_citations":
+          return { smith2020: "Smith 2020" };
+        case "open_bib_file":
           return null;
         default:
           throw new Error(`Unknown command: ${cmd}`);
@@ -237,5 +297,76 @@ describe("ipc", () => {
   it("isCliInstalled returns boolean", async () => {
     const result = await isCliInstalled();
     expect(result).toBe(true);
+  });
+
+  it("resolveAllDecorations returns citations and definition_tags", async () => {
+    const result = await resolveAllDecorations("![cat](cat.png){#fig:cat}\n\n[@fig:cat]");
+    expect(result.citations).toHaveLength(1);
+    expect(result.citations[0]!.rendered_text).toBe("Fig. 1");
+    expect(result.definition_tags).toHaveLength(1);
+    expect(result.definition_tags[0]!.ref_type).toBe("fig");
+  });
+
+  it("resolveAllDecorations sends null frontmatter when omitted", async () => {
+    await resolveAllDecorations("content");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("resolve_all_decorations", {
+      content: "content",
+      frontmatter: null,
+    });
+  });
+
+  it("getDefinitions returns definitions array", async () => {
+    const defs = await getDefinitions("![cat](cat.png){#fig:cat}");
+    expect(defs).toHaveLength(1);
+    expect(defs[0]!.id).toBe("cat");
+    expect(defs[0]!.caption).toBe("A cat");
+  });
+
+  it("expandTemplate returns expanded string", async () => {
+    const result = await expandTemplate("fig-{filename}-{index}", "test", 1);
+    expect(result).toBe("fig-test-001");
+  });
+
+  it("expandTemplate sends null for optional params", async () => {
+    await expandTemplate("{tag:3}");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("expand_template", {
+      template: "{tag:3}",
+      filename: null,
+      index: null,
+      ext: null,
+    });
+  });
+
+  it("resolveBibEntries returns parsed entries", async () => {
+    const entries = await resolveBibEntries(["refs.bib"], "/workspace/notes");
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.key).toBe("smith2020");
+    expect(entries[0]!.authors).toEqual(["Smith, John"]);
+  });
+
+  it("renderBibCitations returns rendered map", async () => {
+    const result = await renderBibCitations([
+      {
+        key: "smith2020",
+        authors: ["Smith, John"],
+        title: "A Study",
+        year: "2020",
+        entry_type: "article",
+        line_number: 0,
+      },
+    ]);
+    expect(result).toEqual({ smith2020: "Smith 2020" });
+  });
+
+  it("openBibFile invokes open_bib_file", async () => {
+    await openBibFile("/path/refs.bib", 5, "code -g {file}:{line}");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("open_bib_file", {
+      file: "/path/refs.bib",
+      line: 5,
+      commandTemplate: "code -g {file}:{line}",
+    });
   });
 });

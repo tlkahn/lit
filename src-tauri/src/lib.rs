@@ -1,3 +1,4 @@
+pub mod bib;
 pub mod cli;
 mod commands;
 mod menu;
@@ -9,6 +10,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, WebviewWindowBuilder};
 use workspace::write_hash::WriteHashRegistry;
+use bib::cache::BibCache;
 
 pub struct InitialWorkspace(pub Mutex<Option<String>>);
 pub struct InitialFile(pub Mutex<Option<String>>);
@@ -79,6 +81,7 @@ pub fn run() {
         .manage(InitialWorkspace(Mutex::new(cli_workspace)))
         .manage(InitialFile(Mutex::new(cli_file)))
         .manage(Arc::new(WriteHashRegistry::new()))
+        .manage(BibCache::new())
         .setup(move |app| {
             let _ = commands::theme::seed_bundled_themes(app.handle());
             commands::keymap::seed_default_keymaps(app.handle());
@@ -179,6 +182,12 @@ pub fn run() {
             commands::cli::install_cli,
             commands::cli::uninstall_cli,
             commands::cli::is_cli_installed,
+            commands::crossref::resolve_all_decorations,
+            commands::crossref::get_definitions,
+            commands::crossref::expand_template,
+            commands::crossref::resolve_bib_entries,
+            commands::crossref::render_bib_citations,
+            commands::crossref::open_bib_file,
             get_initial_workspace,
             get_initial_file,
         ])

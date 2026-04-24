@@ -2131,6 +2131,7 @@ version = "0.1.0"
 dependencies = [
  "gray_matter",
  "notify-debouncer-mini",
+ "regex",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -2140,6 +2141,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
  "tempfile",
+ "turboref-core",
  "unicode-normalization",
  "walkdir",
 ]
@@ -4552,6 +4554,16 @@ name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
+
+[[package]]
+name = "turboref-core"
+version = "0.1.0"
+dependencies = [
+ "rand 0.8.6",
+ "regex",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "typeid"
