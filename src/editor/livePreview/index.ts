@@ -9,7 +9,10 @@ import { createMathClickHandler } from "./mathClickHandler";
 import { createImageClickHandler } from "./imageClickHandler";
 import { createLinkSelectHandler } from "./linkSelectHandler";
 import { createWrappedLineClickFix } from "./clickFix";
+import { crossrefExtension } from "./crossref";
 import { openUrl as defaultOpenUrl } from "@tauri-apps/plugin-opener";
+
+export { frontmatterFacet } from "./crossref";
 
 export interface LivePreviewConfig {
   openUrl?: (url: string) => void;
@@ -29,6 +32,7 @@ export function livePreviewExtension(config?: LivePreviewConfig): Extension {
     createWrappedLineClickFix(),
     livePreviewBaseTheme,
     calloutFoldField,
+    crossrefExtension(),
   ];
   if (config?.resolveImageSrc) {
     exts.push(imageResolverFacet.of(config.resolveImageSrc));

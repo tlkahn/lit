@@ -330,7 +330,7 @@ export function ContentArea() {
           )
         )}
       </div>
-      <CodeMirrorEditor doc={body} onChange={handleChange} resolveImageSrc={resolveImageSrc} viewRef={editorViewRef} onDocReplaced={handleDocReplaced} keymapBindings={editorBindings} />
+      <CodeMirrorEditor doc={body} onChange={handleChange} resolveImageSrc={resolveImageSrc} viewRef={editorViewRef} onDocReplaced={handleDocReplaced} keymapBindings={editorBindings} frontmatter={frontmatter} />
       <ConflictDialog
         open={showConflict}
         onKeepMine={() => setShowConflict(false)}

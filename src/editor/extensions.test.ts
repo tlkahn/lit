@@ -33,6 +33,7 @@ function makeConfig(overrides?: { onChange?: (content: string) => void }) {
     themeCompartment: new Compartment(),
     keymapCompartment: new Compartment(),
     foldCompartment: new Compartment(),
+    crossrefCompartment: new Compartment(),
     ...overrides,
   };
 }

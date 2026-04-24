@@ -1,0 +1,120 @@
+import { type EditorView, WidgetType } from "@codemirror/view";
+
+export class CrossrefWidget extends WidgetType {
+  constructor(
+    readonly original: string,
+    readonly renderedText: string,
+    readonly isValid: boolean,
+    readonly charStart: number,
+    readonly charEnd: number,
+    readonly targetCharOffset?: number | null,
+  ) {
+    super();
+  }
+
+  toDOM(view: EditorView): HTMLElement {
+    const span = document.createElement("span");
+    span.className = "cm-crossref-citation";
+    if (!this.isValid) span.classList.add("invalid");
+    span.textContent = this.renderedText;
+    span.setAttribute("title", this.original);
+    span.dataset.original = this.original;
+
+    span.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (this.isValid && this.targetCharOffset != null) {
+        view.dispatch({
+          selection: { anchor: this.targetCharOffset },
+          scrollIntoView: true,
+        });
+        highlightLine(view, this.targetCharOffset);
+      } else {
+        view.dispatch({
+          selection: { anchor: this.charStart },
+        });
+      }
+      view.focus();
+    });
+
+    return span;
+  }
+
+  eq(other: CrossrefWidget): boolean {
+    return (
+      this.original === other.original &&
+      this.renderedText === other.renderedText &&
+      this.isValid === other.isValid &&
+      this.charStart === other.charStart &&
+      this.charEnd === other.charEnd &&
+      this.targetCharOffset === other.targetCharOffset
+    );
+  }
+
+  ignoreEvent(): boolean {
+    return true;
+  }
+
+  get estimatedHeight(): number {
+    return 20;
+  }
+}
+
+export class DefinitionWidget extends WidgetType {
+  constructor(
+    readonly original: string,
+    readonly renderedText: string,
+    readonly isValid: boolean,
+    readonly charStart: number,
+    readonly charEnd: number,
+  ) {
+    super();
+  }
+
+  toDOM(view: EditorView): HTMLElement {
+    const span = document.createElement("span");
+    span.className = "cm-crossref-definition";
+    span.textContent = this.renderedText;
+    span.dataset.original = this.original;
+
+    span.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      view.dispatch({
+        selection: { anchor: this.charStart },
+      });
+      view.focus();
+    });
+
+    return span;
+  }
+
+  eq(other: DefinitionWidget): boolean {
+    return (
+      this.original === other.original &&
+      this.renderedText === other.renderedText &&
+      this.isValid === other.isValid &&
+      this.charStart === other.charStart &&
+      this.charEnd === other.charEnd
+    );
+  }
+
+  ignoreEvent(): boolean {
+    return true;
+  }
+
+  get estimatedHeight(): number {
+    return 20;
+  }
+}
+
+export function highlightLine(view: EditorView, pos: number): void {
+  const line = view.state.doc.lineAt(pos);
+  const lineEl = view.domAtPos(line.from)?.node?.parentElement;
+  if (!lineEl) return;
+  const cmLine = lineEl.closest(".cm-line") ?? lineEl;
+  cmLine.classList.add("cm-crossref-highlight-blink");
+  setTimeout(() => {
+    cmLine.classList.remove("cm-crossref-highlight-blink");
+  }, 1500);
+}

@@ -5,6 +5,7 @@ import { defaultKeymap, historyKeymap } from "@codemirror/commands";
 import { createExtensions } from "./extensions";
 import { getThemeExtension } from "./theme";
 import { foldExtension } from "./fold";
+import { frontmatterFacet } from "./livePreview";
 import { usePreferencesStore } from "../stores/preferences";
 
 export interface UseCodeMirrorProps {
@@ -14,17 +15,19 @@ export interface UseCodeMirrorProps {
   resolveImageSrc?: (src: string) => string;
   onDocReplaced?: () => void;
   keymapBindings?: CM6KeyBinding[];
+  frontmatter?: Record<string, unknown>;
 }
 
 export function useCodeMirror(props: UseCodeMirrorProps): {
   view: EditorView | null;
 } {
-  const { containerRef, doc, onChange, resolveImageSrc, onDocReplaced, keymapBindings } = props;
+  const { containerRef, doc, onChange, resolveImageSrc, onDocReplaced, keymapBindings, frontmatter } = props;
   const [view, setView] = useState<EditorView | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const themeCompartment = useRef(new Compartment());
   const keymapCompartment = useRef(new Compartment());
   const foldCompartment = useRef(new Compartment());
+  const crossrefCompartment = useRef(new Compartment());
   const suppressOnChange = useRef(false);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
@@ -46,7 +49,9 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
       themeCompartment: themeCompartment.current,
       keymapCompartment: keymapCompartment.current,
       foldCompartment: foldCompartment.current,
+      crossrefCompartment: crossrefCompartment.current,
       foldConfig: { enabled: foldingEnabled, showControls: foldingShowControls },
+      frontmatter,
       keymapBindings,
       onChange: (content) => {
         if (!suppressOnChange.current) {
@@ -131,6 +136,16 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
       ),
     });
   }, [keymapBindings]);
+
+  useEffect(() => {
+    const v = viewRef.current;
+    if (!v) return;
+    v.dispatch({
+      effects: crossrefCompartment.current.reconfigure(
+        frontmatterFacet.of(frontmatter ?? {}),
+      ),
+    });
+  }, [frontmatter]);
 
   return { view };
 }

@@ -221,6 +221,26 @@ export const livePreviewBaseTheme = EditorView.baseTheme({
     width: "24px",
     height: "24px",
   },
+  // Crossref citations and definitions
+  ".cm-crossref-citation": {
+    color: "var(--text-accent)",
+    cursor: "pointer",
+  },
+  ".cm-crossref-citation.invalid": {
+    color: "var(--text-error, #e53e3e)",
+    textDecoration: "underline wavy",
+  },
+  ".cm-crossref-definition": {
+    color: "var(--text-faint)",
+  },
+  "@keyframes cm-crossref-blink": {
+    "0%": { backgroundColor: "color-mix(in srgb, var(--text-accent) 30%, transparent)" },
+    "100%": { backgroundColor: "transparent" },
+  },
+  ".cm-crossref-highlight-blink": {
+    animation: "cm-crossref-blink 1.5s ease-out",
+  },
+
   ".cm-preview-mermaid-error": {
     color: "var(--text-error, #e53e3e)",
     fontStyle: "italic",

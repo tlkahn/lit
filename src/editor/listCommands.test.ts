@@ -20,6 +20,7 @@ function makeView(doc: string, cursorPos: number): EditorView {
     themeCompartment: new Compartment(),
     keymapCompartment: new Compartment(),
     foldCompartment: new Compartment(),
+    crossrefCompartment: new Compartment(),
   };
   const state = EditorState.create({
     doc,

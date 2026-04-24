@@ -7,7 +7,7 @@ import { languages } from "@codemirror/language-data";
 import { GFM } from "@lezer/markdown";
 import { getThemeExtension, highlightExtension, searchTheme } from "./theme";
 import { search, searchKeymap } from "@codemirror/search";
-import { livePreviewExtension } from "./livePreview";
+import { livePreviewExtension, frontmatterFacet } from "./livePreview";
 import { foldExtension, type FoldConfig } from "./fold";
 import { WikiLink } from "./markdown/wikilink";
 import { Frontmatter, FrontmatterYamlWrap } from "./markdown/frontmatter";
@@ -20,6 +20,8 @@ export interface ExtensionConfig {
   keymapCompartment: Compartment;
   foldCompartment: Compartment;
   foldConfig?: FoldConfig;
+  crossrefCompartment: Compartment;
+  frontmatter?: Record<string, unknown>;
   keymapBindings?: import("@codemirror/view").KeyBinding[];
   onChange?: (content: string) => void;
   openUrl?: (url: string) => void;
@@ -35,6 +37,7 @@ export function createExtensions(config: ExtensionConfig): Extension[] {
     config.themeCompartment.of(getThemeExtension(config.theme)),
     highlightExtension,
     livePreviewExtension({ openUrl: config.openUrl, resolveImageSrc: config.resolveImageSrc }),
+    config.crossrefCompartment.of(frontmatterFacet.of(config.frontmatter ?? {})),
     config.foldCompartment.of(foldExtension(config.foldConfig)),
     history(),
     search(),

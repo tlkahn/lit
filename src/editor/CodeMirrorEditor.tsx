@@ -10,11 +10,12 @@ interface CodeMirrorEditorProps {
   viewRef?: React.RefObject<EditorView | null>;
   onDocReplaced?: () => void;
   keymapBindings?: CM6KeyBinding[];
+  frontmatter?: Record<string, unknown>;
 }
 
-export function CodeMirrorEditor({ doc, onChange, resolveImageSrc, viewRef, onDocReplaced, keymapBindings }: CodeMirrorEditorProps) {
+export function CodeMirrorEditor({ doc, onChange, resolveImageSrc, viewRef, onDocReplaced, keymapBindings, frontmatter }: CodeMirrorEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const { view } = useCodeMirror({ containerRef, doc, onChange, resolveImageSrc, onDocReplaced, keymapBindings });
+  const { view } = useCodeMirror({ containerRef, doc, onChange, resolveImageSrc, onDocReplaced, keymapBindings, frontmatter });
 
   useEffect(() => {
     if (viewRef) {
