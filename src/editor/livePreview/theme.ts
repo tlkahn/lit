@@ -14,6 +14,13 @@ export const livePreviewBaseTheme = EditorView.baseTheme({
     textDecoration: "underline",
     cursor: "pointer",
   },
+  ".cm-preview-code-inline": {
+    fontFamily: "var(--font-monospace-theme, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace)",
+    backgroundColor: "var(--code-background)",
+    padding: "2px 4px",
+    borderRadius: "3px",
+    fontSize: "0.9em",
+  },
   ".cm-preview-code-block": {
     backgroundColor: "var(--code-background)",
     fontFamily: "var(--font-monospace-theme, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace)",

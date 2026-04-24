@@ -58,6 +58,10 @@ export function buildDecorations(view: EditorView): DecorationSet {
         if (node.name === "Blockquote") {
           addCalloutDecos(state, node.from, node.to, node.node, decos);
         }
+        if (node.name === "InlineCode") {
+          addInlineCodeDecos(state, node.from, node.to, node.node, decos);
+          return false;
+        }
         if (node.name === "InlineMath") {
           addInlineMathDecos(state, node.from, node.to, node.node, decos);
           return false;
@@ -354,6 +358,32 @@ function addCalloutDecos(
         });
       }
     }
+  }
+}
+
+function addInlineCodeDecos(
+  state: EditorState,
+  from: number,
+  to: number,
+  node: ReturnType<typeof syntaxTree>["topNode"],
+  decos: { from: number; to: number; deco: Decoration }[],
+) {
+  if (isCursorInRange(state, from, to)) return;
+
+  const marks = node.getChildren("CodeMark");
+  let contentFrom = from;
+  let contentTo = to;
+
+  for (const mark of marks) {
+    if (mark.from >= from && mark.to <= to) {
+      decos.push({ from: mark.from, to: mark.to, deco: Decoration.replace({}) });
+      if (mark.from === from) contentFrom = mark.to;
+      if (mark.to === to) contentTo = mark.from;
+    }
+  }
+
+  if (contentFrom < contentTo) {
+    decos.push({ from: contentFrom, to: contentTo, deco: Decoration.mark({ class: "cm-preview-code-inline" }) });
   }
 }
 

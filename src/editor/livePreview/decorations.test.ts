@@ -388,6 +388,43 @@ describe("buildDecorations — math inside callouts", () => {
   });
 });
 
+describe("buildDecorations — inline code", () => {
+  it("hides backtick markers and applies code class", () => {
+    const doc = "`code` text\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const replaces = decos.filter((d) => d.type === "replace");
+    expect(replaces.some((d) => d.from === 0 && d.to === 1)).toBe(true);
+    expect(replaces.some((d) => d.from === 5 && d.to === 6)).toBe(true);
+    const code = decos.find((d) => d.class === "cm-preview-code-inline");
+    expect(code).toBeDefined();
+    expect(code!.from).toBe(1);
+    expect(code!.to).toBe(5);
+    view.destroy();
+  });
+
+  it("does not hide backticks when cursor is inside inline code", () => {
+    const view = makeView("`code` text", 3);
+    const decos = collectDecos(view);
+    const codeDecos = decos.filter(
+      (d) => d.class === "cm-preview-code-inline" || (d.type === "replace" && d.from <= 6),
+    );
+    expect(codeDecos).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("keeps other inline code decorated when cursor is inside one", () => {
+    const doc = "`alpha` and `beta`";
+    const view = makeView(doc, 3); // cursor inside `alpha`
+    const decos = collectDecos(view);
+    const codeDecos = decos.filter((d) => d.class === "cm-preview-code-inline");
+    expect(codeDecos).toHaveLength(1);
+    expect(codeDecos[0]!.from).toBe(13);
+    expect(codeDecos[0]!.to).toBe(17);
+    view.destroy();
+  });
+});
+
 describe("buildDecorations — inline math", () => {
   it("replaces $...$ with InlineMathWidget when cursor elsewhere", () => {
     const doc = "$E=mc^2$\n\nother";
