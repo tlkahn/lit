@@ -11,6 +11,9 @@ export interface PreferencesState {
   sidebarLocation: "left" | "right";
   foldingEnabled: boolean;
   foldingShowControls: FoldingShowControls;
+  crossrefEnabled: boolean;
+  crossrefLiveRendering: boolean;
+  crossrefEnableCiteproc: boolean;
   loaded: boolean;
   loadPreferences: () => Promise<void>;
 }
@@ -38,6 +41,9 @@ function mapPreferences(prefs: Preferences) {
     sidebarLocation: applySidebarLocation(prefs["workbench.sideBar.location"] ?? "left"),
     foldingEnabled: prefs["editor.folding.enabled"] ?? true,
     foldingShowControls: applyFoldingShowControls(prefs["editor.folding.showFoldingControls"] ?? "mouseover"),
+    crossrefEnabled: (prefs["crossref.enabled"] as boolean) ?? true,
+    crossrefLiveRendering: (prefs["crossref.liveRendering"] as boolean) ?? true,
+    crossrefEnableCiteproc: (prefs["crossref.enableCiteproc"] as boolean) ?? true,
   };
 }
 
@@ -47,6 +53,9 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   sidebarLocation: "left",
   foldingEnabled: true,
   foldingShowControls: "mouseover",
+  crossrefEnabled: true,
+  crossrefLiveRendering: true,
+  crossrefEnableCiteproc: true,
   loaded: false,
 
   loadPreferences: async () => {

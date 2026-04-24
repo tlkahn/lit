@@ -8,6 +8,9 @@ describe("PreferencesStore", () => {
       darkMode: "auto",
       colorTheme: null,
       sidebarLocation: "left",
+      crossrefEnabled: true,
+      crossrefLiveRendering: true,
+      crossrefEnableCiteproc: true,
       loaded: false,
     });
   });
@@ -129,6 +132,92 @@ describe("PreferencesStore", () => {
     expect(state.loaded).toBe(true);
     expect(state.darkMode).toBe("auto");
     expect(state.sidebarLocation).toBe("left");
+  });
+
+  it("defaults crossref fields to true", () => {
+    const state = usePreferencesStore.getState();
+    expect(state.crossrefEnabled).toBe(true);
+    expect(state.crossrefLiveRendering).toBe(true);
+    expect(state.crossrefEnableCiteproc).toBe(true);
+  });
+
+  it("loads crossref fields set to false from preferences", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "crossref.enabled": false,
+          "crossref.liveRendering": false,
+          "crossref.enableCiteproc": false,
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+
+    const state = usePreferencesStore.getState();
+    expect(state.crossrefEnabled).toBe(false);
+    expect(state.crossrefLiveRendering).toBe(false);
+    expect(state.crossrefEnableCiteproc).toBe(false);
+  });
+
+  it("defaults crossref to true when keys are missing from IPC response", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+
+    const state = usePreferencesStore.getState();
+    expect(state.crossrefEnabled).toBe(true);
+    expect(state.crossrefLiveRendering).toBe(true);
+    expect(state.crossrefEnableCiteproc).toBe(true);
+  });
+
+  it("updates crossref fields on preferences://changed event", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "crossref.enabled": true,
+          "crossref.liveRendering": true,
+          "crossref.enableCiteproc": true,
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().crossrefLiveRendering).toBe(true);
+
+    emitMockEvent("preferences://changed", {
+      "workbench.colorTheme": null,
+      "workbench.darkMode": "auto",
+      "workbench.sideBar.location": "left",
+      "crossref.enabled": true,
+      "crossref.liveRendering": false,
+      "crossref.enableCiteproc": true,
+    });
+
+    const state = usePreferencesStore.getState();
+    expect(state.crossrefEnabled).toBe(true);
+    expect(state.crossrefLiveRendering).toBe(false);
+    expect(state.crossrefEnableCiteproc).toBe(true);
   });
 
   it("treats unknown sidebarLocation values as left", async () => {
