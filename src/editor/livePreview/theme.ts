@@ -240,6 +240,14 @@ export const livePreviewBaseTheme = EditorView.baseTheme({
   ".cm-crossref-highlight-blink": {
     animation: "cm-crossref-blink 1.5s ease-out",
   },
+  ".cm-crossref-citeproc": {
+    color: "var(--text-accent)",
+    cursor: "pointer",
+  },
+  ".cm-crossref-citeproc.invalid": {
+    color: "var(--text-error, #e53e3e)",
+    textDecoration: "underline wavy",
+  },
 
   ".cm-preview-mermaid-error": {
     color: "var(--text-error, #e53e3e)",

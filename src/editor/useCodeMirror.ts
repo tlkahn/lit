@@ -5,7 +5,7 @@ import { defaultKeymap, historyKeymap } from "@codemirror/commands";
 import { createExtensions } from "./extensions";
 import { getThemeExtension } from "./theme";
 import { foldExtension } from "./fold";
-import { frontmatterFacet } from "./livePreview";
+import { frontmatterFacet, noteDirFacet } from "./livePreview";
 import { usePreferencesStore } from "../stores/preferences";
 
 export interface UseCodeMirrorProps {
@@ -16,18 +16,20 @@ export interface UseCodeMirrorProps {
   onDocReplaced?: () => void;
   keymapBindings?: CM6KeyBinding[];
   frontmatter?: Record<string, unknown>;
+  noteDir?: string;
 }
 
 export function useCodeMirror(props: UseCodeMirrorProps): {
   view: EditorView | null;
 } {
-  const { containerRef, doc, onChange, resolveImageSrc, onDocReplaced, keymapBindings, frontmatter } = props;
+  const { containerRef, doc, onChange, resolveImageSrc, onDocReplaced, keymapBindings, frontmatter, noteDir } = props;
   const [view, setView] = useState<EditorView | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const themeCompartment = useRef(new Compartment());
   const keymapCompartment = useRef(new Compartment());
   const foldCompartment = useRef(new Compartment());
   const crossrefCompartment = useRef(new Compartment());
+  const noteDirCompartment = useRef(new Compartment());
   const suppressOnChange = useRef(false);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
@@ -50,8 +52,10 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
       keymapCompartment: keymapCompartment.current,
       foldCompartment: foldCompartment.current,
       crossrefCompartment: crossrefCompartment.current,
+      noteDirCompartment: noteDirCompartment.current,
       foldConfig: { enabled: foldingEnabled, showControls: foldingShowControls },
       frontmatter,
+      noteDir,
       keymapBindings,
       onChange: (content) => {
         if (!suppressOnChange.current) {
@@ -146,6 +150,16 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
       ),
     });
   }, [frontmatter]);
+
+  useEffect(() => {
+    const v = viewRef.current;
+    if (!v) return;
+    v.dispatch({
+      effects: noteDirCompartment.current.reconfigure(
+        noteDirFacet.of(noteDir ?? ""),
+      ),
+    });
+  }, [noteDir]);
 
   return { view };
 }

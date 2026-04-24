@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { EditorView } from "@codemirror/view";
 import { EditorSelection } from "@codemirror/state";
@@ -135,6 +135,13 @@ export function ContentArea() {
     const fileDir = lastSlash >= 0 ? currentPagePath.substring(0, lastSlash) : "";
     const absolutePath = workspacePath + "/" + resolveRelativePath(fileDir, src);
     return convertFileSrc(absolutePath);
+  }, [workspacePath, currentPagePath]);
+
+  const noteDir = useMemo(() => {
+    if (!workspacePath || !currentPagePath) return "";
+    const lastSlash = currentPagePath.lastIndexOf("/");
+    const fileDir = lastSlash >= 0 ? currentPagePath.substring(0, lastSlash) : "";
+    return fileDir ? workspacePath + "/" + fileDir : workspacePath;
   }, [workspacePath, currentPagePath]);
 
   const handleDocReplaced = useCallback(() => {
@@ -330,7 +337,7 @@ export function ContentArea() {
           )
         )}
       </div>
-      <CodeMirrorEditor doc={body} onChange={handleChange} resolveImageSrc={resolveImageSrc} viewRef={editorViewRef} onDocReplaced={handleDocReplaced} keymapBindings={editorBindings} frontmatter={frontmatter} />
+      <CodeMirrorEditor doc={body} onChange={handleChange} resolveImageSrc={resolveImageSrc} viewRef={editorViewRef} onDocReplaced={handleDocReplaced} keymapBindings={editorBindings} frontmatter={frontmatter} noteDir={noteDir} />
       <ConflictDialog
         open={showConflict}
         onKeepMine={() => setShowConflict(false)}

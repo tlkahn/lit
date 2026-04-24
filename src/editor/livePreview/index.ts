@@ -10,9 +10,11 @@ import { createImageClickHandler } from "./imageClickHandler";
 import { createLinkSelectHandler } from "./linkSelectHandler";
 import { createWrappedLineClickFix } from "./clickFix";
 import { crossrefExtension } from "./crossref";
+import { citeprocExtension } from "./citeproc";
 import { openUrl as defaultOpenUrl } from "@tauri-apps/plugin-opener";
 
 export { frontmatterFacet } from "./crossref";
+export { noteDirFacet } from "./citeproc";
 
 export interface LivePreviewConfig {
   openUrl?: (url: string) => void;
@@ -33,6 +35,7 @@ export function livePreviewExtension(config?: LivePreviewConfig): Extension {
     livePreviewBaseTheme,
     calloutFoldField,
     crossrefExtension(),
+    citeprocExtension(),
   ];
   if (config?.resolveImageSrc) {
     exts.push(imageResolverFacet.of(config.resolveImageSrc));
