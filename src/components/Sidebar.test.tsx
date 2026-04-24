@@ -5,7 +5,10 @@ import { mockInvoke } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
 import { Sidebar } from "./Sidebar";
 
+let invokedCommands: { cmd: string; args: unknown }[] = [];
+
 beforeEach(() => {
+  invokedCommands = [];
   useWorkspaceStore.setState({
     workspacePath: "/workspace",
     pages: [],
@@ -16,6 +19,7 @@ beforeEach(() => {
   });
 
   mockInvoke((cmd, args) => {
+    invokedCommands.push({ cmd, args });
     if (cmd === "create_page") {
       const name = (args as Record<string, unknown>)?.name as string;
       return {
@@ -25,6 +29,9 @@ beforeEach(() => {
         created_at: 1000,
         modified_at: 1000,
       };
+    }
+    if (cmd === "open_in_external_editor") {
+      return null;
     }
     throw new Error(`Unknown command: ${cmd}`);
   });
@@ -126,5 +133,54 @@ describe("Sidebar instant create", () => {
 
     expect(promptSpy).not.toHaveBeenCalled();
     promptSpy.mockRestore();
+  });
+});
+
+describe("Sidebar context menu – Open in External Editor", () => {
+  it("right-click shows 'Open in External Editor' button", async () => {
+    useWorkspaceStore.setState({
+      pages: [
+        {
+          title: "Notes",
+          relative_path: "Notes.md",
+          frontmatter: {},
+          created_at: 1000,
+          modified_at: 1000,
+        },
+      ],
+    });
+
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    const pageButton = screen.getByText("Notes");
+    await user.pointer({ keys: "[MouseRight]", target: pageButton });
+
+    expect(screen.getByText("Open in External Editor")).toBeInTheDocument();
+  });
+
+  it("clicking 'Open in External Editor' calls invoke with correct args", async () => {
+    useWorkspaceStore.setState({
+      pages: [
+        {
+          title: "Notes",
+          relative_path: "Notes.md",
+          frontmatter: {},
+          created_at: 1000,
+          modified_at: 1000,
+        },
+      ],
+    });
+
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    const pageButton = screen.getByText("Notes");
+    await user.pointer({ keys: "[MouseRight]", target: pageButton });
+    await user.click(screen.getByText("Open in External Editor"));
+
+    const call = invokedCommands.find((c) => c.cmd === "open_in_external_editor");
+    expect(call).toBeTruthy();
+    expect(call!.args).toEqual({ relativePath: "Notes.md", line: 1, col: 1 });
   });
 });

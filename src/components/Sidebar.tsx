@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useWorkspaceStore } from "../stores/workspace";
 import { getNextUntitledName } from "../lib/naming";
+import { openInExternalEditor } from "../lib/ipc";
 import { useSidebarTab } from "../hooks/useSidebarTab";
 import { Outline } from "./Outline";
 import type { PageMeta } from "../lib/ipc";
@@ -239,6 +240,15 @@ function PageItem({
             className="block w-full px-4 py-1 text-left text-sm text-text-error hover:bg-bg-hover"
           >
             Delete
+          </button>
+          <button
+            onClick={() => {
+              onMenuClose();
+              openInExternalEditor(page.relative_path, 1, 1);
+            }}
+            className="block w-full px-4 py-1 text-left text-sm text-text-normal hover:bg-bg-hover"
+          >
+            Open in External Editor
           </button>
         </div>
       )}

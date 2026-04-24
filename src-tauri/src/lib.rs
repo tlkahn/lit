@@ -1,6 +1,7 @@
 pub mod bib;
 pub mod cli;
 mod commands;
+pub mod external_editor;
 mod menu;
 pub mod preferences;
 pub mod workspace;
@@ -153,6 +154,10 @@ pub fn run() {
                         }
                     });
                 }
+                "open_in_external_editor" => {
+                    use tauri::Emitter;
+                    let _ = app.emit("menu://open-in-external-editor", ());
+                }
                 _ => {}
             }
         })
@@ -187,6 +192,7 @@ pub fn run() {
             commands::crossref::expand_template,
             commands::crossref::resolve_bib_entries,
             commands::crossref::render_bib_citations,
+            commands::external_editor::open_in_external_editor,
             get_initial_workspace,
             get_initial_file,
         ])

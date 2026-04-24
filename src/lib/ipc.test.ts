@@ -27,6 +27,7 @@ import {
   expandTemplate,
   resolveBibEntries,
   renderBibCitations,
+  openInExternalEditor,
 } from "./ipc";
 
 const sampleMeta = {
@@ -139,6 +140,8 @@ describe("ipc", () => {
           ];
         case "render_bib_citations":
           return { smith2020: "Smith 2020" };
+        case "open_in_external_editor":
+          return null;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -355,6 +358,16 @@ describe("ipc", () => {
       },
     ]);
     expect(result).toEqual({ smith2020: "Smith 2020" });
+  });
+
+  it("openInExternalEditor calls with correct args", async () => {
+    await openInExternalEditor("notes.md", 10, 5);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("open_in_external_editor", {
+      relativePath: "notes.md",
+      line: 10,
+      col: 5,
+    });
   });
 
 });

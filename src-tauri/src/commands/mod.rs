@@ -1,6 +1,7 @@
 pub mod app_info;
 pub mod cli;
 pub mod crossref;
+pub mod external_editor;
 pub mod keymap;
 pub mod page;
 pub mod preferences;

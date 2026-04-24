@@ -15,6 +15,7 @@ describe("useKeymaps", () => {
           { key: "Mod-/", command: "editor.toggleComment", when: "editorFocus" },
           { key: "Mod-Shift-n", command: "app.newPage" },
           { key: "Mod-r", command: "app.gotoHeading" },
+          { key: "Mod-Shift-e", command: "editor.openInExternalEditor", when: "editorFocus" },
         ];
       }
       throw new Error(`Unknown command: ${cmd}`);
@@ -52,6 +53,18 @@ describe("useKeymaps", () => {
   it("app.gotoHeading is registered in the command registry", async () => {
     await loadHook();
     expect(commandRegistry.has("app.gotoHeading")).toBe(true);
+  });
+
+  it("editor.openInExternalEditor is registered in the command registry", async () => {
+    await loadHook();
+    expect(commandRegistry.has("editor.openInExternalEditor")).toBe(true);
+  });
+
+  it("produces a CM6 editor binding for editor.openInExternalEditor", async () => {
+    const { result } = await loadHook();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const keys = result.current.editorBindings.map((b) => b.key);
+    expect(keys).toContain("Mod-Shift-e");
   });
 
   it("executing app.gotoHeading dispatches lit:toggle-quick-switcher", async () => {

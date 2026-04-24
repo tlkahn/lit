@@ -2,8 +2,10 @@ import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { EditorView } from "@codemirror/view";
 import { EditorSelection } from "@codemirror/state";
+import { listen } from "@tauri-apps/api/event";
 import { useWorkspaceStore } from "../stores/workspace";
-import { readPage, writePage, parseRawYaml } from "../lib/ipc";
+import { readPage, writePage, parseRawYaml, openInExternalEditor } from "../lib/ipc";
+import { setCurrentEditorView } from "../lib/editorViewRef";
 import { extractHeadings } from "../lib/headings";
 import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
 import { ConflictDialog } from "./ConflictDialog";
@@ -266,6 +268,24 @@ export function ContentArea() {
       autoResizeTextarea();
     }
   }, [editingYaml, autoResizeTextarea]);
+
+  useEffect(() => {
+    setCurrentEditorView(editorViewRef.current);
+    return () => setCurrentEditorView(null);
+  });
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen("menu://open-in-external-editor", () => {
+      const view = editorViewRef.current;
+      const path = useWorkspaceStore.getState().currentPagePath;
+      if (!view || !path) return;
+      const pos = view.state.selection.main.head;
+      const line = view.state.doc.lineAt(pos);
+      openInExternalEditor(path, line.number, pos - line.from + 1);
+    }).then((fn) => { unlisten = fn; });
+    return () => { unlisten?.(); };
+  }, []);
 
   if (!currentPagePath) {
     return (

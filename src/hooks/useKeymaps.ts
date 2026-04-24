@@ -4,6 +4,8 @@ import { getKeymaps } from "../lib/ipc";
 import { resolveKeymaps, type AppBinding } from "../lib/keymapResolver";
 import { commandRegistry } from "../lib/commands";
 import { toggleBold, toggleItalic, insertLink, toggleComment } from "../editor/editorCommands";
+import { openInExternalEditor } from "../lib/ipc";
+import { useWorkspaceStore } from "../stores/workspace";
 import type { EditorView } from "@codemirror/view";
 
 function ensureCommandsRegistered() {
@@ -12,6 +14,17 @@ function ensureCommandsRegistered() {
   commandRegistry.register("editor.toggleItalic", (view) => toggleItalic(view as EditorView));
   commandRegistry.register("editor.insertLink", (view) => insertLink(view as EditorView));
   commandRegistry.register("editor.toggleComment", (view) => toggleComment(view as EditorView));
+  commandRegistry.register("editor.openInExternalEditor", (view) => {
+    const v = view as EditorView;
+    const pos = v.state.selection.main.head;
+    const line = v.state.doc.lineAt(pos);
+    const lineNumber = line.number;
+    const col = pos - line.from + 1;
+    const currentPagePath = useWorkspaceStore.getState().currentPagePath;
+    if (currentPagePath) {
+      openInExternalEditor(currentPagePath, lineNumber, col);
+    }
+  });
   commandRegistry.register("app.gotoHeading", () => {
     window.dispatchEvent(new CustomEvent("lit:toggle-quick-switcher"));
   });

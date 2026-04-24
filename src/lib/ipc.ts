@@ -258,4 +258,14 @@ export async function renderBibCitations(
   return invoke<Record<string, string>>("render_bib_citations", { entries });
 }
 
+// External editor
+
+export async function openInExternalEditor(
+  relativePath: string,
+  line: number,
+  col: number,
+): Promise<void> {
+  return invoke<void>("open_in_external_editor", { relativePath, line, col });
+}
+
 

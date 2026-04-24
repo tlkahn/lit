@@ -24,6 +24,8 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             &MenuItem::with_id(app, "open_workspace", "Open Another Workspace", true, None::<&str>)?,
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, "open_preferences", "Preferences\u{2026}", true, None::<&str>)?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(app, "open_in_external_editor", "Open in External Editor", true, Some("cmdOrCtrl+shift+e"))?,
         ],
     )?;
 
