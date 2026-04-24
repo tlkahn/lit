@@ -101,8 +101,9 @@ pub fn render_bib_citations(entries: Vec<BibEntry>) -> HashMap<String, String> {
 
 #[tauri::command]
 pub fn open_bib_file(file: String, line: usize, command_template: String) -> Result<(), String> {
+    let escaped_file = format!("'{}'", file.replace("'", "'\\''"));
     let cmd = command_template
-        .replace("{file}", &file)
+        .replace("{file}", &escaped_file)
         .replace("{line}", &line.to_string());
 
     #[cfg(target_os = "windows")]
