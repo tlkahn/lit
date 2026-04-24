@@ -517,7 +517,7 @@ describe("ContentArea headings", () => {
     await waitFor(() => {
       const headings = useWorkspaceStore.getState().currentPageHeadings;
       expect(headings).toEqual([
-        { level: 1, text: "Hello", line: 0 },
+        { level: 1, text: "Hello", line: 0, from: 0, to: 7 },
       ]);
     });
   });
@@ -637,5 +637,81 @@ describe("parseYamlErrorLocation", () => {
 
   it("returns null for empty string", () => {
     expect(parseYamlErrorLocation("")).toBeNull();
+  });
+});
+
+const multiHeadingPage = {
+  body: "# First\nContent\n## Second\nMore",
+  raw_yaml: "",
+  meta: {
+    title: "First",
+    frontmatter: {},
+    relative_path: "Multi.md",
+    created_at: 1000,
+    modified_at: 2000,
+  },
+};
+
+describe("ContentArea mindmap toggle", () => {
+  it("toggle button switches between editor and mindmap views", async () => {
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    const user = userEvent.setup();
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor")).toBeInTheDocument();
+    });
+
+    const mindmapBtn = screen.getByRole("button", { name: /mindmap/i });
+    await user.click(mindmapBtn);
+    expect(screen.queryByTestId("editor")).not.toBeInTheDocument();
+    expect(screen.getByTestId("mindmap-view")).toBeInTheDocument();
+
+    const editorBtn = screen.getByRole("button", { name: /editor/i });
+    await user.click(editorBtn);
+    expect(screen.getByTestId("editor")).toBeInTheDocument();
+    expect(screen.queryByTestId("mindmap-view")).not.toBeInTheDocument();
+  });
+
+  it("clicking a mindmap node scrolls editor to the heading line", async () => {
+    mockInvoke((cmd, args) => {
+      if (cmd === "read_page") {
+        const rp = (args as Record<string, unknown>)?.relativePath;
+        if (rp === "Multi.md") return multiHeadingPage;
+        return samplePage;
+      }
+      if (cmd === "write_page") return null;
+      if (cmd === "parse_raw_yaml") return {};
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    useWorkspaceStore.setState({ currentPagePath: "Multi.md" });
+    const user = userEvent.setup();
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor")).toBeInTheDocument();
+    });
+
+    // Switch to mindmap
+    const mindmapBtn = screen.getByRole("button", { name: /mindmap/i });
+    await user.click(mindmapBtn);
+    expect(screen.getByTestId("mindmap-view")).toBeInTheDocument();
+
+    // Click the "## Second" node (line index 2 in the doc, 0-based)
+    const secondNode = screen.getByText("Second");
+    await user.click(secondNode);
+
+    // Editor should remount with cursor at the "## Second" heading
+    await waitFor(() => {
+      expect(screen.getByTestId("editor")).toBeInTheDocument();
+    });
+
+    const cmEditor = screen.getByTestId("editor").querySelector(".cm-editor");
+    const { EditorView } = await import("@codemirror/view");
+    const view = EditorView.findFromDOM(cmEditor as HTMLElement)!;
+
+    // "# First\nContent\n## Second\nMore" — "## Second" starts at position 16
+    expect(view.state.selection.main.head).toBe(16);
   });
 });

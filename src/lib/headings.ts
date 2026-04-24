@@ -2,6 +2,8 @@ export interface Heading {
   level: number;
   text: string;
   line: number;
+  from: number;
+  to: number;
 }
 
 const HEADING_RE = /^(#{1,6})\s+(.+)$/;
@@ -13,6 +15,7 @@ export function extractHeadings(body: string): Heading[] {
   const headings: Heading[] = [];
   let inFence = false;
   let fenceChar = "";
+  let offset = 0;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
@@ -25,9 +28,13 @@ export function extractHeadings(body: string): Heading[] {
       } else if (char === fenceChar) {
         inFence = false;
       }
+      offset += line.length + 1;
       continue;
     }
-    if (inFence) continue;
+    if (inFence) {
+      offset += line.length + 1;
+      continue;
+    }
 
     const match = HEADING_RE.exec(line);
     if (match) {
@@ -35,8 +42,11 @@ export function extractHeadings(body: string): Heading[] {
         level: match[1]!.length,
         text: match[2]!.trim(),
         line: i,
+        from: offset,
+        to: offset + line.length,
       });
     }
+    offset += line.length + 1;
   }
 
   return headings;

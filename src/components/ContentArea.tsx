@@ -9,6 +9,8 @@ import { setCurrentEditorView } from "../lib/editorViewRef";
 import { extractHeadings } from "../lib/headings";
 import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
 import { ConflictDialog } from "./ConflictDialog";
+import { MindmapView } from "./MindmapView";
+import { buildHeadingTree, applyRename, applyMove } from "../lib/headingTree";
 import { YamlHighlighter } from "./YamlHighlighter";
 import { useKeymaps } from "../hooks/useKeymaps";
 import { globalJumpTracker } from "../editor/jumpTracker";
@@ -45,6 +47,7 @@ export function ContentArea() {
   const { editorBindings } = useKeymaps();
   const editorViewRef = useRef<EditorView | null>(null);
   const [body, setBody] = useState("");
+  const [viewMode, setViewMode] = useState<"editor" | "mindmap">("editor");
   const [showConflict, setShowConflict] = useState(false);
   const [title, setTitle] = useState("");
   const [editingTitle, setEditingTitle] = useState("");
@@ -61,6 +64,7 @@ export function ContentArea() {
   const titleInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cancelledRef = useRef(false);
+  const pendingScrollLineRef = useRef<number | null>(null);
 
   const loadPage = useCallback(async (path: string) => {
     try {
@@ -208,6 +212,8 @@ export function ContentArea() {
     }, 150);
   };
 
+  const headingTree = useMemo(() => buildHeadingTree(body), [body]);
+
   const enterYamlEdit = () => {
     setYamlDraft(rawYaml);
     setYamlError(null);
@@ -333,6 +339,22 @@ export function ContentArea() {
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>
             </button>
           )}
+          <div className="ml-auto flex gap-1">
+            <button
+              onClick={() => setViewMode("editor")}
+              aria-label="Editor"
+              className={`rounded px-2 py-0.5 text-xs ${viewMode === "editor" ? "bg-interactive-accent text-white" : "text-text-faint hover:text-text-muted"}`}
+            >
+              Editor
+            </button>
+            <button
+              onClick={() => setViewMode("mindmap")}
+              aria-label="Mindmap"
+              className={`rounded px-2 py-0.5 text-xs ${viewMode === "mindmap" ? "bg-interactive-accent text-white" : "text-text-faint hover:text-text-muted"}`}
+            >
+              Mindmap
+            </button>
+          </div>
         </div>
         {showFrontmatter && (
           editingYaml ? (
@@ -370,7 +392,48 @@ export function ContentArea() {
           )
         )}
       </div>
-      <CodeMirrorEditor doc={body} onChange={handleChange} resolveImageSrc={resolveImageSrc} viewRef={editorViewRef} onDocReplaced={handleDocReplaced} keymapBindings={editorBindings} frontmatter={frontmatter} noteDir={noteDir} />
+      {viewMode === "editor" ? (
+        <CodeMirrorEditor
+          doc={body}
+          onChange={handleChange}
+          resolveImageSrc={resolveImageSrc}
+          viewRef={editorViewRef}
+          onDocReplaced={handleDocReplaced}
+          onReady={(view) => {
+            const line = pendingScrollLineRef.current;
+            if (line == null) return;
+            requestAnimationFrame(() => { pendingScrollLineRef.current = null; });
+            const lineNum = Math.min(line + 1, view.state.doc.lines);
+            const pos = view.state.doc.line(lineNum).from;
+            view.dispatch({
+              selection: EditorSelection.cursor(pos),
+              effects: EditorView.scrollIntoView(pos, { y: "start" }),
+            });
+            view.focus();
+          }}
+          keymapBindings={editorBindings}
+          frontmatter={frontmatter}
+          noteDir={noteDir}
+        />
+      ) : (
+        <div data-testid="mindmap-view" className="flex-1 min-h-0">
+          <MindmapView
+            tree={headingTree}
+            onNodeClick={(node) => {
+              pendingScrollLineRef.current = node.line;
+              setViewMode("editor");
+            }}
+            onNodeRename={(node, newText) => {
+              const newBody = applyRename(body, node, newText);
+              handleChange(newBody);
+            }}
+            onNodeMove={(sourceId, targetParentId, targetIndex) => {
+              const newBody = applyMove(body, headingTree, sourceId, targetParentId, targetIndex);
+              handleChange(newBody);
+            }}
+          />
+        </div>
+      )}
       <ConflictDialog
         open={showConflict}
         onKeepMine={() => setShowConflict(false)}

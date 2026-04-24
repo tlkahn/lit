@@ -31,8 +31,8 @@ describe("Outline", () => {
     useWorkspaceStore.setState({
       currentPagePath: "test.md",
       currentPageHeadings: [
-        { level: 1, text: "Title", line: 0 },
-        { level: 2, text: "Section", line: 5 },
+        { level: 1, text: "Title", line: 0, from: 0, to: 7 },
+        { level: 2, text: "Section", line: 5, from: 30, to: 40 },
       ],
     });
     render(<Outline />);
@@ -44,8 +44,8 @@ describe("Outline", () => {
     useWorkspaceStore.setState({
       currentPagePath: "test.md",
       currentPageHeadings: [
-        { level: 1, text: "H1", line: 0 },
-        { level: 3, text: "H3", line: 2 },
+        { level: 1, text: "H1", line: 0, from: 0, to: 4 },
+        { level: 3, text: "H3", line: 2, from: 10, to: 16 },
       ],
     });
     render(<Outline />);
@@ -59,7 +59,7 @@ describe("Outline", () => {
     useWorkspaceStore.setState({
       currentPagePath: "test.md",
       currentPageHeadings: [
-        { level: 1, text: "Title", line: 7 },
+        { level: 1, text: "Title", line: 7, from: 50, to: 57 },
       ],
     });
     render(<Outline />);
@@ -81,7 +81,7 @@ describe("Outline", () => {
     useWorkspaceStore.setState({
       currentPagePath: "test.md",
       currentPageHeadings: [
-        { level: 2, text: "", line: 0 },
+        { level: 2, text: "", line: 0, from: 0, to: 3 },
       ],
     });
     render(<Outline />);

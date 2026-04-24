@@ -170,8 +170,8 @@ describe("WorkspaceStore", () => {
 
   it("setCurrentPageHeadings updates state", () => {
     const headings = [
-      { level: 1, text: "Title", line: 0 },
-      { level: 2, text: "Sub", line: 3 },
+      { level: 1, text: "Title", line: 0, from: 0, to: 7 },
+      { level: 2, text: "Sub", line: 3, from: 20, to: 26 },
     ];
     act(() => {
       useWorkspaceStore.getState().setCurrentPageHeadings(headings);
@@ -228,7 +228,7 @@ describe("WorkspaceStore", () => {
   it("selectPage clears currentPageHeadings", () => {
     act(() => {
       useWorkspaceStore.getState().setCurrentPageHeadings([
-        { level: 1, text: "Title", line: 0 },
+        { level: 1, text: "Title", line: 0, from: 0, to: 7 },
       ]);
     });
     act(() => {

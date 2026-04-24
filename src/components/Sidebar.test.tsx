@@ -66,7 +66,7 @@ describe("Sidebar tabs", () => {
   it("Files tab shows search + tree; Outline tab shows Outline component", async () => {
     useWorkspaceStore.setState({
       currentPagePath: "test.md",
-      currentPageHeadings: [{ level: 1, text: "Hello", line: 0 }],
+      currentPageHeadings: [{ level: 1, text: "Hello", line: 0, from: 0, to: 7 }],
     });
     const user = userEvent.setup();
     render(<Sidebar />);

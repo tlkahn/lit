@@ -4,10 +4,10 @@ import { HeadingQuickSwitcher } from "./HeadingQuickSwitcher";
 import type { Heading } from "../lib/headings";
 
 const headings: Heading[] = [
-  { level: 1, text: "Introduction", line: 0 },
-  { level: 2, text: "Getting Started", line: 5 },
-  { level: 3, text: "Installation", line: 10 },
-  { level: 2, text: "Advanced Usage", line: 20 },
+  { level: 1, text: "Introduction", line: 0, from: 0, to: 16 },
+  { level: 2, text: "Getting Started", line: 5, from: 40, to: 58 },
+  { level: 3, text: "Installation", line: 10, from: 80, to: 96 },
+  { level: 2, text: "Advanced Usage", line: 20, from: 120, to: 137 },
 ];
 
 describe("HeadingQuickSwitcher", () => {
