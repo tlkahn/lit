@@ -187,7 +187,6 @@ pub fn run() {
             commands::crossref::expand_template,
             commands::crossref::resolve_bib_entries,
             commands::crossref::render_bib_citations,
-            commands::crossref::open_bib_file,
             get_initial_workspace,
             get_initial_file,
         ])

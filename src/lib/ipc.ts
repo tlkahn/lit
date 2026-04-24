@@ -258,10 +258,4 @@ export async function renderBibCitations(
   return invoke<Record<string, string>>("render_bib_citations", { entries });
 }
 
-export async function openBibFile(
-  file: string,
-  line: number,
-  commandTemplate: string,
-): Promise<void> {
-  return invoke<void>("open_bib_file", { file, line, commandTemplate });
-}
+

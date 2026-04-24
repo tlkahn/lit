@@ -11,7 +11,6 @@ describe("PreferencesStore", () => {
       crossrefEnabled: true,
       crossrefLiveRendering: true,
       crossrefEnableCiteproc: true,
-      crossrefBibOpenCommand: "open {file}",
       loaded: false,
     });
   });
@@ -219,31 +218,6 @@ describe("PreferencesStore", () => {
     expect(state.crossrefEnabled).toBe(true);
     expect(state.crossrefLiveRendering).toBe(false);
     expect(state.crossrefEnableCiteproc).toBe(true);
-  });
-
-  it("defaults crossrefBibOpenCommand to 'open {file}'", () => {
-    const state = usePreferencesStore.getState();
-    expect(state.crossrefBibOpenCommand).toBe("open {file}");
-  });
-
-  it("loads crossrefBibOpenCommand from preferences", async () => {
-    mockInvoke((cmd) => {
-      if (cmd === "get_preferences") {
-        return {
-          "workbench.colorTheme": null,
-          "workbench.darkMode": "auto",
-          "workbench.sideBar.location": "left",
-          "crossref.bibOpenCommand": "code -g {file}:{line}",
-        };
-      }
-      throw new Error(`Unknown command: ${cmd}`);
-    });
-    mockListen();
-
-    await usePreferencesStore.getState().loadPreferences();
-
-    const state = usePreferencesStore.getState();
-    expect(state.crossrefBibOpenCommand).toBe("code -g {file}:{line}");
   });
 
   it("treats unknown sidebarLocation values as left", async () => {

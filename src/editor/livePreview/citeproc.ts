@@ -19,6 +19,7 @@ import {
   type BibEntry,
 } from "../../lib/ipc";
 
+
 export interface BibData {
   entries: BibEntry[];
   renderedCitations: Record<string, string>;
@@ -227,8 +228,7 @@ const citeprocDecorationProvider = EditorView.decorations.compute(
             match.from,
             match.to,
             firstBibFile,
-            firstLineNumber,
-            "open {file}",
+            firstLineNumber != null ? firstLineNumber + 1 : undefined,
           ),
         }),
       });

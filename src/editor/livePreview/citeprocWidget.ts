@@ -1,5 +1,5 @@
 import { type EditorView, WidgetType } from "@codemirror/view";
-import { openBibFile } from "../../lib/ipc";
+import { useWorkspaceStore } from "../../stores/workspace";
 
 export class CiteprocWidget extends WidgetType {
   constructor(
@@ -10,7 +10,6 @@ export class CiteprocWidget extends WidgetType {
     readonly charEnd: number,
     readonly bibFile?: string,
     readonly lineNumber?: number,
-    readonly commandTemplate: string = "open {file}",
   ) {
     super();
   }
@@ -27,12 +26,16 @@ export class CiteprocWidget extends WidgetType {
       e.preventDefault();
       e.stopPropagation();
       if (this.isValid && this.bibFile != null && this.lineNumber != null) {
-        openBibFile(this.bibFile, this.lineNumber, this.commandTemplate).catch(() => {});
-      } else {
-        view.dispatch({
-          selection: { anchor: this.charStart },
-        });
+        const { workspacePath, selectPageAtLine } = useWorkspaceStore.getState();
+        if (workspacePath && this.bibFile.startsWith(workspacePath + "/")) {
+          const relativePath = this.bibFile.slice(workspacePath.length + 1);
+          selectPageAtLine(relativePath, this.lineNumber);
+          return;
+        }
       }
+      view.dispatch({
+        selection: { anchor: this.charStart },
+      });
       view.focus();
     });
 
@@ -47,8 +50,7 @@ export class CiteprocWidget extends WidgetType {
       this.charStart === other.charStart &&
       this.charEnd === other.charEnd &&
       this.bibFile === other.bibFile &&
-      this.lineNumber === other.lineNumber &&
-      this.commandTemplate === other.commandTemplate
+      this.lineNumber === other.lineNumber
     );
   }
 

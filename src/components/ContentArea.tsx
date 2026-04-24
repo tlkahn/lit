@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import type { EditorView } from "@codemirror/view";
+import { EditorView } from "@codemirror/view";
 import { EditorSelection } from "@codemirror/state";
 import { useWorkspaceStore } from "../stores/workspace";
 import { readPage, writePage, parseRawYaml } from "../lib/ipc";
@@ -147,13 +147,24 @@ export function ContentArea() {
   const handleDocReplaced = useCallback(() => {
     const path = currentPathRef.current;
     if (!path) return;
-    const vs = useWorkspaceStore.getState().viewStates[path];
+    const storeState = useWorkspaceStore.getState();
     requestAnimationFrame(() => {
       const view = editorViewRef.current;
       if (!view) return;
-      view.scrollDOM.scrollTop = vs?.scrollTop ?? 0;
-      const cursor = Math.min(vs?.cursor ?? 0, view.state.doc.length);
-      view.dispatch({ selection: EditorSelection.cursor(cursor) });
+      if (storeState.pendingCursorLine != null) {
+        const lineNum = Math.min(storeState.pendingCursorLine, view.state.doc.lines);
+        const line = view.state.doc.line(lineNum);
+        view.dispatch({
+          selection: EditorSelection.cursor(line.from),
+          effects: EditorView.scrollIntoView(line.from, { y: "start" }),
+        });
+        useWorkspaceStore.setState({ pendingCursorLine: null });
+      } else {
+        const vs = storeState.viewStates[path];
+        view.scrollDOM.scrollTop = vs?.scrollTop ?? 0;
+        const cursor = Math.min(vs?.cursor ?? 0, view.state.doc.length);
+        view.dispatch({ selection: EditorSelection.cursor(cursor) });
+      }
       const active = document.activeElement;
       if (!(active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement)) {
         view.focus();

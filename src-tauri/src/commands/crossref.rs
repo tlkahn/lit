@@ -98,23 +98,3 @@ pub fn resolve_bib_entries(
 pub fn render_bib_citations(entries: Vec<BibEntry>) -> HashMap<String, String> {
     crate::bib::renderer::render_bib_citations(&entries)
 }
-
-#[tauri::command]
-pub fn open_bib_file(file: String, line: usize, command_template: String) -> Result<(), String> {
-    let escaped_file = format!("'{}'", file.replace("'", "'\\''"));
-    let cmd = command_template
-        .replace("{file}", &escaped_file)
-        .replace("{line}", &line.to_string());
-
-    #[cfg(target_os = "windows")]
-    let result = std::process::Command::new("cmd")
-        .args(["/C", &cmd])
-        .spawn();
-
-    #[cfg(not(target_os = "windows"))]
-    let result = std::process::Command::new("sh")
-        .args(["-c", &cmd])
-        .spawn();
-
-    result.map(|_| ()).map_err(|e| e.to_string())
-}

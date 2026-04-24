@@ -27,7 +27,6 @@ import {
   expandTemplate,
   resolveBibEntries,
   renderBibCitations,
-  openBibFile,
 } from "./ipc";
 
 const sampleMeta = {
@@ -140,8 +139,6 @@ describe("ipc", () => {
           ];
         case "render_bib_citations":
           return { smith2020: "Smith 2020" };
-        case "open_bib_file":
-          return null;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -360,13 +357,4 @@ describe("ipc", () => {
     expect(result).toEqual({ smith2020: "Smith 2020" });
   });
 
-  it("openBibFile invokes open_bib_file", async () => {
-    await openBibFile("/path/refs.bib", 5, "code -g {file}:{line}");
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("open_bib_file", {
-      file: "/path/refs.bib",
-      line: 5,
-      commandTemplate: "code -g {file}:{line}",
-    });
-  });
 });
