@@ -13,7 +13,7 @@ class LivePreviewPluginValue implements PluginValue {
 
   update(update: ViewUpdate) {
     perfMark("livePreview:update:start");
-    if (update.docChanged || update.selectionSet || update.transactions.some(tr => tr.effects.length > 0)) {
+    if (update.docChanged || update.selectionSet || update.viewportChanged || update.transactions.some(tr => tr.effects.length > 0)) {
       this.decorations = buildDecorations(update.view);
     }
     perfMeasure("livePreview:update", "livePreview:update:start");
