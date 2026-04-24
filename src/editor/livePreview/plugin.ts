@@ -1,7 +1,7 @@
 import { type DecorationSet, EditorView } from "@codemirror/view";
 import { ViewPlugin, type ViewUpdate, type PluginValue } from "@codemirror/view";
 import { StateField, RangeSet } from "@codemirror/state";
-import { buildDecorations, buildBlockReplacements } from "./decorations";
+import { buildDecorations, buildBlockReplacements, type BlockReplacementState } from "./decorations";
 import { perfMark, perfMeasure } from "./perf";
 
 class LivePreviewPluginValue implements PluginValue {
@@ -24,25 +24,54 @@ export const livePreviewPlugin = ViewPlugin.fromClass(LivePreviewPluginValue, {
   decorations: (v) => v.decorations,
 });
 
-export const blockReplacementField = StateField.define<DecorationSet>({
+function findContainingBlock(
+  lineNum: number,
+  ranges: Array<{ fromLine: number; toLine: number }>,
+): number {
+  for (let i = 0; i < ranges.length; i++) {
+    if (lineNum >= ranges[i]!.fromLine && lineNum <= ranges[i]!.toLine) return i;
+  }
+  return -1;
+}
+
+const emptyBlockState: BlockReplacementState = {
+  decos: RangeSet.empty,
+  cursorSensitiveRanges: [],
+};
+
+export const blockReplacementField = StateField.define<BlockReplacementState>({
   create(state) {
     try {
       return buildBlockReplacements(state);
     } catch (e) {
       console.error("[blockReplacementField] create error:", e);
-      return RangeSet.empty;
+      return emptyBlockState;
     }
   },
   update(value, tr) {
-    if (tr.docChanged || tr.selection || tr.effects.length) {
+    if (tr.docChanged || tr.effects.length) {
       try {
         return buildBlockReplacements(tr.state);
       } catch (e) {
         console.error("[blockReplacementField] update error:", e);
-        return RangeSet.empty;
+        return emptyBlockState;
+      }
+    }
+    if (tr.selection) {
+      const oldLine = tr.startState.doc.lineAt(tr.startState.selection.main.head).number;
+      const newLine = tr.state.doc.lineAt(tr.state.selection.main.head).number;
+      if (oldLine === newLine) return value;
+      const oldBlock = findContainingBlock(oldLine, value.cursorSensitiveRanges);
+      const newBlock = findContainingBlock(newLine, value.cursorSensitiveRanges);
+      if (oldBlock === newBlock) return value;
+      try {
+        return buildBlockReplacements(tr.state);
+      } catch (e) {
+        console.error("[blockReplacementField] update error:", e);
+        return emptyBlockState;
       }
     }
     return value;
   },
-  provide: (field) => EditorView.decorations.from(field),
+  provide: (field) => EditorView.decorations.from(field, val => val.decos),
 });

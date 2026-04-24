@@ -447,9 +447,9 @@ describe("buildDecorations — display math", () => {
   it("replaces $$...$$ with DisplayMathWidget when cursor elsewhere", () => {
     const doc = "$$\nx^2\n$$\n\nother";
     const view = makeView(doc, doc.length - 1);
-    const blockDecos = buildBlockReplacements(view.state);
+    const blockState = buildBlockReplacements(view.state);
     const result: DecoInfo[] = [];
-    const iter = blockDecos.iter();
+    const iter = blockState.decos.iter();
     while (iter.value) {
       const spec = iter.value.spec;
       result.push({ from: iter.from, to: iter.to, type: "replace", widget: !!spec.widget });
@@ -462,9 +462,9 @@ describe("buildDecorations — display math", () => {
 
   it("shows raw $$...$$ when cursor is on any line of block", () => {
     const view = makeView("$$\nx^2\n$$", 4);
-    const blockDecos = buildBlockReplacements(view.state);
+    const blockState = buildBlockReplacements(view.state);
     const result: DecoInfo[] = [];
-    const iter = blockDecos.iter();
+    const iter = blockState.decos.iter();
     while (iter.value) {
       result.push({ from: iter.from, to: iter.to, type: "replace" });
       iter.next();
@@ -475,9 +475,9 @@ describe("buildDecorations — display math", () => {
 });
 
 function collectBlockDecos(view: EditorView): DecoInfo[] {
-  const blockDecos = buildBlockReplacements(view.state);
+  const blockState = buildBlockReplacements(view.state);
   const result: DecoInfo[] = [];
-  const iter = blockDecos.iter();
+  const iter = blockState.decos.iter();
   while (iter.value) {
     const spec = iter.value.spec;
     const info: DecoInfo = {

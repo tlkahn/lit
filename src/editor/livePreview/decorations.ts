@@ -435,29 +435,50 @@ function addDisplayMathDecos(
   });
 }
 
+export interface BlockReplacementState {
+  decos: DecorationSet;
+  cursorSensitiveRanges: Array<{ fromLine: number; toLine: number }>;
+}
+
 /**
  * Line-break-crossing replacements that must be provided via a StateField,
  * not a ViewPlugin (CodeMirror restriction).
  */
-export function buildBlockReplacements(state: EditorState): DecorationSet {
+export function buildBlockReplacements(state: EditorState): BlockReplacementState {
   perfMark("buildBlockReplacements:start");
   const decos: { from: number; to: number; deco: Decoration }[] = [];
+  const cursorSensitiveRanges: Array<{ fromLine: number; toLine: number }> = [];
 
   syntaxTree(state).iterate({
     enter: (node) => {
       if (node.name === "Blockquote") {
         addCollapsedCalloutBody(state, node.from, node.to, decos);
+        const firstLine = state.doc.lineAt(node.from);
+        if (parseCalloutType(firstLine.text)) {
+          cursorSensitiveRanges.push({
+            fromLine: firstLine.number,
+            toLine: state.doc.lineAt(node.to).number,
+          });
+        }
       }
       if (node.name === "DisplayMath") {
         const text = state.doc.sliceString(node.from, node.to);
         if (text.includes("\n")) {
           addDisplayMathDecos(state, node.from, node.to, decos);
+          cursorSensitiveRanges.push({
+            fromLine: state.doc.lineAt(node.from).number,
+            toLine: state.doc.lineAt(node.to).number,
+          });
         }
       }
       if (node.name === "BlockComment") {
         const text = state.doc.sliceString(node.from, node.to);
         if (text.includes("\n")) {
           addBlockCommentDecos(state, node.from, node.to, decos);
+          cursorSensitiveRanges.push({
+            fromLine: state.doc.lineAt(node.from).number,
+            toLine: state.doc.lineAt(node.to).number,
+          });
         }
       }
       if (node.name === "Table") {
@@ -469,6 +490,10 @@ export function buildBlockReplacements(state: EditorState): DecorationSet {
           const lang = state.doc.sliceString(codeInfo.from, codeInfo.to).trim().toLowerCase();
           if (lang === "mermaid") {
             addMermaidBlockReplacement(state, node.from, node.to, node.node, decos);
+            cursorSensitiveRanges.push({
+              fromLine: state.doc.lineAt(node.from).number,
+              toLine: state.doc.lineAt(node.to).number,
+            });
           }
         }
       }
@@ -478,7 +503,7 @@ export function buildBlockReplacements(state: EditorState): DecorationSet {
   decos.sort((a, b) => a.from - b.from || a.to - b.to);
   const result = RangeSet.of(decos.map((d) => d.deco.range(d.from, d.to)));
   perfMeasure("buildBlockReplacements", "buildBlockReplacements:start");
-  return result;
+  return { decos: result, cursorSensitiveRanges };
 }
 
 function addCollapsedCalloutBody(
