@@ -84,6 +84,48 @@ describe("CrossrefWidget", () => {
     view.destroy();
   });
 
+  it("updateDOM updates text, title, data, and validity", () => {
+    const view = makeView();
+    const a = new CrossrefWidget("[@fig:cat]", "Fig. 1", true, 0, 10, 50);
+    const dom = a.toDOM(view);
+    const b = new CrossrefWidget("[@fig:dog]", "Fig. 2", false, 5, 15, null);
+    expect(b.updateDOM(dom, view)).toBe(true);
+    expect(dom.textContent).toBe("Fig. 2");
+    expect(dom.getAttribute("title")).toBe("[@fig:dog]");
+    expect(dom.dataset.original).toBe("[@fig:dog]");
+    expect(dom.classList.contains("invalid")).toBe(true);
+    view.destroy();
+  });
+
+  it("updateDOM removes invalid class when becoming valid", () => {
+    const view = makeView();
+    const a = new CrossrefWidget("[@fig:cat]", "??", false, 0, 10, null);
+    const dom = a.toDOM(view);
+    expect(dom.classList.contains("invalid")).toBe(true);
+    const b = new CrossrefWidget("[@fig:cat]", "Fig. 1", true, 0, 10, 50);
+    expect(b.updateDOM(dom, view)).toBe(true);
+    expect(dom.classList.contains("invalid")).toBe(false);
+    view.destroy();
+  });
+
+  it("updateDOM rebinds mousedown handler", () => {
+    const doc = "some text with enough length to hold offset";
+    const view = makeView(doc);
+    const a = new CrossrefWidget("[@fig:cat]", "Fig. 1", true, 0, 10, 5);
+    const dom = a.toDOM(view);
+    const dispatchSpy = vi.spyOn(view, "dispatch");
+    const b = new CrossrefWidget("[@fig:dog]", "Fig. 2", true, 0, 10, 20);
+    b.updateDOM(dom, view);
+    dom.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(dispatchSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selection: { anchor: 20 },
+        scrollIntoView: true,
+      }),
+    );
+    view.destroy();
+  });
+
   it("estimatedHeight returns a number", () => {
     const widget = new CrossrefWidget("[@fig:cat]", "Fig. 1", true, 0, 10, null);
     expect(typeof widget.estimatedHeight).toBe("number");
@@ -124,6 +166,33 @@ describe("DefinitionWidget", () => {
     const widget = new DefinitionWidget("{#fig:cat}", "#Fig. 1", true, 3, 10);
     const el = widget.toDOM(view);
     el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(dispatchSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selection: { anchor: 3 },
+      }),
+    );
+    view.destroy();
+  });
+
+  it("updateDOM updates text and data attributes", () => {
+    const view = makeView();
+    const a = new DefinitionWidget("{#fig:cat}", "#Fig. 1", true, 0, 10);
+    const dom = a.toDOM(view);
+    const b = new DefinitionWidget("{#fig:dog}", "#Fig. 2", true, 5, 15);
+    expect(b.updateDOM(dom, view)).toBe(true);
+    expect(dom.textContent).toBe("#Fig. 2");
+    expect(dom.dataset.original).toBe("{#fig:dog}");
+    view.destroy();
+  });
+
+  it("updateDOM rebinds mousedown handler", () => {
+    const view = makeView();
+    const a = new DefinitionWidget("{#fig:cat}", "#Fig. 1", true, 0, 10);
+    const dom = a.toDOM(view);
+    const dispatchSpy = vi.spyOn(view, "dispatch");
+    const b = new DefinitionWidget("{#fig:dog}", "#Fig. 2", true, 3, 13);
+    b.updateDOM(dom, view);
+    dom.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     expect(dispatchSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         selection: { anchor: 3 },

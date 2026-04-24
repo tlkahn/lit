@@ -20,7 +20,7 @@ export class CrossrefWidget extends WidgetType {
     span.setAttribute("title", this.original);
     span.dataset.original = this.original;
 
-    span.addEventListener("mousedown", (e) => {
+    span.onmousedown = (e) => {
       e.preventDefault();
       e.stopPropagation();
       if (this.isValid && this.targetCharOffset != null) {
@@ -35,9 +35,37 @@ export class CrossrefWidget extends WidgetType {
         });
       }
       view.focus();
-    });
+    };
 
     return span;
+  }
+
+  updateDOM(dom: HTMLElement, view: EditorView): boolean {
+    dom.textContent = this.renderedText;
+    dom.setAttribute("title", this.original);
+    dom.dataset.original = this.original;
+    if (this.isValid) {
+      dom.classList.remove("invalid");
+    } else {
+      dom.classList.add("invalid");
+    }
+    dom.onmousedown = (e) => {
+      e!.preventDefault();
+      e!.stopPropagation();
+      if (this.isValid && this.targetCharOffset != null) {
+        view.dispatch({
+          selection: { anchor: this.targetCharOffset },
+          scrollIntoView: true,
+        });
+        highlightLine(view, this.targetCharOffset);
+      } else {
+        view.dispatch({
+          selection: { anchor: this.charStart },
+        });
+      }
+      view.focus();
+    };
+    return true;
   }
 
   eq(other: CrossrefWidget): boolean {
@@ -77,16 +105,30 @@ export class DefinitionWidget extends WidgetType {
     span.textContent = this.renderedText;
     span.dataset.original = this.original;
 
-    span.addEventListener("mousedown", (e) => {
+    span.onmousedown = (e) => {
       e.preventDefault();
       e.stopPropagation();
       view.dispatch({
         selection: { anchor: this.charStart },
       });
       view.focus();
-    });
+    };
 
     return span;
+  }
+
+  updateDOM(dom: HTMLElement, view: EditorView): boolean {
+    dom.textContent = this.renderedText;
+    dom.dataset.original = this.original;
+    dom.onmousedown = (e) => {
+      e!.preventDefault();
+      e!.stopPropagation();
+      view.dispatch({
+        selection: { anchor: this.charStart },
+      });
+      view.focus();
+    };
+    return true;
   }
 
   eq(other: DefinitionWidget): boolean {

@@ -96,6 +96,47 @@ describe("CiteprocWidget", () => {
     expect(widget.estimatedHeight).toBeGreaterThan(0);
   });
 
+  it("updateDOM updates text, title, data, and validity", () => {
+    const view = makeView();
+    const a = new CiteprocWidget("[@smith2020]", "Smith 2020", true, 0, 13, "refs.bib", 10);
+    const dom = a.toDOM(view);
+    const b = new CiteprocWidget("[@jones2021]", "Jones 2021", false, 5, 18);
+    expect(b.updateDOM(dom, view)).toBe(true);
+    expect(dom.textContent).toBe("Jones 2021");
+    expect(dom.getAttribute("title")).toBe("[@jones2021]");
+    expect(dom.dataset.original).toBe("[@jones2021]");
+    expect(dom.classList.contains("invalid")).toBe(true);
+    view.destroy();
+  });
+
+  it("updateDOM removes invalid class when becoming valid", () => {
+    const view = makeView();
+    const a = new CiteprocWidget("[@unknown]", "??", false, 0, 10);
+    const dom = a.toDOM(view);
+    expect(dom.classList.contains("invalid")).toBe(true);
+    const b = new CiteprocWidget("[@smith2020]", "Smith 2020", true, 0, 13, "refs.bib", 10);
+    expect(b.updateDOM(dom, view)).toBe(true);
+    expect(dom.classList.contains("invalid")).toBe(false);
+    view.destroy();
+  });
+
+  it("updateDOM rebinds mousedown handler", () => {
+    const selectPageAtLine = vi.fn();
+    useWorkspaceStore.setState({
+      workspacePath: "/path",
+      selectPageAtLine,
+    });
+
+    const view = makeView();
+    const a = new CiteprocWidget("[@smith2020]", "Smith 2020", true, 0, 13, "/path/old.bib", 5);
+    const dom = a.toDOM(view);
+    const b = new CiteprocWidget("[@jones2021]", "Jones 2021", true, 0, 13, "/path/new.bib", 10);
+    b.updateDOM(dom, view);
+    dom.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(selectPageAtLine).toHaveBeenCalledWith("new.bib", 10);
+    view.destroy();
+  });
+
   it("ignoreEvent returns true", () => {
     const widget = new CiteprocWidget("[@smith2020]", "Smith 2020", true, 0, 13, "refs.bib", 10);
     expect(widget.ignoreEvent()).toBe(true);

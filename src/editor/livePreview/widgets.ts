@@ -26,6 +26,13 @@ export class ImageWidget extends WidgetType {
     return img;
   }
 
+  updateDOM(dom: HTMLElement): boolean {
+    const img = dom as HTMLImageElement;
+    img.src = this.src;
+    img.alt = this.alt;
+    return true;
+  }
+
   eq(other: ImageWidget): boolean {
     return this.src === other.src && this.alt === other.alt;
   }
@@ -37,6 +44,23 @@ export class ImageWidget extends WidgetType {
   get estimatedHeight(): number {
     return 200;
   }
+}
+
+function createFoldSvg(): SVGSVGElement {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("width", "24");
+  svg.setAttribute("height", "24");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "2");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.classList.add("svg-icon");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", "m6 9 6 6 6-6");
+  svg.appendChild(path);
+  return svg;
 }
 
 export class CalloutHeaderWidget extends WidgetType {
@@ -69,27 +93,45 @@ export class CalloutHeaderWidget extends WidgetType {
       const arrow = document.createElement("span");
       arrow.className = "cm-callout-fold-icon";
       if (this.isCollapsed) arrow.classList.add("is-collapsed");
-      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-      svg.setAttribute("width", "24");
-      svg.setAttribute("height", "24");
-      svg.setAttribute("viewBox", "0 0 24 24");
-      svg.setAttribute("fill", "none");
-      svg.setAttribute("stroke", "currentColor");
-      svg.setAttribute("stroke-width", "2");
-      svg.setAttribute("stroke-linecap", "round");
-      svg.setAttribute("stroke-linejoin", "round");
-      svg.classList.add("svg-icon");
-      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      path.setAttribute("d", "m6 9 6 6 6-6");
-      svg.appendChild(path);
-      arrow.appendChild(svg);
-      arrow.addEventListener("mousedown", (e) => {
+      arrow.appendChild(createFoldSvg());
+      arrow.onmousedown = (e) => {
         e.preventDefault();
         view.dispatch({ effects: toggleCalloutEffect.of({ pos: this.pos }) });
-      });
+      };
       header.appendChild(arrow);
     }
     return header;
+  }
+
+  updateDOM(dom: HTMLElement, view: EditorView): boolean {
+    const icon = dom.querySelector(".cm-callout-icon") as HTMLElement;
+    if (icon) icon.textContent = getCalloutIcon(this.calloutType);
+
+    const title = dom.querySelector(".cm-callout-title") as HTMLElement;
+    if (title) title.textContent = this.title;
+
+    let arrow = dom.querySelector(".cm-callout-fold-icon") as HTMLElement | null;
+    if (this.foldable) {
+      if (!arrow) {
+        arrow = document.createElement("span");
+        arrow.className = "cm-callout-fold-icon";
+        arrow.appendChild(createFoldSvg());
+        dom.appendChild(arrow);
+      }
+      if (this.isCollapsed) {
+        arrow.classList.add("is-collapsed");
+      } else {
+        arrow.classList.remove("is-collapsed");
+      }
+      arrow.onmousedown = (e) => {
+        e.preventDefault();
+        view.dispatch({ effects: toggleCalloutEffect.of({ pos: this.pos }) });
+      };
+    } else if (arrow) {
+      arrow.remove();
+    }
+
+    return true;
   }
 
   eq(other: CalloutHeaderWidget): boolean {
@@ -128,6 +170,18 @@ export class InlineMathWidget extends WidgetType {
     return span;
   }
 
+  updateDOM(dom: HTMLElement): boolean {
+    dom.innerHTML = "";
+    dom.classList.remove("cm-preview-math-error");
+    try {
+      katex.render(this.latex, dom, { throwOnError: false, displayMode: false });
+    } catch {
+      dom.textContent = this.latex;
+      dom.classList.add("cm-preview-math-error");
+    }
+    return true;
+  }
+
   eq(other: InlineMathWidget): boolean {
     return this.latex === other.latex;
   }
@@ -158,6 +212,18 @@ export class DisplayMathWidget extends WidgetType {
     return div;
   }
 
+  updateDOM(dom: HTMLElement): boolean {
+    dom.innerHTML = "";
+    dom.classList.remove("cm-preview-math-error");
+    try {
+      katex.render(this.latex, dom, { throwOnError: false, displayMode: true });
+    } catch {
+      dom.textContent = this.latex;
+      dom.classList.add("cm-preview-math-error");
+    }
+    return true;
+  }
+
   eq(other: DisplayMathWidget): boolean {
     return this.latex === other.latex;
   }
@@ -182,10 +248,21 @@ export class EditableTableWidget extends WidgetType {
   toDOM(view: EditorView): HTMLElement {
     const container = document.createElement("div");
     container.className = "cm-preview-table-container";
-
     const parsed = parseTable(this.tableText);
     if (!parsed) return container;
+    this.buildTable(container, view, parsed);
+    return container;
+  }
 
+  updateDOM(dom: HTMLElement, view: EditorView): boolean {
+    const parsed = parseTable(this.tableText);
+    if (!parsed) return false;
+    dom.innerHTML = "";
+    this.buildTable(dom, view, parsed);
+    return true;
+  }
+
+  private buildTable(container: HTMLElement, view: EditorView, parsed: ParsedTable): void {
     const table = document.createElement("table");
     table.className = "cm-preview-table";
 
@@ -234,7 +311,6 @@ export class EditableTableWidget extends WidgetType {
     }
 
     container.appendChild(table);
-    return container;
   }
 
   eq(other: EditableTableWidget): boolean {
@@ -352,6 +428,36 @@ export class MermaidWidget extends WidgetType {
       });
 
     return container;
+  }
+
+  updateDOM(dom: HTMLElement): boolean {
+    const cached = getMermaidCached(this.source, this.theme);
+    if (cached) {
+      dom.innerHTML = cached;
+      return true;
+    }
+
+    dom.innerHTML = "";
+    const loading = document.createElement("div");
+    loading.className = "cm-preview-mermaid-loading";
+    loading.innerHTML = SPINNER_SVG;
+    dom.appendChild(loading);
+
+    renderMermaid(this.source, this.theme)
+      .then((svg) => {
+        if (!dom.isConnected) return;
+        dom.innerHTML = svg;
+      })
+      .catch((err) => {
+        if (!dom.isConnected) return;
+        dom.innerHTML = "";
+        const error = document.createElement("div");
+        error.className = "cm-preview-mermaid-error";
+        error.textContent = err instanceof Error ? err.message : String(err);
+        dom.appendChild(error);
+      });
+
+    return true;
   }
 
   eq(other: MermaidWidget): boolean {

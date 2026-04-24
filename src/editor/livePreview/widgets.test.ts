@@ -64,6 +64,24 @@ describe("ImageWidget", () => {
     expect(a.eq(b)).toBe(false);
   });
 
+  it("updateDOM updates src and alt on existing element", () => {
+    const a = new ImageWidget("old.png", "old alt");
+    const dom = a.toDOM();
+    const b = new ImageWidget("new.png", "new alt");
+    expect(b.updateDOM(dom)).toBe(true);
+    expect(dom.getAttribute("src")).toBe("new.png");
+    expect(dom.getAttribute("alt")).toBe("new alt");
+  });
+
+  it("updateDOM preserves element identity", () => {
+    const a = new ImageWidget("a.png", "a");
+    const dom = a.toDOM();
+    const ref = dom;
+    const b = new ImageWidget("b.png", "b");
+    b.updateDOM(dom);
+    expect(dom).toBe(ref);
+  });
+
   it("ignoreEvent returns false to allow click-to-edit", () => {
     const widget = new ImageWidget("x.png", "x");
     expect(widget.ignoreEvent()).toBe(false);
@@ -151,6 +169,53 @@ describe("CalloutHeaderWidget", () => {
     expect(a.eq(b)).toBe(false);
   });
 
+  it("updateDOM updates icon, title, and collapse state", () => {
+    const view = makeView();
+    const a = new CalloutHeaderWidget("note", "Old Title", false, true, 0);
+    const dom = a.toDOM(view);
+    const b = new CalloutHeaderWidget("warning", "New Title", true, true, 0);
+    expect(b.updateDOM(dom, view)).toBe(true);
+    expect(dom.querySelector(".cm-callout-title")!.textContent).toBe("New Title");
+    expect(dom.querySelector(".cm-callout-fold-icon")!.classList.contains("is-collapsed")).toBe(true);
+    view.destroy();
+  });
+
+  it("updateDOM adds fold arrow when foldable changes to true", () => {
+    const view = makeView();
+    const a = new CalloutHeaderWidget("note", "Title", false, false, 0);
+    const dom = a.toDOM(view);
+    expect(dom.querySelector(".cm-callout-fold-icon")).toBeNull();
+    const b = new CalloutHeaderWidget("note", "Title", false, true, 0);
+    expect(b.updateDOM(dom, view)).toBe(true);
+    expect(dom.querySelector(".cm-callout-fold-icon")).not.toBeNull();
+    expect(dom.querySelector(".cm-callout-fold-icon svg.svg-icon")).not.toBeNull();
+    view.destroy();
+  });
+
+  it("updateDOM removes fold arrow when foldable changes to false", () => {
+    const view = makeView();
+    const a = new CalloutHeaderWidget("note", "Title", false, true, 0);
+    const dom = a.toDOM(view);
+    expect(dom.querySelector(".cm-callout-fold-icon")).not.toBeNull();
+    const b = new CalloutHeaderWidget("note", "Title", false, false, 0);
+    expect(b.updateDOM(dom, view)).toBe(true);
+    expect(dom.querySelector(".cm-callout-fold-icon")).toBeNull();
+    view.destroy();
+  });
+
+  it("updateDOM rebinds fold arrow click handler", () => {
+    const view = makeView();
+    const a = new CalloutHeaderWidget("note", "Title", false, true, 42);
+    const dom = a.toDOM(view);
+    const b = new CalloutHeaderWidget("note", "Title", false, true, 42);
+    b.updateDOM(dom, view);
+    const arrow = dom.querySelector(".cm-callout-fold-icon")!;
+    arrow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    const foldState = view.state.field(calloutFoldField);
+    expect(foldState.get(42)).toBe(true);
+    view.destroy();
+  });
+
   it("has estimatedHeight of 30", () => {
     const widget = new CalloutHeaderWidget("note", "Title", false, true, 0);
     expect(widget.estimatedHeight).toBe(30);
@@ -178,6 +243,15 @@ describe("InlineMathWidget", () => {
     expect(a.eq(b)).toBe(false);
   });
 
+  it("updateDOM re-renders latex in existing element", () => {
+    const a = new InlineMathWidget("x^2");
+    const dom = a.toDOM();
+    const b = new InlineMathWidget("y^3");
+    expect(b.updateDOM(dom)).toBe(true);
+    expect(dom.textContent).toBe("y^3");
+    expect(dom.classList.contains("cm-preview-math-error")).toBe(false);
+  });
+
   it("ignoreEvent returns false to allow click-to-edit", () => {
     expect(new InlineMathWidget("x").ignoreEvent()).toBe(false);
   });
@@ -202,6 +276,15 @@ describe("DisplayMathWidget", () => {
     const a = new DisplayMathWidget("\\int f");
     const b = new DisplayMathWidget("\\sum g");
     expect(a.eq(b)).toBe(false);
+  });
+
+  it("updateDOM re-renders latex in existing element", () => {
+    const a = new DisplayMathWidget("\\sum x");
+    const dom = a.toDOM();
+    const b = new DisplayMathWidget("\\int y");
+    expect(b.updateDOM(dom)).toBe(true);
+    expect(dom.textContent).toBe("\\int y");
+    expect(dom.classList.contains("cm-preview-math-error")).toBe(false);
   });
 
   it("ignoreEvent returns false to allow click-to-edit", () => {
@@ -423,6 +506,44 @@ describe("EditableTableWidget", () => {
     expect(new EditableTableWidget(basicTable, 0).eq(new EditableTableWidget(basicTable, 10))).toBe(false);
   });
 
+  it("updateDOM rebuilds table in existing container", () => {
+    const view = makeTableView();
+    const a = new EditableTableWidget(basicTable, 0);
+    const dom = a.toDOM(view);
+    const newTable = "| x |\n| --- |\n| 1 |";
+    const b = new EditableTableWidget(newTable, 0);
+    expect(b.updateDOM(dom, view)).toBe(true);
+    expect(dom.querySelector("table")).not.toBeNull();
+    const ths = dom.querySelectorAll<HTMLElement>("thead th");
+    expect(ths).toHaveLength(1);
+    expect(ths[0]!.dataset.raw).toBe("x");
+    const tds = dom.querySelectorAll<HTMLElement>("tbody td");
+    expect(tds).toHaveLength(1);
+    expect(tds[0]!.dataset.raw).toBe("1");
+    view.destroy();
+  });
+
+  it("updateDOM returns false when parse fails", () => {
+    const view = makeTableView();
+    const a = new EditableTableWidget(basicTable, 0);
+    const dom = a.toDOM(view);
+    const b = new EditableTableWidget("not a table", 0);
+    expect(b.updateDOM(dom, view)).toBe(false);
+    view.destroy();
+  });
+
+  it("updateDOM preserves container element identity", () => {
+    const view = makeTableView();
+    const a = new EditableTableWidget(basicTable, 0);
+    const dom = a.toDOM(view);
+    const ref = dom;
+    const b = new EditableTableWidget("| y |\n| --- |\n| 2 |", 0);
+    b.updateDOM(dom, view);
+    expect(dom).toBe(ref);
+    expect(dom.className).toBe("cm-preview-table-container");
+    view.destroy();
+  });
+
   it("ignoreEvent returns true for all events", () => {
     const widget = new EditableTableWidget(basicTable, 0);
     expect(widget.ignoreEvent()).toBe(true);
@@ -522,6 +643,28 @@ describe("MermaidWidget", () => {
     const a = new MermaidWidget("graph LR; A-->B", "default");
     const b = new MermaidWidget("graph LR; A-->B", "dark");
     expect(a.eq(b)).toBe(false);
+  });
+
+  it("updateDOM uses cached SVG when available", () => {
+    const a = new MermaidWidget("graph LR; A-->B", "default");
+    vi.mocked(getMermaidCached).mockReturnValue("<svg>first</svg>");
+    const dom = a.toDOM();
+    vi.mocked(getMermaidCached).mockReturnValue("<svg>updated</svg>");
+    const b = new MermaidWidget("graph LR; C-->D", "default");
+    expect(b.updateDOM(dom)).toBe(true);
+    expect(dom.innerHTML).toBe("<svg>updated</svg>");
+  });
+
+  it("updateDOM shows spinner and calls renderMermaid when cache is empty", () => {
+    vi.mocked(getMermaidCached).mockReturnValue("<svg>initial</svg>");
+    const a = new MermaidWidget("graph LR; A-->B", "default");
+    const dom = a.toDOM();
+    vi.mocked(getMermaidCached).mockReturnValue(undefined);
+    vi.mocked(renderMermaid).mockClear();
+    const b = new MermaidWidget("graph LR; C-->D", "dark");
+    expect(b.updateDOM(dom)).toBe(true);
+    expect(dom.querySelector(".cm-preview-mermaid-loading")).not.toBeNull();
+    expect(renderMermaid).toHaveBeenCalledWith("graph LR; C-->D", "dark");
   });
 
   it("ignoreEvent returns true", () => {
