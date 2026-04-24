@@ -44,7 +44,7 @@ html, body, #root {
 .tok-strong { font-weight: bold; }
 .tok-link { color: var(--text-accent); text-decoration: underline; }
 .tok-url { color: var(--text-accent); }
-.tok-monospace { background-color: var(--code-background); border-radius: 3px; }
+.tok-monospace { background-color: var(--code-background); border-radius: 3px; font-family: var(--font-monospace-theme, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); }
 .tok-meta { color: var(--text-faint); }
 .tok-quote { color: var(--text-muted); font-style: italic; }
 .tok-list { color: var(--text-muted); }

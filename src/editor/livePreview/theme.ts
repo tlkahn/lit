@@ -16,6 +16,7 @@ export const livePreviewBaseTheme = EditorView.baseTheme({
   },
   ".cm-preview-code-block": {
     backgroundColor: "var(--code-background)",
+    fontFamily: "var(--font-monospace-theme, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace)",
   },
   ".cm-code-fence-top": {
     backgroundColor: "var(--code-background)",
