@@ -238,6 +238,73 @@ impl KnowledgeGraph {
         SubgraphResult { nodes, edges }
     }
 
+    pub fn pagerank(&self, damping: f64) -> HashMap<String, f64> {
+        let n = self.graph.node_count();
+        if n == 0 {
+            return HashMap::new();
+        }
+
+        let node_indices: Vec<NodeIndex> = self.graph.node_indices().collect();
+        let index_to_pos: HashMap<NodeIndex, usize> = node_indices
+            .iter()
+            .enumerate()
+            .map(|(pos, &idx)| (idx, pos))
+            .collect();
+
+        let n_f = n as f64;
+        let mut scores = vec![1.0 / n_f; n];
+        let mut new_scores = vec![0.0; n];
+
+        let out_degrees: Vec<usize> = node_indices
+            .iter()
+            .map(|&idx| self.graph.neighbors_directed(idx, Direction::Outgoing).count())
+            .collect();
+
+        for _ in 0..100 {
+            let dangling_sum: f64 = node_indices
+                .iter()
+                .enumerate()
+                .filter(|&(pos, _)| out_degrees[pos] == 0)
+                .map(|(pos, _)| scores[pos])
+                .sum();
+
+            for (j, _) in node_indices.iter().enumerate() {
+                let mut incoming_sum = 0.0;
+                for neighbor in self.graph.neighbors_directed(node_indices[j], Direction::Incoming) {
+                    let pos = index_to_pos[&neighbor];
+                    incoming_sum += scores[pos] / out_degrees[pos] as f64;
+                }
+                new_scores[j] =
+                    (1.0 - damping) / n_f + damping * (dangling_sum / n_f + incoming_sum);
+            }
+
+            let max_delta = scores
+                .iter()
+                .zip(new_scores.iter())
+                .map(|(old, new)| (old - new).abs())
+                .fold(0.0_f64, f64::max);
+
+            std::mem::swap(&mut scores, &mut new_scores);
+
+            if max_delta < 1e-6 {
+                break;
+            }
+        }
+
+        let total: f64 = scores.iter().sum();
+        if total > 0.0 {
+            for s in &mut scores {
+                *s /= total;
+            }
+        }
+
+        node_indices
+            .iter()
+            .enumerate()
+            .map(|(pos, &idx)| (self.graph[idx].id.clone(), scores[pos]))
+            .collect()
+    }
+
     fn dfs_paths(
         &self,
         current: NodeIndex,
@@ -733,5 +800,91 @@ mod tests {
             .map(|(s, t)| (s.as_str(), t.as_str()))
             .collect();
         assert!(edges.contains(&("A", "B")));
+    }
+
+    // --- PageRank ---
+
+    #[test]
+    fn pagerank_scores_sum_to_one() {
+        let (_, kg) = build_test_graph();
+        let scores = kg.pagerank(0.85);
+        let sum: f64 = scores.values().sum();
+        assert!((sum - 1.0).abs() < 1e-9, "sum was {sum}");
+    }
+
+    #[test]
+    fn pagerank_all_nodes_present() {
+        let (_, kg) = build_test_graph();
+        let scores = kg.pagerank(0.85);
+        assert_eq!(scores.len(), 6);
+        for id in &["A", "B", "C", "D", "E", "F"] {
+            assert!(scores.contains_key(*id), "missing {id}");
+        }
+    }
+
+    #[test]
+    fn pagerank_all_scores_positive() {
+        let (_, kg) = build_test_graph();
+        let scores = kg.pagerank(0.85);
+        for (id, score) in &scores {
+            assert!(*score > 0.0, "{id} has non-positive score {score}");
+        }
+    }
+
+    #[test]
+    fn pagerank_hub_scores_higher() {
+        let (_, kg) = build_test_graph();
+        let scores = kg.pagerank(0.85);
+        assert!(
+            scores["D"] > scores["E"],
+            "D={} should beat E={}",
+            scores["D"],
+            scores["E"]
+        );
+        assert!(
+            scores["D"] > scores["C"],
+            "D={} should beat C={}",
+            scores["D"],
+            scores["C"]
+        );
+    }
+
+    #[test]
+    fn pagerank_empty_graph() {
+        let store = Store::open_memory().unwrap();
+        let kg = KnowledgeGraph::from_store(&store).unwrap();
+        let scores = kg.pagerank(0.85);
+        assert!(scores.is_empty());
+    }
+
+    #[test]
+    fn pagerank_single_node() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("X", "Solo"), 1).unwrap();
+        let kg = KnowledgeGraph::from_store(&store).unwrap();
+        let scores = kg.pagerank(0.85);
+        assert_eq!(scores.len(), 1);
+        assert!((scores["X"] - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn pagerank_damping_zero_gives_uniform() {
+        let (_, kg) = build_test_graph();
+        let scores = kg.pagerank(0.0);
+        let expected = 1.0 / 6.0;
+        for (id, score) in &scores {
+            assert!(
+                (*score - expected).abs() < 1e-9,
+                "{id} score {score} != {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn pagerank_stub_participates() {
+        let (_, kg) = build_test_graph();
+        let scores = kg.pagerank(0.85);
+        assert!(scores.contains_key("F"));
+        assert!(scores["F"] > 0.0);
     }
 }

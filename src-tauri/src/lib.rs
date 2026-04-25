@@ -203,6 +203,7 @@ pub fn run() {
             commands::crossref::render_bib_citations,
             commands::external_editor::open_in_external_editor,
             commands::graph::rebuild_graph_index,
+            commands::graph::get_pagerank,
             get_initial_workspace,
             get_initial_file,
         ])

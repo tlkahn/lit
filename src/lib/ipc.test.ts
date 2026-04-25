@@ -29,6 +29,7 @@ import {
   renderBibCitations,
   openInExternalEditor,
   rebuildGraphIndex,
+  getPagerank,
 } from "./ipc";
 
 const sampleMeta = {
@@ -145,6 +146,13 @@ describe("ipc", () => {
           return null;
         case "rebuild_graph_index":
           return "Rebuilt: 5 nodes, 3 edges, 1 stubs";
+        case "get_pagerank": {
+          const a = args as Record<string, unknown> | undefined;
+          if (a?.n != null) {
+            return [["b.md", 0.6], ["a.md", 0.4]];
+          }
+          return { "a.md": 0.4, "b.md": 0.6 };
+        }
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -378,6 +386,20 @@ describe("ipc", () => {
     expect(result).toBe("Rebuilt: 5 nodes, 3 edges, 1 stubs");
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("rebuild_graph_index");
+  });
+
+  it("getPagerank returns full scores map", async () => {
+    const scores = await getPagerank();
+    expect(scores).toEqual({ "a.md": 0.4, "b.md": 0.6 });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("get_pagerank", { n: null });
+  });
+
+  it("getPagerank returns top-N", async () => {
+    const top = await getPagerank(2);
+    expect(top).toEqual([["b.md", 0.6], ["a.md", 0.4]]);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("get_pagerank", { n: 2 });
   });
 
 });

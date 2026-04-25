@@ -264,6 +264,12 @@ export async function rebuildGraphIndex(): Promise<string> {
   return invoke<string>("rebuild_graph_index");
 }
 
+export async function getPagerank(): Promise<Record<string, number>>;
+export async function getPagerank(n: number): Promise<[string, number][]>;
+export async function getPagerank(n?: number) {
+  return invoke("get_pagerank", { n: n ?? null });
+}
+
 // External editor
 
 export async function openInExternalEditor(

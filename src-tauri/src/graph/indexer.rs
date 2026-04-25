@@ -612,6 +612,35 @@ impl GraphIndex {
         let knowledge = self.knowledge.lock().unwrap();
         knowledge.full_subgraph()
     }
+
+    pub fn pagerank(&self) -> Result<HashMap<String, f64>, GraphError> {
+        let store = self.store.lock().unwrap();
+        let fingerprint = store.graph_fingerprint()?;
+        let cached_fp = store.get_meta("pagerank_fingerprint")?;
+
+        if cached_fp.as_deref() == Some(fingerprint.as_str()) {
+            if let Some(json) = store.get_meta("pagerank_scores")? {
+                if let Ok(scores) = serde_json::from_str::<HashMap<String, f64>>(&json) {
+                    return Ok(scores);
+                }
+            }
+        }
+
+        let knowledge = self.knowledge.lock().unwrap();
+        let scores = knowledge.pagerank(0.85);
+        let json = serde_json::to_string(&scores).map_err(|e| GraphError::Other(e.to_string()))?;
+        store.set_meta("pagerank_scores", &json)?;
+        store.set_meta("pagerank_fingerprint", &fingerprint)?;
+        Ok(scores)
+    }
+
+    pub fn top_by_pagerank(&self, n: usize) -> Result<Vec<(String, f64)>, GraphError> {
+        let scores = self.pagerank()?;
+        let mut pairs: Vec<(String, f64)> = scores.into_iter().collect();
+        pairs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        pairs.truncate(n);
+        Ok(pairs)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1151,5 +1180,129 @@ mod tests {
         gi.reindex_file("a.md").unwrap();
         let sub = gi.full_subgraph();
         assert!(!sub.edges.is_empty());
+    }
+
+    // --- PageRank on GraphIndex ---
+
+    #[test]
+    fn pagerank_returns_scores_for_all_nodes() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "[[b]]");
+        write_md(dir.path(), "b.md", "Target.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let scores = gi.pagerank().unwrap();
+        assert_eq!(scores.len(), 2);
+        for (id, score) in &scores {
+            assert!(*score > 0.0, "{id} has non-positive score");
+        }
+    }
+
+    #[test]
+    fn pagerank_scores_sum_to_one() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "[[b]]");
+        write_md(dir.path(), "b.md", "Target.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let scores = gi.pagerank().unwrap();
+        let sum: f64 = scores.values().sum();
+        assert!((sum - 1.0).abs() < 1e-9, "sum was {sum}");
+    }
+
+    #[test]
+    fn pagerank_caches_in_meta_table() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "[[b]]");
+        write_md(dir.path(), "b.md", "Target.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        gi.pagerank().unwrap();
+        let store = gi.store.lock().unwrap();
+        assert!(store.get_meta("pagerank_scores").unwrap().is_some());
+        assert!(store.get_meta("pagerank_fingerprint").unwrap().is_some());
+    }
+
+    #[test]
+    fn pagerank_cache_hit_returns_same() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "[[b]]");
+        write_md(dir.path(), "b.md", "Target.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let scores1 = gi.pagerank().unwrap();
+        let scores2 = gi.pagerank().unwrap();
+        assert_eq!(scores1, scores2);
+    }
+
+    #[test]
+    fn pagerank_invalidated_after_reindex() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "[[b]]");
+        write_md(dir.path(), "b.md", "[[a]]");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let scores1 = gi.pagerank().unwrap();
+        write_md(dir.path(), "a.md", "No links now.");
+        gi.reindex_file("a.md").unwrap();
+        let scores2 = gi.pagerank().unwrap();
+        assert_ne!(scores1, scores2);
+    }
+
+    #[test]
+    fn pagerank_invalidated_after_remove() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Hello.");
+        write_md(dir.path(), "b.md", "World.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let scores1 = gi.pagerank().unwrap();
+        assert_eq!(scores1.len(), 2);
+        fs::remove_file(dir.path().join("b.md")).unwrap();
+        gi.remove_file("b.md").unwrap();
+        let scores2 = gi.pagerank().unwrap();
+        assert_eq!(scores2.len(), 1);
+    }
+
+    #[test]
+    fn pagerank_invalidated_after_rebuild() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Hello.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let scores1 = gi.pagerank().unwrap();
+        assert_eq!(scores1.len(), 1);
+        write_md(dir.path(), "b.md", "New file.");
+        gi.full_rebuild().unwrap();
+        let scores2 = gi.pagerank().unwrap();
+        assert_eq!(scores2.len(), 2);
+    }
+
+    #[test]
+    fn top_by_pagerank_sorted_desc() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "[[b]] [[c]]");
+        write_md(dir.path(), "b.md", "[[c]]");
+        write_md(dir.path(), "c.md", "Leaf.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let top = gi.top_by_pagerank(3).unwrap();
+        assert_eq!(top.len(), 3);
+        for w in top.windows(2) {
+            assert!(w[0].1 >= w[1].1);
+        }
+    }
+
+    #[test]
+    fn top_by_pagerank_truncates() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "[[b]] [[c]]");
+        write_md(dir.path(), "b.md", "[[c]]");
+        write_md(dir.path(), "c.md", "Leaf.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let top = gi.top_by_pagerank(2).unwrap();
+        assert_eq!(top.len(), 2);
+    }
+
+    #[test]
+    fn top_by_pagerank_n_exceeds_graph() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Hello.");
+        write_md(dir.path(), "b.md", "World.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let top = gi.top_by_pagerank(100).unwrap();
+        assert_eq!(top.len(), 2);
     }
 }

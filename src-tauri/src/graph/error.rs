@@ -13,6 +13,9 @@ pub enum GraphError {
         source: std::io::Error,
         path: PathBuf,
     },
+
+    #[error("{0}")]
+    Other(String),
 }
 
 impl From<rusqlite::Error> for GraphError {
