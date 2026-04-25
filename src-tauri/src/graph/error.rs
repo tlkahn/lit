@@ -5,6 +5,9 @@ pub enum GraphError {
     #[error("database error: {message}")]
     Database { message: String },
 
+    #[error("node not found: {id}")]
+    NodeNotFound { id: String },
+
     #[error("I/O error at {path}: {source}")]
     Io {
         source: std::io::Error,
@@ -43,6 +46,14 @@ mod tests {
             GraphError::Database { message } => assert!(message.contains("test")),
             _ => panic!("expected Database variant"),
         }
+    }
+
+    #[test]
+    fn node_not_found_displays_id() {
+        let err = GraphError::NodeNotFound {
+            id: "some-node".into(),
+        };
+        assert_eq!(err.to_string(), "node not found: some-node");
     }
 
     #[test]

@@ -7,6 +7,7 @@ use walkdir::WalkDir;
 
 use super::error::GraphError;
 use super::extract::{extract_first_paragraph, extract_sentence_context};
+use super::knowledge::{GraphNode, KnowledgeGraph, SubgraphResult};
 use super::links::{extract_wikilinks, WikiLink};
 use super::resolve::StemLookup;
 use super::store::Store;
@@ -499,6 +500,7 @@ use std::sync::Mutex;
 pub struct GraphIndex {
     store: Mutex<Store>,
     reverse_stems: Mutex<ReverseStemIndex>,
+    knowledge: Mutex<KnowledgeGraph>,
     workspace_root: std::path::PathBuf,
 }
 
@@ -513,9 +515,11 @@ impl GraphIndex {
         }
         let store = Store::open(&db_path)?;
         let (_, reverse_stems) = index_workspace(&store, &workspace_root)?;
+        let knowledge = KnowledgeGraph::from_store(&store)?;
         Ok(Self {
             store: Mutex::new(store),
             reverse_stems: Mutex::new(reverse_stems),
+            knowledge: Mutex::new(knowledge),
             workspace_root,
         })
     }
@@ -529,6 +533,8 @@ impl GraphIndex {
         let store = self.store.lock().unwrap();
         let mut reverse = self.reverse_stems.lock().unwrap();
         incremental_reindex(&store, &self.workspace_root, &mut reverse, &diff)?;
+        let mut knowledge = self.knowledge.lock().unwrap();
+        *knowledge = KnowledgeGraph::from_store(&store)?;
         Ok(())
     }
 
@@ -541,6 +547,8 @@ impl GraphIndex {
         let store = self.store.lock().unwrap();
         let mut reverse = self.reverse_stems.lock().unwrap();
         incremental_reindex(&store, &self.workspace_root, &mut reverse, &diff)?;
+        let mut knowledge = self.knowledge.lock().unwrap();
+        *knowledge = KnowledgeGraph::from_store(&store)?;
         Ok(())
     }
 
@@ -549,12 +557,60 @@ impl GraphIndex {
         let (result, new_reverse) = index_workspace(&store, &self.workspace_root)?;
         let mut reverse = self.reverse_stems.lock().unwrap();
         *reverse = new_reverse;
+        let mut knowledge = self.knowledge.lock().unwrap();
+        *knowledge = KnowledgeGraph::from_store(&store)?;
         Ok(result)
     }
 
     pub fn stats(&self) -> Result<Stats, GraphError> {
         let store = self.store.lock().unwrap();
         store.stats()
+    }
+
+    pub fn neighbors(
+        &self,
+        id: &str,
+        depth: usize,
+        directed: bool,
+    ) -> Result<SubgraphResult, GraphError> {
+        let knowledge = self.knowledge.lock().unwrap();
+        knowledge.neighbors(id, depth, directed)
+    }
+
+    pub fn paths(
+        &self,
+        from: &str,
+        to: &str,
+        max_depth: usize,
+        directed: bool,
+    ) -> Result<Vec<Vec<String>>, GraphError> {
+        let knowledge = self.knowledge.lock().unwrap();
+        knowledge.paths(from, to, max_depth, directed)
+    }
+
+    pub fn shared(
+        &self,
+        a: &str,
+        b: &str,
+        directed: bool,
+    ) -> Result<Vec<GraphNode>, GraphError> {
+        let knowledge = self.knowledge.lock().unwrap();
+        knowledge.shared(a, b, directed)
+    }
+
+    pub fn subgraph(
+        &self,
+        seeds: &[&str],
+        depth: usize,
+        directed: bool,
+    ) -> Result<SubgraphResult, GraphError> {
+        let knowledge = self.knowledge.lock().unwrap();
+        knowledge.subgraph(seeds, depth, directed)
+    }
+
+    pub fn full_subgraph(&self) -> SubgraphResult {
+        let knowledge = self.knowledge.lock().unwrap();
+        knowledge.full_subgraph()
     }
 }
 
@@ -1051,5 +1107,49 @@ mod tests {
         let stats = gi.stats().unwrap();
         assert_eq!(stats.nodes, 2);
         assert_eq!(stats.edges, 1);
+    }
+
+    // --- GraphIndex knowledge integration ---
+
+    #[test]
+    fn graph_index_neighbors_after_build() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "[[b]]");
+        write_md(dir.path(), "b.md", "Target.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let result = gi.neighbors("a.md", 1, true).unwrap();
+        let ids: std::collections::HashSet<&str> =
+            result.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert!(ids.contains("a.md"));
+        assert!(ids.contains("b.md"));
+    }
+
+    #[test]
+    fn graph_index_knowledge_rebuilt_after_full_rebuild() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Hello.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let sub = gi.full_subgraph();
+        assert_eq!(sub.nodes.len(), 1);
+
+        write_md(dir.path(), "b.md", "New.");
+        gi.full_rebuild().unwrap();
+        let sub = gi.full_subgraph();
+        assert_eq!(sub.nodes.len(), 2);
+    }
+
+    #[test]
+    fn graph_index_knowledge_rebuilt_after_reindex_file() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "No links.");
+        write_md(dir.path(), "b.md", "Target.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let sub = gi.full_subgraph();
+        assert!(sub.edges.is_empty());
+
+        write_md(dir.path(), "a.md", "Now links to [[b]].");
+        gi.reindex_file("a.md").unwrap();
+        let sub = gi.full_subgraph();
+        assert!(!sub.edges.is_empty());
     }
 }
