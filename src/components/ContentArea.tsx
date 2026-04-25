@@ -161,6 +161,17 @@ export function ContentArea() {
       setPendingSection: (s: string) => useWorkspaceStore.setState({ pendingSection: s }),
       currentPagePath: currentPathRef.current,
       triggerReload,
+      recordDeparture: () => {
+        const view = editorViewRef.current;
+        const notePath = currentPathRef.current ?? "";
+        if (!view || !notePath) return;
+        const head = view.state.selection.main.head;
+        const line = view.state.doc.lineAt(head);
+        globalJumpTracker.recordJump(
+          { notePath, line: line.number, col: head - line.from },
+          { notePath: "", line: 0, col: 0 },
+        );
+      },
     });
   }, [selectPage, triggerReload, refreshPages]);
 
@@ -181,11 +192,13 @@ export function ContentArea() {
       if (storeState.pendingCursorLine != null) {
         const lineNum = Math.min(storeState.pendingCursorLine, view.state.doc.lines);
         const line = view.state.doc.line(lineNum);
+        const col = storeState.pendingCursorCol ?? 0;
+        const pos = line.from + Math.min(col, line.length);
         view.dispatch({
-          selection: EditorSelection.cursor(line.from),
-          effects: EditorView.scrollIntoView(line.from, { y: "start" }),
+          selection: EditorSelection.cursor(pos),
+          effects: EditorView.scrollIntoView(pos, { y: "start" }),
         });
-        useWorkspaceStore.setState({ pendingCursorLine: null });
+        useWorkspaceStore.setState({ pendingCursorLine: null, pendingCursorCol: null });
       } else if (storeState.pendingSection != null) {
         const section = storeState.pendingSection;
         useWorkspaceStore.setState({ pendingSection: null });

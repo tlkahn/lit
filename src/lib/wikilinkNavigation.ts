@@ -7,6 +7,7 @@ export interface NavigationDeps {
   setPendingSection: (section: string) => void;
   currentPagePath: string | null;
   triggerReload: () => void;
+  recordDeparture?: () => void;
 }
 
 export async function navigateWikilink(
@@ -14,6 +15,8 @@ export async function navigateWikilink(
   section: string | undefined,
   deps: NavigationDeps,
 ): Promise<void> {
+  deps.recordDeparture?.();
+
   if (target === "") {
     if (section) {
       deps.setPendingSection(section);

@@ -226,6 +226,25 @@ describe("WorkspaceStore", () => {
     expect(useWorkspaceStore.getState().reloadTrigger).toBe(0);
   });
 
+  it("selectPageAtLine sets pendingCursorLine and pendingCursorCol", () => {
+    act(() => {
+      useWorkspaceStore.getState().selectPageAtLine("Page A.md", 10, 7);
+    });
+    const state = useWorkspaceStore.getState();
+    expect(state.currentPagePath).toBe("Page A.md");
+    expect(state.pendingCursorLine).toBe(10);
+    expect(state.pendingCursorCol).toBe(7);
+  });
+
+  it("selectPageAtLine defaults pendingCursorCol to null when col omitted", () => {
+    act(() => {
+      useWorkspaceStore.getState().selectPageAtLine("Page A.md", 5);
+    });
+    const state = useWorkspaceStore.getState();
+    expect(state.pendingCursorLine).toBe(5);
+    expect(state.pendingCursorCol).toBeNull();
+  });
+
   it("pendingSection initializes as null", () => {
     expect(useWorkspaceStore.getState().pendingSection).toBeNull();
   });

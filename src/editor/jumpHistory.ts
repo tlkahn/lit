@@ -94,7 +94,7 @@ export const navigateBack: Command = (view: EditorView) => {
     });
   } else {
     globalJumpTracker.isNavigating = true;
-    store.selectPageAtLine(target.notePath, target.line);
+    store.selectPageAtLine(target.notePath, target.line, target.col);
   }
 
   return true;
@@ -118,7 +118,7 @@ export const navigateForward: Command = (view: EditorView) => {
     });
   } else {
     globalJumpTracker.isNavigating = true;
-    store.selectPageAtLine(target.notePath, target.line);
+    store.selectPageAtLine(target.notePath, target.line, target.col);
   }
 
   return true;

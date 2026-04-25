@@ -157,9 +157,74 @@ describe("jumpHistoryExtension", () => {
 
     navigateBack(view);
 
-    expect(mockSelectPageAtLine).toHaveBeenCalledWith("note-b.md", 5);
+    expect(mockSelectPageAtLine).toHaveBeenCalledWith("note-b.md", 5, 0);
     expect(globalJumpTracker.isNavigating).toBe(true);
     globalJumpTracker.isNavigating = false;
+    view.destroy();
+  });
+
+  it("cross-note navigateBack preserves column", () => {
+    const mockSelectPageAtLine = vi.fn();
+    vi.mocked(useWorkspaceStore.getState).mockReturnValue({
+      currentPagePath: "note-a.md",
+      selectPageAtLine: mockSelectPageAtLine,
+    } as never);
+
+    const view = createView(lines(20));
+    globalJumpTracker.recordJump(
+      { notePath: "note-b.md", line: 8, col: 14 },
+      { notePath: "note-a.md", line: 1, col: 0 },
+    );
+
+    navigateBack(view);
+
+    expect(mockSelectPageAtLine).toHaveBeenCalledWith("note-b.md", 8, 14);
+    globalJumpTracker.isNavigating = false;
+    view.destroy();
+  });
+
+  it("cross-note navigateForward preserves column", () => {
+    const mockSelectPageAtLine = vi.fn();
+    vi.mocked(useWorkspaceStore.getState).mockReturnValue({
+      currentPagePath: "note-a.md",
+      selectPageAtLine: mockSelectPageAtLine,
+    } as never);
+
+    const view = createView(lines(20));
+    globalJumpTracker.recordJump(
+      { notePath: "note-b.md", line: 3, col: 7 },
+      { notePath: "note-a.md", line: 1, col: 0 },
+    );
+
+    navigateBack(view);
+    globalJumpTracker.isNavigating = false;
+    mockSelectPageAtLine.mockClear();
+
+    vi.mocked(useWorkspaceStore.getState).mockReturnValue({
+      currentPagePath: "note-b.md",
+      selectPageAtLine: mockSelectPageAtLine,
+    } as never);
+
+    navigateForward(view);
+
+    expect(mockSelectPageAtLine).toHaveBeenCalledWith("note-a.md", 1, 0);
+    globalJumpTracker.isNavigating = false;
+    view.destroy();
+  });
+
+  it("same-note navigateBack restores exact cursor column", () => {
+    const view = createView(lines(20));
+    // "line 10" is 7 chars; place cursor at col 4
+    const line10 = view.state.doc.line(10);
+    view.dispatch({ selection: EditorSelection.cursor(line10.from + 4) });
+
+    // Jump recorded from line 1, col 0 → line 10, col 4
+    navigateBack(view);
+
+    const head = view.state.selection.main.head;
+    const restoredLine = view.state.doc.lineAt(head);
+    expect(restoredLine.number).toBe(1);
+    expect(head - restoredLine.from).toBe(0);
     view.destroy();
   });
 });

@@ -68,6 +68,47 @@ describe("navigateWikilink", () => {
     expect(deps.selectPage).not.toHaveBeenCalled();
   });
 
+  it("calls recordDeparture before cross-page navigation", async () => {
+    const recordDeparture = vi.fn();
+    const deps = makeDeps({ recordDeparture });
+    await navigateWikilink("Page", undefined, deps);
+    expect(recordDeparture).toHaveBeenCalledOnce();
+    expect(recordDeparture.mock.invocationCallOrder[0]).toBeLessThan(
+      (deps.selectPage as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("calls recordDeparture before same-page section navigation", async () => {
+    const recordDeparture = vi.fn();
+    const deps = makeDeps({ recordDeparture });
+    await navigateWikilink("", "Heading", deps);
+    expect(recordDeparture).toHaveBeenCalledOnce();
+    expect(recordDeparture.mock.invocationCallOrder[0]).toBeLessThan(
+      (deps.triggerReload as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("calls recordDeparture even when page creation is needed", async () => {
+    const recordDeparture = vi.fn();
+    const deps = makeDeps({
+      recordDeparture,
+      resolveWikilink: vi.fn().mockResolvedValue({
+        target: "NewPage",
+        node_id: null,
+        tier: "Unresolved",
+      }),
+      createPage: vi.fn().mockResolvedValue({
+        title: "NewPage",
+        relative_path: "NewPage.md",
+        frontmatter: {},
+        created_at: null,
+        modified_at: null,
+      }),
+    });
+    await navigateWikilink("NewPage", undefined, deps);
+    expect(recordDeparture).toHaveBeenCalledOnce();
+  });
+
   it("handles IPC error gracefully (no crash, logs error)", async () => {
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const deps = makeDeps({

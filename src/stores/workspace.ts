@@ -18,6 +18,7 @@ export interface WorkspaceStore {
   currentPagePath: string | null;
   pendingTitleFocus: boolean;
   pendingCursorLine: number | null;
+  pendingCursorCol: number | null;
   pendingSection: string | null;
   currentPageHeadings: Heading[];
   isDirty: boolean;
@@ -29,7 +30,7 @@ export interface WorkspaceStore {
   openWorkspace: (path: string) => Promise<void>;
   refreshPages: () => Promise<void>;
   selectPage: (relativePath: string | null) => void;
-  selectPageAtLine: (relativePath: string, line: number) => void;
+  selectPageAtLine: (relativePath: string, line: number, col?: number) => void;
   createPage: (name: string, parentDir?: string) => Promise<void>;
   renamePage: (oldPath: string, newName: string) => Promise<void>;
   deletePage: (relativePath: string) => Promise<void>;
@@ -46,6 +47,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   currentPagePath: null,
   pendingTitleFocus: false,
   pendingCursorLine: null,
+  pendingCursorCol: null,
   pendingSection: null,
   currentPageHeadings: [],
   isDirty: false,
@@ -83,8 +85,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     set({ currentPagePath: relativePath, currentPageHeadings: [], isDirty: false, reloadTrigger: 0, pendingCursorLine: null, pendingSection: null });
   },
 
-  selectPageAtLine: (relativePath: string, line: number) => {
-    set({ currentPagePath: relativePath, currentPageHeadings: [], isDirty: false, reloadTrigger: 0, pendingCursorLine: line });
+  selectPageAtLine: (relativePath: string, line: number, col?: number) => {
+    set({ currentPagePath: relativePath, currentPageHeadings: [], isDirty: false, reloadTrigger: 0, pendingCursorLine: line, pendingCursorCol: col ?? null });
   },
 
   createPage: async (name: string, parentDir?: string) => {
