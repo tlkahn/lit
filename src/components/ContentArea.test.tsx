@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { ContentArea, parseYamlErrorLocation } from "./ContentArea";
 import { mockInvoke } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
+import { usePreferencesStore } from "../stores/preferences";
 
 const samplePage = {
   body: "# Hello\nSome content",
@@ -724,6 +725,42 @@ describe("ContentArea mindmap toggle", () => {
     // "# First\nContent\n## Second\nMore" — "## Second" starts at position 16
     await waitFor(() => {
       expect(view.state.selection.main.head).toBe(16);
+    });
+  });
+});
+
+describe("ContentArea unlinked references gating", () => {
+  beforeEach(() => {
+    mockInvoke((cmd) => {
+      if (cmd === "read_page") return samplePage;
+      if (cmd === "write_page") return null;
+      if (cmd === "parse_raw_yaml") return {};
+      if (cmd === "get_backlinks") return [];
+      if (cmd === "get_keymaps") return [];
+      if (cmd === "get_unlinked_mentions") return [];
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+  });
+
+  it("does not render UnlinkedMentionsPanel when experimentalUnlinkedReferences is false", async () => {
+    usePreferencesStore.setState({ experimentalUnlinkedReferences: false });
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByTestId("unlinked-header")).not.toBeInTheDocument();
+  });
+
+  it("renders UnlinkedMentionsPanel when experimentalUnlinkedReferences is true", async () => {
+    usePreferencesStore.setState({ experimentalUnlinkedReferences: true });
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("unlinked-header")).toBeInTheDocument();
     });
   });
 });

@@ -11,6 +11,7 @@ describe("PreferencesStore", () => {
       crossrefEnabled: true,
       crossrefLiveRendering: true,
       crossrefEnableCiteproc: true,
+      experimentalUnlinkedReferences: false,
       loaded: false,
     });
   });
@@ -235,5 +236,71 @@ describe("PreferencesStore", () => {
 
     await usePreferencesStore.getState().loadPreferences();
     expect(usePreferencesStore.getState().sidebarLocation).toBe("left");
+  });
+
+  it("defaults experimentalUnlinkedReferences to false", () => {
+    const state = usePreferencesStore.getState();
+    expect(state.experimentalUnlinkedReferences).toBe(false);
+  });
+
+  it("maps experimental.unlinkedReferences true from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "experimental.unlinkedReferences": true,
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().experimentalUnlinkedReferences).toBe(true);
+  });
+
+  it("defaults experimentalUnlinkedReferences to false when key missing from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().experimentalUnlinkedReferences).toBe(false);
+  });
+
+  it("updates experimentalUnlinkedReferences on preferences://changed event", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().experimentalUnlinkedReferences).toBe(false);
+
+    emitMockEvent("preferences://changed", {
+      "workbench.colorTheme": null,
+      "workbench.darkMode": "auto",
+      "workbench.sideBar.location": "left",
+      "experimental.unlinkedReferences": true,
+    });
+
+    expect(usePreferencesStore.getState().experimentalUnlinkedReferences).toBe(true);
   });
 });

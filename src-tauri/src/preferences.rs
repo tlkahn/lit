@@ -567,6 +567,29 @@ mod tests {
     }
 
     #[test]
+    fn experimental_unlinked_references_round_trip() {
+        let json = r#"{"experimental.unlinkedReferences": true}"#;
+        let prefs: Preferences = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            prefs.extra.get("experimental.unlinkedReferences"),
+            Some(&serde_json::json!(true))
+        );
+
+        let serialized = serde_json::to_string(&prefs).unwrap();
+        let roundtrip: Preferences = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(
+            roundtrip.extra.get("experimental.unlinkedReferences"),
+            Some(&serde_json::json!(true))
+        );
+    }
+
+    #[test]
+    fn experimental_unlinked_references_absent_by_default() {
+        let prefs = Preferences::default();
+        assert!(prefs.extra.get("experimental.unlinkedReferences").is_none());
+    }
+
+    #[test]
     fn crossref_config_string_prefix_becomes_single_element_vec() {
         let json = r#"{"crossref.eqPrefix": "Equation"}"#;
         let prefs: Preferences = serde_json::from_str(json).unwrap();

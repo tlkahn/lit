@@ -16,6 +16,7 @@ import { MindmapView } from "./MindmapView";
 import { buildHeadingTree, applyRename, applyMove } from "../lib/headingTree";
 import { YamlHighlighter } from "./YamlHighlighter";
 import { useKeymaps } from "../hooks/useKeymaps";
+import { usePreferencesStore } from "../stores/preferences";
 import { globalJumpTracker } from "../editor/jumpTracker";
 
 export function parseYamlErrorLocation(msg: string): { line: number; column: number } | null {
@@ -47,6 +48,7 @@ export function ContentArea() {
   const setDirty = useWorkspaceStore((s) => s.setDirty);
   const reloadTrigger = useWorkspaceStore((s) => s.reloadTrigger);
   const saveViewState = useWorkspaceStore((s) => s.saveViewState);
+  const experimentalUnlinkedReferences = usePreferencesStore((s) => s.experimentalUnlinkedReferences);
   const { editorBindings } = useKeymaps();
   const editorViewRef = useRef<EditorView | null>(null);
   const [body, setBody] = useState("");
@@ -493,7 +495,7 @@ export function ContentArea() {
         />
       </div>
       <BacklinksPanel pageId={currentPagePath} />
-      <UnlinkedMentionsPanel pageId={currentPagePath} />
+      {experimentalUnlinkedReferences && <UnlinkedMentionsPanel pageId={currentPagePath} />}
       <ConflictDialog
         open={showConflict}
         onKeepMine={() => setShowConflict(false)}
