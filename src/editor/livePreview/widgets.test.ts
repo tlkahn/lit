@@ -29,6 +29,10 @@ vi.mock("./mermaid", () => ({
   getMermaidCached: vi.fn(() => undefined),
 }));
 
+vi.mock("./lightbox", () => ({
+  showMediaLightbox: vi.fn(),
+}));
+
 describe("ImageWidget", () => {
   it("toDOM returns an img element with correct src and alt", () => {
     const widget = new ImageWidget("photo.png", "A photo");
@@ -84,7 +88,64 @@ describe("ImageWidget", () => {
 
   it("ignoreEvent returns false to allow click-to-edit", () => {
     const widget = new ImageWidget("x.png", "x");
-    expect(widget.ignoreEvent()).toBe(false);
+    expect(widget.ignoreEvent(new MouseEvent("mousedown"))).toBe(false);
+  });
+
+  describe("thumbnail mode", () => {
+    it("toDOM returns container div with cm-preview-image-thumbnail class", () => {
+      const widget = new ImageWidget("photo.png", "A photo", true);
+      const el = widget.toDOM();
+      expect(el.tagName).toBe("DIV");
+      expect(el.className).toBe("cm-preview-image-thumbnail");
+    });
+
+    it("img inside has correct src and alt", () => {
+      const widget = new ImageWidget("photo.png", "A photo", true);
+      const el = widget.toDOM();
+      const img = el.querySelector("img")!;
+      expect(img).not.toBeNull();
+      expect(img.src).toContain("photo.png");
+      expect(img.alt).toBe("A photo");
+    });
+
+    it("estimatedHeight returns 128 (120px maxHeight + 8px padding)", () => {
+      const widget = new ImageWidget("x.png", "x", true);
+      expect(widget.estimatedHeight).toBe(128);
+    });
+
+    it("ignoreEvent returns true for mousedown", () => {
+      const widget = new ImageWidget("x.png", "x", true);
+      expect(widget.ignoreEvent(new MouseEvent("mousedown"))).toBe(true);
+    });
+
+    it("ignoreEvent returns false for other events", () => {
+      const widget = new ImageWidget("x.png", "x", true);
+      expect(widget.ignoreEvent(new MouseEvent("click"))).toBe(false);
+    });
+
+    it("eq returns false when thumbnail flag differs", () => {
+      const a = new ImageWidget("a.png", "alt", true);
+      const b = new ImageWidget("a.png", "alt", false);
+      expect(a.eq(b)).toBe(false);
+    });
+
+    it("updateDOM updates img src within container", () => {
+      const a = new ImageWidget("old.png", "old", true);
+      const dom = a.toDOM();
+      const b = new ImageWidget("new.png", "new", true);
+      expect(b.updateDOM(dom)).toBe(true);
+      const img = dom.querySelector("img")!;
+      expect(img.src).toContain("new.png");
+      expect(img.alt).toBe("new");
+    });
+  });
+
+  it("non-thumbnail: backward compatible (no third arg)", () => {
+    const widget = new ImageWidget("img.jpg", "alt");
+    expect(widget.thumbnail).toBe(false);
+    const el = widget.toDOM();
+    expect(el.tagName).toBe("IMG");
+    expect(widget.estimatedHeight).toBe(200);
   });
 });
 
@@ -670,5 +731,34 @@ describe("MermaidWidget", () => {
   it("ignoreEvent returns true", () => {
     const widget = new MermaidWidget("graph LR; A-->B", "default");
     expect(widget.ignoreEvent()).toBe(true);
+  });
+
+  describe("thumbnail mode", () => {
+    it("toDOM adds cm-preview-mermaid--thumbnail class", () => {
+      vi.mocked(getMermaidCached).mockReturnValue("<svg>ok</svg>");
+      const widget = new MermaidWidget("graph LR; A-->B", "default", true);
+      const el = widget.toDOM();
+      expect(el.classList.contains("cm-preview-mermaid--thumbnail")).toBe(true);
+      expect(el.classList.contains("cm-preview-mermaid")).toBe(true);
+    });
+
+    it("estimatedHeight returns 136 (120px maxHeight + 16px padding)", () => {
+      const widget = new MermaidWidget("graph LR; A-->B", "default", true);
+      expect(widget.estimatedHeight).toBe(136);
+    });
+
+    it("eq returns false when thumbnail flag differs", () => {
+      const a = new MermaidWidget("graph LR; A-->B", "default", true);
+      const b = new MermaidWidget("graph LR; A-->B", "default", false);
+      expect(a.eq(b)).toBe(false);
+    });
+
+    it("non-thumbnail: backward compatible (no third arg)", () => {
+      const widget = new MermaidWidget("graph LR; A-->B", "default");
+      expect(widget.thumbnail).toBe(false);
+      expect(widget.estimatedHeight).toBe(200);
+      const el = widget.toDOM();
+      expect(el.classList.contains("cm-preview-mermaid--thumbnail")).toBe(false);
+    });
   });
 });

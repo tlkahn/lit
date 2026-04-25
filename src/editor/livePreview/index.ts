@@ -19,6 +19,7 @@ import { openUrl as defaultOpenUrl } from "@tauri-apps/plugin-opener";
 
 export { frontmatterFacet } from "./crossref";
 export { noteDirFacet } from "./citeproc";
+export { mediaThumbnailsFacet } from "./mediaThumbnails";
 
 export interface LivePreviewConfig {
   openUrl?: (url: string) => void;

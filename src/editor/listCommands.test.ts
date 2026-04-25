@@ -22,6 +22,7 @@ function makeView(doc: string, cursorPos: number): EditorView {
     foldCompartment: new Compartment(),
     crossrefCompartment: new Compartment(),
     noteDirCompartment: new Compartment(),
+    mediaThumbnailsCompartment: new Compartment(),
   };
   const state = EditorState.create({
     doc,

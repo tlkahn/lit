@@ -39,6 +39,16 @@ describe("crossref CSS variables in variables.css", () => {
   }
 });
 
+describe("thumbnail theme spec", () => {
+  it("livePreviewThemeSpec contains .cm-preview-image-thumbnail key", () => {
+    expect(livePreviewThemeSpec[".cm-preview-image-thumbnail"]).toBeDefined();
+  });
+
+  it("livePreviewThemeSpec contains .cm-preview-mermaid--thumbnail key", () => {
+    expect(livePreviewThemeSpec[".cm-preview-mermaid--thumbnail"]).toBeDefined();
+  });
+});
+
 describe("horizontal rule theme spec", () => {
   it("livePreviewThemeSpec contains .cm-preview-hr key", () => {
     expect(livePreviewThemeSpec[".cm-preview-hr"]).toBeDefined();

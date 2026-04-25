@@ -7,7 +7,7 @@ import { languages } from "@codemirror/language-data";
 import { GFM } from "@lezer/markdown";
 import { getThemeExtension, highlightExtension, searchTheme } from "./theme";
 import { search, searchKeymap } from "@codemirror/search";
-import { livePreviewExtension, frontmatterFacet, noteDirFacet } from "./livePreview";
+import { livePreviewExtension, frontmatterFacet, noteDirFacet, mediaThumbnailsFacet } from "./livePreview";
 import { foldExtension, type FoldConfig } from "./fold";
 import { jumpHistoryExtension } from "./jumpHistory";
 import { WikiLink } from "./markdown/wikilink";
@@ -23,8 +23,10 @@ export interface ExtensionConfig {
   foldConfig?: FoldConfig;
   crossrefCompartment: Compartment;
   noteDirCompartment: Compartment;
+  mediaThumbnailsCompartment: Compartment;
   frontmatter?: Record<string, unknown>;
   noteDir?: string;
+  mediaThumbnails?: boolean;
   keymapBindings?: import("@codemirror/view").KeyBinding[];
   onChange?: (content: string) => void;
   openUrl?: (url: string) => void;
@@ -43,6 +45,7 @@ export function createExtensions(config: ExtensionConfig): Extension[] {
     livePreviewExtension({ openUrl: config.openUrl, resolveImageSrc: config.resolveImageSrc, navigateToPage: config.navigateToPage }),
     config.crossrefCompartment.of(frontmatterFacet.of(config.frontmatter ?? {})),
     config.noteDirCompartment.of(noteDirFacet.of(config.noteDir ?? "")),
+    config.mediaThumbnailsCompartment.of(mediaThumbnailsFacet.of(config.mediaThumbnails ?? true)),
     config.foldCompartment.of(foldExtension(config.foldConfig)),
     history(),
     search(),

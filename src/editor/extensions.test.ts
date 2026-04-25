@@ -16,6 +16,7 @@ import {
 } from "@codemirror/search";
 import { createExtensions } from "./extensions";
 import { livePreviewPlugin } from "./livePreview/plugin";
+import { mediaThumbnailsFacet } from "./livePreview";
 
 vi.mock("katex", () => ({
   default: {
@@ -35,6 +36,7 @@ function makeConfig(overrides?: { onChange?: (content: string) => void }) {
     foldCompartment: new Compartment(),
     crossrefCompartment: new Compartment(),
     noteDirCompartment: new Compartment(),
+    mediaThumbnailsCompartment: new Compartment(),
     ...overrides,
   };
 }
@@ -215,6 +217,12 @@ describe("createExtensions", () => {
     const names: string[] = [];
     tree.iterate({ enter: (node) => { names.push(node.name); } });
     expect(names).toContain("InlineComment");
+  });
+
+  it("mediaThumbnailsFacet defaults to true in created state", () => {
+    const exts = createExtensions(makeConfig());
+    const state = EditorState.create({ doc: "", extensions: exts });
+    expect(state.facet(mediaThumbnailsFacet)).toBe(true);
   });
 
   it("parses BlockComment nodes", () => {

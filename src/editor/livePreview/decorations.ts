@@ -4,6 +4,7 @@ import { syntaxTree } from "@codemirror/language";
 import { isCursorOnLine, isCursorInRange } from "./proximity";
 import { ImageWidget, CalloutHeaderWidget, InlineMathWidget, DisplayMathWidget, EditableTableWidget, MermaidWidget, HorizontalRuleWidget } from "./widgets";
 import { imageResolverFacet } from "./imageResolver";
+import { mediaThumbnailsFacet } from "./mediaThumbnails";
 import { parseCalloutType, calloutFoldField } from "./callout";
 import { perfMark, perfMeasure } from "./perf";
 
@@ -193,10 +194,11 @@ function addImageDecos(
 
   if (src) {
     const resolve = state.facet(imageResolverFacet);
+    const thumbnail = state.facet(mediaThumbnailsFacet);
     decos.push({
       from,
       to,
-      deco: Decoration.replace({ widget: new ImageWidget(resolve(src), alt) }),
+      deco: Decoration.replace({ widget: new ImageWidget(resolve(src), alt, thumbnail) }),
     });
   }
 }
@@ -562,10 +564,11 @@ function addMermaidBlockReplacement(
 
   const source = state.doc.sliceString(codeText.from, codeText.to);
   const theme = document.documentElement.classList.contains("dark") ? "dark" : "default";
+  const thumbnail = state.facet(mediaThumbnailsFacet);
   decos.push({
     from,
     to,
-    deco: Decoration.replace({ widget: new MermaidWidget(source, theme) }),
+    deco: Decoration.replace({ widget: new MermaidWidget(source, theme, thumbnail) }),
   });
 }
 

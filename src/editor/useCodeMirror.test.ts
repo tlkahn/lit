@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { openSearchPanel, closeSearchPanel } from "@codemirror/search";
 import { useCodeMirror } from "./useCodeMirror";
+import { usePreferencesStore } from "../stores/preferences";
+import { mediaThumbnailsFacet } from "./livePreview";
 
 function makeContainer() {
   const div = document.createElement("div");
@@ -187,6 +189,23 @@ describe("useCodeMirror", () => {
 
     act(() => { closeSearchPanel(view); });
     expect(container.ref.current.querySelector(".cm-search")).toBeNull();
+  });
+
+  it("reconfigures mediaThumbnails compartment when preference changes", () => {
+    const { result } = renderHook(() =>
+      useCodeMirror({
+        containerRef: container.ref,
+        doc: "hello",
+      }),
+    );
+    const view = result.current.view!;
+    expect(view.state.facet(mediaThumbnailsFacet)).toBe(true);
+
+    act(() => {
+      usePreferencesStore.setState({ mediaThumbnails: false });
+    });
+
+    expect(view.state.facet(mediaThumbnailsFacet)).toBe(false);
   });
 
   it("reconfigures theme when dark class changes on document element", () => {

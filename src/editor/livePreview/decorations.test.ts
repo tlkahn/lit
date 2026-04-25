@@ -8,6 +8,8 @@ import { WikiLink } from "../markdown/wikilink";
 import { Math as MathExt } from "../markdown/math";
 import { Comment as CommentExt } from "../markdown/comment";
 import { calloutFoldField } from "./callout";
+import { mediaThumbnailsFacet } from "./mediaThumbnails";
+import { ImageWidget, MermaidWidget } from "./widgets";
 
 vi.mock("katex", () => ({
   default: {
@@ -700,6 +702,91 @@ describe("buildDecorations — inline comments", () => {
     const mark = decos.find((d) => d.type === "mark" && d.from === 7 && d.to === 18);
     expect(mark).toBeDefined();
     expect(mark!.class).toBe("cm-preview-comment");
+    view.destroy();
+  });
+});
+
+function makeViewWithFacet(doc: string, cursor: number, thumbnail: boolean): EditorView {
+  const state = EditorState.create({
+    doc,
+    selection: { anchor: cursor },
+    extensions: [
+      markdown({ extensions: [GFM, WikiLink, MathExt, CommentExt] }),
+      calloutFoldField,
+      mediaThumbnailsFacet.of(thumbnail),
+    ],
+  });
+  return new EditorView({ state, parent: document.createElement("div") });
+}
+
+describe("buildDecorations — image thumbnail facet", () => {
+  it("creates ImageWidget with thumbnail=true when facet is true", () => {
+    const doc = "![alt](img.png)\n\nother";
+    const view = makeViewWithFacet(doc, doc.length - 1, true);
+    const decoSet = buildDecorations(view);
+    const iter = decoSet.iter();
+    let found = false;
+    while (iter.value) {
+      if (iter.value.spec.widget instanceof ImageWidget) {
+        expect(iter.value.spec.widget.thumbnail).toBe(true);
+        found = true;
+      }
+      iter.next();
+    }
+    expect(found).toBe(true);
+    view.destroy();
+  });
+
+  it("creates ImageWidget with thumbnail=false when facet is false", () => {
+    const doc = "![alt](img.png)\n\nother";
+    const view = makeViewWithFacet(doc, doc.length - 1, false);
+    const decoSet = buildDecorations(view);
+    const iter = decoSet.iter();
+    let found = false;
+    while (iter.value) {
+      if (iter.value.spec.widget instanceof ImageWidget) {
+        expect(iter.value.spec.widget.thumbnail).toBe(false);
+        found = true;
+      }
+      iter.next();
+    }
+    expect(found).toBe(true);
+    view.destroy();
+  });
+});
+
+describe("buildBlockReplacements — mermaid thumbnail facet", () => {
+  it("creates MermaidWidget with thumbnail=true when facet is true", () => {
+    const doc = "```mermaid\ngraph LR; A-->B\n```\n\nother";
+    const view = makeViewWithFacet(doc, doc.length - 1, true);
+    const blockState = buildBlockReplacements(view.state);
+    const iter = blockState.decos.iter();
+    let found = false;
+    while (iter.value) {
+      if (iter.value.spec.widget instanceof MermaidWidget) {
+        expect(iter.value.spec.widget.thumbnail).toBe(true);
+        found = true;
+      }
+      iter.next();
+    }
+    expect(found).toBe(true);
+    view.destroy();
+  });
+
+  it("creates MermaidWidget with thumbnail=false when facet is false", () => {
+    const doc = "```mermaid\ngraph LR; A-->B\n```\n\nother";
+    const view = makeViewWithFacet(doc, doc.length - 1, false);
+    const blockState = buildBlockReplacements(view.state);
+    const iter = blockState.decos.iter();
+    let found = false;
+    while (iter.value) {
+      if (iter.value.spec.widget instanceof MermaidWidget) {
+        expect(iter.value.spec.widget.thumbnail).toBe(false);
+        found = true;
+      }
+      iter.next();
+    }
+    expect(found).toBe(true);
     view.destroy();
   });
 });

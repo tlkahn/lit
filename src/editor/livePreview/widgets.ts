@@ -2,6 +2,7 @@ import { type EditorView, WidgetType } from "@codemirror/view";
 import { getCalloutIcon, toggleCalloutEffect } from "./callout";
 import { parseTable, renderInlineMarkdown, serializeTable, type Alignment, type ParsedTable } from "./table";
 import { renderMermaid, getMermaidCached } from "./mermaid";
+import { showMediaLightbox } from "./lightbox";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 
@@ -11,11 +12,25 @@ export class ImageWidget extends WidgetType {
   constructor(
     readonly src: string,
     readonly alt: string,
+    readonly thumbnail: boolean = false,
   ) {
     super();
   }
 
   toDOM(): HTMLElement {
+    if (this.thumbnail) {
+      const container = document.createElement("div");
+      container.className = "cm-preview-image-thumbnail";
+      const img = document.createElement("img");
+      img.src = this.src;
+      img.alt = this.alt;
+      container.appendChild(img);
+      container.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        showMediaLightbox({ type: "image", src: this.src });
+      });
+      return container;
+    }
     const img = document.createElement("img");
     img.className = "cm-preview-image";
     img.src = this.src;
@@ -27,6 +42,13 @@ export class ImageWidget extends WidgetType {
   }
 
   updateDOM(dom: HTMLElement): boolean {
+    if (this.thumbnail) {
+      const img = dom.querySelector("img");
+      if (!img) return false;
+      img.src = this.src;
+      img.alt = this.alt;
+      return true;
+    }
     const img = dom as HTMLImageElement;
     img.src = this.src;
     img.alt = this.alt;
@@ -34,15 +56,15 @@ export class ImageWidget extends WidgetType {
   }
 
   eq(other: ImageWidget): boolean {
-    return this.src === other.src && this.alt === other.alt;
+    return this.src === other.src && this.alt === other.alt && this.thumbnail === other.thumbnail;
   }
 
-  ignoreEvent(): boolean {
-    return false;
+  ignoreEvent(event: Event): boolean {
+    return this.thumbnail ? event.type === "mousedown" : false;
   }
 
   get estimatedHeight(): number {
-    return 200;
+    return this.thumbnail ? 128 : 200;
   }
 }
 
@@ -394,13 +416,26 @@ export class MermaidWidget extends WidgetType {
   constructor(
     readonly source: string,
     readonly theme: "default" | "dark",
+    readonly thumbnail: boolean = false,
   ) {
     super();
   }
 
   toDOM(): HTMLElement {
     const container = document.createElement("div");
-    container.className = "cm-preview-mermaid";
+    container.className = this.thumbnail
+      ? "cm-preview-mermaid cm-preview-mermaid--thumbnail"
+      : "cm-preview-mermaid";
+
+    if (this.thumbnail) {
+      container.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        const svg = container.querySelector("svg");
+        if (svg) {
+          showMediaLightbox({ type: "svg", svg: svg.outerHTML });
+        }
+      });
+    }
 
     const cached = getMermaidCached(this.source, this.theme);
     if (cached) {
@@ -431,6 +466,12 @@ export class MermaidWidget extends WidgetType {
   }
 
   updateDOM(dom: HTMLElement): boolean {
+    if (this.thumbnail) {
+      dom.classList.add("cm-preview-mermaid--thumbnail");
+    } else {
+      dom.classList.remove("cm-preview-mermaid--thumbnail");
+    }
+
     const cached = getMermaidCached(this.source, this.theme);
     if (cached) {
       dom.innerHTML = cached;
@@ -461,7 +502,7 @@ export class MermaidWidget extends WidgetType {
   }
 
   eq(other: MermaidWidget): boolean {
-    return this.source === other.source && this.theme === other.theme;
+    return this.source === other.source && this.theme === other.theme && this.thumbnail === other.thumbnail;
   }
 
   ignoreEvent(): boolean {
@@ -469,7 +510,7 @@ export class MermaidWidget extends WidgetType {
   }
 
   get estimatedHeight(): number {
-    return 200;
+    return this.thumbnail ? 136 : 200;
   }
 }
 

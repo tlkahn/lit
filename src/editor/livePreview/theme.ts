@@ -203,6 +203,32 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
     outlineOffset: "-2px",
   },
 
+  // Image thumbnails
+  ".cm-preview-image-thumbnail": {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    maxHeight: "120px",
+    overflow: "hidden",
+    cursor: "zoom-in",
+    padding: "4px 0",
+  },
+  ".cm-preview-image-thumbnail img": {
+    maxHeight: "112px",
+    maxWidth: "100%",
+    objectFit: "contain",
+  },
+
+  // Mermaid thumbnails
+  ".cm-preview-mermaid--thumbnail": {
+    maxHeight: "120px",
+    overflow: "hidden",
+    cursor: "zoom-in",
+  },
+  ".cm-preview-mermaid--thumbnail svg": {
+    maxHeight: "112px",
+  },
+
   // Mermaid diagrams
   ".cm-preview-mermaid": {
     textAlign: "center",

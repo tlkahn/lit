@@ -14,6 +14,7 @@ export interface PreferencesState {
   crossrefEnabled: boolean;
   crossrefLiveRendering: boolean;
   crossrefEnableCiteproc: boolean;
+  mediaThumbnails: boolean;
   experimentalUnlinkedReferences: boolean;
   loaded: boolean;
   loadPreferences: () => Promise<void>;
@@ -45,6 +46,7 @@ function mapPreferences(prefs: Preferences) {
     crossrefEnabled: (prefs["crossref.enabled"] as boolean) ?? true,
     crossrefLiveRendering: (prefs["crossref.liveRendering"] as boolean) ?? true,
     crossrefEnableCiteproc: (prefs["crossref.enableCiteproc"] as boolean) ?? true,
+    mediaThumbnails: (prefs["editor.mediaThumbnails"] as boolean) ?? true,
     experimentalUnlinkedReferences: (prefs["experimental.unlinkedReferences"] as boolean) ?? false,
   };
 }
@@ -58,6 +60,7 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   crossrefEnabled: true,
   crossrefLiveRendering: true,
   crossrefEnableCiteproc: true,
+  mediaThumbnails: true,
   experimentalUnlinkedReferences: false,
   loaded: false,
 

@@ -5,7 +5,7 @@ import { defaultKeymap, historyKeymap } from "@codemirror/commands";
 import { createExtensions } from "./extensions";
 import { getThemeExtension } from "./theme";
 import { foldExtension } from "./fold";
-import { frontmatterFacet, noteDirFacet } from "./livePreview";
+import { frontmatterFacet, noteDirFacet, mediaThumbnailsFacet } from "./livePreview";
 import { docReplaced } from "./jumpHistory";
 import { usePreferencesStore } from "../stores/preferences";
 
@@ -32,6 +32,7 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
   const foldCompartment = useRef(new Compartment());
   const crossrefCompartment = useRef(new Compartment());
   const noteDirCompartment = useRef(new Compartment());
+  const mediaThumbnailsCompartment = useRef(new Compartment());
   const suppressOnChange = useRef(false);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
@@ -48,7 +49,7 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
 
     const isDark = document.documentElement.classList.contains("dark");
     const theme = isDark ? "dark" : "light";
-    const { foldingEnabled, foldingShowControls } = usePreferencesStore.getState();
+    const { foldingEnabled, foldingShowControls, mediaThumbnails } = usePreferencesStore.getState();
 
     const extensions = createExtensions({
       theme,
@@ -57,6 +58,8 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
       foldCompartment: foldCompartment.current,
       crossrefCompartment: crossrefCompartment.current,
       noteDirCompartment: noteDirCompartment.current,
+      mediaThumbnailsCompartment: mediaThumbnailsCompartment.current,
+      mediaThumbnails,
       foldConfig: { enabled: foldingEnabled, showControls: foldingShowControls },
       frontmatter,
       noteDir,
@@ -133,6 +136,21 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
       prev = next;
       v.dispatch({
         effects: foldCompartment.current.reconfigure(foldExtension(next)),
+      });
+    });
+  }, [view]);
+
+  useEffect(() => {
+    const v = viewRef.current;
+    if (!v) return;
+    let prev = usePreferencesStore.getState().mediaThumbnails;
+    return usePreferencesStore.subscribe((s) => {
+      if (s.mediaThumbnails === prev) return;
+      prev = s.mediaThumbnails;
+      v.dispatch({
+        effects: mediaThumbnailsCompartment.current.reconfigure(
+          mediaThumbnailsFacet.of(s.mediaThumbnails),
+        ),
       });
     });
   }, [view]);
