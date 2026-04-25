@@ -2,6 +2,7 @@ pub mod bib;
 pub mod cli;
 mod commands;
 pub mod external_editor;
+pub mod graph;
 mod menu;
 pub mod preferences;
 pub mod workspace;

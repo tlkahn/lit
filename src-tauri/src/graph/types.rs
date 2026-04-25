@@ -1,0 +1,102 @@
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ParsedNode {
+    pub id: String,
+    pub title: String,
+    pub tags: Vec<String>,
+    pub frontmatter: serde_json::Value,
+    pub first_paragraph: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SearchResult {
+    pub id: String,
+    pub title: String,
+    pub score: f64,
+    pub excerpt: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct Stats {
+    pub nodes: i64,
+    pub stubs: i64,
+    pub edges: i64,
+    pub tags: i64,
+}
+
+pub fn extract_aliases(fm: &serde_json::Value) -> Vec<String> {
+    match fm.get("aliases") {
+        Some(serde_json::Value::Array(arr)) => {
+            arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()
+        }
+        Some(serde_json::Value::String(s)) => vec![s.clone()],
+        _ => vec![],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parsed_node_serializes_to_json() {
+        let node = ParsedNode {
+            id: "People/Alice.md".into(),
+            title: "Alice".into(),
+            tags: vec!["person".into()],
+            frontmatter: json!({"title": "Alice"}),
+            first_paragraph: "First paragraph.".into(),
+        };
+        let value = serde_json::to_value(&node).expect("serialize");
+        assert_eq!(value["id"], "People/Alice.md");
+        assert_eq!(value["title"], "Alice");
+        assert_eq!(value["tags"], json!(["person"]));
+        assert!(value["frontmatter"].is_object());
+    }
+
+    #[test]
+    fn search_result_round_trips() {
+        let result = SearchResult {
+            id: "a.md".into(),
+            title: "A".into(),
+            score: -2.5,
+            excerpt: "some [match]".into(),
+        };
+        let json_str = serde_json::to_string(&result).expect("serialize");
+        let back: SearchResult = serde_json::from_str(&json_str).expect("deserialize");
+        assert_eq!(back, result);
+    }
+
+    #[test]
+    fn stats_equality() {
+        let a = Stats { nodes: 1, stubs: 2, edges: 3, tags: 4 };
+        let b = Stats { nodes: 1, stubs: 2, edges: 3, tags: 4 };
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn extract_aliases_from_array() {
+        let fm = json!({"aliases": ["Alpha", "Alfa"]});
+        assert_eq!(extract_aliases(&fm), vec!["Alpha", "Alfa"]);
+    }
+
+    #[test]
+    fn extract_aliases_missing() {
+        let fm = json!({});
+        assert!(extract_aliases(&fm).is_empty());
+    }
+
+    #[test]
+    fn extract_aliases_single_string() {
+        let fm = json!({"aliases": "Solo"});
+        assert_eq!(extract_aliases(&fm), vec!["Solo"]);
+    }
+
+    #[test]
+    fn extract_aliases_non_string_items() {
+        let fm = json!({"aliases": ["Good", 42, null, "Also Good"]});
+        assert_eq!(extract_aliases(&fm), vec!["Good", "Also Good"]);
+    }
+}

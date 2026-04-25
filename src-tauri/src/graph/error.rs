@@ -1,0 +1,58 @@
+use std::path::PathBuf;
+
+#[derive(Debug, thiserror::Error)]
+pub enum GraphError {
+    #[error("database error: {message}")]
+    Database { message: String },
+
+    #[error("I/O error at {path}: {source}")]
+    Io {
+        source: std::io::Error,
+        path: PathBuf,
+    },
+}
+
+impl From<rusqlite::Error> for GraphError {
+    fn from(e: rusqlite::Error) -> Self {
+        GraphError::Database {
+            message: e.to_string(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn database_error_displays_message() {
+        let err = GraphError::Database {
+            message: "table not found".into(),
+        };
+        assert_eq!(err.to_string(), "database error: table not found");
+    }
+
+    #[test]
+    fn from_rusqlite_error() {
+        let sqlite_err = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(1),
+            Some("test".into()),
+        );
+        let err: GraphError = sqlite_err.into();
+        match &err {
+            GraphError::Database { message } => assert!(message.contains("test")),
+            _ => panic!("expected Database variant"),
+        }
+    }
+
+    #[test]
+    fn io_error_displays_path() {
+        let err = GraphError::Io {
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "gone"),
+            path: PathBuf::from("/some/file.md"),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("/some/file.md"));
+        assert!(msg.contains("gone"));
+    }
+}

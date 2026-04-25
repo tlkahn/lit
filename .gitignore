@@ -37,6 +37,9 @@ src-tauri/Frameworks/
 # Documentation (separate repo)
 doc/
 
+# Lit graph index
+.lit/
+
 # Claude
 .claude
 
