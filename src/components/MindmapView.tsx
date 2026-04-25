@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState, useEffect, useCallback } from "react";
 import { hierarchy, tree as d3tree } from "d3-hierarchy";
 import { linkHorizontal } from "d3-shape";
 import type { HeadingNode } from "../lib/headingTree";
@@ -21,6 +21,17 @@ const FONT_SIZES = [16, 15, 14, 13, 12, 11];
 export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: MindmapViewProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [contextMenu, setContextMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null);
+
+  const dismissContextMenu = useCallback(() => setContextMenu(null), []);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const onPointerDown = () => dismissContextMenu();
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [contextMenu, dismissContextMenu]);
 
   const allNodes = useMemo(() => {
     const nodes: HeadingNode[] = [];
@@ -103,7 +114,7 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: Min
     : null;
 
   return (
-    <div className="w-full h-full overflow-hidden relative">
+    <div ref={containerRef} className="w-full h-full overflow-hidden relative">
       <svg
         ref={svgRef}
         className={`w-full h-full ${dragState.isDragging ? "cursor-grabbing" : ""}`}
@@ -113,6 +124,13 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: Min
         tabIndex={0}
         data-mindmap-svg
       >
+        <defs>
+          {FONT_SIZES.map((fs, i) => (
+            <clipPath key={i} id={`node-clip-${i}`}>
+              <rect x={-4} y={-fs / 2 - 4} width={NODE_WIDTH} height={fs + 8} rx={4} />
+            </clipPath>
+          ))}
+        </defs>
         <g ref={gRef}>
           {links.map((l, i) => (
             <path
@@ -152,11 +170,13 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: Min
                 onClick={() => {
                   if (!isEditing && !dragOccurredRef.current) onNodeClick(d.data);
                 }}
-                onDoubleClick={(e) => {
-                  e.stopPropagation();
-                  if (!dragOccurredRef.current) {
-                    setEditingId(d.data.id);
-                    setEditText(d.data.text);
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  if (!dragState.isDragging) {
+                    const rect = containerRef.current?.getBoundingClientRect();
+                    const ox = rect?.left ?? 0;
+                    const oy = rect?.top ?? 0;
+                    setContextMenu({ nodeId: d.data.id, x: e.clientX - ox, y: e.clientY - oy });
                   }
                 }}
                 onPointerDown={(e) => handlers.onPointerDown(d.data.id, e)}
@@ -174,36 +194,14 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: Min
                   }
                   strokeWidth={isDropTarget ? 2 : 1}
                 />
-                {isEditing ? (
-                  <foreignObject x={-2} y={-fontSize / 2 - 2} width={NODE_WIDTH - 4} height={fontSize + 4}>
-                    <input
-                      type="text"
-                      value={editText}
-                      onChange={(e) => setEditText(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          onNodeRename(d.data, editText);
-                          setEditingId(null);
-                        } else if (e.key === "Escape") {
-                          setEditingId(null);
-                        }
-                      }}
-                      onBlur={() => setEditingId(null)}
-                      autoFocus
-                      className="w-full h-full bg-transparent border-none outline-none text-neutral-900 dark:text-neutral-100"
-                      style={{ fontSize }}
-                      data-mindmap-edit
-                    />
-                  </foreignObject>
-                ) : (
-                  <text
-                    dy="0.35em"
-                    fontSize={fontSize}
-                    className="fill-neutral-900 dark:fill-neutral-100 select-none"
-                  >
-                    {d.data.text}
-                  </text>
-                )}
+                <text
+                  dy="0.35em"
+                  fontSize={fontSize}
+                  clipPath={`url(#node-clip-${Math.min(d.data.level - 1, FONT_SIZES.length - 1)})`}
+                  className="fill-neutral-900 dark:fill-neutral-100 select-none"
+                >
+                  {d.data.text}
+                </text>
               </g>
             );
           })}
@@ -252,6 +250,63 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: Min
           })()}
         </g>
       </svg>
+      {editingId && (() => {
+        const editNode = descendants.find(d => d.data.id === editingId);
+        if (!editNode) return null;
+        const fontSize = FONT_SIZES[Math.min(editNode.data.level - 1, FONT_SIZES.length - 1)]!;
+        const t = transformRef.current;
+        const left = editNode.y * t.k + t.x;
+        const top = (editNode.x - fontSize / 2 - 4) * t.k + t.y;
+        const width = NODE_WIDTH * t.k;
+        const height = (fontSize + 8) * t.k;
+        return (
+          <input
+            type="text"
+            value={editText}
+            onChange={(e) => setEditText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                onNodeRename(editNode.data, editText);
+                setEditingId(null);
+              } else if (e.key === "Escape") {
+                setEditingId(null);
+              }
+            }}
+            onBlur={() => setEditingId(null)}
+            autoFocus
+            className="absolute bg-white dark:bg-neutral-800 border border-blue-500 dark:border-blue-400 rounded px-1 outline-none text-neutral-900 dark:text-neutral-100 z-40"
+            style={{ left, top, width, height, fontSize: fontSize * t.k, lineHeight: `${height}px` }}
+            data-mindmap-edit
+          />
+        );
+      })()}
+      {contextMenu && (() => {
+        const menuNode = allNodes.find(n => n.id === contextMenu.nodeId);
+        if (!menuNode) return null;
+        return (
+          <div
+            data-mindmap-context-menu
+            className="absolute z-50 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded shadow-lg py-1 min-w-[120px]"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+            onPointerDown={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") dismissContextMenu();
+            }}
+          >
+            <button
+              data-mindmap-context-edit
+              className="w-full text-left px-3 py-1.5 text-sm text-neutral-800 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-700"
+              onClick={() => {
+                setEditingId(menuNode.id);
+                setEditText(menuNode.text);
+                setContextMenu(null);
+              }}
+            >
+              Edit
+            </button>
+          </div>
+        );
+      })()}
       <div className="absolute bottom-4 right-4 flex gap-1">
         <button
           data-mindmap-zoom-in

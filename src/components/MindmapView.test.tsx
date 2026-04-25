@@ -57,15 +57,28 @@ describe("MindmapView", () => {
     expect(props.onNodeClick).toHaveBeenCalledWith(tree.children[0]!.children[0]!);
   });
 
-  it("double-clicking a node shows a text input", async () => {
+  it("right-clicking a node shows context menu with Edit option", () => {
     const tree = makeTree("# A\n## B");
     const { container } = render(<MindmapView tree={tree} {...defaultProps()} />);
-    const user = userEvent.setup();
-    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`);
-    await user.dblClick(nodeB!);
+    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
+    fireEvent.contextMenu(nodeB);
+    const menu = container.querySelector("[data-mindmap-context-menu]");
+    expect(menu).toBeTruthy();
+    expect(menu!.textContent).toContain("Edit");
+  });
+
+  it("clicking Edit in context menu enters edit mode", () => {
+    const tree = makeTree("# A\n## B");
+    const { container } = render(<MindmapView tree={tree} {...defaultProps()} />);
+    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
+    fireEvent.contextMenu(nodeB);
+    const editItem = container.querySelector("[data-mindmap-context-edit]") as HTMLElement;
+    expect(editItem).toBeTruthy();
+    fireEvent.click(editItem);
     const input = container.querySelector("[data-mindmap-edit]") as HTMLInputElement;
     expect(input).toBeTruthy();
     expect(input.value).toBe("B");
+    expect(container.querySelector("[data-mindmap-context-menu]")).toBeNull();
   });
 
   it("pressing Enter in edit mode calls onNodeRename with new text", async () => {
@@ -73,25 +86,86 @@ describe("MindmapView", () => {
     const props = defaultProps();
     const { container } = render(<MindmapView tree={tree} {...props} />);
     const user = userEvent.setup();
-    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`);
-    await user.dblClick(nodeB!);
+    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
+    fireEvent.contextMenu(nodeB);
+    fireEvent.click(container.querySelector("[data-mindmap-context-edit]")!);
     const input = container.querySelector("[data-mindmap-edit]") as HTMLInputElement;
     await user.clear(input);
     await user.type(input, "New B{Enter}");
     expect(props.onNodeRename).toHaveBeenCalledWith(tree.children[0]!.children[0]!, "New B");
   });
 
-  it("pressing Escape cancels edit mode without calling onNodeRename", async () => {
+  it("pressing Escape in edit mode cancels without calling onNodeRename", async () => {
     const tree = makeTree("# A\n## B");
     const props = defaultProps();
     const { container } = render(<MindmapView tree={tree} {...props} />);
     const user = userEvent.setup();
-    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`);
-    await user.dblClick(nodeB!);
+    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
+    fireEvent.contextMenu(nodeB);
+    fireEvent.click(container.querySelector("[data-mindmap-context-edit]")!);
     const input = container.querySelector("[data-mindmap-edit]") as HTMLInputElement;
     await user.type(input, "changed{Escape}");
     expect(props.onNodeRename).not.toHaveBeenCalled();
     expect(container.querySelector("[data-mindmap-edit]")).toBeNull();
+  });
+
+  it("clicking outside the context menu dismisses it", () => {
+    const tree = makeTree("# A\n## B");
+    const { container } = render(<MindmapView tree={tree} {...defaultProps()} />);
+    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
+    fireEvent.contextMenu(nodeB);
+    expect(container.querySelector("[data-mindmap-context-menu]")).toBeTruthy();
+    fireEvent.pointerDown(container.querySelector("svg")!);
+    expect(container.querySelector("[data-mindmap-context-menu]")).toBeNull();
+  });
+
+  it("pressing Escape dismisses the context menu", () => {
+    const tree = makeTree("# A\n## B");
+    const { container } = render(<MindmapView tree={tree} {...defaultProps()} />);
+    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
+    fireEvent.contextMenu(nodeB);
+    expect(container.querySelector("[data-mindmap-context-menu]")).toBeTruthy();
+    fireEvent.keyDown(container.querySelector("[data-mindmap-context-menu]")!, { key: "Escape" });
+    expect(container.querySelector("[data-mindmap-context-menu]")).toBeNull();
+  });
+
+  it("double-clicking a node does NOT enter edit mode", async () => {
+    const tree = makeTree("# A\n## B");
+    const { container } = render(<MindmapView tree={tree} {...defaultProps()} />);
+    const user = userEvent.setup();
+    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
+    await user.dblClick(nodeB);
+    expect(container.querySelector("[data-mindmap-edit]")).toBeNull();
+  });
+
+  it("display text is clipped to node bounds via clipPath", () => {
+    const tree = makeTree("# A\n## B");
+    const { container } = render(<MindmapView tree={tree} {...defaultProps()} />);
+    const textEl = container.querySelector("[data-mindmap-node] text")!;
+    expect(textEl.getAttribute("clip-path")).toMatch(/url\(#node-clip-/);
+  });
+
+  it("edit input is rendered as HTML overlay, not inside SVG foreignObject", () => {
+    const tree = makeTree("# A\n## B");
+    const { container } = render(<MindmapView tree={tree} {...defaultProps()} />);
+    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
+    fireEvent.contextMenu(nodeB);
+    fireEvent.click(container.querySelector("[data-mindmap-context-edit]")!);
+    const input = container.querySelector("[data-mindmap-edit]") as HTMLInputElement;
+    expect(input).toBeTruthy();
+    expect(input.closest("svg")).toBeNull();
+    expect(input.closest("[class*='overflow-hidden']")).toBeTruthy();
+  });
+
+  it("context menu does not appear during drag", () => {
+    const tree = makeTree("# A\n## B\n## C");
+    const { container } = render(<MindmapView tree={tree} {...defaultProps()} />);
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
+    firePointer(nodeB, "pointerdown", { clientX: 0, clientY: 0 });
+    firePointer(svg, "pointermove", { clientX: 50, clientY: 50 });
+    fireEvent.contextMenu(nodeB);
+    expect(container.querySelector("[data-mindmap-context-menu]")).toBeNull();
   });
 });
 
