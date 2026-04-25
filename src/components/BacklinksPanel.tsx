@@ -2,6 +2,8 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getBacklinks, type BacklinkEntry } from "../lib/ipc";
 import { useWorkspaceStore } from "../stores/workspace";
+import { getCurrentEditorView } from "../lib/editorViewRef";
+import { globalJumpTracker } from "../editor/jumpTracker";
 
 function highlightWikilinks(text: string): (string | JSX.Element)[] {
   const parts: (string | JSX.Element)[] = [];
@@ -33,6 +35,18 @@ export function BacklinksPanel({ pageId }: { pageId: string }) {
   const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
   const pageIdRef = useRef(pageId);
   pageIdRef.current = pageId;
+
+  const recordDeparture = useCallback(() => {
+    const view = getCurrentEditorView();
+    const notePath = pageIdRef.current;
+    if (!view || !notePath) return;
+    const head = view.state.selection.main.head;
+    const line = view.state.doc.lineAt(head);
+    globalJumpTracker.recordJump(
+      { notePath, line: line.number, col: head - line.from },
+      { notePath: "", line: 0, col: 0 },
+    );
+  }, []);
 
   const fetchBacklinks = useCallback(async () => {
     try {
@@ -96,7 +110,10 @@ export function BacklinksPanel({ pageId }: { pageId: string }) {
                 <li key={`${entry.source_id}-${i}`} className="text-xs">
                   <button
                     className="font-medium text-interactive-accent hover:underline"
-                    onClick={() => selectPage(entry.source_id)}
+                    onClick={() => {
+                      recordDeparture();
+                      selectPage(entry.source_id);
+                    }}
                   >
                     {entry.source_title || entry.source_id}
                   </button>
@@ -104,9 +121,10 @@ export function BacklinksPanel({ pageId }: { pageId: string }) {
                     <p
                       data-testid={`backlink-context-${i}`}
                       className="mt-0.5 cursor-pointer text-text-muted hover:text-text-normal"
-                      onClick={() =>
-                        selectPageAtLine(entry.source_id, entry.source_line)
-                      }
+                      onClick={() => {
+                        recordDeparture();
+                        selectPageAtLine(entry.source_id, entry.source_line);
+                      }}
                     >
                       {highlightWikilinks(entry.context)}
                     </p>

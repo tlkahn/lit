@@ -4,6 +4,8 @@ import userEvent from "@testing-library/user-event";
 import { BacklinksPanel } from "./BacklinksPanel";
 import { mockInvoke, mockListen, emitMockEvent } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
+import { globalJumpTracker } from "../editor/jumpTracker";
+import { setCurrentEditorView } from "../lib/editorViewRef";
 import type { BacklinkEntry } from "../lib/ipc";
 
 function makeEntry(overrides: Partial<BacklinkEntry> = {}): BacklinkEntry {
@@ -77,7 +79,14 @@ describe("BacklinksPanel", () => {
   });
 
   // Cycle 7: Click navigation
-  it("navigates to source page on title click", async () => {
+  const fakeEditorView = {
+    state: {
+      selection: { main: { head: 10 } },
+      doc: { lineAt: () => ({ number: 3, from: 8 }) },
+    },
+  };
+
+  it("navigates to source page on title click and records jump", async () => {
     const selectPage = vi.fn();
     useWorkspaceStore.setState({ selectPage });
     mockInvoke((cmd) => {
@@ -86,6 +95,9 @@ describe("BacklinksPanel", () => {
       throw new Error(`Unknown command: ${cmd}`);
     });
 
+    setCurrentEditorView(fakeEditorView as never);
+    const spy = vi.spyOn(globalJumpTracker, "recordJump");
+
     render(<BacklinksPanel pageId="target.md" />);
 
     await waitFor(() => {
@@ -93,9 +105,15 @@ describe("BacklinksPanel", () => {
     });
     await userEvent.click(screen.getByText("Alpha"));
     expect(selectPage).toHaveBeenCalledWith("a.md");
+    expect(spy).toHaveBeenCalledWith(
+      { notePath: "target.md", line: 3, col: 2 },
+      { notePath: "", line: 0, col: 0 },
+    );
+    spy.mockRestore();
+    setCurrentEditorView(null);
   });
 
-  it("navigates to source page at line on context click", async () => {
+  it("navigates to source page at line on context click and records jump", async () => {
     const selectPageAtLine = vi.fn();
     useWorkspaceStore.setState({ selectPageAtLine });
     mockInvoke((cmd) => {
@@ -104,6 +122,9 @@ describe("BacklinksPanel", () => {
       throw new Error(`Unknown command: ${cmd}`);
     });
 
+    setCurrentEditorView(fakeEditorView as never);
+    const spy = vi.spyOn(globalJumpTracker, "recordJump");
+
     render(<BacklinksPanel pageId="target.md" />);
 
     await waitFor(() => {
@@ -111,6 +132,9 @@ describe("BacklinksPanel", () => {
     });
     await userEvent.click(screen.getByTestId("backlink-context-0"));
     expect(selectPageAtLine).toHaveBeenCalledWith("a.md", 7);
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+    setCurrentEditorView(null);
   });
 
   // Cycle 8: Collapse/expand toggle
