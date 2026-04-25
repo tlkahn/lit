@@ -65,6 +65,7 @@ beforeEach(() => {
       return { tags: ["test"] };
     }
     if (cmd === "get_backlinks") return [];
+    if (cmd === "get_keymaps") return [];
     throw new Error(`Unknown command: ${cmd}`);
   });
 });
@@ -573,9 +574,17 @@ describe("ContentArea scroll position", () => {
       expect(screen.getByTestId("editor").textContent).toContain("Some content");
     });
 
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
     act(() => {
       useWorkspaceStore.getState().selectPage(null);
     });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("selectPage(null)"),
+      expect.anything(),
+    );
+    warnSpy.mockRestore();
 
     await waitFor(() => {
       expect(useWorkspaceStore.getState().viewStates["Hello.md"]).toBeDefined();
@@ -683,6 +692,8 @@ describe("ContentArea mindmap toggle", () => {
       }
       if (cmd === "write_page") return null;
       if (cmd === "parse_raw_yaml") return {};
+      if (cmd === "get_backlinks") return [];
+      if (cmd === "get_keymaps") return [];
       throw new Error(`Unknown command: ${cmd}`);
     });
 

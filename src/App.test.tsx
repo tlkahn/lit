@@ -59,6 +59,12 @@ describe("App", () => {
           };
         case "get_keymaps":
           return [];
+        case "read_page":
+          return { meta: { title: "Test", relative_path: "test.md", frontmatter: {}, created_at: null, modified_at: null }, body: "", raw_yaml: "" };
+        case "get_backlinks":
+          return [];
+        case "parse_raw_yaml":
+          return {};
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -100,6 +106,8 @@ describe("App", () => {
           return samplePages;
         case "get_initial_workspace":
           return null;
+        case "get_keymaps":
+          return [];
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -193,6 +201,12 @@ describe("App", () => {
           };
         case "get_keymaps":
           return [];
+        case "read_page":
+          return { meta: { title: "Test", relative_path: "test.md", frontmatter: {}, created_at: null, modified_at: null }, body: "", raw_yaml: "" };
+        case "get_backlinks":
+          return [];
+        case "parse_raw_yaml":
+          return {};
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -265,6 +279,12 @@ describe("App", () => {
           };
         case "get_keymaps":
           return [];
+        case "read_page":
+          return { meta: { title: "Test", relative_path: "test.md", frontmatter: {}, created_at: null, modified_at: null }, body: "", raw_yaml: "" };
+        case "get_backlinks":
+          return [];
+        case "parse_raw_yaml":
+          return {};
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
