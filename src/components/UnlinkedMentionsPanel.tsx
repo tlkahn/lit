@@ -15,17 +15,21 @@ function highlightMention(context: string, matchedText: string): (string | JSX.E
 
 export function UnlinkedMentionsPanel({ pageId }: { pageId: string }) {
   const [entries, setEntries] = useState<UnlinkedMention[]>([]);
+  const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(false);
   const selectPage = useWorkspaceStore((s) => s.selectPage);
   const pageIdRef = useRef(pageId);
   pageIdRef.current = pageId;
 
   const fetchMentions = useCallback(async () => {
+    setLoading(true);
     try {
       const result = await getUnlinkedMentions(pageIdRef.current);
       setEntries(result);
     } catch {
       setEntries([]);
+    } finally {
+      setLoading(false);
     }
   }, []);
 
@@ -69,13 +73,27 @@ export function UnlinkedMentionsPanel({ pageId }: { pageId: string }) {
         {entries.length > 0
           ? `Unlinked References (${entries.length})`
           : "Unlinked References"}
+        {loading && (
+          <svg
+            data-testid="unlinked-spinner"
+            className="ml-1 h-3 w-3 animate-spin text-text-faint"
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+          >
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+        )}
       </button>
       {expanded && (
         <div className="mt-2 max-h-64 overflow-y-auto">
           {entries.length === 0 ? (
-            <p className="text-xs text-text-faint">
-              No unlinked mentions found
-            </p>
+            loading ? null : (
+              <p className="text-xs text-text-faint">
+                No unlinked mentions found
+              </p>
+            )
           ) : (
             <ul className="space-y-2">
               {entries.map((entry, i) => (

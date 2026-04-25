@@ -208,6 +208,149 @@ describe("UnlinkedMentionsPanel", () => {
     });
   });
 
+  // Cycle 11.1 — Spinner visible during initial fetch
+  it("shows spinner during initial fetch, hides after resolve", async () => {
+    let resolveIpc!: (value: UnlinkedMention[]) => void;
+    const ipcPromise = new Promise<UnlinkedMention[]>((r) => {
+      resolveIpc = r;
+    });
+
+    mockInvoke((cmd) => {
+      if (cmd === "get_unlinked_mentions") return ipcPromise;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<UnlinkedMentionsPanel pageId="target.md" />);
+
+    expect(screen.getByTestId("unlinked-spinner")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveIpc([]);
+    });
+
+    expect(screen.queryByTestId("unlinked-spinner")).not.toBeInTheDocument();
+  });
+
+  // Cycle 11.2 — Spinner visible during refetch on graph-updated
+  it("shows spinner during refetch on lit:graph-updated", async () => {
+    let callCount = 0;
+    let resolveSecond!: (value: UnlinkedMention[]) => void;
+
+    mockInvoke((cmd) => {
+      if (cmd === "get_unlinked_mentions") {
+        callCount++;
+        if (callCount === 1) return [makeMention({ source_title: "First" })];
+        return new Promise<UnlinkedMention[]>((r) => {
+          resolveSecond = r;
+        });
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    render(<UnlinkedMentionsPanel pageId="target.md" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Unlinked References (1)")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("unlinked-spinner")).not.toBeInTheDocument();
+
+    act(() => {
+      emitMockEvent("lit:graph-updated", {});
+    });
+
+    expect(screen.getByTestId("unlinked-spinner")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveSecond([makeMention({ source_title: "First" })]);
+    });
+
+    expect(screen.queryByTestId("unlinked-spinner")).not.toBeInTheDocument();
+  });
+
+  // Cycle 11.3 — Spinner visible on pageId change
+  it("shows spinner on pageId change", async () => {
+    let callCount = 0;
+    let resolveSecond!: (value: UnlinkedMention[]) => void;
+
+    mockInvoke((cmd) => {
+      if (cmd === "get_unlinked_mentions") {
+        callCount++;
+        if (callCount === 1) return [];
+        return new Promise<UnlinkedMention[]>((r) => {
+          resolveSecond = r;
+        });
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    const { rerender } = render(<UnlinkedMentionsPanel pageId="target.md" />);
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("unlinked-spinner")).not.toBeInTheDocument();
+    });
+
+    rerender(<UnlinkedMentionsPanel pageId="other.md" />);
+
+    expect(screen.getByTestId("unlinked-spinner")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveSecond([]);
+    });
+
+    expect(screen.queryByTestId("unlinked-spinner")).not.toBeInTheDocument();
+  });
+
+  // Cycle 11.4 — Spinner hides on fetch error
+  it("hides spinner on fetch error", async () => {
+    let rejectIpc!: (reason: Error) => void;
+    const ipcPromise = new Promise<UnlinkedMention[]>((_, rej) => {
+      rejectIpc = rej;
+    });
+
+    mockInvoke((cmd) => {
+      if (cmd === "get_unlinked_mentions") return ipcPromise;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<UnlinkedMentionsPanel pageId="target.md" />);
+
+    expect(screen.getByTestId("unlinked-spinner")).toBeInTheDocument();
+
+    await act(async () => {
+      rejectIpc(new Error("fail"));
+    });
+
+    expect(screen.queryByTestId("unlinked-spinner")).not.toBeInTheDocument();
+  });
+
+  // Cycle 11.5 — Expanded empty body suppresses message during load
+  it("suppresses empty message while loading, shows after resolve", async () => {
+    let resolveIpc!: (value: UnlinkedMention[]) => void;
+    const ipcPromise = new Promise<UnlinkedMention[]>((r) => {
+      resolveIpc = r;
+    });
+
+    mockInvoke((cmd) => {
+      if (cmd === "get_unlinked_mentions") return ipcPromise;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<UnlinkedMentionsPanel pageId="target.md" />);
+
+    // Expand while still loading
+    await userEvent.click(screen.getByTestId("unlinked-header"));
+
+    expect(screen.queryByText("No unlinked mentions found")).not.toBeInTheDocument();
+    expect(screen.getByTestId("unlinked-spinner")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveIpc([]);
+    });
+
+    expect(screen.getByText("No unlinked mentions found")).toBeInTheDocument();
+  });
+
   // Cycle 10.8 — Entry disappears after linking
   it("removes entry from list after linking", async () => {
     let fetchCount = 0;
