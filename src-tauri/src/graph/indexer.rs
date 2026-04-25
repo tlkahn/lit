@@ -242,8 +242,10 @@ pub fn index_workspace(
         if let Some(links) = all_links.get(&node.id) {
             for link in links {
                 let resolved = stem_lookup.resolve(&link.target);
+                let raw = std::fs::read_to_string(root.join(&node.id)).unwrap_or_default();
+                let parsed_fm = parse_frontmatter(&raw);
                 let (context, source_line) = extract_sentence_context(
-                    &std::fs::read_to_string(root.join(&node.id)).unwrap_or_default(),
+                    parsed_fm.body,
                     &link.target,
                 );
                 let target_id = match &resolved.node_id {
@@ -399,10 +401,11 @@ pub fn incremental_reindex(
                 let aliases = store.all_aliases()?;
                 let stem_lookup = StemLookup::build(&all_ids, &aliases);
 
-                let body = std::fs::read_to_string(root.join(path)).unwrap_or_default();
+                let raw_content = std::fs::read_to_string(root.join(path)).unwrap_or_default();
+                let parsed_fm = parse_frontmatter(&raw_content);
                 for link in &links {
                     let resolved = stem_lookup.resolve(&link.target);
-                    let (context, source_line) = extract_sentence_context(&body, &link.target);
+                    let (context, source_line) = extract_sentence_context(parsed_fm.body, &link.target);
                     let target_id = match &resolved.node_id {
                         Some(id) => id.clone(),
                         None => {
@@ -463,10 +466,11 @@ pub fn incremental_reindex(
                 store.delete_edges_from(source_id)?;
                 reverse_stems.remove_source(source_id);
 
-                let body = std::fs::read_to_string(root.join(source_id)).unwrap_or_default();
+                let raw_content = std::fs::read_to_string(root.join(source_id)).unwrap_or_default();
+                let parsed_fm = parse_frontmatter(&raw_content);
                 for link in &links {
                     let resolved = stem_lookup.resolve(&link.target);
-                    let (context, source_line) = extract_sentence_context(&body, &link.target);
+                    let (context, source_line) = extract_sentence_context(parsed_fm.body, &link.target);
                     let target_id = match &resolved.node_id {
                         Some(id) => id.clone(),
                         None => {
@@ -895,6 +899,27 @@ mod tests {
         let raw = store.all_raw_edges().unwrap();
         assert_eq!(raw.len(), 1);
         assert_eq!(raw[0].2, "My Note");
+    }
+
+    #[test]
+    fn index_workspace_context_excludes_frontmatter() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "---\ntitle: Source\ntags:\n  - note\n---\n\nThis links to [[B]].",
+        );
+        write_md(dir.path(), "b.md", "Target.");
+        let store = Store::open_memory().unwrap();
+        index_workspace(&store, dir.path()).unwrap();
+        let bl = store.backlinks("b.md").unwrap();
+        assert_eq!(bl.len(), 1);
+        assert_eq!(bl[0].context, "This links to [[B]].");
+        assert!(
+            !bl[0].context.contains("title:"),
+            "context should not contain frontmatter, got: {:?}",
+            bl[0].context
+        );
     }
 
     #[test]
