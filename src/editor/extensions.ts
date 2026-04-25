@@ -29,6 +29,7 @@ export interface ExtensionConfig {
   onChange?: (content: string) => void;
   openUrl?: (url: string) => void;
   resolveImageSrc?: (src: string) => string;
+  navigateToPage?: (target: string, section?: string) => void;
 }
 
 export function createExtensions(config: ExtensionConfig): Extension[] {
@@ -39,7 +40,7 @@ export function createExtensions(config: ExtensionConfig): Extension[] {
     }),
     config.themeCompartment.of(getThemeExtension(config.theme)),
     highlightExtension,
-    livePreviewExtension({ openUrl: config.openUrl, resolveImageSrc: config.resolveImageSrc }),
+    livePreviewExtension({ openUrl: config.openUrl, resolveImageSrc: config.resolveImageSrc, navigateToPage: config.navigateToPage }),
     config.crossrefCompartment.of(frontmatterFacet.of(config.frontmatter ?? {})),
     config.noteDirCompartment.of(noteDirFacet.of(config.noteDir ?? "")),
     config.foldCompartment.of(foldExtension(config.foldConfig)),

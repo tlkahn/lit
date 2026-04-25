@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use tracing::{debug, info};
 
 use super::error::GraphError;
-use super::types::{extract_aliases, ParsedNode, SearchResult, Stats};
+use super::types::{extract_aliases, BacklinkEntry, LinkEntry, ParsedNode, SearchResult, Stats};
 
 pub struct Store {
     pub(crate) conn: Connection,
@@ -334,6 +334,49 @@ impl Store {
             })?
             .collect::<Result<HashMap<String, String>, _>>()?;
         Ok(map)
+    }
+
+    // --- Backlinks / Forward links ---
+
+    pub fn backlinks(&self, page_id: &str) -> Result<Vec<BacklinkEntry>, GraphError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT e.source, n.title, e.context
+             FROM edges e
+             JOIN nodes n ON n.id = e.source
+             WHERE e.target = ?1
+             ORDER BY e.source",
+        )?;
+        let results = stmt
+            .query_map([page_id], |row| {
+                Ok(BacklinkEntry {
+                    source_id: row.get(0)?,
+                    source_title: row.get(1)?,
+                    context: row.get(2)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(results)
+    }
+
+    pub fn forward_links(&self, page_id: &str) -> Result<Vec<LinkEntry>, GraphError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT e.target, n.title, e.raw_target, e.context
+             FROM edges e
+             JOIN nodes n ON n.id = e.target
+             WHERE e.source = ?1
+             ORDER BY e.target",
+        )?;
+        let results = stmt
+            .query_map([page_id], |row| {
+                Ok(LinkEntry {
+                    target_id: row.get(0)?,
+                    target_title: row.get(1)?,
+                    raw_target: row.get(2)?,
+                    context: row.get(3)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(results)
     }
 
     // --- Search ---
@@ -1219,6 +1262,111 @@ mod tests {
         let raw = store.all_raw_edges().unwrap();
         assert_eq!(raw.len(), 1);
         assert_eq!(raw[0], ("a.md".into(), "b.md".into(), "B".into()));
+    }
+
+    // --- Backlinks ---
+
+    #[test]
+    fn backlinks_returns_sources_targeting_page() {
+        let store = Store::open_memory().unwrap();
+        let a = make_node("a.md", "Alpha", &[], json!({}));
+        let b = make_node("b.md", "Beta", &[], json!({}));
+        store.upsert_node(&a, 1).unwrap();
+        store.upsert_node(&b, 1).unwrap();
+        store.insert_edge("a.md", "b.md", "links to b", "b").unwrap();
+
+        let bl = store.backlinks("b.md").unwrap();
+        assert_eq!(bl.len(), 1);
+        assert_eq!(bl[0].source_id, "a.md");
+        assert_eq!(bl[0].source_title, "Alpha");
+        assert_eq!(bl[0].context, "links to b");
+    }
+
+    #[test]
+    fn backlinks_empty_when_no_inbound() {
+        let store = Store::open_memory().unwrap();
+        let a = make_node("a.md", "Alpha", &[], json!({}));
+        store.upsert_node(&a, 1).unwrap();
+        let bl = store.backlinks("a.md").unwrap();
+        assert!(bl.is_empty());
+    }
+
+    #[test]
+    fn backlinks_multiple_sources() {
+        let store = Store::open_memory().unwrap();
+        let a = make_node("a.md", "Alpha", &[], json!({}));
+        let b = make_node("b.md", "Beta", &[], json!({}));
+        let c = make_node("c.md", "Charlie", &[], json!({}));
+        store.upsert_node(&a, 1).unwrap();
+        store.upsert_node(&b, 1).unwrap();
+        store.upsert_node(&c, 1).unwrap();
+        store.insert_edge("a.md", "c.md", "from a", "c").unwrap();
+        store.insert_edge("b.md", "c.md", "from b", "c").unwrap();
+
+        let bl = store.backlinks("c.md").unwrap();
+        assert_eq!(bl.len(), 2);
+        assert_eq!(bl[0].source_id, "a.md");
+        assert_eq!(bl[1].source_id, "b.md");
+    }
+
+    // --- Forward links ---
+
+    #[test]
+    fn forward_links_returns_targets_from_page() {
+        let store = Store::open_memory().unwrap();
+        let a = make_node("a.md", "Alpha", &[], json!({}));
+        let b = make_node("b.md", "Beta", &[], json!({}));
+        store.upsert_node(&a, 1).unwrap();
+        store.upsert_node(&b, 1).unwrap();
+        store.insert_edge("a.md", "b.md", "links to b", "B").unwrap();
+
+        let fl = store.forward_links("a.md").unwrap();
+        assert_eq!(fl.len(), 1);
+        assert_eq!(fl[0].target_id, "b.md");
+        assert_eq!(fl[0].target_title, "Beta");
+        assert_eq!(fl[0].raw_target, "B");
+        assert_eq!(fl[0].context, "links to b");
+    }
+
+    #[test]
+    fn forward_links_empty_when_no_outbound() {
+        let store = Store::open_memory().unwrap();
+        let a = make_node("a.md", "Alpha", &[], json!({}));
+        store.upsert_node(&a, 1).unwrap();
+        let fl = store.forward_links("a.md").unwrap();
+        assert!(fl.is_empty());
+    }
+
+    #[test]
+    fn forward_links_multiple_targets() {
+        let store = Store::open_memory().unwrap();
+        let a = make_node("a.md", "Alpha", &[], json!({}));
+        let b = make_node("b.md", "Beta", &[], json!({}));
+        let c = make_node("c.md", "Charlie", &[], json!({}));
+        store.upsert_node(&a, 1).unwrap();
+        store.upsert_node(&b, 1).unwrap();
+        store.upsert_node(&c, 1).unwrap();
+        store.insert_edge("a.md", "b.md", "to b", "B").unwrap();
+        store.insert_edge("a.md", "c.md", "to c", "C").unwrap();
+
+        let fl = store.forward_links("a.md").unwrap();
+        assert_eq!(fl.len(), 2);
+        assert_eq!(fl[0].target_id, "b.md");
+        assert_eq!(fl[1].target_id, "c.md");
+    }
+
+    #[test]
+    fn forward_links_includes_stub_targets() {
+        let store = Store::open_memory().unwrap();
+        let a = make_node("a.md", "Alpha", &[], json!({}));
+        store.upsert_node(&a, 1).unwrap();
+        store.upsert_stub("Ghost").unwrap();
+        store.insert_edge("a.md", "Ghost", "to ghost", "Ghost").unwrap();
+
+        let fl = store.forward_links("a.md").unwrap();
+        assert_eq!(fl.len(), 1);
+        assert_eq!(fl[0].target_id, "Ghost");
+        assert_eq!(fl[0].target_title, "");
     }
 
     // --- Phase 10: Transactions & Tracing ---

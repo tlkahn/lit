@@ -11,7 +11,7 @@ use super::knowledge::{GraphNode, KnowledgeGraph, SubgraphResult};
 use super::links::{extract_wikilinks, WikiLink};
 use super::resolve::StemLookup;
 use super::store::Store;
-use super::types::{extract_aliases, extract_tags, ParsedNode, Stats};
+use super::types::{extract_aliases, extract_tags, BacklinkEntry, LinkEntry, ParsedNode, SearchResult, Stats};
 use crate::workspace::frontmatter::parse_frontmatter;
 use crate::workspace::normalize::filename_to_page_name;
 
@@ -613,6 +613,29 @@ impl GraphIndex {
         knowledge.full_subgraph()
     }
 
+    pub fn resolve_wikilink(&self, target: &str) -> Result<super::resolve::ResolvedLink, GraphError> {
+        let store = self.store.lock().unwrap();
+        let all_ids = store.all_node_ids()?;
+        let aliases = store.all_aliases()?;
+        let lookup = StemLookup::build(&all_ids, &aliases);
+        Ok(lookup.resolve(target))
+    }
+
+    pub fn backlinks(&self, page_id: &str) -> Result<Vec<BacklinkEntry>, GraphError> {
+        let store = self.store.lock().unwrap();
+        store.backlinks(page_id)
+    }
+
+    pub fn forward_links(&self, page_id: &str) -> Result<Vec<LinkEntry>, GraphError> {
+        let store = self.store.lock().unwrap();
+        store.forward_links(page_id)
+    }
+
+    pub fn search(&self, query: &str, limit: i64) -> Result<Vec<SearchResult>, GraphError> {
+        let store = self.store.lock().unwrap();
+        store.search(query, limit)
+    }
+
     pub fn pagerank(&self) -> Result<HashMap<String, f64>, GraphError> {
         let store = self.store.lock().unwrap();
         let fingerprint = store.graph_fingerprint()?;
@@ -1182,6 +1205,67 @@ mod tests {
         assert!(!sub.edges.is_empty());
     }
 
+    // --- GraphIndex backlinks/forward_links/search ---
+
+    #[test]
+    fn graph_index_backlinks() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Links to [[b]].");
+        write_md(dir.path(), "b.md", "Target.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let bl = gi.backlinks("b.md").unwrap();
+        assert_eq!(bl.len(), 1);
+        assert_eq!(bl[0].source_id, "a.md");
+    }
+
+    #[test]
+    fn graph_index_backlinks_empty() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "No outgoing links.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let bl = gi.backlinks("a.md").unwrap();
+        assert!(bl.is_empty());
+    }
+
+    #[test]
+    fn graph_index_forward_links() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Links to [[b]].");
+        write_md(dir.path(), "b.md", "Target.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let fl = gi.forward_links("a.md").unwrap();
+        assert_eq!(fl.len(), 1);
+        assert_eq!(fl[0].target_id, "b.md");
+    }
+
+    #[test]
+    fn graph_index_forward_links_empty() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "No links.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let fl = gi.forward_links("a.md").unwrap();
+        assert!(fl.is_empty());
+    }
+
+    #[test]
+    fn graph_index_search() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "---\ntitle: Quantum Computing\n---\nBody.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let results = gi.search("Quantum", 20).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "a.md");
+    }
+
+    #[test]
+    fn graph_index_search_empty() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Content.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let results = gi.search("zzzznonexistent", 20).unwrap();
+        assert!(results.is_empty());
+    }
+
     // --- PageRank on GraphIndex ---
 
     #[test]
@@ -1294,6 +1378,48 @@ mod tests {
         let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
         let top = gi.top_by_pagerank(2).unwrap();
         assert_eq!(top.len(), 2);
+    }
+
+    // --- GraphIndex resolve_wikilink ---
+
+    #[test]
+    fn resolve_wikilink_existing_page() {
+        let dir = create_workspace();
+        write_md(dir.path(), "People/Alice.md", "Hello.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let r = gi.resolve_wikilink("Alice").unwrap();
+        assert_eq!(r.node_id, Some("People/Alice.md".to_string()));
+    }
+
+    #[test]
+    fn resolve_wikilink_unresolved_page() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Hello.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let r = gi.resolve_wikilink("NonExistent").unwrap();
+        assert_eq!(r.node_id, None);
+        assert_eq!(r.tier, super::super::resolve::ResolutionTier::Unresolved);
+    }
+
+    #[test]
+    fn resolve_wikilink_exact_path() {
+        let dir = create_workspace();
+        write_md(dir.path(), "Notes/Topic.md", "Content.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let r = gi.resolve_wikilink("Notes/Topic.md").unwrap();
+        assert_eq!(r.tier, super::super::resolve::ResolutionTier::ExactPath);
+        assert_eq!(r.node_id, Some("Notes/Topic.md".to_string()));
+    }
+
+    #[test]
+    fn resolve_wikilink_ambiguous() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a/Note.md", "Alpha.");
+        write_md(dir.path(), "b/Note.md", "Beta.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let r = gi.resolve_wikilink("Note").unwrap();
+        assert_eq!(r.tier, super::super::resolve::ResolutionTier::Ambiguous);
+        assert_eq!(r.node_id, Some("a/Note.md".to_string()));
     }
 
     #[test]

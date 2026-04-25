@@ -18,6 +18,7 @@ export interface WorkspaceStore {
   currentPagePath: string | null;
   pendingTitleFocus: boolean;
   pendingCursorLine: number | null;
+  pendingSection: string | null;
   currentPageHeadings: Heading[];
   isDirty: boolean;
   reloadTrigger: number;
@@ -45,6 +46,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   currentPagePath: null,
   pendingTitleFocus: false,
   pendingCursorLine: null,
+  pendingSection: null,
   currentPageHeadings: [],
   isDirty: false,
   reloadTrigger: 0,
@@ -78,7 +80,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     if (relativePath === null) {
       console.warn("[WorkspaceStore] selectPage(null) called — stack:", new Error().stack);
     }
-    set({ currentPagePath: relativePath, currentPageHeadings: [], isDirty: false, reloadTrigger: 0, pendingCursorLine: null });
+    set({ currentPagePath: relativePath, currentPageHeadings: [], isDirty: false, reloadTrigger: 0, pendingCursorLine: null, pendingSection: null });
   },
 
   selectPageAtLine: (relativePath: string, line: number) => {

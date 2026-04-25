@@ -29,7 +29,15 @@ import {
   renderBibCitations,
   openInExternalEditor,
   rebuildGraphIndex,
+  resolveWikilink,
   getPagerank,
+  getBacklinks,
+  getForwardLinks,
+  searchPages,
+  getGraphStats,
+  getGraphNeighbors,
+  getGraphPaths,
+  getGraphSubgraph,
 } from "./ipc";
 
 const sampleMeta = {
@@ -144,6 +152,42 @@ describe("ipc", () => {
           return { smith2020: "Smith 2020" };
         case "open_in_external_editor":
           return null;
+        case "get_backlinks":
+          return [
+            { source_id: "a.md", source_title: "Alpha", context: "links to b" },
+          ];
+        case "get_forward_links":
+          return [
+            { target_id: "b.md", target_title: "Beta", raw_target: "B", context: "see B" },
+          ];
+        case "search_pages":
+          return [
+            { id: "a.md", title: "Alpha", score: -1.5, excerpt: "[Alpha] note" },
+          ];
+        case "get_graph_stats":
+          return { nodes: 5, stubs: 1, edges: 3, tags: 2 };
+        case "get_graph_neighbors":
+          return {
+            nodes: [{ id: "a.md", title: "A", is_stub: false }],
+            edges: [["a.md", "b.md"]],
+          };
+        case "get_graph_paths":
+          return [["a.md", "b.md", "c.md"]];
+        case "get_graph_subgraph":
+          return {
+            nodes: [
+              { id: "a.md", title: "A", is_stub: false },
+              { id: "b.md", title: "B", is_stub: false },
+            ],
+            edges: [["a.md", "b.md"]],
+          };
+        case "resolve_wikilink": {
+          const a = args as Record<string, unknown> | undefined;
+          if (a?.target === "NonExistent") {
+            return { target: "NonExistent", node_id: null, tier: "Unresolved" };
+          }
+          return { target: a?.target ?? "", node_id: "Notes/Topic.md", tier: "Stem" };
+        }
         case "rebuild_graph_index":
           return "Rebuilt: 5 nodes, 3 edges, 1 stubs";
         case "get_pagerank": {
@@ -400,6 +444,82 @@ describe("ipc", () => {
     expect(top).toEqual([["b.md", 0.6], ["a.md", 0.4]]);
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("get_pagerank", { n: 2 });
+  });
+
+  it("getBacklinks returns backlink entries", async () => {
+    const bl = await getBacklinks("b.md");
+    expect(bl).toHaveLength(1);
+    expect(bl[0]!.source_id).toBe("a.md");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("get_backlinks", { pageId: "b.md" });
+  });
+
+  it("getForwardLinks returns link entries", async () => {
+    const fl = await getForwardLinks("a.md");
+    expect(fl).toHaveLength(1);
+    expect(fl[0]!.target_id).toBe("b.md");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("get_forward_links", { pageId: "a.md" });
+  });
+
+  it("searchPages returns results", async () => {
+    const results = await searchPages("Alpha");
+    expect(results).toHaveLength(1);
+    expect(results[0]!.id).toBe("a.md");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("search_pages", { query: "Alpha", limit: null });
+  });
+
+  it("searchPages passes limit when provided", async () => {
+    await searchPages("Alpha", 5);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("search_pages", { query: "Alpha", limit: 5 });
+  });
+
+  it("getGraphStats returns stats", async () => {
+    const stats = await getGraphStats();
+    expect(stats.nodes).toBe(5);
+    expect(stats.edges).toBe(3);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("get_graph_stats");
+  });
+
+  it("getGraphNeighbors returns subgraph", async () => {
+    const result = await getGraphNeighbors("a.md", 1);
+    expect(result.nodes).toHaveLength(1);
+    expect(result.edges).toHaveLength(1);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("get_graph_neighbors", { id: "a.md", depth: 1, directed: null });
+  });
+
+  it("getGraphPaths returns paths", async () => {
+    const paths = await getGraphPaths("a.md", "c.md", 3);
+    expect(paths).toHaveLength(1);
+    expect(paths[0]).toEqual(["a.md", "b.md", "c.md"]);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("get_graph_paths", { from: "a.md", to: "c.md", maxDepth: 3, directed: null });
+  });
+
+  it("resolveWikilink calls resolve_wikilink with target", async () => {
+    const result = await resolveWikilink("Topic");
+    expect(result.node_id).toBe("Notes/Topic.md");
+    expect(result.tier).toBe("Stem");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("resolve_wikilink", { target: "Topic" });
+  });
+
+  it("resolveWikilink returns null node_id for unresolved", async () => {
+    const result = await resolveWikilink("NonExistent");
+    expect(result.node_id).toBeNull();
+    expect(result.tier).toBe("Unresolved");
+  });
+
+  it("getGraphSubgraph returns subgraph", async () => {
+    const result = await getGraphSubgraph(["a.md", "b.md"], 1);
+    expect(result.nodes).toHaveLength(2);
+    expect(result.edges).toHaveLength(1);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: ["a.md", "b.md"], depth: 1, directed: null });
   });
 
 });

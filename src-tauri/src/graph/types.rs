@@ -25,6 +25,21 @@ pub struct Stats {
     pub tags: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BacklinkEntry {
+    pub source_id: String,
+    pub source_title: String,
+    pub context: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LinkEntry {
+    pub target_id: String,
+    pub target_title: String,
+    pub raw_target: String,
+    pub context: String,
+}
+
 pub fn extract_tags(fm: &serde_json::Value) -> Vec<String> {
     match fm.get("tags") {
         Some(serde_json::Value::Array(arr)) => {
@@ -108,6 +123,31 @@ mod tests {
     fn extract_tags_non_string_filtered() {
         let fm = json!({"tags": ["good", 42, null]});
         assert_eq!(extract_tags(&fm), vec!["good"]);
+    }
+
+    #[test]
+    fn backlink_entry_round_trips() {
+        let entry = BacklinkEntry {
+            source_id: "a.md".into(),
+            source_title: "Alpha".into(),
+            context: "links to target".into(),
+        };
+        let json_str = serde_json::to_string(&entry).expect("serialize");
+        let back: BacklinkEntry = serde_json::from_str(&json_str).expect("deserialize");
+        assert_eq!(back, entry);
+    }
+
+    #[test]
+    fn link_entry_round_trips() {
+        let entry = LinkEntry {
+            target_id: "b.md".into(),
+            target_title: "Beta".into(),
+            raw_target: "B".into(),
+            context: "see B for details".into(),
+        };
+        let json_str = serde_json::to_string(&entry).expect("serialize");
+        let back: LinkEntry = serde_json::from_str(&json_str).expect("deserialize");
+        assert_eq!(back, entry);
     }
 
     #[test]

@@ -16,24 +16,36 @@ impl GraphRegistry {
     }
 }
 
+fn with_graph_index<F, T>(
+    workspace_state: &State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: &State<Arc<GraphRegistry>>,
+    window_label: &str,
+    f: F,
+) -> Result<T, String>
+where
+    F: FnOnce(&GraphIndex) -> Result<T, crate::graph::error::GraphError>,
+{
+    let root = crate::commands::workspace::get_workspace_root(workspace_state, window_label)?;
+    let indices = graph_state.indices.lock().unwrap();
+    let gi = indices
+        .get(&root)
+        .ok_or_else(|| "No graph index for this workspace".to_string())?;
+    f(gi).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn rebuild_graph_index(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
     graph_state: State<Arc<GraphRegistry>>,
 ) -> Result<String, String> {
-    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
-
-    let indices = graph_state.indices.lock().unwrap();
-    if let Some(gi) = indices.get(&root) {
-        let result = gi.full_rebuild().map_err(|e| e.to_string())?;
+    with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+        let result = gi.full_rebuild()?;
         Ok(format!(
             "Rebuilt: {} nodes, {} edges, {} stubs",
             result.nodes_indexed, result.edges_resolved, result.stubs_created
         ))
-    } else {
-        Err("No graph index for this workspace".into())
-    }
+    })
 }
 
 #[tauri::command]
@@ -43,23 +55,130 @@ pub fn get_pagerank(
     graph_state: State<Arc<GraphRegistry>>,
     n: Option<usize>,
 ) -> Result<serde_json::Value, String> {
-    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
-
-    let indices = graph_state.indices.lock().unwrap();
-    let gi = indices
-        .get(&root)
-        .ok_or_else(|| "No graph index for this workspace".to_string())?;
-
-    match n {
-        Some(n) => {
-            let top = gi.top_by_pagerank(n).map_err(|e| e.to_string())?;
-            serde_json::to_value(top).map_err(|e| e.to_string())
+    with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+        match n {
+            Some(n) => {
+                let top = gi.top_by_pagerank(n)?;
+                serde_json::to_value(top).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+            }
+            None => {
+                let scores = gi.pagerank()?;
+                serde_json::to_value(scores).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+            }
         }
-        None => {
-            let scores = gi.pagerank().map_err(|e| e.to_string())?;
-            serde_json::to_value(scores).map_err(|e| e.to_string())
-        }
-    }
+    })
+}
+
+#[tauri::command]
+pub fn get_backlinks(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<GraphRegistry>>,
+    page_id: String,
+) -> Result<serde_json::Value, String> {
+    with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+        let bl = gi.backlinks(&page_id)?;
+        serde_json::to_value(bl).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+    })
+}
+
+#[tauri::command]
+pub fn get_forward_links(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<GraphRegistry>>,
+    page_id: String,
+) -> Result<serde_json::Value, String> {
+    with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+        let fl = gi.forward_links(&page_id)?;
+        serde_json::to_value(fl).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+    })
+}
+
+#[tauri::command]
+pub fn search_pages(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<GraphRegistry>>,
+    query: String,
+    limit: Option<i64>,
+) -> Result<serde_json::Value, String> {
+    with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+        let results = gi.search(&query, limit.unwrap_or(20))?;
+        serde_json::to_value(results).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+    })
+}
+
+#[tauri::command]
+pub fn get_graph_stats(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<GraphRegistry>>,
+) -> Result<serde_json::Value, String> {
+    with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+        let stats = gi.stats()?;
+        serde_json::to_value(stats).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+    })
+}
+
+#[tauri::command]
+pub fn get_graph_neighbors(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<GraphRegistry>>,
+    id: String,
+    depth: usize,
+    directed: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+        let result = gi.neighbors(&id, depth, directed.unwrap_or(false))?;
+        serde_json::to_value(result).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+    })
+}
+
+#[tauri::command]
+pub fn get_graph_paths(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<GraphRegistry>>,
+    from: String,
+    to: String,
+    max_depth: usize,
+    directed: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+        let paths = gi.paths(&from, &to, max_depth, directed.unwrap_or(false))?;
+        serde_json::to_value(paths).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+    })
+}
+
+#[tauri::command]
+pub fn get_graph_subgraph(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<GraphRegistry>>,
+    seeds: Vec<String>,
+    depth: usize,
+    directed: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+        let seed_refs: Vec<&str> = seeds.iter().map(|s| s.as_str()).collect();
+        let result = gi.subgraph(&seed_refs, depth, directed.unwrap_or(false))?;
+        serde_json::to_value(result).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+    })
+}
+
+#[tauri::command]
+pub fn resolve_wikilink(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<GraphRegistry>>,
+    target: String,
+) -> Result<serde_json::Value, String> {
+    with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+        let resolved = gi.resolve_wikilink(&target)?;
+        serde_json::to_value(resolved).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+    })
 }
 
 #[cfg(test)]
@@ -104,5 +223,112 @@ mod tests {
         let top = gi.top_by_pagerank(2).unwrap();
         assert_eq!(top.len(), 2);
         assert!(top[0].1 >= top[1].1);
+    }
+
+    #[test]
+    fn cmd_get_backlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "Links to [[b]].").unwrap();
+        std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let bl = gi.backlinks("b.md").unwrap();
+        assert_eq!(bl.len(), 1);
+        assert_eq!(bl[0].source_id, "a.md");
+    }
+
+    #[test]
+    fn cmd_get_forward_links() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "Links to [[b]].").unwrap();
+        std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let fl = gi.forward_links("a.md").unwrap();
+        assert_eq!(fl.len(), 1);
+        assert_eq!(fl[0].target_id, "b.md");
+    }
+
+    #[test]
+    fn cmd_search_pages() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "---\ntitle: Quantum\n---\nBody.").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let results = gi.search("Quantum", 20).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "a.md");
+    }
+
+    #[test]
+    fn cmd_get_graph_stats() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
+        std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let stats = gi.stats().unwrap();
+        assert_eq!(stats.nodes, 2);
+        assert_eq!(stats.edges, 1);
+    }
+
+    #[test]
+    fn cmd_get_graph_neighbors() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
+        std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let result = gi.neighbors("a.md", 1, true).unwrap();
+        let ids: std::collections::HashSet<&str> =
+            result.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert!(ids.contains("a.md"));
+        assert!(ids.contains("b.md"));
+    }
+
+    #[test]
+    fn cmd_get_graph_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
+        std::fs::write(dir.path().join("b.md"), "[[c]]").unwrap();
+        std::fs::write(dir.path().join("c.md"), "Leaf.").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let paths = gi.paths("a.md", "c.md", 3, true).unwrap();
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0], vec!["a.md", "b.md", "c.md"]);
+    }
+
+    #[test]
+    fn cmd_resolve_wikilink_returns_resolved_link() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "Content.").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let resolved = gi.resolve_wikilink("a").unwrap();
+        assert_eq!(resolved.node_id, Some("a.md".to_string()));
+        let json = serde_json::to_value(&resolved).unwrap();
+        assert!(json.get("target").is_some());
+        assert!(json.get("node_id").is_some());
+        assert!(json.get("tier").is_some());
+    }
+
+    #[test]
+    fn cmd_resolve_wikilink_unresolved_returns_null_node_id() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "Content.").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let resolved = gi.resolve_wikilink("NonExistent").unwrap();
+        assert_eq!(resolved.node_id, None);
+        let json = serde_json::to_value(&resolved).unwrap();
+        assert!(json["node_id"].is_null());
+    }
+
+    #[test]
+    fn cmd_get_graph_subgraph() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
+        std::fs::write(dir.path().join("b.md"), "[[c]]").unwrap();
+        std::fs::write(dir.path().join("c.md"), "Leaf.").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let result = gi.subgraph(&["a.md"], 1, true).unwrap();
+        let ids: std::collections::HashSet<&str> =
+            result.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert!(ids.contains("a.md"));
+        assert!(ids.contains("b.md"));
+        assert!(!ids.contains("c.md"));
     }
 }

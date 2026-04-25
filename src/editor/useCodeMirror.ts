@@ -18,12 +18,13 @@ export interface UseCodeMirrorProps {
   keymapBindings?: CM6KeyBinding[];
   frontmatter?: Record<string, unknown>;
   noteDir?: string;
+  navigateToPage?: (target: string, section?: string) => void;
 }
 
 export function useCodeMirror(props: UseCodeMirrorProps): {
   view: EditorView | null;
 } {
-  const { containerRef, doc, onChange, resolveImageSrc, onDocReplaced, keymapBindings, frontmatter, noteDir } = props;
+  const { containerRef, doc, onChange, resolveImageSrc, onDocReplaced, keymapBindings, frontmatter, noteDir, navigateToPage } = props;
   const [view, setView] = useState<EditorView | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const themeCompartment = useRef(new Compartment());
@@ -38,6 +39,8 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
   resolveImageSrcRef.current = resolveImageSrc;
   const onDocReplacedRef = useRef(onDocReplaced);
   onDocReplacedRef.current = onDocReplaced;
+  const navigateToPageRef = useRef(navigateToPage);
+  navigateToPageRef.current = navigateToPage;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -64,6 +67,7 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
         }
       },
       resolveImageSrc: (src) => resolveImageSrcRef.current?.(src) ?? src,
+      navigateToPage: (target, section) => navigateToPageRef.current?.(target, section),
     });
 
     const state = EditorState.create({ doc, extensions });

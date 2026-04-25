@@ -27,6 +27,7 @@ describe("WorkspaceStore", () => {
       pages: [],
       currentPagePath: null,
       pendingTitleFocus: false,
+      pendingSection: null,
       currentPageHeadings: [],
       isDirty: false,
       reloadTrigger: 0,
@@ -223,6 +224,20 @@ describe("WorkspaceStore", () => {
       useWorkspaceStore.getState().selectPage("Page A.md");
     });
     expect(useWorkspaceStore.getState().reloadTrigger).toBe(0);
+  });
+
+  it("pendingSection initializes as null", () => {
+    expect(useWorkspaceStore.getState().pendingSection).toBeNull();
+  });
+
+  it("selectPage clears pendingSection", () => {
+    act(() => {
+      useWorkspaceStore.setState({ pendingSection: "Heading" });
+    });
+    act(() => {
+      useWorkspaceStore.getState().selectPage("Page A.md");
+    });
+    expect(useWorkspaceStore.getState().pendingSection).toBeNull();
   });
 
   it("selectPage clears currentPageHeadings", () => {

@@ -4,7 +4,8 @@ import { EditorView } from "@codemirror/view";
 import { EditorSelection } from "@codemirror/state";
 import { listen } from "@tauri-apps/api/event";
 import { useWorkspaceStore } from "../stores/workspace";
-import { readPage, writePage, parseRawYaml, openInExternalEditor } from "../lib/ipc";
+import { readPage, writePage, parseRawYaml, openInExternalEditor, resolveWikilink, createPage as ipcCreatePage } from "../lib/ipc";
+import { navigateWikilink } from "../lib/wikilinkNavigation";
 import { setCurrentEditorView } from "../lib/editorViewRef";
 import { extractHeadings } from "../lib/headings";
 import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
@@ -144,6 +145,25 @@ export function ContentArea() {
     return convertFileSrc(absolutePath);
   }, [workspacePath, currentPagePath]);
 
+  const selectPage = useWorkspaceStore((s) => s.selectPage);
+  const triggerReload = useWorkspaceStore((s) => s.triggerReload);
+  const refreshPages = useWorkspaceStore((s) => s.refreshPages);
+
+  const navigateToPage = useCallback((target: string, section?: string) => {
+    navigateWikilink(target, section, {
+      resolveWikilink,
+      createPage: async (name: string) => {
+        const meta = await ipcCreatePage(name);
+        await refreshPages();
+        return meta;
+      },
+      selectPage,
+      setPendingSection: (s: string) => useWorkspaceStore.setState({ pendingSection: s }),
+      currentPagePath: currentPathRef.current,
+      triggerReload,
+    });
+  }, [selectPage, triggerReload, refreshPages]);
+
   const noteDir = useMemo(() => {
     if (!workspacePath || !currentPagePath) return "";
     const lastSlash = currentPagePath.lastIndexOf("/");
@@ -166,6 +186,21 @@ export function ContentArea() {
           effects: EditorView.scrollIntoView(line.from, { y: "start" }),
         });
         useWorkspaceStore.setState({ pendingCursorLine: null });
+      } else if (storeState.pendingSection != null) {
+        const section = storeState.pendingSection;
+        useWorkspaceStore.setState({ pendingSection: null });
+        const docBody = view.state.doc.toString();
+        const headings = extractHeadings(docBody);
+        const match = headings.find(
+          (h) => h.text.toLowerCase() === section.toLowerCase(),
+        );
+        if (match) {
+          const pos = match.from;
+          view.dispatch({
+            selection: EditorSelection.cursor(pos),
+            effects: EditorView.scrollIntoView(pos, { y: "start" }),
+          });
+        }
       } else {
         const vs = storeState.viewStates[path];
         view.scrollDOM.scrollTop = vs?.scrollTop ?? 0;
@@ -418,6 +453,7 @@ export function ContentArea() {
         keymapBindings={editorBindings}
         frontmatter={frontmatter}
         noteDir={noteDir}
+        navigateToPage={navigateToPage}
         style={viewMode !== "editor" ? { display: "none" } : undefined}
       />
       <div

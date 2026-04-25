@@ -12,12 +12,13 @@ interface CodeMirrorEditorProps {
   keymapBindings?: CM6KeyBinding[];
   frontmatter?: Record<string, unknown>;
   noteDir?: string;
+  navigateToPage?: (target: string, section?: string) => void;
   style?: React.CSSProperties;
 }
 
-export function CodeMirrorEditor({ doc, onChange, resolveImageSrc, viewRef, onDocReplaced, keymapBindings, frontmatter, noteDir, style }: CodeMirrorEditorProps) {
+export function CodeMirrorEditor({ doc, onChange, resolveImageSrc, viewRef, onDocReplaced, keymapBindings, frontmatter, noteDir, navigateToPage, style }: CodeMirrorEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const { view } = useCodeMirror({ containerRef, doc, onChange, resolveImageSrc, onDocReplaced, keymapBindings, frontmatter, noteDir });
+  const { view } = useCodeMirror({ containerRef, doc, onChange, resolveImageSrc, onDocReplaced, keymapBindings, frontmatter, noteDir, navigateToPage });
 
   useEffect(() => {
     if (viewRef) {

@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use tracing::warn;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum ResolutionTier {
     ExactPath,
     Stem,
@@ -11,7 +11,7 @@ pub enum ResolutionTier {
     Unresolved,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct ResolvedLink {
     pub target: String,
     pub node_id: Option<String>,

@@ -260,6 +260,95 @@ export async function renderBibCitations(
 
 // Graph
 
+export interface BacklinkEntry {
+  source_id: string;
+  source_title: string;
+  context: string;
+}
+
+export interface LinkEntry {
+  target_id: string;
+  target_title: string;
+  raw_target: string;
+  context: string;
+}
+
+export interface GraphNode {
+  id: string;
+  title: string;
+  is_stub: boolean;
+}
+
+export interface SubgraphResult {
+  nodes: GraphNode[];
+  edges: [string, string][];
+}
+
+export interface GraphStats {
+  nodes: number;
+  stubs: number;
+  edges: number;
+  tags: number;
+}
+
+export interface GraphSearchResult {
+  id: string;
+  title: string;
+  score: number;
+  excerpt: string;
+}
+
+export async function getBacklinks(pageId: string): Promise<BacklinkEntry[]> {
+  return invoke<BacklinkEntry[]>("get_backlinks", { pageId });
+}
+
+export async function getForwardLinks(pageId: string): Promise<LinkEntry[]> {
+  return invoke<LinkEntry[]>("get_forward_links", { pageId });
+}
+
+export async function searchPages(query: string, limit?: number): Promise<GraphSearchResult[]> {
+  return invoke<GraphSearchResult[]>("search_pages", { query, limit: limit ?? null });
+}
+
+export async function getGraphStats(): Promise<GraphStats> {
+  return invoke<GraphStats>("get_graph_stats");
+}
+
+export async function getGraphNeighbors(
+  id: string,
+  depth: number,
+  directed?: boolean,
+): Promise<SubgraphResult> {
+  return invoke<SubgraphResult>("get_graph_neighbors", { id, depth, directed: directed ?? null });
+}
+
+export async function getGraphPaths(
+  from: string,
+  to: string,
+  maxDepth: number,
+  directed?: boolean,
+): Promise<string[][]> {
+  return invoke<string[][]>("get_graph_paths", { from, to, maxDepth, directed: directed ?? null });
+}
+
+export async function getGraphSubgraph(
+  seeds: string[],
+  depth: number,
+  directed?: boolean,
+): Promise<SubgraphResult> {
+  return invoke<SubgraphResult>("get_graph_subgraph", { seeds, depth, directed: directed ?? null });
+}
+
+export interface ResolvedWikilink {
+  target: string;
+  node_id: string | null;
+  tier: string;
+}
+
+export async function resolveWikilink(target: string): Promise<ResolvedWikilink> {
+  return invoke<ResolvedWikilink>("resolve_wikilink", { target });
+}
+
 export async function rebuildGraphIndex(): Promise<string> {
   return invoke<string>("rebuild_graph_index");
 }

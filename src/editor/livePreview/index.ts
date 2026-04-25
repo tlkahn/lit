@@ -1,6 +1,7 @@
 import type { Extension } from "@codemirror/state";
 import { livePreviewPlugin, blockReplacementField } from "./plugin";
 import { createLinkClickHandler } from "./linkHandler";
+import { createWikilinkClickHandler, type NavigateToPage } from "./wikilinkHandler";
 import { livePreviewBaseTheme } from "./theme";
 import { imageResolverFacet, type ImageResolver } from "./imageResolver";
 import { calloutFoldField } from "./callout";
@@ -21,6 +22,7 @@ export { noteDirFacet } from "./citeproc";
 export interface LivePreviewConfig {
   openUrl?: (url: string) => void;
   resolveImageSrc?: ImageResolver;
+  navigateToPage?: NavigateToPage;
 }
 
 export function livePreviewExtension(config?: LivePreviewConfig): Extension {
@@ -29,6 +31,7 @@ export function livePreviewExtension(config?: LivePreviewConfig): Extension {
     livePreviewPlugin,
     blockReplacementField,
     createLinkClickHandler(openUrl),
+    ...(config?.navigateToPage ? [createWikilinkClickHandler(config.navigateToPage)] : []),
     createCalloutClickHandler(),
     createMathClickHandler(),
     createImageClickHandler(),
