@@ -30,6 +30,12 @@ fn get_initial_file(state: tauri::State<InitialFile>) -> Option<String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("lit_lib=info")),
+        )
+        .init();
     let (cli_workspace, cli_file) = match std::env::args().nth(1) {
         Some(arg) => {
             let cwd = std::env::current_dir()
