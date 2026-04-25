@@ -80,21 +80,21 @@ export function classifyDrag(start: Point, current: Point, threshold = DRAG_THRE
   return Math.sqrt(dx * dx + dy * dy) >= threshold;
 }
 
-export function buildNodeRects(descendants: PointNode[], nodeWidth: number, fontSizes: number[]): NodeRect[] {
+export function buildNodeRects(descendants: PointNode[], nodeWidths: Map<string, number>, fontSizes: number[]): NodeRect[] {
   return descendants.map((d) => {
     const fontSize = fontSizes[Math.min(d.data.level - 1, fontSizes.length - 1)]!;
     return {
       id: d.data.id,
       left: d.y - 4,
       top: d.x - fontSize / 2 - 4,
-      width: nodeWidth,
+      width: nodeWidths.get(d.data.id) ?? 160,
       height: fontSize + 8,
       node: d,
     };
   });
 }
 
-export function buildGapZones(descendants: PointNode[]): GapZone[] {
+export function buildGapZones(descendants: PointNode[], nodeWidths?: Map<string, number>): GapZone[] {
   const zones: GapZone[] = [];
   const childrenByParent = new Map<string, PointNode[]>();
 
@@ -116,7 +116,7 @@ export function buildGapZones(descendants: PointNode[]): GapZone[] {
         index: i + 1,
         left: above.y - 4,
         top: midY - GAP_HEIGHT / 2,
-        width: 160,
+        width: nodeWidths?.get(above.data.id) ?? 160,
         height: GAP_HEIGHT,
       });
     }

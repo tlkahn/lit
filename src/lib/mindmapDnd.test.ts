@@ -20,6 +20,12 @@ import {
 const FONT_SIZES = [16, 15, 14, 13, 12, 11];
 const NODE_WIDTH = 160;
 
+function uniformWidths(descendants: PointNode[], w = NODE_WIDTH): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const d of descendants) m.set(d.data.id, w);
+  return m;
+}
+
 function layoutTree(body: string) {
   const tree = buildHeadingTree(body);
   const root = hierarchy(tree, (d) => (d.children.length > 0 ? d.children : undefined));
@@ -86,19 +92,23 @@ describe("svgPointFromClientWithZoom", () => {
 });
 
 describe("buildNodeRects", () => {
-  it("creates rects from D3 descendants", () => {
+  it("creates rects from D3 descendants with per-node widths", () => {
     const { descendants } = layoutTree("# A\n## B");
-    const rects = buildNodeRects(descendants, NODE_WIDTH, FONT_SIZES);
+    const widths = new Map<string, number>();
+    widths.set(descendants[0]!.data.id, 200);
+    widths.set(descendants[1]!.data.id, 120);
+    const rects = buildNodeRects(descendants, widths, FONT_SIZES);
     expect(rects).toHaveLength(2);
     expect(rects[0]!.id).toBe(descendants[0]!.data.id);
-    expect(rects[0]!.width).toBe(NODE_WIDTH);
+    expect(rects[0]!.width).toBe(200);
+    expect(rects[1]!.width).toBe(120);
   });
 });
 
 describe("hitTestNode", () => {
   it("returns hit rect when point is inside", () => {
     const { descendants } = layoutTree("# A\n## B");
-    const rects = buildNodeRects(descendants, NODE_WIDTH, FONT_SIZES);
+    const rects = buildNodeRects(descendants, uniformWidths(descendants), FONT_SIZES);
     const r = rects[0]!;
     const point = { x: r.left + 10, y: r.top + 5 };
     expect(hitTestNode(point, rects)).toBe(r);
@@ -106,7 +116,7 @@ describe("hitTestNode", () => {
 
   it("returns null when point is outside all rects", () => {
     const { descendants } = layoutTree("# A\n## B");
-    const rects = buildNodeRects(descendants, NODE_WIDTH, FONT_SIZES);
+    const rects = buildNodeRects(descendants, uniformWidths(descendants), FONT_SIZES);
     expect(hitTestNode({ x: -9999, y: -9999 }, rects)).toBeNull();
   });
 });
@@ -144,7 +154,7 @@ describe("hitTestGap", () => {
 describe("resolveDropTarget", () => {
   it("returns node target when point hits a node", () => {
     const { descendants } = layoutTree("# A\n## B");
-    const rects = buildNodeRects(descendants, NODE_WIDTH, FONT_SIZES);
+    const rects = buildNodeRects(descendants, uniformWidths(descendants), FONT_SIZES);
     const gaps = buildGapZones(descendants);
     const r = rects[0]!;
     const result = resolveDropTarget({ x: r.left + 10, y: r.top + 5 }, rects, gaps);
@@ -153,7 +163,7 @@ describe("resolveDropTarget", () => {
 
   it("returns gap target when point hits a gap zone", () => {
     const { descendants } = layoutTree("# A\n## B\n## C");
-    const rects = buildNodeRects(descendants, NODE_WIDTH, FONT_SIZES);
+    const rects = buildNodeRects(descendants, uniformWidths(descendants), FONT_SIZES);
     const gaps = buildGapZones(descendants);
     const g = gaps[0]!;
     const result = resolveDropTarget({ x: g.left + 10, y: g.top + 3 }, rects, gaps);
@@ -162,14 +172,14 @@ describe("resolveDropTarget", () => {
 
   it("returns null when point misses everything", () => {
     const { descendants } = layoutTree("# A\n## B");
-    const rects = buildNodeRects(descendants, NODE_WIDTH, FONT_SIZES);
+    const rects = buildNodeRects(descendants, uniformWidths(descendants), FONT_SIZES);
     const gaps = buildGapZones(descendants);
     expect(resolveDropTarget({ x: -9999, y: -9999 }, rects, gaps)).toBeNull();
   });
 
   it("gap zone takes priority over node zone in overlap region", () => {
     const { descendants } = layoutTree("# A\n## B\n## C");
-    const rects = buildNodeRects(descendants, NODE_WIDTH, FONT_SIZES);
+    const rects = buildNodeRects(descendants, uniformWidths(descendants), FONT_SIZES);
     const gaps = buildGapZones(descendants);
     const g = gaps[0]!;
     const point = { x: g.left + 10, y: g.top + 3 };

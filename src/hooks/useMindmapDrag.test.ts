@@ -9,13 +9,19 @@ import { useMindmapDrag } from "./useMindmapDrag";
 const FONT_SIZES = [16, 15, 14, 13, 12, 11];
 const NODE_WIDTH = 160;
 
+function uniformWidths(descendants: PointNode[], w = NODE_WIDTH): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const d of descendants) m.set(d.data.id, w);
+  return m;
+}
+
 function setupLayout(body: string) {
   const tree = buildHeadingTree(body);
   const root = hierarchy(tree, (d) => (d.children.length > 0 ? d.children : undefined));
   const treeLayout = d3tree<HeadingNode>().nodeSize([44, 200]);
   treeLayout(root);
   const descendants = (root.descendants() as PointNode[]).filter((d) => d.data.level > 0);
-  const nodeRects = buildNodeRects(descendants, NODE_WIDTH, FONT_SIZES);
+  const nodeRects = buildNodeRects(descendants, uniformWidths(descendants), FONT_SIZES);
   const gapZones = buildGapZones(descendants);
   return { tree, descendants, nodeRects, gapZones };
 }

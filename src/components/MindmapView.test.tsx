@@ -138,6 +138,26 @@ describe("MindmapView", () => {
     expect(container.querySelector("[data-mindmap-edit]")).toBeNull();
   });
 
+  it("short-text node has a narrower rect than long-text node", () => {
+    const tree = makeTree("# Hi\n## A much longer heading title here");
+    const { container } = render(<MindmapView tree={tree} {...defaultProps()} />);
+    const nodes = container.querySelectorAll("[data-mindmap-node]");
+    const rectShort = nodes[0]!.querySelector("rect")!;
+    const rectLong = nodes[1]!.querySelector("rect")!;
+    const wShort = Number(rectShort.getAttribute("width"));
+    const wLong = Number(rectLong.getAttribute("width"));
+    expect(wLong).toBeGreaterThan(wShort);
+  });
+
+  it("very long text is truncated with '..'", () => {
+    const longHeading = "# " + "A".repeat(200);
+    const tree = makeTree(longHeading);
+    const { container } = render(<MindmapView tree={tree} {...defaultProps()} />);
+    const textEl = container.querySelector("[data-mindmap-node] text")!;
+    expect(textEl.textContent!.endsWith("..")).toBe(true);
+    expect(textEl.textContent!.length).toBeLessThan(200);
+  });
+
   it("display text is clipped to node bounds via clipPath", () => {
     const tree = makeTree("# A\n## B");
     const { container } = render(<MindmapView tree={tree} {...defaultProps()} />);
