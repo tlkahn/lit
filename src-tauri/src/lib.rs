@@ -213,6 +213,8 @@ pub fn run() {
             commands::graph::get_graph_subgraph,
             commands::graph::resolve_wikilink,
             commands::graph::get_page_headings,
+            commands::graph::get_unlinked_mentions,
+            commands::graph::link_unlinked_mention,
             get_initial_workspace,
             get_initial_file,
         ])

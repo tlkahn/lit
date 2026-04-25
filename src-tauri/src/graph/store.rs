@@ -345,6 +345,34 @@ impl Store {
         Ok(map)
     }
 
+    pub fn title_and_aliases(&self, page_id: &str) -> Result<(String, Vec<String>), GraphError> {
+        let title: String = self.conn.query_row(
+            "SELECT title FROM nodes WHERE id = ?1",
+            [page_id],
+            |row| row.get(0),
+        ).map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => GraphError::NodeNotFound { id: page_id.to_string() },
+            other => GraphError::from(other),
+        })?;
+
+        let mut stmt = self.conn.prepare("SELECT alias FROM aliases WHERE node_id = ?1 ORDER BY alias")?;
+        let aliases = stmt
+            .query_map([page_id], |row| row.get(0))?
+            .collect::<Result<Vec<String>, _>>()?;
+
+        Ok((title, aliases))
+    }
+
+    pub fn backlink_source_ids(&self, page_id: &str) -> Result<std::collections::HashSet<String>, GraphError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT source FROM edges WHERE target = ?1"
+        )?;
+        let sources = stmt
+            .query_map([page_id], |row| row.get(0))?
+            .collect::<Result<std::collections::HashSet<String>, _>>()?;
+        Ok(sources)
+    }
+
     // --- Backlinks / Forward links ---
 
     pub fn backlinks(&self, page_id: &str) -> Result<Vec<BacklinkEntry>, GraphError> {
@@ -1512,6 +1540,59 @@ mod tests {
         let raw_edges = store.all_raw_edges().unwrap();
         assert_eq!(raw_edges.len(), 1);
         assert_eq!(raw_edges[0].2, "", "existing edges get empty raw_target");
+    }
+
+    // --- title_and_aliases ---
+
+    #[test]
+    fn title_and_aliases_returns_title_and_aliases() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "Alpha", &[], json!({"aliases": ["Alfa", "A"]}));
+        store.upsert_node(&node, 1).unwrap();
+        let (title, aliases) = store.title_and_aliases("a.md").unwrap();
+        assert_eq!(title, "Alpha");
+        assert_eq!(aliases, vec!["A", "Alfa"]);
+    }
+
+    #[test]
+    fn title_and_aliases_no_aliases() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "Alpha", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        let (title, aliases) = store.title_and_aliases("a.md").unwrap();
+        assert_eq!(title, "Alpha");
+        assert!(aliases.is_empty());
+    }
+
+    #[test]
+    fn title_and_aliases_nonexistent_page() {
+        let store = Store::open_memory().unwrap();
+        let result = store.title_and_aliases("nope.md");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            super::GraphError::NodeNotFound { id } => assert_eq!(id, "nope.md"),
+            other => panic!("expected NodeNotFound, got: {other:?}"),
+        }
+    }
+
+    // --- backlink_source_ids ---
+
+    #[test]
+    fn backlink_source_ids_returns_sources() {
+        let store = Store::open_memory().unwrap();
+        store.insert_edge("a.md", "target.md", "", "", 0).unwrap();
+        store.insert_edge("b.md", "target.md", "", "", 0).unwrap();
+        let sources = store.backlink_source_ids("target.md").unwrap();
+        assert!(sources.contains("a.md"));
+        assert!(sources.contains("b.md"));
+        assert_eq!(sources.len(), 2);
+    }
+
+    #[test]
+    fn backlink_source_ids_empty() {
+        let store = Store::open_memory().unwrap();
+        let sources = store.backlink_source_ids("lonely.md").unwrap();
+        assert!(sources.is_empty());
     }
 
     #[test]

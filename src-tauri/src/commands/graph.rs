@@ -194,6 +194,55 @@ pub fn get_page_headings(
     })
 }
 
+#[tauri::command]
+pub fn get_unlinked_mentions(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<GraphRegistry>>,
+    page_id: String,
+) -> Result<serde_json::Value, String> {
+    with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+        let mentions = gi.unlinked_mentions(&page_id)?;
+        serde_json::to_value(mentions)
+            .map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+    })
+}
+
+#[tauri::command]
+pub fn link_unlinked_mention(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<GraphRegistry>>,
+    registry: State<Arc<crate::workspace::write_hash::WriteHashRegistry>>,
+    source_id: String,
+    source_line: u32,
+    matched_text: String,
+) -> Result<(), String> {
+    let root =
+        crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+
+    let page = crate::workspace::ops::read_page(&root, &source_id)
+        .map_err(|e| e.to_string())?;
+
+    let new_body =
+        crate::graph::extract::replace_mention_with_wikilink(&page.body, source_line, &matched_text)
+            .map_err(|e| e.to_string())?;
+
+    let fm: HashMap<String, serde_yaml::Value> =
+        crate::workspace::frontmatter::parse_raw_yaml(&page.raw_yaml)
+            .unwrap_or_default();
+
+    crate::workspace::ops::write_page(&root, &source_id, &new_body, &fm, &registry)
+        .map_err(|e| e.to_string())?;
+
+    let indices = graph_state.indices.lock().unwrap();
+    if let Some(gi) = indices.get(&root) {
+        let _ = gi.reindex_file(&source_id);
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -354,5 +403,60 @@ mod tests {
         assert!(ids.contains("a.md"));
         assert!(ids.contains("b.md"));
         assert!(!ids.contains("c.md"));
+    }
+
+    #[test]
+    fn cmd_get_unlinked_mentions() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("target.md"),
+            "---\ntitle: Alice\n---\nI am Alice.",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("other.md"), "I met Alice yesterday.")
+            .unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let mentions = gi.unlinked_mentions("target.md").unwrap();
+        assert_eq!(mentions.len(), 1);
+        assert_eq!(mentions[0].source_id, "other.md");
+        assert_eq!(mentions[0].matched_text, "Alice");
+
+        let json = serde_json::to_value(&mentions).unwrap();
+        assert!(json.is_array());
+        assert_eq!(json[0]["source_id"], "other.md");
+    }
+
+    #[test]
+    fn cmd_link_unlinked_mention() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("target.md"),
+            "---\ntitle: Alice\n---\nI am Alice.",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("other.md"), "I met Alice yesterday.")
+            .unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+
+        // Read the source page, replace, and write back
+        let page = crate::workspace::ops::read_page(dir.path(), "other.md").unwrap();
+        let new_body =
+            crate::graph::extract::replace_mention_with_wikilink(&page.body, 1, "Alice")
+                .unwrap();
+        assert_eq!(new_body, "I met [[Alice]] yesterday.");
+
+        let registry = crate::workspace::write_hash::WriteHashRegistry::new();
+        let fm: std::collections::HashMap<String, serde_yaml::Value> = std::collections::HashMap::new();
+        crate::workspace::ops::write_page(dir.path(), "other.md", &new_body, &fm, &registry)
+            .unwrap();
+        gi.reindex_file("other.md").unwrap();
+
+        // Verify the file was updated
+        let content = std::fs::read_to_string(dir.path().join("other.md")).unwrap();
+        assert!(content.contains("[[Alice]]"));
+
+        // Verify unlinked mentions is now empty (it's now a backlink)
+        let mentions = gi.unlinked_mentions("target.md").unwrap();
+        assert!(mentions.is_empty());
     }
 }

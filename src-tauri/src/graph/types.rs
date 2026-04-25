@@ -47,6 +47,15 @@ pub struct HeadingInfo {
     pub level: u8,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct UnlinkedMention {
+    pub source_id: String,
+    pub source_title: String,
+    pub context: String,
+    pub source_line: u32,
+    pub matched_text: String,
+}
+
 pub fn extract_tags(fm: &serde_json::Value) -> Vec<String> {
     match fm.get("tags") {
         Some(serde_json::Value::Array(arr)) => {
@@ -156,6 +165,20 @@ mod tests {
         let json_str = serde_json::to_string(&entry).expect("serialize");
         let back: LinkEntry = serde_json::from_str(&json_str).expect("deserialize");
         assert_eq!(back, entry);
+    }
+
+    #[test]
+    fn unlinked_mention_round_trips() {
+        let mention = UnlinkedMention {
+            source_id: "other.md".into(),
+            source_title: "Other Page".into(),
+            context: "I met Alice yesterday".into(),
+            source_line: 3,
+            matched_text: "Alice".into(),
+        };
+        let json_str = serde_json::to_string(&mention).expect("serialize");
+        let back: UnlinkedMention = serde_json::from_str(&json_str).expect("deserialize");
+        assert_eq!(back, mention);
     }
 
     #[test]

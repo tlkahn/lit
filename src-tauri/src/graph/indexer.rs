@@ -12,7 +12,7 @@ use super::knowledge::{GraphNode, KnowledgeGraph, SubgraphResult};
 use super::links::{extract_wikilinks, WikiLink};
 use super::resolve::StemLookup;
 use super::store::Store;
-use super::types::{extract_aliases, extract_tags, BacklinkEntry, LinkEntry, ParsedNode, SearchResult, Stats};
+use super::types::{extract_aliases, extract_tags, BacklinkEntry, LinkEntry, ParsedNode, SearchResult, Stats, UnlinkedMention};
 use crate::workspace::frontmatter::parse_frontmatter;
 use crate::workspace::normalize::filename_to_page_name;
 
@@ -644,6 +644,56 @@ impl GraphIndex {
     pub fn forward_links(&self, page_id: &str) -> Result<Vec<LinkEntry>, GraphError> {
         let store = self.store.lock().unwrap();
         store.forward_links(page_id)
+    }
+
+    pub fn unlinked_mentions(&self, page_id: &str) -> Result<Vec<UnlinkedMention>, GraphError> {
+        use super::extract::{extract_mention_context, find_plain_mentions, strip_for_mention_scan};
+
+        let store = self.store.lock().unwrap();
+        let (title, aliases) = store.title_and_aliases(page_id)?;
+        let already_linked = store.backlink_source_ids(page_id)?;
+        let all_paths = store.all_synced_paths()?;
+        let titles = store.node_titles()?;
+        drop(store);
+
+        let mut names: Vec<&str> = vec![&title];
+        for a in &aliases {
+            names.push(a);
+        }
+
+        let mut results = Vec::new();
+
+        for source_id in &all_paths {
+            if source_id == page_id {
+                continue;
+            }
+            if already_linked.contains(source_id) {
+                continue;
+            }
+
+            let page = match crate::workspace::ops::read_page(&self.workspace_root, source_id) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+
+            let stripped = strip_for_mention_scan(&page.body);
+            let mentions = find_plain_mentions(&stripped, &names);
+
+            let source_title = titles.get(source_id).cloned().unwrap_or_default();
+
+            for mention in mentions {
+                let context = extract_mention_context(&page.body, mention.byte_offset);
+                results.push(UnlinkedMention {
+                    source_id: source_id.clone(),
+                    source_title: source_title.clone(),
+                    context,
+                    source_line: mention.line,
+                    matched_text: mention.matched_text,
+                });
+            }
+        }
+
+        Ok(results)
     }
 
     pub fn search(&self, query: &str, limit: i64) -> Result<Vec<SearchResult>, GraphError> {
@@ -1508,5 +1558,88 @@ mod tests {
         let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
         let top = gi.top_by_pagerank(100).unwrap();
         assert_eq!(top.len(), 2);
+    }
+
+    // --- GraphIndex unlinked_mentions ---
+
+    #[test]
+    fn unlinked_mentions_no_mentions() {
+        let dir = create_workspace();
+        write_md(dir.path(), "target.md", "---\ntitle: Alice\n---\nI am Alice.");
+        write_md(dir.path(), "other.md", "No mention of the name here.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let mentions = gi.unlinked_mentions("target.md").unwrap();
+        assert!(mentions.is_empty());
+    }
+
+    #[test]
+    fn unlinked_mentions_finds_plain_text() {
+        let dir = create_workspace();
+        write_md(dir.path(), "target.md", "---\ntitle: Alice\n---\nI am Alice.");
+        write_md(dir.path(), "other.md", "I met Alice yesterday.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let mentions = gi.unlinked_mentions("target.md").unwrap();
+        assert_eq!(mentions.len(), 1);
+        assert_eq!(mentions[0].source_id, "other.md");
+        assert_eq!(mentions[0].matched_text, "Alice");
+        assert!(mentions[0].context.contains("Alice"));
+    }
+
+    #[test]
+    fn unlinked_mentions_excludes_already_linked() {
+        let dir = create_workspace();
+        write_md(dir.path(), "target.md", "---\ntitle: Alice\n---\nI am Alice.");
+        write_md(dir.path(), "linked.md", "[[target]] and Alice is great.");
+        write_md(dir.path(), "unlinked.md", "Alice is here.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let mentions = gi.unlinked_mentions("target.md").unwrap();
+        assert_eq!(mentions.len(), 1);
+        assert_eq!(mentions[0].source_id, "unlinked.md");
+    }
+
+    #[test]
+    fn unlinked_mentions_excludes_code_and_wikilinks() {
+        let dir = create_workspace();
+        write_md(dir.path(), "target.md", "---\ntitle: Alice\n---\nI am Alice.");
+        write_md(dir.path(), "other.md", "`Alice` and [[Bob]] and Alice plain.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let mentions = gi.unlinked_mentions("target.md").unwrap();
+        assert_eq!(mentions.len(), 1);
+        assert_eq!(mentions[0].matched_text, "Alice");
+    }
+
+    #[test]
+    fn unlinked_mentions_matches_aliases() {
+        let dir = create_workspace();
+        write_md(dir.path(), "target.md", "---\ntitle: Alice\naliases:\n  - Ali\n---\nContent.");
+        write_md(dir.path(), "other.md", "I met Ali today.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let mentions = gi.unlinked_mentions("target.md").unwrap();
+        assert_eq!(mentions.len(), 1);
+        assert_eq!(mentions[0].matched_text, "Ali");
+    }
+
+    #[test]
+    fn unlinked_mentions_skips_self() {
+        let dir = create_workspace();
+        write_md(dir.path(), "target.md", "---\ntitle: Alice\n---\nAlice talks about Alice.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let mentions = gi.unlinked_mentions("target.md").unwrap();
+        assert!(mentions.is_empty());
+    }
+
+    #[test]
+    fn unlinked_mentions_line_numbers_body_relative() {
+        let dir = create_workspace();
+        write_md(dir.path(), "target.md", "---\ntitle: Alice\n---\nContent.");
+        write_md(
+            dir.path(),
+            "other.md",
+            "---\ntitle: Other\ntags:\n  - test\n---\nLine one.\nAlice here.",
+        );
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let mentions = gi.unlinked_mentions("target.md").unwrap();
+        assert_eq!(mentions.len(), 1);
+        assert_eq!(mentions[0].source_line, 2);
     }
 }

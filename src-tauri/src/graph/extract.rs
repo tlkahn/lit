@@ -138,6 +138,202 @@ pub fn extract_headings(body: &str) -> Vec<super::types::HeadingInfo> {
     headings
 }
 
+pub fn strip_for_mention_scan(body: &str) -> String {
+    let mut text = body.to_string();
+
+    // Blank fenced code blocks (``` or ~~~)
+    let mut result = String::with_capacity(text.len());
+    let mut lines = text.split('\n').peekable();
+    while let Some(line) = lines.next() {
+        let trimmed = line.trim_start();
+        let fence_char = if trimmed.starts_with("```") {
+            Some(('`', trimmed.chars().take_while(|&c| c == '`').count()))
+        } else if trimmed.starts_with("~~~") {
+            Some(('~', trimmed.chars().take_while(|&c| c == '~').count()))
+        } else {
+            None
+        };
+
+        if let Some((ch, count)) = fence_char {
+            result.push_str(&" ".repeat(line.len()));
+            result.push('\n');
+            while let Some(inner) = lines.next() {
+                let inner_trimmed = inner.trim_start();
+                let is_closing = inner_trimmed.starts_with(&ch.to_string().repeat(count))
+                    && inner_trimmed.trim().chars().all(|c| c == ch);
+                result.push_str(&" ".repeat(inner.len()));
+                result.push('\n');
+                if is_closing {
+                    break;
+                }
+            }
+        } else {
+            result.push_str(line);
+            result.push('\n');
+        }
+    }
+    if result.ends_with('\n') && !text.ends_with('\n') {
+        result.pop();
+    }
+    text = result;
+
+    // Blank inline code
+    let re_inline = regex::Regex::new(r"`[^`]+`").unwrap();
+    text = re_inline
+        .replace_all(&text, |caps: &regex::Captures| {
+            " ".repeat(caps.get(0).unwrap().as_str().len())
+        })
+        .into_owned();
+
+    // Blank HTML comments (preserve newlines for line stability)
+    let re_comment = regex::Regex::new(r"(?s)<!--.*?-->").unwrap();
+    text = re_comment
+        .replace_all(&text, |caps: &regex::Captures| {
+            let m = caps.get(0).unwrap().as_str();
+            m.chars().map(|c| if c == '\n' { '\n' } else { ' ' }).collect::<String>()
+        })
+        .into_owned();
+
+    // Blank existing wikilinks
+    let re_wikilink = regex::Regex::new(r"\[\[[^\]]+\]\]").unwrap();
+    text = re_wikilink
+        .replace_all(&text, |caps: &regex::Captures| {
+            " ".repeat(caps.get(0).unwrap().as_str().len())
+        })
+        .into_owned();
+
+    text
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MentionMatch {
+    pub matched_text: String,
+    pub line: u32,
+    pub byte_offset: usize,
+}
+
+pub fn find_plain_mentions(body: &str, names: &[&str]) -> Vec<MentionMatch> {
+    if names.is_empty() {
+        return vec![];
+    }
+
+    let alternatives: Vec<String> = names
+        .iter()
+        .filter(|n| !n.is_empty())
+        .map(|n| {
+            let escaped = regex::escape(n);
+            let starts_word = n.chars().next().map(|c| c.is_alphanumeric() || c == '_').unwrap_or(false);
+            let ends_word = n.chars().last().map(|c| c.is_alphanumeric() || c == '_').unwrap_or(false);
+            let prefix = if starts_word { r"\b" } else { "" };
+            let suffix = if ends_word { r"\b" } else { "" };
+            format!("{prefix}{escaped}{suffix}")
+        })
+        .collect();
+
+    if alternatives.is_empty() {
+        return vec![];
+    }
+
+    let pattern = format!("(?i)(?:{})", alternatives.join("|"));
+    let re = regex::Regex::new(&pattern).unwrap();
+
+    let non_word_end: Vec<bool> = names
+        .iter()
+        .map(|n| n.chars().last().map(|c| !(c.is_alphanumeric() || c == '_')).unwrap_or(false))
+        .collect();
+    let non_word_start: Vec<bool> = names
+        .iter()
+        .map(|n| n.chars().next().map(|c| !(c.is_alphanumeric() || c == '_')).unwrap_or(false))
+        .collect();
+    let needs_manual_boundary = non_word_end.iter().any(|&b| b) || non_word_start.iter().any(|&b| b);
+
+    let mut matches = Vec::new();
+    for m in re.find_iter(body) {
+        if needs_manual_boundary {
+            let end = m.end();
+            if end < body.len() {
+                let next_char = body[end..].chars().next().unwrap();
+                if next_char.is_alphanumeric() || next_char == '_' {
+                    continue;
+                }
+            }
+            let start = m.start();
+            if start > 0 {
+                let prev_char = body[..start].chars().last().unwrap();
+                if prev_char.is_alphanumeric() || prev_char == '_' {
+                    continue;
+                }
+            }
+        }
+        let offset = m.start();
+        let line = body[..offset].matches('\n').count() as u32 + 1;
+        matches.push(MentionMatch {
+            matched_text: m.as_str().to_string(),
+            line,
+            byte_offset: offset,
+        });
+    }
+
+    matches
+}
+
+pub fn extract_mention_context(body: &str, byte_offset: usize) -> String {
+    let line_start = body[..byte_offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let line_end = body[byte_offset..]
+        .find('\n')
+        .map(|i| byte_offset + i)
+        .unwrap_or(body.len());
+    let line_text = &body[line_start..line_end];
+
+    for sentence in split_sentences(line_text) {
+        let trimmed = sentence.trim();
+        let sentence_start = line_text.find(trimmed).unwrap_or(0) + line_start;
+        let sentence_end = sentence_start + trimmed.len();
+        if byte_offset >= sentence_start && byte_offset < sentence_end {
+            return trimmed.to_string();
+        }
+    }
+
+    line_text.trim().to_string()
+}
+
+pub fn replace_mention_with_wikilink(
+    body: &str,
+    body_line: u32,
+    mention: &str,
+) -> Result<String, super::error::GraphError> {
+    let lines: Vec<&str> = body.lines().collect();
+    let idx = (body_line - 1) as usize;
+    if idx >= lines.len() {
+        return Err(super::error::GraphError::Other(format!(
+            "line {} out of range (body has {} lines)",
+            body_line,
+            lines.len()
+        )));
+    }
+
+    let line = lines[idx];
+    let pattern = format!("(?i){}", regex::escape(mention));
+    let re = regex::Regex::new(&pattern).unwrap();
+
+    if let Some(m) = re.find(line) {
+        let new_line = format!("{}[[{}]]{}", &line[..m.start()], mention, &line[m.end()..]);
+        let mut result_lines: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+        result_lines[idx] = new_line;
+        let trailing_newline = body.ends_with('\n');
+        let mut result = result_lines.join("\n");
+        if trailing_newline {
+            result.push('\n');
+        }
+        Ok(result)
+    } else {
+        Err(super::error::GraphError::Other(format!(
+            "mention '{}' not found on line {}",
+            mention, body_line
+        )))
+    }
+}
+
 fn split_sentences(text: &str) -> Vec<&str> {
     let mut sentences = Vec::new();
     let mut start = 0;
@@ -422,5 +618,157 @@ mod tests {
         let (ctx, line) = extract_sentence_context(body, "Alice");
         assert_eq!(ctx, "Line three has [[Alice]].");
         assert_eq!(line, 4);
+    }
+
+    // --- strip_for_mention_scan ---
+
+    #[test]
+    fn strip_blanks_fenced_code_blocks() {
+        let body = "Alice outside\n```\nAlice inside\n```\nAlice after";
+        let stripped = strip_for_mention_scan(body);
+        assert_eq!(stripped.len(), body.len());
+        assert!(!stripped[body.find("```").unwrap()..].starts_with("Alice inside"));
+        assert!(stripped.starts_with("Alice outside"));
+        assert!(stripped.ends_with("Alice after"));
+    }
+
+    #[test]
+    fn strip_blanks_inline_code() {
+        let body = "`Alice` and Alice is here";
+        let stripped = strip_for_mention_scan(body);
+        assert!(!stripped.starts_with("`Alice`"));
+        assert!(stripped.contains("Alice is here"));
+    }
+
+    #[test]
+    fn strip_blanks_html_comments() {
+        let body = "before <!-- Alice --> after";
+        let stripped = strip_for_mention_scan(body);
+        assert!(stripped.contains("before"));
+        assert!(stripped.contains("after"));
+        assert!(!stripped.contains("Alice"));
+    }
+
+    #[test]
+    fn strip_blanks_html_comments_multiline() {
+        let body = "before\n<!--\nAlice\n-->\nafter";
+        let stripped = strip_for_mention_scan(body);
+        assert_eq!(stripped.lines().count(), body.lines().count());
+        assert!(!stripped.contains("Alice"));
+    }
+
+    #[test]
+    fn strip_blanks_wikilinks() {
+        let body = "[[Alice]] and Alice outside";
+        let stripped = strip_for_mention_scan(body);
+        assert!(!stripped.starts_with("[[Alice]]"));
+        assert!(stripped.contains("Alice outside"));
+    }
+
+    #[test]
+    fn strip_offset_preservation() {
+        let body = "```\nAlice\n```\n`Alice` and <!-- Alice --> plus [[Alice]] end";
+        let stripped = strip_for_mention_scan(body);
+        assert_eq!(stripped.len(), body.len());
+        assert_eq!(stripped.lines().count(), body.lines().count());
+    }
+
+    // --- find_plain_mentions ---
+
+    #[test]
+    fn find_mentions_case_insensitive() {
+        let matches = find_plain_mentions("Alice went home. alice too.", &["Alice"]);
+        assert_eq!(matches.len(), 2);
+    }
+
+    #[test]
+    fn find_mentions_multi_word_phrase() {
+        let matches = find_plain_mentions("about Quantum Computing here", &["Quantum Computing"]);
+        assert_eq!(matches.len(), 1);
+        let no_match = find_plain_mentions("just Quantum alone", &["Quantum Computing"]);
+        assert!(no_match.is_empty());
+    }
+
+    #[test]
+    fn find_mentions_word_boundary_rejects_partials() {
+        let matches = find_plain_mentions("Aliceson and malice", &["Alice"]);
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn find_mentions_regex_special_chars() {
+        let matches = find_plain_mentions("The C++ language is great", &["C++"]);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].matched_text, "C++");
+    }
+
+    #[test]
+    fn find_mentions_multiple_names() {
+        let matches = find_plain_mentions("I met Alpha and also Alfa here", &["Alpha", "Alfa"]);
+        assert_eq!(matches.len(), 2);
+    }
+
+    #[test]
+    fn find_mentions_line_numbers() {
+        let matches = find_plain_mentions("First.\nAlice here.\nThird.\nAlice again.", &["Alice"]);
+        assert_eq!(matches.len(), 2);
+        assert_eq!(matches[0].line, 2);
+        assert_eq!(matches[1].line, 4);
+    }
+
+    #[test]
+    fn find_mentions_integration_with_strip() {
+        let body = "```\nAlice\n```\nAlice is here.";
+        let stripped = strip_for_mention_scan(body);
+        let matches = find_plain_mentions(&stripped, &["Alice"]);
+        assert_eq!(matches.len(), 1);
+    }
+
+    // --- extract_mention_context ---
+
+    #[test]
+    fn mention_context_extracts_sentence() {
+        let body = "Some intro. Alice went to the store. Then left.";
+        let ctx = extract_mention_context(body, 12);
+        assert_eq!(ctx, "Alice went to the store.");
+    }
+
+    #[test]
+    fn mention_context_fallback_full_line() {
+        let body = "This line has no sentence-ending punctuation and mentions Alice somewhere";
+        let ctx = extract_mention_context(body, body.find("Alice").unwrap());
+        assert_eq!(ctx, body);
+    }
+
+    // --- replace_mention_with_wikilink ---
+
+    #[test]
+    fn replace_basic_wrapping() {
+        let body = "I met Alice at the park.";
+        let result = replace_mention_with_wikilink(body, 1, "Alice").unwrap();
+        assert_eq!(result, "I met [[Alice]] at the park.");
+    }
+
+    #[test]
+    fn replace_preserves_canonical_case() {
+        let body = "I met alice at the park.";
+        let result = replace_mention_with_wikilink(body, 1, "Alice").unwrap();
+        assert_eq!(result, "I met [[Alice]] at the park.");
+    }
+
+    #[test]
+    fn replace_targets_correct_line() {
+        let body = "Alice on line one.\nAlice on line two.\nAlice on line three.";
+        let result = replace_mention_with_wikilink(body, 3, "Alice").unwrap();
+        let lines: Vec<&str> = result.lines().collect();
+        assert_eq!(lines[0], "Alice on line one.");
+        assert_eq!(lines[1], "Alice on line two.");
+        assert_eq!(lines[2], "[[Alice]] on line three.");
+    }
+
+    #[test]
+    fn replace_error_if_not_found() {
+        let result = replace_mention_with_wikilink("No mention here.", 1, "Alice");
+        assert!(result.is_err());
     }
 }
