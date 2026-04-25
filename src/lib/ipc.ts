@@ -369,6 +369,28 @@ export async function getPagerank(n?: number) {
   return invoke("get_pagerank", { n: n ?? null });
 }
 
+// Unlinked mentions
+
+export interface UnlinkedMention {
+  source_id: string;
+  source_title: string;
+  context: string;
+  source_line: number;
+  matched_text: string;
+}
+
+export async function getUnlinkedMentions(pageId: string): Promise<UnlinkedMention[]> {
+  return invoke<UnlinkedMention[]>("get_unlinked_mentions", { pageId });
+}
+
+export async function linkUnlinkedMention(
+  sourceId: string,
+  sourceLine: number,
+  matchedText: string,
+): Promise<void> {
+  return invoke<void>("link_unlinked_mention", { sourceId, sourceLine, matchedText });
+}
+
 // External editor
 
 export async function openInExternalEditor(

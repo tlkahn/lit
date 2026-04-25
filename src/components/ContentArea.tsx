@@ -10,6 +10,7 @@ import { setCurrentEditorView } from "../lib/editorViewRef";
 import { extractHeadings } from "../lib/headings";
 import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
 import { BacklinksPanel } from "./BacklinksPanel";
+import { UnlinkedMentionsPanel } from "./UnlinkedMentionsPanel";
 import { ConflictDialog } from "./ConflictDialog";
 import { MindmapView } from "./MindmapView";
 import { buildHeadingTree, applyRename, applyMove } from "../lib/headingTree";
@@ -492,6 +493,7 @@ export function ContentArea() {
         />
       </div>
       <BacklinksPanel pageId={currentPagePath} />
+      <UnlinkedMentionsPanel pageId={currentPagePath} />
       <ConflictDialog
         open={showConflict}
         onKeepMine={() => setShowConflict(false)}

@@ -28,6 +28,8 @@ import {
   resolveBibEntries,
   renderBibCitations,
   openInExternalEditor,
+  getUnlinkedMentions,
+  linkUnlinkedMention,
   rebuildGraphIndex,
   resolveWikilink,
   getPageHeadings,
@@ -151,6 +153,18 @@ describe("ipc", () => {
           ];
         case "render_bib_citations":
           return { smith2020: "Smith 2020" };
+        case "get_unlinked_mentions":
+          return [
+            {
+              source_id: "c.md",
+              source_title: "Gamma",
+              context: "mentions Alpha in passing",
+              source_line: 3,
+              matched_text: "Alpha",
+            },
+          ];
+        case "link_unlinked_mention":
+          return null;
         case "open_in_external_editor":
           return null;
         case "get_backlinks":
@@ -541,6 +555,25 @@ describe("ipc", () => {
     expect(result.edges).toHaveLength(1);
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: ["a.md", "b.md"], depth: 1, directed: null });
+  });
+
+  it("getUnlinkedMentions returns mention entries", async () => {
+    const mentions = await getUnlinkedMentions("a.md");
+    expect(mentions).toHaveLength(1);
+    expect(mentions[0]!.source_id).toBe("c.md");
+    expect(mentions[0]!.matched_text).toBe("Alpha");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("get_unlinked_mentions", { pageId: "a.md" });
+  });
+
+  it("linkUnlinkedMention calls with correct args", async () => {
+    await linkUnlinkedMention("c.md", 3, "Alpha");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("link_unlinked_mention", {
+      sourceId: "c.md",
+      sourceLine: 3,
+      matchedText: "Alpha",
+    });
   });
 
 });
