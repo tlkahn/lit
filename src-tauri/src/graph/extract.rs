@@ -82,6 +82,55 @@ pub fn extract_sentence_context(body: &str, link_target: &str) -> String {
     String::new()
 }
 
+pub fn extract_headings(body: &str) -> Vec<super::types::HeadingInfo> {
+    let mut headings = Vec::new();
+    let mut in_fence = false;
+    let mut fence_char: u8 = 0;
+
+    for line in body.lines() {
+        let trimmed = line.trim_start();
+        let fence_match = trimmed.as_bytes().first().copied();
+        if matches!(fence_match, Some(b'`') | Some(b'~')) {
+            let ch = fence_match.unwrap();
+            let run = trimmed.bytes().take_while(|&b| b == ch).count();
+            if run >= 3 {
+                if !in_fence {
+                    in_fence = true;
+                    fence_char = ch;
+                } else if ch == fence_char {
+                    in_fence = false;
+                }
+                continue;
+            }
+        }
+        if in_fence {
+            continue;
+        }
+
+        let bytes = trimmed.as_bytes();
+        if bytes.first() != Some(&b'#') {
+            continue;
+        }
+        let hash_count = bytes.iter().take_while(|&&b| b == b'#').count();
+        if hash_count > 6 || hash_count >= trimmed.len() {
+            continue;
+        }
+        if bytes[hash_count] != b' ' {
+            continue;
+        }
+        let text = trimmed[hash_count + 1..].trim();
+        if text.is_empty() {
+            continue;
+        }
+        headings.push(super::types::HeadingInfo {
+            text: text.to_string(),
+            level: hash_count as u8,
+        });
+    }
+
+    headings
+}
+
 fn split_sentences(text: &str) -> Vec<&str> {
     let mut sentences = Vec::new();
     let mut start = 0;
@@ -184,6 +233,93 @@ mod tests {
     fn first_paragraph_skips_underscore_horizontal_rule() {
         let body = "___\n\nAfter underscores.";
         assert_eq!(extract_first_paragraph(body), "After underscores.");
+    }
+
+    // --- extract_headings ---
+
+    use super::super::types::HeadingInfo;
+
+    #[test]
+    fn extract_headings_empty() {
+        assert!(extract_headings("").is_empty());
+    }
+
+    #[test]
+    fn extract_headings_no_headings() {
+        assert!(extract_headings("just text\nmore text").is_empty());
+    }
+
+    #[test]
+    fn extract_headings_single_h1() {
+        let result = extract_headings("# Title");
+        assert_eq!(result, vec![HeadingInfo { text: "Title".into(), level: 1 }]);
+    }
+
+    #[test]
+    fn extract_headings_multiple_levels() {
+        let result = extract_headings("# One\ntext\n## Two\n### Three");
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].level, 1);
+        assert_eq!(result[1].level, 2);
+        assert_eq!(result[2].level, 3);
+    }
+
+    #[test]
+    fn extract_headings_strips_whitespace() {
+        let result = extract_headings("#   Spaced  ");
+        assert_eq!(result, vec![HeadingInfo { text: "Spaced".into(), level: 1 }]);
+    }
+
+    #[test]
+    fn extract_headings_h1_through_h6() {
+        let body = "# H1\n## H2\n### H3\n#### H4\n##### H5\n###### H6";
+        let result = extract_headings(body);
+        assert_eq!(result.len(), 6);
+        for (i, h) in result.iter().enumerate() {
+            assert_eq!(h.level, (i + 1) as u8);
+        }
+    }
+
+    #[test]
+    fn extract_headings_ignores_7_hashes() {
+        assert!(extract_headings("####### Not").is_empty());
+    }
+
+    #[test]
+    fn extract_headings_ignores_no_space() {
+        assert!(extract_headings("#nospace").is_empty());
+    }
+
+    #[test]
+    fn extract_headings_skips_fenced_code() {
+        let body = "# Before\n```\n# Inside\n```\n# After";
+        let result = extract_headings(body);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].text, "Before");
+        assert_eq!(result[1].text, "After");
+    }
+
+    #[test]
+    fn extract_headings_skips_tilde_fence() {
+        let body = "# Before\n~~~\n# Inside\n~~~\n# After";
+        let result = extract_headings(body);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].text, "Before");
+        assert_eq!(result[1].text, "After");
+    }
+
+    #[test]
+    fn extract_headings_unclosed_fence() {
+        let body = "```\n# Inside";
+        assert!(extract_headings(body).is_empty());
+    }
+
+    #[test]
+    fn extract_headings_fenced_with_lang() {
+        let body = "```rust\n# Inside\n```\n# Outside";
+        let result = extract_headings(body);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].text, "Outside");
     }
 
     // --- extract_sentence_context ---

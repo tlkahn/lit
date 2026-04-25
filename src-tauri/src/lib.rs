@@ -212,6 +212,7 @@ pub fn run() {
             commands::graph::get_graph_paths,
             commands::graph::get_graph_subgraph,
             commands::graph::resolve_wikilink,
+            commands::graph::get_page_headings,
             get_initial_workspace,
             get_initial_file,
         ])

@@ -30,6 +30,7 @@ import {
   openInExternalEditor,
   rebuildGraphIndex,
   resolveWikilink,
+  getPageHeadings,
   getPagerank,
   getBacklinks,
   getForwardLinks,
@@ -188,6 +189,11 @@ describe("ipc", () => {
           }
           return { target: a?.target ?? "", node_id: "Notes/Topic.md", tier: "Stem" };
         }
+        case "get_page_headings":
+          return [
+            { text: "Introduction", level: 1 },
+            { text: "Details", level: 2 },
+          ];
         case "rebuild_graph_index":
           return "Rebuilt: 5 nodes, 3 edges, 1 stubs";
         case "get_pagerank": {
@@ -423,6 +429,21 @@ describe("ipc", () => {
       line: 10,
       col: 5,
     });
+  });
+
+  it("getPageHeadings returns headings array", async () => {
+    const headings = await getPageHeadings("My Page");
+    expect(headings).toHaveLength(2);
+    expect(headings[0]!.text).toBe("Introduction");
+    expect(headings[0]!.level).toBe(1);
+    expect(headings[1]!.text).toBe("Details");
+    expect(headings[1]!.level).toBe(2);
+  });
+
+  it("getPageHeadings passes target correctly", async () => {
+    await getPageHeadings("My Page");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("get_page_headings", { target: "My Page" });
   });
 
   it("rebuildGraphIndex calls correct command", async () => {

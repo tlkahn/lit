@@ -40,6 +40,12 @@ pub struct LinkEntry {
     pub context: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HeadingInfo {
+    pub text: String,
+    pub level: u8,
+}
+
 pub fn extract_tags(fm: &serde_json::Value) -> Vec<String> {
     match fm.get("tags") {
         Some(serde_json::Value::Array(arr)) => {

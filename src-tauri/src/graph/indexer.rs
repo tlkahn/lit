@@ -6,7 +6,8 @@ use tracing::info;
 use walkdir::WalkDir;
 
 use super::error::GraphError;
-use super::extract::{extract_first_paragraph, extract_sentence_context};
+use super::extract::{extract_first_paragraph, extract_headings, extract_sentence_context};
+use super::types::HeadingInfo;
 use super::knowledge::{GraphNode, KnowledgeGraph, SubgraphResult};
 use super::links::{extract_wikilinks, WikiLink};
 use super::resolve::StemLookup;
@@ -619,6 +620,16 @@ impl GraphIndex {
         let aliases = store.all_aliases()?;
         let lookup = StemLookup::build(&all_ids, &aliases);
         Ok(lookup.resolve(target))
+    }
+
+    pub fn page_headings(&self, target: &str) -> Result<Vec<HeadingInfo>, GraphError> {
+        let resolved = self.resolve_wikilink(target)?;
+        let node_id = resolved.node_id.ok_or_else(|| GraphError::NodeNotFound {
+            id: target.to_string(),
+        })?;
+        let page = crate::workspace::ops::read_page(&self.workspace_root, &node_id)
+            .map_err(|e| GraphError::Other(e.to_string()))?;
+        Ok(extract_headings(&page.body))
     }
 
     pub fn backlinks(&self, page_id: &str) -> Result<Vec<BacklinkEntry>, GraphError> {
@@ -1420,6 +1431,48 @@ mod tests {
         let r = gi.resolve_wikilink("Note").unwrap();
         assert_eq!(r.tier, super::super::resolve::ResolutionTier::Ambiguous);
         assert_eq!(r.node_id, Some("a/Note.md".to_string()));
+    }
+
+    // --- GraphIndex page_headings ---
+
+    #[test]
+    fn page_headings_returns_headings() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "# Intro\n\n## Details");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let headings = gi.page_headings("a").unwrap();
+        assert_eq!(headings.len(), 2);
+        assert_eq!(headings[0].text, "Intro");
+        assert_eq!(headings[0].level, 1);
+        assert_eq!(headings[1].text, "Details");
+        assert_eq!(headings[1].level, 2);
+    }
+
+    #[test]
+    fn page_headings_empty_for_no_headings() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Just plain text.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let headings = gi.page_headings("a").unwrap();
+        assert!(headings.is_empty());
+    }
+
+    #[test]
+    fn page_headings_resolves_by_stem() {
+        let dir = create_workspace();
+        write_md(dir.path(), "notes/Topic.md", "# First\n## Second");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let headings = gi.page_headings("Topic").unwrap();
+        assert_eq!(headings.len(), 2);
+    }
+
+    #[test]
+    fn page_headings_unresolved_errors() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Content.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let result = gi.page_headings("NonExistent");
+        assert!(result.is_err());
     }
 
     #[test]

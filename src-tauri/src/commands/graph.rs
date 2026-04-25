@@ -181,6 +181,19 @@ pub fn resolve_wikilink(
     })
 }
 
+#[tauri::command]
+pub fn get_page_headings(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<GraphRegistry>>,
+    target: String,
+) -> Result<serde_json::Value, String> {
+    with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+        let headings = gi.page_headings(&target)?;
+        serde_json::to_value(headings).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,6 +328,17 @@ mod tests {
         assert_eq!(resolved.node_id, None);
         let json = serde_json::to_value(&resolved).unwrap();
         assert!(json["node_id"].is_null());
+    }
+
+    #[test]
+    fn cmd_get_page_headings() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "# Intro\n\n## Details").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let headings = gi.page_headings("a").unwrap();
+        assert_eq!(headings.len(), 2);
+        assert_eq!(headings[0].text, "Intro");
+        assert_eq!(headings[1].text, "Details");
     }
 
     #[test]

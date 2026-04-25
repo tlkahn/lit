@@ -14,6 +14,7 @@ import { crossrefExtension } from "./crossref";
 import { citeprocExtension } from "./citeproc";
 import { autocompletion } from "@codemirror/autocomplete";
 import { crossrefCompletionSource } from "./crossrefCompletion";
+import { wikilinkCompletionSource } from "./wikilinkCompletion";
 import { openUrl as defaultOpenUrl } from "@tauri-apps/plugin-opener";
 
 export { frontmatterFacet } from "./crossref";
@@ -41,7 +42,7 @@ export function livePreviewExtension(config?: LivePreviewConfig): Extension {
     calloutFoldField,
     crossrefExtension(),
     citeprocExtension(),
-    autocompletion({ override: [crossrefCompletionSource] }),
+    autocompletion({ override: [crossrefCompletionSource, wikilinkCompletionSource] }),
   ];
   if (config?.resolveImageSrc) {
     exts.push(imageResolverFacet.of(config.resolveImageSrc));

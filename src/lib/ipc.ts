@@ -349,6 +349,15 @@ export async function resolveWikilink(target: string): Promise<ResolvedWikilink>
   return invoke<ResolvedWikilink>("resolve_wikilink", { target });
 }
 
+export interface HeadingInfo {
+  text: string;
+  level: number;
+}
+
+export async function getPageHeadings(target: string): Promise<HeadingInfo[]> {
+  return invoke<HeadingInfo[]>("get_page_headings", { target });
+}
+
 export async function rebuildGraphIndex(): Promise<string> {
   return invoke<string>("rebuild_graph_index");
 }
