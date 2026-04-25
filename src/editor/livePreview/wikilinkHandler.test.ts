@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { EditorState } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
 import { markdown } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
 import { WikiLink } from "../markdown/wikilink";
@@ -67,5 +68,77 @@ describe("createWikilinkClickHandler", () => {
     expect(() =>
       EditorState.create({ extensions: [handler] }),
     ).not.toThrow();
+  });
+
+  function createView(doc: string, navigateToPage: ReturnType<typeof vi.fn>) {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const state = EditorState.create({
+      doc,
+      extensions: [
+        markdown({ extensions: [GFM, WikiLink] }),
+        createWikilinkClickHandler(navigateToPage),
+      ],
+    });
+    const view = new EditorView({ state, parent: container });
+    vi.spyOn(view, "posAtCoords").mockReturnValue(7);
+    return view;
+  }
+
+  // Live-preview hides [[ and ]] via Decoration.replace when the cursor is
+  // outside the wikilink.  CM6 processes mousedown before click — if the
+  // handler listened on "click", the mousedown would move the cursor into
+  // the wikilink, remove decorations, shift the DOM, and cause posAtCoords
+  // in the subsequent click to land on [[ instead of the page name.
+  // Using "mousedown" resolves coordinates before any decoration update.
+
+  it("navigates on Cmd+mousedown (left button)", () => {
+    const navigateToPage = vi.fn();
+    const view = createView("see [[MyPage]] here", navigateToPage);
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", { button: 0, metaKey: true, bubbles: true }),
+    );
+    expect(navigateToPage).toHaveBeenCalledWith("MyPage", undefined);
+    view.destroy();
+  });
+
+  it("navigates on Ctrl+mousedown (left button)", () => {
+    const navigateToPage = vi.fn();
+    const view = createView("see [[MyPage]] here", navigateToPage);
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", { button: 0, ctrlKey: true, bubbles: true }),
+    );
+    expect(navigateToPage).toHaveBeenCalledWith("MyPage", undefined);
+    view.destroy();
+  });
+
+  it("does NOT navigate on Cmd+click (must use mousedown to avoid decoration DOM shift)", () => {
+    const navigateToPage = vi.fn();
+    const view = createView("see [[MyPage]] here", navigateToPage);
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("click", { button: 0, metaKey: true, bubbles: true }),
+    );
+    expect(navigateToPage).not.toHaveBeenCalled();
+    view.destroy();
+  });
+
+  it("ignores mousedown without modifier key", () => {
+    const navigateToPage = vi.fn();
+    const view = createView("see [[MyPage]] here", navigateToPage);
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", { button: 0, bubbles: true }),
+    );
+    expect(navigateToPage).not.toHaveBeenCalled();
+    view.destroy();
+  });
+
+  it("ignores right-button mousedown even with Cmd", () => {
+    const navigateToPage = vi.fn();
+    const view = createView("see [[MyPage]] here", navigateToPage);
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", { button: 2, metaKey: true, bubbles: true }),
+    );
+    expect(navigateToPage).not.toHaveBeenCalled();
+    view.destroy();
   });
 });

@@ -50,7 +50,8 @@ export function createWikilinkClickHandler(
   navigateToPage: NavigateToPage,
 ): Extension {
   return EditorView.domEventHandlers({
-    click(event, view) {
+    mousedown(event, view) {
+      if (event.button !== 0) return false;
       const isMod = event.ctrlKey || event.metaKey;
       if (!isMod) return false;
 
