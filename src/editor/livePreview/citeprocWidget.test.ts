@@ -1,8 +1,9 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { CiteprocWidget } from "./citeprocWidget";
 import { useWorkspaceStore } from "../../stores/workspace";
+import { globalJumpTracker } from "../jumpTracker";
 
 function makeView(doc = "test document"): EditorView {
   const state = EditorState.create({ doc });
@@ -10,6 +11,10 @@ function makeView(doc = "test document"): EditorView {
 }
 
 describe("CiteprocWidget", () => {
+  beforeEach(() => {
+    globalJumpTracker.clear();
+  });
+
   it("eq returns true for identical props", () => {
     const a = new CiteprocWidget("[@smith2020]", "Smith 2020", true, 0, 13, "refs.bib", 10);
     const b = new CiteprocWidget("[@smith2020]", "Smith 2020", true, 0, 13, "refs.bib", 10);
@@ -65,6 +70,7 @@ describe("CiteprocWidget", () => {
     const selectPageAtLine = vi.fn();
     useWorkspaceStore.setState({
       workspacePath: "/path",
+      currentPagePath: "note.md",
       selectPageAtLine,
     });
 
@@ -74,6 +80,26 @@ describe("CiteprocWidget", () => {
     el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
 
     expect(selectPageAtLine).toHaveBeenCalledWith("refs.bib", 10);
+    view.destroy();
+  });
+
+  it("click records departure before cross-page navigation", () => {
+    const selectPageAtLine = vi.fn();
+    useWorkspaceStore.setState({
+      workspacePath: "/path",
+      currentPagePath: "note.md",
+      selectPageAtLine,
+    });
+
+    const view = makeView();
+    const widget = new CiteprocWidget("[@smith2020]", "Smith 2020", true, 0, 13, "/path/refs.bib", 10);
+    const el = widget.toDOM(view);
+    el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+
+    expect(globalJumpTracker.jumps).toHaveLength(1);
+    expect(globalJumpTracker.jumps[0]).toEqual(
+      expect.objectContaining({ notePath: "note.md", line: 1, col: 0 }),
+    );
     view.destroy();
   });
 
@@ -124,6 +150,7 @@ describe("CiteprocWidget", () => {
     const selectPageAtLine = vi.fn();
     useWorkspaceStore.setState({
       workspacePath: "/path",
+      currentPagePath: "note.md",
       selectPageAtLine,
     });
 

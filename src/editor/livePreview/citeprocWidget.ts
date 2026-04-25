@@ -1,5 +1,6 @@
 import { type EditorView, WidgetType } from "@codemirror/view";
 import { useWorkspaceStore } from "../../stores/workspace";
+import { globalJumpTracker } from "../jumpTracker";
 
 export class CiteprocWidget extends WidgetType {
   constructor(
@@ -26,9 +27,10 @@ export class CiteprocWidget extends WidgetType {
       e.preventDefault();
       e.stopPropagation();
       if (this.isValid && this.bibFile != null && this.lineNumber != null) {
-        const { workspacePath, selectPageAtLine } = useWorkspaceStore.getState();
+        const { workspacePath, selectPageAtLine, currentPagePath } = useWorkspaceStore.getState();
         if (workspacePath && this.bibFile.startsWith(workspacePath + "/")) {
           const relativePath = this.bibFile.slice(workspacePath.length + 1);
+          recordCiteprocDeparture(view, currentPagePath);
           selectPageAtLine(relativePath, this.lineNumber);
           return;
         }
@@ -55,9 +57,10 @@ export class CiteprocWidget extends WidgetType {
       e!.preventDefault();
       e!.stopPropagation();
       if (this.isValid && this.bibFile != null && this.lineNumber != null) {
-        const { workspacePath, selectPageAtLine } = useWorkspaceStore.getState();
+        const { workspacePath, selectPageAtLine, currentPagePath } = useWorkspaceStore.getState();
         if (workspacePath && this.bibFile.startsWith(workspacePath + "/")) {
           const relativePath = this.bibFile.slice(workspacePath.length + 1);
+          recordCiteprocDeparture(view, currentPagePath);
           selectPageAtLine(relativePath, this.lineNumber);
           return;
         }
@@ -89,4 +92,14 @@ export class CiteprocWidget extends WidgetType {
   get estimatedHeight(): number {
     return 20;
   }
+}
+
+function recordCiteprocDeparture(view: EditorView, currentPagePath: string | null): void {
+  const notePath = currentPagePath ?? "";
+  const head = view.state.selection.main.head;
+  const line = view.state.doc.lineAt(head);
+  globalJumpTracker.recordJump(
+    { notePath, line: line.number, col: head - line.from },
+    { notePath: "", line: 0, col: 0 },
+  );
 }

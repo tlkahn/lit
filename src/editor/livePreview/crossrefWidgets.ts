@@ -1,4 +1,7 @@
 import { type EditorView, WidgetType } from "@codemirror/view";
+import { globalJumpTracker } from "../jumpTracker";
+import { isJumpNavigation } from "../jumpHistory";
+import { useWorkspaceStore } from "../../stores/workspace";
 
 export class CrossrefWidget extends WidgetType {
   constructor(
@@ -24,9 +27,11 @@ export class CrossrefWidget extends WidgetType {
       e.preventDefault();
       e.stopPropagation();
       if (this.isValid && this.targetCharOffset != null) {
+        recordDeparture(view);
         view.dispatch({
           selection: { anchor: this.targetCharOffset },
           scrollIntoView: true,
+          annotations: isJumpNavigation.of(true),
         });
         highlightLine(view, this.targetCharOffset);
       } else {
@@ -53,9 +58,11 @@ export class CrossrefWidget extends WidgetType {
       e!.preventDefault();
       e!.stopPropagation();
       if (this.isValid && this.targetCharOffset != null) {
+        recordDeparture(view);
         view.dispatch({
           selection: { anchor: this.targetCharOffset },
           scrollIntoView: true,
+          annotations: isJumpNavigation.of(true),
         });
         highlightLine(view, this.targetCharOffset);
       } else {
@@ -148,6 +155,16 @@ export class DefinitionWidget extends WidgetType {
   get estimatedHeight(): number {
     return 20;
   }
+}
+
+function recordDeparture(view: EditorView): void {
+  const notePath = useWorkspaceStore.getState().currentPagePath ?? "";
+  const head = view.state.selection.main.head;
+  const line = view.state.doc.lineAt(head);
+  globalJumpTracker.recordJump(
+    { notePath, line: line.number, col: head - line.from },
+    { notePath: "", line: 0, col: 0 },
+  );
 }
 
 export function highlightLine(view: EditorView, pos: number): void {

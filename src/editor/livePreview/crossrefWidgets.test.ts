@@ -2,6 +2,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { CrossrefWidget, DefinitionWidget, highlightLine } from "./crossrefWidgets";
+import { globalJumpTracker } from "../jumpTracker";
+
+vi.mock("../../stores/workspace", () => ({
+  useWorkspaceStore: {
+    getState: vi.fn(() => ({
+      currentPagePath: "note.md",
+    })),
+  },
+}));
 
 function makeView(doc = "test document"): EditorView {
   const state = EditorState.create({ doc });
@@ -123,6 +132,30 @@ describe("CrossrefWidget", () => {
         scrollIntoView: true,
       }),
     );
+    view.destroy();
+  });
+
+  it("mousedown records departure in jump tracker", () => {
+    const doc = "some text with enough length to hold offset";
+    const view = makeView(doc);
+    globalJumpTracker.clear();
+    const widget = new CrossrefWidget("[@fig:cat]", "Fig. 1", true, 0, 10, 20);
+    const el = widget.toDOM(view);
+    el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(globalJumpTracker.jumps).toHaveLength(1);
+    expect(globalJumpTracker.jumps[0]).toEqual(
+      expect.objectContaining({ notePath: "note.md", line: 1, col: 0 }),
+    );
+    view.destroy();
+  });
+
+  it("mousedown does not record departure for invalid crossref", () => {
+    const view = makeView();
+    globalJumpTracker.clear();
+    const widget = new CrossrefWidget("[@fig:nope]", "??", false, 5, 10, null);
+    const el = widget.toDOM(view);
+    el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(globalJumpTracker.jumps).toHaveLength(0);
     view.destroy();
   });
 
