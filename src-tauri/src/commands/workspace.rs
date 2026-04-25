@@ -1,3 +1,5 @@
+use crate::commands::graph::GraphRegistry;
+use crate::graph::indexer::GraphIndex;
 use crate::workspace::page::PageMeta;
 use crate::workspace::scan::scan_pages;
 use crate::workspace::watcher::FileWatcher;
@@ -6,7 +8,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
-use tauri::{Manager, State, WebviewWindowBuilder};
+use tauri::{Emitter, Manager, State, WebviewWindowBuilder};
 
 pub struct WorkspaceEntry {
     pub root: PathBuf,
@@ -36,6 +38,7 @@ pub fn open_workspace(
     state: State<WorkspaceRegistry>,
     app_handle: tauri::AppHandle,
     registry: State<Arc<WriteHashRegistry>>,
+    graph_state: State<Arc<GraphRegistry>>,
 ) -> Result<Vec<PageMeta>, String> {
     let root = PathBuf::from(&path);
     if !root.is_dir() {
@@ -53,7 +56,7 @@ pub fn open_workspace(
     let watcher = FileWatcher::new(
         root.clone(),
         label.clone(),
-        app_handle,
+        app_handle.clone(),
         Arc::clone(&registry),
     )
     .ok();
@@ -61,10 +64,30 @@ pub fn open_workspace(
     state.workspaces.lock().unwrap().insert(
         label,
         WorkspaceEntry {
-            root,
+            root: root.clone(),
             watcher,
         },
     );
+
+    // Spawn async graph indexing
+    let graph_root = root.clone();
+    let graph_reg = Arc::clone(&graph_state);
+    let handle = app_handle.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        match GraphIndex::build(graph_root.clone()) {
+            Ok(gi) => {
+                graph_reg
+                    .indices
+                    .lock()
+                    .unwrap()
+                    .insert(graph_root, Arc::new(gi));
+                let _ = handle.emit("lit:graph-updated", ());
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "failed to build graph index");
+            }
+        }
+    });
 
     Ok(pages)
 }

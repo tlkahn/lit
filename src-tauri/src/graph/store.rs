@@ -92,6 +92,15 @@ impl Store {
             )?;
         }
 
+        if version < 3 {
+            info!(from = version, to = 3, "migrating schema");
+            self.conn
+                .execute_batch("ALTER TABLE edges ADD COLUMN raw_target TEXT DEFAULT '';")?;
+            self.conn.execute_batch(
+                "UPDATE meta SET value = '3' WHERE key = 'schema_version';",
+            )?;
+        }
+
         self.conn.execute_batch(
             "CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(
                 title, first_paragraph, tags_text,
@@ -205,10 +214,10 @@ impl Store {
 
     // --- Edges ---
 
-    pub fn insert_edge(&self, source: &str, target: &str, ctx: &str) -> Result<(), GraphError> {
+    pub fn insert_edge(&self, source: &str, target: &str, ctx: &str, raw_target: &str) -> Result<(), GraphError> {
         self.conn.execute(
-            "INSERT INTO edges(source, target, context) VALUES (?1, ?2, ?3)",
-            rusqlite::params![source, target, ctx],
+            "INSERT INTO edges(source, target, context, raw_target) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![source, target, ctx, raw_target],
         )?;
         Ok(())
     }
@@ -219,12 +228,12 @@ impl Store {
         Ok(())
     }
 
-    pub fn replace_all_edges(&self, edges: &[(&str, &str, &str)]) -> Result<(), GraphError> {
+    pub fn replace_all_edges(&self, edges: &[(&str, &str, &str, &str)]) -> Result<(), GraphError> {
         self.conn.execute("DELETE FROM edges", [])?;
-        for &(source, target, context) in edges {
+        for &(source, target, context, raw_target) in edges {
             self.conn.execute(
-                "INSERT INTO edges(source, target, context) VALUES (?1, ?2, ?3)",
-                rusqlite::params![source, target, context],
+                "INSERT INTO edges(source, target, context, raw_target) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![source, target, context, raw_target],
             )?;
         }
         Ok(())
@@ -239,6 +248,40 @@ impl Store {
             Some(row) => Ok(Some(row.get(0)?)),
             None => Ok(None),
         }
+    }
+
+    pub fn all_sync_entries(&self) -> Result<Vec<(String, i64)>, GraphError> {
+        let mut stmt = self.conn.prepare("SELECT path, mtime FROM sync ORDER BY path")?;
+        let entries = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(entries)
+    }
+
+    pub fn all_aliases(&self) -> Result<HashMap<String, Vec<String>>, GraphError> {
+        let mut stmt = self.conn.prepare("SELECT node_id, alias FROM aliases ORDER BY node_id, alias")?;
+        let rows = stmt
+            .query_map([], |row| {
+                let node_id: String = row.get(0)?;
+                let alias: String = row.get(1)?;
+                Ok((node_id, alias))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut map: HashMap<String, Vec<String>> = HashMap::new();
+        for (node_id, alias) in rows {
+            map.entry(node_id).or_default().push(alias);
+        }
+        Ok(map)
+    }
+
+    pub fn all_raw_edges(&self) -> Result<Vec<(String, String, String)>, GraphError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT source, target, raw_target FROM edges ORDER BY source, target"
+        )?;
+        let edges = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(edges)
     }
 
     pub fn all_synced_paths(&self) -> Result<Vec<String>, GraphError> {
@@ -439,9 +482,9 @@ mod tests {
     }
 
     #[test]
-    fn schema_version_is_2() {
+    fn schema_version_is_3() {
         let store = Store::open_memory().unwrap();
-        assert_eq!(store.schema_version().unwrap(), 2);
+        assert_eq!(store.schema_version().unwrap(), 3);
     }
 
     #[test]
@@ -464,11 +507,11 @@ mod tests {
         let db_path = dir.path().join("test.db");
         {
             let store = Store::open(&db_path).unwrap();
-            assert_eq!(store.schema_version().unwrap(), 2);
+            assert_eq!(store.schema_version().unwrap(), 3);
         }
         {
             let store = Store::open(&db_path).unwrap();
-            assert_eq!(store.schema_version().unwrap(), 2);
+            assert_eq!(store.schema_version().unwrap(), 3);
         }
     }
 
@@ -498,7 +541,7 @@ mod tests {
     #[test]
     fn schema_version_readable_via_get_meta() {
         let store = Store::open_memory().unwrap();
-        assert_eq!(store.get_meta("schema_version").unwrap(), Some("2".into()));
+        assert_eq!(store.get_meta("schema_version").unwrap(), Some("3".into()));
     }
 
     // --- Phase 5: Node CRUD ---
@@ -670,7 +713,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &["t"], json!({"aliases": ["X"]}));
         store.upsert_node(&node, 1).unwrap();
-        store.insert_edge("a.md", "b.md", "ctx").unwrap();
+        store.insert_edge("a.md", "b.md", "ctx", "").unwrap();
 
         store.delete_node("a.md").unwrap();
 
@@ -717,8 +760,8 @@ mod tests {
         let node_b = make_node("b.md", "B", &[], json!({}));
         store.upsert_node(&node_a, 1).unwrap();
         store.upsert_node(&node_b, 1).unwrap();
-        store.insert_edge("a.md", "b.md", "").unwrap();
-        store.insert_edge("b.md", "a.md", "").unwrap();
+        store.insert_edge("a.md", "b.md", "", "").unwrap();
+        store.insert_edge("b.md", "a.md", "", "").unwrap();
 
         store.delete_node("a.md").unwrap();
 
@@ -740,7 +783,7 @@ mod tests {
     #[test]
     fn insert_edge_and_query() {
         let store = Store::open_memory().unwrap();
-        store.insert_edge("a.md", "b.md", "links to b").unwrap();
+        store.insert_edge("a.md", "b.md", "links to b", "b").unwrap();
 
         let ctx: String = store
             .conn
@@ -756,9 +799,9 @@ mod tests {
     #[test]
     fn delete_edges_from_source() {
         let store = Store::open_memory().unwrap();
-        store.insert_edge("a.md", "b.md", "").unwrap();
-        store.insert_edge("a.md", "c.md", "").unwrap();
-        store.insert_edge("x.md", "y.md", "").unwrap();
+        store.insert_edge("a.md", "b.md", "", "").unwrap();
+        store.insert_edge("a.md", "c.md", "", "").unwrap();
+        store.insert_edge("x.md", "y.md", "", "").unwrap();
 
         store.delete_edges_from("a.md").unwrap();
 
@@ -772,11 +815,11 @@ mod tests {
     #[test]
     fn replace_all_edges_clears_and_inserts() {
         let store = Store::open_memory().unwrap();
-        store.insert_edge("old.md", "old_target.md", "").unwrap();
+        store.insert_edge("old.md", "old_target.md", "", "").unwrap();
 
         let edges = vec![
-            ("a.md", "b.md", "link to B"),
-            ("a.md", "c.md", "link to C"),
+            ("a.md", "b.md", "link to B", "B"),
+            ("a.md", "c.md", "link to C", "C"),
         ];
         store.replace_all_edges(&edges).unwrap();
 
@@ -840,8 +883,8 @@ mod tests {
     #[test]
     fn all_edges_returns_source_target_pairs() {
         let store = Store::open_memory().unwrap();
-        store.insert_edge("a.md", "b.md", "").unwrap();
-        store.insert_edge("c.md", "d.md", "").unwrap();
+        store.insert_edge("a.md", "b.md", "", "").unwrap();
+        store.insert_edge("c.md", "d.md", "", "").unwrap();
 
         let edges = store.all_edges().unwrap();
         assert_eq!(
@@ -918,8 +961,8 @@ mod tests {
         let node2 = make_node("b.md", "B", &["t1"], json!({}));
         store.upsert_node(&node2, 1).unwrap();
         store.upsert_stub("Ghost").unwrap();
-        store.insert_edge("a.md", "b.md", "").unwrap();
-        store.insert_edge("a.md", "Ghost", "").unwrap();
+        store.insert_edge("a.md", "b.md", "", "").unwrap();
+        store.insert_edge("a.md", "Ghost", "", "").unwrap();
 
         let s = store.stats().unwrap();
         assert_eq!(s.nodes, 2);
@@ -1119,6 +1162,65 @@ mod tests {
         assert_eq!(new_results[0].title, "NewTitle");
     }
 
+    // --- all_sync_entries ---
+
+    #[test]
+    fn all_sync_entries_empty() {
+        let store = Store::open_memory().unwrap();
+        assert!(store.all_sync_entries().unwrap().is_empty());
+    }
+
+    #[test]
+    fn all_sync_entries_returns_path_mtime_pairs() {
+        let store = Store::open_memory().unwrap();
+        let a = make_node("a.md", "A", &[], json!({}));
+        let b = make_node("b.md", "B", &[], json!({}));
+        store.upsert_node(&a, 1).unwrap();
+        store.upsert_node(&b, 2).unwrap();
+        let entries = store.all_sync_entries().unwrap();
+        assert_eq!(entries, vec![("a.md".into(), 1), ("b.md".into(), 2)]);
+    }
+
+    // --- all_aliases ---
+
+    #[test]
+    fn all_aliases_empty() {
+        let store = Store::open_memory().unwrap();
+        assert!(store.all_aliases().unwrap().is_empty());
+    }
+
+    #[test]
+    fn all_aliases_returns_grouped() {
+        let store = Store::open_memory().unwrap();
+        let a = make_node("a.md", "A", &[], json!({"aliases": ["Alpha", "Alfa"]}));
+        let b = make_node("b.md", "B", &[], json!({"aliases": ["Beta"]}));
+        store.upsert_node(&a, 1).unwrap();
+        store.upsert_node(&b, 1).unwrap();
+        let aliases = store.all_aliases().unwrap();
+        assert_eq!(aliases.len(), 2);
+        assert_eq!(aliases["a.md"], vec!["Alfa", "Alpha"]);
+        assert_eq!(aliases["b.md"], vec!["Beta"]);
+    }
+
+    #[test]
+    fn all_aliases_excludes_nodes_without_aliases() {
+        let store = Store::open_memory().unwrap();
+        let a = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&a, 1).unwrap();
+        assert!(store.all_aliases().unwrap().is_empty());
+    }
+
+    // --- raw_target ---
+
+    #[test]
+    fn insert_edge_with_raw_target() {
+        let store = Store::open_memory().unwrap();
+        store.insert_edge("a.md", "b.md", "ctx", "B").unwrap();
+        let raw = store.all_raw_edges().unwrap();
+        assert_eq!(raw.len(), 1);
+        assert_eq!(raw[0], ("a.md".into(), "b.md".into(), "B".into()));
+    }
+
     // --- Phase 10: Transactions & Tracing ---
 
     #[test]
@@ -1163,7 +1265,7 @@ mod tests {
     // --- Phase 11: Migration ---
 
     #[test]
-    fn v1_to_v2_migration_backfills_tags_text() {
+    fn v1_to_v3_migration_backfills_tags_text_and_adds_raw_target() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.db");
 
@@ -1194,7 +1296,7 @@ mod tests {
         }
 
         let store = Store::open(&db_path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 2);
+        assert_eq!(store.schema_version().unwrap(), 3);
 
         let tags_text: String = store
             .conn
@@ -1206,5 +1308,48 @@ mod tests {
 
         let results = store.search("Alpha", 20).unwrap();
         assert_eq!(results.len(), 1);
+
+        // v3 column should exist
+        store.insert_edge("a.md", "b.md", "ctx", "b").unwrap();
+        let raw_edges = store.all_raw_edges().unwrap();
+        assert_eq!(raw_edges.len(), 1);
+        assert_eq!(raw_edges[0].2, "b");
+    }
+
+    #[test]
+    fn v2_to_v3_migration_adds_raw_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
+            conn.execute_batch(
+                "CREATE TABLE nodes (
+                    id TEXT PRIMARY KEY,
+                    title TEXT,
+                    first_paragraph TEXT,
+                    frontmatter JSON,
+                    mtime INTEGER,
+                    is_stub INTEGER DEFAULT 0,
+                    tags_text TEXT DEFAULT ''
+                );
+                CREATE TABLE tags (node_id TEXT, tag TEXT);
+                CREATE TABLE aliases (node_id TEXT, alias TEXT);
+                CREATE TABLE edges (source TEXT, target TEXT, context TEXT);
+                CREATE TABLE sync (path TEXT PRIMARY KEY, mtime INTEGER);
+                CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+                INSERT INTO meta(key, value) VALUES ('schema_version', '2');
+                INSERT INTO edges(source, target, context) VALUES ('a.md', 'b.md', 'ctx');",
+            )
+            .unwrap();
+        }
+
+        let store = Store::open(&db_path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), 3);
+
+        let raw_edges = store.all_raw_edges().unwrap();
+        assert_eq!(raw_edges.len(), 1);
+        assert_eq!(raw_edges[0].2, "", "existing edges get empty raw_target");
     }
 }

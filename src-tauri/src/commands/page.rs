@@ -1,3 +1,4 @@
+use crate::commands::graph::GraphRegistry;
 use crate::commands::workspace::{get_workspace_root, WorkspaceRegistry};
 use crate::workspace::ops;
 use crate::workspace::page::{PageContent, PageMeta};
@@ -29,9 +30,17 @@ pub fn write_page(
     window: tauri::Window,
     state: State<WorkspaceRegistry>,
     registry: State<Arc<WriteHashRegistry>>,
+    graph_state: State<Arc<GraphRegistry>>,
 ) -> Result<(), String> {
     let root = get_workspace_root(&state, window.label())?;
-    ops::write_page(&root, &relative_path, &body, &frontmatter, &registry).map_err(|e| e.to_string())
+    ops::write_page(&root, &relative_path, &body, &frontmatter, &registry).map_err(|e| e.to_string())?;
+
+    let indices = graph_state.indices.lock().unwrap();
+    if let Some(gi) = indices.get(&root) {
+        let _ = gi.reindex_file(&relative_path);
+    }
+
+    Ok(())
 }
 
 #[tauri::command]

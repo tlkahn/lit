@@ -25,6 +25,16 @@ pub struct Stats {
     pub tags: i64,
 }
 
+pub fn extract_tags(fm: &serde_json::Value) -> Vec<String> {
+    match fm.get("tags") {
+        Some(serde_json::Value::Array(arr)) => {
+            arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()
+        }
+        Some(serde_json::Value::String(s)) => vec![s.clone()],
+        _ => vec![],
+    }
+}
+
 pub fn extract_aliases(fm: &serde_json::Value) -> Vec<String> {
     match fm.get("aliases") {
         Some(serde_json::Value::Array(arr)) => {
@@ -74,6 +84,30 @@ mod tests {
         let a = Stats { nodes: 1, stubs: 2, edges: 3, tags: 4 };
         let b = Stats { nodes: 1, stubs: 2, edges: 3, tags: 4 };
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn extract_tags_from_array() {
+        let fm = json!({"tags": ["rust", "coding"]});
+        assert_eq!(extract_tags(&fm), vec!["rust", "coding"]);
+    }
+
+    #[test]
+    fn extract_tags_from_string() {
+        let fm = json!({"tags": "solo"});
+        assert_eq!(extract_tags(&fm), vec!["solo"]);
+    }
+
+    #[test]
+    fn extract_tags_missing() {
+        let fm = json!({});
+        assert!(extract_tags(&fm).is_empty());
+    }
+
+    #[test]
+    fn extract_tags_non_string_filtered() {
+        let fm = json!({"tags": ["good", 42, null]});
+        assert_eq!(extract_tags(&fm), vec!["good"]);
     }
 
     #[test]

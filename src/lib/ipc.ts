@@ -258,6 +258,12 @@ export async function renderBibCitations(
   return invoke<Record<string, string>>("render_bib_citations", { entries });
 }
 
+// Graph
+
+export async function rebuildGraphIndex(): Promise<string> {
+  return invoke<string>("rebuild_graph_index");
+}
+
 // External editor
 
 export async function openInExternalEditor(

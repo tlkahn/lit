@@ -7,6 +7,7 @@ mod menu;
 pub mod preferences;
 pub mod workspace;
 
+use commands::graph::GraphRegistry;
 use commands::workspace::{PendingFiles, PendingWorkspaces, WorkspaceRegistry};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -83,6 +84,7 @@ pub fn run() {
         .manage(InitialWorkspace(Mutex::new(cli_workspace)))
         .manage(InitialFile(Mutex::new(cli_file)))
         .manage(Arc::new(WriteHashRegistry::new()))
+        .manage(Arc::new(GraphRegistry::new()))
         .manage(BibCache::new())
         .setup(move |app| {
             let _ = commands::theme::seed_bundled_themes(app.handle());
@@ -194,6 +196,7 @@ pub fn run() {
             commands::crossref::resolve_bib_entries,
             commands::crossref::render_bib_citations,
             commands::external_editor::open_in_external_editor,
+            commands::graph::rebuild_graph_index,
             get_initial_workspace,
             get_initial_file,
         ])

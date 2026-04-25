@@ -28,6 +28,7 @@ import {
   resolveBibEntries,
   renderBibCitations,
   openInExternalEditor,
+  rebuildGraphIndex,
 } from "./ipc";
 
 const sampleMeta = {
@@ -142,6 +143,8 @@ describe("ipc", () => {
           return { smith2020: "Smith 2020" };
         case "open_in_external_editor":
           return null;
+        case "rebuild_graph_index":
+          return "Rebuilt: 5 nodes, 3 edges, 1 stubs";
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -368,6 +371,13 @@ describe("ipc", () => {
       line: 10,
       col: 5,
     });
+  });
+
+  it("rebuildGraphIndex calls correct command", async () => {
+    const result = await rebuildGraphIndex();
+    expect(result).toBe("Rebuilt: 5 nodes, 3 edges, 1 stubs");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("rebuild_graph_index");
   });
 
 });

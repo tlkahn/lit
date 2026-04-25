@@ -1,0 +1,1055 @@
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
+use std::time::UNIX_EPOCH;
+
+use tracing::info;
+use walkdir::WalkDir;
+
+use super::error::GraphError;
+use super::extract::{extract_first_paragraph, extract_sentence_context};
+use super::links::{extract_wikilinks, WikiLink};
+use super::resolve::StemLookup;
+use super::store::Store;
+use super::types::{extract_aliases, extract_tags, ParsedNode, Stats};
+use crate::workspace::frontmatter::parse_frontmatter;
+use crate::workspace::normalize::filename_to_page_name;
+
+// ---------------------------------------------------------------------------
+// parse_md_file
+// ---------------------------------------------------------------------------
+
+pub fn parse_md_file(
+    root: &Path,
+    relative_path: &str,
+) -> Result<(ParsedNode, Vec<WikiLink>), GraphError> {
+    let abs = root.join(relative_path);
+    let raw = std::fs::read_to_string(&abs).map_err(|e| GraphError::Io {
+        source: e,
+        path: abs.clone(),
+    })?;
+
+    let parsed = parse_frontmatter(&raw);
+    let fm_json = yaml_map_to_json(&parsed.map);
+
+    let title = fm_json
+        .get("title")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .unwrap_or_else(|| title_from_relative_path(relative_path));
+
+    let tags = extract_tags(&fm_json);
+    let first_paragraph = extract_first_paragraph(parsed.body);
+    let links = extract_wikilinks(parsed.body);
+
+    let node = ParsedNode {
+        id: relative_path.to_string(),
+        title,
+        tags,
+        frontmatter: fm_json,
+        first_paragraph,
+    };
+
+    Ok((node, links))
+}
+
+fn title_from_relative_path(relative_path: &str) -> String {
+    let basename = relative_path.rsplit('/').next().unwrap_or(relative_path);
+    filename_to_page_name(basename)
+}
+
+fn yaml_map_to_json(map: &HashMap<String, serde_yaml::Value>) -> serde_json::Value {
+    let json_str = match serde_json::to_string(map) {
+        Ok(s) => s,
+        Err(_) => return serde_json::Value::Object(serde_json::Map::new()),
+    };
+    serde_json::from_str(&json_str).unwrap_or(serde_json::Value::Object(serde_json::Map::new()))
+}
+
+// ---------------------------------------------------------------------------
+// ReverseStemIndex
+// ---------------------------------------------------------------------------
+
+pub struct ReverseStemIndex {
+    index: HashMap<String, Vec<(String, String)>>, // stem -> [(source_id, raw_target)]
+}
+
+impl ReverseStemIndex {
+    pub fn new() -> Self {
+        Self {
+            index: HashMap::new(),
+        }
+    }
+
+    pub fn add(&mut self, source_id: &str, raw_target: &str) {
+        let stem = normalize_stem(raw_target);
+        self.index
+            .entry(stem)
+            .or_default()
+            .push((source_id.to_string(), raw_target.to_string()));
+    }
+
+    pub fn remove_source(&mut self, source_id: &str) {
+        for entries in self.index.values_mut() {
+            entries.retain(|(s, _)| s != source_id);
+        }
+        self.index.retain(|_, v| !v.is_empty());
+    }
+
+    pub fn lookup(&self, stem: &str) -> &[(String, String)] {
+        self.index.get(stem).map(|v| v.as_slice()).unwrap_or(&[])
+    }
+
+    pub fn build_from_edges(edges: &[(String, String)]) -> Self {
+        let mut idx = Self::new();
+        for (source, raw_target) in edges {
+            idx.add(source, raw_target);
+        }
+        idx
+    }
+
+    pub fn affected_sources(&self, stems: &[String]) -> HashSet<String> {
+        let mut sources = HashSet::new();
+        for stem in stems {
+            if let Some(entries) = self.index.get(stem) {
+                for (source_id, _) in entries {
+                    sources.insert(source_id.clone());
+                }
+            }
+        }
+        sources
+    }
+}
+
+fn normalize_stem(target: &str) -> String {
+    let stripped = target.strip_suffix(".md").unwrap_or(target);
+    let basename = stripped.rsplit('/').next().unwrap_or(stripped);
+    basename.to_lowercase()
+}
+
+// ---------------------------------------------------------------------------
+// walk_md_files
+// ---------------------------------------------------------------------------
+
+fn walk_md_files(root: &Path) -> Result<Vec<(String, i64)>, GraphError> {
+    let mut files = Vec::new();
+    for entry in WalkDir::new(root).into_iter().filter_entry(|e| {
+        if e.depth() == 0 {
+            return true;
+        }
+        let name = e.file_name().to_string_lossy();
+        !name.starts_with('.')
+    }) {
+        let entry = entry.map_err(|e| GraphError::Io {
+            source: e.into(),
+            path: root.to_path_buf(),
+        })?;
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+        let relative = path
+            .strip_prefix(root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .to_string();
+        let mtime = entry
+            .metadata()
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        files.push((relative, mtime));
+    }
+    Ok(files)
+}
+
+// ---------------------------------------------------------------------------
+// index_workspace (full scan)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub struct IndexResult {
+    pub nodes_indexed: usize,
+    pub edges_resolved: usize,
+    pub stubs_created: usize,
+}
+
+pub fn index_workspace(
+    store: &Store,
+    root: &Path,
+) -> Result<(IndexResult, ReverseStemIndex), GraphError> {
+    let lit_dir = root.join(".lit");
+    if !lit_dir.exists() {
+        std::fs::create_dir_all(&lit_dir).map_err(|e| GraphError::Io {
+            source: e,
+            path: lit_dir.clone(),
+        })?;
+    }
+
+    let files = walk_md_files(root)?;
+
+    store.begin_transaction()?;
+
+    let mut all_nodes: Vec<ParsedNode> = Vec::new();
+    let mut all_links: HashMap<String, Vec<WikiLink>> = HashMap::new();
+    let mut file_mtimes: HashMap<String, i64> = HashMap::new();
+
+    for (rel_path, mtime) in &files {
+        match parse_md_file(root, rel_path) {
+            Ok((node, links)) => {
+                file_mtimes.insert(rel_path.clone(), *mtime);
+                all_links.insert(rel_path.clone(), links);
+                all_nodes.push(node);
+            }
+            Err(e) => {
+                tracing::warn!(path = %rel_path, error = %e, "skipping file");
+            }
+        }
+    }
+
+    let node_ids: Vec<String> = all_nodes.iter().map(|n| n.id.clone()).collect();
+
+    // Collect aliases for StemLookup
+    let mut alias_map: HashMap<String, Vec<String>> = HashMap::new();
+    for node in &all_nodes {
+        let aliases = extract_aliases(&node.frontmatter);
+        if !aliases.is_empty() {
+            alias_map.insert(node.id.clone(), aliases);
+        }
+    }
+
+    let stem_lookup = StemLookup::build(&node_ids, &alias_map);
+
+    let mut nodes_indexed = 0;
+    let mut edges_resolved = 0;
+    let mut stubs_created = 0;
+    let mut reverse_stems = ReverseStemIndex::new();
+    let mut known_stubs: HashSet<String> = HashSet::new();
+
+    for node in &all_nodes {
+        let mtime = file_mtimes.get(&node.id).copied().unwrap_or(0);
+        store.upsert_node(node, mtime)?;
+        nodes_indexed += 1;
+
+        store.delete_edges_from(&node.id)?;
+
+        if let Some(links) = all_links.get(&node.id) {
+            for link in links {
+                let resolved = stem_lookup.resolve(&link.target);
+                let context = extract_sentence_context(
+                    &std::fs::read_to_string(root.join(&node.id)).unwrap_or_default(),
+                    &link.target,
+                );
+                let target_id = match &resolved.node_id {
+                    Some(id) => id.clone(),
+                    None => {
+                        let stub_id = link.target.clone();
+                        if !known_stubs.contains(&stub_id) {
+                            store.upsert_stub(&stub_id)?;
+                            known_stubs.insert(stub_id.clone());
+                            stubs_created += 1;
+                        }
+                        stub_id
+                    }
+                };
+                store.insert_edge(&node.id, &target_id, &context, &link.target)?;
+                reverse_stems.add(&node.id, &link.target);
+                edges_resolved += 1;
+            }
+        }
+    }
+
+    // Record sync mtimes (already done in upsert_node)
+
+    store.commit()?;
+
+    info!(
+        nodes = nodes_indexed,
+        edges = edges_resolved,
+        stubs = stubs_created,
+        "index_workspace complete"
+    );
+
+    Ok((
+        IndexResult {
+            nodes_indexed,
+            edges_resolved,
+            stubs_created,
+        },
+        reverse_stems,
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// compute_diff
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DiffResult {
+    pub new: Vec<String>,
+    pub changed: Vec<String>,
+    pub deleted: Vec<String>,
+}
+
+pub fn compute_diff(store: &Store, root: &Path) -> Result<DiffResult, GraphError> {
+    let disk_files = walk_md_files(root)?;
+    let sync_entries = store.all_sync_entries()?;
+
+    let sync_map: HashMap<String, i64> = sync_entries.into_iter().collect();
+    let disk_map: HashMap<String, i64> = disk_files.into_iter().collect();
+
+    let mut new = Vec::new();
+    let mut changed = Vec::new();
+    let mut deleted = Vec::new();
+
+    for (path, mtime) in &disk_map {
+        match sync_map.get(path) {
+            None => new.push(path.clone()),
+            Some(old_mtime) if *old_mtime != *mtime => changed.push(path.clone()),
+            _ => {}
+        }
+    }
+
+    for path in sync_map.keys() {
+        if !disk_map.contains_key(path) {
+            deleted.push(path.clone());
+        }
+    }
+
+    new.sort();
+    changed.sort();
+    deleted.sort();
+
+    Ok(DiffResult {
+        new,
+        changed,
+        deleted,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// incremental_reindex
+// ---------------------------------------------------------------------------
+
+pub fn incremental_reindex(
+    store: &Store,
+    root: &Path,
+    reverse_stems: &mut ReverseStemIndex,
+    diff: &DiffResult,
+) -> Result<IndexResult, GraphError> {
+    store.begin_transaction()?;
+
+    let mut nodes_indexed = 0;
+    let mut edges_resolved = 0;
+    let mut stubs_created = 0;
+
+    // Collect stems that changed (for re-resolution of other files)
+    let mut changed_stems: Vec<String> = Vec::new();
+
+    // Handle deleted files
+    for path in &diff.deleted {
+        // Compute stems this file was a target for
+        let stem = normalize_stem(path);
+        changed_stems.push(stem);
+        store.delete_node(path)?;
+        reverse_stems.remove_source(path);
+    }
+
+    // Handle new + changed files — track old aliases to detect alias changes
+    let old_aliases = store.all_aliases()?;
+
+    for path in diff.new.iter().chain(diff.changed.iter()) {
+        match parse_md_file(root, path) {
+            Ok((node, links)) => {
+                let mtime = std::fs::metadata(root.join(path))
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or(0);
+
+                // Check if aliases changed
+                let new_aliases = extract_aliases(&node.frontmatter);
+                let old_a = old_aliases.get(path).cloned().unwrap_or_default();
+                if new_aliases != old_a {
+                    for alias in old_a.iter().chain(new_aliases.iter()) {
+                        changed_stems.push(alias.to_lowercase());
+                    }
+                }
+
+                // For new files, their stem is a changed stem
+                if diff.new.contains(path) {
+                    changed_stems.push(normalize_stem(path));
+                }
+
+                store.upsert_node(&node, mtime)?;
+                nodes_indexed += 1;
+
+                // Re-resolve outgoing links
+                store.delete_edges_from(&node.id)?;
+                reverse_stems.remove_source(&node.id);
+
+                let all_ids = store.all_node_ids()?;
+                let aliases = store.all_aliases()?;
+                let stem_lookup = StemLookup::build(&all_ids, &aliases);
+
+                let body = std::fs::read_to_string(root.join(path)).unwrap_or_default();
+                for link in &links {
+                    let resolved = stem_lookup.resolve(&link.target);
+                    let context = extract_sentence_context(&body, &link.target);
+                    let target_id = match &resolved.node_id {
+                        Some(id) => id.clone(),
+                        None => {
+                            store.upsert_stub(&link.target)?;
+                            stubs_created += 1;
+                            link.target.clone()
+                        }
+                    };
+                    store.insert_edge(&node.id, &target_id, &context, &link.target)?;
+                    reverse_stems.add(&node.id, &link.target);
+                    edges_resolved += 1;
+                }
+            }
+            Err(e) => {
+                tracing::warn!(path = %path, error = %e, "skipping file in incremental reindex");
+            }
+        }
+    }
+
+    // Clean up stubs that are now resolved by real files
+    if !diff.new.is_empty() {
+        let all_meta = store.all_nodes_metadata()?;
+        let real_ids: HashSet<String> = all_meta
+            .iter()
+            .filter(|(_, is_stub)| !is_stub)
+            .map(|(id, _)| id.clone())
+            .collect();
+        let real_stems: HashMap<String, String> = real_ids
+            .iter()
+            .map(|id| (normalize_stem(id), id.clone()))
+            .collect();
+        for (id, is_stub) in &all_meta {
+            if *is_stub {
+                let stub_stem = normalize_stem(id);
+                if real_stems.contains_key(&stub_stem) {
+                    store.delete_node(id)?;
+                }
+            }
+        }
+    }
+
+    // Re-resolve other files affected by changed stems
+    if !changed_stems.is_empty() {
+        let affected = reverse_stems.affected_sources(&changed_stems);
+        let all_ids = store.all_node_ids()?;
+        let aliases = store.all_aliases()?;
+        let stem_lookup = StemLookup::build(&all_ids, &aliases);
+
+        for source_id in &affected {
+            if diff.new.contains(source_id)
+                || diff.changed.contains(source_id)
+                || diff.deleted.contains(source_id)
+            {
+                continue; // already handled
+            }
+
+            if let Ok((_, links)) = parse_md_file(root, source_id) {
+                store.delete_edges_from(source_id)?;
+                reverse_stems.remove_source(source_id);
+
+                let body = std::fs::read_to_string(root.join(source_id)).unwrap_or_default();
+                for link in &links {
+                    let resolved = stem_lookup.resolve(&link.target);
+                    let context = extract_sentence_context(&body, &link.target);
+                    let target_id = match &resolved.node_id {
+                        Some(id) => id.clone(),
+                        None => {
+                            store.upsert_stub(&link.target)?;
+                            stubs_created += 1;
+                            link.target.clone()
+                        }
+                    };
+                    store.insert_edge(source_id, &target_id, &context, &link.target)?;
+                    reverse_stems.add(source_id, &link.target);
+                    edges_resolved += 1;
+                }
+            }
+        }
+    }
+
+    store.commit()?;
+
+    Ok(IndexResult {
+        nodes_indexed,
+        edges_resolved,
+        stubs_created,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// GraphIndex
+// ---------------------------------------------------------------------------
+
+use std::sync::Mutex;
+
+pub struct GraphIndex {
+    store: Mutex<Store>,
+    reverse_stems: Mutex<ReverseStemIndex>,
+    workspace_root: std::path::PathBuf,
+}
+
+impl GraphIndex {
+    pub fn build(workspace_root: std::path::PathBuf) -> Result<Self, GraphError> {
+        let db_path = workspace_root.join(".lit").join("graph.db");
+        if let Some(parent) = db_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| GraphError::Io {
+                source: e,
+                path: parent.to_path_buf(),
+            })?;
+        }
+        let store = Store::open(&db_path)?;
+        let (_, reverse_stems) = index_workspace(&store, &workspace_root)?;
+        Ok(Self {
+            store: Mutex::new(store),
+            reverse_stems: Mutex::new(reverse_stems),
+            workspace_root,
+        })
+    }
+
+    pub fn reindex_file(&self, relative_path: &str) -> Result<(), GraphError> {
+        let diff = DiffResult {
+            new: vec![],
+            changed: vec![relative_path.to_string()],
+            deleted: vec![],
+        };
+        let store = self.store.lock().unwrap();
+        let mut reverse = self.reverse_stems.lock().unwrap();
+        incremental_reindex(&store, &self.workspace_root, &mut reverse, &diff)?;
+        Ok(())
+    }
+
+    pub fn remove_file(&self, relative_path: &str) -> Result<(), GraphError> {
+        let diff = DiffResult {
+            new: vec![],
+            changed: vec![],
+            deleted: vec![relative_path.to_string()],
+        };
+        let store = self.store.lock().unwrap();
+        let mut reverse = self.reverse_stems.lock().unwrap();
+        incremental_reindex(&store, &self.workspace_root, &mut reverse, &diff)?;
+        Ok(())
+    }
+
+    pub fn full_rebuild(&self) -> Result<IndexResult, GraphError> {
+        let store = self.store.lock().unwrap();
+        let (result, new_reverse) = index_workspace(&store, &self.workspace_root)?;
+        let mut reverse = self.reverse_stems.lock().unwrap();
+        *reverse = new_reverse;
+        Ok(result)
+    }
+
+    pub fn stats(&self) -> Result<Stats, GraphError> {
+        let store = self.store.lock().unwrap();
+        store.stats()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn create_workspace() -> TempDir {
+        tempfile::tempdir().unwrap()
+    }
+
+    fn write_md(root: &Path, rel_path: &str, content: &str) {
+        let abs = root.join(rel_path);
+        if let Some(parent) = abs.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(abs, content).unwrap();
+    }
+
+    // --- parse_md_file ---
+
+    #[test]
+    fn parse_md_file_basic() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "note.md",
+            "---\ntitle: My Note\ntags:\n  - rust\n---\nFirst paragraph.\n\n[[Link]]",
+        );
+        let (node, links) = parse_md_file(dir.path(), "note.md").unwrap();
+        assert_eq!(node.id, "note.md");
+        assert_eq!(node.title, "My Note");
+        assert_eq!(node.tags, vec!["rust"]);
+        assert_eq!(node.first_paragraph, "First paragraph.");
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target, "Link");
+    }
+
+    #[test]
+    fn parse_md_file_no_frontmatter() {
+        let dir = create_workspace();
+        write_md(dir.path(), "plain.md", "Just some text.\n\n[[Other]]");
+        let (node, links) = parse_md_file(dir.path(), "plain.md").unwrap();
+        assert_eq!(node.title, "plain");
+        assert!(node.tags.is_empty());
+        assert_eq!(node.first_paragraph, "Just some text.");
+        assert_eq!(links.len(), 1);
+    }
+
+    #[test]
+    fn parse_md_file_with_tags() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "tagged.md",
+            "---\ntags:\n  - alpha\n  - beta\n---\nBody.",
+        );
+        let (node, _) = parse_md_file(dir.path(), "tagged.md").unwrap();
+        assert_eq!(node.tags, vec!["alpha", "beta"]);
+    }
+
+    #[test]
+    fn parse_md_file_title_from_frontmatter() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "note.md",
+            "---\ntitle: Custom Title\n---\nBody.",
+        );
+        let (node, _) = parse_md_file(dir.path(), "note.md").unwrap();
+        assert_eq!(node.title, "Custom Title");
+    }
+
+    #[test]
+    fn parse_md_file_missing_file_errors() {
+        let dir = create_workspace();
+        let result = parse_md_file(dir.path(), "nonexistent.md");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            GraphError::Io { .. } => {}
+            other => panic!("expected Io error, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_md_file_id_is_relative_path() {
+        let dir = create_workspace();
+        write_md(dir.path(), "sub/deep.md", "Content.");
+        let (node, _) = parse_md_file(dir.path(), "sub/deep.md").unwrap();
+        assert_eq!(node.id, "sub/deep.md");
+    }
+
+    // --- ReverseStemIndex ---
+
+    #[test]
+    fn reverse_stem_empty() {
+        let idx = ReverseStemIndex::new();
+        assert!(idx.lookup("anything").is_empty());
+    }
+
+    #[test]
+    fn reverse_stem_add_and_lookup() {
+        let mut idx = ReverseStemIndex::new();
+        idx.add("a.md", "Target");
+        let entries = idx.lookup("target");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "a.md");
+        assert_eq!(entries[0].1, "Target");
+    }
+
+    #[test]
+    fn reverse_stem_multiple_sources() {
+        let mut idx = ReverseStemIndex::new();
+        idx.add("a.md", "Target");
+        idx.add("b.md", "Target");
+        assert_eq!(idx.lookup("target").len(), 2);
+    }
+
+    #[test]
+    fn reverse_stem_remove_source() {
+        let mut idx = ReverseStemIndex::new();
+        idx.add("a.md", "Target");
+        idx.add("b.md", "Target");
+        idx.remove_source("a.md");
+        let entries = idx.lookup("target");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "b.md");
+    }
+
+    #[test]
+    fn reverse_stem_build_from_edges() {
+        let edges = vec![
+            ("a.md".to_string(), "Link1".to_string()),
+            ("b.md".to_string(), "Link1".to_string()),
+            ("a.md".to_string(), "Link2".to_string()),
+        ];
+        let idx = ReverseStemIndex::build_from_edges(&edges);
+        assert_eq!(idx.lookup("link1").len(), 2);
+        assert_eq!(idx.lookup("link2").len(), 1);
+    }
+
+    #[test]
+    fn reverse_stem_affected_sources() {
+        let mut idx = ReverseStemIndex::new();
+        idx.add("a.md", "Target");
+        idx.add("b.md", "Other");
+        idx.add("c.md", "Target");
+        let affected = idx.affected_sources(&["target".to_string()]);
+        assert!(affected.contains("a.md"));
+        assert!(affected.contains("c.md"));
+        assert!(!affected.contains("b.md"));
+    }
+
+    // --- index_workspace ---
+
+    #[test]
+    fn index_workspace_empty_dir() {
+        let dir = create_workspace();
+        let store = Store::open_memory().unwrap();
+        let (result, _) = index_workspace(&store, dir.path()).unwrap();
+        assert_eq!(result.nodes_indexed, 0);
+        assert_eq!(result.edges_resolved, 0);
+    }
+
+    #[test]
+    fn index_workspace_single_file() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "note.md",
+            "---\ntitle: Hello\ntags:\n  - test\n---\nContent.",
+        );
+        let store = Store::open_memory().unwrap();
+        let (result, _) = index_workspace(&store, dir.path()).unwrap();
+        assert_eq!(result.nodes_indexed, 1);
+        let stats = store.stats().unwrap();
+        assert_eq!(stats.nodes, 1);
+        assert_eq!(stats.tags, 1);
+    }
+
+    #[test]
+    fn index_workspace_resolves_edges() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Links to [[B]].");
+        write_md(dir.path(), "b.md", "Target page.");
+        let store = Store::open_memory().unwrap();
+        let (result, _) = index_workspace(&store, dir.path()).unwrap();
+        assert_eq!(result.edges_resolved, 1);
+        let edges = store.all_edges().unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].0, "a.md");
+        assert_eq!(edges[0].1, "b.md");
+    }
+
+    #[test]
+    fn index_workspace_unresolved_creates_stub() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Links to [[Ghost]].");
+        let store = Store::open_memory().unwrap();
+        let (result, _) = index_workspace(&store, dir.path()).unwrap();
+        assert_eq!(result.stubs_created, 1);
+        let meta = store.all_nodes_metadata().unwrap();
+        assert!(meta.iter().any(|(id, is_stub)| id == "Ghost" && *is_stub));
+    }
+
+    #[test]
+    fn index_workspace_raw_target_persisted() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "See [[My Note]].");
+        write_md(dir.path(), "My Note.md", "Target.");
+        let store = Store::open_memory().unwrap();
+        index_workspace(&store, dir.path()).unwrap();
+        let raw = store.all_raw_edges().unwrap();
+        assert_eq!(raw.len(), 1);
+        assert_eq!(raw[0].2, "My Note");
+    }
+
+    #[test]
+    fn index_workspace_builds_reverse_index() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "[[B]]");
+        write_md(dir.path(), "b.md", "Target.");
+        let store = Store::open_memory().unwrap();
+        let (_, reverse) = index_workspace(&store, dir.path()).unwrap();
+        let entries = reverse.lookup("b");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "a.md");
+    }
+
+    #[test]
+    fn index_workspace_records_sync_mtimes() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Content.");
+        let store = Store::open_memory().unwrap();
+        index_workspace(&store, dir.path()).unwrap();
+        let entries = store.all_sync_entries().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "a.md");
+        assert!(entries[0].1 > 0);
+    }
+
+    #[test]
+    fn index_workspace_skips_hidden_dirs() {
+        let dir = create_workspace();
+        write_md(dir.path(), ".obsidian/config.md", "Hidden.");
+        write_md(dir.path(), "visible.md", "Visible.");
+        let store = Store::open_memory().unwrap();
+        let (result, _) = index_workspace(&store, dir.path()).unwrap();
+        assert_eq!(result.nodes_indexed, 1);
+    }
+
+    #[test]
+    fn index_workspace_idempotent() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "[[B]]");
+        write_md(dir.path(), "b.md", "Target.");
+        let store = Store::open_memory().unwrap();
+        let (r1, _) = index_workspace(&store, dir.path()).unwrap();
+        let (r2, _) = index_workspace(&store, dir.path()).unwrap();
+        assert_eq!(r1.nodes_indexed, r2.nodes_indexed);
+        assert_eq!(store.stats().unwrap().nodes, 2);
+    }
+
+    #[test]
+    fn index_workspace_creates_lit_dir() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Content.");
+        let store = Store::open_memory().unwrap();
+        index_workspace(&store, dir.path()).unwrap();
+        assert!(dir.path().join(".lit").exists());
+    }
+
+    // --- compute_diff ---
+
+    #[test]
+    fn compute_diff_no_changes() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Content.");
+        let store = Store::open_memory().unwrap();
+        index_workspace(&store, dir.path()).unwrap();
+        let diff = compute_diff(&store, dir.path()).unwrap();
+        assert!(diff.new.is_empty());
+        assert!(diff.changed.is_empty());
+        assert!(diff.deleted.is_empty());
+    }
+
+    #[test]
+    fn compute_diff_new_file() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Content.");
+        let store = Store::open_memory().unwrap();
+        index_workspace(&store, dir.path()).unwrap();
+        write_md(dir.path(), "b.md", "New file.");
+        let diff = compute_diff(&store, dir.path()).unwrap();
+        assert_eq!(diff.new, vec!["b.md"]);
+    }
+
+    #[test]
+    fn compute_diff_modified_file() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Content.");
+        let store = Store::open_memory().unwrap();
+        index_workspace(&store, dir.path()).unwrap();
+        // Touch the file to change mtime
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        write_md(dir.path(), "a.md", "Updated content.");
+        let diff = compute_diff(&store, dir.path()).unwrap();
+        assert_eq!(diff.changed, vec!["a.md"]);
+    }
+
+    #[test]
+    fn compute_diff_deleted_file() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Content.");
+        write_md(dir.path(), "b.md", "Content.");
+        let store = Store::open_memory().unwrap();
+        index_workspace(&store, dir.path()).unwrap();
+        fs::remove_file(dir.path().join("b.md")).unwrap();
+        let diff = compute_diff(&store, dir.path()).unwrap();
+        assert_eq!(diff.deleted, vec!["b.md"]);
+    }
+
+    #[test]
+    fn compute_diff_mixed() {
+        let dir = create_workspace();
+        write_md(dir.path(), "keep.md", "Keep.");
+        write_md(dir.path(), "change.md", "Change.");
+        write_md(dir.path(), "delete.md", "Delete.");
+        let store = Store::open_memory().unwrap();
+        index_workspace(&store, dir.path()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        write_md(dir.path(), "change.md", "Changed.");
+        fs::remove_file(dir.path().join("delete.md")).unwrap();
+        write_md(dir.path(), "new.md", "New.");
+        let diff = compute_diff(&store, dir.path()).unwrap();
+        assert_eq!(diff.new, vec!["new.md"]);
+        assert_eq!(diff.changed, vec!["change.md"]);
+        assert_eq!(diff.deleted, vec!["delete.md"]);
+    }
+
+    // --- incremental_reindex ---
+
+    #[test]
+    fn incremental_body_edit_updates_paragraph() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Old paragraph.");
+        let store = Store::open_memory().unwrap();
+        let (_, mut reverse) = index_workspace(&store, dir.path()).unwrap();
+        write_md(dir.path(), "a.md", "New paragraph.");
+        let diff = DiffResult {
+            new: vec![],
+            changed: vec!["a.md".to_string()],
+            deleted: vec![],
+        };
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff).unwrap();
+        let titles = store.node_titles().unwrap();
+        assert_eq!(titles.len(), 1);
+    }
+
+    #[test]
+    fn incremental_body_edit_updates_edges() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "[[OldLink]]");
+        write_md(dir.path(), "b.md", "Target.");
+        let store = Store::open_memory().unwrap();
+        let (_, mut reverse) = index_workspace(&store, dir.path()).unwrap();
+        write_md(dir.path(), "a.md", "[[b]]");
+        let diff = DiffResult {
+            new: vec![],
+            changed: vec!["a.md".to_string()],
+            deleted: vec![],
+        };
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff).unwrap();
+        let edges = store.all_edges().unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].1, "b.md");
+    }
+
+    #[test]
+    fn incremental_body_edit_preserves_other_nodes() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Alpha.");
+        write_md(dir.path(), "b.md", "Beta.");
+        let store = Store::open_memory().unwrap();
+        let (_, mut reverse) = index_workspace(&store, dir.path()).unwrap();
+        write_md(dir.path(), "a.md", "Alpha updated.");
+        let diff = DiffResult {
+            new: vec![],
+            changed: vec!["a.md".to_string()],
+            deleted: vec![],
+        };
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff).unwrap();
+        assert_eq!(store.stats().unwrap().nodes, 2);
+    }
+
+    #[test]
+    fn incremental_new_file_resolves_dangling() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Links to [[B]].");
+        let store = Store::open_memory().unwrap();
+        let (_, mut reverse) = index_workspace(&store, dir.path()).unwrap();
+        // B was unresolved (stub). Now create it.
+        write_md(dir.path(), "b.md", "I exist now.");
+        let diff = DiffResult {
+            new: vec!["b.md".to_string()],
+            changed: vec![],
+            deleted: vec![],
+        };
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff).unwrap();
+        let edges = store.all_edges().unwrap();
+        assert!(
+            edges.iter().any(|(s, t)| s == "a.md" && t == "b.md"),
+            "a.md should now link to b.md, edges: {:?}",
+            edges
+        );
+    }
+
+    #[test]
+    fn incremental_deleted_file_removes_node() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Alpha.");
+        write_md(dir.path(), "b.md", "Beta.");
+        let store = Store::open_memory().unwrap();
+        let (_, mut reverse) = index_workspace(&store, dir.path()).unwrap();
+        fs::remove_file(dir.path().join("b.md")).unwrap();
+        let diff = DiffResult {
+            new: vec![],
+            changed: vec![],
+            deleted: vec!["b.md".to_string()],
+        };
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff).unwrap();
+        let ids = store.all_node_ids().unwrap();
+        assert!(!ids.contains(&"b.md".to_string()));
+    }
+
+    // --- GraphIndex ---
+
+    #[test]
+    fn graph_index_build_indexes_workspace() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Hello.");
+        write_md(dir.path(), "b.md", "World.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let stats = gi.stats().unwrap();
+        assert_eq!(stats.nodes, 2);
+    }
+
+    #[test]
+    fn graph_index_reindex_file() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "[[B]]");
+        write_md(dir.path(), "b.md", "Target.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        write_md(dir.path(), "a.md", "No links now.");
+        gi.reindex_file("a.md").unwrap();
+        let stats = gi.stats().unwrap();
+        assert_eq!(stats.edges, 0);
+    }
+
+    #[test]
+    fn graph_index_remove_file() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Hello.");
+        write_md(dir.path(), "b.md", "World.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        fs::remove_file(dir.path().join("b.md")).unwrap();
+        gi.remove_file("b.md").unwrap();
+        let stats = gi.stats().unwrap();
+        assert_eq!(stats.nodes, 1);
+    }
+
+    #[test]
+    fn graph_index_full_rebuild() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Hello.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        write_md(dir.path(), "b.md", "New file.");
+        let result = gi.full_rebuild().unwrap();
+        assert_eq!(result.nodes_indexed, 2);
+    }
+
+    #[test]
+    fn graph_index_stats() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "[[B]]");
+        write_md(dir.path(), "b.md", "Target.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let stats = gi.stats().unwrap();
+        assert_eq!(stats.nodes, 2);
+        assert_eq!(stats.edges, 1);
+    }
+}

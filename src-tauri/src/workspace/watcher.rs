@@ -1,4 +1,5 @@
 use super::write_hash::WriteHashRegistry;
+use crate::commands::graph::GraphRegistry;
 use notify_debouncer_mini::notify::RecursiveMode;
 use notify_debouncer_mini::{new_debouncer, DebouncedEventKind};
 use serde::Serialize;
@@ -66,11 +67,24 @@ impl FileWatcher {
                                 } else {
                                     eprintln!("[watcher] file-DELETED (exists=false): {}", relative);
                                 }
-                                let payload = FileEvent { path: relative };
+                                let payload = FileEvent { path: relative.clone() };
                                 if exists {
                                     let _ = win.emit("workspace://file-modified", &payload);
                                 } else {
                                     let _ = win.emit("workspace://file-deleted", &payload);
+                                }
+
+                                if let Some(graph_reg) = app_handle.try_state::<std::sync::Arc<GraphRegistry>>() {
+                                    let indices = graph_reg.indices.lock().unwrap();
+                                    if let Some(gi) = indices.get(&root_clone) {
+                                        if exists {
+                                            let _ = gi.reindex_file(&relative);
+                                        } else {
+                                            let _ = gi.remove_file(&relative);
+                                        }
+                                    }
+                                    drop(indices);
+                                    let _ = app_handle.emit("lit:graph-updated", ());
                                 }
                             }
                             DebouncedEventKind::AnyContinuous | _ => {}
