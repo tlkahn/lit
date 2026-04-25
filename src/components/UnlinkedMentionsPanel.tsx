@@ -71,7 +71,7 @@ export function UnlinkedMentionsPanel({ pageId }: { pageId: string }) {
           : "Unlinked References"}
       </button>
       {expanded && (
-        <div className="mt-2">
+        <div className="mt-2 max-h-64 overflow-y-auto">
           {entries.length === 0 ? (
             <p className="text-xs text-text-faint">
               No unlinked mentions found
