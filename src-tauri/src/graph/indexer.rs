@@ -242,7 +242,7 @@ pub fn index_workspace(
         if let Some(links) = all_links.get(&node.id) {
             for link in links {
                 let resolved = stem_lookup.resolve(&link.target);
-                let context = extract_sentence_context(
+                let (context, source_line) = extract_sentence_context(
                     &std::fs::read_to_string(root.join(&node.id)).unwrap_or_default(),
                     &link.target,
                 );
@@ -258,7 +258,7 @@ pub fn index_workspace(
                         stub_id
                     }
                 };
-                store.insert_edge(&node.id, &target_id, &context, &link.target)?;
+                store.insert_edge(&node.id, &target_id, &context, &link.target, source_line)?;
                 reverse_stems.add(&node.id, &link.target);
                 edges_resolved += 1;
             }
@@ -402,7 +402,7 @@ pub fn incremental_reindex(
                 let body = std::fs::read_to_string(root.join(path)).unwrap_or_default();
                 for link in &links {
                     let resolved = stem_lookup.resolve(&link.target);
-                    let context = extract_sentence_context(&body, &link.target);
+                    let (context, source_line) = extract_sentence_context(&body, &link.target);
                     let target_id = match &resolved.node_id {
                         Some(id) => id.clone(),
                         None => {
@@ -411,7 +411,7 @@ pub fn incremental_reindex(
                             link.target.clone()
                         }
                     };
-                    store.insert_edge(&node.id, &target_id, &context, &link.target)?;
+                    store.insert_edge(&node.id, &target_id, &context, &link.target, source_line)?;
                     reverse_stems.add(&node.id, &link.target);
                     edges_resolved += 1;
                 }
@@ -466,7 +466,7 @@ pub fn incremental_reindex(
                 let body = std::fs::read_to_string(root.join(source_id)).unwrap_or_default();
                 for link in &links {
                     let resolved = stem_lookup.resolve(&link.target);
-                    let context = extract_sentence_context(&body, &link.target);
+                    let (context, source_line) = extract_sentence_context(&body, &link.target);
                     let target_id = match &resolved.node_id {
                         Some(id) => id.clone(),
                         None => {
@@ -475,7 +475,7 @@ pub fn incremental_reindex(
                             link.target.clone()
                         }
                     };
-                    store.insert_edge(source_id, &target_id, &context, &link.target)?;
+                    store.insert_edge(source_id, &target_id, &context, &link.target, source_line)?;
                     reverse_stems.add(source_id, &link.target);
                     edges_resolved += 1;
                 }

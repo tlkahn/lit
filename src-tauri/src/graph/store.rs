@@ -101,6 +101,15 @@ impl Store {
             )?;
         }
 
+        if version < 4 {
+            info!(from = version, to = 4, "migrating schema");
+            self.conn
+                .execute_batch("ALTER TABLE edges ADD COLUMN source_line INTEGER DEFAULT 0;")?;
+            self.conn.execute_batch(
+                "UPDATE meta SET value = '4' WHERE key = 'schema_version';",
+            )?;
+        }
+
         self.conn.execute_batch(
             "CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(
                 title, first_paragraph, tags_text,
@@ -214,10 +223,10 @@ impl Store {
 
     // --- Edges ---
 
-    pub fn insert_edge(&self, source: &str, target: &str, ctx: &str, raw_target: &str) -> Result<(), GraphError> {
+    pub fn insert_edge(&self, source: &str, target: &str, ctx: &str, raw_target: &str, source_line: u32) -> Result<(), GraphError> {
         self.conn.execute(
-            "INSERT INTO edges(source, target, context, raw_target) VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![source, target, ctx, raw_target],
+            "INSERT INTO edges(source, target, context, raw_target, source_line) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![source, target, ctx, raw_target, source_line],
         )?;
         Ok(())
     }
@@ -228,12 +237,12 @@ impl Store {
         Ok(())
     }
 
-    pub fn replace_all_edges(&self, edges: &[(&str, &str, &str, &str)]) -> Result<(), GraphError> {
+    pub fn replace_all_edges(&self, edges: &[(&str, &str, &str, &str, u32)]) -> Result<(), GraphError> {
         self.conn.execute("DELETE FROM edges", [])?;
-        for &(source, target, context, raw_target) in edges {
+        for &(source, target, context, raw_target, source_line) in edges {
             self.conn.execute(
-                "INSERT INTO edges(source, target, context, raw_target) VALUES (?1, ?2, ?3, ?4)",
-                rusqlite::params![source, target, context, raw_target],
+                "INSERT INTO edges(source, target, context, raw_target, source_line) VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![source, target, context, raw_target, source_line],
             )?;
         }
         Ok(())
@@ -340,7 +349,7 @@ impl Store {
 
     pub fn backlinks(&self, page_id: &str) -> Result<Vec<BacklinkEntry>, GraphError> {
         let mut stmt = self.conn.prepare(
-            "SELECT e.source, n.title, e.context
+            "SELECT e.source, n.title, e.context, e.source_line
              FROM edges e
              JOIN nodes n ON n.id = e.source
              WHERE e.target = ?1
@@ -352,6 +361,7 @@ impl Store {
                     source_id: row.get(0)?,
                     source_title: row.get(1)?,
                     context: row.get(2)?,
+                    source_line: row.get::<_, u32>(3).unwrap_or(0),
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -525,9 +535,9 @@ mod tests {
     }
 
     #[test]
-    fn schema_version_is_3() {
+    fn schema_version_is_4() {
         let store = Store::open_memory().unwrap();
-        assert_eq!(store.schema_version().unwrap(), 3);
+        assert_eq!(store.schema_version().unwrap(), 4);
     }
 
     #[test]
@@ -550,11 +560,11 @@ mod tests {
         let db_path = dir.path().join("test.db");
         {
             let store = Store::open(&db_path).unwrap();
-            assert_eq!(store.schema_version().unwrap(), 3);
+            assert_eq!(store.schema_version().unwrap(), 4);
         }
         {
             let store = Store::open(&db_path).unwrap();
-            assert_eq!(store.schema_version().unwrap(), 3);
+            assert_eq!(store.schema_version().unwrap(), 4);
         }
     }
 
@@ -584,7 +594,7 @@ mod tests {
     #[test]
     fn schema_version_readable_via_get_meta() {
         let store = Store::open_memory().unwrap();
-        assert_eq!(store.get_meta("schema_version").unwrap(), Some("3".into()));
+        assert_eq!(store.get_meta("schema_version").unwrap(), Some("4".into()));
     }
 
     // --- Phase 5: Node CRUD ---
@@ -756,7 +766,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &["t"], json!({"aliases": ["X"]}));
         store.upsert_node(&node, 1).unwrap();
-        store.insert_edge("a.md", "b.md", "ctx", "").unwrap();
+        store.insert_edge("a.md", "b.md", "ctx", "", 0).unwrap();
 
         store.delete_node("a.md").unwrap();
 
@@ -803,8 +813,8 @@ mod tests {
         let node_b = make_node("b.md", "B", &[], json!({}));
         store.upsert_node(&node_a, 1).unwrap();
         store.upsert_node(&node_b, 1).unwrap();
-        store.insert_edge("a.md", "b.md", "", "").unwrap();
-        store.insert_edge("b.md", "a.md", "", "").unwrap();
+        store.insert_edge("a.md", "b.md", "", "", 0).unwrap();
+        store.insert_edge("b.md", "a.md", "", "", 0).unwrap();
 
         store.delete_node("a.md").unwrap();
 
@@ -826,7 +836,7 @@ mod tests {
     #[test]
     fn insert_edge_and_query() {
         let store = Store::open_memory().unwrap();
-        store.insert_edge("a.md", "b.md", "links to b", "b").unwrap();
+        store.insert_edge("a.md", "b.md", "links to b", "b", 0).unwrap();
 
         let ctx: String = store
             .conn
@@ -842,9 +852,9 @@ mod tests {
     #[test]
     fn delete_edges_from_source() {
         let store = Store::open_memory().unwrap();
-        store.insert_edge("a.md", "b.md", "", "").unwrap();
-        store.insert_edge("a.md", "c.md", "", "").unwrap();
-        store.insert_edge("x.md", "y.md", "", "").unwrap();
+        store.insert_edge("a.md", "b.md", "", "", 0).unwrap();
+        store.insert_edge("a.md", "c.md", "", "", 0).unwrap();
+        store.insert_edge("x.md", "y.md", "", "", 0).unwrap();
 
         store.delete_edges_from("a.md").unwrap();
 
@@ -858,11 +868,11 @@ mod tests {
     #[test]
     fn replace_all_edges_clears_and_inserts() {
         let store = Store::open_memory().unwrap();
-        store.insert_edge("old.md", "old_target.md", "", "").unwrap();
+        store.insert_edge("old.md", "old_target.md", "", "", 0).unwrap();
 
         let edges = vec![
-            ("a.md", "b.md", "link to B", "B"),
-            ("a.md", "c.md", "link to C", "C"),
+            ("a.md", "b.md", "link to B", "B", 0),
+            ("a.md", "c.md", "link to C", "C", 0),
         ];
         store.replace_all_edges(&edges).unwrap();
 
@@ -926,8 +936,8 @@ mod tests {
     #[test]
     fn all_edges_returns_source_target_pairs() {
         let store = Store::open_memory().unwrap();
-        store.insert_edge("a.md", "b.md", "", "").unwrap();
-        store.insert_edge("c.md", "d.md", "", "").unwrap();
+        store.insert_edge("a.md", "b.md", "", "", 0).unwrap();
+        store.insert_edge("c.md", "d.md", "", "", 0).unwrap();
 
         let edges = store.all_edges().unwrap();
         assert_eq!(
@@ -1004,8 +1014,8 @@ mod tests {
         let node2 = make_node("b.md", "B", &["t1"], json!({}));
         store.upsert_node(&node2, 1).unwrap();
         store.upsert_stub("Ghost").unwrap();
-        store.insert_edge("a.md", "b.md", "", "").unwrap();
-        store.insert_edge("a.md", "Ghost", "", "").unwrap();
+        store.insert_edge("a.md", "b.md", "", "", 0).unwrap();
+        store.insert_edge("a.md", "Ghost", "", "", 0).unwrap();
 
         let s = store.stats().unwrap();
         assert_eq!(s.nodes, 2);
@@ -1258,7 +1268,7 @@ mod tests {
     #[test]
     fn insert_edge_with_raw_target() {
         let store = Store::open_memory().unwrap();
-        store.insert_edge("a.md", "b.md", "ctx", "B").unwrap();
+        store.insert_edge("a.md", "b.md", "ctx", "B", 0).unwrap();
         let raw = store.all_raw_edges().unwrap();
         assert_eq!(raw.len(), 1);
         assert_eq!(raw[0], ("a.md".into(), "b.md".into(), "B".into()));
@@ -1273,13 +1283,14 @@ mod tests {
         let b = make_node("b.md", "Beta", &[], json!({}));
         store.upsert_node(&a, 1).unwrap();
         store.upsert_node(&b, 1).unwrap();
-        store.insert_edge("a.md", "b.md", "links to b", "b").unwrap();
+        store.insert_edge("a.md", "b.md", "links to b", "b", 5).unwrap();
 
         let bl = store.backlinks("b.md").unwrap();
         assert_eq!(bl.len(), 1);
         assert_eq!(bl[0].source_id, "a.md");
         assert_eq!(bl[0].source_title, "Alpha");
         assert_eq!(bl[0].context, "links to b");
+        assert_eq!(bl[0].source_line, 5);
     }
 
     #[test]
@@ -1300,13 +1311,15 @@ mod tests {
         store.upsert_node(&a, 1).unwrap();
         store.upsert_node(&b, 1).unwrap();
         store.upsert_node(&c, 1).unwrap();
-        store.insert_edge("a.md", "c.md", "from a", "c").unwrap();
-        store.insert_edge("b.md", "c.md", "from b", "c").unwrap();
+        store.insert_edge("a.md", "c.md", "from a", "c", 1).unwrap();
+        store.insert_edge("b.md", "c.md", "from b", "c", 3).unwrap();
 
         let bl = store.backlinks("c.md").unwrap();
         assert_eq!(bl.len(), 2);
         assert_eq!(bl[0].source_id, "a.md");
+        assert_eq!(bl[0].source_line, 1);
         assert_eq!(bl[1].source_id, "b.md");
+        assert_eq!(bl[1].source_line, 3);
     }
 
     // --- Forward links ---
@@ -1318,7 +1331,7 @@ mod tests {
         let b = make_node("b.md", "Beta", &[], json!({}));
         store.upsert_node(&a, 1).unwrap();
         store.upsert_node(&b, 1).unwrap();
-        store.insert_edge("a.md", "b.md", "links to b", "B").unwrap();
+        store.insert_edge("a.md", "b.md", "links to b", "B", 0).unwrap();
 
         let fl = store.forward_links("a.md").unwrap();
         assert_eq!(fl.len(), 1);
@@ -1346,8 +1359,8 @@ mod tests {
         store.upsert_node(&a, 1).unwrap();
         store.upsert_node(&b, 1).unwrap();
         store.upsert_node(&c, 1).unwrap();
-        store.insert_edge("a.md", "b.md", "to b", "B").unwrap();
-        store.insert_edge("a.md", "c.md", "to c", "C").unwrap();
+        store.insert_edge("a.md", "b.md", "to b", "B", 0).unwrap();
+        store.insert_edge("a.md", "c.md", "to c", "C", 0).unwrap();
 
         let fl = store.forward_links("a.md").unwrap();
         assert_eq!(fl.len(), 2);
@@ -1361,7 +1374,7 @@ mod tests {
         let a = make_node("a.md", "Alpha", &[], json!({}));
         store.upsert_node(&a, 1).unwrap();
         store.upsert_stub("Ghost").unwrap();
-        store.insert_edge("a.md", "Ghost", "to ghost", "Ghost").unwrap();
+        store.insert_edge("a.md", "Ghost", "to ghost", "Ghost", 0).unwrap();
 
         let fl = store.forward_links("a.md").unwrap();
         assert_eq!(fl.len(), 1);
@@ -1413,7 +1426,7 @@ mod tests {
     // --- Phase 11: Migration ---
 
     #[test]
-    fn v1_to_v3_migration_backfills_tags_text_and_adds_raw_target() {
+    fn v1_to_v4_migration_backfills_tags_text_and_adds_raw_target_and_source_line() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.db");
 
@@ -1444,7 +1457,7 @@ mod tests {
         }
 
         let store = Store::open(&db_path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 3);
+        assert_eq!(store.schema_version().unwrap(), 4);
 
         let tags_text: String = store
             .conn
@@ -1458,14 +1471,14 @@ mod tests {
         assert_eq!(results.len(), 1);
 
         // v3 column should exist
-        store.insert_edge("a.md", "b.md", "ctx", "b").unwrap();
+        store.insert_edge("a.md", "b.md", "ctx", "b", 0).unwrap();
         let raw_edges = store.all_raw_edges().unwrap();
         assert_eq!(raw_edges.len(), 1);
         assert_eq!(raw_edges[0].2, "b");
     }
 
     #[test]
-    fn v2_to_v3_migration_adds_raw_target() {
+    fn v2_to_v4_migration_adds_raw_target_and_source_line() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.db");
 
@@ -1494,10 +1507,20 @@ mod tests {
         }
 
         let store = Store::open(&db_path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 3);
+        assert_eq!(store.schema_version().unwrap(), 4);
 
         let raw_edges = store.all_raw_edges().unwrap();
         assert_eq!(raw_edges.len(), 1);
         assert_eq!(raw_edges[0].2, "", "existing edges get empty raw_target");
+    }
+
+    #[test]
+    fn source_line_column_exists() {
+        let store = Store::open_memory().unwrap();
+        let has_column: bool = store
+            .conn
+            .prepare("SELECT source_line FROM edges LIMIT 0")
+            .is_ok();
+        assert!(has_column, "edges table should have source_line column");
     }
 }

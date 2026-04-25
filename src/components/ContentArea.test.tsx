@@ -64,6 +64,7 @@ beforeEach(() => {
       if (raw.trim() === "") return {};
       return { tags: ["test"] };
     }
+    if (cmd === "get_backlinks") return [];
     throw new Error(`Unknown command: ${cmd}`);
   });
 });

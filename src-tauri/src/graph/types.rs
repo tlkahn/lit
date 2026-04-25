@@ -30,6 +30,7 @@ pub struct BacklinkEntry {
     pub source_id: String,
     pub source_title: String,
     pub context: String,
+    pub source_line: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -137,6 +138,7 @@ mod tests {
             source_id: "a.md".into(),
             source_title: "Alpha".into(),
             context: "links to target".into(),
+            source_line: 5,
         };
         let json_str = serde_json::to_string(&entry).expect("serialize");
         let back: BacklinkEntry = serde_json::from_str(&json_str).expect("deserialize");

@@ -366,11 +366,11 @@ mod tests {
         store.upsert_node(&make_node("E", "Echo"), 1).unwrap();
         store.upsert_stub("F").unwrap();
 
-        store.insert_edge("A", "B", "", "").unwrap();
-        store.insert_edge("B", "C", "", "").unwrap();
-        store.insert_edge("A", "D", "", "").unwrap();
-        store.insert_edge("A", "F", "", "").unwrap();
-        store.insert_edge("B", "D", "", "").unwrap();
+        store.insert_edge("A", "B", "", "", 0).unwrap();
+        store.insert_edge("B", "C", "", "", 0).unwrap();
+        store.insert_edge("A", "D", "", "", 0).unwrap();
+        store.insert_edge("A", "F", "", "", 0).unwrap();
+        store.insert_edge("B", "D", "", "", 0).unwrap();
 
         let kg = KnowledgeGraph::from_store(&store).unwrap();
         (store, kg)
@@ -477,8 +477,8 @@ mod tests {
         let store = Store::open_memory().unwrap();
         store.upsert_node(&make_node("A", "A"), 1).unwrap();
         store.upsert_node(&make_node("B", "B"), 1).unwrap();
-        store.insert_edge("A", "B", "ctx1", "").unwrap();
-        store.insert_edge("A", "B", "ctx2", "").unwrap();
+        store.insert_edge("A", "B", "ctx1", "", 0).unwrap();
+        store.insert_edge("A", "B", "ctx2", "", 0).unwrap();
         let kg = KnowledgeGraph::from_store(&store).unwrap();
         assert_eq!(kg.graph.edge_count(), 1);
     }

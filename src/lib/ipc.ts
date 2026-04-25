@@ -264,6 +264,7 @@ export interface BacklinkEntry {
   source_id: string;
   source_title: string;
   context: string;
+  source_line: number;
 }
 
 export interface LinkEntry {

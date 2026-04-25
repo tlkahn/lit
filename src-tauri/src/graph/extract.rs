@@ -52,10 +52,12 @@ fn is_blockquote_only(line: &str) -> bool {
     stripped.is_empty()
 }
 
-pub fn extract_sentence_context(body: &str, link_target: &str) -> String {
+pub fn extract_sentence_context(body: &str, link_target: &str) -> (String, u32) {
     let link_pattern_pipe = format!("[[{}|", link_target);
     let link_pattern_close = format!("[[{}]]", link_target);
     let link_pattern_section = format!("[[{}#", link_target);
+
+    let mut byte_offset = 0usize;
 
     for paragraph in body.split("\n\n") {
         let has_link = paragraph.contains(&link_pattern_close)
@@ -63,8 +65,11 @@ pub fn extract_sentence_context(body: &str, link_target: &str) -> String {
             || paragraph.contains(&link_pattern_section);
 
         if !has_link {
+            byte_offset += paragraph.len() + 2;
             continue;
         }
+
+        let line_number = body[..byte_offset.min(body.len())].matches('\n').count() as u32 + 1;
 
         let flat = paragraph.replace('\n', " ");
 
@@ -74,12 +79,14 @@ pub fn extract_sentence_context(body: &str, link_target: &str) -> String {
                 || trimmed.contains(&link_pattern_pipe)
                 || trimmed.contains(&link_pattern_section)
             {
-                return trimmed.to_string();
+                return (trimmed.to_string(), line_number);
             }
         }
+
+        byte_offset += paragraph.len() + 2;
     }
 
-    String::new()
+    (String::new(), 0)
 }
 
 pub fn extract_headings(body: &str) -> Vec<super::types::HeadingInfo> {
@@ -329,7 +336,7 @@ mod tests {
         let body = "Some intro. She talked to [[Alice]] about the project. Then she left.";
         assert_eq!(
             extract_sentence_context(body, "Alice"),
-            "She talked to [[Alice]] about the project."
+            ("She talked to [[Alice]] about the project.".into(), 1)
         );
     }
 
@@ -338,7 +345,7 @@ mod tests {
         let body = "[[Alice]] is a great person. Others agree.";
         assert_eq!(
             extract_sentence_context(body, "Alice"),
-            "[[Alice]] is a great person."
+            ("[[Alice]] is a great person.".into(), 1)
         );
     }
 
@@ -347,14 +354,14 @@ mod tests {
         let body = "She met [[Alice]]";
         assert_eq!(
             extract_sentence_context(body, "Alice"),
-            "She met [[Alice]]"
+            ("She met [[Alice]]".into(), 1)
         );
     }
 
     #[test]
     fn sentence_context_link_not_found() {
         let body = "No links here at all.";
-        assert_eq!(extract_sentence_context(body, "Alice"), "");
+        assert_eq!(extract_sentence_context(body, "Alice"), ("".into(), 0));
     }
 
     #[test]
@@ -362,7 +369,7 @@ mod tests {
         let body = "This paragraph has no sentence-ending punctuation and mentions [[Alice]] somewhere";
         assert_eq!(
             extract_sentence_context(body, "Alice"),
-            "This paragraph has no sentence-ending punctuation and mentions [[Alice]] somewhere"
+            ("This paragraph has no sentence-ending punctuation and mentions [[Alice]] somewhere".into(), 1)
         );
     }
 
@@ -371,7 +378,7 @@ mod tests {
         let body = "She met [[Alice|her friend]] at the cafe.";
         assert_eq!(
             extract_sentence_context(body, "Alice"),
-            "She met [[Alice|her friend]] at the cafe."
+            ("She met [[Alice|her friend]] at the cafe.".into(), 1)
         );
     }
 
@@ -380,7 +387,7 @@ mod tests {
         let body = "See [[Alice#Bio]] for details.";
         assert_eq!(
             extract_sentence_context(body, "Alice"),
-            "See [[Alice#Bio]] for details."
+            ("See [[Alice#Bio]] for details.".into(), 1)
         );
     }
 
@@ -389,7 +396,31 @@ mod tests {
         let body = "First sentence.\nShe mentioned [[Alice]] in passing.\nAnother sentence.";
         assert_eq!(
             extract_sentence_context(body, "Alice"),
-            "She mentioned [[Alice]] in passing."
+            ("She mentioned [[Alice]] in passing.".into(), 1)
         );
+    }
+
+    #[test]
+    fn sentence_context_returns_line_of_second_paragraph() {
+        let body = "First paragraph.\n\nSecond paragraph links to [[Alice]].";
+        let (ctx, line) = extract_sentence_context(body, "Alice");
+        assert_eq!(ctx, "Second paragraph links to [[Alice]].");
+        assert_eq!(line, 3);
+    }
+
+    #[test]
+    fn sentence_context_returns_line_of_third_paragraph() {
+        let body = "Para one.\n\nPara two.\n\nPara three mentions [[Bob]].";
+        let (ctx, line) = extract_sentence_context(body, "Bob");
+        assert_eq!(ctx, "Para three mentions [[Bob]].");
+        assert_eq!(line, 5);
+    }
+
+    #[test]
+    fn sentence_context_multiline_para_line_number() {
+        let body = "Line one.\nLine two.\n\nLine three has [[Alice]].";
+        let (ctx, line) = extract_sentence_context(body, "Alice");
+        assert_eq!(ctx, "Line three has [[Alice]].");
+        assert_eq!(line, 4);
     }
 }
