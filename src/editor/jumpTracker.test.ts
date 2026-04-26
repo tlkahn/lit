@@ -12,14 +12,24 @@ describe("JumpTracker", () => {
     tracker = new JumpTracker();
   });
 
-  it("records jump when same-note distance >= 5 lines", () => {
-    tracker.recordJump(jump("a.md", 1), jump("a.md", 6));
+  it("records same-note jump to different line", () => {
+    tracker.recordJump(jump("a.md", 1), jump("a.md", 2));
     expect(tracker.jumps).toHaveLength(1);
   });
 
-  it("skips when same-note distance < 5 lines", () => {
-    tracker.recordJump(jump("a.md", 1), jump("a.md", 4));
+  it("skips same-line move with col distance <= 1", () => {
+    tracker.recordJump(jump("a.md", 5, 3), jump("a.md", 5, 4));
     expect(tracker.jumps).toHaveLength(0);
+  });
+
+  it("skips same-line move with col distance 0 (same position)", () => {
+    tracker.recordJump(jump("a.md", 5, 3), jump("a.md", 5, 3));
+    expect(tracker.jumps).toHaveLength(0);
+  });
+
+  it("records same-line jump when col distance > 1", () => {
+    tracker.recordJump(jump("a.md", 5, 0), jump("a.md", 5, 10));
+    expect(tracker.jumps).toHaveLength(1);
   });
 
   it("always records cross-note jumps regardless of distance", () => {

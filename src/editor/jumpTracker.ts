@@ -1,5 +1,4 @@
 const MAX_JUMPS = 100;
-const MIN_LINE_DISTANCE = 5;
 
 export interface Jump {
   notePath: string;
@@ -17,8 +16,11 @@ export class JumpTracker {
   }
 
   recordJump(from: Jump, to: Jump): void {
-    const sameNote = from.notePath === to.notePath;
-    if (sameNote && Math.abs(from.line - to.line) < MIN_LINE_DISTANCE) return;
+    if (
+      from.notePath === to.notePath &&
+      from.line === to.line &&
+      Math.abs(from.col - to.col) <= 1
+    ) return;
 
     if (this._index !== -1) {
       this._jumps.length = this._index + 1;

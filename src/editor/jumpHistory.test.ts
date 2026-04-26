@@ -42,19 +42,25 @@ describe("jumpHistoryExtension", () => {
     } as never);
   });
 
-  it("cursor move >= 5 lines records a jump", () => {
+  it("cursor move to different line records a jump", () => {
     const view = createView(lines(20));
-    const line6 = view.state.doc.line(6).from;
-    view.dispatch({ selection: EditorSelection.cursor(line6) });
+    const line2 = view.state.doc.line(2).from;
+    view.dispatch({ selection: EditorSelection.cursor(line2) });
     expect(globalJumpTracker.jumps).toHaveLength(1);
     view.destroy();
   });
 
-  it("cursor move < 5 lines does not record", () => {
+  it("adjacent char move on same line does not record", () => {
     const view = createView(lines(20));
-    const line3 = view.state.doc.line(3).from;
-    view.dispatch({ selection: EditorSelection.cursor(line3) });
+    view.dispatch({ selection: EditorSelection.cursor(1) });
     expect(globalJumpTracker.jumps).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("cursor move to distant col on same line records a jump", () => {
+    const view = createView(lines(20));
+    view.dispatch({ selection: EditorSelection.cursor(10) });
+    expect(globalJumpTracker.jumps).toHaveLength(1);
     view.destroy();
   });
 
