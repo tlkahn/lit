@@ -236,13 +236,12 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: Min
                 />
                 <text
                   y={-((lines.length - 1) * lineHeight) / 2}
-                  dy="0.35em"
                   fontSize={fontSize}
                   clipPath={`url(#node-clip-${d.data.id})`}
                   className="fill-neutral-900 dark:fill-neutral-100 select-none"
                 >
                   {lines.map((line, i) => (
-                    <tspan key={i} x={0} dy={i === 0 ? 0 : lineHeight}>{line}</tspan>
+                    <tspan key={i} x={0} dy={i === 0 ? "0.35em" : lineHeight}>{line}</tspan>
                   ))}
                 </text>
               </g>
@@ -286,12 +285,11 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: Min
                 />
                 <text
                   y={-((ghostLines.length - 1) * ghostLineHeight) / 2}
-                  dy="0.35em"
                   fontSize={fontSize}
                   className="fill-neutral-900 dark:fill-neutral-100 select-none"
                 >
                   {ghostLines.map((line, i) => (
-                    <tspan key={i} x={0} dy={i === 0 ? 0 : ghostLineHeight}>{line}</tspan>
+                    <tspan key={i} x={0} dy={i === 0 ? "0.35em" : ghostLineHeight}>{line}</tspan>
                   ))}
                 </text>
               </g>
