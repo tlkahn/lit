@@ -647,6 +647,7 @@ impl GraphIndex {
     }
 
     pub fn unlinked_mentions(&self, page_id: &str) -> Result<Vec<UnlinkedMention>, GraphError> {
+        use grep_regex::RegexMatcherBuilder;
         use super::extract::{extract_mention_context, find_plain_mentions, strip_for_mention_scan};
 
         let store = self.store.lock().unwrap();
@@ -661,6 +662,21 @@ impl GraphIndex {
             names.push(a);
         }
 
+        let filtered: Vec<&str> = names.iter().copied().filter(|n| !n.is_empty()).collect();
+        let prefilter_matcher = if !filtered.is_empty() {
+            let pattern = filtered
+                .iter()
+                .map(|n| regex::escape(n))
+                .collect::<Vec<_>>()
+                .join("|");
+            RegexMatcherBuilder::new()
+                .case_insensitive(true)
+                .build(&pattern)
+                .ok()
+        } else {
+            None
+        };
+
         let mut results = Vec::new();
 
         for source_id in &all_paths {
@@ -672,7 +688,11 @@ impl GraphIndex {
             }
 
             let abs_path = self.workspace_root.join(source_id);
-            if !file_contains_any_name(&abs_path, &names) {
+            let contains = match &prefilter_matcher {
+                Some(m) => file_contains_any_name_with_matcher(&abs_path, m),
+                None => false,
+            };
+            if !contains {
                 continue;
             }
 
@@ -702,10 +722,26 @@ impl GraphIndex {
     }
 
     pub fn search(&self, query: &str, limit: i64) -> Result<Vec<SearchResult>, GraphError> {
+        use grep_regex::RegexMatcherBuilder;
+
         let terms = parse_search_query(query);
         if terms.is_empty() {
             return Ok(vec![]);
         }
+
+        let pattern = terms
+            .iter()
+            .map(|t| regex::escape(t))
+            .collect::<Vec<_>>()
+            .join("|");
+
+        let matcher = match RegexMatcherBuilder::new()
+            .case_insensitive(true)
+            .build(&pattern)
+        {
+            Ok(m) => m,
+            Err(_) => return Ok(vec![]),
+        };
 
         let store = self.store.lock().unwrap();
         let synced = store.all_synced_paths()?;
@@ -716,7 +752,7 @@ impl GraphIndex {
             .iter()
             .filter_map(|id| {
                 let (count, excerpt) =
-                    search_file_for_terms(&self.workspace_root.join(id), &terms)?;
+                    search_file_with_matcher(&self.workspace_root.join(id), &matcher, &terms)?;
                 let title = titles.get(id).cloned().unwrap_or_default();
                 Some(SearchResult {
                     id: id.clone(),
@@ -771,8 +807,11 @@ fn parse_search_query(raw: &str) -> Vec<String> {
     trimmed.split_whitespace().map(|s| s.to_string()).collect()
 }
 
-fn search_file_for_terms(path: &Path, terms: &[String]) -> Option<(usize, String)> {
-    use grep_regex::RegexMatcherBuilder;
+fn search_file_with_matcher(
+    path: &Path,
+    matcher: &grep_regex::RegexMatcher,
+    terms: &[String],
+) -> Option<(usize, String)> {
     use grep_searcher::sinks::UTF8;
     use grep_searcher::Searcher;
 
@@ -780,23 +819,12 @@ fn search_file_for_terms(path: &Path, terms: &[String]) -> Option<(usize, String
         return None;
     }
 
-    let pattern = terms
-        .iter()
-        .map(|t| regex::escape(t))
-        .collect::<Vec<_>>()
-        .join("|");
-
-    let matcher = RegexMatcherBuilder::new()
-        .case_insensitive(true)
-        .build(&pattern)
-        .ok()?;
-
     let mut match_count: usize = 0;
     let mut first_line: Option<String> = None;
     let mut seen_terms: HashSet<usize> = HashSet::new();
 
     let result = Searcher::new().search_path(
-        &matcher,
+        matcher,
         path,
         UTF8(|_line_number, line| {
             match_count += 1;
@@ -821,10 +849,51 @@ fn search_file_for_terms(path: &Path, terms: &[String]) -> Option<(usize, String
     }
 }
 
-fn file_contains_any_name(path: &Path, names: &[&str]) -> bool {
+#[cfg(test)]
+fn search_file_for_terms(path: &Path, terms: &[String]) -> Option<(usize, String)> {
     use grep_regex::RegexMatcherBuilder;
+
+    if terms.is_empty() {
+        return None;
+    }
+
+    let pattern = terms
+        .iter()
+        .map(|t| regex::escape(t))
+        .collect::<Vec<_>>()
+        .join("|");
+
+    let matcher = RegexMatcherBuilder::new()
+        .case_insensitive(true)
+        .build(&pattern)
+        .ok()?;
+
+    search_file_with_matcher(path, &matcher, terms)
+}
+
+fn file_contains_any_name_with_matcher(path: &Path, matcher: &grep_regex::RegexMatcher) -> bool {
     use grep_searcher::sinks::UTF8;
     use grep_searcher::Searcher;
+
+    let mut found = false;
+    let result = Searcher::new().search_path(
+        matcher,
+        path,
+        UTF8(|_line_number, _line| {
+            found = true;
+            Ok(false)
+        }),
+    );
+
+    match result {
+        Ok(()) => found,
+        Err(_) => true,
+    }
+}
+
+#[cfg(test)]
+fn file_contains_any_name(path: &Path, names: &[&str]) -> bool {
+    use grep_regex::RegexMatcherBuilder;
 
     let filtered: Vec<&str> = names.iter().copied().filter(|n| !n.is_empty()).collect();
     if filtered.is_empty() {
@@ -845,20 +914,7 @@ fn file_contains_any_name(path: &Path, names: &[&str]) -> bool {
         Err(_) => return true,
     };
 
-    let mut found = false;
-    let result = Searcher::new().search_path(
-        &matcher,
-        path,
-        UTF8(|_line_number, _line| {
-            found = true;
-            Ok(false)
-        }),
-    );
-
-    match result {
-        Ok(()) => found,
-        Err(_) => true,
-    }
+    file_contains_any_name_with_matcher(path, &matcher)
 }
 
 // ---------------------------------------------------------------------------
@@ -1773,6 +1829,66 @@ mod tests {
         assert_eq!(mentions[0].source_line, 2);
     }
 
+    // --- unlinked_mentions many files (shared matcher gate) ---
+
+    #[test]
+    fn unlinked_mentions_many_files_shared_matcher() {
+        let dir = create_workspace();
+        write_md(dir.path(), "target.md", "---\ntitle: Alice\n---\nI am Alice.");
+        for i in 0..20 {
+            let content = if i % 2 == 0 {
+                format!("File {i} mentions Alice in passing.")
+            } else {
+                format!("File {i} has no relevant names.")
+            };
+            write_md(dir.path(), &format!("note_{i}.md"), &content);
+        }
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let mentions = gi.unlinked_mentions("target.md").unwrap();
+        assert_eq!(mentions.len(), 10, "every even file of 20 should mention Alice");
+        for m in &mentions {
+            assert_eq!(m.matched_text, "Alice");
+        }
+    }
+
+    // ------- file_contains_any_name_with_matcher tests -------
+
+    fn build_name_matcher(names: &[&str]) -> grep_regex::RegexMatcher {
+        let filtered: Vec<&str> = names.iter().copied().filter(|n| !n.is_empty()).collect();
+        let pattern = filtered
+            .iter()
+            .map(|n| regex::escape(n))
+            .collect::<Vec<_>>()
+            .join("|");
+        grep_regex::RegexMatcherBuilder::new()
+            .case_insensitive(true)
+            .build(&pattern)
+            .unwrap()
+    }
+
+    #[test]
+    fn prefilter_with_matcher_finds_name() {
+        let dir = create_workspace();
+        write_md(dir.path(), "note.md", "Hello Alice, welcome.");
+        let matcher = build_name_matcher(&["Alice"]);
+        assert!(file_contains_any_name_with_matcher(&dir.path().join("note.md"), &matcher));
+    }
+
+    #[test]
+    fn prefilter_with_matcher_rejects_absent() {
+        let dir = create_workspace();
+        write_md(dir.path(), "note.md", "Hello world.");
+        let matcher = build_name_matcher(&["Alice"]);
+        assert!(!file_contains_any_name_with_matcher(&dir.path().join("note.md"), &matcher));
+    }
+
+    #[test]
+    fn prefilter_with_matcher_missing_file_returns_true() {
+        let dir = create_workspace();
+        let matcher = build_name_matcher(&["Alice"]);
+        assert!(file_contains_any_name_with_matcher(&dir.path().join("nonexistent.md"), &matcher));
+    }
+
     // ------- file_contains_any_name pre-filter tests -------
 
     #[test]
@@ -1867,6 +1983,63 @@ mod tests {
     #[test]
     fn parse_query_interior_star_preserved() {
         assert_eq!(parse_search_query("he*llo*"), vec!["he*llo"]);
+    }
+
+    // --- search_file_with_matcher ---
+
+    fn build_matcher(terms: &[String]) -> grep_regex::RegexMatcher {
+        let pattern = terms
+            .iter()
+            .map(|t| regex::escape(t))
+            .collect::<Vec<_>>()
+            .join("|");
+        grep_regex::RegexMatcherBuilder::new()
+            .case_insensitive(true)
+            .build(&pattern)
+            .unwrap()
+    }
+
+    #[test]
+    fn search_file_with_matcher_single_term_found() {
+        let dir = create_workspace();
+        write_md(dir.path(), "note.md", "Hello world of rust programming.");
+        let terms = vec!["rust".to_string()];
+        let matcher = build_matcher(&terms);
+        let result = search_file_with_matcher(&dir.path().join("note.md"), &matcher, &terms);
+        assert!(result.is_some());
+        let (count, excerpt) = result.unwrap();
+        assert_eq!(count, 1);
+        assert!(excerpt.contains("rust"));
+    }
+
+    #[test]
+    fn search_file_with_matcher_term_not_found() {
+        let dir = create_workspace();
+        write_md(dir.path(), "note.md", "Hello world.");
+        let terms = vec!["rust".to_string()];
+        let matcher = build_matcher(&terms);
+        let result = search_file_with_matcher(&dir.path().join("note.md"), &matcher, &terms);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn search_file_with_matcher_multi_term_all_present() {
+        let dir = create_workspace();
+        write_md(dir.path(), "note.md", "Rust is great.\nSystems programming.");
+        let terms = vec!["rust".to_string(), "programming".to_string()];
+        let matcher = build_matcher(&terms);
+        let result = search_file_with_matcher(&dir.path().join("note.md"), &matcher, &terms);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn search_file_with_matcher_multi_term_one_missing() {
+        let dir = create_workspace();
+        write_md(dir.path(), "note.md", "Rust is great.");
+        let terms = vec!["rust".to_string(), "python".to_string()];
+        let matcher = build_matcher(&terms);
+        let result = search_file_with_matcher(&dir.path().join("note.md"), &matcher, &terms);
+        assert!(result.is_none());
     }
 
     // --- search_file_for_terms ---
@@ -2030,6 +2203,25 @@ mod tests {
         let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
         let results = gi.search("searchable", 2).unwrap();
         assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn search_shared_matcher_across_many_files() {
+        let dir = create_workspace();
+        for i in 0..50 {
+            let content = if i % 5 == 0 {
+                format!("This file mentions quantum computing on iteration {i}.")
+            } else {
+                format!("Unrelated content {i}.")
+            };
+            write_md(dir.path(), &format!("note_{i}.md"), &content);
+        }
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let results = gi.search("quantum computing", 100).unwrap();
+        assert_eq!(results.len(), 10, "every 5th of 50 files should match");
+        for r in &results {
+            assert!(r.score < 0.0, "score should be negative (negated count)");
+        }
     }
 
     #[test]
