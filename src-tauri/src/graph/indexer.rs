@@ -702,8 +702,34 @@ impl GraphIndex {
     }
 
     pub fn search(&self, query: &str, limit: i64) -> Result<Vec<SearchResult>, GraphError> {
+        let terms = parse_search_query(query);
+        if terms.is_empty() {
+            return Ok(vec![]);
+        }
+
         let store = self.store.lock().unwrap();
-        store.search(query, limit)
+        let synced = store.all_synced_paths()?;
+        let titles = store.node_titles()?;
+        drop(store);
+
+        let mut hits: Vec<SearchResult> = synced
+            .iter()
+            .filter_map(|id| {
+                let (count, excerpt) =
+                    search_file_for_terms(&self.workspace_root.join(id), &terms)?;
+                let title = titles.get(id).cloned().unwrap_or_default();
+                Some(SearchResult {
+                    id: id.clone(),
+                    title,
+                    score: -(count as f64),
+                    excerpt,
+                })
+            })
+            .collect();
+
+        hits.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
+        hits.truncate(limit as usize);
+        Ok(hits)
     }
 
     pub fn pagerank(&self) -> Result<HashMap<String, f64>, GraphError> {
@@ -733,6 +759,65 @@ impl GraphIndex {
         pairs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         pairs.truncate(n);
         Ok(pairs)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Ripgrep full-body search
+// ---------------------------------------------------------------------------
+
+fn parse_search_query(raw: &str) -> Vec<String> {
+    let trimmed = raw.trim().strip_suffix('*').unwrap_or(raw.trim());
+    trimmed.split_whitespace().map(|s| s.to_string()).collect()
+}
+
+fn search_file_for_terms(path: &Path, terms: &[String]) -> Option<(usize, String)> {
+    use grep_regex::RegexMatcherBuilder;
+    use grep_searcher::sinks::UTF8;
+    use grep_searcher::Searcher;
+
+    if terms.is_empty() {
+        return None;
+    }
+
+    let pattern = terms
+        .iter()
+        .map(|t| regex::escape(t))
+        .collect::<Vec<_>>()
+        .join("|");
+
+    let matcher = RegexMatcherBuilder::new()
+        .case_insensitive(true)
+        .build(&pattern)
+        .ok()?;
+
+    let mut match_count: usize = 0;
+    let mut first_line: Option<String> = None;
+    let mut seen_terms: HashSet<usize> = HashSet::new();
+
+    let result = Searcher::new().search_path(
+        &matcher,
+        path,
+        UTF8(|_line_number, line| {
+            match_count += 1;
+            if first_line.is_none() {
+                first_line = Some(line.trim().to_string());
+            }
+            let line_lower = line.to_lowercase();
+            for (i, term) in terms.iter().enumerate() {
+                if line_lower.contains(&term.to_lowercase()) {
+                    seen_terms.insert(i);
+                }
+            }
+            Ok(true)
+        }),
+    );
+
+    match result {
+        Ok(()) if seen_terms.len() == terms.len() => {
+            Some((match_count, first_line.unwrap_or_default()))
+        }
+        _ => None,
     }
 }
 
@@ -1750,5 +1835,209 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "note.md", "I love C programming.");
         assert!(!file_contains_any_name(&dir.path().join("note.md"), &["C++"]));
+    }
+
+    // --- parse_search_query ---
+
+    #[test]
+    fn parse_query_strips_trailing_star() {
+        assert_eq!(parse_search_query("hello*"), vec!["hello"]);
+    }
+
+    #[test]
+    fn parse_query_splits_words() {
+        assert_eq!(parse_search_query("quantum computing"), vec!["quantum", "computing"]);
+    }
+
+    #[test]
+    fn parse_query_empty_returns_empty() {
+        assert!(parse_search_query("").is_empty());
+    }
+
+    #[test]
+    fn parse_query_whitespace_only_returns_empty() {
+        assert!(parse_search_query("   ").is_empty());
+    }
+
+    #[test]
+    fn parse_query_single_word() {
+        assert_eq!(parse_search_query("rust"), vec!["rust"]);
+    }
+
+    #[test]
+    fn parse_query_interior_star_preserved() {
+        assert_eq!(parse_search_query("he*llo*"), vec!["he*llo"]);
+    }
+
+    // --- search_file_for_terms ---
+
+    #[test]
+    fn search_file_single_term_found() {
+        let dir = create_workspace();
+        write_md(dir.path(), "note.md", "Hello world of rust programming.");
+        let result = search_file_for_terms(
+            &dir.path().join("note.md"),
+            &["rust".to_string()],
+        );
+        assert!(result.is_some());
+        let (count, excerpt) = result.unwrap();
+        assert_eq!(count, 1);
+        assert!(excerpt.contains("rust"));
+    }
+
+    #[test]
+    fn search_file_single_term_not_found() {
+        let dir = create_workspace();
+        write_md(dir.path(), "note.md", "Hello world.");
+        let result = search_file_for_terms(
+            &dir.path().join("note.md"),
+            &["rust".to_string()],
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn search_file_multiple_terms_all_present() {
+        let dir = create_workspace();
+        write_md(dir.path(), "note.md", "Rust is great.\nSystems programming.");
+        let result = search_file_for_terms(
+            &dir.path().join("note.md"),
+            &["rust".to_string(), "programming".to_string()],
+        );
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn search_file_multiple_terms_one_missing() {
+        let dir = create_workspace();
+        write_md(dir.path(), "note.md", "Rust is great.");
+        let result = search_file_for_terms(
+            &dir.path().join("note.md"),
+            &["rust".to_string(), "python".to_string()],
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn search_file_case_insensitive() {
+        let dir = create_workspace();
+        write_md(dir.path(), "note.md", "RUST is great.");
+        let result = search_file_for_terms(
+            &dir.path().join("note.md"),
+            &["rust".to_string()],
+        );
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn search_file_multiple_matching_lines() {
+        let dir = create_workspace();
+        write_md(dir.path(), "note.md", "Rust line one.\nRust line two.\nRust line three.");
+        let result = search_file_for_terms(
+            &dir.path().join("note.md"),
+            &["rust".to_string()],
+        );
+        let (count, _) = result.unwrap();
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn search_file_special_regex_chars() {
+        let dir = create_workspace();
+        write_md(dir.path(), "note.md", "I love C++ programming.");
+        let result = search_file_for_terms(
+            &dir.path().join("note.md"),
+            &["C++".to_string()],
+        );
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn search_file_excerpt_is_first_matching_line() {
+        let dir = create_workspace();
+        write_md(dir.path(), "note.md", "No match here.\nFirst rust line.\nSecond rust line.");
+        let result = search_file_for_terms(
+            &dir.path().join("note.md"),
+            &["rust".to_string()],
+        );
+        let (_, excerpt) = result.unwrap();
+        assert_eq!(excerpt, "First rust line.");
+    }
+
+    // --- GraphIndex search (ripgrep) ---
+
+    #[test]
+    fn search_full_body() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "---\ntitle: Intro\n---\nFirst paragraph.\n\nDeep in the body: thermodynamics rules.",
+        );
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let results = gi.search("thermodynamics", 20).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "a.md");
+    }
+
+    #[test]
+    fn search_ranks_by_match_count() {
+        let dir = create_workspace();
+        write_md(dir.path(), "many.md", "rust\nrust\nrust\nrust\nrust");
+        write_md(dir.path(), "few.md", "rust once");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let results = gi.search("rust", 20).unwrap();
+        assert!(results.len() >= 2);
+        assert_eq!(results[0].id, "many.md", "file with more matches should rank first");
+    }
+
+    #[test]
+    fn search_multi_term_and() {
+        let dir = create_workspace();
+        write_md(dir.path(), "both.md", "quantum computing is here");
+        write_md(dir.path(), "one.md", "quantum mechanics only");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let results = gi.search("quantum computing", 20).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "both.md");
+    }
+
+    #[test]
+    fn search_strips_trailing_star() {
+        let dir = create_workspace();
+        write_md(dir.path(), "alpha.md", "---\ntitle: Alpha\n---\nAlpha content.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let results = gi.search("Alph*", 20).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "alpha.md");
+    }
+
+    #[test]
+    fn search_empty_query() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Content.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let results = gi.search("", 20).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn search_respects_limit() {
+        let dir = create_workspace();
+        for i in 0..5 {
+            write_md(dir.path(), &format!("{i}.md"), "searchable content here");
+        }
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let results = gi.search("searchable", 2).unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn search_case_insensitive() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "QUANTUM computing.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let results = gi.search("quantum", 20).unwrap();
+        assert_eq!(results.len(), 1);
     }
 }

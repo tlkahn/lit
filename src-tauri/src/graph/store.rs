@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use tracing::{debug, info};
 
 use super::error::GraphError;
-use super::types::{extract_aliases, BacklinkEntry, LinkEntry, ParsedNode, SearchResult, Stats};
+use super::types::{extract_aliases, BacklinkEntry, LinkEntry, ParsedNode, Stats};
 
 pub struct Store {
     pub(crate) conn: Connection,
@@ -110,42 +110,15 @@ impl Store {
             )?;
         }
 
-        self.conn.execute_batch(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(
-                title, first_paragraph, tags_text,
-                content=nodes, content_rowid=rowid
-            );",
-        )?;
-
-        self.conn.execute_batch(
-            "CREATE TRIGGER IF NOT EXISTS nodes_fts_insert AFTER INSERT ON nodes
-            BEGIN
-                INSERT INTO nodes_fts(rowid, title, first_paragraph, tags_text)
-                VALUES (new.rowid, new.title, new.first_paragraph, new.tags_text);
-            END;",
-        )?;
-
-        self.conn.execute_batch(
-            "CREATE TRIGGER IF NOT EXISTS nodes_fts_delete AFTER DELETE ON nodes
-            BEGIN
-                INSERT INTO nodes_fts(nodes_fts, rowid, title, first_paragraph, tags_text)
-                VALUES ('delete', old.rowid, old.title, old.first_paragraph, old.tags_text);
-            END;",
-        )?;
-
-        self.conn.execute_batch(
-            "CREATE TRIGGER IF NOT EXISTS nodes_fts_update AFTER UPDATE ON nodes
-            BEGIN
-                INSERT INTO nodes_fts(nodes_fts, rowid, title, first_paragraph, tags_text)
-                VALUES ('delete', old.rowid, old.title, old.first_paragraph, old.tags_text);
-                INSERT INTO nodes_fts(rowid, title, first_paragraph, tags_text)
-                VALUES (new.rowid, new.title, new.first_paragraph, new.tags_text);
-            END;",
-        )?;
-
-        if version < 2 {
-            self.conn
-                .execute_batch("INSERT INTO nodes_fts(nodes_fts) VALUES ('rebuild');")?;
+        if version < 5 {
+            info!(from = version, to = 5, "migrating schema: dropping FTS5");
+            self.conn.execute_batch(
+                "DROP TRIGGER IF EXISTS nodes_fts_insert;
+                 DROP TRIGGER IF EXISTS nodes_fts_delete;
+                 DROP TRIGGER IF EXISTS nodes_fts_update;
+                 DROP TABLE IF EXISTS nodes_fts;
+                 UPDATE meta SET value = '5' WHERE key = 'schema_version';"
+            )?;
         }
 
         Ok(())
@@ -417,35 +390,6 @@ impl Store {
         Ok(results)
     }
 
-    // --- Search ---
-
-    pub fn search(&self, query: &str, limit: i64) -> Result<Vec<SearchResult>, GraphError> {
-        info!(query, limit, "searching");
-        let mut stmt = self.conn.prepare(
-            "SELECT n.id, n.title, bm25(nodes_fts) AS score,
-                    snippet(nodes_fts, -1, '[', ']', '...', 64) AS excerpt
-             FROM nodes_fts
-             JOIN nodes n ON n.rowid = nodes_fts.rowid
-             WHERE nodes_fts MATCH ?1 AND n.is_stub = 0
-             ORDER BY score
-             LIMIT ?2",
-        )?;
-
-        let results = stmt
-            .query_map(rusqlite::params![query, limit], |row| {
-                Ok(SearchResult {
-                    id: row.get(0)?,
-                    title: row.get(1)?,
-                    score: row.get(2)?,
-                    excerpt: row.get(3)?,
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-
-        debug!(results = results.len(), "search complete");
-        Ok(results)
-    }
-
     // --- Meta ---
 
     pub fn get_meta(&self, key: &str) -> Result<Option<String>, GraphError> {
@@ -563,13 +507,13 @@ mod tests {
     }
 
     #[test]
-    fn schema_version_is_4() {
+    fn schema_version_is_5() {
         let store = Store::open_memory().unwrap();
-        assert_eq!(store.schema_version().unwrap(), 4);
+        assert_eq!(store.schema_version().unwrap(), 5);
     }
 
     #[test]
-    fn fts_table_exists() {
+    fn fts_table_does_not_exist() {
         let store = Store::open_memory().unwrap();
         let count: i64 = store
             .conn
@@ -579,7 +523,21 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(count, 1);
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn fts_triggers_do_not_exist() {
+        let store = Store::open_memory().unwrap();
+        let count: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name LIKE 'nodes_fts%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
     }
 
     #[test]
@@ -588,11 +546,11 @@ mod tests {
         let db_path = dir.path().join("test.db");
         {
             let store = Store::open(&db_path).unwrap();
-            assert_eq!(store.schema_version().unwrap(), 4);
+            assert_eq!(store.schema_version().unwrap(), 5);
         }
         {
             let store = Store::open(&db_path).unwrap();
-            assert_eq!(store.schema_version().unwrap(), 4);
+            assert_eq!(store.schema_version().unwrap(), 5);
         }
     }
 
@@ -622,7 +580,7 @@ mod tests {
     #[test]
     fn schema_version_readable_via_get_meta() {
         let store = Store::open_memory().unwrap();
-        assert_eq!(store.get_meta("schema_version").unwrap(), Some("4".into()));
+        assert_eq!(store.get_meta("schema_version").unwrap(), Some("5".into()));
     }
 
     // --- Phase 5: Node CRUD ---
@@ -1098,151 +1056,6 @@ mod tests {
         assert_eq!(fp1, fp2);
     }
 
-    // --- Phase 9: FTS5 Search ---
-
-    #[test]
-    fn fts_trigger_fires_on_upsert() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "Alpha", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-
-        let count: i64 = store
-            .conn
-            .query_row(
-                "SELECT COUNT(*) FROM nodes_fts WHERE nodes_fts MATCH 'Alpha'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(count, 1);
-    }
-
-    #[test]
-    fn search_by_title() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node(
-            "People/Alice.md",
-            "Alice Smith",
-            &["person"],
-            json!({}),
-        );
-        store.upsert_node(&node, 1).unwrap();
-
-        let results = store.search("Alice", 20).unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].id, "People/Alice.md");
-        assert_eq!(results[0].title, "Alice Smith");
-        assert!(results[0].score < 0.0);
-        assert!(!results[0].excerpt.is_empty());
-    }
-
-    #[test]
-    fn search_by_tag() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "Something", &["engineering", "rust"], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-
-        let results = store.search("engineering", 20).unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].id, "a.md");
-    }
-
-    #[test]
-    fn search_by_paragraph() {
-        let store = Store::open_memory().unwrap();
-        let mut node = make_node("a.md", "Title", &[], json!({}));
-        node.first_paragraph = "Quantum computing revolutionizes cryptography".into();
-        store.upsert_node(&node, 1).unwrap();
-
-        let results = store.search("cryptography", 20).unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].id, "a.md");
-    }
-
-    #[test]
-    fn search_bm25_ordering() {
-        let store = Store::open_memory().unwrap();
-        let mut strong = make_node("strong.md", "Rust Rust Rust", &["rust"], json!({}));
-        strong.first_paragraph = "Rust programming language for systems".into();
-        store.upsert_node(&strong, 1).unwrap();
-
-        let mut weak = make_node("weak.md", "Other Topic", &[], json!({}));
-        weak.first_paragraph = "Mentions rust once in passing".into();
-        store.upsert_node(&weak, 1).unwrap();
-
-        let results = store.search("rust", 20).unwrap();
-        assert!(results.len() >= 2);
-        assert_eq!(
-            results[0].id, "strong.md",
-            "strongly relevant doc should rank first"
-        );
-    }
-
-    #[test]
-    fn search_excludes_stubs() {
-        let store = Store::open_memory().unwrap();
-        store.upsert_stub("Ghost Node").unwrap();
-
-        let results = store.search("Ghost", 20).unwrap();
-        assert!(results.is_empty());
-    }
-
-    #[test]
-    fn search_respects_limit() {
-        let store = Store::open_memory().unwrap();
-        for i in 0..5 {
-            let node = make_node(
-                &format!("{i}.md"),
-                &format!("Searchable Item {i}"),
-                &[],
-                json!({}),
-            );
-            store.upsert_node(&node, 1).unwrap();
-        }
-
-        let results = store.search("Searchable", 2).unwrap();
-        assert_eq!(results.len(), 2);
-    }
-
-    #[test]
-    fn search_no_matches_returns_empty() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "Alpha", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-
-        let results = store.search("zzzznonexistent", 20).unwrap();
-        assert!(results.is_empty());
-    }
-
-    #[test]
-    fn fts_trigger_fires_on_delete() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "Deleteable", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-
-        store.delete_node("a.md").unwrap();
-
-        let results = store.search("Deleteable", 20).unwrap();
-        assert!(results.is_empty());
-    }
-
-    #[test]
-    fn fts_trigger_fires_on_update() {
-        let store = Store::open_memory().unwrap();
-        let old = make_node("a.md", "OldTitle", &[], json!({}));
-        store.upsert_node(&old, 1).unwrap();
-
-        let new = make_node("a.md", "NewTitle", &[], json!({}));
-        store.upsert_node(&new, 2).unwrap();
-
-        let old_results = store.search("OldTitle", 20).unwrap();
-        assert!(old_results.is_empty(), "old title should not be in FTS");
-
-        let new_results = store.search("NewTitle", 20).unwrap();
-        assert_eq!(new_results.len(), 1);
-        assert_eq!(new_results[0].title, "NewTitle");
-    }
-
     // --- all_sync_entries ---
 
     #[test]
@@ -1440,21 +1253,10 @@ mod tests {
         assert!(logs_contain("opening store"));
     }
 
-    #[traced_test]
-    #[test]
-    fn search_logs() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "Alpha", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-        let _ = store.search("Alpha", 20).unwrap();
-        assert!(logs_contain("searching"));
-        assert!(logs_contain("search complete"));
-    }
-
     // --- Phase 11: Migration ---
 
     #[test]
-    fn v1_to_v4_migration_backfills_tags_text_and_adds_raw_target_and_source_line() {
+    fn v1_to_v5_migration_backfills_tags_text_and_adds_raw_target_and_source_line() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.db");
 
@@ -1485,7 +1287,7 @@ mod tests {
         }
 
         let store = Store::open(&db_path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 4);
+        assert_eq!(store.schema_version().unwrap(), 5);
 
         let tags_text: String = store
             .conn
@@ -1495,9 +1297,6 @@ mod tests {
             .unwrap();
         assert!(!tags_text.is_empty(), "tags_text should be backfilled");
 
-        let results = store.search("Alpha", 20).unwrap();
-        assert_eq!(results.len(), 1);
-
         // v3 column should exist
         store.insert_edge("a.md", "b.md", "ctx", "b", 0).unwrap();
         let raw_edges = store.all_raw_edges().unwrap();
@@ -1506,7 +1305,7 @@ mod tests {
     }
 
     #[test]
-    fn v2_to_v4_migration_adds_raw_target_and_source_line() {
+    fn v2_to_v5_migration_adds_raw_target_and_source_line() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.db");
 
@@ -1535,11 +1334,78 @@ mod tests {
         }
 
         let store = Store::open(&db_path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 4);
+        assert_eq!(store.schema_version().unwrap(), 5);
 
         let raw_edges = store.all_raw_edges().unwrap();
         assert_eq!(raw_edges.len(), 1);
         assert_eq!(raw_edges[0].2, "", "existing edges get empty raw_target");
+    }
+
+    #[test]
+    fn v4_to_v5_migration_drops_fts() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
+            conn.execute_batch(
+                "CREATE TABLE nodes (
+                    id TEXT PRIMARY KEY,
+                    title TEXT,
+                    first_paragraph TEXT,
+                    frontmatter JSON,
+                    mtime INTEGER,
+                    is_stub INTEGER DEFAULT 0,
+                    tags_text TEXT DEFAULT ''
+                );
+                CREATE TABLE tags (node_id TEXT, tag TEXT);
+                CREATE TABLE aliases (node_id TEXT, alias TEXT);
+                CREATE TABLE edges (source TEXT, target TEXT, context TEXT, raw_target TEXT DEFAULT '', source_line INTEGER DEFAULT 0);
+                CREATE TABLE sync (path TEXT PRIMARY KEY, mtime INTEGER);
+                CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+                INSERT INTO meta(key, value) VALUES ('schema_version', '4');
+                CREATE VIRTUAL TABLE nodes_fts USING fts5(title, first_paragraph, tags_text, content=nodes, content_rowid=rowid);
+                CREATE TRIGGER nodes_fts_insert AFTER INSERT ON nodes BEGIN
+                    INSERT INTO nodes_fts(rowid, title, first_paragraph, tags_text)
+                    VALUES (new.rowid, new.title, new.first_paragraph, new.tags_text);
+                END;
+                CREATE TRIGGER nodes_fts_delete AFTER DELETE ON nodes BEGIN
+                    INSERT INTO nodes_fts(nodes_fts, rowid, title, first_paragraph, tags_text)
+                    VALUES ('delete', old.rowid, old.title, old.first_paragraph, old.tags_text);
+                END;
+                CREATE TRIGGER nodes_fts_update AFTER UPDATE ON nodes BEGIN
+                    INSERT INTO nodes_fts(nodes_fts, rowid, title, first_paragraph, tags_text)
+                    VALUES ('delete', old.rowid, old.title, old.first_paragraph, old.tags_text);
+                    INSERT INTO nodes_fts(rowid, title, first_paragraph, tags_text)
+                    VALUES (new.rowid, new.title, new.first_paragraph, new.tags_text);
+                END;",
+            )
+            .unwrap();
+        }
+
+        let store = Store::open(&db_path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), 5);
+
+        let fts_count: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='nodes_fts'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(fts_count, 0, "FTS table should be dropped");
+
+        let trigger_count: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name LIKE 'nodes_fts%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(trigger_count, 0, "FTS triggers should be dropped");
     }
 
     // --- title_and_aliases ---
