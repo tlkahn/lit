@@ -38,7 +38,9 @@ export function showMediaLightbox(content: LightboxContent): void {
     inner.innerHTML = content.svg;
     const svg = inner.querySelector("svg");
     if (svg) {
-      svg.style.maxWidth = "90vw";
+      svg.removeAttribute("width");
+      svg.removeAttribute("height");
+      svg.style.width = "90vw";
       svg.style.maxHeight = "90vh";
     }
   }
