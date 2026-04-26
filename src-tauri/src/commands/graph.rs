@@ -199,17 +199,30 @@ pub fn get_page_headings(
 }
 
 #[tauri::command]
-pub fn get_unlinked_mentions(
+pub async fn get_unlinked_mentions(
     window: tauri::Window,
-    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
-    graph_state: State<Arc<GraphRegistry>>,
+    workspace_state: State<'_, crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<'_, Arc<GraphRegistry>>,
     page_id: String,
 ) -> Result<serde_json::Value, String> {
-    with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
-        let mentions = gi.unlinked_mentions(&page_id)?;
-        serde_json::to_value(mentions)
-            .map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+    let gi = {
+        let indices = graph_state.indices.lock().unwrap();
+        Arc::clone(
+            indices
+                .get(&root)
+                .ok_or_else(|| "No graph index for this workspace".to_string())?,
+        )
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let mentions = gi
+            .unlinked_mentions(&page_id)
+            .map_err(|e| e.to_string())?;
+        serde_json::to_value(mentions).map_err(|e| e.to_string())
     })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
