@@ -103,6 +103,35 @@ describe("buildNodeRects", () => {
     expect(rects[0]!.width).toBe(200);
     expect(rects[1]!.width).toBe(120);
   });
+
+  it("uses per-node height from nodeHeights map when provided", () => {
+    const { descendants } = layoutTree("# A\n## B");
+    const widths = uniformWidths(descendants);
+    const heights = new Map<string, number>();
+    heights.set(descendants[0]!.data.id, 50);
+    heights.set(descendants[1]!.data.id, 30);
+    const rects = buildNodeRects(descendants, widths, FONT_SIZES, heights);
+    expect(rects[0]!.height).toBe(50);
+    expect(rects[1]!.height).toBe(30);
+  });
+
+  it("falls back to fontSize + 8 when nodeHeights omitted", () => {
+    const { descendants } = layoutTree("# A\n## B");
+    const widths = uniformWidths(descendants);
+    const rects = buildNodeRects(descendants, widths, FONT_SIZES);
+    const fs0 = FONT_SIZES[Math.min(descendants[0]!.data.level - 1, FONT_SIZES.length - 1)]!;
+    expect(rects[0]!.height).toBe(fs0 + 8);
+  });
+
+  it("centers rect vertically on d.x", () => {
+    const { descendants } = layoutTree("# A\n## B");
+    const widths = uniformWidths(descendants);
+    const heights = new Map<string, number>();
+    heights.set(descendants[0]!.data.id, 40);
+    heights.set(descendants[1]!.data.id, 40);
+    const rects = buildNodeRects(descendants, widths, FONT_SIZES, heights);
+    expect(rects[0]!.top).toBe(descendants[0]!.x - 20);
+  });
 });
 
 describe("hitTestNode", () => {

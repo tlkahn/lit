@@ -80,15 +80,16 @@ export function classifyDrag(start: Point, current: Point, threshold = DRAG_THRE
   return Math.sqrt(dx * dx + dy * dy) >= threshold;
 }
 
-export function buildNodeRects(descendants: PointNode[], nodeWidths: Map<string, number>, fontSizes: number[]): NodeRect[] {
+export function buildNodeRects(descendants: PointNode[], nodeWidths: Map<string, number>, fontSizes: number[], nodeHeights?: Map<string, number>): NodeRect[] {
   return descendants.map((d) => {
     const fontSize = fontSizes[Math.min(d.data.level - 1, fontSizes.length - 1)]!;
+    const height = nodeHeights?.get(d.data.id) ?? (fontSize + 8);
     return {
       id: d.data.id,
       left: d.y - 4,
-      top: d.x - fontSize / 2 - 4,
+      top: d.x - height / 2,
       width: nodeWidths.get(d.data.id) ?? 160,
-      height: fontSize + 8,
+      height,
       node: d,
     };
   });

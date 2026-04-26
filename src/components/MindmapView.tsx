@@ -4,7 +4,7 @@ import { linkHorizontal } from "d3-shape";
 import type { HeadingNode } from "../lib/headingTree";
 import { buildNodeRects, buildGapZones, type PointNode } from "../lib/mindmapDnd";
 import type { ContentBounds } from "../lib/mindmapZoom";
-import { computeNodeWidth, truncateText, MAX_NODE_WIDTH } from "../lib/mindmapLayout";
+import { computeNodeWidth, wrapText, computeNodeHeight, MAX_NODE_WIDTH, LINE_HEIGHT_RATIO } from "../lib/mindmapLayout";
 import { useMindmapDrag } from "../hooks/useMindmapDrag";
 import { useMindmapZoom } from "../hooks/useMindmapZoom";
 
@@ -15,7 +15,6 @@ interface MindmapViewProps {
   onNodeMove: (sourceId: string, targetParentId: string, targetIndex: number) => void;
 }
 
-const NODE_HEIGHT = 32;
 const FONT_SIZES = [16, 15, 14, 13, 12, 11];
 
 export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: MindmapViewProps) {
@@ -52,38 +51,62 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: Min
     return widths;
   }, [allNodes]);
 
+  const wrappedLines = useMemo(() => {
+    const lines = new Map<string, string[]>();
+    for (const n of allNodes) {
+      const fontSize = FONT_SIZES[Math.min(n.level - 1, FONT_SIZES.length - 1)]!;
+      lines.set(n.id, wrapText(n.text, fontSize, MAX_NODE_WIDTH));
+    }
+    return lines;
+  }, [allNodes]);
+
+  const nodeHeights = useMemo(() => {
+    const heights = new Map<string, number>();
+    for (const n of allNodes) {
+      const fontSize = FONT_SIZES[Math.min(n.level - 1, FONT_SIZES.length - 1)]!;
+      const lineCount = wrappedLines.get(n.id)?.length ?? 1;
+      heights.set(n.id, computeNodeHeight(lineCount, fontSize));
+    }
+    return heights;
+  }, [allNodes, wrappedLines]);
+
+  const maxNodeHeight = useMemo(() => {
+    if (nodeHeights.size === 0) return 22;
+    return Math.max(...nodeHeights.values());
+  }, [nodeHeights]);
+
   const layout = useMemo(() => {
     if (allNodes.length === 0) return null;
 
     const root = hierarchy(tree, (d) => (d.children.length > 0 ? d.children : undefined));
-    const treeLayout = d3tree<HeadingNode>().nodeSize([NODE_HEIGHT + 12, MAX_NODE_WIDTH + 40]);
+    const treeLayout = d3tree<HeadingNode>().nodeSize([maxNodeHeight + 12, MAX_NODE_WIDTH + 40]);
     treeLayout(root);
 
     const descendants = (root.descendants() as PointNode[]).filter((d) => d.data.level > 0);
     const links = root.links().filter((l) => l.source.data.level > 0);
 
     return { descendants, links };
-  }, [tree, allNodes.length]);
+  }, [tree, allNodes.length, maxNodeHeight]);
 
   const contentBounds: ContentBounds | null = useMemo(() => {
     if (!layout) return null;
     const { descendants } = layout;
     const xs = descendants.map((d) => d.x);
     const ys = descendants.map((d) => d.y);
-    const minX = Math.min(...xs) - NODE_HEIGHT;
-    const maxX = Math.max(...xs) + NODE_HEIGHT;
+    const minX = Math.min(...xs) - maxNodeHeight;
+    const maxX = Math.max(...xs) + maxNodeHeight;
     const minY = Math.min(...ys) - MAX_NODE_WIDTH / 2;
     const maxY = Math.max(...ys) + MAX_NODE_WIDTH;
     return { x: minY, y: minX, width: maxY - minY, height: maxX - minX };
-  }, [layout]);
+  }, [layout, maxNodeHeight]);
 
   const hasContent = allNodes.length > 0;
   const { svgRef, gRef, transformRef, fitContent, zoomIn, zoomOut } = useMindmapZoom(contentBounds, hasContent);
 
   const nodeRects = useMemo(() => {
     if (!layout) return [];
-    return buildNodeRects(layout.descendants, nodeWidths, FONT_SIZES);
-  }, [layout, nodeWidths]);
+    return buildNodeRects(layout.descendants, nodeWidths, FONT_SIZES, nodeHeights);
+  }, [layout, nodeWidths, nodeHeights]);
 
   const gapZones = useMemo(() => {
     if (!layout) return [];
@@ -135,11 +158,11 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: Min
       >
         <defs>
           {descendants.map((d) => {
-            const fs = FONT_SIZES[Math.min(d.data.level - 1, FONT_SIZES.length - 1)]!;
             const nw = nodeWidths.get(d.data.id) ?? 160;
+            const nh = nodeHeights.get(d.data.id) ?? 22;
             return (
               <clipPath key={d.data.id} id={`node-clip-${d.data.id}`}>
-                <rect x={-4} y={-fs / 2 - 4} width={nw} height={fs + 8} rx={4} />
+                <rect x={-4} y={-nh / 2} width={nw} height={nh} rx={4} />
               </clipPath>
             );
           })}
@@ -165,7 +188,9 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: Min
               dragState.dropTarget?.kind === "node" &&
               dragState.dropTarget.nodeId === d.data.id;
             const isInvalid = dragState.isDragging && dragState.invalidIds.has(d.data.id);
-            const displayText = truncateText(d.data.text, fontSize, nw);
+            const lines = wrappedLines.get(d.data.id) ?? [d.data.text];
+            const nh = nodeHeights.get(d.data.id) ?? (fontSize + 8);
+            const lineHeight = Math.ceil(fontSize * LINE_HEIGHT_RATIO);
 
             return (
               <g
@@ -198,9 +223,9 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: Min
               >
                 <rect
                   x={-4}
-                  y={-fontSize / 2 - 4}
+                  y={-nh / 2}
                   width={nw}
-                  height={fontSize + 8}
+                  height={nh}
                   rx={4}
                   className={
                     isDropTarget
@@ -210,12 +235,15 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: Min
                   strokeWidth={isDropTarget ? 2 : 1}
                 />
                 <text
+                  y={-((lines.length - 1) * lineHeight) / 2}
                   dy="0.35em"
                   fontSize={fontSize}
                   clipPath={`url(#node-clip-${d.data.id})`}
                   className="fill-neutral-900 dark:fill-neutral-100 select-none"
                 >
-                  {displayText}
+                  {lines.map((line, i) => (
+                    <tspan key={i} x={0} dy={i === 0 ? 0 : lineHeight}>{line}</tspan>
+                  ))}
                 </text>
               </g>
             );
@@ -237,29 +265,34 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: Min
             if (!draggedNode) return null;
             const fontSize = FONT_SIZES[Math.min(draggedNode.data.level - 1, FONT_SIZES.length - 1)]!;
             const ghostW = nodeWidths.get(draggedNode.data.id) ?? 160;
-            const rectH = fontSize + 8;
+            const ghostH = nodeHeights.get(draggedNode.data.id) ?? (fontSize + 8);
+            const ghostLines = wrappedLines.get(draggedNode.data.id) ?? [draggedNode.data.text];
+            const ghostLineHeight = Math.ceil(fontSize * LINE_HEIGHT_RATIO);
             return (
               <g
                 data-mindmap-ghost
-                transform={`translate(${dragState.cursorPos.x - ghostW / 2},${dragState.cursorPos.y - rectH / 2})`}
+                transform={`translate(${dragState.cursorPos.x - ghostW / 2},${dragState.cursorPos.y - ghostH / 2})`}
                 opacity={0.6}
                 pointerEvents="none"
               >
                 <rect
                   x={-4}
-                  y={-fontSize / 2 - 4}
+                  y={-ghostH / 2}
                   width={ghostW}
-                  height={rectH}
+                  height={ghostH}
                   rx={4}
                   className="fill-white dark:fill-neutral-800 stroke-blue-500 dark:stroke-blue-400"
                   strokeWidth={1.5}
                 />
                 <text
+                  y={-((ghostLines.length - 1) * ghostLineHeight) / 2}
                   dy="0.35em"
                   fontSize={fontSize}
                   className="fill-neutral-900 dark:fill-neutral-100 select-none"
                 >
-                  {draggedNode.data.text}
+                  {ghostLines.map((line, i) => (
+                    <tspan key={i} x={0} dy={i === 0 ? 0 : ghostLineHeight}>{line}</tspan>
+                  ))}
                 </text>
               </g>
             );
@@ -271,11 +304,12 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: Min
         if (!editNode) return null;
         const fontSize = FONT_SIZES[Math.min(editNode.data.level - 1, FONT_SIZES.length - 1)]!;
         const editW = nodeWidths.get(editNode.data.id) ?? 160;
+        const editH = nodeHeights.get(editNode.data.id) ?? (fontSize + 8);
         const t = transformRef.current;
         const left = editNode.y * t.k + t.x;
-        const top = (editNode.x - fontSize / 2 - 4) * t.k + t.y;
+        const top = (editNode.x - editH / 2) * t.k + t.y;
         const width = editW * t.k;
-        const height = (fontSize + 8) * t.k;
+        const height = editH * t.k;
         return (
           <input
             type="text"

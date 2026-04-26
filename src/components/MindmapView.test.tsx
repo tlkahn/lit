@@ -149,13 +149,47 @@ describe("MindmapView", () => {
     expect(wLong).toBeGreaterThan(wShort);
   });
 
-  it("very long text is truncated with '..'", () => {
+  it("very long text wraps into multiple lines", () => {
     const longHeading = "# " + "A".repeat(200);
     const tree = makeTree(longHeading);
     const { container } = render(<MindmapView tree={tree} {...defaultProps()} />);
     const textEl = container.querySelector("[data-mindmap-node] text")!;
-    expect(textEl.textContent!.endsWith("..")).toBe(true);
-    expect(textEl.textContent!.length).toBeLessThan(200);
+    const tspans = textEl.querySelectorAll("tspan");
+    expect(tspans.length).toBeGreaterThan(1);
+    const fullText = Array.from(tspans).map((t) => t.textContent).join("");
+    expect(fullText).toBe("A".repeat(200));
+  });
+
+  it("short text renders a single tspan", () => {
+    const tree = makeTree("# Hi");
+    const { container } = render(<MindmapView tree={tree} {...defaultProps()} />);
+    const textEl = container.querySelector("[data-mindmap-node] text")!;
+    const tspans = textEl.querySelectorAll("tspan");
+    expect(tspans).toHaveLength(1);
+    expect(tspans[0]!.textContent).toBe("Hi");
+  });
+
+  it("node rect is taller for wrapped text", () => {
+    const tree = makeTree("# Hi\n## " + "word ".repeat(30));
+    const { container } = render(<MindmapView tree={tree} {...defaultProps()} />);
+    const nodes = container.querySelectorAll("[data-mindmap-node]");
+    const rectShort = nodes[0]!.querySelector("rect")!;
+    const rectLong = nodes[1]!.querySelector("rect")!;
+    const hShort = Number(rectShort.getAttribute("height"));
+    const hLong = Number(rectLong.getAttribute("height"));
+    expect(hLong).toBeGreaterThan(hShort);
+  });
+
+  it("clipPath rect height matches node rect height", () => {
+    const longText = "word ".repeat(30).trim();
+    const tree = makeTree("# " + longText);
+    const { container } = render(<MindmapView tree={tree} {...defaultProps()} />);
+    const nodeRect = container.querySelector("[data-mindmap-node] rect")!;
+    const nodeH = Number(nodeRect.getAttribute("height"));
+    const nodeId = container.querySelector("[data-mindmap-node]")!.getAttribute("data-mindmap-node")!;
+    const clipRect = container.querySelector(`#node-clip-${nodeId} rect`)!;
+    const clipH = Number(clipRect.getAttribute("height"));
+    expect(clipH).toBe(nodeH);
   });
 
   it("display text is clipped to node bounds via clipPath", () => {
