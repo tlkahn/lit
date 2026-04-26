@@ -33,6 +33,7 @@ export interface ExtensionConfig {
   keymapBindings?: import("@codemirror/view").KeyBinding[];
   onChange?: (content: string) => void;
   openUrl?: (url: string) => void;
+  openFilePath?: (path: string) => void;
   resolveImageSrc?: (src: string) => string;
   navigateToPage?: (target: string, section?: string, departurePos?: number) => void;
 }
@@ -45,7 +46,7 @@ export function createExtensions(config: ExtensionConfig): Extension[] {
     }),
     config.themeCompartment.of(getThemeExtension(config.theme)),
     highlightExtension,
-    livePreviewExtension({ openUrl: config.openUrl, resolveImageSrc: config.resolveImageSrc, navigateToPage: config.navigateToPage }),
+    livePreviewExtension({ openUrl: config.openUrl, openFilePath: config.openFilePath, resolveImageSrc: config.resolveImageSrc, navigateToPage: config.navigateToPage }),
     config.crossrefCompartment.of(frontmatterFacet.of(config.frontmatter ?? {})),
     config.noteDirCompartment.of(noteDirFacet.of(config.noteDir ?? "")),
     config.mediaThumbnailsCompartment.of(mediaThumbnailsFacet.of(config.mediaThumbnails ?? true)),

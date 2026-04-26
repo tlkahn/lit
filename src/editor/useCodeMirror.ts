@@ -20,13 +20,14 @@ export interface UseCodeMirrorProps {
   keymapBindings?: CM6KeyBinding[];
   frontmatter?: Record<string, unknown>;
   noteDir?: string;
+  openFilePath?: (path: string) => void;
   navigateToPage?: (target: string, section?: string, departurePos?: number) => void;
 }
 
 export function useCodeMirror(props: UseCodeMirrorProps): {
   view: EditorView | null;
 } {
-  const { containerRef, doc, onChange, resolveImageSrc, onDocReplaced, keymapBindings, frontmatter, noteDir, navigateToPage } = props;
+  const { containerRef, doc, onChange, resolveImageSrc, onDocReplaced, keymapBindings, frontmatter, noteDir, openFilePath, navigateToPage } = props;
   const [view, setView] = useState<EditorView | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const themeCompartment = useRef(new Compartment());
@@ -43,6 +44,8 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
   resolveImageSrcRef.current = resolveImageSrc;
   const onDocReplacedRef = useRef(onDocReplaced);
   onDocReplacedRef.current = onDocReplaced;
+  const openFilePathRef = useRef(openFilePath);
+  openFilePathRef.current = openFilePath;
   const navigateToPageRef = useRef(navigateToPage);
   navigateToPageRef.current = navigateToPage;
 
@@ -74,6 +77,7 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
           onChangeRef.current?.(content);
         }
       },
+      openFilePath: (path) => openFilePathRef.current?.(path),
       resolveImageSrc: (src) => resolveImageSrcRef.current?.(src) ?? src,
       navigateToPage: (target, section, departurePos) => navigateToPageRef.current?.(target, section, departurePos),
     });

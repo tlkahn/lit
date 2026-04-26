@@ -28,8 +28,21 @@ export function getLinkUrlAtPos(state: EditorState, pos: number): string | null 
   return url;
 }
 
+export type LinkTargetKind = "url" | "path" | "anchor";
+
+export function classifyLinkTarget(target: string): LinkTargetKind {
+  if (target.startsWith("#")) return "anchor";
+  if (/^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(target)) return "url";
+  return "path";
+}
+
+export interface LinkClickHandlers {
+  openUrl: (url: string) => void;
+  openFilePath?: (path: string) => void;
+}
+
 export function createLinkClickHandler(
-  openUrl: (url: string) => void,
+  handlers: LinkClickHandlers,
 ): Extension {
   return EditorView.domEventHandlers({
     mousedown(event, view) {
@@ -40,13 +53,20 @@ export function createLinkClickHandler(
       const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
       if (pos === null) return false;
 
-      const url = getLinkUrlAtPos(view.state, pos);
-      if (url) {
+      const target = getLinkUrlAtPos(view.state, pos);
+      if (!target) return false;
+
+      const kind = classifyLinkTarget(target);
+      if (kind === "anchor") return false;
+      if (kind === "path") {
+        if (!handlers.openFilePath) return false;
         event.preventDefault();
-        openUrl(url);
+        handlers.openFilePath(target);
         return true;
       }
-      return false;
+      event.preventDefault();
+      handlers.openUrl(target);
+      return true;
     },
   });
 }

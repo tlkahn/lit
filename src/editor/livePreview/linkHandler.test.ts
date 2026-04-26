@@ -3,7 +3,7 @@ import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { markdown } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
-import { getLinkUrlAtPos, createLinkClickHandler } from "./linkHandler";
+import { getLinkUrlAtPos, createLinkClickHandler, classifyLinkTarget } from "./linkHandler";
 
 function makeState(doc: string): EditorState {
   return EditorState.create({
@@ -35,16 +35,54 @@ describe("getLinkUrlAtPos", () => {
   });
 });
 
+describe("classifyLinkTarget", () => {
+  it("classifies https as url", () => {
+    expect(classifyLinkTarget("https://example.com")).toBe("url");
+  });
+
+  it("classifies http as url", () => {
+    expect(classifyLinkTarget("http://x.com")).toBe("url");
+  });
+
+  it("classifies mailto as url", () => {
+    expect(classifyLinkTarget("mailto:a@b.com")).toBe("url");
+  });
+
+  it("classifies tel as url", () => {
+    expect(classifyLinkTarget("tel:+123")).toBe("url");
+  });
+
+  it("classifies anchor-only as anchor", () => {
+    expect(classifyLinkTarget("#heading")).toBe("anchor");
+  });
+
+  it("classifies bare filename as path", () => {
+    expect(classifyLinkTarget("file.md")).toBe("path");
+  });
+
+  it("classifies relative path as path", () => {
+    expect(classifyLinkTarget("./folder/file.pdf")).toBe("path");
+  });
+
+  it("classifies parent-relative path as path", () => {
+    expect(classifyLinkTarget("../other/doc.txt")).toBe("path");
+  });
+
+  it("classifies absolute path as path", () => {
+    expect(classifyLinkTarget("/absolute/path.pdf")).toBe("path");
+  });
+});
+
 describe("createLinkClickHandler", () => {
   it("is a valid Extension", () => {
-    const handler = createLinkClickHandler(vi.fn());
+    const handler = createLinkClickHandler({ openUrl: vi.fn() });
     expect(() =>
       EditorState.create({ extensions: [handler] }),
     ).not.toThrow();
   });
 
   it("can be used alongside markdown extensions", () => {
-    const handler = createLinkClickHandler(vi.fn());
+    const handler = createLinkClickHandler({ openUrl: vi.fn() });
     const state = EditorState.create({
       doc: "[test](url)",
       extensions: [markdown({ extensions: GFM }), handler],
@@ -54,29 +92,24 @@ describe("createLinkClickHandler", () => {
     view.destroy();
   });
 
-  function createView(doc: string, openUrl: ReturnType<typeof vi.fn>) {
+  function createView(doc: string, handlers: { openUrl: ReturnType<typeof vi.fn>; openFilePath?: ReturnType<typeof vi.fn> }) {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const state = EditorState.create({
       doc,
       extensions: [
         markdown({ extensions: GFM }),
-        createLinkClickHandler(openUrl),
+        createLinkClickHandler(handlers),
       ],
     });
     const view = new EditorView({ state, parent: container });
-    // Position inside the link text "Click" (pos 3 is between [ and ])
     vi.spyOn(view, "posAtCoords").mockReturnValue(3);
     return view;
   }
 
-  // Same rationale as wikilinkHandler: live-preview hides link syntax via
-  // Decoration.replace.  mousedown fires before CM6 updates decorations,
-  // so posAtCoords resolves against the pre-shift DOM.
-
   it("opens URL on Cmd+mousedown (left button)", () => {
     const openUrl = vi.fn();
-    const view = createView("[Click](https://example.com)", openUrl);
+    const view = createView("[Click](https://example.com)", { openUrl });
     view.contentDOM.dispatchEvent(
       new MouseEvent("mousedown", { button: 0, metaKey: true, bubbles: true }),
     );
@@ -86,7 +119,7 @@ describe("createLinkClickHandler", () => {
 
   it("opens URL on Ctrl+mousedown (left button)", () => {
     const openUrl = vi.fn();
-    const view = createView("[Click](https://example.com)", openUrl);
+    const view = createView("[Click](https://example.com)", { openUrl });
     view.contentDOM.dispatchEvent(
       new MouseEvent("mousedown", { button: 0, ctrlKey: true, bubbles: true }),
     );
@@ -96,7 +129,7 @@ describe("createLinkClickHandler", () => {
 
   it("does NOT open URL on Cmd+click (must use mousedown to avoid decoration DOM shift)", () => {
     const openUrl = vi.fn();
-    const view = createView("[Click](https://example.com)", openUrl);
+    const view = createView("[Click](https://example.com)", { openUrl });
     view.contentDOM.dispatchEvent(
       new MouseEvent("click", { button: 0, metaKey: true, bubbles: true }),
     );
@@ -106,7 +139,7 @@ describe("createLinkClickHandler", () => {
 
   it("ignores mousedown without modifier key", () => {
     const openUrl = vi.fn();
-    const view = createView("[Click](https://example.com)", openUrl);
+    const view = createView("[Click](https://example.com)", { openUrl });
     view.contentDOM.dispatchEvent(
       new MouseEvent("mousedown", { button: 0, bubbles: true }),
     );
@@ -116,9 +149,43 @@ describe("createLinkClickHandler", () => {
 
   it("ignores right-button mousedown even with Cmd", () => {
     const openUrl = vi.fn();
-    const view = createView("[Click](https://example.com)", openUrl);
+    const view = createView("[Click](https://example.com)", { openUrl });
     view.contentDOM.dispatchEvent(
       new MouseEvent("mousedown", { button: 2, metaKey: true, bubbles: true }),
+    );
+    expect(openUrl).not.toHaveBeenCalled();
+    view.destroy();
+  });
+
+  it("calls openFilePath for file path targets", () => {
+    const openUrl = vi.fn();
+    const openFilePath = vi.fn();
+    const view = createView("[Click](file.pdf)", { openUrl, openFilePath });
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", { button: 0, metaKey: true, bubbles: true }),
+    );
+    expect(openFilePath).toHaveBeenCalledWith("file.pdf");
+    expect(openUrl).not.toHaveBeenCalled();
+    view.destroy();
+  });
+
+  it("does not call either handler for anchor targets", () => {
+    const openUrl = vi.fn();
+    const openFilePath = vi.fn();
+    const view = createView("[Click](#heading)", { openUrl, openFilePath });
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", { button: 0, metaKey: true, bubbles: true }),
+    );
+    expect(openUrl).not.toHaveBeenCalled();
+    expect(openFilePath).not.toHaveBeenCalled();
+    view.destroy();
+  });
+
+  it("does not call openUrl for file path when openFilePath is not provided", () => {
+    const openUrl = vi.fn();
+    const view = createView("[Click](file.pdf)", { openUrl });
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", { button: 0, metaKey: true, bubbles: true }),
     );
     expect(openUrl).not.toHaveBeenCalled();
     view.destroy();

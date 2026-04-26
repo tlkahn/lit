@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { EditorView } from "@codemirror/view";
 import { EditorSelection } from "@codemirror/state";
 import { listen } from "@tauri-apps/api/event";
@@ -147,6 +148,14 @@ export function ContentArea() {
     const fileDir = lastSlash >= 0 ? currentPagePath.substring(0, lastSlash) : "";
     const absolutePath = workspacePath + "/" + resolveRelativePath(fileDir, src);
     return convertFileSrc(absolutePath);
+  }, [workspacePath, currentPagePath]);
+
+  const openFilePath = useCallback((relativePath: string) => {
+    if (!workspacePath || !currentPagePath) return;
+    const lastSlash = currentPagePath.lastIndexOf("/");
+    const fileDir = lastSlash >= 0 ? currentPagePath.substring(0, lastSlash) : "";
+    const absolutePath = workspacePath + "/" + resolveRelativePath(fileDir, relativePath);
+    openPath(absolutePath);
   }, [workspacePath, currentPagePath]);
 
   const selectPage = useWorkspaceStore((s) => s.selectPage);
@@ -470,6 +479,7 @@ export function ContentArea() {
         keymapBindings={editorBindings}
         frontmatter={frontmatter}
         noteDir={noteDir}
+        openFilePath={openFilePath}
         navigateToPage={navigateToPage}
         style={viewMode !== "editor" ? { display: "none" } : undefined}
       />

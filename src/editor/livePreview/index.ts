@@ -23,6 +23,7 @@ export { mediaThumbnailsFacet } from "./mediaThumbnails";
 
 export interface LivePreviewConfig {
   openUrl?: (url: string) => void;
+  openFilePath?: (path: string) => void;
   resolveImageSrc?: ImageResolver;
   navigateToPage?: NavigateToPage;
 }
@@ -32,7 +33,7 @@ export function livePreviewExtension(config?: LivePreviewConfig): Extension {
   const exts: Extension[] = [
     livePreviewPlugin,
     blockReplacementField,
-    createLinkClickHandler(openUrl),
+    createLinkClickHandler({ openUrl, openFilePath: config?.openFilePath }),
     ...(config?.navigateToPage ? [createWikilinkClickHandler(config.navigateToPage)] : []),
     createCalloutClickHandler(),
     createMathClickHandler(),
