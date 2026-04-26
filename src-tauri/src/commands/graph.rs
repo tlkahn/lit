@@ -26,11 +26,15 @@ where
     F: FnOnce(&GraphIndex) -> Result<T, crate::graph::error::GraphError>,
 {
     let root = crate::commands::workspace::get_workspace_root(workspace_state, window_label)?;
-    let indices = graph_state.indices.lock().unwrap();
-    let gi = indices
-        .get(&root)
-        .ok_or_else(|| "No graph index for this workspace".to_string())?;
-    f(gi).map_err(|e| e.to_string())
+    let gi = {
+        let indices = graph_state.indices.lock().unwrap();
+        Arc::clone(
+            indices
+                .get(&root)
+                .ok_or_else(|| "No graph index for this workspace".to_string())?,
+        )
+    };
+    f(&gi).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -235,8 +239,11 @@ pub fn link_unlinked_mention(
     crate::workspace::ops::write_page(&root, &source_id, &new_body, &fm, &registry)
         .map_err(|e| e.to_string())?;
 
-    let indices = graph_state.indices.lock().unwrap();
-    if let Some(gi) = indices.get(&root) {
+    let gi = {
+        let indices = graph_state.indices.lock().unwrap();
+        indices.get(&root).cloned()
+    };
+    if let Some(gi) = gi {
         let _ = gi.reindex_file(&source_id);
     }
 
