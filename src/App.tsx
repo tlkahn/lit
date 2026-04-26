@@ -10,6 +10,7 @@ import { useFileWatcher } from "./hooks/useFileWatcher";
 import { useWorkspaceStore, getRecentWorkspaces } from "./stores/workspace";
 import { useThemeStore } from "./stores/theme";
 import { usePreferencesStore } from "./stores/preferences";
+import { useFocusModeStore } from "./stores/focusMode";
 import { getInitialWorkspace, getInitialFile, getPendingWorkspace, getPendingFile } from "./lib/ipc";
 import { HeadingQuickSwitcher } from "./components/HeadingQuickSwitcher";
 
@@ -36,6 +37,8 @@ function App() {
   const loadPreferences = usePreferencesStore((s) => s.loadPreferences);
   const colorTheme = usePreferencesStore((s) => s.colorTheme);
   const syncFromPreferences = useThemeStore((s) => s.syncFromPreferences);
+  const focusModeActive = useFocusModeStore((s) => s.active);
+  const toggleFocusMode = useFocusModeStore((s) => s.toggleFocusMode);
 
   useEffect(() => {
     loadPreferences();
@@ -98,6 +101,18 @@ function App() {
     );
   }, []);
 
+  useEffect(() => {
+    if (!focusModeActive) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        toggleFocusMode();
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [focusModeActive, toggleFocusMode]);
+
   useFileWatcher(triggerReload);
 
   if (!workspacePath) {
@@ -105,7 +120,7 @@ function App() {
   }
 
   return (
-    <div className="flex h-screen flex-col bg-bg-primary">
+    <div className={`flex h-screen flex-col bg-bg-primary${focusModeActive ? " focus-mode-zen" : ""}`}>
       <div className={`flex min-h-0 flex-1 ${position === "right" ? "flex-row-reverse" : "flex-row"}`}>
         <Sidebar />
         <div className="flex min-h-0 flex-1 flex-col">

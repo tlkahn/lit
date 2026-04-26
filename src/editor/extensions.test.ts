@@ -37,6 +37,7 @@ function makeConfig(overrides?: { onChange?: (content: string) => void }) {
     crossrefCompartment: new Compartment(),
     noteDirCompartment: new Compartment(),
     mediaThumbnailsCompartment: new Compartment(),
+    focusModeCompartment: new Compartment(),
     ...overrides,
   };
 }

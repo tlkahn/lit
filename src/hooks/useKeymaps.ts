@@ -7,6 +7,7 @@ import { toggleBold, toggleItalic, insertLink, toggleComment } from "../editor/e
 import { navigateBack, navigateForward } from "../editor/jumpHistory";
 import { openInExternalEditor } from "../lib/ipc";
 import { useWorkspaceStore } from "../stores/workspace";
+import { useFocusModeStore } from "../stores/focusMode";
 import type { EditorView } from "@codemirror/view";
 
 function ensureCommandsRegistered() {
@@ -30,6 +31,9 @@ function ensureCommandsRegistered() {
   commandRegistry.register("editor.navigateForward", (view) => navigateForward(view as EditorView));
   commandRegistry.register("app.gotoHeading", () => {
     window.dispatchEvent(new CustomEvent("lit:toggle-quick-switcher"));
+  });
+  commandRegistry.register("app.toggleFocusMode", () => {
+    useFocusModeStore.getState().toggleFocusMode();
   });
 }
 

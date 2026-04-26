@@ -5,9 +5,11 @@ import { defaultKeymap, historyKeymap } from "@codemirror/commands";
 import { createExtensions } from "./extensions";
 import { getThemeExtension } from "./theme";
 import { foldExtension } from "./fold";
+import { focusModeExtension } from "./focusMode";
 import { frontmatterFacet, noteDirFacet, mediaThumbnailsFacet } from "./livePreview";
 import { docReplaced } from "./jumpHistory";
 import { usePreferencesStore } from "../stores/preferences";
+import { useFocusModeStore } from "../stores/focusMode";
 
 export interface UseCodeMirrorProps {
   containerRef: React.RefObject<HTMLDivElement | null>;
@@ -33,6 +35,7 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
   const crossrefCompartment = useRef(new Compartment());
   const noteDirCompartment = useRef(new Compartment());
   const mediaThumbnailsCompartment = useRef(new Compartment());
+  const focusModeCompartment = useRef(new Compartment());
   const suppressOnChange = useRef(false);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
@@ -59,6 +62,8 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
       crossrefCompartment: crossrefCompartment.current,
       noteDirCompartment: noteDirCompartment.current,
       mediaThumbnailsCompartment: mediaThumbnailsCompartment.current,
+      focusModeCompartment: focusModeCompartment.current,
+      focusModeActive: useFocusModeStore.getState().active,
       mediaThumbnails,
       foldConfig: { enabled: foldingEnabled, showControls: foldingShowControls },
       frontmatter,
@@ -150,6 +155,21 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
       v.dispatch({
         effects: mediaThumbnailsCompartment.current.reconfigure(
           mediaThumbnailsFacet.of(s.mediaThumbnails),
+        ),
+      });
+    });
+  }, [view]);
+
+  useEffect(() => {
+    const v = viewRef.current;
+    if (!v) return;
+    let prev = useFocusModeStore.getState().active;
+    return useFocusModeStore.subscribe((s) => {
+      if (s.active === prev) return;
+      prev = s.active;
+      v.dispatch({
+        effects: focusModeCompartment.current.reconfigure(
+          focusModeExtension(s.active),
         ),
       });
     });
