@@ -20,7 +20,7 @@ export interface UseCodeMirrorProps {
   keymapBindings?: CM6KeyBinding[];
   frontmatter?: Record<string, unknown>;
   noteDir?: string;
-  navigateToPage?: (target: string, section?: string) => void;
+  navigateToPage?: (target: string, section?: string, departurePos?: number) => void;
 }
 
 export function useCodeMirror(props: UseCodeMirrorProps): {
@@ -75,7 +75,7 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
         }
       },
       resolveImageSrc: (src) => resolveImageSrcRef.current?.(src) ?? src,
-      navigateToPage: (target, section) => navigateToPageRef.current?.(target, section),
+      navigateToPage: (target, section, departurePos) => navigateToPageRef.current?.(target, section, departurePos),
     });
 
     const state = EditorState.create({ doc, extensions });

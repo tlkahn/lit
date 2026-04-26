@@ -27,7 +27,7 @@ export class CrossrefWidget extends WidgetType {
       e.preventDefault();
       e.stopPropagation();
       if (this.isValid && this.targetCharOffset != null) {
-        recordDeparture(view);
+        recordDeparture(view, this.charStart);
         view.dispatch({
           selection: { anchor: this.targetCharOffset },
           scrollIntoView: true,
@@ -58,7 +58,7 @@ export class CrossrefWidget extends WidgetType {
       e!.preventDefault();
       e!.stopPropagation();
       if (this.isValid && this.targetCharOffset != null) {
-        recordDeparture(view);
+        recordDeparture(view, this.charStart);
         view.dispatch({
           selection: { anchor: this.targetCharOffset },
           scrollIntoView: true,
@@ -157,12 +157,11 @@ export class DefinitionWidget extends WidgetType {
   }
 }
 
-function recordDeparture(view: EditorView): void {
+function recordDeparture(view: EditorView, departurePos: number): void {
   const notePath = useWorkspaceStore.getState().currentPagePath ?? "";
-  const head = view.state.selection.main.head;
-  const line = view.state.doc.lineAt(head);
+  const line = view.state.doc.lineAt(departurePos);
   globalJumpTracker.recordJump(
-    { notePath, line: line.number, col: head - line.from },
+    { notePath, line: line.number, col: departurePos - line.from },
     { notePath: "", line: 0, col: 0 },
   );
 }

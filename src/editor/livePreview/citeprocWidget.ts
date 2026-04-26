@@ -30,7 +30,7 @@ export class CiteprocWidget extends WidgetType {
         const { workspacePath, selectPageAtLine, currentPagePath } = useWorkspaceStore.getState();
         if (workspacePath && this.bibFile.startsWith(workspacePath + "/")) {
           const relativePath = this.bibFile.slice(workspacePath.length + 1);
-          recordCiteprocDeparture(view, currentPagePath);
+          recordCiteprocDeparture(view, currentPagePath, this.charStart);
           selectPageAtLine(relativePath, this.lineNumber);
           return;
         }
@@ -60,7 +60,7 @@ export class CiteprocWidget extends WidgetType {
         const { workspacePath, selectPageAtLine, currentPagePath } = useWorkspaceStore.getState();
         if (workspacePath && this.bibFile.startsWith(workspacePath + "/")) {
           const relativePath = this.bibFile.slice(workspacePath.length + 1);
-          recordCiteprocDeparture(view, currentPagePath);
+          recordCiteprocDeparture(view, currentPagePath, this.charStart);
           selectPageAtLine(relativePath, this.lineNumber);
           return;
         }
@@ -94,12 +94,11 @@ export class CiteprocWidget extends WidgetType {
   }
 }
 
-function recordCiteprocDeparture(view: EditorView, currentPagePath: string | null): void {
+function recordCiteprocDeparture(view: EditorView, currentPagePath: string | null, departurePos: number): void {
   const notePath = currentPagePath ?? "";
-  const head = view.state.selection.main.head;
-  const line = view.state.doc.lineAt(head);
+  const line = view.state.doc.lineAt(departurePos);
   globalJumpTracker.recordJump(
-    { notePath, line: line.number, col: head - line.from },
+    { notePath, line: line.number, col: departurePos - line.from },
     { notePath: "", line: 0, col: 0 },
   );
 }

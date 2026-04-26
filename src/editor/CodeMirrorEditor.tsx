@@ -12,7 +12,7 @@ interface CodeMirrorEditorProps {
   keymapBindings?: CM6KeyBinding[];
   frontmatter?: Record<string, unknown>;
   noteDir?: string;
-  navigateToPage?: (target: string, section?: string) => void;
+  navigateToPage?: (target: string, section?: string, departurePos?: number) => void;
   style?: React.CSSProperties;
 }
 

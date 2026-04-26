@@ -153,7 +153,7 @@ export function ContentArea() {
   const triggerReload = useWorkspaceStore((s) => s.triggerReload);
   const refreshPages = useWorkspaceStore((s) => s.refreshPages);
 
-  const navigateToPage = useCallback((target: string, section?: string) => {
+  const navigateToPage = useCallback((target: string, section?: string, departurePos?: number) => {
     navigateWikilink(target, section, {
       resolveWikilink,
       createPage: async (name: string) => {
@@ -169,10 +169,10 @@ export function ContentArea() {
         const view = editorViewRef.current;
         const notePath = currentPathRef.current ?? "";
         if (!view || !notePath) return;
-        const head = view.state.selection.main.head;
-        const line = view.state.doc.lineAt(head);
+        const pos = departurePos ?? view.state.selection.main.head;
+        const line = view.state.doc.lineAt(pos);
         globalJumpTracker.recordJump(
-          { notePath, line: line.number, col: head - line.from },
+          { notePath, line: line.number, col: pos - line.from },
           { notePath: "", line: 0, col: 0 },
         );
       },

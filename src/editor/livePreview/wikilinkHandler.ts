@@ -44,7 +44,7 @@ export function getWikilinkTargetAtPos(
   return result;
 }
 
-export type NavigateToPage = (target: string, section?: string) => void;
+export type NavigateToPage = (target: string, section?: string, departurePos?: number) => void;
 
 export function createWikilinkClickHandler(
   navigateToPage: NavigateToPage,
@@ -64,6 +64,7 @@ export function createWikilinkClickHandler(
         navigateToPage(
           wikilink.target,
           wikilink.section ?? undefined,
+          pos,
         );
         return true;
       }

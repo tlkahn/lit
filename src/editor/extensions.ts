@@ -34,7 +34,7 @@ export interface ExtensionConfig {
   onChange?: (content: string) => void;
   openUrl?: (url: string) => void;
   resolveImageSrc?: (src: string) => string;
-  navigateToPage?: (target: string, section?: string) => void;
+  navigateToPage?: (target: string, section?: string, departurePos?: number) => void;
 }
 
 export function createExtensions(config: ExtensionConfig): Extension[] {

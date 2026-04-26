@@ -98,7 +98,7 @@ describe("createWikilinkClickHandler", () => {
     view.contentDOM.dispatchEvent(
       new MouseEvent("mousedown", { button: 0, metaKey: true, bubbles: true }),
     );
-    expect(navigateToPage).toHaveBeenCalledWith("MyPage", undefined);
+    expect(navigateToPage).toHaveBeenCalledWith("MyPage", undefined, 7);
     view.destroy();
   });
 
@@ -108,7 +108,7 @@ describe("createWikilinkClickHandler", () => {
     view.contentDOM.dispatchEvent(
       new MouseEvent("mousedown", { button: 0, ctrlKey: true, bubbles: true }),
     );
-    expect(navigateToPage).toHaveBeenCalledWith("MyPage", undefined);
+    expect(navigateToPage).toHaveBeenCalledWith("MyPage", undefined, 7);
     view.destroy();
   });
 
