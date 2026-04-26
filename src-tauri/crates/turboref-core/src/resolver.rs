@@ -2,10 +2,14 @@ use std::collections::HashMap;
 
 use crate::types::{Definition, RefType};
 
-/// Reference map for looking up definitions by ID.
+/// Reference map for looking up definitions by qualified key ("type:id").
 pub struct ReferenceMap {
     definitions: HashMap<String, Definition>,
     by_type: HashMap<RefType, Vec<String>>,
+}
+
+fn qualified_key(ref_type: &RefType, id: &str) -> String {
+    format!("{}:{}", ref_type.prefix_str(), id)
 }
 
 impl ReferenceMap {
@@ -18,7 +22,8 @@ impl ReferenceMap {
                 .entry(def.ref_type.clone())
                 .or_default()
                 .push(def.id.clone());
-            definitions.insert(def.id.clone(), def);
+            let key = qualified_key(&def.ref_type, &def.id);
+            definitions.insert(key, def);
         }
 
         Self {
@@ -27,8 +32,8 @@ impl ReferenceMap {
         }
     }
 
-    pub fn get(&self, id: &str) -> Option<&Definition> {
-        self.definitions.get(id)
+    pub fn get(&self, ref_type: &RefType, id: &str) -> Option<&Definition> {
+        self.definitions.get(&qualified_key(ref_type, id))
     }
 
     pub fn get_by_type(&self, ref_type: &RefType) -> &[String] {
@@ -59,8 +64,8 @@ mod tests {
             char_offset: 0,
         }];
         let map = ReferenceMap::from_definitions(defs);
-        assert!(map.get("cat").is_some());
-        assert!(map.get("dog").is_none());
+        assert!(map.get(&RefType::Fig, "cat").is_some());
+        assert!(map.get(&RefType::Fig, "dog").is_none());
     }
 
     #[test]

@@ -33,7 +33,7 @@ fn resolve_one(
         if !groups.contains_key(&key) {
             group_order.push(key.clone());
         }
-        if let Some(def) = ref_map.get(&cref.id) {
+        if let Some(def) = ref_map.get(&cref.ref_type, &cref.id) {
             groups.entry(key).or_default().push(&def.number);
             if first_target.is_none() {
                 first_target = Some((def.line, def.char_offset));

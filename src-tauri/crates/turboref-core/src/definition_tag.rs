@@ -218,7 +218,7 @@ pub fn resolve_definition_tags(
 ) -> Vec<ResolvedDefinitionTag> {
     tags.iter()
         .map(|tag| {
-            if let Some(def) = ref_map.get(&tag.id) {
+            if let Some(def) = ref_map.get(&tag.ref_type, &tag.id) {
                 let prefix_array = prefix_for_type(&def.ref_type, config);
                 let prefix = DocumentConfig::select_prefix(prefix_array, 1);
                 let rendered = format!("#{} {}", prefix, def.number.display());

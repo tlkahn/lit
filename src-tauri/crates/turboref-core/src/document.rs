@@ -116,6 +116,37 @@ See [@fig:cat], [@tbl:data], [@sec:intro], [@eq:einstein], and [@lst:hello].";
     }
 
     #[test]
+    fn same_id_different_types_resolve_independently() {
+        let content = "\
+# Variants {#sec:variants}\n\
+\n\
+## Dr. GRPO {#sec:dr-grpo}\n\
+\n\
+$$\nr_i - \\mu\n$$\n\
+{#eq:dr-grpo}\n\
+\n\
+See [@sec:dr-grpo] and [@eq:dr-grpo].";
+
+        let doc = Document::parse(content, DocumentConfig::default());
+        let defs = doc.get_definitions();
+
+        assert!(defs.iter().any(|d| d.ref_type == RefType::Sec && d.id == "dr-grpo"));
+        assert!(defs.iter().any(|d| d.ref_type == RefType::Eq && d.id == "dr-grpo"));
+
+        let resolved = doc.resolve_all();
+        assert_eq!(resolved.len(), 2);
+        assert!(resolved.iter().all(|r| r.is_valid));
+        assert!(resolved.iter().any(|r| r.rendered_text == "Section 1.1"));
+        assert!(resolved.iter().any(|r| r.rendered_text == "Eq. 1"));
+
+        let def_tags = doc.resolve_definition_tags(content);
+        let sec_tag = def_tags.iter().find(|t| t.ref_type == "sec" && t.id == "dr-grpo").unwrap();
+        assert_eq!(sec_tag.rendered_text, "#Section 1.1");
+        let eq_tag = def_tags.iter().find(|t| t.ref_type == "eq" && t.id == "dr-grpo").unwrap();
+        assert_eq!(eq_tag.rendered_text, "#Eq. 1");
+    }
+
+    #[test]
     fn end_to_end_batch_references() {
         let content = "\
 ![A](a.png){#fig:a}\n\
