@@ -150,11 +150,15 @@ export function ContentArea() {
     return convertFileSrc(absolutePath);
   }, [workspacePath, currentPagePath]);
 
-  const openFilePath = useCallback((relativePath: string) => {
+  const openFilePath = useCallback((path: string) => {
+    if (path.startsWith("/")) {
+      openPath(path);
+      return;
+    }
     if (!workspacePath || !currentPagePath) return;
     const lastSlash = currentPagePath.lastIndexOf("/");
     const fileDir = lastSlash >= 0 ? currentPagePath.substring(0, lastSlash) : "";
-    const absolutePath = workspacePath + "/" + resolveRelativePath(fileDir, relativePath);
+    const absolutePath = workspacePath + "/" + resolveRelativePath(fileDir, path);
     openPath(absolutePath);
   }, [workspacePath, currentPagePath]);
 
