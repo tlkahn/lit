@@ -29,6 +29,9 @@ thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 petgraph = "0.7"
+grep-searcher = "0.1"
+grep-regex = "0.1"
+grep-matcher = "0.1"
 
 [dev-dependencies]
 serde_json = "1"

@@ -671,6 +671,11 @@ impl GraphIndex {
                 continue;
             }
 
+            let abs_path = self.workspace_root.join(source_id);
+            if !file_contains_any_name(&abs_path, &names) {
+                continue;
+            }
+
             let page = match crate::workspace::ops::read_page(&self.workspace_root, source_id) {
                 Ok(p) => p,
                 Err(_) => continue,
@@ -728,6 +733,46 @@ impl GraphIndex {
         pairs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         pairs.truncate(n);
         Ok(pairs)
+    }
+}
+
+fn file_contains_any_name(path: &Path, names: &[&str]) -> bool {
+    use grep_regex::RegexMatcherBuilder;
+    use grep_searcher::sinks::UTF8;
+    use grep_searcher::Searcher;
+
+    let filtered: Vec<&str> = names.iter().copied().filter(|n| !n.is_empty()).collect();
+    if filtered.is_empty() {
+        return false;
+    }
+
+    let pattern = filtered
+        .iter()
+        .map(|n| regex::escape(n))
+        .collect::<Vec<_>>()
+        .join("|");
+
+    let matcher = match RegexMatcherBuilder::new()
+        .case_insensitive(true)
+        .build(&pattern)
+    {
+        Ok(m) => m,
+        Err(_) => return true,
+    };
+
+    let mut found = false;
+    let result = Searcher::new().search_path(
+        &matcher,
+        path,
+        UTF8(|_line_number, _line| {
+            found = true;
+            Ok(false)
+        }),
+    );
+
+    match result {
+        Ok(()) => found,
+        Err(_) => true,
     }
 }
 
@@ -1641,5 +1686,69 @@ mod tests {
         let mentions = gi.unlinked_mentions("target.md").unwrap();
         assert_eq!(mentions.len(), 1);
         assert_eq!(mentions[0].source_line, 2);
+    }
+
+    // ------- file_contains_any_name pre-filter tests -------
+
+    #[test]
+    fn prefilter_finds_name_in_file() {
+        let dir = create_workspace();
+        write_md(dir.path(), "note.md", "Hello Alice, welcome.");
+        assert!(file_contains_any_name(&dir.path().join("note.md"), &["Alice"]));
+    }
+
+    #[test]
+    fn prefilter_rejects_when_no_name_present() {
+        let dir = create_workspace();
+        write_md(dir.path(), "note.md", "Hello world.");
+        assert!(!file_contains_any_name(&dir.path().join("note.md"), &["Alice"]));
+    }
+
+    #[test]
+    fn prefilter_case_insensitive() {
+        let dir = create_workspace();
+        write_md(dir.path(), "note.md", "I saw alice today.");
+        assert!(file_contains_any_name(&dir.path().join("note.md"), &["Alice"]));
+    }
+
+    #[test]
+    fn prefilter_matches_any_of_multiple_names() {
+        let dir = create_workspace();
+        write_md(dir.path(), "note.md", "Bob is here.");
+        assert!(file_contains_any_name(&dir.path().join("note.md"), &["Alice", "Bob"]));
+    }
+
+    #[test]
+    fn prefilter_empty_names_returns_false() {
+        let dir = create_workspace();
+        write_md(dir.path(), "note.md", "Hello world.");
+        assert!(!file_contains_any_name(&dir.path().join("note.md"), &[]));
+    }
+
+    #[test]
+    fn prefilter_all_empty_names_returns_false() {
+        let dir = create_workspace();
+        write_md(dir.path(), "note.md", "Hello world.");
+        assert!(!file_contains_any_name(&dir.path().join("note.md"), &["", ""]));
+    }
+
+    #[test]
+    fn prefilter_missing_file_returns_true() {
+        let dir = create_workspace();
+        assert!(file_contains_any_name(&dir.path().join("nonexistent.md"), &["Alice"]));
+    }
+
+    #[test]
+    fn prefilter_special_chars_in_name() {
+        let dir = create_workspace();
+        write_md(dir.path(), "note.md", "I love C++ programming.");
+        assert!(file_contains_any_name(&dir.path().join("note.md"), &["C++"]));
+    }
+
+    #[test]
+    fn prefilter_special_chars_no_false_positive() {
+        let dir = create_workspace();
+        write_md(dir.path(), "note.md", "I love C programming.");
+        assert!(!file_contains_any_name(&dir.path().join("note.md"), &["C++"]));
     }
 }
