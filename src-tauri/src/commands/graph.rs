@@ -128,6 +128,20 @@ pub async fn search_pages(
 }
 
 #[tauri::command]
+pub fn search_pages_by_title(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<GraphRegistry>>,
+    query: String,
+    limit: Option<i64>,
+) -> Result<serde_json::Value, String> {
+    with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+        let results = gi.search_by_title(&query, limit.unwrap_or(20))?;
+        serde_json::to_value(results).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+    })
+}
+
+#[tauri::command]
 pub fn get_graph_stats(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
@@ -477,6 +491,20 @@ mod tests {
         let json = serde_json::to_value(&mentions).unwrap();
         assert!(json.is_array());
         assert_eq!(json[0]["source_id"], "other.md");
+    }
+
+    #[test]
+    fn cmd_search_pages_by_title() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("quantum.md"), "---\ntitle: Quantum Physics\n---\nBody.").unwrap();
+        std::fs::write(dir.path().join("classic.md"), "---\ntitle: Classical Mechanics\n---\nBody.").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let results = gi.search_by_title("Quantum", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "quantum.md");
+        assert_eq!(results[0].title, "Quantum Physics");
+        assert_eq!(results[0].score, 0.0);
+        assert_eq!(results[0].excerpt, "");
     }
 
     #[test]

@@ -207,6 +207,7 @@ pub fn run() {
             commands::graph::get_backlinks,
             commands::graph::get_forward_links,
             commands::graph::search_pages,
+            commands::graph::search_pages_by_title,
             commands::graph::get_graph_stats,
             commands::graph::get_graph_neighbors,
             commands::graph::get_graph_paths,

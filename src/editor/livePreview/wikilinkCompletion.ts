@@ -3,7 +3,7 @@ import type {
   CompletionResult,
   Completion,
 } from "@codemirror/autocomplete";
-import { listPages, searchPages, getPageHeadings } from "../../lib/ipc";
+import { listPages, searchPagesByTitle, getPageHeadings } from "../../lib/ipc";
 import { extractHeadings } from "../../lib/headings";
 
 export interface WikilinkTriggerInfo {
@@ -78,7 +78,7 @@ export async function wikilinkCompletionSource(
       }));
     } else {
       try {
-        const results = await searchPages(trigger.query + "*", 10);
+        const results = await searchPagesByTitle(trigger.query, 10);
         options = results.map((r) => ({
           label: r.title,
           detail: r.id,

@@ -113,7 +113,7 @@ describe("wikilinkCompletionSource — page phase", () => {
   beforeEach(() => {
     mockInvoke((cmd, args) => {
       if (cmd === "list_pages") return mockPages;
-      if (cmd === "search_pages") return mockSearchResults;
+      if (cmd === "search_pages_by_title") return mockSearchResults;
       if (cmd === "get_page_headings") {
         return [
           { text: "Intro", level: 1 },
@@ -169,10 +169,10 @@ describe("wikilinkCompletionSource — page phase", () => {
     expect(result!.options[0]!.label).toBe("Alpha");
   });
 
-  it("searchPages called with query + '*' and limit 10", async () => {
+  it("searchPagesByTitle called with query and limit 10", async () => {
     await getCompletions("[[Alph");
     const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("search_pages", { query: "Alph*", limit: 10 });
+    expect(invoke).toHaveBeenCalledWith("search_pages_by_title", { query: "Alph", limit: 10 });
   });
 
   it("from points to position after [[", async () => {

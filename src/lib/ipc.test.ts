@@ -37,6 +37,7 @@ import {
   getBacklinks,
   getForwardLinks,
   searchPages,
+  searchPagesByTitle,
   getGraphStats,
   getGraphNeighbors,
   getGraphPaths,
@@ -178,6 +179,10 @@ describe("ipc", () => {
         case "search_pages":
           return [
             { id: "a.md", title: "Alpha", score: -1.5, excerpt: "[Alpha] note" },
+          ];
+        case "search_pages_by_title":
+          return [
+            { id: "a.md", title: "Alpha", score: 0, excerpt: "" },
           ];
         case "get_graph_stats":
           return { nodes: 5, stubs: 1, edges: 3, tags: 2 };
@@ -509,6 +514,22 @@ describe("ipc", () => {
     await searchPages("Alpha", 5);
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("search_pages", { query: "Alpha", limit: 5 });
+  });
+
+  it("searchPagesByTitle returns results", async () => {
+    const results = await searchPagesByTitle("Alpha");
+    expect(results).toHaveLength(1);
+    expect(results[0]!.id).toBe("a.md");
+    expect(results[0]!.score).toBe(0);
+    expect(results[0]!.excerpt).toBe("");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("search_pages_by_title", { query: "Alpha", limit: null });
+  });
+
+  it("searchPagesByTitle passes limit when provided", async () => {
+    await searchPagesByTitle("Alpha", 5);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("search_pages_by_title", { query: "Alpha", limit: 5 });
   });
 
   it("getGraphStats returns stats", async () => {

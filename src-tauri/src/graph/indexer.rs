@@ -717,6 +717,20 @@ impl GraphIndex {
         Ok(results)
     }
 
+    pub fn search_by_title(&self, query: &str, limit: i64) -> Result<Vec<SearchResult>, GraphError> {
+        let store = self.store.lock().unwrap();
+        let pairs = store.search_titles(query, limit)?;
+        Ok(pairs
+            .into_iter()
+            .map(|(id, title)| SearchResult {
+                id,
+                title,
+                score: 0.0,
+                excerpt: String::new(),
+            })
+            .collect())
+    }
+
     pub fn search(&self, query: &str, limit: i64) -> Result<Vec<SearchResult>, GraphError> {
         use grep_regex::RegexMatcherBuilder;
         use rayon::prelude::*;
@@ -2219,6 +2233,59 @@ mod tests {
         for r in &results {
             assert!(r.score < 0.0, "score should be negative (negated count)");
         }
+    }
+
+    // --- GraphIndex search_by_title ---
+
+    #[test]
+    fn search_by_title_matches_title() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "---\ntitle: Quantum Computing\n---\nBody.");
+        write_md(dir.path(), "b.md", "---\ntitle: Classical Physics\n---\nBody.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let results = gi.search_by_title("Quantum", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "a.md");
+        assert_eq!(results[0].title, "Quantum Computing");
+    }
+
+    #[test]
+    fn search_by_title_matches_file_stem() {
+        let dir = create_workspace();
+        write_md(dir.path(), "quantum-notes.md", "---\ntitle: My Notes\n---\nBody.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let results = gi.search_by_title("quantum", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "quantum-notes.md");
+    }
+
+    #[test]
+    fn search_by_title_matches_aliases() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "---\ntitle: Alice\naliases:\n  - Ali\n---\nBody.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let results = gi.search_by_title("Ali", 10).unwrap();
+        assert!(results.iter().any(|r| r.id == "a.md"));
+    }
+
+    #[test]
+    fn search_by_title_returns_search_result_type() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "---\ntitle: Alpha\n---\nBody.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let results = gi.search_by_title("Alpha", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].score, 0.0);
+        assert_eq!(results[0].excerpt, "");
+    }
+
+    #[test]
+    fn search_by_title_empty_query_returns_empty() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "---\ntitle: Alpha\n---\nBody.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let results = gi.search_by_title("", 10).unwrap();
+        assert!(results.is_empty());
     }
 
     #[test]

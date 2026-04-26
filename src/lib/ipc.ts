@@ -311,6 +311,10 @@ export async function searchPages(query: string, limit?: number): Promise<GraphS
   return invoke<GraphSearchResult[]>("search_pages", { query, limit: limit ?? null });
 }
 
+export async function searchPagesByTitle(query: string, limit?: number): Promise<GraphSearchResult[]> {
+  return invoke<GraphSearchResult[]>("search_pages_by_title", { query, limit: limit ?? null });
+}
+
 export async function getGraphStats(): Promise<GraphStats> {
   return invoke<GraphStats>("get_graph_stats");
 }

@@ -409,6 +409,30 @@ impl Store {
         Ok(())
     }
 
+    // --- Title search ---
+
+    pub fn search_titles(&self, query: &str, limit: i64) -> Result<Vec<(String, String)>, GraphError> {
+        if query.is_empty() {
+            return Ok(vec![]);
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT id, title FROM nodes
+             WHERE title LIKE '%' || ?1 || '%' COLLATE NOCASE
+                OR id LIKE '%' || ?1 || '%' COLLATE NOCASE
+             UNION
+             SELECT a.node_id, n.title FROM aliases a
+             JOIN nodes n ON n.id = a.node_id
+             WHERE a.alias LIKE '%' || ?1 || '%' COLLATE NOCASE
+             LIMIT ?2"
+        )?;
+        let results = stmt
+            .query_map(rusqlite::params![query, limit], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(results)
+    }
+
     // --- Stats ---
 
     pub fn stats(&self) -> Result<Stats, GraphError> {
@@ -1459,6 +1483,79 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let sources = store.backlink_source_ids("lonely.md").unwrap();
         assert!(sources.is_empty());
+    }
+
+    // --- search_titles ---
+
+    #[test]
+    fn search_titles_matches_title_substring() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "Quantum Computing", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        let results = store.search_titles("Quantum", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "a.md");
+        assert_eq!(results[0].1, "Quantum Computing");
+    }
+
+    #[test]
+    fn search_titles_case_insensitive() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "Quantum Computing", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        let results = store.search_titles("quantum", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "a.md");
+    }
+
+    #[test]
+    fn search_titles_matches_id_stem() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("quantum-notes.md", "My Notes", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        let results = store.search_titles("quantum", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "quantum-notes.md");
+    }
+
+    #[test]
+    fn search_titles_matches_aliases() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "Alice", &[], json!({"aliases": ["Ali", "Ally"]}));
+        store.upsert_node(&node, 1).unwrap();
+        let results = store.search_titles("Ali", 10).unwrap();
+        assert!(results.iter().any(|(id, _)| id == "a.md"));
+    }
+
+    #[test]
+    fn search_titles_respects_limit() {
+        let store = Store::open_memory().unwrap();
+        for i in 0..10 {
+            let node = make_node(&format!("{i}.md"), &format!("Note {i}"), &[], json!({}));
+            store.upsert_node(&node, 1).unwrap();
+        }
+        let results = store.search_titles("Note", 3).unwrap();
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn search_titles_empty_query_returns_empty() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "Alpha", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        let results = store.search_titles("", 10).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn search_titles_deduplicates_alias_and_title_match() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "Alpha", &[], json!({"aliases": ["Alpha Team"]}));
+        store.upsert_node(&node, 1).unwrap();
+        let results = store.search_titles("Alpha", 10).unwrap();
+        let ids: Vec<&str> = results.iter().map(|(id, _)| id.as_str()).collect();
+        let unique: std::collections::HashSet<&str> = ids.iter().copied().collect();
+        assert_eq!(ids.len(), unique.len(), "results should be deduplicated");
     }
 
     #[test]
