@@ -100,17 +100,31 @@ pub fn get_forward_links(
 }
 
 #[tauri::command]
-pub fn search_pages(
+pub async fn search_pages(
     window: tauri::Window,
-    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
-    graph_state: State<Arc<GraphRegistry>>,
+    workspace_state: State<'_, crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<'_, Arc<GraphRegistry>>,
     query: String,
     limit: Option<i64>,
 ) -> Result<serde_json::Value, String> {
-    with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
-        let results = gi.search(&query, limit.unwrap_or(20))?;
-        serde_json::to_value(results).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+    let gi = {
+        let indices = graph_state.indices.lock().unwrap();
+        Arc::clone(
+            indices
+                .get(&root)
+                .ok_or_else(|| "No graph index for this workspace".to_string())?,
+        )
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let results = gi
+            .search(&query, limit.unwrap_or(20))
+            .map_err(|e| e.to_string())?;
+        serde_json::to_value(results).map_err(|e| e.to_string())
     })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -337,6 +351,25 @@ mod tests {
         let results = gi.search("Quantum", 20).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "a.md");
+    }
+
+    #[test]
+    fn search_pages_returns_results_via_graph_index() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..10 {
+            let content = if i % 2 == 0 {
+                format!("This note discusses concurrency in iteration {i}.")
+            } else {
+                format!("Unrelated content {i}.")
+            };
+            std::fs::write(dir.path().join(format!("n{i}.md")), content).unwrap();
+        }
+        let gi = Arc::new(GraphIndex::build(dir.path().to_path_buf()).unwrap());
+        let results = gi.search("concurrency", 100).unwrap();
+        assert_eq!(results.len(), 5);
+        for r in &results {
+            assert!(r.score < 0.0);
+        }
     }
 
     #[test]

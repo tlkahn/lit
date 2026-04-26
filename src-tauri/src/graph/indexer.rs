@@ -648,6 +648,7 @@ impl GraphIndex {
 
     pub fn unlinked_mentions(&self, page_id: &str) -> Result<Vec<UnlinkedMention>, GraphError> {
         use grep_regex::RegexMatcherBuilder;
+        use rayon::prelude::*;
         use super::extract::{extract_mention_context, find_plain_mentions, strip_for_mention_scan};
 
         let store = self.store.lock().unwrap();
@@ -657,12 +658,10 @@ impl GraphIndex {
         let titles = store.node_titles()?;
         drop(store);
 
-        let mut names: Vec<&str> = vec![&title];
-        for a in &aliases {
-            names.push(a);
-        }
+        let mut names: Vec<String> = vec![title];
+        names.extend(aliases);
 
-        let filtered: Vec<&str> = names.iter().copied().filter(|n| !n.is_empty()).collect();
+        let filtered: Vec<&str> = names.iter().map(|n| n.as_str()).filter(|n| !n.is_empty()).collect();
         let prefilter_matcher = if !filtered.is_empty() {
             let pattern = filtered
                 .iter()
@@ -677,52 +676,50 @@ impl GraphIndex {
             None
         };
 
-        let mut results = Vec::new();
+        let page_id_owned = page_id.to_string();
 
-        for source_id in &all_paths {
-            if source_id == page_id {
-                continue;
-            }
-            if already_linked.contains(source_id) {
-                continue;
-            }
-
-            let abs_path = self.workspace_root.join(source_id);
-            let contains = match &prefilter_matcher {
-                Some(m) => file_contains_any_name_with_matcher(&abs_path, m),
+        let results: Vec<UnlinkedMention> = all_paths
+            .par_iter()
+            .filter(|source_id| {
+                source_id.as_str() != page_id_owned && !already_linked.contains(source_id.as_str())
+            })
+            .filter(|source_id| match &prefilter_matcher {
+                Some(m) => file_contains_any_name_with_matcher(&self.workspace_root.join(source_id), m),
                 None => false,
-            };
-            if !contains {
-                continue;
-            }
+            })
+            .flat_map_iter(|source_id| {
+                let page = match crate::workspace::ops::read_page(&self.workspace_root, source_id) {
+                    Ok(p) => p,
+                    Err(_) => return Vec::new(),
+                };
 
-            let page = match crate::workspace::ops::read_page(&self.workspace_root, source_id) {
-                Ok(p) => p,
-                Err(_) => continue,
-            };
+                let stripped = strip_for_mention_scan(&page.body);
+                let name_refs: Vec<&str> = names.iter().map(|n| n.as_str()).collect();
+                let mentions = find_plain_mentions(&stripped, &name_refs);
+                let source_title = titles.get(source_id).cloned().unwrap_or_default();
 
-            let stripped = strip_for_mention_scan(&page.body);
-            let mentions = find_plain_mentions(&stripped, &names);
-
-            let source_title = titles.get(source_id).cloned().unwrap_or_default();
-
-            for mention in mentions {
-                let context = extract_mention_context(&page.body, mention.byte_offset);
-                results.push(UnlinkedMention {
-                    source_id: source_id.clone(),
-                    source_title: source_title.clone(),
-                    context,
-                    source_line: mention.line,
-                    matched_text: mention.matched_text,
-                });
-            }
-        }
+                mentions
+                    .into_iter()
+                    .map(|mention| {
+                        let context = extract_mention_context(&page.body, mention.byte_offset);
+                        UnlinkedMention {
+                            source_id: source_id.clone(),
+                            source_title: source_title.clone(),
+                            context,
+                            source_line: mention.line,
+                            matched_text: mention.matched_text,
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
 
         Ok(results)
     }
 
     pub fn search(&self, query: &str, limit: i64) -> Result<Vec<SearchResult>, GraphError> {
         use grep_regex::RegexMatcherBuilder;
+        use rayon::prelude::*;
 
         let terms = parse_search_query(query);
         if terms.is_empty() {
@@ -749,7 +746,7 @@ impl GraphIndex {
         drop(store);
 
         let mut hits: Vec<SearchResult> = synced
-            .iter()
+            .par_iter()
             .filter_map(|id| {
                 let (count, excerpt) =
                     search_file_with_matcher(&self.workspace_root.join(id), &matcher, &terms)?;
@@ -2231,5 +2228,44 @@ mod tests {
         let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
         let results = gi.search("quantum", 20).unwrap();
         assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn unlinked_mentions_parallel_correctness() {
+        let dir = create_workspace();
+        write_md(dir.path(), "target.md", "---\ntitle: Alice\n---\nI am Alice.");
+        for i in 0..30 {
+            let content = if i % 2 == 0 {
+                format!("File {i} mentions Alice in passing.")
+            } else {
+                format!("File {i} has no relevant names.")
+            };
+            write_md(dir.path(), &format!("src_{i}.md"), &content);
+        }
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let mentions = gi.unlinked_mentions("target.md").unwrap();
+        assert_eq!(mentions.len(), 15, "every even file of 30 should mention Alice");
+        for m in &mentions {
+            assert_eq!(m.matched_text, "Alice");
+        }
+    }
+
+    #[test]
+    fn search_parallel_produces_same_results() {
+        let dir = create_workspace();
+        for i in 0..30 {
+            let content = if i % 3 == 0 {
+                format!("This file discusses parallelism in iteration {i}.")
+            } else {
+                format!("Unrelated content number {i}.")
+            };
+            write_md(dir.path(), &format!("par_{i}.md"), &content);
+        }
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let results = gi.search("parallelism", 100).unwrap();
+        assert_eq!(results.len(), 10, "every 3rd of 30 files should match");
+        for r in &results {
+            assert!(r.score < 0.0, "score should be negative (negated count)");
+        }
     }
 }
