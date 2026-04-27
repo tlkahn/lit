@@ -163,12 +163,23 @@ function addEmphasisDecos(
     decos.push({ from: contentFrom, to: contentTo, deco: Decoration.mark({ class: cls }) });
   }
 
-  // Recurse into nested emphasis/strong
   for (let child = node.firstChild; child; child = child.nextSibling) {
     if (child.name === "Emphasis") {
       addEmphasisDecos(state, child.from, child.to, "cm-preview-italic", child, decos);
     } else if (child.name === "StrongEmphasis") {
       addEmphasisDecos(state, child.from, child.to, "cm-preview-bold", child, decos);
+    } else if (child.name === "WikiLink") {
+      addWikilinkDecos(state, child.from, child.to, child, decos);
+    } else if (child.name === "Link") {
+      addLinkDecos(state, child.from, child.to, child, decos);
+    } else if (child.name === "InlineCode") {
+      addInlineCodeDecos(state, child.from, child.to, child, decos);
+    } else if (child.name === "InlineMath") {
+      addInlineMathDecos(state, child.from, child.to, child, decos);
+    } else if (child.name === "Image") {
+      addImageDecos(state, child.from, child.to, child, decos);
+    } else if (child.name === "InlineComment") {
+      addInlineCommentDecos(state, child.from, child.to, decos);
     }
   }
 }

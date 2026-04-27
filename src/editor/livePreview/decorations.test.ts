@@ -168,6 +168,141 @@ describe("buildDecorations — bold and italic", () => {
     expect(italic).toBeDefined();
     view.destroy();
   });
+
+  it("decorates wikilink inside italic", () => {
+    // *[[Page]]* → italic class + wikilink brackets hidden + wikilink class
+    const doc = "*[[Page]]*\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    // * markers hidden at 0-1 and 9-10
+    expect(decos.some((d) => d.type === "replace" && d.from === 0 && d.to === 1)).toBe(true);
+    expect(decos.some((d) => d.type === "replace" && d.from === 9 && d.to === 10)).toBe(true);
+    // italic class on content
+    expect(decos.find((d) => d.class === "cm-preview-italic")).toBeDefined();
+    // [[ hidden at 1-3, ]] hidden at 7-9
+    expect(decos.some((d) => d.type === "replace" && d.from === 1 && d.to === 3)).toBe(true);
+    expect(decos.some((d) => d.type === "replace" && d.from === 7 && d.to === 9)).toBe(true);
+    // wikilink class on "Page"
+    const wl = decos.find((d) => d.class === "cm-preview-wikilink");
+    expect(wl).toBeDefined();
+    expect(wl!.from).toBe(3);
+    expect(wl!.to).toBe(7);
+    view.destroy();
+  });
+
+  it("decorates wikilink inside bold", () => {
+    const doc = "**[[Page]]**\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    // ** markers hidden
+    expect(decos.some((d) => d.type === "replace" && d.from === 0 && d.to === 2)).toBe(true);
+    expect(decos.some((d) => d.type === "replace" && d.from === 10 && d.to === 12)).toBe(true);
+    expect(decos.find((d) => d.class === "cm-preview-bold")).toBeDefined();
+    // [[ hidden at 2-4, ]] hidden at 8-10
+    expect(decos.some((d) => d.type === "replace" && d.from === 2 && d.to === 4)).toBe(true);
+    expect(decos.some((d) => d.type === "replace" && d.from === 8 && d.to === 10)).toBe(true);
+    const wl = decos.find((d) => d.class === "cm-preview-wikilink");
+    expect(wl).toBeDefined();
+    expect(wl!.from).toBe(4);
+    expect(wl!.to).toBe(8);
+    view.destroy();
+  });
+
+  it("decorates aliased wikilink inside italic", () => {
+    // *[[Page|Alias]]* → hides *,[[Page|,]] and styles "Alias"
+    const doc = "*[[Page|Alias]]*\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    // * markers hidden
+    expect(decos.some((d) => d.type === "replace" && d.from === 0 && d.to === 1)).toBe(true);
+    expect(decos.some((d) => d.type === "replace" && d.from === 15 && d.to === 16)).toBe(true);
+    expect(decos.find((d) => d.class === "cm-preview-italic")).toBeDefined();
+    // [[Page| hidden (1 to 8)
+    expect(decos.some((d) => d.type === "replace" && d.from === 1 && d.to === 8)).toBe(true);
+    // ]] hidden (13 to 15)
+    expect(decos.some((d) => d.type === "replace" && d.from === 13 && d.to === 15)).toBe(true);
+    const wl = decos.find((d) => d.class === "cm-preview-wikilink");
+    expect(wl).toBeDefined();
+    expect(wl!.from).toBe(8);
+    expect(wl!.to).toBe(13);
+    view.destroy();
+  });
+
+  it("decorates link inside italic", () => {
+    // *[text](url)* → italic + link decos
+    const doc = "*[text](url)*\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    // * markers hidden
+    expect(decos.some((d) => d.type === "replace" && d.from === 0 && d.to === 1)).toBe(true);
+    expect(decos.some((d) => d.type === "replace" && d.from === 12 && d.to === 13)).toBe(true);
+    expect(decos.find((d) => d.class === "cm-preview-italic")).toBeDefined();
+    const link = decos.find((d) => d.class === "cm-preview-link");
+    expect(link).toBeDefined();
+    view.destroy();
+  });
+
+  it("decorates link inside bold", () => {
+    const doc = "**[text](url)**\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.find((d) => d.class === "cm-preview-bold")).toBeDefined();
+    expect(decos.find((d) => d.class === "cm-preview-link")).toBeDefined();
+    view.destroy();
+  });
+
+  it("decorates inline code inside italic", () => {
+    const doc = "*`code`*\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    // * markers hidden
+    expect(decos.some((d) => d.type === "replace" && d.from === 0 && d.to === 1)).toBe(true);
+    expect(decos.some((d) => d.type === "replace" && d.from === 7 && d.to === 8)).toBe(true);
+    expect(decos.find((d) => d.class === "cm-preview-italic")).toBeDefined();
+    expect(decos.find((d) => d.class === "cm-preview-code-inline")).toBeDefined();
+    view.destroy();
+  });
+
+  it("decorates inline code inside bold", () => {
+    const doc = "**`code`**\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.find((d) => d.class === "cm-preview-bold")).toBeDefined();
+    expect(decos.find((d) => d.class === "cm-preview-code-inline")).toBeDefined();
+    view.destroy();
+  });
+
+  it("decorates inline math inside italic", () => {
+    // *$E=mc^2$* → emphasis marks hidden, math widget replaces $...$
+    const doc = "*$E=mc^2$*\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    // * markers hidden
+    expect(decos.some((d) => d.type === "replace" && d.from === 0 && d.to === 1)).toBe(true);
+    expect(decos.some((d) => d.type === "replace" && d.from === 9 && d.to === 10)).toBe(true);
+    // math widget replaces $E=mc^2$
+    const math = decos.find((d) => d.widget && d.from === 1 && d.to === 9);
+    expect(math).toBeDefined();
+    view.destroy();
+  });
+
+  it("decorates inline math inside bold", () => {
+    const doc = "**$E=mc^2$**\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.type === "replace" && d.from === 0 && d.to === 2)).toBe(true);
+    expect(decos.some((d) => d.type === "replace" && d.from === 10 && d.to === 12)).toBe(true);
+    const math = decos.find((d) => d.widget && d.from === 2 && d.to === 10);
+    expect(math).toBeDefined();
+    view.destroy();
+  });
+
+  it("shows raw syntax when cursor is inside emphasis containing wikilink", () => {
+    const view = makeView("*[[Page]]*", 5);
+    const decos = collectDecos(view);
+    expect(decos).toHaveLength(0);
+    view.destroy();
+  });
 });
 
 describe("buildDecorations — links", () => {
