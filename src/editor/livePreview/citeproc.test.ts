@@ -705,6 +705,52 @@ describe("citeprocPlugin bib fetch", () => {
     view.destroy();
   });
 
+  it("does not throw when bibliography is removed during a reconfigure dispatch", async () => {
+    const entry: BibEntry = {
+      key: "smith2020",
+      authors: ["Smith"],
+      title: "Test",
+      year: "2020",
+      entry_type: "article",
+      line_number: 5,
+      bib_file: "refs.bib",
+    };
+
+    mockInvoke((cmd) => {
+      if (cmd === "resolve_all_decorations") return { citations: [], definition_tags: [] };
+      if (cmd === "resolve_bib_entries") return [entry];
+      if (cmd === "render_bib_citations") return { smith2020: "Smith 2020" };
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    const fmCompartment = new Compartment();
+    const state = EditorState.create({
+      doc: "See [@smith2020] here",
+      extensions: [
+        citeprocExtension(),
+        fmCompartment.of(frontmatterFacet.of({ bibliography: "refs.bib" })),
+        noteDirFacet.of("/notes"),
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(200);
+    expect(view.state.field(bibEntriesField).entries).toHaveLength(1);
+
+    expect(() => {
+      view.dispatch({
+        effects: fmCompartment.reconfigure(frontmatterFacet.of({})),
+      });
+    }).not.toThrow();
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const data = view.state.field(bibEntriesField);
+    expect(data.entries).toEqual([]);
+
+    view.destroy();
+  });
+
   it("handles empty bibliography (no fetch, clears entries)", async () => {
     mockInvoke((cmd) => {
       if (cmd === "resolve_all_decorations") return { citations: [], definition_tags: [] };

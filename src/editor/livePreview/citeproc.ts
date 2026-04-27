@@ -156,7 +156,11 @@ const citeprocPlugin = ViewPlugin.fromClass(
     private fetchBib() {
       const paths = this.lastBibPaths.split("\0").filter(Boolean);
       if (paths.length === 0) {
-        this.view.dispatch({ effects: setBibData.of(EMPTY_BIB) });
+        const snapshot = this.lastBibPaths;
+        Promise.resolve().then(() => {
+          if (this.lastBibPaths !== snapshot) return;
+          this.view.dispatch({ effects: setBibData.of(EMPTY_BIB) });
+        });
         return;
       }
       const noteDir = this.view.state.facet(noteDirFacet);
