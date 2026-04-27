@@ -39,6 +39,7 @@ pub fn open_workspace(
     app_handle: tauri::AppHandle,
     registry: State<Arc<WriteHashRegistry>>,
     graph_state: State<Arc<GraphRegistry>>,
+    build_state: State<Arc<crate::commands::graph::GraphBuildState>>,
 ) -> Result<Vec<PageMeta>, String> {
     let root = PathBuf::from(&path);
     if !root.is_dir() {
@@ -69,22 +70,31 @@ pub fn open_workspace(
         },
     );
 
-    // Spawn async graph indexing
     let graph_root = root.clone();
     let graph_reg = Arc::clone(&graph_state);
     let handle = app_handle.clone();
+    let build_st = Arc::clone(&build_state);
+    build_st.start_build(graph_root.clone());
+
     tauri::async_runtime::spawn_blocking(move || {
-        match GraphIndex::build(graph_root.clone()) {
+        let emit_handle = handle.clone();
+        let callback = move |p: crate::graph::progress::IndexProgress| {
+            let _ = emit_handle.emit("lit:index-progress", &p);
+        };
+
+        match GraphIndex::build_with_progress(graph_root.clone(), &callback) {
             Ok(gi) => {
                 graph_reg
                     .indices
                     .lock()
                     .unwrap()
-                    .insert(graph_root, Arc::new(gi));
+                    .insert(graph_root.clone(), Arc::new(gi));
+                build_st.mark_ready(&graph_root);
                 let _ = handle.emit("lit:graph-updated", ());
             }
             Err(e) => {
                 tracing::error!(error = %e, "failed to build graph index");
+                build_st.mark_failed(&graph_root, e.to_string());
             }
         }
     });

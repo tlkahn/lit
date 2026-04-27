@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mockInvoke } from "../test/tauri-mock";
+import { mockInvoke, mockListen, emitMockEvent } from "../test/tauri-mock";
 import { useWorkspaceStore, getRecentWorkspaces, addRecentWorkspace } from "./workspace";
 import { act } from "@testing-library/react";
 
@@ -32,9 +32,13 @@ describe("WorkspaceStore", () => {
       isDirty: false,
       reloadTrigger: 0,
       viewStates: {},
+      graphReady: false,
+      indexProgress: null,
       loading: false,
       error: null,
     });
+
+    mockListen();
 
     mockInvoke((cmd, args) => {
       switch (cmd) {
@@ -54,6 +58,8 @@ describe("WorkspaceStore", () => {
           return `${(args as Record<string, unknown>)?.newName as string}.md`;
         case "delete_page":
           return null;
+        case "ensure_graph_ready":
+          return null;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -70,6 +76,73 @@ describe("WorkspaceStore", () => {
     expect(state.pages).toHaveLength(2);
     expect(state.loading).toBe(false);
     expect(state.error).toBeNull();
+  });
+
+  it("graphReady defaults to false", () => {
+    expect(useWorkspaceStore.getState().graphReady).toBe(false);
+  });
+
+  it("indexProgress defaults to null", () => {
+    expect(useWorkspaceStore.getState().indexProgress).toBeNull();
+  });
+
+  it("openWorkspace sets graphReady to true after ensureGraphReady resolves", async () => {
+    await act(async () => {
+      await useWorkspaceStore.getState().openWorkspace("/my/workspace");
+    });
+
+    const state = useWorkspaceStore.getState();
+    expect(state.graphReady).toBe(true);
+  });
+
+  it("openWorkspace updates indexProgress from events", async () => {
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "open_workspace":
+          return samplePages;
+        case "ensure_graph_ready":
+          emitMockEvent("lit:index-progress", {
+            phase: "parsing",
+            current: 2,
+            total: 5,
+          });
+          return null;
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    await act(async () => {
+      await useWorkspaceStore.getState().openWorkspace("/my/workspace");
+    });
+
+    const state = useWorkspaceStore.getState();
+    expect(state.indexProgress).toEqual({
+      phase: "parsing",
+      current: 2,
+      total: 5,
+    });
+  });
+
+  it("openWorkspace with failed ensureGraphReady sets error and graphReady stays false", async () => {
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "open_workspace":
+          return samplePages;
+        case "ensure_graph_ready":
+          throw new Error("index failed");
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    await act(async () => {
+      await useWorkspaceStore.getState().openWorkspace("/my/workspace");
+    });
+
+    const state = useWorkspaceStore.getState();
+    expect(state.graphReady).toBe(false);
+    expect(state.error).toContain("index failed");
   });
 
   it("openWorkspace adds path to recent workspaces", async () => {

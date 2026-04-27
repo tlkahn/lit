@@ -22,6 +22,8 @@ describe("App", () => {
       workspacePath: null,
       pages: [],
       currentPagePath: null,
+      graphReady: false,
+      indexProgress: null,
       loading: false,
       error: null,
     });
@@ -65,6 +67,8 @@ describe("App", () => {
           return [];
         case "parse_raw_yaml":
           return {};
+        case "ensure_graph_ready":
+          return null;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -80,6 +84,7 @@ describe("App", () => {
     useWorkspaceStore.setState({
       workspacePath: "/test",
       pages: samplePages,
+      graphReady: true,
     });
 
     render(<App />);
@@ -108,6 +113,8 @@ describe("App", () => {
           return null;
         case "get_keymaps":
           return [];
+        case "ensure_graph_ready":
+          return null;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -121,7 +128,7 @@ describe("App", () => {
   });
 
   it("applies dark mode from preferences", () => {
-    useWorkspaceStore.setState({ workspacePath: "/test", pages: [] });
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
     usePreferencesStore.setState({ darkMode: "dark" });
 
     render(<App />);
@@ -129,7 +136,7 @@ describe("App", () => {
   });
 
   it("renders sidebar on the left by default", () => {
-    useWorkspaceStore.setState({ workspacePath: "/test", pages: [] });
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
 
     render(<App />);
     const container = screen.getByText("Files").closest("aside")!.parentElement!;
@@ -138,7 +145,7 @@ describe("App", () => {
   });
 
   it("renders sidebar on the right from preferences", () => {
-    useWorkspaceStore.setState({ workspacePath: "/test", pages: [] });
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
     usePreferencesStore.setState({ sidebarLocation: "right" });
 
     render(<App />);
@@ -147,13 +154,13 @@ describe("App", () => {
   });
 
   it("quick switcher not visible by default", () => {
-    useWorkspaceStore.setState({ workspacePath: "/test", pages: [] });
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
     render(<App />);
     expect(screen.queryByTestId("quick-switcher-backdrop")).not.toBeInTheDocument();
   });
 
   it("dispatching lit:toggle-quick-switcher shows the quick switcher", async () => {
-    useWorkspaceStore.setState({ workspacePath: "/test", pages: [] });
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
     render(<App />);
 
     act(() => {
@@ -164,7 +171,7 @@ describe("App", () => {
   });
 
   it("dispatching lit:toggle-quick-switcher twice hides it", async () => {
-    useWorkspaceStore.setState({ workspacePath: "/test", pages: [] });
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
     render(<App />);
 
     act(() => {
@@ -207,6 +214,8 @@ describe("App", () => {
           return [];
         case "parse_raw_yaml":
           return {};
+        case "ensure_graph_ready":
+          return null;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -243,6 +252,8 @@ describe("App", () => {
           };
         case "get_keymaps":
           return [];
+        case "ensure_graph_ready":
+          return null;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -285,6 +296,8 @@ describe("App", () => {
           return [];
         case "parse_raw_yaml":
           return {};
+        case "ensure_graph_ready":
+          return null;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -298,6 +311,26 @@ describe("App", () => {
     });
   });
 
+  it("shows IndexingScreen when workspace set but graphReady is false", () => {
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: false });
+    render(<App />);
+    expect(screen.getByTestId("indexing-screen")).toBeInTheDocument();
+    expect(screen.queryByText("Files")).not.toBeInTheDocument();
+  });
+
+  it("shows Sidebar when workspace set and graphReady is true", () => {
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+    render(<App />);
+    expect(screen.queryByTestId("indexing-screen")).not.toBeInTheDocument();
+    expect(screen.getByText("Files")).toBeInTheDocument();
+  });
+
+  it("shows WorkspaceChooser when no workspacePath", () => {
+    render(<App />);
+    expect(screen.getByText("Open Workspace")).toBeInTheDocument();
+    expect(screen.queryByTestId("indexing-screen")).not.toBeInTheDocument();
+  });
+
   it("file-modified event for current page triggers reload", async () => {
     mockListen();
     useWorkspaceStore.setState({
@@ -305,6 +338,7 @@ describe("App", () => {
       pages: samplePages,
       currentPagePath: "Test Page.md",
       reloadTrigger: 0,
+      graphReady: true,
     });
 
     render(<App />);

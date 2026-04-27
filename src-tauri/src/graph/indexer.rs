@@ -184,6 +184,16 @@ pub fn index_workspace(
     store: &Store,
     root: &Path,
 ) -> Result<(IndexResult, ReverseStemIndex), GraphError> {
+    index_workspace_with_progress(store, root, &super::progress::noop_callback())
+}
+
+pub fn index_workspace_with_progress(
+    store: &Store,
+    root: &Path,
+    on_progress: &dyn Fn(super::progress::IndexProgress),
+) -> Result<(IndexResult, ReverseStemIndex), GraphError> {
+    use super::progress::{IndexPhase, IndexProgress};
+
     let lit_dir = root.join(".lit");
     if !lit_dir.exists() {
         std::fs::create_dir_all(&lit_dir).map_err(|e| GraphError::Io {
@@ -193,6 +203,13 @@ pub fn index_workspace(
     }
 
     let files = walk_md_files(root)?;
+    let file_count = files.len();
+
+    on_progress(IndexProgress {
+        phase: IndexPhase::Scanning,
+        current: file_count,
+        total: file_count,
+    });
 
     store.begin_transaction()?;
 
@@ -200,7 +217,7 @@ pub fn index_workspace(
     let mut all_links: HashMap<String, Vec<WikiLink>> = HashMap::new();
     let mut file_mtimes: HashMap<String, i64> = HashMap::new();
 
-    for (rel_path, mtime) in &files {
+    for (i, (rel_path, mtime)) in files.iter().enumerate() {
         match parse_md_file(root, rel_path) {
             Ok((node, links)) => {
                 file_mtimes.insert(rel_path.clone(), *mtime);
@@ -211,6 +228,11 @@ pub fn index_workspace(
                 tracing::warn!(path = %rel_path, error = %e, "skipping file");
             }
         }
+        on_progress(IndexProgress {
+            phase: IndexPhase::Parsing,
+            current: i + 1,
+            total: file_count,
+        });
     }
 
     let node_ids: Vec<String> = all_nodes.iter().map(|n| n.id.clone()).collect();
@@ -231,8 +253,9 @@ pub fn index_workspace(
     let mut stubs_created = 0;
     let mut reverse_stems = ReverseStemIndex::new();
     let mut known_stubs: HashSet<String> = HashSet::new();
+    let node_count = all_nodes.len();
 
-    for node in &all_nodes {
+    for (i, node) in all_nodes.iter().enumerate() {
         let mtime = file_mtimes.get(&node.id).copied().unwrap_or(0);
         store.upsert_node(node, mtime)?;
         nodes_indexed += 1;
@@ -265,9 +288,13 @@ pub fn index_workspace(
                 edges_resolved += 1;
             }
         }
-    }
 
-    // Record sync mtimes (already done in upsert_node)
+        on_progress(IndexProgress {
+            phase: IndexPhase::Resolving,
+            current: i + 1,
+            total: node_count,
+        });
+    }
 
     store.commit()?;
 
@@ -517,6 +544,15 @@ pub struct GraphIndex {
 
 impl GraphIndex {
     pub fn build(workspace_root: std::path::PathBuf) -> Result<Self, GraphError> {
+        Self::build_with_progress(workspace_root, &super::progress::noop_callback())
+    }
+
+    pub fn build_with_progress(
+        workspace_root: std::path::PathBuf,
+        on_progress: &dyn Fn(super::progress::IndexProgress),
+    ) -> Result<Self, GraphError> {
+        use super::progress::{IndexPhase, IndexProgress};
+
         let db_path = workspace_root.join(".lit").join("graph.db");
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| GraphError::Io {
@@ -530,6 +566,7 @@ impl GraphIndex {
             let diff = compute_diff(&store, &workspace_root)?;
             if diff.is_empty() {
                 info!("warm start: no changes detected, loading from store");
+                on_progress(IndexProgress { phase: IndexPhase::Diffing, current: 0, total: 0 });
                 let edges: Vec<(String, String)> = store
                     .all_raw_edges()?
                     .into_iter()
@@ -543,6 +580,7 @@ impl GraphIndex {
                     deleted = diff.deleted.len(),
                     "warm start: applying diff"
                 );
+                on_progress(IndexProgress { phase: IndexPhase::Diffing, current: 0, total: 0 });
                 let edges: Vec<(String, String)> = store
                     .all_raw_edges()?
                     .into_iter()
@@ -554,10 +592,11 @@ impl GraphIndex {
             }
         } else {
             info!("cold start: no existing store data, full index");
-            let (_, reverse_stems) = index_workspace(&store, &workspace_root)?;
+            let (_, reverse_stems) = index_workspace_with_progress(&store, &workspace_root, on_progress)?;
             reverse_stems
         };
 
+        on_progress(IndexProgress { phase: IndexPhase::Building, current: 0, total: 0 });
         let knowledge = KnowledgeGraph::from_store(&store)?;
         Ok(Self {
             store: Mutex::new(store),
@@ -1262,6 +1301,87 @@ mod tests {
         assert!(dir.path().join(".lit").exists());
     }
 
+    // --- index_workspace_with_progress ---
+
+    #[test]
+    fn index_with_progress_emits_phases_in_order() {
+        use crate::graph::progress::{IndexPhase, IndexProgress};
+        use std::sync::{Arc, Mutex};
+
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "[[b]]");
+        write_md(dir.path(), "b.md", "[[c]]");
+        write_md(dir.path(), "c.md", "Leaf.");
+        let store = Store::open_memory().unwrap();
+
+        let log: Arc<Mutex<Vec<IndexProgress>>> = Arc::new(Mutex::new(Vec::new()));
+        let log_clone = Arc::clone(&log);
+        let callback = move |p: IndexProgress| {
+            log_clone.lock().unwrap().push(p);
+        };
+
+        let (result, _) = index_workspace_with_progress(&store, dir.path(), &callback).unwrap();
+        assert_eq!(result.nodes_indexed, 3);
+
+        let events = log.lock().unwrap();
+        // First event should be Scanning
+        assert_eq!(events[0].phase, IndexPhase::Scanning);
+        assert_eq!(events[0].current, 3);
+        assert_eq!(events[0].total, 3);
+
+        // Then 3 Parsing events
+        let parsing: Vec<_> = events.iter().filter(|e| e.phase == IndexPhase::Parsing).collect();
+        assert_eq!(parsing.len(), 3);
+        assert_eq!(parsing[0].current, 1);
+        assert_eq!(parsing[1].current, 2);
+        assert_eq!(parsing[2].current, 3);
+        assert!(parsing.iter().all(|e| e.total == 3));
+
+        // Then 3 Resolving events
+        let resolving: Vec<_> = events.iter().filter(|e| e.phase == IndexPhase::Resolving).collect();
+        assert_eq!(resolving.len(), 3);
+        assert_eq!(resolving[0].current, 1);
+        assert_eq!(resolving[1].current, 2);
+        assert_eq!(resolving[2].current, 3);
+        assert!(resolving.iter().all(|e| e.total == 3));
+    }
+
+    #[test]
+    fn index_with_progress_phases_strictly_ascending() {
+        use crate::graph::progress::{IndexPhase, IndexProgress};
+        use std::sync::{Arc, Mutex};
+
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Content.");
+        write_md(dir.path(), "b.md", "Content.");
+        let store = Store::open_memory().unwrap();
+
+        let log: Arc<Mutex<Vec<IndexPhase>>> = Arc::new(Mutex::new(Vec::new()));
+        let log_clone = Arc::clone(&log);
+        let callback = move |p: IndexProgress| {
+            let mut l = log_clone.lock().unwrap();
+            if l.last() != Some(&p.phase) {
+                l.push(p.phase);
+            }
+        };
+
+        index_workspace_with_progress(&store, dir.path(), &callback).unwrap();
+
+        let phases = log.lock().unwrap();
+        assert_eq!(*phases, vec![IndexPhase::Scanning, IndexPhase::Parsing, IndexPhase::Resolving]);
+    }
+
+    #[test]
+    fn index_workspace_delegation_preserves_behavior() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "[[b]]");
+        write_md(dir.path(), "b.md", "Target.");
+        let store = Store::open_memory().unwrap();
+        let (result, _) = index_workspace(&store, dir.path()).unwrap();
+        assert_eq!(result.nodes_indexed, 2);
+        assert_eq!(result.edges_resolved, 1);
+    }
+
     // --- compute_diff ---
 
     #[test]
@@ -1575,6 +1695,100 @@ mod tests {
         let gi2 = GraphIndex::build(dir.path().to_path_buf()).unwrap();
         let stats2 = gi2.stats().unwrap();
         assert_eq!(stats2.nodes, 1, "cold start fallback should re-index");
+    }
+
+    #[test]
+    fn build_with_progress_cold_start() {
+        use crate::graph::progress::{IndexPhase, IndexProgress};
+        use std::sync::{Arc, Mutex};
+
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "[[b]]");
+        write_md(dir.path(), "b.md", "Target.");
+
+        let log: Arc<Mutex<Vec<IndexPhase>>> = Arc::new(Mutex::new(Vec::new()));
+        let log_clone = Arc::clone(&log);
+        let callback = move |p: IndexProgress| {
+            let mut l = log_clone.lock().unwrap();
+            if l.last() != Some(&p.phase) {
+                l.push(p.phase);
+            }
+        };
+
+        let gi = GraphIndex::build_with_progress(dir.path().to_path_buf(), &callback).unwrap();
+        assert_eq!(gi.stats().unwrap().nodes, 2);
+
+        let phases = log.lock().unwrap();
+        assert_eq!(phases[0], IndexPhase::Scanning);
+        assert!(phases.contains(&IndexPhase::Parsing));
+        assert!(phases.contains(&IndexPhase::Resolving));
+        assert_eq!(*phases.last().unwrap(), IndexPhase::Building);
+    }
+
+    #[test]
+    fn build_with_progress_warm_start_no_diff() {
+        use crate::graph::progress::{IndexPhase, IndexProgress};
+        use std::sync::{Arc, Mutex};
+
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Content.");
+
+        GraphIndex::build(dir.path().to_path_buf()).unwrap();
+
+        let log: Arc<Mutex<Vec<IndexPhase>>> = Arc::new(Mutex::new(Vec::new()));
+        let log_clone = Arc::clone(&log);
+        let callback = move |p: IndexProgress| {
+            let mut l = log_clone.lock().unwrap();
+            if l.last() != Some(&p.phase) {
+                l.push(p.phase);
+            }
+        };
+
+        let gi = GraphIndex::build_with_progress(dir.path().to_path_buf(), &callback).unwrap();
+        assert_eq!(gi.stats().unwrap().nodes, 1);
+
+        let phases = log.lock().unwrap();
+        assert_eq!(*phases, vec![IndexPhase::Diffing, IndexPhase::Building]);
+    }
+
+    #[test]
+    fn build_with_progress_warm_start_with_diff() {
+        use crate::graph::progress::{IndexPhase, IndexProgress};
+        use std::sync::{Arc, Mutex};
+
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Content.");
+
+        GraphIndex::build(dir.path().to_path_buf()).unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        write_md(dir.path(), "a.md", "Updated content.");
+
+        let log: Arc<Mutex<Vec<IndexPhase>>> = Arc::new(Mutex::new(Vec::new()));
+        let log_clone = Arc::clone(&log);
+        let callback = move |p: IndexProgress| {
+            let mut l = log_clone.lock().unwrap();
+            if l.last() != Some(&p.phase) {
+                l.push(p.phase);
+            }
+        };
+
+        let gi = GraphIndex::build_with_progress(dir.path().to_path_buf(), &callback).unwrap();
+        assert_eq!(gi.stats().unwrap().nodes, 1);
+
+        let phases = log.lock().unwrap();
+        assert_eq!(*phases, vec![IndexPhase::Diffing, IndexPhase::Building]);
+    }
+
+    #[test]
+    fn build_delegation_preserves_existing_behavior() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "[[b]]");
+        write_md(dir.path(), "b.md", "Target.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let stats = gi.stats().unwrap();
+        assert_eq!(stats.nodes, 2);
+        assert_eq!(stats.edges, 1);
     }
 
     #[test]

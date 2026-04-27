@@ -1,6 +1,7 @@
 import { create } from "zustand";
+import { listen } from "@tauri-apps/api/event";
 import * as ipc from "../lib/ipc";
-import type { PageMeta } from "../lib/ipc";
+import type { PageMeta, IndexProgress } from "../lib/ipc";
 import type { Heading } from "../lib/headings";
 
 const RECENT_KEY = "lit-recent-workspaces";
@@ -24,6 +25,8 @@ export interface WorkspaceStore {
   isDirty: boolean;
   reloadTrigger: number;
   viewStates: Record<string, ViewState>;
+  graphReady: boolean;
+  indexProgress: IndexProgress | null;
   loading: boolean;
   error: string | null;
 
@@ -53,15 +56,30 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   isDirty: false,
   reloadTrigger: 0,
   viewStates: {},
+  graphReady: false,
+  indexProgress: null,
   loading: false,
   error: null,
 
   openWorkspace: async (path: string) => {
-    set({ loading: true, error: null });
+    set({ loading: true, error: null, graphReady: false, indexProgress: null });
     try {
       const pages = await ipc.openWorkspace(path);
       set({ workspacePath: path, pages, loading: false });
       addRecentWorkspace(path);
+
+      const unlisten = await listen<IndexProgress>("lit:index-progress", (event) => {
+        set({ indexProgress: event.payload });
+      });
+
+      try {
+        await ipc.ensureGraphReady(path);
+        set({ graphReady: true });
+      } catch (e) {
+        set({ error: String(e) });
+      } finally {
+        unlisten();
+      }
     } catch (e) {
       set({ loading: false, error: String(e) });
     }

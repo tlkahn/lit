@@ -91,6 +91,7 @@ pub fn run() {
         .manage(InitialFile(Mutex::new(cli_file)))
         .manage(Arc::new(WriteHashRegistry::new()))
         .manage(Arc::new(GraphRegistry::new()))
+        .manage(Arc::new(commands::graph::GraphBuildState::new()))
         .manage(BibCache::new())
         .setup(move |app| {
             let _ = commands::theme::seed_bundled_themes(app.handle());
@@ -216,6 +217,7 @@ pub fn run() {
             commands::graph::get_page_headings,
             commands::graph::get_unlinked_mentions,
             commands::graph::link_unlinked_mention,
+            commands::graph::ensure_graph_ready,
             get_initial_workspace,
             get_initial_file,
         ])

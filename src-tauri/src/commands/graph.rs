@@ -1,7 +1,7 @@
 use crate::graph::indexer::GraphIndex;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use tauri::State;
 
 pub struct GraphRegistry {
@@ -13,6 +13,65 @@ impl GraphRegistry {
         Self {
             indices: Mutex::new(HashMap::new()),
         }
+    }
+}
+
+#[derive(Debug)]
+pub enum BuildStatus {
+    InProgress,
+    Ready,
+    Failed(String),
+}
+
+pub struct BuildSignal {
+    pub status: Mutex<BuildStatus>,
+    pub condvar: Condvar,
+}
+
+impl BuildSignal {
+    fn new() -> Self {
+        Self {
+            status: Mutex::new(BuildStatus::InProgress),
+            condvar: Condvar::new(),
+        }
+    }
+}
+
+pub struct GraphBuildState {
+    signals: Mutex<HashMap<PathBuf, Arc<BuildSignal>>>,
+}
+
+impl GraphBuildState {
+    pub fn new() -> Self {
+        Self {
+            signals: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub fn start_build(&self, path: PathBuf) -> Arc<BuildSignal> {
+        let signal = Arc::new(BuildSignal::new());
+        self.signals.lock().unwrap().insert(path, Arc::clone(&signal));
+        signal
+    }
+
+    pub fn mark_ready(&self, path: &PathBuf) {
+        if let Some(signal) = self.signals.lock().unwrap().get(path) {
+            let mut status = signal.status.lock().unwrap();
+            *status = BuildStatus::Ready;
+            signal.condvar.notify_all();
+        }
+    }
+
+    pub fn mark_failed(&self, path: &PathBuf, err: String) {
+        if let Some(signal) = self.signals.lock().unwrap().get(path) {
+            let mut status = signal.status.lock().unwrap();
+            *status = BuildStatus::Failed(err);
+            signal.condvar.notify_all();
+        }
+    }
+
+    pub fn get_signal(&self, path: &PathBuf) -> Option<Arc<BuildSignal>> {
+        self.signals.lock().unwrap().get(path).cloned()
     }
 }
 
@@ -291,6 +350,33 @@ pub fn link_unlinked_mention(
     Ok(())
 }
 
+#[tauri::command]
+pub async fn ensure_graph_ready(
+    path: String,
+    build_state: State<'_, Arc<GraphBuildState>>,
+) -> Result<(), String> {
+    let path_buf = PathBuf::from(&path);
+
+    let signal = match build_state.get_signal(&path_buf) {
+        Some(s) => s,
+        None => return Ok(()),
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut status = signal.status.lock().unwrap();
+        while matches!(*status, BuildStatus::InProgress) {
+            status = signal.condvar.wait(status).unwrap();
+        }
+        match &*status {
+            BuildStatus::Ready => Ok(()),
+            BuildStatus::Failed(msg) => Err(msg.clone()),
+            BuildStatus::InProgress => unreachable!(),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -539,5 +625,62 @@ mod tests {
         // Verify unlinked mentions is now empty (it's now a backlink)
         let mentions = gi.unlinked_mentions("target.md").unwrap();
         assert!(mentions.is_empty());
+    }
+
+    // --- GraphBuildState ---
+
+    #[test]
+    fn build_state_start_and_mark_ready() {
+        let state = GraphBuildState::new();
+        let path = PathBuf::from("/test");
+        state.start_build(path.clone());
+        state.mark_ready(&path);
+
+        let signal = state.get_signal(&path).unwrap();
+        let status = signal.status.lock().unwrap();
+        assert!(matches!(*status, BuildStatus::Ready));
+    }
+
+    #[test]
+    fn build_state_start_and_mark_failed() {
+        let state = GraphBuildState::new();
+        let path = PathBuf::from("/test");
+        state.start_build(path.clone());
+        state.mark_failed(&path, "disk full".to_string());
+
+        let signal = state.get_signal(&path).unwrap();
+        let status = signal.status.lock().unwrap();
+        match &*status {
+            BuildStatus::Failed(msg) => assert_eq!(msg, "disk full"),
+            other => panic!("expected Failed, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn build_state_get_signal_returns_none_for_unknown() {
+        let state = GraphBuildState::new();
+        assert!(state.get_signal(&PathBuf::from("/unknown")).is_none());
+    }
+
+    #[test]
+    fn build_state_condvar_unblocks_waiter() {
+        let state = Arc::new(GraphBuildState::new());
+        let path = PathBuf::from("/test");
+        let signal = state.start_build(path.clone());
+
+        let state_clone = Arc::clone(&state);
+        let path_clone = path.clone();
+        let handle = std::thread::spawn(move || {
+            let mut status = signal.status.lock().unwrap();
+            while matches!(*status, BuildStatus::InProgress) {
+                status = signal.condvar.wait(status).unwrap();
+            }
+            matches!(*status, BuildStatus::Ready)
+        });
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        state_clone.mark_ready(&path_clone);
+
+        assert!(handle.join().unwrap());
     }
 }

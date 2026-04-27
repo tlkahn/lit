@@ -42,6 +42,7 @@ import {
   getGraphNeighbors,
   getGraphPaths,
   getGraphSubgraph,
+  ensureGraphReady,
 } from "./ipc";
 
 const sampleMeta = {
@@ -167,6 +168,8 @@ describe("ipc", () => {
         case "link_unlinked_mention":
           return null;
         case "open_in_external_editor":
+          return null;
+        case "ensure_graph_ready":
           return null;
         case "get_backlinks":
           return [
@@ -595,6 +598,24 @@ describe("ipc", () => {
       sourceLine: 3,
       matchedText: "Alpha",
     });
+  });
+
+  it("ensureGraphReady calls with path", async () => {
+    await ensureGraphReady("/my/workspace");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("ensure_graph_ready", { path: "/my/workspace" });
+  });
+
+  it("ensureGraphReady resolves on success", async () => {
+    await expect(ensureGraphReady("/my/workspace")).resolves.toBeNull();
+  });
+
+  it("ensureGraphReady rejects on error", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "ensure_graph_ready") throw new Error("build failed");
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    await expect(ensureGraphReady("/my/workspace")).rejects.toThrow("build failed");
   });
 
 });

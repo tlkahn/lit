@@ -395,6 +395,20 @@ export async function linkUnlinkedMention(
   return invoke<void>("link_unlinked_mention", { sourceId, sourceLine, matchedText });
 }
 
+// Index progress
+
+export type IndexPhase = "scanning" | "parsing" | "resolving" | "diffing" | "building";
+
+export interface IndexProgress {
+  phase: IndexPhase;
+  current: number;
+  total: number;
+}
+
+export async function ensureGraphReady(path: string): Promise<void> {
+  return invoke<void>("ensure_graph_ready", { path });
+}
+
 // External editor
 
 export async function openInExternalEditor(

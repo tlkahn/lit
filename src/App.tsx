@@ -4,6 +4,7 @@ import { ContentArea } from "./components/ContentArea";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ContentErrorFallback } from "./components/ContentErrorFallback";
 import { WorkspaceChooser } from "./components/WorkspaceChooser";
+import { IndexingScreen } from "./components/IndexingScreen";
 import { useTheme } from "./hooks/useTheme";
 import { useSidebarPosition } from "./hooks/useSidebarPosition";
 import { useFileWatcher } from "./hooks/useFileWatcher";
@@ -29,6 +30,8 @@ function App() {
   useTheme();
   const { position } = useSidebarPosition();
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
+  const graphReady = useWorkspaceStore((s) => s.graphReady);
+  const indexProgress = useWorkspaceStore((s) => s.indexProgress);
   const openWorkspace = useWorkspaceStore((s) => s.openWorkspace);
   const selectPage = useWorkspaceStore((s) => s.selectPage);
   const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
@@ -117,6 +120,10 @@ function App() {
 
   if (!workspacePath) {
     return <WorkspaceChooser />;
+  }
+
+  if (!graphReady) {
+    return <IndexingScreen progress={indexProgress} />;
   }
 
   return (
