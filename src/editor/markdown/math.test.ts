@@ -85,4 +85,49 @@ describe("DisplayMath parser", () => {
     const nodes = parseNodes("text $$not display$$");
     expect(nodes.some((n) => n.name === "DisplayMath")).toBe(false);
   });
+
+  it("parses $$content$$ {#eq:label} as DisplayMath covering only $$content$$", () => {
+    const nodes = parseNodes("$$E=mc^2$$ {#eq:einstein}");
+    const dm = nodes.find((n) => n.name === "DisplayMath");
+    expect(dm).toBeDefined();
+    expect(dm!.from).toBe(0);
+    expect(dm!.to).toBe(10); // only $$E=mc^2$$, not the label
+  });
+
+  it("parses $$content$${#eq:label} (no space) as DisplayMath covering only $$content$$", () => {
+    const nodes = parseNodes("$$E=mc^2$${#eq:einstein}");
+    const dm = nodes.find((n) => n.name === "DisplayMath");
+    expect(dm).toBeDefined();
+    expect(dm!.from).toBe(0);
+    expect(dm!.to).toBe(10);
+  });
+
+  it("does not match single-line $$ with arbitrary trailing text", () => {
+    const nodes = parseNodes("$$E=mc^2$$ hello world");
+    const dm = nodes.find((n) => n.name === "DisplayMath");
+    // Should NOT parse as single-line display math (arbitrary trailing text)
+    // It will fall through to multi-line and create a broken block, but importantly
+    // it should not create a clean single-line DisplayMath ending at position 10
+    if (dm) {
+      expect(dm.to).not.toBe(10);
+    }
+  });
+
+  it("parses multi-line $$...$$ {#eq:label} on closing line", () => {
+    const doc = "$$\ncontent\n$$ {#eq:einstein}";
+    const nodes = parseNodes(doc);
+    const dm = nodes.find((n) => n.name === "DisplayMath");
+    expect(dm).toBeDefined();
+    expect(dm!.from).toBe(0);
+    expect(dm!.to).toBe(13); // up to and including $$ on closing line
+  });
+
+  it("parses multi-line $$...$$  {#eq:label} with extra space", () => {
+    const doc = "$$\ncontent\n$$  {#eq:test}";
+    const nodes = parseNodes(doc);
+    const dm = nodes.find((n) => n.name === "DisplayMath");
+    expect(dm).toBeDefined();
+    expect(dm!.from).toBe(0);
+    expect(dm!.to).toBe(13);
+  });
 });

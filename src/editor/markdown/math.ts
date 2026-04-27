@@ -42,17 +42,21 @@ export const Math: MarkdownConfig = {
 
         const start = cx.lineStart;
 
-        if (line.text.length > 2 && line.text.endsWith("$$")) {
-          const end = cx.lineStart + line.text.length;
-          cx.nextLine();
-          cx.addElement(cx.elt("DisplayMath", start, end));
-          return true;
+        const closeIdx = line.text.indexOf("$$", 2);
+        if (closeIdx > 2) {
+          const afterClose = line.text.slice(closeIdx + 2).trim();
+          if (afterClose === "" || /^\{#[a-z]+:[^}]+\}$/.test(afterClose)) {
+            const end = cx.lineStart + closeIdx + 2;
+            cx.nextLine();
+            cx.addElement(cx.elt("DisplayMath", start, end));
+            return true;
+          }
         }
 
         let lastEnd = cx.lineStart + line.text.length;
         while (cx.nextLine()) {
-          if (/^\$\$\s*$/.test(line.text)) {
-            const end = cx.lineStart + line.text.length;
+          if (/^\$\$\s*(\{#[a-z]+:[^}]+\})?\s*$/.test(line.text)) {
+            const end = cx.lineStart + 2;
             cx.nextLine();
             cx.addElement(cx.elt("DisplayMath", start, end));
             return true;

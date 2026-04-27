@@ -474,6 +474,44 @@ describe("buildDecorations — display math", () => {
     expect(result).toHaveLength(0);
     view.destroy();
   });
+
+  it("replaces same-line $$...$$ {#eq:label} with widget, leaving label outside", () => {
+    const doc = "$$E=mc^2$$ {#eq:einstein}\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const mathWidget = decos.find((d) => d.widget && d.from === 0);
+    expect(mathWidget).toBeDefined();
+    // Widget should only cover $$E=mc^2$$ (positions 0-10), not the label
+    expect(mathWidget!.to).toBe(10);
+    view.destroy();
+  });
+
+  it("shows raw same-line $$...$$ {#eq:label} when cursor is on that line", () => {
+    const doc = "$$E=mc^2$$ {#eq:einstein}\n\nother";
+    const view = makeView(doc, 5); // cursor inside the math
+    const decos = collectDecos(view);
+    const mathWidget = decos.find((d) => d.widget && d.from === 0);
+    expect(mathWidget).toBeUndefined();
+    view.destroy();
+  });
+
+  it("replaces multi-line $$...$$ {#eq:label} on closing line with widget", () => {
+    const doc = "$$\nx^2\n$$ {#eq:test}\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const blockState = buildBlockReplacements(view.state);
+    const result: DecoInfo[] = [];
+    const iter = blockState.decos.iter();
+    while (iter.value) {
+      const spec = iter.value.spec;
+      result.push({ from: iter.from, to: iter.to, type: "replace", widget: !!spec.widget });
+      iter.next();
+    }
+    const mathWidget = result.find((d) => d.widget && d.from === 0);
+    expect(mathWidget).toBeDefined();
+    // Widget covers from opening $$ to closing $$ only (pos 0 to 7+2=9)
+    expect(mathWidget!.to).toBe(9);
+    view.destroy();
+  });
 });
 
 function collectBlockDecos(view: EditorView): DecoInfo[] {
