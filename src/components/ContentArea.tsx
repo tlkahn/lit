@@ -196,6 +196,7 @@ export function ContentArea() {
           { notePath, line: line.number, col: pos - line.from },
           { notePath: "", line: 0, col: 0 },
         );
+        globalJumpTracker.isNavigating = true;
       },
     });
   }, [selectPage, triggerReload, refreshPages]);
