@@ -2,50 +2,75 @@ import { type EditorView, WidgetType } from "@codemirror/view";
 import { useWorkspaceStore } from "../../stores/workspace";
 import { globalJumpTracker } from "../jumpTracker";
 
+export interface CiteprocLinkInfo {
+  renderedText: string;
+  bibFile?: string;
+  lineNumber?: number;
+  isValid: boolean;
+}
+
 export class CiteprocWidget extends WidgetType {
   constructor(
     readonly original: string,
-    readonly renderedText: string,
-    readonly isValid: boolean,
+    readonly links: CiteprocLinkInfo[],
     readonly charStart: number,
     readonly charEnd: number,
-    readonly bibFile?: string,
-    readonly lineNumber?: number,
   ) {
     super();
+  }
+
+  get isValid(): boolean {
+    return this.links.every((l) => l.isValid);
+  }
+
+  get renderedText(): string {
+    return this.links.map((l) => l.renderedText).join("; ");
+  }
+
+  private buildChildren(parent: HTMLElement, view: EditorView): void {
+    parent.textContent = "";
+    for (let i = 0; i < this.links.length; i++) {
+      if (i > 0) {
+        parent.appendChild(document.createTextNode("; "));
+      }
+      const link = this.links[i]!;
+      const keySpan = document.createElement("span");
+      keySpan.className = "cm-crossref-citeproc-key";
+      if (!link.isValid) keySpan.classList.add("invalid");
+      keySpan.textContent = link.renderedText;
+      keySpan.onmousedown = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (link.isValid && link.bibFile != null && link.lineNumber != null) {
+          const { workspacePath, selectPageAtLine, currentPagePath } =
+            useWorkspaceStore.getState();
+          if (workspacePath && link.bibFile.startsWith(workspacePath + "/")) {
+            const relativePath = link.bibFile.slice(workspacePath.length + 1);
+            recordCiteprocDeparture(view, currentPagePath, this.charStart);
+            selectPageAtLine(relativePath, link.lineNumber);
+            return;
+          }
+        }
+        view.dispatch({
+          selection: { anchor: this.charStart },
+        });
+        view.focus();
+      };
+      parent.appendChild(keySpan);
+    }
   }
 
   toDOM(view: EditorView): HTMLElement {
     const span = document.createElement("span");
     span.className = "cm-crossref-citeproc";
     if (!this.isValid) span.classList.add("invalid");
-    span.textContent = this.renderedText;
     span.setAttribute("title", this.original);
     span.dataset.original = this.original;
-
-    span.onmousedown = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (this.isValid && this.bibFile != null && this.lineNumber != null) {
-        const { workspacePath, selectPageAtLine, currentPagePath } = useWorkspaceStore.getState();
-        if (workspacePath && this.bibFile.startsWith(workspacePath + "/")) {
-          const relativePath = this.bibFile.slice(workspacePath.length + 1);
-          recordCiteprocDeparture(view, currentPagePath, this.charStart);
-          selectPageAtLine(relativePath, this.lineNumber);
-          return;
-        }
-      }
-      view.dispatch({
-        selection: { anchor: this.charStart },
-      });
-      view.focus();
-    };
-
+    this.buildChildren(span, view);
     return span;
   }
 
   updateDOM(dom: HTMLElement, view: EditorView): boolean {
-    dom.textContent = this.renderedText;
     dom.setAttribute("title", this.original);
     dom.dataset.original = this.original;
     if (this.isValid) {
@@ -53,35 +78,25 @@ export class CiteprocWidget extends WidgetType {
     } else {
       dom.classList.add("invalid");
     }
-    dom.onmousedown = (e) => {
-      e!.preventDefault();
-      e!.stopPropagation();
-      if (this.isValid && this.bibFile != null && this.lineNumber != null) {
-        const { workspacePath, selectPageAtLine, currentPagePath } = useWorkspaceStore.getState();
-        if (workspacePath && this.bibFile.startsWith(workspacePath + "/")) {
-          const relativePath = this.bibFile.slice(workspacePath.length + 1);
-          recordCiteprocDeparture(view, currentPagePath, this.charStart);
-          selectPageAtLine(relativePath, this.lineNumber);
-          return;
-        }
-      }
-      view.dispatch({
-        selection: { anchor: this.charStart },
-      });
-      view.focus();
-    };
+    this.buildChildren(dom, view);
     return true;
   }
 
   eq(other: CiteprocWidget): boolean {
     return (
       this.original === other.original &&
-      this.renderedText === other.renderedText &&
-      this.isValid === other.isValid &&
       this.charStart === other.charStart &&
       this.charEnd === other.charEnd &&
-      this.bibFile === other.bibFile &&
-      this.lineNumber === other.lineNumber
+      this.links.length === other.links.length &&
+      this.links.every((l, i) => {
+        const o = other.links[i]!;
+        return (
+          l.renderedText === o.renderedText &&
+          l.bibFile === o.bibFile &&
+          l.lineNumber === o.lineNumber &&
+          l.isValid === o.isValid
+        );
+      })
     );
   }
 
@@ -94,7 +109,11 @@ export class CiteprocWidget extends WidgetType {
   }
 }
 
-function recordCiteprocDeparture(view: EditorView, currentPagePath: string | null, departurePos: number): void {
+function recordCiteprocDeparture(
+  view: EditorView,
+  currentPagePath: string | null,
+  departurePos: number,
+): void {
   const notePath = currentPagePath ?? "";
   const line = view.state.doc.lineAt(departurePos);
   globalJumpTracker.recordJump(

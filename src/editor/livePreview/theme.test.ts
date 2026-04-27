@@ -93,8 +93,8 @@ describe("crossref theme spec", () => {
     expect(rule.color).toContain("--crossref-invalid-color");
   });
 
-  it(".cm-crossref-citeproc.invalid uses --crossref-invalid-color", () => {
-    const rule = livePreviewThemeSpec[".cm-crossref-citeproc.invalid"] as Record<string, string>;
+  it(".cm-crossref-citeproc-key.invalid uses --crossref-invalid-color", () => {
+    const rule = livePreviewThemeSpec[".cm-crossref-citeproc-key.invalid"] as Record<string, string>;
     expect(rule.color).toContain("--crossref-invalid-color");
   });
 
@@ -109,8 +109,8 @@ describe("crossref theme spec", () => {
     expect(rule.textDecoration).toBe("underline");
   });
 
-  it(".cm-crossref-citeproc:hover has underline", () => {
-    const rule = livePreviewThemeSpec[".cm-crossref-citeproc:hover"] as Record<string, string>;
+  it(".cm-crossref-citeproc-key:hover has underline", () => {
+    const rule = livePreviewThemeSpec[".cm-crossref-citeproc-key:hover"] as Record<string, string>;
     expect(rule).toBeDefined();
     expect(rule.textDecoration).toBe("underline");
   });

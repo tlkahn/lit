@@ -10,7 +10,7 @@ import {
   ViewPlugin,
   type ViewUpdate,
 } from "@codemirror/view";
-import { CiteprocWidget } from "./citeprocWidget";
+import { CiteprocWidget, type CiteprocLinkInfo } from "./citeprocWidget";
 import { frontmatterFacet } from "./crossref";
 import { isInEditableRange } from "./crossref";
 import {
@@ -181,6 +181,37 @@ const citeprocPlugin = ViewPlugin.fromClass(
   },
 );
 
+export function buildCiteprocLinks(
+  keys: CiteprocKey[],
+  bibData: BibData,
+): CiteprocLinkInfo[] {
+  return keys.map((k) => {
+    const entry = bibData.byKey.get(k.key);
+    if (!entry) {
+      const rendered = bibData.renderedCitations[k.key];
+      return { renderedText: rendered ?? `@${k.key}`, isValid: false };
+    }
+    const rendered = bibData.renderedCitations[k.key];
+    let renderedText: string;
+    if (rendered) {
+      if (k.suppressed) {
+        const yearMatch = rendered.match(/\d{4}/);
+        renderedText = yearMatch ? yearMatch[0] : rendered;
+      } else {
+        renderedText = rendered;
+      }
+    } else {
+      renderedText = `@${k.key}`;
+    }
+    return {
+      renderedText,
+      bibFile: entry.bib_file,
+      lineNumber: entry.line_number + 1,
+      isValid: true,
+    };
+  });
+}
+
 const citeprocDecorationProvider = EditorView.decorations.compute(
   [bibEntriesField, citeprocMatchesField, "selection"],
   (state) => {
@@ -202,54 +233,14 @@ const citeprocDecorationProvider = EditorView.decorations.compute(
       if (match.from < 0 || match.to > docLen || match.from >= match.to) continue;
       if (isInEditableRange(match.from, match.to, cursorPos, selStart, selEnd)) continue;
 
-      const renderedParts: string[] = [];
-      let allValid = true;
-      let firstBibFile: string | undefined;
-      let firstLineNumber: number | undefined;
-
-      for (const k of match.keys) {
-        const entry = bibData.byKey.get(k.key);
-        if (!entry) {
-          allValid = false;
-          const rendered = bibData.renderedCitations[k.key];
-          renderedParts.push(rendered ?? `@${k.key}`);
-          continue;
-        }
-
-        if (firstBibFile == null) {
-          firstBibFile = entry.bib_file;
-          firstLineNumber = entry.line_number;
-        }
-
-        const rendered = bibData.renderedCitations[k.key];
-        if (rendered) {
-          if (k.suppressed) {
-            const yearMatch = rendered.match(/\d{4}/);
-            renderedParts.push(yearMatch ? yearMatch[0] : rendered);
-          } else {
-            renderedParts.push(rendered);
-          }
-        } else {
-          renderedParts.push(`@${k.key}`);
-        }
-      }
-
-      const renderedText = renderedParts.join("; ");
+      const links = buildCiteprocLinks(match.keys, bibData);
       const original = state.doc.sliceString(match.from, match.to);
 
       decos.push({
         from: match.from,
         to: match.to,
         deco: Decoration.replace({
-          widget: new CiteprocWidget(
-            original,
-            renderedText,
-            allValid,
-            match.from,
-            match.to,
-            firstBibFile,
-            firstLineNumber != null ? firstLineNumber + 1 : undefined,
-          ),
+          widget: new CiteprocWidget(original, links, match.from, match.to),
         }),
       });
     }

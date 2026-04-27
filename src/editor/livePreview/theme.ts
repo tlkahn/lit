@@ -271,14 +271,17 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
   },
   ".cm-crossref-citeproc": {
     color: "var(--crossref-citeproc-color, var(--color-purple, var(--text-accent)))",
+  },
+  ".cm-crossref-citeproc-key": {
     cursor: "pointer",
   },
-  ".cm-crossref-citeproc:hover": {
+  ".cm-crossref-citeproc-key:hover": {
     textDecoration: "underline",
   },
-  ".cm-crossref-citeproc.invalid": {
+  ".cm-crossref-citeproc-key.invalid": {
     color: "var(--crossref-invalid-color, var(--text-error, #e53e3e))",
     textDecoration: "underline wavy",
+    cursor: "default",
   },
 
   // Horizontal rules

@@ -8,6 +8,7 @@ import {
   scanCiteprocCitations,
   citeprocExtension,
   citeprocMatchesField,
+  buildCiteprocLinks,
   type BibData,
 } from "./citeproc";
 import { frontmatterFacet } from "./crossref";
@@ -130,6 +131,54 @@ describe("scanCiteprocCitations", () => {
     expect(results).toHaveLength(1);
     expect(results[0]!.keys[0]!.key).toBe("smith2020");
     expect(results[0]!.keys[0]!.locator).toBe("p. 5");
+  });
+});
+
+describe("buildCiteprocLinks", () => {
+  const ENTRIES: BibEntry[] = [
+    { key: "smith2020", authors: ["Smith"], title: "T", year: "2020", entry_type: "article", line_number: 5, bib_file: "refs.bib" },
+    { key: "jones2021", authors: ["Jones"], title: "T2", year: "2021", entry_type: "article", line_number: 12, bib_file: "refs.bib" },
+  ];
+  const RENDERED: Record<string, string> = { smith2020: "Smith 2020", jones2021: "Jones 2021" };
+
+  it("returns one link per key with bibFile and lineNumber (+1 offset)", () => {
+    const bib = makeBibData(ENTRIES, RENDERED);
+    const links = buildCiteprocLinks(
+      [{ key: "smith2020", suppressed: false }, { key: "jones2021", suppressed: false }],
+      bib,
+    );
+    expect(links).toHaveLength(2);
+    expect(links[0]).toEqual({ renderedText: "Smith 2020", bibFile: "refs.bib", lineNumber: 6, isValid: true });
+    expect(links[1]).toEqual({ renderedText: "Jones 2021", bibFile: "refs.bib", lineNumber: 13, isValid: true });
+  });
+
+  it("marks unknown keys as invalid", () => {
+    const bib = makeBibData(ENTRIES, RENDERED);
+    const links = buildCiteprocLinks(
+      [{ key: "smith2020", suppressed: false }, { key: "unknown", suppressed: false }],
+      bib,
+    );
+    expect(links[0]!.isValid).toBe(true);
+    expect(links[1]).toEqual({ renderedText: "@unknown", isValid: false });
+  });
+
+  it("uses year-only text for suppressed keys", () => {
+    const bib = makeBibData(ENTRIES, RENDERED);
+    const links = buildCiteprocLinks(
+      [{ key: "smith2020", suppressed: true }],
+      bib,
+    );
+    expect(links[0]!.renderedText).toBe("2020");
+  });
+
+  it("falls back to @key when no rendered citation exists", () => {
+    const bib = makeBibData(ENTRIES, {});
+    const links = buildCiteprocLinks(
+      [{ key: "smith2020", suppressed: false }],
+      bib,
+    );
+    expect(links[0]!.renderedText).toBe("@smith2020");
+    expect(links[0]!.isValid).toBe(true);
   });
 });
 
