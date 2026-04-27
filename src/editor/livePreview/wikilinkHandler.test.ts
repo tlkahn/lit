@@ -17,7 +17,7 @@ describe("getWikilinkTargetAtPos", () => {
   it("returns target when pos is inside WikiLink content", () => {
     const state = makeState("see [[MyPage]] here");
     const result = getWikilinkTargetAtPos(state, 7);
-    expect(result).toEqual({ target: "MyPage", section: null });
+    expect(result).toEqual({ target: "MyPage", section: null, from: 4 });
   });
 
   it("returns null when pos is outside WikiLink", () => {
@@ -34,31 +34,31 @@ describe("getWikilinkTargetAtPos", () => {
   it("parses section from [[Page#Section]]", () => {
     const state = makeState("go to [[Page#Section]]");
     const result = getWikilinkTargetAtPos(state, 10);
-    expect(result).toEqual({ target: "Page", section: "Section" });
+    expect(result).toEqual({ target: "Page", section: "Section", from: 6 });
   });
 
   it("parses alias — uses target not display text", () => {
     const state = makeState("see [[Target|Display]]");
     const result = getWikilinkTargetAtPos(state, 8);
-    expect(result).toEqual({ target: "Target", section: null });
+    expect(result).toEqual({ target: "Target", section: null, from: 4 });
   });
 
   it("parses target with section and alias [[Page#Section|Display]]", () => {
     const state = makeState("see [[Page#Section|Display]]");
     const result = getWikilinkTargetAtPos(state, 8);
-    expect(result).toEqual({ target: "Page", section: "Section" });
+    expect(result).toEqual({ target: "Page", section: "Section", from: 4 });
   });
 
   it("returns target with folder path [[folder/Page]]", () => {
     const state = makeState("see [[folder/Page]]");
     const result = getWikilinkTargetAtPos(state, 8);
-    expect(result).toEqual({ target: "folder/Page", section: null });
+    expect(result).toEqual({ target: "folder/Page", section: null, from: 4 });
   });
 
   it("handles same-page section [[#Section]] — target is empty string", () => {
     const state = makeState("see [[#Section]]");
     const result = getWikilinkTargetAtPos(state, 8);
-    expect(result).toEqual({ target: "", section: "Section" });
+    expect(result).toEqual({ target: "", section: "Section", from: 4 });
   });
 });
 
@@ -98,7 +98,7 @@ describe("createWikilinkClickHandler", () => {
     view.contentDOM.dispatchEvent(
       new MouseEvent("mousedown", { button: 0, metaKey: true, bubbles: true }),
     );
-    expect(navigateToPage).toHaveBeenCalledWith("MyPage", undefined, 7);
+    expect(navigateToPage).toHaveBeenCalledWith("MyPage", undefined, 4);
     view.destroy();
   });
 
@@ -108,7 +108,7 @@ describe("createWikilinkClickHandler", () => {
     view.contentDOM.dispatchEvent(
       new MouseEvent("mousedown", { button: 0, ctrlKey: true, bubbles: true }),
     );
-    expect(navigateToPage).toHaveBeenCalledWith("MyPage", undefined, 7);
+    expect(navigateToPage).toHaveBeenCalledWith("MyPage", undefined, 4);
     view.destroy();
   });
 

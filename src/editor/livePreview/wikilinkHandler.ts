@@ -6,6 +6,7 @@ import { syntaxTree } from "@codemirror/language";
 export interface WikilinkTarget {
   target: string;
   section: string | null;
+  from: number;
 }
 
 export function getWikilinkTargetAtPos(
@@ -33,9 +34,10 @@ export function getWikilinkTargetAtPos(
           result = {
             target: raw.substring(0, hashIndex),
             section: raw.substring(hashIndex + 1),
+            from: node.from,
           };
         } else {
-          result = { target: raw, section: null };
+          result = { target: raw, section: null, from: node.from };
         }
         return false;
       }
@@ -64,7 +66,7 @@ export function createWikilinkClickHandler(
         navigateToPage(
           wikilink.target,
           wikilink.section ?? undefined,
-          pos,
+          wikilink.from,
         );
         return true;
       }
