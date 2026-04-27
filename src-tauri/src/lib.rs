@@ -11,7 +11,7 @@ use commands::graph::GraphRegistry;
 use commands::workspace::{PendingFiles, PendingWorkspaces, WorkspaceRegistry};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use tauri::{Manager, WebviewWindowBuilder};
+use tauri::{Emitter, Manager, WebviewWindowBuilder};
 use workspace::write_hash::WriteHashRegistry;
 use bib::cache::BibCache;
 
@@ -103,6 +103,43 @@ pub fn run() {
 
             if let Ok(watcher) = preferences::PreferencesWatcher::new(app.handle().clone()) {
                 app.manage(watcher);
+            }
+
+            let early_workspace = setup_workspace.clone().or_else(|| {
+                app.path().app_data_dir().ok().and_then(|dir| {
+                    commands::workspace::read_last_workspace(&dir)
+                })
+            });
+
+            if let Some(ref ws_path) = early_workspace {
+                let root = std::path::PathBuf::from(ws_path);
+                if root.is_dir() {
+                    let build_state: Arc<commands::graph::GraphBuildState> =
+                        app.state::<Arc<commands::graph::GraphBuildState>>().inner().clone();
+                    let graph_reg: Arc<commands::graph::GraphRegistry> =
+                        app.state::<Arc<commands::graph::GraphRegistry>>().inner().clone();
+                    let handle = app.handle().clone();
+
+                    build_state.start_build(root.clone());
+
+                    tauri::async_runtime::spawn_blocking(move || {
+                        let emit_handle = handle.clone();
+                        let callback = move |p: crate::graph::progress::IndexProgress| {
+                            let _ = emit_handle.emit("lit:index-progress", &p);
+                        };
+                        match crate::graph::indexer::GraphIndex::build_with_progress(root.clone(), &callback) {
+                            Ok(gi) => {
+                                graph_reg.indices.lock().unwrap().insert(root.clone(), Arc::new(gi));
+                                build_state.mark_ready(&root);
+                                let _ = handle.emit("lit:graph-updated", ());
+                            }
+                            Err(e) => {
+                                tracing::error!(error = %e, "early graph indexing failed");
+                                build_state.mark_failed(&root, e.to_string());
+                            }
+                        }
+                    });
+                }
             }
 
             let mut builder =

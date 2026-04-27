@@ -5,7 +5,7 @@ use crate::workspace::scan::scan_pages;
 use crate::workspace::watcher::FileWatcher;
 use crate::workspace::write_hash::WriteHashRegistry;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager, State, WebviewWindowBuilder};
@@ -22,6 +22,18 @@ pub struct WorkspaceRegistry {
 
 pub struct PendingWorkspaces(pub Mutex<HashMap<String, String>>);
 pub struct PendingFiles(pub Mutex<HashMap<String, String>>);
+
+pub fn persist_last_workspace(app_data_dir: &Path, workspace_path: &str) -> Result<(), std::io::Error> {
+    std::fs::create_dir_all(app_data_dir)?;
+    std::fs::write(app_data_dir.join("last-workspace"), workspace_path)
+}
+
+pub fn read_last_workspace(app_data_dir: &Path) -> Option<String> {
+    std::fs::read_to_string(app_data_dir.join("last-workspace"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
 
 pub fn get_workspace_root(registry: &WorkspaceRegistry, label: &str) -> Result<PathBuf, String> {
     let workspaces = registry.workspaces.lock().unwrap();
@@ -71,33 +83,41 @@ pub fn open_workspace(
     );
 
     let graph_root = root.clone();
-    let graph_reg = Arc::clone(&graph_state);
-    let handle = app_handle.clone();
     let build_st = Arc::clone(&build_state);
-    build_st.start_build(graph_root.clone());
 
-    tauri::async_runtime::spawn_blocking(move || {
-        let emit_handle = handle.clone();
-        let callback = move |p: crate::graph::progress::IndexProgress| {
-            let _ = emit_handle.emit("lit:index-progress", &p);
-        };
+    if !build_st.is_in_progress(&graph_root) {
+        let graph_reg = Arc::clone(&graph_state);
+        let handle = app_handle.clone();
+        let build_st = Arc::clone(&build_st);
+        build_st.start_build(graph_root.clone());
 
-        match GraphIndex::build_with_progress(graph_root.clone(), &callback) {
-            Ok(gi) => {
-                graph_reg
-                    .indices
-                    .lock()
-                    .unwrap()
-                    .insert(graph_root.clone(), Arc::new(gi));
-                build_st.mark_ready(&graph_root);
-                let _ = handle.emit("lit:graph-updated", ());
+        tauri::async_runtime::spawn_blocking(move || {
+            let emit_handle = handle.clone();
+            let callback = move |p: crate::graph::progress::IndexProgress| {
+                let _ = emit_handle.emit("lit:index-progress", &p);
+            };
+
+            match GraphIndex::build_with_progress(graph_root.clone(), &callback) {
+                Ok(gi) => {
+                    graph_reg
+                        .indices
+                        .lock()
+                        .unwrap()
+                        .insert(graph_root.clone(), Arc::new(gi));
+                    build_st.mark_ready(&graph_root);
+                    let _ = handle.emit("lit:graph-updated", ());
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "failed to build graph index");
+                    build_st.mark_failed(&graph_root, e.to_string());
+                }
             }
-            Err(e) => {
-                tracing::error!(error = %e, "failed to build graph index");
-                build_st.mark_failed(&graph_root, e.to_string());
-            }
-        }
-    });
+        });
+    }
+
+    if let Ok(app_data_dir) = app_handle.path().app_data_dir() {
+        let _ = persist_last_workspace(&app_data_dir, &path);
+    }
 
     Ok(pages)
 }
@@ -217,5 +237,49 @@ mod tests {
         };
         let result = get_workspace_root(&registry, "main");
         assert_eq!(result.unwrap(), PathBuf::from("/test/workspace"));
+    }
+
+    #[test]
+    fn persist_and_read_last_workspace_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        persist_last_workspace(dir.path(), "/my/vault").unwrap();
+        assert_eq!(
+            read_last_workspace(dir.path()),
+            Some("/my/vault".to_string())
+        );
+    }
+
+    #[test]
+    fn read_last_workspace_returns_none_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(read_last_workspace(dir.path()), None);
+    }
+
+    #[test]
+    fn persist_last_workspace_overwrites_previous() {
+        let dir = tempfile::tempdir().unwrap();
+        persist_last_workspace(dir.path(), "/old/path").unwrap();
+        persist_last_workspace(dir.path(), "/new/path").unwrap();
+        assert_eq!(
+            read_last_workspace(dir.path()),
+            Some("/new/path".to_string())
+        );
+    }
+
+    #[test]
+    fn read_last_workspace_returns_none_for_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("last-workspace"), "").unwrap();
+        assert_eq!(read_last_workspace(dir.path()), None);
+    }
+
+    #[test]
+    fn read_last_workspace_trims_whitespace() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("last-workspace"), "  /my/vault  \n").unwrap();
+        assert_eq!(
+            read_last_workspace(dir.path()),
+            Some("/my/vault".to_string())
+        );
     }
 }

@@ -70,6 +70,14 @@ impl GraphBuildState {
         }
     }
 
+    pub fn is_in_progress(&self, path: &PathBuf) -> bool {
+        if let Some(signal) = self.signals.lock().unwrap().get(path) {
+            matches!(*signal.status.lock().unwrap(), BuildStatus::InProgress)
+        } else {
+            false
+        }
+    }
+
     pub fn get_signal(&self, path: &PathBuf) -> Option<Arc<BuildSignal>> {
         self.signals.lock().unwrap().get(path).cloned()
     }
@@ -628,6 +636,38 @@ mod tests {
     }
 
     // --- GraphBuildState ---
+
+    #[test]
+    fn build_state_is_in_progress_false_for_unknown() {
+        let state = GraphBuildState::new();
+        assert!(!state.is_in_progress(&PathBuf::from("/unknown")));
+    }
+
+    #[test]
+    fn build_state_is_in_progress_true_after_start() {
+        let state = GraphBuildState::new();
+        let path = PathBuf::from("/test");
+        state.start_build(path.clone());
+        assert!(state.is_in_progress(&path));
+    }
+
+    #[test]
+    fn build_state_is_in_progress_false_after_ready() {
+        let state = GraphBuildState::new();
+        let path = PathBuf::from("/test");
+        state.start_build(path.clone());
+        state.mark_ready(&path);
+        assert!(!state.is_in_progress(&path));
+    }
+
+    #[test]
+    fn build_state_is_in_progress_false_after_failed() {
+        let state = GraphBuildState::new();
+        let path = PathBuf::from("/test");
+        state.start_build(path.clone());
+        state.mark_failed(&path, "error".to_string());
+        assert!(!state.is_in_progress(&path));
+    }
 
     #[test]
     fn build_state_start_and_mark_ready() {

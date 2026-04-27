@@ -54,6 +54,13 @@ impl FileWatcher {
                         .to_string_lossy()
                         .to_string();
 
+                    if let Some(build_state) = app_handle.try_state::<Arc<crate::commands::graph::GraphBuildState>>() {
+                        if build_state.is_in_progress(&root_clone) {
+                            eprintln!("[watcher] skipping reindex during initial build: {}", relative);
+                            continue;
+                        }
+                    }
+
                     if let Some(win) = app_handle.get_webview_window(&window_label) {
                         match event.kind {
                             DebouncedEventKind::Any => {
