@@ -7,6 +7,8 @@ use tracing::{debug, info};
 use super::error::GraphError;
 use super::types::{extract_aliases, BacklinkEntry, LinkEntry, ParsedNode, Stats};
 
+pub const CURRENT_SCHEMA_VERSION: i64 = 5;
+
 pub struct Store {
     pub(crate) conn: Connection,
 }
@@ -77,6 +79,23 @@ impl Store {
 
         let version = self.schema_version()?;
 
+        if version > CURRENT_SCHEMA_VERSION {
+            info!(
+                found = version,
+                expected = CURRENT_SCHEMA_VERSION,
+                "schema version from the future — resetting store"
+            );
+            self.conn.execute_batch(
+                "DROP TABLE IF EXISTS nodes;
+                 DROP TABLE IF EXISTS tags;
+                 DROP TABLE IF EXISTS aliases;
+                 DROP TABLE IF EXISTS edges;
+                 DROP TABLE IF EXISTS sync;
+                 DROP TABLE IF EXISTS meta;"
+            )?;
+            return self.migrate();
+        }
+
         if version < 2 {
             info!(from = 1, to = 2, "migrating schema");
             self.conn
@@ -122,6 +141,15 @@ impl Store {
         }
 
         Ok(())
+    }
+
+    pub fn has_data(&self) -> Result<bool, GraphError> {
+        let exists: bool = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM nodes LIMIT 1)",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(exists)
     }
 
     pub fn schema_version(&self) -> Result<i64, GraphError> {
@@ -531,9 +559,59 @@ mod tests {
     }
 
     #[test]
-    fn schema_version_is_5() {
+    fn schema_version_matches_const() {
         let store = Store::open_memory().unwrap();
-        assert_eq!(store.schema_version().unwrap(), 5);
+        assert_eq!(
+            store.schema_version().unwrap(),
+            CURRENT_SCHEMA_VERSION,
+            "migrate() final version drifted from CURRENT_SCHEMA_VERSION — bump the const"
+        );
+    }
+
+    #[test]
+    fn has_data_empty_store() {
+        let store = Store::open_memory().unwrap();
+        assert!(!store.has_data().unwrap());
+    }
+
+    #[test]
+    fn has_data_after_upsert() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1000).unwrap();
+        assert!(store.has_data().unwrap());
+    }
+
+    #[test]
+    fn has_data_false_after_delete() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1000).unwrap();
+        store.delete_node("a.md").unwrap();
+        assert!(!store.has_data().unwrap());
+    }
+
+    #[test]
+    fn schema_version_from_future_resets_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("graph.db");
+
+        // Create a store, insert a node, then bump version to 999
+        {
+            let store = Store::open(&db_path).unwrap();
+            let node = make_node("a.md", "A", &[], json!({}));
+            store.upsert_node(&node, 1000).unwrap();
+            assert!(store.has_data().unwrap());
+            store
+                .conn
+                .execute("UPDATE meta SET value = '999' WHERE key = 'schema_version'", [])
+                .unwrap();
+        }
+
+        // Reopen — should detect future version and reset
+        let store = Store::open(&db_path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+        assert!(!store.has_data().unwrap(), "store should be empty after schema reset");
     }
 
     #[test]

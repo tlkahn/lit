@@ -299,6 +299,12 @@ pub struct DiffResult {
     pub deleted: Vec<String>,
 }
 
+impl DiffResult {
+    pub fn is_empty(&self) -> bool {
+        self.new.is_empty() && self.changed.is_empty() && self.deleted.is_empty()
+    }
+}
+
 pub fn compute_diff(store: &Store, root: &Path) -> Result<DiffResult, GraphError> {
     let disk_files = walk_md_files(root)?;
     let sync_entries = store.all_sync_entries()?;
@@ -519,7 +525,39 @@ impl GraphIndex {
             })?;
         }
         let store = Store::open(&db_path)?;
-        let (_, reverse_stems) = index_workspace(&store, &workspace_root)?;
+
+        let reverse_stems = if store.has_data()? {
+            let diff = compute_diff(&store, &workspace_root)?;
+            if diff.is_empty() {
+                info!("warm start: no changes detected, loading from store");
+                let edges: Vec<(String, String)> = store
+                    .all_raw_edges()?
+                    .into_iter()
+                    .map(|(source, _target, raw_target)| (source, raw_target))
+                    .collect();
+                ReverseStemIndex::build_from_edges(&edges)
+            } else {
+                info!(
+                    new = diff.new.len(),
+                    changed = diff.changed.len(),
+                    deleted = diff.deleted.len(),
+                    "warm start: applying diff"
+                );
+                let edges: Vec<(String, String)> = store
+                    .all_raw_edges()?
+                    .into_iter()
+                    .map(|(source, _target, raw_target)| (source, raw_target))
+                    .collect();
+                let mut reverse = ReverseStemIndex::build_from_edges(&edges);
+                incremental_reindex(&store, &workspace_root, &mut reverse, &diff)?;
+                reverse
+            }
+        } else {
+            info!("cold start: no existing store data, full index");
+            let (_, reverse_stems) = index_workspace(&store, &workspace_root)?;
+            reverse_stems
+        };
+
         let knowledge = KnowledgeGraph::from_store(&store)?;
         Ok(Self {
             store: Mutex::new(store),
@@ -1292,6 +1330,48 @@ mod tests {
         assert_eq!(diff.deleted, vec!["delete.md"]);
     }
 
+    // --- DiffResult::is_empty ---
+
+    #[test]
+    fn diff_result_is_empty_when_all_vecs_empty() {
+        let diff = DiffResult {
+            new: vec![],
+            changed: vec![],
+            deleted: vec![],
+        };
+        assert!(diff.is_empty());
+    }
+
+    #[test]
+    fn diff_result_is_not_empty_with_new() {
+        let diff = DiffResult {
+            new: vec!["a.md".to_string()],
+            changed: vec![],
+            deleted: vec![],
+        };
+        assert!(!diff.is_empty());
+    }
+
+    #[test]
+    fn diff_result_is_not_empty_with_changed() {
+        let diff = DiffResult {
+            new: vec![],
+            changed: vec!["a.md".to_string()],
+            deleted: vec![],
+        };
+        assert!(!diff.is_empty());
+    }
+
+    #[test]
+    fn diff_result_is_not_empty_with_deleted() {
+        let diff = DiffResult {
+            new: vec![],
+            changed: vec![],
+            deleted: vec!["a.md".to_string()],
+        };
+        assert!(!diff.is_empty());
+    }
+
     // --- incremental_reindex ---
 
     #[test]
@@ -1397,6 +1477,104 @@ mod tests {
         let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
         let stats = gi.stats().unwrap();
         assert_eq!(stats.nodes, 2);
+    }
+
+    #[test]
+    fn build_warm_start_no_diff() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Hello.");
+        write_md(dir.path(), "b.md", "Links to [[a]].");
+
+        // Cold start — builds .lit/graph.db
+        let gi1 = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let stats1 = gi1.stats().unwrap();
+        assert_eq!(stats1.nodes, 2);
+        assert_eq!(stats1.edges, 1);
+        drop(gi1);
+
+        // Warm start — same files, no changes
+        let gi2 = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let stats2 = gi2.stats().unwrap();
+        assert_eq!(stats2.nodes, 2, "warm start should preserve node count");
+        assert_eq!(stats2.edges, 1, "warm start should preserve edge count");
+
+        // Verify backlinks work (proves in-memory structs were rebuilt)
+        let backlinks = gi2.backlinks("a.md").unwrap();
+        assert_eq!(backlinks.len(), 1);
+        assert_eq!(backlinks[0].source_id, "b.md");
+    }
+
+    #[test]
+    fn build_warm_start_with_diff() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Hello.");
+        write_md(dir.path(), "b.md", "Links to [[a]].");
+
+        // Cold start
+        let gi1 = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        assert_eq!(gi1.stats().unwrap().nodes, 2);
+        drop(gi1);
+
+        // Modify a file and add a new one
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        write_md(dir.path(), "b.md", "Now links to [[c]].");
+        write_md(dir.path(), "c.md", "New page.");
+
+        // Warm start — should apply diff
+        let gi2 = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let stats2 = gi2.stats().unwrap();
+        assert_eq!(stats2.nodes, 3, "should include new page c.md");
+
+        // b.md should now link to c.md, not a.md
+        let backlinks_a = gi2.backlinks("a.md").unwrap();
+        assert!(backlinks_a.is_empty(), "a.md should have no backlinks after edit");
+        let backlinks_c = gi2.backlinks("c.md").unwrap();
+        assert_eq!(backlinks_c.len(), 1);
+        assert_eq!(backlinks_c[0].source_id, "b.md");
+    }
+
+    #[test]
+    fn build_warm_start_with_deletion() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Hello.");
+        write_md(dir.path(), "b.md", "World.");
+
+        // Cold start
+        let gi1 = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        assert_eq!(gi1.stats().unwrap().nodes, 2);
+        drop(gi1);
+
+        // Delete a file
+        fs::remove_file(dir.path().join("b.md")).unwrap();
+
+        // Warm start — should detect deletion
+        let gi2 = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let stats2 = gi2.stats().unwrap();
+        assert_eq!(stats2.nodes, 1, "deleted file should be removed");
+    }
+
+    #[test]
+    fn build_corrupt_store_falls_back_to_cold_start() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Hello.");
+
+        // Cold start — creates graph.db
+        let gi1 = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        assert_eq!(gi1.stats().unwrap().nodes, 1);
+        drop(gi1);
+
+        // Corrupt the schema version
+        let db_path = dir.path().join(".lit").join("graph.db");
+        {
+            let conn = rusqlite::Connection::open(&db_path).unwrap();
+            conn.execute("UPDATE meta SET value = '999' WHERE key = 'schema_version'", [])
+                .unwrap();
+        }
+
+        // Build again — should detect future version, reset, and do cold start
+        let gi2 = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let stats2 = gi2.stats().unwrap();
+        assert_eq!(stats2.nodes, 1, "cold start fallback should re-index");
     }
 
     #[test]
