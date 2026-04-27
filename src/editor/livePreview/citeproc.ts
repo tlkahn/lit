@@ -122,6 +122,7 @@ function extractBibPaths(frontmatter: Record<string, unknown>): string[] {
 const citeprocPlugin = ViewPlugin.fromClass(
   class {
     private lastBibPaths = "";
+    private lastNoteDir = "";
 
     constructor(private view: EditorView) {
       this.checkBibChange();
@@ -130,8 +131,14 @@ const citeprocPlugin = ViewPlugin.fromClass(
     update(update: ViewUpdate) {
       const fm = update.state.facet(frontmatterFacet);
       const bibPaths = extractBibPaths(fm).join("\0");
+      const noteDir = update.state.facet(noteDirFacet);
+
       if (bibPaths !== this.lastBibPaths) {
         this.lastBibPaths = bibPaths;
+        this.lastNoteDir = noteDir;
+        this.fetchBib();
+      } else if (noteDir !== this.lastNoteDir && bibPaths) {
+        this.lastNoteDir = noteDir;
         this.fetchBib();
       }
     }
@@ -140,6 +147,7 @@ const citeprocPlugin = ViewPlugin.fromClass(
       const fm = this.view.state.facet(frontmatterFacet);
       const bibPaths = extractBibPaths(fm).join("\0");
       this.lastBibPaths = bibPaths;
+      this.lastNoteDir = this.view.state.facet(noteDirFacet);
       if (bibPaths) {
         this.fetchBib();
       }
@@ -153,12 +161,15 @@ const citeprocPlugin = ViewPlugin.fromClass(
       }
       const noteDir = this.view.state.facet(noteDirFacet);
       const snapshotPaths = this.lastBibPaths;
+      const snapshotDir = noteDir;
 
       resolveBibEntries(paths, noteDir)
         .then((entries) => {
           if (this.lastBibPaths !== snapshotPaths) return;
+          if (this.lastNoteDir !== snapshotDir) return;
           return renderBibCitations(entries).then((rendered) => {
             if (this.lastBibPaths !== snapshotPaths) return;
+            if (this.lastNoteDir !== snapshotDir) return;
             const byKey = new Map(entries.map((e) => [e.key, e]));
             this.view.dispatch({
               effects: setBibData.of({ entries, renderedCitations: rendered, byKey }),
