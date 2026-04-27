@@ -35,6 +35,9 @@ function ensureCommandsRegistered() {
   commandRegistry.register("app.toggleFocusMode", () => {
     useFocusModeStore.getState().toggleFocusMode();
   });
+  commandRegistry.register("panel.toggleBottom", () => {
+    window.dispatchEvent(new CustomEvent("lit:toggle-bottom-panel"));
+  });
 }
 
 function keyStringFromEvent(e: KeyboardEvent): string {

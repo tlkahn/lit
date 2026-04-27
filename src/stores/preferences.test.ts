@@ -12,7 +12,7 @@ describe("PreferencesStore", () => {
       crossrefLiveRendering: true,
       crossrefEnableCiteproc: true,
       mediaThumbnails: true,
-      experimentalUnlinkedReferences: false,
+      experimentalUnlinkedReferences: true,
       loaded: false,
     });
   });
@@ -305,9 +305,9 @@ describe("PreferencesStore", () => {
     expect(usePreferencesStore.getState().mediaThumbnails).toBe(false);
   });
 
-  it("defaults experimentalUnlinkedReferences to false", () => {
+  it("defaults experimentalUnlinkedReferences to true", () => {
     const state = usePreferencesStore.getState();
-    expect(state.experimentalUnlinkedReferences).toBe(false);
+    expect(state.experimentalUnlinkedReferences).toBe(true);
   });
 
   it("maps experimental.unlinkedReferences true from IPC", async () => {
@@ -328,7 +328,7 @@ describe("PreferencesStore", () => {
     expect(usePreferencesStore.getState().experimentalUnlinkedReferences).toBe(true);
   });
 
-  it("defaults experimentalUnlinkedReferences to false when key missing from IPC", async () => {
+  it("defaults experimentalUnlinkedReferences to true when key missing from IPC", async () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
@@ -342,7 +342,7 @@ describe("PreferencesStore", () => {
     mockListen();
 
     await usePreferencesStore.getState().loadPreferences();
-    expect(usePreferencesStore.getState().experimentalUnlinkedReferences).toBe(false);
+    expect(usePreferencesStore.getState().experimentalUnlinkedReferences).toBe(true);
   });
 
   it("updates experimentalUnlinkedReferences on preferences://changed event", async () => {
@@ -359,15 +359,15 @@ describe("PreferencesStore", () => {
     mockListen();
 
     await usePreferencesStore.getState().loadPreferences();
-    expect(usePreferencesStore.getState().experimentalUnlinkedReferences).toBe(false);
+    expect(usePreferencesStore.getState().experimentalUnlinkedReferences).toBe(true);
 
     emitMockEvent("preferences://changed", {
       "workbench.colorTheme": null,
       "workbench.darkMode": "auto",
       "workbench.sideBar.location": "left",
-      "experimental.unlinkedReferences": true,
+      "experimental.unlinkedReferences": false,
     });
 
-    expect(usePreferencesStore.getState().experimentalUnlinkedReferences).toBe(true);
+    expect(usePreferencesStore.getState().experimentalUnlinkedReferences).toBe(false);
   });
 });

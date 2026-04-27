@@ -40,8 +40,8 @@ describe("BacklinksPanel", () => {
     });
   });
 
-  // Cycle 5: Display backlink entries with count
-  it("displays backlink entries with count in header", async () => {
+  // Cycle 5: Display backlink entries
+  it("displays backlink entries", async () => {
     const entries: BacklinkEntry[] = [
       makeEntry({ source_id: "a.md", source_title: "Alpha", context: "see [[target]]" }),
       makeEntry({ source_id: "b.md", source_title: "Beta", context: "links to [[target]]", source_line: 5 }),
@@ -54,9 +54,8 @@ describe("BacklinksPanel", () => {
     render(<BacklinksPanel pageId="target.md" />);
 
     await waitFor(() => {
-      expect(screen.getByText("Linked References (2)")).toBeInTheDocument();
+      expect(screen.getByText("Alpha")).toBeInTheDocument();
     });
-    expect(screen.getByText("Alpha")).toBeInTheDocument();
     expect(screen.getByText("Beta")).toBeInTheDocument();
   });
 
@@ -137,27 +136,33 @@ describe("BacklinksPanel", () => {
     setCurrentEditorView(null);
   });
 
-  // Cycle 8: Collapse/expand toggle
-  it("collapses and expands on header click", async () => {
+  it("calls onCountChange with entry count when entries arrive", async () => {
+    const spy = vi.fn();
     mockInvoke((cmd) => {
       if (cmd === "get_backlinks")
-        return [makeEntry({ source_title: "Alpha" })];
+        return [makeEntry(), makeEntry({ source_id: "b.md" }), makeEntry({ source_id: "c.md" })];
       throw new Error(`Unknown command: ${cmd}`);
     });
 
-    render(<BacklinksPanel pageId="target.md" />);
+    render(<BacklinksPanel pageId="target.md" onCountChange={spy} />);
 
     await waitFor(() => {
-      expect(screen.getByText("Alpha")).toBeInTheDocument();
+      expect(spy).toHaveBeenCalledWith(3);
+    });
+  });
+
+  it("calls onCountChange with 0 when empty", async () => {
+    const spy = vi.fn();
+    mockInvoke((cmd) => {
+      if (cmd === "get_backlinks") return [];
+      throw new Error(`Unknown command: ${cmd}`);
     });
 
-    // Click header to collapse
-    await userEvent.click(screen.getByTestId("backlinks-header"));
-    expect(screen.queryByText("Alpha")).not.toBeInTheDocument();
+    render(<BacklinksPanel pageId="target.md" onCountChange={spy} />);
 
-    // Click header to expand
-    await userEvent.click(screen.getByTestId("backlinks-header"));
-    expect(screen.getByText("Alpha")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(spy).toHaveBeenCalledWith(0);
+    });
   });
 
   // Cycle 9: Live refresh via lit:graph-updated event
@@ -179,7 +184,7 @@ describe("BacklinksPanel", () => {
     render(<BacklinksPanel pageId="target.md" />);
 
     await waitFor(() => {
-      expect(screen.getByText("Linked References (1)")).toBeInTheDocument();
+      expect(screen.getByText("First")).toBeInTheDocument();
     });
 
     act(() => {
@@ -187,9 +192,8 @@ describe("BacklinksPanel", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("Linked References (2)")).toBeInTheDocument();
+      expect(screen.getByText("Second")).toBeInTheDocument();
     });
-    expect(screen.getByText("Second")).toBeInTheDocument();
   });
 
   it("refetches when pageId changes", async () => {

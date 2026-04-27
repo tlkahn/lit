@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { ContentArea, parseYamlErrorLocation } from "./ContentArea";
 import { mockInvoke } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
-import { usePreferencesStore } from "../stores/preferences";
+
 import { globalJumpTracker } from "../editor/jumpTracker";
 
 const samplePage = {
@@ -730,7 +730,7 @@ describe("ContentArea mindmap toggle", () => {
   });
 });
 
-describe("ContentArea unlinked references gating", () => {
+describe("ContentArea bottom panel", () => {
   beforeEach(() => {
     mockInvoke((cmd) => {
       if (cmd === "read_page") return samplePage;
@@ -743,25 +743,12 @@ describe("ContentArea unlinked references gating", () => {
     });
   });
 
-  it("does not render UnlinkedMentionsPanel when experimentalUnlinkedReferences is false", async () => {
-    usePreferencesStore.setState({ experimentalUnlinkedReferences: false });
+  it("renders BottomPanel with pageId", async () => {
     useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
     render(<ContentArea />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("editor")).toBeInTheDocument();
-    });
-
-    expect(screen.queryByTestId("unlinked-header")).not.toBeInTheDocument();
-  });
-
-  it("renders UnlinkedMentionsPanel when experimentalUnlinkedReferences is true", async () => {
-    usePreferencesStore.setState({ experimentalUnlinkedReferences: true });
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
-    render(<ContentArea />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("unlinked-header")).toBeInTheDocument();
+      expect(screen.getByTestId("bottom-panel")).toBeInTheDocument();
     });
   });
 });

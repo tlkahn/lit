@@ -25,7 +25,7 @@ beforeEach(() => {
 });
 
 describe("UnlinkedMentionsPanel", () => {
-  // Cycle 10.1 — Empty state (starts collapsed, expand to see message)
+  // Cycle 10.1 — Empty state
   it("shows empty message when no unlinked mentions", async () => {
     mockInvoke((cmd) => {
       if (cmd === "get_unlinked_mentions") return [];
@@ -34,17 +34,13 @@ describe("UnlinkedMentionsPanel", () => {
 
     render(<UnlinkedMentionsPanel pageId="target.md" />);
 
-    // Wait for fetch to settle, then expand
     await waitFor(() => {
-      expect(screen.getByTestId("unlinked-header")).toBeInTheDocument();
+      expect(screen.getByText("No unlinked mentions found")).toBeInTheDocument();
     });
-    await userEvent.click(screen.getByTestId("unlinked-header"));
-
-    expect(screen.getByText("No unlinked mentions found")).toBeInTheDocument();
   });
 
-  // Cycle 10.2 — Display entries with count
-  it("displays entries with count in header when expanded", async () => {
+  // Cycle 10.2 — Display entries
+  it("displays entries when loaded", async () => {
     const entries: UnlinkedMention[] = [
       makeMention({ source_id: "c.md", source_title: "Gamma", matched_text: "Alpha" }),
       makeMention({ source_id: "d.md", source_title: "Delta", matched_text: "Alpha" }),
@@ -57,40 +53,38 @@ describe("UnlinkedMentionsPanel", () => {
     render(<UnlinkedMentionsPanel pageId="target.md" />);
 
     await waitFor(() => {
-      expect(screen.getByText("Unlinked References (2)")).toBeInTheDocument();
+      expect(screen.getByText("Gamma")).toBeInTheDocument();
     });
-
-    // Expand to see entries
-    await userEvent.click(screen.getByTestId("unlinked-header"));
-
-    expect(screen.getByText("Gamma")).toBeInTheDocument();
     expect(screen.getByText("Delta")).toBeInTheDocument();
   });
 
-  // Cycle 10.3 — Collapse/expand (starts collapsed)
-  it("starts collapsed; click to expand; click again to collapse", async () => {
+  it("calls onCountChange with entry count when entries arrive", async () => {
+    const spy = vi.fn();
     mockInvoke((cmd) => {
       if (cmd === "get_unlinked_mentions")
-        return [makeMention({ source_title: "Gamma" })];
+        return [makeMention(), makeMention({ source_id: "d.md" })];
       throw new Error(`Unknown command: ${cmd}`);
     });
 
-    render(<UnlinkedMentionsPanel pageId="target.md" />);
+    render(<UnlinkedMentionsPanel pageId="target.md" onCountChange={spy} />);
 
     await waitFor(() => {
-      expect(screen.getByText("Unlinked References (1)")).toBeInTheDocument();
+      expect(spy).toHaveBeenCalledWith(2);
+    });
+  });
+
+  it("calls onCountChange with 0 when empty and loaded", async () => {
+    const spy = vi.fn();
+    mockInvoke((cmd) => {
+      if (cmd === "get_unlinked_mentions") return [];
+      throw new Error(`Unknown command: ${cmd}`);
     });
 
-    // Starts collapsed — entry not visible
-    expect(screen.queryByText("Gamma")).not.toBeInTheDocument();
+    render(<UnlinkedMentionsPanel pageId="target.md" onCountChange={spy} />);
 
-    // Click to expand
-    await userEvent.click(screen.getByTestId("unlinked-header"));
-    expect(screen.getByText("Gamma")).toBeInTheDocument();
-
-    // Click to collapse again
-    await userEvent.click(screen.getByTestId("unlinked-header"));
-    expect(screen.queryByText("Gamma")).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(spy).toHaveBeenCalledWith(0);
+    });
   });
 
   // Cycle 10.4 — "Link" button calls IPC
@@ -114,11 +108,8 @@ describe("UnlinkedMentionsPanel", () => {
     render(<UnlinkedMentionsPanel pageId="target.md" />);
 
     await waitFor(() => {
-      expect(screen.getByText("Unlinked References (1)")).toBeInTheDocument();
+      expect(screen.getByText("Gamma")).toBeInTheDocument();
     });
-
-    // Expand
-    await userEvent.click(screen.getByTestId("unlinked-header"));
 
     const linkButton = screen.getByRole("button", { name: "Link" });
     await userEvent.click(linkButton);
@@ -145,10 +136,9 @@ describe("UnlinkedMentionsPanel", () => {
     render(<UnlinkedMentionsPanel pageId="target.md" />);
 
     await waitFor(() => {
-      expect(screen.getByText("Unlinked References (1)")).toBeInTheDocument();
+      expect(screen.getByText("Gamma")).toBeInTheDocument();
     });
 
-    await userEvent.click(screen.getByTestId("unlinked-header"));
     await userEvent.click(screen.getByText("Gamma"));
 
     expect(selectPage).toHaveBeenCalledWith("c.md");
@@ -165,10 +155,8 @@ describe("UnlinkedMentionsPanel", () => {
     render(<UnlinkedMentionsPanel pageId="target.md" />);
 
     await waitFor(() => {
-      expect(screen.getByText("Unlinked References (1)")).toBeInTheDocument();
+      expect(screen.getByText("Gamma")).toBeInTheDocument();
     });
-
-    await userEvent.click(screen.getByTestId("unlinked-header"));
 
     const contextEl = screen.getByTestId("unlinked-context-0");
     expect(contextEl.textContent).toBe("mentions Alpha in passing");
@@ -196,7 +184,7 @@ describe("UnlinkedMentionsPanel", () => {
     render(<UnlinkedMentionsPanel pageId="target.md" />);
 
     await waitFor(() => {
-      expect(screen.getByText("Unlinked References (1)")).toBeInTheDocument();
+      expect(screen.getByText("First")).toBeInTheDocument();
     });
 
     act(() => {
@@ -204,7 +192,7 @@ describe("UnlinkedMentionsPanel", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("Unlinked References (2)")).toBeInTheDocument();
+      expect(screen.getByText("Second")).toBeInTheDocument();
     });
   });
 
@@ -251,7 +239,7 @@ describe("UnlinkedMentionsPanel", () => {
     render(<UnlinkedMentionsPanel pageId="target.md" />);
 
     await waitFor(() => {
-      expect(screen.getByText("Unlinked References (1)")).toBeInTheDocument();
+      expect(screen.getByText("First")).toBeInTheDocument();
     });
     expect(screen.queryByTestId("unlinked-spinner")).not.toBeInTheDocument();
 
@@ -324,7 +312,7 @@ describe("UnlinkedMentionsPanel", () => {
     expect(screen.queryByTestId("unlinked-spinner")).not.toBeInTheDocument();
   });
 
-  // Cycle 11.5 — Expanded empty body suppresses message during load
+  // Cycle 11.5 — Suppresses empty message during load
   it("suppresses empty message while loading, shows after resolve", async () => {
     let resolveIpc!: (value: UnlinkedMention[]) => void;
     const ipcPromise = new Promise<UnlinkedMention[]>((r) => {
@@ -337,9 +325,6 @@ describe("UnlinkedMentionsPanel", () => {
     });
 
     render(<UnlinkedMentionsPanel pageId="target.md" />);
-
-    // Expand while still loading
-    await userEvent.click(screen.getByTestId("unlinked-header"));
 
     expect(screen.queryByText("No unlinked mentions found")).not.toBeInTheDocument();
     expect(screen.getByTestId("unlinked-spinner")).toBeInTheDocument();
@@ -371,20 +356,15 @@ describe("UnlinkedMentionsPanel", () => {
     render(<UnlinkedMentionsPanel pageId="target.md" />);
 
     await waitFor(() => {
-      expect(screen.getByText("Unlinked References (2)")).toBeInTheDocument();
+      expect(screen.getByText("Gamma")).toBeInTheDocument();
     });
 
-    await userEvent.click(screen.getByTestId("unlinked-header"));
-    expect(screen.getByText("Gamma")).toBeInTheDocument();
-
-    // Click Link on the first entry
     const linkButtons = screen.getAllByRole("button", { name: "Link" });
     await userEvent.click(linkButtons[0]!);
 
     await waitFor(() => {
-      expect(screen.getByText("Unlinked References (1)")).toBeInTheDocument();
+      expect(screen.queryByText("Gamma")).not.toBeInTheDocument();
     });
-    expect(screen.queryByText("Gamma")).not.toBeInTheDocument();
     expect(screen.getByText("Delta")).toBeInTheDocument();
   });
 });

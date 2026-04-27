@@ -76,6 +76,20 @@ describe("useKeymaps", () => {
     expect(listener).toHaveBeenCalledTimes(1);
   });
 
+  it("panel.toggleBottom is registered in the command registry", async () => {
+    await loadHook();
+    expect(commandRegistry.has("panel.toggleBottom")).toBe(true);
+  });
+
+  it("executing panel.toggleBottom dispatches lit:toggle-bottom-panel", async () => {
+    await loadHook();
+    const listener = vi.fn();
+    window.addEventListener("lit:toggle-bottom-panel", listener);
+    commandRegistry.execute("panel.toggleBottom");
+    window.removeEventListener("lit:toggle-bottom-panel", listener);
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
   it("app keydown handler dispatches matching command", async () => {
     commandRegistry.register("app.newPage", vi.fn());
     const { result } = await loadHook();
