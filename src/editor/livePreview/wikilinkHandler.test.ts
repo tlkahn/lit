@@ -60,6 +60,48 @@ describe("getWikilinkTargetAtPos", () => {
     const result = getWikilinkTargetAtPos(state, 8);
     expect(result).toEqual({ target: "", section: "Section", from: 4 });
   });
+
+  it("returns target for WikiLink inside italic *[[page]]*", () => {
+    const state = makeState("*[[page]]*");
+    const result = getWikilinkTargetAtPos(state, 4);
+    expect(result).not.toBeNull();
+    expect(result!.target).toBe("page");
+    expect(result!.section).toBeNull();
+  });
+
+  it("returns target for WikiLink inside bold **[[page]]**", () => {
+    const state = makeState("**[[page]]**");
+    const result = getWikilinkTargetAtPos(state, 5);
+    expect(result).not.toBeNull();
+    expect(result!.target).toBe("page");
+  });
+
+  it("returns target for WikiLink inside bold+italic ***[[page]]***", () => {
+    const state = makeState("***[[page]]***");
+    const result = getWikilinkTargetAtPos(state, 6);
+    expect(result).not.toBeNull();
+    expect(result!.target).toBe("page");
+  });
+
+  it("returns null on emphasis marks outside WikiLink", () => {
+    const state = makeState("*[[page]]*");
+    expect(getWikilinkTargetAtPos(state, 0)).toBeNull();
+  });
+
+  it("parses section from WikiLink inside italic", () => {
+    const state = makeState("*[[Page#Heading]]*");
+    const result = getWikilinkTargetAtPos(state, 5);
+    expect(result).not.toBeNull();
+    expect(result!.target).toBe("Page");
+    expect(result!.section).toBe("Heading");
+  });
+
+  it("parses alias in WikiLink inside bold", () => {
+    const state = makeState("**[[Target|Display]]**");
+    const result = getWikilinkTargetAtPos(state, 6);
+    expect(result).not.toBeNull();
+    expect(result!.target).toBe("Target");
+  });
 });
 
 describe("createWikilinkClickHandler", () => {
@@ -70,7 +112,11 @@ describe("createWikilinkClickHandler", () => {
     ).not.toThrow();
   });
 
-  function createView(doc: string, navigateToPage: ReturnType<typeof vi.fn>) {
+  function createView(
+    doc: string,
+    navigateToPage: ReturnType<typeof vi.fn>,
+    mockPos = 7,
+  ) {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const state = EditorState.create({
@@ -81,7 +127,7 @@ describe("createWikilinkClickHandler", () => {
       ],
     });
     const view = new EditorView({ state, parent: container });
-    vi.spyOn(view, "posAtCoords").mockReturnValue(7);
+    vi.spyOn(view, "posAtCoords").mockReturnValue(mockPos);
     return view;
   }
 
@@ -139,6 +185,28 @@ describe("createWikilinkClickHandler", () => {
       new MouseEvent("mousedown", { button: 2, metaKey: true, bubbles: true }),
     );
     expect(navigateToPage).not.toHaveBeenCalled();
+    view.destroy();
+  });
+
+  it("navigates on Cmd+mousedown for italic-wrapped wikilink with correct from", () => {
+    const navigateToPage = vi.fn();
+    const view = createView("*[[MyPage]]*", navigateToPage, 5);
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", { button: 0, metaKey: true, bubbles: true }),
+    );
+    expect(navigateToPage).toHaveBeenCalledWith("MyPage", undefined, expect.any(Number));
+    const fromArg = navigateToPage.mock.calls[0]![2] as number;
+    expect(fromArg).toBeGreaterThan(0);
+    view.destroy();
+  });
+
+  it("navigates on Cmd+mousedown for bold-wrapped wikilink", () => {
+    const navigateToPage = vi.fn();
+    const view = createView("**[[MyPage]]**", navigateToPage, 6);
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", { button: 0, metaKey: true, bubbles: true }),
+    );
+    expect(navigateToPage).toHaveBeenCalled();
     view.destroy();
   });
 });

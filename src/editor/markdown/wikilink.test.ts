@@ -76,4 +76,14 @@ describe("WikiLink parser", () => {
     expect(wl.from).toBe(4);
     expect(wl.to).toBe(11);
   });
+
+  it("produces WikiLink inside Emphasis for *[[Page]]*", () => {
+    const nodes = parseNodes("*[[Page]]*");
+    const emphasis = nodes.find((n) => n.name === "Emphasis");
+    const wl = nodes.find((n) => n.name === "WikiLink");
+    expect(emphasis).toBeDefined();
+    expect(wl).toBeDefined();
+    expect(wl!.from).toBeGreaterThanOrEqual(emphasis!.from);
+    expect(wl!.to).toBeLessThanOrEqual(emphasis!.to);
+  });
 });
