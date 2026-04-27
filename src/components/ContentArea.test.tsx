@@ -5,6 +5,7 @@ import { ContentArea, parseYamlErrorLocation } from "./ContentArea";
 import { mockInvoke } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePreferencesStore } from "../stores/preferences";
+import { globalJumpTracker } from "../editor/jumpTracker";
 
 const samplePage = {
   body: "# Hello\nSome content",
@@ -762,5 +763,68 @@ describe("ContentArea unlinked references gating", () => {
     await waitFor(() => {
       expect(screen.getByTestId("unlinked-header")).toBeInTheDocument();
     });
+  });
+});
+
+describe("ContentArea jump recording on page switch", () => {
+  beforeEach(() => {
+    globalJumpTracker.clear();
+  });
+
+  it("records departure jump when switching pages via selectPage", async () => {
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor").textContent).toContain("Some content");
+    });
+
+    act(() => {
+      useWorkspaceStore.getState().selectPage("Other.md");
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor").textContent).toContain("Different content");
+    });
+
+    expect(globalJumpTracker.jumps.length).toBeGreaterThanOrEqual(1);
+    expect(globalJumpTracker.jumps.some((j) => j.notePath === "Hello.md")).toBe(true);
+  });
+
+  it("does not record departure when switching from null (no previous page)", async () => {
+    render(<ContentArea />);
+    expect(screen.getByTestId("empty-state")).toBeInTheDocument();
+
+    act(() => {
+      useWorkspaceStore.getState().selectPage("Hello.md");
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor").textContent).toContain("Some content");
+    });
+
+    expect(globalJumpTracker.jumps).toHaveLength(0);
+  });
+
+  it("does not record departure when isNavigating is true (jump navigation)", async () => {
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor").textContent).toContain("Some content");
+    });
+
+    globalJumpTracker.isNavigating = true;
+
+    act(() => {
+      useWorkspaceStore.getState().selectPage("Other.md");
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor").textContent).toContain("Different content");
+    });
+
+    expect(globalJumpTracker.jumps).toHaveLength(0);
+    globalJumpTracker.isNavigating = false;
   });
 });

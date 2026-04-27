@@ -102,6 +102,14 @@ export function ContentArea() {
     if (previousPath && editorViewRef.current) {
       const view = editorViewRef.current;
       saveViewState(previousPath, view.scrollDOM.scrollTop, view.state.selection.main.head);
+      if (!globalJumpTracker.isNavigating) {
+        const pos = view.state.selection.main.head;
+        const line = view.state.doc.lineAt(pos);
+        globalJumpTracker.recordJump(
+          { notePath: previousPath, line: line.number, col: pos - line.from },
+          { notePath: "", line: 0, col: 0 },
+        );
+      }
     }
     currentPathRef.current = currentPagePath;
     if (currentPagePath) {
