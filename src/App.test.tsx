@@ -51,6 +51,14 @@ describe("App", () => {
           return null;
         case "get_pending_file":
           return null;
+        case "get_initial_line":
+          return null;
+        case "get_initial_col":
+          return null;
+        case "get_pending_line":
+          return null;
+        case "get_pending_col":
+          return null;
         case "list_themes":
           return [];
         case "get_preferences":
@@ -352,6 +360,189 @@ describe("App", () => {
 
     await waitFor(() => {
       expect(useWorkspaceStore.getState().reloadTrigger).toBe(before + 1);
+    });
+  });
+
+  it("__LIT_CLI__ with line and col sets pendingCursorLine/Col", async () => {
+    window.__LIT_CLI__ = { workspace: "/cli/workspace", file: "notes.md", line: 7, col: 3 };
+
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "open_workspace":
+          return samplePages;
+        case "list_themes":
+          return [];
+        case "get_preferences":
+          return {
+            "workbench.colorTheme": null,
+            "workbench.darkMode": "light",
+            "workbench.sideBar.location": "left",
+          };
+        case "get_keymaps":
+          return [];
+        case "read_page":
+          return { meta: { title: "Test", relative_path: "test.md", frontmatter: {}, created_at: null, modified_at: null }, body: "", raw_yaml: "" };
+        case "get_backlinks":
+          return [];
+        case "parse_raw_yaml":
+          return {};
+        case "ensure_graph_ready":
+          return null;
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().workspacePath).toBe("/cli/workspace");
+      expect(useWorkspaceStore.getState().currentPagePath).toBe("notes.md");
+      expect(useWorkspaceStore.getState().pendingCursorLine).toBe(7);
+      expect(useWorkspaceStore.getState().pendingCursorCol).toBe(3);
+    });
+  });
+
+  it("__LIT_CLI__ without line uses plain selectPage", async () => {
+    window.__LIT_CLI__ = { workspace: "/cli/workspace", file: "notes.md", line: null, col: null };
+
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "open_workspace":
+          return samplePages;
+        case "list_themes":
+          return [];
+        case "get_preferences":
+          return {
+            "workbench.colorTheme": null,
+            "workbench.darkMode": "light",
+            "workbench.sideBar.location": "left",
+          };
+        case "get_keymaps":
+          return [];
+        case "read_page":
+          return { meta: { title: "Test", relative_path: "test.md", frontmatter: {}, created_at: null, modified_at: null }, body: "", raw_yaml: "" };
+        case "get_backlinks":
+          return [];
+        case "parse_raw_yaml":
+          return {};
+        case "ensure_graph_ready":
+          return null;
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().workspacePath).toBe("/cli/workspace");
+      expect(useWorkspaceStore.getState().currentPagePath).toBe("notes.md");
+      expect(useWorkspaceStore.getState().pendingCursorLine).toBeNull();
+    });
+  });
+
+  it("pending file with line sets pendingCursorLine", async () => {
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_pending_workspace":
+          return "/pending/workspace";
+        case "get_pending_file":
+          return "readme.md";
+        case "get_pending_line":
+          return 20;
+        case "get_pending_col":
+          return 3;
+        case "get_initial_workspace":
+          return null;
+        case "get_initial_file":
+          return null;
+        case "get_initial_line":
+          return null;
+        case "get_initial_col":
+          return null;
+        case "open_workspace":
+          return samplePages;
+        case "list_themes":
+          return [];
+        case "get_preferences":
+          return {
+            "workbench.colorTheme": null,
+            "workbench.darkMode": "light",
+            "workbench.sideBar.location": "left",
+          };
+        case "get_keymaps":
+          return [];
+        case "read_page":
+          return { meta: { title: "Test", relative_path: "test.md", frontmatter: {}, created_at: null, modified_at: null }, body: "", raw_yaml: "" };
+        case "get_backlinks":
+          return [];
+        case "parse_raw_yaml":
+          return {};
+        case "ensure_graph_ready":
+          return null;
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().workspacePath).toBe("/pending/workspace");
+      expect(useWorkspaceStore.getState().currentPagePath).toBe("readme.md");
+      expect(useWorkspaceStore.getState().pendingCursorLine).toBe(20);
+      expect(useWorkspaceStore.getState().pendingCursorCol).toBe(3);
+    });
+  });
+
+  it("initial file with line sets pendingCursorLine", async () => {
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_pending_workspace":
+          return null;
+        case "get_pending_file":
+          return null;
+        case "get_initial_workspace":
+          return "/cli/workspace";
+        case "get_initial_file":
+          return "notes.md";
+        case "get_initial_line":
+          return 15;
+        case "get_initial_col":
+          return null;
+        case "open_workspace":
+          return samplePages;
+        case "list_themes":
+          return [];
+        case "get_preferences":
+          return {
+            "workbench.colorTheme": null,
+            "workbench.darkMode": "light",
+            "workbench.sideBar.location": "left",
+          };
+        case "get_keymaps":
+          return [];
+        case "read_page":
+          return { meta: { title: "Test", relative_path: "test.md", frontmatter: {}, created_at: null, modified_at: null }, body: "", raw_yaml: "" };
+        case "get_backlinks":
+          return [];
+        case "parse_raw_yaml":
+          return {};
+        case "ensure_graph_ready":
+          return null;
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().workspacePath).toBe("/cli/workspace");
+      expect(useWorkspaceStore.getState().currentPagePath).toBe("notes.md");
+      expect(useWorkspaceStore.getState().pendingCursorLine).toBe(15);
+      expect(useWorkspaceStore.getState().pendingCursorCol).toBeNull();
     });
   });
 });

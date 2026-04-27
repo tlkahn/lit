@@ -22,6 +22,8 @@ pub struct WorkspaceRegistry {
 
 pub struct PendingWorkspaces(pub Mutex<HashMap<String, String>>);
 pub struct PendingFiles(pub Mutex<HashMap<String, String>>);
+pub struct PendingLines(pub Mutex<HashMap<String, u32>>);
+pub struct PendingCols(pub Mutex<HashMap<String, u32>>);
 
 pub fn persist_last_workspace(app_data_dir: &Path, workspace_path: &str) -> Result<(), std::io::Error> {
     std::fs::create_dir_all(app_data_dir)?;
@@ -148,6 +150,8 @@ pub fn create_workspace_window(
     app_handle: &tauri::AppHandle,
     path: Option<String>,
     file: Option<String>,
+    line: Option<u32>,
+    col: Option<u32>,
 ) -> Result<String, String> {
     let id = WINDOW_COUNTER.fetch_add(1, Ordering::Relaxed);
     let label = format!("workspace-{id}");
@@ -161,11 +165,21 @@ pub fn create_workspace_window(
             pending.0.lock().unwrap().insert(label.clone(), f.clone());
         }
     }
+    if let Some(l) = line {
+        if let Some(pending) = app_handle.try_state::<PendingLines>() {
+            pending.0.lock().unwrap().insert(label.clone(), l);
+        }
+    }
+    if let Some(c) = col {
+        if let Some(pending) = app_handle.try_state::<PendingCols>() {
+            pending.0.lock().unwrap().insert(label.clone(), c);
+        }
+    }
     let mut builder = WebviewWindowBuilder::new(app_handle, &label, tauri::WebviewUrl::default())
         .title("Lit")
         .inner_size(1024.0, 768.0);
 
-    if let Some(script) = crate::cli::cli_init_script(&path, &file) {
+    if let Some(script) = crate::cli::cli_init_script(&path, &file, &line, &col) {
         builder = builder.initialization_script(&script);
     }
 
@@ -181,7 +195,7 @@ pub fn open_workspace_window(
     app_handle: tauri::AppHandle,
     _state: State<PendingWorkspaces>,
 ) -> Result<String, String> {
-    create_workspace_window(&app_handle, path, None)
+    create_workspace_window(&app_handle, path, None, None, None)
 }
 
 #[tauri::command]
@@ -197,6 +211,22 @@ pub fn get_pending_file(
     window: tauri::Window,
     state: State<PendingFiles>,
 ) -> Option<String> {
+    state.0.lock().unwrap().remove(window.label())
+}
+
+#[tauri::command]
+pub fn get_pending_line(
+    window: tauri::Window,
+    state: State<PendingLines>,
+) -> Option<u32> {
+    state.0.lock().unwrap().remove(window.label())
+}
+
+#[tauri::command]
+pub fn get_pending_col(
+    window: tauri::Window,
+    state: State<PendingCols>,
+) -> Option<u32> {
     state.0.lock().unwrap().remove(window.label())
 }
 

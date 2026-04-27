@@ -9,6 +9,7 @@
     "dialog:default",
     "dialog:allow-open",
     "opener:default",
+    "deep-link:default",
     {
       "identifier": "opener:allow-open-path",
       "allow": [{ "path": "$HOME/**" }]

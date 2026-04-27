@@ -87,6 +87,22 @@ export async function getPendingFile(): Promise<string | null> {
   return invoke<string | null>("get_pending_file");
 }
 
+export async function getInitialLine(): Promise<number | null> {
+  return invoke<number | null>("get_initial_line");
+}
+
+export async function getInitialCol(): Promise<number | null> {
+  return invoke<number | null>("get_initial_col");
+}
+
+export async function getPendingLine(): Promise<number | null> {
+  return invoke<number | null>("get_pending_line");
+}
+
+export async function getPendingCol(): Promise<number | null> {
+  return invoke<number | null>("get_pending_col");
+}
+
 export async function installCli(): Promise<void> {
   return invoke<void>("install_cli");
 }

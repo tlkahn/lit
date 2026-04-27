@@ -8,15 +8,18 @@ pub mod preferences;
 pub mod workspace;
 
 use commands::graph::GraphRegistry;
-use commands::workspace::{PendingFiles, PendingWorkspaces, WorkspaceRegistry};
+use commands::workspace::{PendingCols, PendingFiles, PendingLines, PendingWorkspaces, WorkspaceRegistry};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager, WebviewWindowBuilder};
+use tauri_plugin_deep_link::DeepLinkExt;
 use workspace::write_hash::WriteHashRegistry;
 use bib::cache::BibCache;
 
 pub struct InitialWorkspace(pub Mutex<Option<String>>);
 pub struct InitialFile(pub Mutex<Option<String>>);
+pub struct InitialLine(pub Mutex<Option<u32>>);
+pub struct InitialCol(pub Mutex<Option<u32>>);
 
 #[tauri::command]
 fn get_initial_workspace(state: tauri::State<InitialWorkspace>) -> Option<String> {
@@ -28,6 +31,16 @@ fn get_initial_file(state: tauri::State<InitialFile>) -> Option<String> {
     state.0.lock().unwrap().take()
 }
 
+#[tauri::command]
+fn get_initial_line(state: tauri::State<InitialLine>) -> Option<u32> {
+    state.0.lock().unwrap().take()
+}
+
+#[tauri::command]
+fn get_initial_col(state: tauri::State<InitialCol>) -> Option<u32> {
+    state.0.lock().unwrap().take()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt()
@@ -36,7 +49,7 @@ pub fn run() {
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("lit_lib=info")),
         )
         .init();
-    let (cli_workspace, cli_file) = match std::env::args().nth(1) {
+    let (cli_workspace, cli_file, cli_line, cli_col) = match std::env::args().nth(1) {
         Some(arg) => {
             let cwd = std::env::current_dir()
                 .unwrap_or_default()
@@ -44,33 +57,37 @@ pub fn run() {
                 .to_string();
             match cli::resolve_arg(&arg, &cwd) {
                 cli::CliTarget::Directory(p) => {
-                    (Some(p.to_string_lossy().to_string()), None)
+                    (Some(p.to_string_lossy().to_string()), None, None, None)
                 }
-                cli::CliTarget::File { workspace, file } => {
-                    (Some(workspace.to_string_lossy().to_string()), Some(file))
+                cli::CliTarget::File { workspace, file, line, col } => {
+                    (Some(workspace.to_string_lossy().to_string()), Some(file), line, col)
                 }
-                cli::CliTarget::Invalid(_) => (None, None),
+                cli::CliTarget::Invalid(_) => (None, None, None, None),
             }
         }
-        None => (None, None),
+        None => (None, None, None, None),
     };
 
     let setup_workspace = cli_workspace.clone();
     let setup_file = cli_file.clone();
+    let setup_line = cli_line;
+    let setup_col = cli_col;
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             match cli::process_instance_args(&args, &cwd) {
                 Some(cli::CliTarget::Directory(path)) => {
                     let path_str = path.to_string_lossy().to_string();
-                    let _ = commands::workspace::create_workspace_window(app, Some(path_str), None);
+                    let _ = commands::workspace::create_workspace_window(app, Some(path_str), None, None, None);
                 }
-                Some(cli::CliTarget::File { workspace, file }) => {
+                Some(cli::CliTarget::File { workspace, file, line, col }) => {
                     let workspace_str = workspace.to_string_lossy().to_string();
                     let _ = commands::workspace::create_workspace_window(
                         app,
                         Some(workspace_str),
                         Some(file),
+                        line,
+                        col,
                     );
                 }
                 _ => {
@@ -82,13 +99,18 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_deep_link::init())
         .manage(WorkspaceRegistry {
             workspaces: Mutex::new(HashMap::new()),
         })
         .manage(PendingWorkspaces(Mutex::new(HashMap::new())))
         .manage(PendingFiles(Mutex::new(HashMap::new())))
+        .manage(PendingLines(Mutex::new(HashMap::new())))
+        .manage(PendingCols(Mutex::new(HashMap::new())))
         .manage(InitialWorkspace(Mutex::new(cli_workspace)))
         .manage(InitialFile(Mutex::new(cli_file)))
+        .manage(InitialLine(Mutex::new(cli_line)))
+        .manage(InitialCol(Mutex::new(cli_col)))
         .manage(Arc::new(WriteHashRegistry::new()))
         .manage(Arc::new(GraphRegistry::new()))
         .manage(Arc::new(commands::graph::GraphBuildState::new()))
@@ -142,12 +164,43 @@ pub fn run() {
                 }
             }
 
+            let app_handle_for_deep_link = app.handle().clone();
+            app.deep_link().on_open_url(move |event| {
+                for url_str in event.urls() {
+                    if let Some(target) = cli::resolve_deep_link(&url_str) {
+                        match target {
+                            cli::CliTarget::Directory(path) => {
+                                let path_str = path.to_string_lossy().to_string();
+                                let _ = commands::workspace::create_workspace_window(
+                                    &app_handle_for_deep_link,
+                                    Some(path_str),
+                                    None,
+                                    None,
+                                    None,
+                                );
+                            }
+                            cli::CliTarget::File { workspace, file, line, col } => {
+                                let workspace_str = workspace.to_string_lossy().to_string();
+                                let _ = commands::workspace::create_workspace_window(
+                                    &app_handle_for_deep_link,
+                                    Some(workspace_str),
+                                    Some(file),
+                                    line,
+                                    col,
+                                );
+                            }
+                            cli::CliTarget::Invalid(_) => {}
+                        }
+                    }
+                }
+            });
+
             let mut builder =
                 WebviewWindowBuilder::new(app.handle(), "main", tauri::WebviewUrl::default())
                     .title("Lit")
                     .inner_size(1024.0, 768.0);
 
-            if let Some(script) = cli::cli_init_script(&setup_workspace, &setup_file) {
+            if let Some(script) = cli::cli_init_script(&setup_workspace, &setup_file, &setup_line, &setup_col) {
                 builder = builder.initialization_script(&script);
             }
 
@@ -165,7 +218,7 @@ pub fn run() {
                         dialog.file().pick_folder(move |folder| {
                             if let Some(path) = folder {
                                 let p = path.to_string();
-                                let _ = commands::workspace::create_workspace_window(&handle, Some(p), None);
+                                let _ = commands::workspace::create_workspace_window(&handle, Some(p), None, None, None);
                             }
                         });
                     });
@@ -216,6 +269,8 @@ pub fn run() {
             commands::workspace::open_workspace_window,
             commands::workspace::get_pending_workspace,
             commands::workspace::get_pending_file,
+            commands::workspace::get_pending_line,
+            commands::workspace::get_pending_col,
             commands::page::read_page,
             commands::page::write_page,
             commands::page::create_page,
@@ -257,6 +312,8 @@ pub fn run() {
             commands::graph::ensure_graph_ready,
             get_initial_workspace,
             get_initial_file,
+            get_initial_line,
+            get_initial_col,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
@@ -268,6 +325,12 @@ pub fn run() {
                     pending.0.lock().unwrap().remove(&label);
                 }
                 if let Some(pending) = window.try_state::<PendingFiles>() {
+                    pending.0.lock().unwrap().remove(&label);
+                }
+                if let Some(pending) = window.try_state::<PendingLines>() {
+                    pending.0.lock().unwrap().remove(&label);
+                }
+                if let Some(pending) = window.try_state::<PendingCols>() {
                     pending.0.lock().unwrap().remove(&label);
                 }
             }

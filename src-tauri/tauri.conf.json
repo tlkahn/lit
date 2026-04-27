@@ -24,6 +24,13 @@
       "../keymaps/default.json": "bundled-keymaps/default.json"
     }
   },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["lit"]
+      }
+    }
+  },
   "app": {
     "windows": [],
     "security": {

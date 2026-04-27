@@ -27,6 +27,10 @@ import {
   expandTemplate,
   resolveBibEntries,
   renderBibCitations,
+  getInitialLine,
+  getInitialCol,
+  getPendingLine,
+  getPendingCol,
   openInExternalEditor,
   getUnlinkedMentions,
   linkUnlinkedMention,
@@ -84,6 +88,14 @@ describe("ipc", () => {
         case "get_initial_file":
           return "notes.md";
         case "get_pending_file":
+          return null;
+        case "get_initial_line":
+          return 10;
+        case "get_initial_col":
+          return 5;
+        case "get_pending_line":
+          return null;
+        case "get_pending_col":
           return null;
         case "install_cli":
           return null;
@@ -616,6 +628,26 @@ describe("ipc", () => {
       throw new Error(`Unknown command: ${cmd}`);
     });
     await expect(ensureGraphReady("/my/workspace")).rejects.toThrow("build failed");
+  });
+
+  it("getInitialLine returns the initial line", async () => {
+    const line = await getInitialLine();
+    expect(line).toBe(10);
+  });
+
+  it("getInitialCol returns the initial col", async () => {
+    const col = await getInitialCol();
+    expect(col).toBe(5);
+  });
+
+  it("getPendingLine returns null by default", async () => {
+    const line = await getPendingLine();
+    expect(line).toBeNull();
+  });
+
+  it("getPendingCol returns null by default", async () => {
+    const col = await getPendingCol();
+    expect(col).toBeNull();
   });
 
 });

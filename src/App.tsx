@@ -12,12 +12,14 @@ import { useWorkspaceStore, getRecentWorkspaces } from "./stores/workspace";
 import { useThemeStore } from "./stores/theme";
 import { usePreferencesStore } from "./stores/preferences";
 import { useFocusModeStore } from "./stores/focusMode";
-import { getInitialWorkspace, getInitialFile, getPendingWorkspace, getPendingFile } from "./lib/ipc";
+import { getInitialWorkspace, getInitialFile, getInitialLine, getInitialCol, getPendingWorkspace, getPendingFile, getPendingLine, getPendingCol } from "./lib/ipc";
 import { HeadingQuickSwitcher } from "./components/HeadingQuickSwitcher";
 
 interface LitCliArgs {
   workspace: string | null;
   file: string | null;
+  line: number | null;
+  col: number | null;
 }
 
 declare global {
@@ -34,6 +36,7 @@ function App() {
   const indexProgress = useWorkspaceStore((s) => s.indexProgress);
   const openWorkspace = useWorkspaceStore((s) => s.openWorkspace);
   const selectPage = useWorkspaceStore((s) => s.selectPage);
+  const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
   const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
   const triggerReload = useWorkspaceStore((s) => s.triggerReload);
   const initThemes = useThemeStore((s) => s.loadThemes);
@@ -63,7 +66,13 @@ function App() {
         delete window.__LIT_CLI__;
         if (cliArgs.workspace) {
           await openWorkspace(cliArgs.workspace);
-          if (cliArgs.file) selectPage(cliArgs.file);
+          if (cliArgs.file) {
+            if (cliArgs.line != null) {
+              selectPageAtLine(cliArgs.file, cliArgs.line, cliArgs.col ?? undefined);
+            } else {
+              selectPage(cliArgs.file);
+            }
+          }
           return;
         }
       }
@@ -71,14 +80,30 @@ function App() {
       if (pending) {
         await openWorkspace(pending);
         const file = await getPendingFile().catch(() => null);
-        if (file) selectPage(file);
+        if (file) {
+          const line = await getPendingLine().catch(() => null);
+          if (line != null) {
+            const col = await getPendingCol().catch(() => null);
+            selectPageAtLine(file, line, col ?? undefined);
+          } else {
+            selectPage(file);
+          }
+        }
         return;
       }
       const cliPath = await getInitialWorkspace().catch(() => null);
       if (cliPath) {
         await openWorkspace(cliPath);
         const file = await getInitialFile().catch(() => null);
-        if (file) selectPage(file);
+        if (file) {
+          const line = await getInitialLine().catch(() => null);
+          if (line != null) {
+            const col = await getInitialCol().catch(() => null);
+            selectPageAtLine(file, line, col ?? undefined);
+          } else {
+            selectPage(file);
+          }
+        }
         return;
       }
       const recent = getRecentWorkspaces();
@@ -87,7 +112,7 @@ function App() {
       }
     };
     init();
-  }, [openWorkspace, selectPage, workspacePath]);
+  }, [openWorkspace, selectPage, selectPageAtLine, workspacePath]);
 
   const currentPageHeadings = useWorkspaceStore((s) => s.currentPageHeadings);
   const [quickSwitcherOpen, setQuickSwitcherOpen] = useState(false);
