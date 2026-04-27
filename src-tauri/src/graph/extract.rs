@@ -190,7 +190,7 @@ pub fn strip_for_mention_scan(body: &str) -> String {
     text = re_comment
         .replace_all(&text, |caps: &regex::Captures| {
             let m = caps.get(0).unwrap().as_str();
-            m.chars().map(|c| if c == '\n' { '\n' } else { ' ' }).collect::<String>()
+            String::from_utf8(m.bytes().map(|b| if b == b'\n' { b'\n' } else { b' ' }).collect()).unwrap()
         })
         .into_owned();
 
@@ -278,6 +278,8 @@ pub fn find_plain_mentions(body: &str, names: &[&str]) -> Vec<MentionMatch> {
 }
 
 pub fn extract_mention_context(body: &str, byte_offset: usize) -> String {
+    let byte_offset = byte_offset.min(body.len());
+    let byte_offset = body.floor_char_boundary(byte_offset);
     let line_start = body[..byte_offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
     let line_end = body[byte_offset..]
         .find('\n')
@@ -770,5 +772,62 @@ mod tests {
     fn replace_error_if_not_found() {
         let result = replace_mention_with_wikilink("No mention here.", 1, "Alice");
         assert!(result.is_err());
+    }
+
+    // --- UTF-8 multibyte safety ---
+
+    #[test]
+    fn strip_html_comment_preserves_byte_length_multibyte() {
+        let body = "before <!-- café --> after";
+        let stripped = strip_for_mention_scan(body);
+        assert_eq!(stripped.len(), body.len());
+    }
+
+    #[test]
+    fn strip_html_comment_preserves_byte_length_emoji() {
+        let body = "text <!-- 🎵🎵🎵 --> more";
+        let stripped = strip_for_mention_scan(body);
+        assert_eq!(stripped.len(), body.len());
+    }
+
+    #[test]
+    fn strip_html_comment_multibyte_multiline_preserves_bytes() {
+        let body = "start\n<!-- línea\nüber -->\nend";
+        let stripped = strip_for_mention_scan(body);
+        assert_eq!(stripped.len(), body.len());
+        assert_eq!(stripped.lines().count(), body.lines().count());
+    }
+
+    #[test]
+    fn find_mentions_after_multibyte_html_comment() {
+        let body = "<!-- 🎵🎵🎵 -->ö Alice is here";
+        let stripped = strip_for_mention_scan(body);
+        let matches = find_plain_mentions(&stripped, &["Alice"]);
+        assert_eq!(matches.len(), 1);
+        let offset = matches[0].byte_offset;
+        assert!(body.is_char_boundary(offset));
+        assert!(body[offset..].starts_with("Alice"));
+    }
+
+    #[test]
+    fn mention_context_with_bad_offset_no_panic() {
+        let body = "café Alice is here";
+        // byte 4 is a continuation byte of 'é' (U+00E9 = 0xC3 0xA9)
+        let ctx = extract_mention_context(body, 4);
+        assert!(!ctx.is_empty());
+    }
+
+    #[test]
+    fn full_pipeline_multibyte_html_comment() {
+        let body = "<!-- 中文注释 -->\nAlice met Bob here.\n<!-- もう一つ -->\nCharlie too.";
+        let stripped = strip_for_mention_scan(body);
+        assert_eq!(stripped.len(), body.len());
+        let matches = find_plain_mentions(&stripped, &["Alice", "Bob", "Charlie"]);
+        assert_eq!(matches.len(), 3);
+        for m in &matches {
+            assert!(body.is_char_boundary(m.byte_offset));
+            let ctx = extract_mention_context(body, m.byte_offset);
+            assert!(ctx.contains(&m.matched_text));
+        }
     }
 }
