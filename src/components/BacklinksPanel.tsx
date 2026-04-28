@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { listen } from "@tauri-apps/api/event";
 import { getBacklinks, type BacklinkEntry } from "../lib/ipc";
 import { useWorkspaceStore } from "../stores/workspace";
@@ -31,9 +32,10 @@ function highlightWikilinks(text: string): (string | JSX.Element)[] {
 interface BacklinksPanelProps {
   pageId: string;
   onCountChange?: (count: number) => void;
+  contentHeight?: number;
 }
 
-export function BacklinksPanel({ pageId, onCountChange }: BacklinksPanelProps) {
+export function BacklinksPanel({ pageId, onCountChange, contentHeight }: BacklinksPanelProps) {
   const [entries, setEntries] = useState<BacklinkEntry[]>([]);
   const selectPage = useWorkspaceStore((s) => s.selectPage);
   const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
@@ -81,6 +83,14 @@ export function BacklinksPanel({ pageId, onCountChange }: BacklinksPanelProps) {
     onCountChange?.(entries.length);
   }, [entries, onCountChange]);
 
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const virtualizer = useVirtualizer({
+    count: entries.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 40,
+  });
+
   return (
     <div className="px-6 py-2">
       {entries.length === 0 ? (
@@ -88,33 +98,57 @@ export function BacklinksPanel({ pageId, onCountChange }: BacklinksPanelProps) {
           No other pages link to this page
         </p>
       ) : (
-        <ul className="space-y-2">
-          {entries.map((entry, i) => (
-            <li key={`${entry.source_id}-${i}`} className="text-xs">
-              <button
-                className="font-medium text-interactive-accent hover:underline"
-                onClick={() => {
-                  recordDeparture();
-                  selectPage(entry.source_id);
-                }}
-              >
-                {entry.source_title || entry.source_id}
-              </button>
-              {entry.context && (
-                <p
-                  data-testid={`backlink-context-${i}`}
-                  className="mt-0.5 cursor-pointer text-text-muted hover:text-text-normal"
-                  onClick={() => {
-                    recordDeparture();
-                    selectPageAtLine(entry.source_id, entry.source_line);
+        <div
+          ref={scrollRef}
+          data-testid="backlinks-scroll-container"
+          data-virtual-scroll
+          className="overflow-y-auto"
+          style={contentHeight != null ? { height: contentHeight } : undefined}
+        >
+          <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+            {virtualizer.getVirtualItems().map((virtualRow) => {
+              const i = virtualRow.index;
+              const entry = entries[i]!;
+              return (
+                <div
+                  key={`${entry.source_id}-${i}`}
+                  data-index={i}
+                  className="text-xs"
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    transform: `translateY(${virtualRow.start}px)`,
+                    paddingBottom: 8,
                   }}
                 >
-                  {highlightWikilinks(entry.context)}
-                </p>
-              )}
-            </li>
-          ))}
-        </ul>
+                  <button
+                    className="font-medium text-interactive-accent hover:underline"
+                    onClick={() => {
+                      recordDeparture();
+                      selectPage(entry.source_id);
+                    }}
+                  >
+                    {entry.source_title || entry.source_id}
+                  </button>
+                  {entry.context && (
+                    <p
+                      data-testid={`backlink-context-${i}`}
+                      className="mt-0.5 cursor-pointer text-text-muted hover:text-text-normal"
+                      onClick={() => {
+                        recordDeparture();
+                        selectPageAtLine(entry.source_id, entry.source_line);
+                      }}
+                    >
+                      {highlightWikilinks(entry.context)}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
       )}
     </div>
   );

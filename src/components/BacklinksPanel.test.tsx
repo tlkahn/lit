@@ -196,6 +196,55 @@ describe("BacklinksPanel", () => {
     });
   });
 
+  describe("virtualization", () => {
+    it("renders all entries when scroll container is large enough", async () => {
+      const entries = Array.from({ length: 10 }, (_, i) =>
+        makeEntry({ source_id: `p${i}.md`, source_title: `Page ${i}`, context: `ctx ${i}` }),
+      );
+      mockInvoke((cmd) => {
+        if (cmd === "get_backlinks") return entries;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      render(<BacklinksPanel pageId="target.md" />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Page 0")).toBeInTheDocument();
+      });
+      for (let i = 0; i < 10; i++) {
+        expect(screen.getByText(`Page ${i}`)).toBeInTheDocument();
+      }
+    });
+
+    it("has a scroll container with data-testid", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "get_backlinks") return [makeEntry()];
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      render(<BacklinksPanel pageId="target.md" />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Alpha")).toBeInTheDocument();
+      });
+      expect(screen.getByTestId("backlinks-scroll-container")).toBeInTheDocument();
+    });
+
+    it("existing data-testid backlink-context-N still works", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "get_backlinks")
+          return [makeEntry({ context: "see [[target]]" })];
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      render(<BacklinksPanel pageId="target.md" />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("backlink-context-0")).toBeInTheDocument();
+      });
+    });
+  });
+
   it("refetches when pageId changes", async () => {
     mockInvoke((cmd, args) => {
       if (cmd === "get_backlinks") {

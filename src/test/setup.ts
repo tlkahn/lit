@@ -2,12 +2,52 @@ import "@testing-library/jest-dom/vitest";
 import { vi } from "vitest";
 import { resetInvokeMock, resetListenMock } from "./tauri-mock";
 
-if (typeof globalThis.ResizeObserver === "undefined") {
-  globalThis.ResizeObserver = class {
-    observe() {}
-    unobserve() {}
-    disconnect() {}
-  } as unknown as typeof ResizeObserver;
+globalThis.ResizeObserver = class {
+  private cb: ResizeObserverCallback;
+  constructor(cb: ResizeObserverCallback) {
+    this.cb = cb;
+  }
+  observe(target: Element) {
+    if (!(target instanceof HTMLElement) || !target.hasAttribute("data-virtual-scroll")) {
+      return;
+    }
+    const h = target.clientHeight;
+    const w = target.clientWidth;
+    this.cb(
+      [{
+        target,
+        contentRect: target.getBoundingClientRect(),
+        borderBoxSize: [{ blockSize: h, inlineSize: w }],
+      } as unknown as ResizeObserverEntry],
+      this as unknown as ResizeObserver,
+    );
+  }
+  unobserve() {}
+  disconnect() {}
+} as unknown as typeof ResizeObserver;
+
+Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+  configurable: true,
+  get() {
+    return this._clientHeight ?? 5000;
+  },
+  set(v: number) {
+    this._clientHeight = v;
+  },
+});
+
+Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+  configurable: true,
+  get() {
+    return this._clientWidth ?? 1000;
+  },
+  set(v: number) {
+    this._clientWidth = v;
+  },
+});
+
+if (typeof Element.prototype.scrollTo !== "function") {
+  Element.prototype.scrollTo = function () {};
 }
 
 vi.mock("@tauri-apps/api/core", () => ({
