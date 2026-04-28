@@ -262,7 +262,6 @@ export function Sidebar() {
                 return (
                   <div
                     key={row.key}
-                    ref={virtualizer.measureElement}
                     data-index={virtualRow.index}
                     style={{
                       position: "absolute",
@@ -275,11 +274,11 @@ export function Sidebar() {
                     {row.type === "folder" ? (
                       <button
                         onClick={() => toggleCollapse(row.folderPath)}
-                        className="flex w-full items-center gap-1 rounded px-2 py-1 text-start text-sm text-text-muted hover:bg-bg-hover"
+                        className="flex w-full min-w-0 items-center gap-1 rounded px-2 py-1 text-start text-sm text-text-muted hover:bg-bg-hover"
                         style={{ paddingInlineStart: `${row.depth * 12 + 8}px` }}
                       >
                         <span className="text-xs">{row.isCollapsed ? "▸" : "▾"}</span>
-                        <span className="font-medium">{row.folderName}</span>
+                        <span className="truncate font-medium">{row.folderName}</span>
                       </button>
                     ) : (
                       <PageItem
