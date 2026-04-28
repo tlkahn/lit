@@ -257,15 +257,15 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
         role="tabpanel"
         id="bp-tabpanel"
         aria-labelledby={`bp-tab-${activeTab}`}
-        className="overflow-y-auto"
+        className="overflow-hidden"
         style={{ height: panelHeight - TAB_BAR_HEIGHT }}
       >
         <div style={{ display: activeTab === "linked" ? undefined : "none" }}>
-          <BacklinksPanel pageId={pageId} onCountChange={setLinkedCount} />
+          <BacklinksPanel pageId={pageId} onCountChange={setLinkedCount} contentHeight={panelHeight - TAB_BAR_HEIGHT} />
         </div>
         {hasOpenedUnlinked && (
           <div style={{ display: activeTab === "unlinked" ? undefined : "none" }}>
-            <UnlinkedMentionsPanel pageId={pageId} onCountChange={setUnlinkedCount} />
+            <UnlinkedMentionsPanel pageId={pageId} onCountChange={setUnlinkedCount} contentHeight={panelHeight - TAB_BAR_HEIGHT} />
           </div>
         )}
       </div>

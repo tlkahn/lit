@@ -574,6 +574,57 @@ describe("BottomPanel", () => {
     });
   });
 
+  describe("scroll isolation", () => {
+    const backlinkEntry = { source_id: "a.md", source_title: "A", context: "ctx", source_line: 1 };
+    const unlinkedEntry = { source_id: "b.md", source_title: "B", context: "ctx", source_line: 1, matched_text: "target" };
+
+    it("each panel has its own scroll container", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "get_backlinks") return [backlinkEntry];
+        if (cmd === "get_unlinked_mentions") return [unlinkedEntry];
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      render(<BottomPanel pageId="target.md" />);
+
+      await userEvent.click(screen.getByText("Linked References"));
+      await waitFor(() => {
+        expect(screen.getByTestId("backlinks-scroll-container")).toBeInTheDocument();
+      });
+
+      await userEvent.click(screen.getByText("Unlinked References"));
+      await waitFor(() => {
+        expect(screen.getByTestId("unlinked-scroll-container")).toBeInTheDocument();
+      });
+    });
+
+    it("tabpanel div does not scroll itself", async () => {
+      render(<BottomPanel pageId="target.md" />);
+      await userEvent.click(screen.getByText("Linked References"));
+
+      const tabpanel = screen.getByRole("tabpanel");
+      expect(tabpanel.className).toContain("overflow-hidden");
+      expect(tabpanel.className).not.toContain("overflow-y-auto");
+    });
+
+    it("passes contentHeight to panels based on panelHeight minus tab bar", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "get_backlinks") return [backlinkEntry];
+        if (cmd === "get_unlinked_mentions") return [];
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      render(<BottomPanel pageId="target.md" />);
+      await userEvent.click(screen.getByText("Linked References"));
+
+      await waitFor(() => {
+        const scrollContainer = screen.getByTestId("backlinks-scroll-container");
+        // Default panelHeight is 200, TAB_BAR_HEIGHT is 32, so contentHeight = 168
+        expect(scrollContainer.style.height).toBe("168px");
+      });
+    });
+  });
+
   describe("focus management", () => {
     it("opening via toggle event does not steal focus", () => {
       render(<BottomPanel pageId="target.md" />);
