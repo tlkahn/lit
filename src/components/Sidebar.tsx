@@ -1,9 +1,9 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, useDeferredValue, useCallback, memo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useWorkspaceStore } from "../stores/workspace";
 import { getNextUntitledName } from "../lib/naming";
 import { openInExternalEditor } from "../lib/ipc";
-import { localeIncludes } from "../lib/localeSearch";
+import { localeFilter } from "../lib/localeSearch";
 import { useSidebarTab } from "../hooks/useSidebarTab";
 import { useFlatTree, type FolderNode } from "../hooks/useFlatTree";
 import { Outline } from "./Outline";
@@ -26,7 +26,7 @@ function buildTree(pages: PageMeta[]): FolderNode {
   return root;
 }
 
-function PageItem({
+const PageItem = memo(function PageItem({
   page,
   isActive,
   showMenu,
@@ -164,7 +164,7 @@ function PageItem({
       )}
     </div>
   );
-}
+});
 
 export function Sidebar() {
   const pages = useWorkspaceStore((s) => s.pages);
@@ -175,14 +175,16 @@ export function Sidebar() {
   const deletePageAction = useWorkspaceStore((s) => s.deletePage);
   const { tab, setTab } = useSidebarTab();
   const [search, setSearch] = useState("");
+  const deferredSearch = useDeferredValue(search);
   const [menuPath, setMenuPath] = useState<string | null>(null);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
 
-  const filtered = search
-    ? pages.filter((p) => localeIncludes(p.title, search))
-    : pages;
+  const filtered = useMemo(
+    () => deferredSearch ? localeFilter(pages, deferredSearch, (p) => p.title) : pages,
+    [pages, deferredSearch],
+  );
 
-  const tree = useMemo(() => buildTree(filtered), [pages, search]);
+  const tree = useMemo(() => buildTree(filtered), [filtered]);
   const { rows, toggleCollapse } = useFlatTree(tree);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -197,16 +199,19 @@ export function Sidebar() {
     createPageAction(name);
   };
 
-  const handleRenameCommit = (path: string, newName: string) => {
+  const handleMenuClose = useCallback(() => setMenuPath(null), []);
+  const handleRenameCancel = useCallback(() => setRenamingPath(null), []);
+
+  const handleRenameCommit = useCallback((path: string, newName: string) => {
     setRenamingPath(null);
     renamePageAction(path, newName);
-  };
+  }, [renamePageAction]);
 
-  const handleDelete = (path: string) => {
+  const handleDelete = useCallback((path: string) => {
     if (window.confirm(`Delete "${path}"?`)) {
       deletePageAction(path);
     }
-  };
+  }, [deletePageAction]);
 
   return (
     <aside className="flex w-60 shrink-0 flex-col border-e border-border bg-bg-secondary">
@@ -284,10 +289,10 @@ export function Sidebar() {
                         onSelect={selectPage}
                         onDelete={handleDelete}
                         onMenuOpen={setMenuPath}
-                        onMenuClose={() => setMenuPath(null)}
+                        onMenuClose={handleMenuClose}
                         onRenameStart={setRenamingPath}
                         onRenameCommit={handleRenameCommit}
-                        onRenameCancel={() => setRenamingPath(null)}
+                        onRenameCancel={handleRenameCancel}
                         depth={row.depth}
                       />
                     )}

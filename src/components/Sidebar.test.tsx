@@ -170,6 +170,30 @@ describe("Sidebar accent-insensitive filter", () => {
   });
 });
 
+describe("Sidebar context menu during search", () => {
+  it("context menu interaction does not break active search filter", async () => {
+    useWorkspaceStore.setState({
+      pages: [
+        { title: "Café Notes", relative_path: "Café Notes.md", frontmatter: {}, created_at: 1000, modified_at: 1000 },
+        { title: "Other", relative_path: "Other.md", frontmatter: {}, created_at: 1000, modified_at: 1000 },
+      ],
+    });
+
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.type(screen.getByLabelText("Search pages"), "cafe");
+    expect(screen.getByText("Café Notes")).toBeInTheDocument();
+    expect(screen.queryByText("Other")).not.toBeInTheDocument();
+
+    await user.pointer({ keys: "[MouseRight]", target: screen.getByText("Café Notes") });
+    expect(screen.getByText("Rename")).toBeInTheDocument();
+
+    expect(screen.getByText("Café Notes")).toBeInTheDocument();
+    expect(screen.queryByText("Other")).not.toBeInTheDocument();
+  });
+});
+
 describe("Sidebar context menu – Open in External Editor", () => {
   it("right-click shows 'Open in External Editor' button", async () => {
     useWorkspaceStore.setState({
