@@ -86,15 +86,28 @@ export function renderInlineMarkdown(text: string): string {
   working = escapeSegments(working);
 
   // Pass 3: apply inline transforms
-  // Wikilinks: [[Page|Display]] or [[Page]]
+  // Wikilinks: [[Page#Section|Display]], [[Page|Display]], [[Page#Section]], [[Page]], [[#Section]]
   working = working.replace(
     /\[\[([^\]|]+)\|([^\]]+)\]\]/g,
-    (_, _page, display) =>
-      `<span class="cm-preview-wikilink">${display}</span>`,
+    (_, raw, display) => {
+      const hashIdx = raw.indexOf("#");
+      const target = hashIdx >= 0 ? raw.substring(0, hashIdx) : raw;
+      const section = hashIdx >= 0 ? raw.substring(hashIdx + 1) : null;
+      let attrs = ` data-wikilink-target="${target}"`;
+      if (section !== null) attrs += ` data-wikilink-section="${section}"`;
+      return `<span class="cm-preview-wikilink"${attrs}>${display}</span>`;
+    },
   );
   working = working.replace(
     /\[\[([^\]]+)\]\]/g,
-    (_, page) => `<span class="cm-preview-wikilink">${page}</span>`,
+    (_, page) => {
+      const hashIdx = page.indexOf("#");
+      const target = hashIdx >= 0 ? page.substring(0, hashIdx) : page;
+      const section = hashIdx >= 0 ? page.substring(hashIdx + 1) : null;
+      let attrs = ` data-wikilink-target="${target}"`;
+      if (section !== null) attrs += ` data-wikilink-section="${section}"`;
+      return `<span class="cm-preview-wikilink"${attrs}>${page}</span>`;
+    },
   );
 
   // Links: [text](url)

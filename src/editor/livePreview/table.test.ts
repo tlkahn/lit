@@ -142,14 +142,37 @@ describe("renderInlineMarkdown", () => {
 
   it("renders wikilinks", () => {
     expect(renderInlineMarkdown("[[Page]]")).toBe(
-      '<span class="cm-preview-wikilink">Page</span>',
+      '<span class="cm-preview-wikilink" data-wikilink-target="Page">Page</span>',
     );
   });
 
   it("renders wikilinks with alias", () => {
     expect(renderInlineMarkdown("[[Page|Display]]")).toBe(
-      '<span class="cm-preview-wikilink">Display</span>',
+      '<span class="cm-preview-wikilink" data-wikilink-target="Page">Display</span>',
     );
+  });
+
+  it("wikilink with section has data-wikilink-section", () => {
+    expect(renderInlineMarkdown("[[Page#Section]]")).toBe(
+      '<span class="cm-preview-wikilink" data-wikilink-target="Page" data-wikilink-section="Section">Page#Section</span>',
+    );
+  });
+
+  it("aliased wikilink with section stores both attributes", () => {
+    expect(renderInlineMarkdown("[[Page#Section|Display]]")).toBe(
+      '<span class="cm-preview-wikilink" data-wikilink-target="Page" data-wikilink-section="Section">Display</span>',
+    );
+  });
+
+  it("same-page link stores empty target with section", () => {
+    expect(renderInlineMarkdown("[[#Heading]]")).toBe(
+      '<span class="cm-preview-wikilink" data-wikilink-target="" data-wikilink-section="Heading">#Heading</span>',
+    );
+  });
+
+  it("special chars in wikilink target are escaped in attribute", () => {
+    const result = renderInlineMarkdown('[[Page<"q">]]');
+    expect(result).toContain('data-wikilink-target="Page&lt;&quot;q&quot;&gt;"');
   });
 
   it("renders inline math", () => {

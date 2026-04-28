@@ -3,6 +3,7 @@ import { getCalloutIcon, toggleCalloutEffect } from "./callout";
 import { parseTable, renderInlineMarkdown, serializeTable, type Alignment, type ParsedTable } from "./table";
 import { renderMermaid, getMermaidCached } from "./mermaid";
 import { showMediaLightbox } from "./lightbox";
+import { navigateToPageFacet } from "./navigateToPageFacet";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 
@@ -270,6 +271,23 @@ export class EditableTableWidget extends WidgetType {
   toDOM(view: EditorView): HTMLElement {
     const container = document.createElement("div");
     container.className = "cm-preview-table-container";
+
+    container.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      if (!e.metaKey && !e.ctrlKey) return;
+      const span = (e.target as HTMLElement).closest?.(".cm-preview-wikilink");
+      if (!span) return;
+      const target = span.getAttribute("data-wikilink-target");
+      if (target === null) return;
+      const section = span.getAttribute("data-wikilink-section") ?? undefined;
+      const navigateToPage = view.state.facet(navigateToPageFacet);
+      if (!navigateToPage) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const departurePos = view.posAtCoords({ x: e.clientX, y: e.clientY }) ?? this.from;
+      navigateToPage(target, section, departurePos);
+    }, true);
+
     const parsed = parseTable(this.tableText);
     if (!parsed) return container;
     this.buildTable(container, view, parsed);

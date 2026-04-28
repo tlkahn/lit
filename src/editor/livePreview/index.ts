@@ -4,6 +4,7 @@ import { createLinkClickHandler } from "./linkHandler";
 import { createWikilinkClickHandler, type NavigateToPage } from "./wikilinkHandler";
 import { livePreviewBaseTheme } from "./theme";
 import { imageResolverFacet, type ImageResolver } from "./imageResolver";
+import { navigateToPageFacet } from "./navigateToPageFacet";
 import { calloutFoldField } from "./callout";
 import { createCalloutClickHandler } from "./calloutClickHandler";
 import { createMathClickHandler } from "./mathClickHandler";
@@ -21,6 +22,7 @@ import { openUrl as defaultOpenUrl } from "@tauri-apps/plugin-opener";
 export { frontmatterFacet } from "./crossref";
 export { noteDirFacet } from "./citeproc";
 export { mediaThumbnailsFacet } from "./mediaThumbnails";
+export { navigateToPageFacet } from "./navigateToPageFacet";
 
 export interface LivePreviewConfig {
   openUrl?: (url: string) => void;
@@ -50,6 +52,9 @@ export function livePreviewExtension(config?: LivePreviewConfig): Extension {
   ];
   if (config?.resolveImageSrc) {
     exts.push(imageResolverFacet.of(config.resolveImageSrc));
+  }
+  if (config?.navigateToPage) {
+    exts.push(navigateToPageFacet.of(config.navigateToPage));
   }
   return exts;
 }
