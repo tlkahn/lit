@@ -1,17 +1,13 @@
 import { useState, useRef, useEffect, useMemo } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useWorkspaceStore } from "../stores/workspace";
 import { getNextUntitledName } from "../lib/naming";
 import { openInExternalEditor } from "../lib/ipc";
 import { localeIncludes } from "../lib/localeSearch";
 import { useSidebarTab } from "../hooks/useSidebarTab";
+import { useFlatTree, type FolderNode } from "../hooks/useFlatTree";
 import { Outline } from "./Outline";
 import type { PageMeta } from "../lib/ipc";
-
-interface FolderNode {
-  name: string;
-  pages: PageMeta[];
-  children: Map<string, FolderNode>;
-}
 
 function buildTree(pages: PageMeta[]): FolderNode {
   const root: FolderNode = { name: "", pages: [], children: new Map() };
@@ -28,93 +24,6 @@ function buildTree(pages: PageMeta[]): FolderNode {
     node.pages.push(page);
   }
   return root;
-}
-
-function FolderView({
-  node,
-  currentPagePath,
-  menuPath,
-  renamingPath,
-  onSelect,
-  onDelete,
-  onMenuOpen,
-  onMenuClose,
-  onRenameStart,
-  onRenameCommit,
-  onRenameCancel,
-  depth,
-}: {
-  node: FolderNode;
-  currentPagePath: string | null;
-  menuPath: string | null;
-  renamingPath: string | null;
-  onSelect: (path: string) => void;
-  onDelete: (path: string) => void;
-  onMenuOpen: (path: string) => void;
-  onMenuClose: () => void;
-  onRenameStart: (path: string) => void;
-  onRenameCommit: (path: string, newName: string) => void;
-  onRenameCancel: () => void;
-  depth: number;
-}) {
-  const [collapsed, setCollapsed] = useState(false);
-
-  const sortedDirs = [...node.children.entries()].sort(([a], [b]) =>
-    a.localeCompare(b),
-  );
-
-  return (
-    <div>
-      {node.name && (
-        <button
-          onClick={() => setCollapsed(!collapsed)}
-          className="flex w-full items-center gap-1 rounded px-2 py-1 text-start text-sm text-text-muted hover:bg-bg-hover"
-          style={{ paddingInlineStart: `${depth * 12 + 8}px` }}
-        >
-          <span className="text-xs">{collapsed ? "▸" : "▾"}</span>
-          <span className="font-medium">{node.name}</span>
-        </button>
-      )}
-      {!collapsed && (
-        <>
-          {sortedDirs.map(([dirName, child]) => (
-            <FolderView
-              key={dirName}
-              node={child}
-              currentPagePath={currentPagePath}
-              menuPath={menuPath}
-              renamingPath={renamingPath}
-              onSelect={onSelect}
-              onDelete={onDelete}
-              onMenuOpen={onMenuOpen}
-              onMenuClose={onMenuClose}
-              onRenameStart={onRenameStart}
-              onRenameCommit={onRenameCommit}
-              onRenameCancel={onRenameCancel}
-              depth={depth + (node.name ? 1 : 0)}
-            />
-          ))}
-          {node.pages.map((page) => (
-            <PageItem
-              key={page.relative_path}
-              page={page}
-              isActive={currentPagePath === page.relative_path}
-              showMenu={menuPath === page.relative_path}
-              isRenaming={renamingPath === page.relative_path}
-              onSelect={onSelect}
-              onDelete={onDelete}
-              onMenuOpen={onMenuOpen}
-              onMenuClose={onMenuClose}
-              onRenameStart={onRenameStart}
-              onRenameCommit={onRenameCommit}
-              onRenameCancel={onRenameCancel}
-              depth={depth + (node.name ? 1 : 0)}
-            />
-          ))}
-        </>
-      )}
-    </div>
-  );
 }
 
 function PageItem({
@@ -274,6 +183,14 @@ export function Sidebar() {
     : pages;
 
   const tree = useMemo(() => buildTree(filtered), [pages, search]);
+  const { rows, toggleCollapse } = useFlatTree(tree);
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 28,
+  });
 
   const handleNewPage = () => {
     const name = getNextUntitledName(pages);
@@ -327,21 +244,56 @@ export function Sidebar() {
               aria-label="Search pages"
             />
           </div>
-          <div className="flex-1 overflow-y-auto px-1">
-            <FolderView
-              node={tree}
-              currentPagePath={currentPagePath}
-              menuPath={menuPath}
-              renamingPath={renamingPath}
-              onSelect={selectPage}
-              onDelete={handleDelete}
-              onMenuOpen={setMenuPath}
-              onMenuClose={() => setMenuPath(null)}
-              onRenameStart={setRenamingPath}
-              onRenameCommit={handleRenameCommit}
-              onRenameCancel={() => setRenamingPath(null)}
-              depth={0}
-            />
+          <div
+            ref={scrollRef}
+            data-testid="sidebar-file-list"
+            data-virtual-scroll
+            className="flex-1 overflow-y-auto px-1"
+          >
+            <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+              {virtualizer.getVirtualItems().map((virtualRow) => {
+                const row = rows[virtualRow.index]!;
+                return (
+                  <div
+                    key={row.key}
+                    data-index={virtualRow.index}
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                      transform: `translateY(${virtualRow.start}px)`,
+                    }}
+                  >
+                    {row.type === "folder" ? (
+                      <button
+                        onClick={() => toggleCollapse(row.folderPath)}
+                        className="flex w-full items-center gap-1 rounded px-2 py-1 text-start text-sm text-text-muted hover:bg-bg-hover"
+                        style={{ paddingInlineStart: `${row.depth * 12 + 8}px` }}
+                      >
+                        <span className="text-xs">{row.isCollapsed ? "▸" : "▾"}</span>
+                        <span className="font-medium">{row.folderName}</span>
+                      </button>
+                    ) : (
+                      <PageItem
+                        page={row.page}
+                        isActive={currentPagePath === row.page.relative_path}
+                        showMenu={menuPath === row.page.relative_path}
+                        isRenaming={renamingPath === row.page.relative_path}
+                        onSelect={selectPage}
+                        onDelete={handleDelete}
+                        onMenuOpen={setMenuPath}
+                        onMenuClose={() => setMenuPath(null)}
+                        onRenameStart={setRenamingPath}
+                        onRenameCommit={handleRenameCommit}
+                        onRenameCancel={() => setRenamingPath(null)}
+                        depth={row.depth}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </>
       ) : (

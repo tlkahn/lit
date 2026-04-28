@@ -218,3 +218,101 @@ describe("Sidebar context menu – Open in External Editor", () => {
     expect(call!.args).toEqual({ relativePath: "Notes.md", line: 1, col: 1 });
   });
 });
+
+function makePage(title: string, relativePath?: string) {
+  return {
+    title,
+    relative_path: relativePath ?? `${title}.md`,
+    frontmatter: {},
+    created_at: 1000,
+    modified_at: 1000,
+  };
+}
+
+describe("Sidebar virtualization", () => {
+  it("renders page items via virtualized list", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha"), makePage("Beta"), makePage("Gamma")],
+    });
+
+    render(<Sidebar />);
+
+    expect(screen.getByText("Alpha")).toBeInTheDocument();
+    expect(screen.getByText("Beta")).toBeInTheDocument();
+    expect(screen.getByText("Gamma")).toBeInTheDocument();
+  });
+
+  it("has a scroll container with data-testid sidebar-file-list", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha")],
+    });
+
+    render(<Sidebar />);
+
+    expect(screen.getByTestId("sidebar-file-list")).toBeInTheDocument();
+  });
+
+  it("culls DOM nodes when scroll container is small and list is large", () => {
+    const pages = Array.from({ length: 500 }, (_, i) => makePage(`Page ${i}`, `page-${i}.md`));
+    useWorkspaceStore.setState({ pages });
+
+    const origGet = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight")!.get!;
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get() {
+        if (this.dataset?.testid === "sidebar-file-list") return 200;
+        return origGet.call(this);
+      },
+    });
+
+    try {
+      render(<Sidebar />);
+
+      const scrollContainer = screen.getByTestId("sidebar-file-list");
+      const renderedItems = scrollContainer.querySelectorAll("[data-index]");
+      expect(renderedItems.length).toBeLessThan(100);
+      expect(renderedItems.length).toBeGreaterThan(0);
+    } finally {
+      Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+        configurable: true,
+        get: origGet,
+      });
+    }
+  });
+
+  it("folder collapse hides children from DOM", async () => {
+    useWorkspaceStore.setState({
+      pages: [
+        makePage("Inside Doc", "docs/inside.md"),
+        makePage("Outside", "outside.md"),
+      ],
+    });
+
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    expect(screen.getByText("Inside Doc")).toBeInTheDocument();
+    expect(screen.getByText("docs")).toBeInTheDocument();
+
+    await user.click(screen.getByText("docs"));
+
+    expect(screen.queryByText("Inside Doc")).not.toBeInTheDocument();
+    expect(screen.getByText("Outside")).toBeInTheDocument();
+  });
+
+  it("context menu still works on virtualized page items", async () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Notes", "Notes.md")],
+    });
+
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    const pageButton = screen.getByText("Notes");
+    await user.pointer({ keys: "[MouseRight]", target: pageButton });
+
+    expect(screen.getByText("Rename")).toBeInTheDocument();
+    expect(screen.getByText("Delete")).toBeInTheDocument();
+    expect(screen.getByText("Open in External Editor")).toBeInTheDocument();
+  });
+});
