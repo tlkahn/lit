@@ -110,6 +110,7 @@ export function UnlinkedMentionsPanel({ pageId, onCountChange, contentHeight }: 
                 return (
                   <div
                     key={`${entry.source_id}-${i}`}
+                    ref={virtualizer.measureElement}
                     data-index={i}
                     className="text-xs"
                     style={{

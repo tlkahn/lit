@@ -256,6 +256,7 @@ export function Sidebar() {
                 return (
                   <div
                     key={row.key}
+                    ref={virtualizer.measureElement}
                     data-index={virtualRow.index}
                     style={{
                       position: "absolute",

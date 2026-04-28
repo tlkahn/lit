@@ -46,6 +46,14 @@ Object.defineProperty(HTMLElement.prototype, "clientWidth", {
   },
 });
 
+Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+  configurable: true,
+  get() {
+    if (this.hasAttribute?.("data-index")) return 28;
+    return 0;
+  },
+});
+
 if (typeof Element.prototype.scrollTo !== "function") {
   Element.prototype.scrollTo = function () {};
 }
