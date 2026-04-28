@@ -27,7 +27,8 @@ export class CrossrefWidget extends WidgetType {
       e.preventDefault();
       e.stopPropagation();
       if (this.isValid && this.targetCharOffset != null) {
-        recordDeparture(view, this.charStart);
+        const clickPos = view.posAtCoords({ x: e.clientX, y: e.clientY }) ?? this.charStart;
+        recordDeparture(view, clickPos);
         view.dispatch({
           selection: { anchor: this.targetCharOffset },
           scrollIntoView: true,
@@ -58,7 +59,8 @@ export class CrossrefWidget extends WidgetType {
       e!.preventDefault();
       e!.stopPropagation();
       if (this.isValid && this.targetCharOffset != null) {
-        recordDeparture(view, this.charStart);
+        const clickPos = view.posAtCoords({ x: e.clientX, y: e.clientY }) ?? this.charStart;
+        recordDeparture(view, clickPos);
         view.dispatch({
           selection: { anchor: this.targetCharOffset },
           scrollIntoView: true,

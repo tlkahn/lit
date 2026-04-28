@@ -190,7 +190,7 @@ describe("CiteprocWidget", () => {
     view.destroy();
   });
 
-  it("click records departure at link position, not cursor position", () => {
+  it("click records departure at click position", () => {
     const selectPageAtLine = vi.fn();
     useWorkspaceStore.setState({
       workspacePath: "/path",
@@ -200,7 +200,7 @@ describe("CiteprocWidget", () => {
 
     const doc = "line one\nline two\nline three\nline four";
     const view = makeView(doc);
-    view.dispatch({ selection: { anchor: view.state.doc.line(3).from + 2 } });
+    vi.spyOn(view, "posAtCoords").mockReturnValue(5);
     const widget = new CiteprocWidget(
       "[@smith2020]",
       singleLink("Smith 2020", true, "/path/refs.bib", 10),
@@ -212,7 +212,7 @@ describe("CiteprocWidget", () => {
 
     expect(globalJumpTracker.jumps).toHaveLength(1);
     expect(globalJumpTracker.jumps[0]).toEqual(
-      expect.objectContaining({ notePath: "note.md", line: 1, col: 0 }),
+      expect.objectContaining({ notePath: "note.md", line: 1, col: 5 }),
     );
     view.destroy();
   });

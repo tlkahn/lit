@@ -64,7 +64,7 @@ function createCitationClickHandler(): Extension {
 
         event.preventDefault();
         if (c.is_valid && c.target_char_offset != null) {
-          recordDeparture(view, c.char_start);
+          recordDeparture(view, pos);
           view.dispatch({
             selection: { anchor: c.target_char_offset },
             scrollIntoView: true,
@@ -96,7 +96,7 @@ function createCitationClickHandler(): Extension {
             useWorkspaceStore.getState();
           if (workspacePath && link.bibFile.startsWith(workspacePath + "/")) {
             const relativePath = link.bibFile.slice(workspacePath.length + 1);
-            recordCiteprocDeparture(view, currentPagePath, match.from);
+            recordCiteprocDeparture(view, currentPagePath, pos);
             globalJumpTracker.isNavigating = true;
             selectPageAtLine(relativePath, link.lineNumber);
             return true;

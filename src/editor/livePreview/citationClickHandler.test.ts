@@ -168,7 +168,7 @@ describe("citationClickHandler — crossref", () => {
 
     expect(globalJumpTracker.jumps).toHaveLength(1);
     expect(globalJumpTracker.jumps[0]).toEqual(
-      expect.objectContaining({ notePath: "note.md", line: 1, col: 4 }),
+      expect.objectContaining({ notePath: "note.md", line: 1, col: 6 }),
     );
     view.dom.remove();
     view.destroy();
@@ -355,6 +355,9 @@ describe("citationClickHandler — citeproc", () => {
     );
 
     expect(globalJumpTracker.jumps).toHaveLength(1);
+    expect(globalJumpTracker.jumps[0]).toEqual(
+      expect.objectContaining({ notePath: "note.md", line: 1, col: 6 }),
+    );
     expect(globalJumpTracker.isNavigating).toBe(true);
     globalJumpTracker.isNavigating = false;
     view.dom.remove();

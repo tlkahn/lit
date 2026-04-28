@@ -135,20 +135,17 @@ describe("CrossrefWidget", () => {
     view.destroy();
   });
 
-  it("mousedown records departure at link position, not cursor position", () => {
+  it("mousedown records departure at click position", () => {
     const doc = "line one\nline two\nline three has [@fig:cat] ref\nline four";
     const view = makeView(doc);
-    // Place cursor on line 3 (a later line)
-    view.dispatch({ selection: { anchor: view.state.doc.line(3).from + 2 } });
     globalJumpTracker.clear();
-    // Widget charStart=0 is on line 1
+    vi.spyOn(view, "posAtCoords").mockReturnValue(5);
     const widget = new CrossrefWidget("[@fig:cat]", "Fig. 1", true, 0, 10, 20);
     const el = widget.toDOM(view);
     el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     expect(globalJumpTracker.jumps).toHaveLength(1);
-    // Departure should be at charStart (line 1, col 0), not cursor (line 3)
     expect(globalJumpTracker.jumps[0]).toEqual(
-      expect.objectContaining({ notePath: "note.md", line: 1, col: 0 }),
+      expect.objectContaining({ notePath: "note.md", line: 1, col: 5 }),
     );
     view.destroy();
   });
