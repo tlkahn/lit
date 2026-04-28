@@ -1,15 +1,16 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getUnlinkedMentions, linkUnlinkedMention, type UnlinkedMention } from "../lib/ipc";
+import { localeIndexOf } from "../lib/localeSearch";
 import { useWorkspaceStore } from "../stores/workspace";
 
 function highlightMention(context: string, matchedText: string): (string | JSX.Element)[] {
-  const idx = context.toLowerCase().indexOf(matchedText.toLowerCase());
-  if (idx === -1) return [context];
+  const match = localeIndexOf(context, matchedText);
+  if (!match) return [context];
   return [
-    context.slice(0, idx),
-    <mark key="hl" className="bg-yellow-200/50 dark:bg-yellow-500/30">{context.slice(idx, idx + matchedText.length)}</mark>,
-    context.slice(idx + matchedText.length),
+    context.slice(0, match.start),
+    <mark key="hl" className="bg-yellow-200/50 dark:bg-yellow-500/30">{context.slice(match.start, match.end)}</mark>,
+    context.slice(match.end),
   ];
 }
 

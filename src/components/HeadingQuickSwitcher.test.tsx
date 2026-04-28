@@ -205,7 +205,7 @@ describe("HeadingQuickSwitcher", () => {
       render(
         <HeadingQuickSwitcher open={true} onClose={onClose} onSelect={onSelect} headings={zwjHeadings} />,
       );
-      fireEvent.change(screen.getByTestId("quick-switcher-input"), { target: { value: "👨" } });
+      fireEvent.change(screen.getByTestId("quick-switcher-input"), { target: { value: "👨‍👩‍👧‍👦" } });
       const items = screen.getAllByTestId("quick-switcher-item");
       const marks = items[0]!.querySelectorAll("mark");
       expect(marks).toHaveLength(1);

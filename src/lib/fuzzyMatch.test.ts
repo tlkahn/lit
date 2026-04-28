@@ -74,4 +74,67 @@ describe("fuzzyMatch", () => {
     expect(result).not.toBeNull();
     expect(result!.indices).toEqual([4]);
   });
+
+  describe("grapheme-aware indices", () => {
+    it("returns grapheme-cluster indices for emoji", () => {
+      const result = fuzzyMatch("L", "🚀 Launch");
+      expect(result).not.toBeNull();
+      expect(result!.indices).toEqual([2]);
+    });
+
+    it("treats ZWJ emoji sequence as single grapheme", () => {
+      const result = fuzzyMatch("h", "👨‍👩‍👧‍👦 hi");
+      expect(result).not.toBeNull();
+      expect(result!.indices).toEqual([2]);
+    });
+
+    it("treats base + combining mark as single grapheme", () => {
+      const result = fuzzyMatch("s", "és");
+      expect(result).not.toBeNull();
+      expect(result!.indices).toEqual([1]);
+    });
+
+    it("matches Korean characters as individual graphemes", () => {
+      const result = fuzzyMatch("글", "한글");
+      expect(result).not.toBeNull();
+      expect(result!.indices).toEqual([1]);
+    });
+
+    it("scores consecutive graphemes correctly with emoji prefix", () => {
+      const consecutive = fuzzyMatch("ab", "🎯 abc");
+      const scattered = fuzzyMatch("ac", "🎯 abc");
+      expect(consecutive).not.toBeNull();
+      expect(scattered).not.toBeNull();
+      expect(consecutive!.indices).toEqual([2, 3]);
+      expect(consecutive!.score).toBeGreaterThan(scattered!.score);
+    });
+  });
+
+  describe("locale-aware case folding", () => {
+    it("matches accented characters with base equivalents", () => {
+      const result = fuzzyMatch("cafe", "café");
+      expect(result).not.toBeNull();
+      expect(result!.indices).toEqual([0, 1, 2, 3]);
+    });
+
+    it("matches ü with u via locale-aware folding", () => {
+      const result = fuzzyMatch("uber", "über");
+      expect(result).not.toBeNull();
+      expect(result!.indices).toEqual([0, 1, 2, 3]);
+    });
+
+    it("matches precomposed and decomposed forms", () => {
+      const result = fuzzyMatch("é", "é rest");
+      expect(result).not.toBeNull();
+      expect(result!.indices).toEqual([0]);
+    });
+
+    it("gives case-exact bonus when accents match exactly", () => {
+      const withAccent = fuzzyMatch("é", "café");
+      const withoutAccent = fuzzyMatch("e", "café");
+      expect(withAccent).not.toBeNull();
+      expect(withoutAccent).not.toBeNull();
+      expect(withAccent!.score).toBeGreaterThan(withoutAccent!.score);
+    });
+  });
 });

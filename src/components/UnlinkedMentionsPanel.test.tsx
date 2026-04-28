@@ -336,6 +336,26 @@ describe("UnlinkedMentionsPanel", () => {
     expect(screen.getByText("No unlinked mentions found")).toBeInTheDocument();
   });
 
+  // Cycle P1 — Accent-insensitive highlight
+  it("highlights mention with accent-insensitive matching", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_unlinked_mentions")
+        return [makeMention({ context: "visited the café today", matched_text: "cafe" })];
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<UnlinkedMentionsPanel pageId="target.md" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Gamma")).toBeInTheDocument();
+    });
+
+    const contextEl = screen.getByTestId("unlinked-context-0");
+    const mark = contextEl.querySelector("mark");
+    expect(mark).not.toBeNull();
+    expect(mark!.textContent).toBe("café");
+  });
+
   // Cycle 10.8 — Entry disappears after linking
   it("removes entry from list after linking", async () => {
     let fetchCount = 0;

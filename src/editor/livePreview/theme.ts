@@ -15,7 +15,7 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
     cursor: "pointer",
   },
   ".cm-preview-code-inline": {
-    fontFamily: "var(--font-monospace-theme, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace)",
+    fontFamily: "var(--font-monospace-theme, ui-monospace, SFMono-Regular, Menlo, Consolas, \"Noto Sans Mono\", monospace)",
     backgroundColor: "var(--code-background)",
     padding: "2px 4px",
     borderRadius: "3px",
@@ -23,7 +23,7 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
   },
   ".cm-preview-code-block": {
     backgroundColor: "var(--code-background)",
-    fontFamily: "var(--font-monospace-theme, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace)",
+    fontFamily: "var(--font-monospace-theme, ui-monospace, SFMono-Regular, Menlo, Consolas, \"Noto Sans Mono\", monospace)",
   },
   ".cm-code-fence-top": {
     backgroundColor: "var(--code-background)",

@@ -24,17 +24,16 @@ function HighlightedText({ text, indices }: { text: string; indices: number[] })
   let current = "";
   let inHighlight = false;
 
-  for (const { segment, index } of graphemeSegmenter.segment(text)) {
-    let shouldHighlight = false;
-    for (let i = index; i < index + segment.length; i++) {
-      if (indexSet.has(i)) { shouldHighlight = true; break; }
-    }
+  let gi = 0;
+  for (const { segment } of graphemeSegmenter.segment(text)) {
+    const shouldHighlight = indexSet.has(gi);
     if (shouldHighlight !== inHighlight) {
       if (current) parts.push({ text: current, highlighted: inHighlight });
       current = "";
       inHighlight = shouldHighlight;
     }
     current += segment;
+    gi++;
   }
   if (current) parts.push({ text: current, highlighted: inHighlight });
 

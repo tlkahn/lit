@@ -5,7 +5,7 @@
 
 @theme {
   --default-font-family: var(--font-interface-theme, ui-sans-serif, system-ui, sans-serif);
-  --default-mono-font-family: var(--font-monospace-theme, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  --default-mono-font-family: var(--font-monospace-theme, ui-monospace, SFMono-Regular, Menlo, Consolas, "Noto Sans Mono", monospace);
   --color-bg-primary: var(--background-primary);
   --color-bg-primary-alt: var(--background-primary-alt);
   --color-bg-secondary: var(--background-secondary);
@@ -49,7 +49,7 @@ html, body, #root {
 .tok-strong { font-weight: bold; }
 .tok-link { color: var(--text-accent); text-decoration: underline; }
 .tok-url { color: var(--text-accent); }
-.tok-monospace { background-color: var(--code-background); border-radius: 3px; font-family: var(--font-monospace-theme, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); }
+.tok-monospace { background-color: var(--code-background); border-radius: 3px; font-family: var(--font-monospace-theme, ui-monospace, SFMono-Regular, Menlo, Consolas, "Noto Sans Mono", monospace); }
 .tok-meta { color: var(--text-faint); }
 .tok-quote { color: var(--text-muted); font-style: italic; }
 .tok-list { color: var(--text-muted); }
@@ -58,6 +58,13 @@ html, body, #root {
 .tok-number, .tok-bool, .tok-atom { color: var(--color-orange); }
 .tok-comment { color: var(--text-faint); font-style: italic; }
 .cm-preview-comment { color: var(--text-faint); font-style: italic; }
+
+:lang(bo) .cm-content,
+:lang(bo) .tok-monospace,
+:lang(bo) pre,
+:lang(bo) code {
+  line-height: 1.8;
+}
 .tok-typeName { color: var(--color-cyan); }
 
 /* Focus mode: dim text outside current sentence */

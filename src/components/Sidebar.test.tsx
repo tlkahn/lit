@@ -136,6 +136,40 @@ describe("Sidebar instant create", () => {
   });
 });
 
+describe("Sidebar accent-insensitive filter", () => {
+  it("filters pages with accent-insensitive matching", async () => {
+    useWorkspaceStore.setState({
+      pages: [
+        { title: "Café Notes", relative_path: "Café Notes.md", frontmatter: {}, created_at: 1000, modified_at: 1000 },
+        { title: "Other", relative_path: "Other.md", frontmatter: {}, created_at: 1000, modified_at: 1000 },
+      ],
+    });
+
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.type(screen.getByLabelText("Search pages"), "cafe");
+
+    expect(screen.getByText("Café Notes")).toBeInTheDocument();
+    expect(screen.queryByText("Other")).not.toBeInTheDocument();
+  });
+
+  it("filters pages matching diacritics like ü to u", async () => {
+    useWorkspaceStore.setState({
+      pages: [
+        { title: "Über alles", relative_path: "Über alles.md", frontmatter: {}, created_at: 1000, modified_at: 1000 },
+      ],
+    });
+
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.type(screen.getByLabelText("Search pages"), "uber");
+
+    expect(screen.getByText("Über alles")).toBeInTheDocument();
+  });
+});
+
 describe("Sidebar context menu – Open in External Editor", () => {
   it("right-click shows 'Open in External Editor' button", async () => {
     useWorkspaceStore.setState({

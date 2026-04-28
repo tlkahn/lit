@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { useWorkspaceStore } from "../stores/workspace";
 import { getNextUntitledName } from "../lib/naming";
 import { openInExternalEditor } from "../lib/ipc";
+import { localeIncludes } from "../lib/localeSearch";
 import { useSidebarTab } from "../hooks/useSidebarTab";
 import { Outline } from "./Outline";
 import type { PageMeta } from "../lib/ipc";
@@ -269,7 +270,7 @@ export function Sidebar() {
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
 
   const filtered = search
-    ? pages.filter((p) => p.title.toLowerCase().includes(search.toLowerCase()))
+    ? pages.filter((p) => localeIncludes(p.title, search))
     : pages;
 
   const tree = buildTree(filtered);
