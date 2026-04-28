@@ -110,7 +110,7 @@ export class CiteprocWidget extends WidgetType {
   }
 }
 
-function recordCiteprocDeparture(
+export function recordCiteprocDeparture(
   view: EditorView,
   currentPagePath: string | null,
   departurePos: number,

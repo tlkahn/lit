@@ -12,6 +12,7 @@ import { createLinkSelectHandler } from "./linkSelectHandler";
 import { createWrappedLineClickFix } from "./clickFix";
 import { crossrefExtension } from "./crossref";
 import { citeprocExtension } from "./citeproc";
+import { citationClickExtension } from "./citationClickHandler";
 import { autocompletion } from "@codemirror/autocomplete";
 import { crossrefCompletionSource } from "./crossrefCompletion";
 import { wikilinkCompletionSource } from "./wikilinkCompletion";
@@ -44,6 +45,7 @@ export function livePreviewExtension(config?: LivePreviewConfig): Extension {
     calloutFoldField,
     crossrefExtension(),
     citeprocExtension(),
+    citationClickExtension(),
     autocompletion({ override: [crossrefCompletionSource, wikilinkCompletionSource] }),
   ];
   if (config?.resolveImageSrc) {

@@ -157,7 +157,7 @@ export class DefinitionWidget extends WidgetType {
   }
 }
 
-function recordDeparture(view: EditorView, departurePos: number): void {
+export function recordDeparture(view: EditorView, departurePos: number): void {
   const notePath = useWorkspaceStore.getState().currentPagePath ?? "";
   const line = view.state.doc.lineAt(departurePos);
   globalJumpTracker.recordJump(
