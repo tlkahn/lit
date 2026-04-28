@@ -58,6 +58,7 @@
     "eslint": "^9",
     "globals": "^16",
     "jsdom": "^26",
+    "react-devtools": "^7.0.1",
     "tailwindcss": "^4",
     "typescript": "^5.7.3",
     "typescript-eslint": "^8",
