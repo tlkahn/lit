@@ -3,12 +3,13 @@ import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { markdown } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
-import { buildDecorations, buildBlockReplacements } from "./decorations";
+import { buildDecorations, buildBlockReplacements, filterContainedDecorations } from "./decorations";
 import { WikiLink } from "../markdown/wikilink";
 import { Math as MathExt } from "../markdown/math";
 import { Comment as CommentExt } from "../markdown/comment";
 import { calloutFoldField } from "./callout";
 import { mediaThumbnailsFacet } from "./mediaThumbnails";
+import { Decoration } from "@codemirror/view";
 import { ImageWidget, MermaidWidget } from "./widgets";
 
 vi.mock("katex", () => ({
@@ -1044,6 +1045,157 @@ describe("buildDecorations — cursorSensitiveLines", () => {
     const { cursorSensitiveLines } = buildDecorations(view);
     expect(cursorSensitiveLines.has(1)).toBe(false);
     expect(cursorSensitiveLines.has(2)).toBe(true);
+    view.destroy();
+  });
+});
+
+function widgetDeco(from: number, to: number): { from: number; to: number; deco: Decoration } {
+  return { from, to, deco: Decoration.replace({ widget: new ImageWidget("", "", false) }) };
+}
+
+function markDeco(from: number, to: number): { from: number; to: number; deco: Decoration } {
+  return { from, to, deco: Decoration.mark({ class: "test-mark" }) };
+}
+
+function replaceDeco(from: number, to: number): { from: number; to: number; deco: Decoration } {
+  return { from, to, deco: Decoration.replace({}) };
+}
+
+function pointDeco(pos: number): { from: number; to: number; deco: Decoration } {
+  return { from: pos, to: pos, deco: Decoration.replace({}) };
+}
+
+describe("filterContainedDecorations", () => {
+  it("returns empty array for empty input", () => {
+    expect(filterContainedDecorations([])).toEqual([]);
+  });
+
+  it("keeps all decos when no widget replacements exist", () => {
+    const decos = [markDeco(0, 5), markDeco(10, 15), replaceDeco(20, 25)];
+    expect(filterContainedDecorations(decos)).toEqual(decos);
+  });
+
+  it("keeps all decos when only widget replacements exist", () => {
+    const decos = [widgetDeco(0, 10), widgetDeco(20, 30)];
+    expect(filterContainedDecorations(decos)).toEqual(decos);
+  });
+
+  it("removes non-widget span fully inside widget range", () => {
+    const decos = [markDeco(2, 8), widgetDeco(0, 10)];
+    decos.sort((a, b) => a.from - b.from || a.to - b.to);
+    const result = filterContainedDecorations(decos);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.deco.spec.widget).toBeTruthy();
+  });
+
+  it("keeps non-widget span partially overlapping widget", () => {
+    const decos = [markDeco(5, 15), widgetDeco(0, 10)];
+    decos.sort((a, b) => a.from - b.from || a.to - b.to);
+    const result = filterContainedDecorations(decos);
+    expect(result).toHaveLength(2);
+  });
+
+  it("removes non-widget span with exact same bounds as widget", () => {
+    const decos = [markDeco(0, 10), widgetDeco(0, 10)];
+    decos.sort((a, b) => a.from - b.from || a.to - b.to);
+    const result = filterContainedDecorations(decos);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.deco.spec.widget).toBeTruthy();
+  });
+
+  it("keeps point deco inside widget range", () => {
+    const decos = [widgetDeco(0, 10), pointDeco(5)];
+    decos.sort((a, b) => a.from - b.from || a.to - b.to);
+    const result = filterContainedDecorations(decos);
+    expect(result).toHaveLength(2);
+  });
+
+  it("handles multiple widgets with contained and non-contained decos", () => {
+    const decos = [
+      widgetDeco(0, 5),
+      markDeco(1, 4),
+      markDeco(6, 8),
+      widgetDeco(10, 20),
+      markDeco(12, 18),
+    ];
+    decos.sort((a, b) => a.from - b.from || a.to - b.to);
+    const result = filterContainedDecorations(decos);
+    expect(result).toHaveLength(3);
+    expect(result.map((d) => [d.from, d.to])).toEqual([[0, 5], [6, 8], [10, 20]]);
+  });
+
+  it("keeps span starting at wr.from but ending past wr.to", () => {
+    const decos = [widgetDeco(0, 10), markDeco(0, 15)];
+    decos.sort((a, b) => a.from - b.from || a.to - b.to);
+    const result = filterContainedDecorations(decos);
+    expect(result).toHaveLength(2);
+  });
+
+  it("keeps span starting before wr.from but ending at wr.to", () => {
+    const decos = [markDeco(0, 10), widgetDeco(5, 10)];
+    decos.sort((a, b) => a.from - b.from || a.to - b.to);
+    const result = filterContainedDecorations(decos);
+    expect(result).toHaveLength(2);
+  });
+
+  it("keeps deco spanning boundary of adjacent widgets", () => {
+    const decos = [widgetDeco(0, 5), markDeco(4, 6), widgetDeco(5, 10)];
+    decos.sort((a, b) => a.from - b.from || a.to - b.to);
+    const result = filterContainedDecorations(decos);
+    expect(result).toHaveLength(3);
+  });
+
+  it("handles **$E=mc^2$** pattern correctly", () => {
+    // bold mark [2,10] should be removed (inside widget [2,10])
+    // ** hides [0,2] and [10,12] should be kept (outside widget)
+    // widget [2,10] should be kept
+    const decos = [
+      replaceDeco(0, 2),
+      widgetDeco(2, 10),
+      markDeco(2, 10),
+      replaceDeco(10, 12),
+    ];
+    decos.sort((a, b) => a.from - b.from || a.to - b.to);
+    const result = filterContainedDecorations(decos);
+    expect(result).toHaveLength(3);
+    expect(result.some((d) => d.from === 0 && d.to === 2)).toBe(true);
+    expect(result.some((d) => d.deco.spec.widget && d.from === 2 && d.to === 10)).toBe(true);
+    expect(result.some((d) => d.from === 10 && d.to === 12)).toBe(true);
+  });
+
+  it("handles large-range widget with contained deco in the middle", () => {
+    const decos = [widgetDeco(10, 100), markDeco(50, 60)];
+    decos.sort((a, b) => a.from - b.from || a.to - b.to);
+    const result = filterContainedDecorations(decos);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.deco.spec.widget).toBeTruthy();
+  });
+
+  it("preserves order in output", () => {
+    const decos = [
+      replaceDeco(0, 2),
+      markDeco(3, 7),
+      widgetDeco(10, 20),
+      markDeco(25, 30),
+    ];
+    const result = filterContainedDecorations(decos);
+    for (let i = 1; i < result.length; i++) {
+      expect(result[i]!.from).toBeGreaterThanOrEqual(result[i - 1]!.from);
+    }
+  });
+
+  it("integration: **![alt](img.png)** filters bold mark but keeps marker hides and widget", () => {
+    const doc = "**![alt](img.png)**\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const imgWidget = decos.find((d) => d.widget && d.from === 2 && d.to === 17);
+    expect(imgWidget).toBeDefined();
+    const boldMark = decos.find((d) => d.class === "cm-preview-bold");
+    expect(boldMark).toBeUndefined();
+    const starHide1 = decos.find((d) => d.type === "replace" && !d.widget && d.from === 0 && d.to === 2);
+    expect(starHide1).toBeDefined();
+    const starHide2 = decos.find((d) => d.type === "replace" && !d.widget && d.from === 17 && d.to === 19);
+    expect(starHide2).toBeDefined();
     view.destroy();
   });
 });

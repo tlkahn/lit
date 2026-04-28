@@ -112,16 +112,7 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
 
   decos.sort((a, b) => a.from - b.from || a.to - b.to);
 
-  const widgetReplaces = decos.filter(
-    (d) => d.deco.spec.widget && d.from < d.to,
-  );
-  const filtered = decos.filter((d) => {
-    if (d.deco.spec.widget) return true;
-    if (d.from === d.to) return true;
-    return !widgetReplaces.some(
-      (wr) => wr !== d && wr.from <= d.from && wr.to >= d.to,
-    );
-  });
+  const filtered = filterContainedDecorations(decos);
 
   const result = RangeSet.of(filtered.map((d) => d.deco.range(d.from, d.to)));
   perfMeasure("buildDecorations", "buildDecorations:start");
@@ -534,6 +525,39 @@ export function buildBlockReplacements(state: EditorState): BlockReplacementStat
   const result = RangeSet.of(decos.map((d) => d.deco.range(d.from, d.to)));
   perfMeasure("buildBlockReplacements", "buildBlockReplacements:start");
   return { decos: result, cursorSensitiveRanges };
+}
+
+export function filterContainedDecorations(
+  decos: { from: number; to: number; deco: Decoration }[],
+): { from: number; to: number; deco: Decoration }[] {
+  const widgetReplaces: { from: number; to: number }[] = [];
+  for (const d of decos) {
+    if (d.deco.spec.widget && d.from < d.to) {
+      widgetReplaces.push(d);
+    }
+  }
+  if (widgetReplaces.length === 0) return decos;
+
+  let w = 0;
+  const result: typeof decos = [];
+  for (const d of decos) {
+    if (d.deco.spec.widget || d.from === d.to) {
+      result.push(d);
+      continue;
+    }
+    while (w < widgetReplaces.length && widgetReplaces[w]!.to < d.from) {
+      w++;
+    }
+    if (
+      w < widgetReplaces.length &&
+      widgetReplaces[w]!.from <= d.from &&
+      widgetReplaces[w]!.to >= d.to
+    ) {
+      continue;
+    }
+    result.push(d);
+  }
+  return result;
 }
 
 function addCollapsedCalloutBody(
