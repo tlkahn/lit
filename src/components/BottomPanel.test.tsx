@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { BottomPanel } from "./BottomPanel";
@@ -511,6 +511,115 @@ describe("BottomPanel", () => {
 
         expect(() => unmount()).not.toThrow();
       });
+    });
+  });
+
+  describe("ARIA attributes", () => {
+    it("tab bar container has role=tablist", () => {
+      render(<BottomPanel pageId="target.md" />);
+      expect(screen.getByRole("tablist")).toBeInTheDocument();
+    });
+
+    it("tab buttons have role=tab", () => {
+      render(<BottomPanel pageId="target.md" />);
+      const tabs = screen.getAllByRole("tab");
+      expect(tabs.length).toBe(2);
+    });
+
+    it("panel body has role=tabpanel when unfolded", async () => {
+      render(<BottomPanel pageId="target.md" />);
+      await userEvent.click(screen.getByText("Linked References"));
+      expect(screen.getByRole("tabpanel")).toBeInTheDocument();
+    });
+
+    it("tabs have correct IDs", () => {
+      render(<BottomPanel pageId="target.md" />);
+      expect(screen.getByTestId("tab-linked").id).toBe("bp-tab-linked");
+      expect(screen.getByTestId("tab-unlinked").id).toBe("bp-tab-unlinked");
+    });
+
+    it("active tab when unfolded has aria-selected=true, inactive has false", async () => {
+      render(<BottomPanel pageId="target.md" />);
+      await userEvent.click(screen.getByText("Linked References"));
+
+      expect(screen.getByTestId("tab-linked")).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByTestId("tab-unlinked")).toHaveAttribute("aria-selected", "false");
+    });
+
+    it("when folded, all tabs have aria-selected=false", () => {
+      render(<BottomPanel pageId="target.md" />);
+      expect(screen.getByTestId("tab-linked")).toHaveAttribute("aria-selected", "false");
+      expect(screen.getByTestId("tab-unlinked")).toHaveAttribute("aria-selected", "false");
+    });
+
+    it("tabs have aria-controls pointing to panel body id", () => {
+      render(<BottomPanel pageId="target.md" />);
+      expect(screen.getByTestId("tab-linked")).toHaveAttribute("aria-controls", "bp-tabpanel");
+      expect(screen.getByTestId("tab-unlinked")).toHaveAttribute("aria-controls", "bp-tabpanel");
+    });
+
+    it("panel body aria-labelledby points to active tab id", async () => {
+      render(<BottomPanel pageId="target.md" />);
+      await userEvent.click(screen.getByText("Linked References"));
+      const panel = screen.getByRole("tabpanel");
+      expect(panel).toHaveAttribute("aria-labelledby", "bp-tab-linked");
+    });
+
+    it("switching tabs updates aria-labelledby", async () => {
+      render(<BottomPanel pageId="target.md" />);
+      await userEvent.click(screen.getByText("Linked References"));
+      await userEvent.click(screen.getByText("Unlinked References"));
+      const panel = screen.getByRole("tabpanel");
+      expect(panel).toHaveAttribute("aria-labelledby", "bp-tab-unlinked");
+    });
+  });
+
+  describe("focus management", () => {
+    it("opening via toggle event does not steal focus", () => {
+      render(<BottomPanel pageId="target.md" />);
+      const dummy = document.createElement("input");
+      document.body.appendChild(dummy);
+      dummy.focus();
+      expect(document.activeElement).toBe(dummy);
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("lit:toggle-bottom-panel"));
+      });
+
+      expect(document.activeElement).toBe(dummy);
+      document.body.removeChild(dummy);
+    });
+
+    it("keyboard close dispatches lit:request-editor-focus", async () => {
+      render(<BottomPanel pageId="target.md" />);
+      const spy = vi.fn();
+      window.addEventListener("lit:request-editor-focus", spy);
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("lit:toggle-bottom-panel"));
+      });
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("lit:toggle-bottom-panel"));
+      });
+
+      await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+      window.removeEventListener("lit:request-editor-focus", spy);
+    });
+
+    it("click-to-fold does NOT dispatch lit:request-editor-focus", async () => {
+      render(<BottomPanel pageId="target.md" />);
+      const spy = vi.fn();
+      window.addEventListener("lit:request-editor-focus", spy);
+
+      await userEvent.click(screen.getByText("Linked References"));
+      await userEvent.click(screen.getByText("Linked References"));
+
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 50));
+      });
+      expect(spy).not.toHaveBeenCalled();
+      window.removeEventListener("lit:request-editor-focus", spy);
     });
   });
 });

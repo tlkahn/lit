@@ -44,6 +44,13 @@ export function CodeMirrorEditor({ doc, onChange, resolveImageSrc, viewRef, onDo
     return () => window.removeEventListener("lit:scroll-to-line", handler);
   }, [view]);
 
+  useEffect(() => {
+    if (!view) return;
+    const handler = () => view.focus();
+    window.addEventListener("lit:request-editor-focus", handler);
+    return () => window.removeEventListener("lit:request-editor-focus", handler);
+  }, [view]);
+
   return (
     <div
       ref={containerRef}

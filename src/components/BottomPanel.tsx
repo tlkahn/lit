@@ -19,6 +19,7 @@ function TabButton({
   folded,
   onClick,
   testId,
+  id,
 }: {
   label: string;
   count: number | null;
@@ -26,6 +27,7 @@ function TabButton({
   folded: boolean;
   onClick: () => void;
   testId: string;
+  id: string;
 }) {
   let borderClass = "";
   if (active && !folded) {
@@ -36,6 +38,10 @@ function TabButton({
 
   return (
     <button
+      id={id}
+      role="tab"
+      aria-selected={active && !folded}
+      aria-controls="bp-tabpanel"
       data-testid={testId}
       className={`flex h-full items-center gap-1 px-3 text-sm text-text-muted ${borderClass}`}
       onClick={onClick}
@@ -136,7 +142,16 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
   }, []);
 
   useEffect(() => {
-    const handler = () => setUnfolded((u) => !u);
+    const handler = () => {
+      setUnfolded((prev) => {
+        if (prev) {
+          queueMicrotask(() =>
+            window.dispatchEvent(new CustomEvent("lit:request-editor-focus")),
+          );
+        }
+        return !prev;
+      });
+    };
     window.addEventListener("lit:toggle-bottom-panel", handler);
     return () => window.removeEventListener("lit:toggle-bottom-panel", handler);
   }, []);
@@ -203,7 +218,7 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
         transition: isDragging ? "none" : "height 150ms ease-out",
       }}
     >
-      <div className="relative flex h-8 items-center gap-0 bg-bg-primary-alt px-4">
+      <div role="tablist" className="relative flex h-8 items-center gap-0 bg-bg-primary-alt px-4">
         <div
           data-testid="resize-handle"
           style={{
@@ -218,6 +233,7 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
           onMouseDown={handleResizeStart}
         />
         <TabButton
+          id="bp-tab-linked"
           testId="tab-linked"
           label="Linked References"
           count={linkedCount}
@@ -227,6 +243,7 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
         />
         {experimentalUnlinkedReferences && (
           <TabButton
+            id="bp-tab-unlinked"
             testId="tab-unlinked"
             label="Unlinked References"
             count={unlinkedCount}
@@ -236,7 +253,13 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
           />
         )}
       </div>
-      <div className="overflow-y-auto" style={{ height: panelHeight - TAB_BAR_HEIGHT }}>
+      <div
+        role="tabpanel"
+        id="bp-tabpanel"
+        aria-labelledby={`bp-tab-${activeTab}`}
+        className="overflow-y-auto"
+        style={{ height: panelHeight - TAB_BAR_HEIGHT }}
+      >
         <div style={{ display: activeTab === "linked" ? undefined : "none" }}>
           <BacklinksPanel pageId={pageId} onCountChange={setLinkedCount} />
         </div>

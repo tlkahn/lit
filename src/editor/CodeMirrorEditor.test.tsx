@@ -124,4 +124,30 @@ describe("CodeMirrorEditor", () => {
     rerender(<CodeMirrorEditor doc="second" onDocReplaced={fn} />);
     expect(fn).toHaveBeenCalledTimes(1);
   });
+
+  it("lit:request-editor-focus gives the editor focus", () => {
+    let capturedRef: React.RefObject<EditorView | null> = { current: null };
+    function Wrapper() {
+      const ref = useRef<EditorView | null>(null);
+      capturedRef = ref;
+      return <CodeMirrorEditor doc="test" viewRef={ref} />;
+    }
+    render(<Wrapper />);
+    const view = capturedRef.current!;
+    expect(view).not.toBeNull();
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent("lit:request-editor-focus"));
+    });
+
+    expect(view.hasFocus).toBe(true);
+  });
+
+  it("cleans up request-editor-focus listener on unmount", () => {
+    const { unmount } = render(<CodeMirrorEditor doc="hello" />);
+    unmount();
+    expect(() => {
+      window.dispatchEvent(new CustomEvent("lit:request-editor-focus"));
+    }).not.toThrow();
+  });
 });
