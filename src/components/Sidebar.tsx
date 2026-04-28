@@ -254,7 +254,7 @@ export function Sidebar() {
             ref={scrollRef}
             data-testid="sidebar-file-list"
             data-virtual-scroll
-            className="flex-1 overflow-y-auto px-1"
+            className="flex-1 overflow-y-auto overscroll-contain px-1"
           >
             <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
               {virtualizer.getVirtualItems().map((virtualRow) => {
