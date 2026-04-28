@@ -14,6 +14,8 @@ interface FilteredHeading {
   indices: number[];
 }
 
+const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
 function HighlightedText({ text, indices }: { text: string; indices: number[] }) {
   if (indices.length === 0) return <>{text}</>;
 
@@ -22,14 +24,17 @@ function HighlightedText({ text, indices }: { text: string; indices: number[] })
   let current = "";
   let inHighlight = false;
 
-  for (let i = 0; i < text.length; i++) {
-    const shouldHighlight = indexSet.has(i);
+  for (const { segment, index } of graphemeSegmenter.segment(text)) {
+    let shouldHighlight = false;
+    for (let i = index; i < index + segment.length; i++) {
+      if (indexSet.has(i)) { shouldHighlight = true; break; }
+    }
     if (shouldHighlight !== inHighlight) {
       if (current) parts.push({ text: current, highlighted: inHighlight });
       current = "";
       inHighlight = shouldHighlight;
     }
-    current += text[i];
+    current += segment;
   }
   if (current) parts.push({ text: current, highlighted: inHighlight });
 
@@ -145,7 +150,7 @@ export function HeadingQuickSwitcher({ open, onClose, onSelect, headings }: Head
                 data-testid="quick-switcher-item"
                 data-active={i === activeIndex ? "true" : "false"}
                 className={`cursor-pointer px-4 py-1.5 text-sm ${i === activeIndex ? "bg-bg-hover" : ""}`}
-                style={{ paddingLeft: `${(item.heading.level - 1) * 12 + 16}px` }}
+                style={{ paddingInlineStart: `${(item.heading.level - 1) * 12 + 16}px` }}
                 onClick={() => {
                   onSelect(item.heading.line);
                   onClose();

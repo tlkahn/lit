@@ -51,8 +51,8 @@ describe("Outline", () => {
     render(<Outline />);
     const h1 = screen.getByText("H1");
     const h3 = screen.getByText("H3");
-    expect(h1.style.paddingLeft).toBe("8px");
-    expect(h3.style.paddingLeft).toBe("32px");
+    expect(h1.style.paddingInlineStart).toBe("8px");
+    expect(h3.style.paddingInlineStart).toBe("32px");
   });
 
   it("dispatches lit:scroll-to-line event on click", async () => {

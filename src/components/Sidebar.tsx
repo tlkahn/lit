@@ -67,8 +67,8 @@ function FolderView({
       {node.name && (
         <button
           onClick={() => setCollapsed(!collapsed)}
-          className="flex w-full items-center gap-1 rounded px-2 py-1 text-left text-sm text-text-muted hover:bg-bg-hover"
-          style={{ paddingLeft: `${depth * 12 + 8}px` }}
+          className="flex w-full items-center gap-1 rounded px-2 py-1 text-start text-sm text-text-muted hover:bg-bg-hover"
+          style={{ paddingInlineStart: `${depth * 12 + 8}px` }}
         >
           <span className="text-xs">{collapsed ? "▸" : "▾"}</span>
           <span className="font-medium">{node.name}</span>
@@ -203,19 +203,19 @@ function PageItem({
           }}
           onBlur={commitRename}
           className="w-full rounded border border-interactive-accent bg-bg-primary px-2 py-1 text-sm text-text-normal outline-none"
-          style={{ paddingLeft: `${depth * 12 + 8}px` }}
+          style={{ paddingInlineStart: `${depth * 12 + 8}px` }}
         />
       ) : (
         <button
           onClick={() => onSelect(page.relative_path)}
-          className={`w-full select-none truncate rounded px-2 py-1 text-left text-sm ${
+          className={`w-full select-none truncate rounded px-2 py-1 text-start text-sm ${
             isActive
               ? "bg-nav-active-bg text-nav-active-text"
               : showMenu
                 ? "bg-bg-hover text-text-normal"
                 : "text-text-normal hover:bg-bg-hover"
           }`}
-          style={{ paddingLeft: `${depth * 12 + 8}px` }}
+          style={{ paddingInlineStart: `${depth * 12 + 8}px` }}
           title={page.relative_path}
         >
           {page.title}
@@ -228,7 +228,7 @@ function PageItem({
               onMenuClose();
               onRenameStart(page.relative_path);
             }}
-            className="block w-full px-4 py-1 text-left text-sm text-text-normal hover:bg-bg-hover"
+            className="block w-full px-4 py-1 text-start text-sm text-text-normal hover:bg-bg-hover"
           >
             Rename
           </button>
@@ -237,7 +237,7 @@ function PageItem({
               onMenuClose();
               onDelete(page.relative_path);
             }}
-            className="block w-full px-4 py-1 text-left text-sm text-text-error hover:bg-bg-hover"
+            className="block w-full px-4 py-1 text-start text-sm text-text-error hover:bg-bg-hover"
           >
             Delete
           </button>
@@ -246,7 +246,7 @@ function PageItem({
               onMenuClose();
               openInExternalEditor(page.relative_path, 1, 1);
             }}
-            className="block w-full px-4 py-1 text-left text-sm text-text-normal hover:bg-bg-hover"
+            className="block w-full px-4 py-1 text-start text-sm text-text-normal hover:bg-bg-hover"
           >
             Open in External Editor
           </button>
@@ -291,7 +291,7 @@ export function Sidebar() {
   };
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-bg-secondary">
+    <aside className="flex w-60 shrink-0 flex-col border-e border-border bg-bg-secondary">
       <div className="flex items-center border-b border-border">
         <button
           onClick={() => setTab("files")}

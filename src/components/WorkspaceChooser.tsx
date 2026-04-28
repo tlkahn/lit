@@ -61,7 +61,7 @@ export function WorkspaceChooser() {
               <li key={path}>
                 <button
                   onClick={() => openWorkspace(path)}
-                  className="w-full truncate px-4 py-2 text-left text-sm text-text-normal hover:bg-bg-hover"
+                  className="w-full truncate px-4 py-2 text-start text-sm text-text-normal hover:bg-bg-hover"
                   title={path}
                 >
                   {path}

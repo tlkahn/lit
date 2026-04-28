@@ -32,6 +32,11 @@ html, body, #root {
   font-family: var(--font-interface-theme, ui-sans-serif, system-ui, sans-serif);
 }
 
+.cm-editor, [contenteditable], textarea {
+  direction: auto;
+  unicode-bidi: plaintext;
+}
+
 /* CodeMirror syntax highlighting — tok-* classes from classHighlighter */
 .tok-heading { font-weight: bold; }
 .tok-heading1 { font-weight: bold; font-size: 1.5em; }

@@ -56,9 +56,9 @@ describe("HeadingQuickSwitcher", () => {
       <HeadingQuickSwitcher open={true} onClose={onClose} onSelect={onSelect} headings={headings} />,
     );
     const items = screen.getAllByTestId("quick-switcher-item");
-    expect(items[0]!.style.paddingLeft).toBe("16px");
-    expect(items[1]!.style.paddingLeft).toBe("28px");
-    expect(items[2]!.style.paddingLeft).toBe("40px");
+    expect(items[0]!.style.paddingInlineStart).toBe("16px");
+    expect(items[1]!.style.paddingInlineStart).toBe("28px");
+    expect(items[2]!.style.paddingInlineStart).toBe("40px");
   });
 
   it("typing filters headings via fuzzy match", () => {
@@ -181,5 +181,49 @@ describe("HeadingQuickSwitcher", () => {
     fireEvent.change(input, { target: { value: "a" } });
     const items = screen.getAllByTestId("quick-switcher-item");
     expect(items[0]!.getAttribute("data-active")).toBe("true");
+  });
+
+  describe("HighlightedText grapheme handling", () => {
+    it("highlights full emoji as single grapheme", () => {
+      const emojiHeadings: Heading[] = [
+        { level: 1, text: "🚀 Launch", line: 0, from: 0, to: 11 },
+      ];
+      render(
+        <HeadingQuickSwitcher open={true} onClose={onClose} onSelect={onSelect} headings={emojiHeadings} />,
+      );
+      fireEvent.change(screen.getByTestId("quick-switcher-input"), { target: { value: "🚀" } });
+      const items = screen.getAllByTestId("quick-switcher-item");
+      const marks = items[0]!.querySelectorAll("mark");
+      expect(marks).toHaveLength(1);
+      expect(marks[0]!.textContent).toBe("🚀");
+    });
+
+    it("highlights full ZWJ sequence as single grapheme", () => {
+      const zwjHeadings: Heading[] = [
+        { level: 1, text: "👨‍👩‍👧‍👦 Family", line: 0, from: 0, to: 18 },
+      ];
+      render(
+        <HeadingQuickSwitcher open={true} onClose={onClose} onSelect={onSelect} headings={zwjHeadings} />,
+      );
+      fireEvent.change(screen.getByTestId("quick-switcher-input"), { target: { value: "👨" } });
+      const items = screen.getAllByTestId("quick-switcher-item");
+      const marks = items[0]!.querySelectorAll("mark");
+      expect(marks).toHaveLength(1);
+      expect(marks[0]!.textContent).toBe("👨‍👩‍👧‍👦");
+    });
+
+    it("highlights combining mark sequences as single grapheme", () => {
+      const combiningHeadings: Heading[] = [
+        { level: 1, text: "é cafe", line: 0, from: 0, to: 7 },
+      ];
+      render(
+        <HeadingQuickSwitcher open={true} onClose={onClose} onSelect={onSelect} headings={combiningHeadings} />,
+      );
+      fireEvent.change(screen.getByTestId("quick-switcher-input"), { target: { value: "é" } });
+      const items = screen.getAllByTestId("quick-switcher-item");
+      const marks = items[0]!.querySelectorAll("mark");
+      expect(marks).toHaveLength(1);
+      expect(marks[0]!.textContent).toBe("é");
+    });
   });
 });

@@ -17,8 +17,8 @@ export function Outline() {
       {headings.map((h, i) => (
         <button
           key={`${h.line}-${i}`}
-          className="w-full truncate rounded py-0.5 text-left text-sm text-text-normal hover:bg-bg-hover"
-          style={{ paddingLeft: `${(h.level - 1) * 12 + 8}px` }}
+          className="w-full truncate rounded py-0.5 text-start text-sm text-text-normal hover:bg-bg-hover"
+          style={{ paddingInlineStart: `${(h.level - 1) * 12 + 8}px` }}
           onClick={() => {
             window.dispatchEvent(
               new CustomEvent("lit:scroll-to-line", { detail: { line: h.line } }),

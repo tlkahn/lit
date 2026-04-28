@@ -270,6 +270,23 @@ describe("frontmatter editing", () => {
     expect(ta.selectionEnd).toBe("bad: [[[".length);
   });
 
+  it("YAML error selection works correctly with emoji in content", async () => {
+    await showFrontmatterPanel();
+    await userEvent.click(screen.getByTestId("frontmatter"));
+    const textarea = screen.getByTestId("frontmatter-editor");
+    await userEvent.clear(textarea);
+    await userEvent.type(textarea, "🚀: {[}{[}{[}");
+    await act(async () => {
+      textarea.blur();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("yaml-error")).toBeInTheDocument();
+    });
+    const ta = screen.getByTestId("frontmatter-editor") as HTMLTextAreaElement;
+    expect(ta.selectionStart).toBe(0);
+    expect(ta.selectionEnd).toBe("🚀: [[[".length);
+  });
+
   it("editing to empty commits empty frontmatter", async () => {
     await showFrontmatterPanel();
     await userEvent.click(screen.getByTestId("frontmatter"));

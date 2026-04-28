@@ -41,7 +41,7 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
 
   // Callouts — base
   ".cm-callout": {
-    borderLeft: "3px solid var(--text-faint)",
+    borderInlineStart: "3px solid var(--text-faint)",
     borderRadius: "4px",
     padding: "2px 8px",
     backgroundColor: "color-mix(in srgb, var(--text-faint) 8%, transparent)",
@@ -78,55 +78,55 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
 
   // Callouts — per-type
   ".cm-callout-note": {
-    borderLeftColor: "var(--color-blue)",
+    borderInlineStartColor: "var(--color-blue)",
     backgroundColor: "color-mix(in srgb, var(--color-blue) 8%, transparent)",
   },
   ".cm-callout-tip": {
-    borderLeftColor: "var(--color-green)",
+    borderInlineStartColor: "var(--color-green)",
     backgroundColor: "color-mix(in srgb, var(--color-green) 8%, transparent)",
   },
   ".cm-callout-warning": {
-    borderLeftColor: "var(--color-yellow)",
+    borderInlineStartColor: "var(--color-yellow)",
     backgroundColor: "color-mix(in srgb, var(--color-yellow) 8%, transparent)",
   },
   ".cm-callout-danger": {
-    borderLeftColor: "var(--color-red)",
+    borderInlineStartColor: "var(--color-red)",
     backgroundColor: "color-mix(in srgb, var(--color-red) 8%, transparent)",
   },
   ".cm-callout-info": {
-    borderLeftColor: "var(--color-blue)",
+    borderInlineStartColor: "var(--color-blue)",
     backgroundColor: "color-mix(in srgb, var(--color-blue) 8%, transparent)",
   },
   ".cm-callout-success": {
-    borderLeftColor: "var(--color-green)",
+    borderInlineStartColor: "var(--color-green)",
     backgroundColor: "color-mix(in srgb, var(--color-green) 8%, transparent)",
   },
   ".cm-callout-failure": {
-    borderLeftColor: "var(--color-red)",
+    borderInlineStartColor: "var(--color-red)",
     backgroundColor: "color-mix(in srgb, var(--color-red) 8%, transparent)",
   },
   ".cm-callout-bug": {
-    borderLeftColor: "var(--color-orange)",
+    borderInlineStartColor: "var(--color-orange)",
     backgroundColor: "color-mix(in srgb, var(--color-orange) 8%, transparent)",
   },
   ".cm-callout-example": {
-    borderLeftColor: "var(--color-purple)",
+    borderInlineStartColor: "var(--color-purple)",
     backgroundColor: "color-mix(in srgb, var(--color-purple) 8%, transparent)",
   },
   ".cm-callout-quote": {
-    borderLeftColor: "var(--text-faint)",
+    borderInlineStartColor: "var(--text-faint)",
     backgroundColor: "color-mix(in srgb, var(--text-faint) 8%, transparent)",
   },
   ".cm-callout-question": {
-    borderLeftColor: "var(--color-yellow)",
+    borderInlineStartColor: "var(--color-yellow)",
     backgroundColor: "color-mix(in srgb, var(--color-yellow) 8%, transparent)",
   },
   ".cm-callout-abstract": {
-    borderLeftColor: "var(--color-cyan)",
+    borderInlineStartColor: "var(--color-cyan)",
     backgroundColor: "color-mix(in srgb, var(--color-cyan) 8%, transparent)",
   },
   ".cm-callout-todo": {
-    borderLeftColor: "var(--color-blue)",
+    borderInlineStartColor: "var(--color-blue)",
     backgroundColor: "color-mix(in srgb, var(--color-blue) 8%, transparent)",
   },
 
@@ -310,7 +310,7 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
     fontFamily: "monospace",
     fontSize: "0.85em",
     whiteSpace: "pre-wrap",
-    textAlign: "left",
+    textAlign: "start",
   },
 };
 

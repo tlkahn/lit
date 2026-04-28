@@ -344,7 +344,7 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: Min
           >
             <button
               data-mindmap-context-edit
-              className="w-full text-left px-3 py-1.5 text-sm text-neutral-800 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-700"
+              className="w-full text-start px-3 py-1.5 text-sm text-neutral-800 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-700"
               onClick={() => {
                 setEditingId(menuNode.id);
                 setEditText(menuNode.text);
