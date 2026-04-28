@@ -303,4 +303,16 @@ mod tests {
         let result = delete_page(dir.path(), "nope.md");
         assert!(result.is_err());
     }
+
+    #[test]
+    fn create_and_read_page_with_emoji_title() {
+        let dir = TempDir::new().unwrap();
+        let meta = create_page(dir.path(), "🚀 Launch", None).unwrap();
+        assert_eq!(meta.title, "🚀 Launch");
+        assert_eq!(meta.relative_path, "🚀 Launch.md");
+        assert!(dir.path().join("🚀 Launch.md").exists());
+
+        let page = read_page(dir.path(), "🚀 Launch.md").unwrap();
+        assert_eq!(page.meta.title, "🚀 Launch");
+    }
 }

@@ -92,4 +92,33 @@ mod tests {
         let name = filename_to_page_name(nfd_filename);
         assert_eq!(name, "caf\u{00e9}");
     }
+
+    #[test]
+    fn arabic_filename_round_trip() {
+        let name = "اختبار";
+        assert!(validate_page_name(name).is_ok());
+        let filename = page_name_to_filename(name);
+        assert_eq!(filename, "اختبار.md");
+        let recovered = filename_to_page_name(&filename);
+        assert_eq!(recovered, name);
+    }
+
+    #[test]
+    fn tibetan_filename_round_trip() {
+        let name = "བོད་ཡིག";
+        assert!(validate_page_name(name).is_ok());
+        let filename = page_name_to_filename(name);
+        let recovered = filename_to_page_name(&filename);
+        assert_eq!(recovered, name);
+    }
+
+    #[test]
+    fn emoji_in_page_name() {
+        let name = "🚀 Launch Notes";
+        assert!(validate_page_name(name).is_ok());
+        let filename = page_name_to_filename(name);
+        assert_eq!(filename, "🚀 Launch Notes.md");
+        let recovered = filename_to_page_name(&filename);
+        assert_eq!(recovered, name);
+    }
 }

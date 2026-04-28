@@ -206,4 +206,31 @@ mod tests {
         assert_eq!(result, body);
         assert!(!result.contains("---"));
     }
+
+    #[test]
+    fn frontmatter_with_cjk_and_devanagari() {
+        let input = "---\ntitle: 日本語のタイトル\ntags:\n  - 漢字\n  - かな\n  - देवनागरी\n---\nBody text.\n";
+        let parsed = parse_frontmatter(input);
+        assert_eq!(
+            parsed.map.get("title"),
+            Some(&serde_yaml::Value::String("日本語のタイトル".to_string()))
+        );
+        let tags = parsed.map.get("tags").unwrap().as_sequence().unwrap();
+        assert_eq!(tags.len(), 3);
+        assert_eq!(parsed.body, "Body text.\n");
+    }
+
+    #[test]
+    fn round_trip_cjk_frontmatter() {
+        let mut fm = HashMap::new();
+        fm.insert(
+            "title".to_string(),
+            serde_yaml::Value::String("日本語のタイトル".to_string()),
+        );
+        let body = "本文テキスト\n";
+        let serialized = serialize_frontmatter(&fm, body);
+        let parsed = parse_frontmatter(&serialized);
+        assert_eq!(parsed.map.get("title"), fm.get("title"));
+        assert_eq!(parsed.body, body);
+    }
 }

@@ -110,6 +110,26 @@ describe("fuzzyMatch", () => {
     });
   });
 
+  describe("CJK and Devanagari matching", () => {
+    it("matches CJK characters as individual graphemes", () => {
+      const result = fuzzyMatch("日本", "日本語のページ");
+      expect(result).not.toBeNull();
+      expect(result!.indices).toEqual([0, 1]);
+    });
+
+    it("matches CJK subsequence across candidate", () => {
+      const result = fuzzyMatch("日ペ", "日本語のページ");
+      expect(result).not.toBeNull();
+      expect(result!.indices).toEqual([0, 4]);
+    });
+
+    it("matches Devanagari characters as graphemes", () => {
+      const result = fuzzyMatch("नम", "नमस्ते");
+      expect(result).not.toBeNull();
+      expect(result!.indices).toEqual([0, 1]);
+    });
+  });
+
   describe("locale-aware case folding", () => {
     it("matches accented characters with base equivalents", () => {
       const result = fuzzyMatch("cafe", "café");

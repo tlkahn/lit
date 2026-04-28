@@ -183,6 +183,22 @@ describe("HeadingQuickSwitcher", () => {
     expect(items[0]!.getAttribute("data-active")).toBe("true");
   });
 
+  describe("Arabic/RTL highlight rendering", () => {
+    it("highlights Arabic characters correctly", () => {
+      const arabicHeadings: Heading[] = [
+        { level: 1, text: "مقدمة", line: 0, from: 0, to: 10 },
+      ];
+      render(
+        <HeadingQuickSwitcher open={true} onClose={onClose} onSelect={onSelect} headings={arabicHeadings} />,
+      );
+      fireEvent.change(screen.getByTestId("quick-switcher-input"), { target: { value: "مق" } });
+      const items = screen.getAllByTestId("quick-switcher-item");
+      const marks = items[0]!.querySelectorAll("mark");
+      expect(marks).toHaveLength(1);
+      expect(marks[0]!.textContent).toBe("مق");
+    });
+  });
+
   describe("HighlightedText grapheme handling", () => {
     it("highlights full emoji as single grapheme", () => {
       const emojiHeadings: Heading[] = [
