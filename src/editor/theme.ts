@@ -5,7 +5,7 @@ import type { Extension } from "@codemirror/state";
 
 const shared = EditorView.baseTheme({
   "&": { height: "100%" },
-  ".cm-scroller": { overflow: "auto" },
+  ".cm-scroller": { overflow: "auto", overscrollBehavior: "contain" },
   ".cm-content": {
     padding: "1rem 1.5rem",
     fontFamily: "var(--font-text-theme, var(--font-interface-theme, -apple-system, BlinkMacSystemFont, sans-serif))",
