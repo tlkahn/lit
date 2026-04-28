@@ -192,6 +192,7 @@ export function Sidebar() {
     count: rows.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => 28,
+    overscan: 10,
   });
 
   const handleNewPage = () => {
