@@ -3,7 +3,7 @@ import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { markdown } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
-import { getLinkUrlAtPos, createLinkClickHandler, classifyLinkTarget } from "./linkHandler";
+import { getLinkUrlAtPos, getLinkInfoAtPos, createLinkClickHandler, classifyLinkTarget } from "./linkHandler";
 
 function makeState(doc: string): EditorState {
   return EditorState.create({
@@ -92,56 +92,57 @@ describe("createLinkClickHandler", () => {
     view.destroy();
   });
 
-  function createView(doc: string, handlers: { openUrl: ReturnType<typeof vi.fn>; openFilePath?: ReturnType<typeof vi.fn> }) {
+  function createView(doc: string, handlers: { openUrl: ReturnType<typeof vi.fn>; openFilePath?: ReturnType<typeof vi.fn> }, mockPos = 7) {
     const container = document.createElement("div");
     document.body.appendChild(container);
+    const prefixed = "txt " + doc;
     const state = EditorState.create({
-      doc,
+      doc: prefixed,
       extensions: [
         markdown({ extensions: GFM }),
         createLinkClickHandler(handlers),
       ],
     });
     const view = new EditorView({ state, parent: container });
-    vi.spyOn(view, "posAtCoords").mockReturnValue(3);
+    vi.spyOn(view, "posAtCoords").mockReturnValue(mockPos);
     return view;
   }
 
-  it("opens URL on Cmd+mousedown (left button)", () => {
+  it("opens URL on plain mousedown (left button)", () => {
+    const openUrl = vi.fn();
+    const view = createView("[Click](https://example.com)", { openUrl });
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", { button: 0, bubbles: true }),
+    );
+    expect(openUrl).toHaveBeenCalledWith("https://example.com");
+    view.destroy();
+  });
+
+  it("does NOT open URL on Cmd+mousedown", () => {
     const openUrl = vi.fn();
     const view = createView("[Click](https://example.com)", { openUrl });
     view.contentDOM.dispatchEvent(
       new MouseEvent("mousedown", { button: 0, metaKey: true, bubbles: true }),
     );
-    expect(openUrl).toHaveBeenCalledWith("https://example.com");
+    expect(openUrl).not.toHaveBeenCalled();
     view.destroy();
   });
 
-  it("opens URL on Ctrl+mousedown (left button)", () => {
+  it("does NOT open URL on Ctrl+mousedown", () => {
     const openUrl = vi.fn();
     const view = createView("[Click](https://example.com)", { openUrl });
     view.contentDOM.dispatchEvent(
       new MouseEvent("mousedown", { button: 0, ctrlKey: true, bubbles: true }),
     );
-    expect(openUrl).toHaveBeenCalledWith("https://example.com");
-    view.destroy();
-  });
-
-  it("does NOT open URL on Cmd+click (must use mousedown to avoid decoration DOM shift)", () => {
-    const openUrl = vi.fn();
-    const view = createView("[Click](https://example.com)", { openUrl });
-    view.contentDOM.dispatchEvent(
-      new MouseEvent("click", { button: 0, metaKey: true, bubbles: true }),
-    );
     expect(openUrl).not.toHaveBeenCalled();
     view.destroy();
   });
 
-  it("ignores mousedown without modifier key", () => {
+  it("does NOT open URL on click (must use mousedown to avoid decoration DOM shift)", () => {
     const openUrl = vi.fn();
     const view = createView("[Click](https://example.com)", { openUrl });
     view.contentDOM.dispatchEvent(
-      new MouseEvent("mousedown", { button: 0, bubbles: true }),
+      new MouseEvent("click", { button: 0, bubbles: true }),
     );
     expect(openUrl).not.toHaveBeenCalled();
     view.destroy();
@@ -162,7 +163,7 @@ describe("createLinkClickHandler", () => {
     const openFilePath = vi.fn();
     const view = createView("[Click](file.pdf)", { openUrl, openFilePath });
     view.contentDOM.dispatchEvent(
-      new MouseEvent("mousedown", { button: 0, metaKey: true, bubbles: true }),
+      new MouseEvent("mousedown", { button: 0, bubbles: true }),
     );
     expect(openFilePath).toHaveBeenCalledWith("file.pdf");
     expect(openUrl).not.toHaveBeenCalled();
@@ -174,7 +175,7 @@ describe("createLinkClickHandler", () => {
     const openFilePath = vi.fn();
     const view = createView("[Click](#heading)", { openUrl, openFilePath });
     view.contentDOM.dispatchEvent(
-      new MouseEvent("mousedown", { button: 0, metaKey: true, bubbles: true }),
+      new MouseEvent("mousedown", { button: 0, bubbles: true }),
     );
     expect(openUrl).not.toHaveBeenCalled();
     expect(openFilePath).not.toHaveBeenCalled();
@@ -185,9 +186,61 @@ describe("createLinkClickHandler", () => {
     const openUrl = vi.fn();
     const view = createView("[Click](file.pdf)", { openUrl });
     view.contentDOM.dispatchEvent(
-      new MouseEvent("mousedown", { button: 0, metaKey: true, bubbles: true }),
+      new MouseEvent("mousedown", { button: 0, bubbles: true }),
     );
     expect(openUrl).not.toHaveBeenCalled();
     view.destroy();
+  });
+
+  it("does NOT open URL when cursor is inside the same Link node", () => {
+    const openUrl = vi.fn();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const state = EditorState.create({
+      doc: "[Click](https://example.com)",
+      selection: { anchor: 3 },
+      extensions: [
+        markdown({ extensions: GFM }),
+        createLinkClickHandler({ openUrl }),
+      ],
+    });
+    const view = new EditorView({ state, parent: container });
+    vi.spyOn(view, "posAtCoords").mockReturnValue(3);
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", { button: 0, bubbles: true }),
+    );
+    expect(openUrl).not.toHaveBeenCalled();
+    view.destroy();
+  });
+
+  it("opens URL when cursor is inside a different Link node", () => {
+    const openUrl = vi.fn();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const doc = "[A](https://a.com) [B](https://b.com)";
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: 1 },
+      extensions: [
+        markdown({ extensions: GFM }),
+        createLinkClickHandler({ openUrl }),
+      ],
+    });
+    const view = new EditorView({ state, parent: container });
+    vi.spyOn(view, "posAtCoords").mockReturnValue(20);
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", { button: 0, bubbles: true }),
+    );
+    expect(openUrl).toHaveBeenCalledWith("https://b.com");
+    view.destroy();
+  });
+
+  it("getLinkInfoAtPos returns url and range", () => {
+    const state = makeState("[Click me](https://example.com)");
+    const info = getLinkInfoAtPos(state, 3);
+    expect(info).not.toBeNull();
+    expect(info!.url).toBe("https://example.com");
+    expect(info!.from).toBe(0);
+    expect(info!.to).toBe(31);
   });
 });

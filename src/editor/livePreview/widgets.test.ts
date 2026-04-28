@@ -611,7 +611,7 @@ describe("EditableTableWidget", () => {
     expect(widget.ignoreEvent()).toBe(true);
   });
 
-  describe("wikilink cmd+click navigation", () => {
+  describe("wikilink plain-click navigation", () => {
     const wikiTable = "| link |\n| --- |\n| [[Target]] |";
 
     function makeTableViewWithFacet(navigateToPage: ReturnType<typeof vi.fn>): EditorView {
@@ -622,10 +622,9 @@ describe("EditableTableWidget", () => {
       return new EditorView({ state, parent: document.createElement("div") });
     }
 
-    function cmdClickOn(span: Element): MouseEvent {
+    function clickOn(span: Element): MouseEvent {
       const event = new MouseEvent("mousedown", {
         button: 0,
-        metaKey: true,
         bubbles: true,
         cancelable: true,
       });
@@ -633,38 +632,20 @@ describe("EditableTableWidget", () => {
       return event;
     }
 
-    it("cmd+click on wikilink in cell calls navigateToPage with departurePos", () => {
+    it("plain click on wikilink in cell calls navigateToPage with departurePos", () => {
       const nav = vi.fn();
       const view = makeTableViewWithFacet(nav);
       const widget = new EditableTableWidget(wikiTable, 0);
       const el = widget.toDOM(view);
       document.body.appendChild(el);
       const span = el.querySelector(".cm-preview-wikilink")!;
-      cmdClickOn(span);
+      clickOn(span);
       expect(nav).toHaveBeenCalledWith("Target", undefined, 0);
       el.remove();
       view.destroy();
     });
 
-    it("ctrl+click also navigates", () => {
-      const nav = vi.fn();
-      const view = makeTableViewWithFacet(nav);
-      const widget = new EditableTableWidget(wikiTable, 0);
-      const el = widget.toDOM(view);
-      document.body.appendChild(el);
-      const span = el.querySelector(".cm-preview-wikilink")!;
-      span.dispatchEvent(new MouseEvent("mousedown", {
-        button: 0,
-        ctrlKey: true,
-        bubbles: true,
-        cancelable: true,
-      }));
-      expect(nav).toHaveBeenCalledWith("Target", undefined, 0);
-      el.remove();
-      view.destroy();
-    });
-
-    it("cmd+click with section passes section arg", () => {
+    it("plain click with section passes section arg", () => {
       const sectionTable = "| link |\n| --- |\n| [[Page#Heading]] |";
       const nav = vi.fn();
       const state = EditorState.create({
@@ -676,13 +657,13 @@ describe("EditableTableWidget", () => {
       const el = widget.toDOM(view);
       document.body.appendChild(el);
       const span = el.querySelector(".cm-preview-wikilink")!;
-      cmdClickOn(span);
+      clickOn(span);
       expect(nav).toHaveBeenCalledWith("Page", "Heading", 0);
       el.remove();
       view.destroy();
     });
 
-    it("cmd+click on wikilink with section+hash uses target not display text", () => {
+    it("plain click on wikilink with section+hash uses target not display text", () => {
       const hashTable = "| link |\n| --- |\n| [[OtherPage#Details]] |";
       const nav = vi.fn();
       const state = EditorState.create({
@@ -696,7 +677,7 @@ describe("EditableTableWidget", () => {
       const span = el.querySelector(".cm-preview-wikilink")!;
       expect(span.textContent).toBe("OtherPage#Details");
       expect(span.getAttribute("data-wikilink-target")).toBe("OtherPage");
-      cmdClickOn(span);
+      clickOn(span);
       expect(nav).toHaveBeenCalledWith("OtherPage", "Details", 0);
       el.remove();
       view.destroy();
@@ -710,7 +691,7 @@ describe("EditableTableWidget", () => {
       const el = widget.toDOM(view);
       document.body.appendChild(el);
       const span = el.querySelector(".cm-preview-wikilink")!;
-      cmdClickOn(span);
+      clickOn(span);
       expect(nav).toHaveBeenCalledWith("Target", undefined, 15);
       el.remove();
       view.destroy();
@@ -724,13 +705,13 @@ describe("EditableTableWidget", () => {
       const el = widget.toDOM(view);
       document.body.appendChild(el);
       const span = el.querySelector(".cm-preview-wikilink")!;
-      cmdClickOn(span);
+      clickOn(span);
       expect(nav).toHaveBeenCalledWith("Target", undefined, 42);
       el.remove();
       view.destroy();
     });
 
-    it("plain click does NOT navigate", () => {
+    it("cmd+click does NOT navigate", () => {
       const nav = vi.fn();
       const view = makeTableViewWithFacet(nav);
       const widget = new EditableTableWidget(wikiTable, 0);
@@ -738,23 +719,6 @@ describe("EditableTableWidget", () => {
       document.body.appendChild(el);
       const span = el.querySelector(".cm-preview-wikilink")!;
       span.dispatchEvent(new MouseEvent("mousedown", {
-        button: 0,
-        bubbles: true,
-        cancelable: true,
-      }));
-      expect(nav).not.toHaveBeenCalled();
-      el.remove();
-      view.destroy();
-    });
-
-    it("cmd+click on non-wikilink cell does NOT navigate", () => {
-      const nav = vi.fn();
-      const view = makeTableViewWithFacet(nav);
-      const widget = new EditableTableWidget(wikiTable, 0);
-      const el = widget.toDOM(view);
-      document.body.appendChild(el);
-      const th = el.querySelector("thead th")!;
-      th.dispatchEvent(new MouseEvent("mousedown", {
         button: 0,
         metaKey: true,
         bubbles: true,
@@ -765,14 +729,31 @@ describe("EditableTableWidget", () => {
       view.destroy();
     });
 
-    it("cmd+click prevents cell focus via stopPropagation", () => {
+    it("plain click on non-wikilink cell does NOT navigate", () => {
+      const nav = vi.fn();
+      const view = makeTableViewWithFacet(nav);
+      const widget = new EditableTableWidget(wikiTable, 0);
+      const el = widget.toDOM(view);
+      document.body.appendChild(el);
+      const th = el.querySelector("thead th")!;
+      th.dispatchEvent(new MouseEvent("mousedown", {
+        button: 0,
+        bubbles: true,
+        cancelable: true,
+      }));
+      expect(nav).not.toHaveBeenCalled();
+      el.remove();
+      view.destroy();
+    });
+
+    it("plain click prevents cell focus via stopPropagation", () => {
       const nav = vi.fn();
       const view = makeTableViewWithFacet(nav);
       const widget = new EditableTableWidget(wikiTable, 0);
       const el = widget.toDOM(view);
       document.body.appendChild(el);
       const span = el.querySelector(".cm-preview-wikilink")!;
-      const event = cmdClickOn(span);
+      const event = clickOn(span);
       expect(event.defaultPrevented).toBe(true);
       el.remove();
       view.destroy();
@@ -787,7 +768,6 @@ describe("EditableTableWidget", () => {
       expect(() => {
         span.dispatchEvent(new MouseEvent("mousedown", {
           button: 0,
-          metaKey: true,
           bubbles: true,
           cancelable: true,
         }));

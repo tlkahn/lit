@@ -3,8 +3,14 @@ import type { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 
-export function getLinkUrlAtPos(state: EditorState, pos: number): string | null {
-  let url: string | null = null;
+export interface LinkInfo {
+  url: string;
+  from: number;
+  to: number;
+}
+
+export function getLinkInfoAtPos(state: EditorState, pos: number): LinkInfo | null {
+  let result: LinkInfo | null = null;
   syntaxTree(state).iterate({
     from: pos,
     to: pos,
@@ -17,7 +23,11 @@ export function getLinkUrlAtPos(state: EditorState, pos: number): string | null 
             const textFrom = linkMarks[0].to;
             const textTo = linkMarks[1].from;
             if (pos >= textFrom && pos <= textTo) {
-              url = state.doc.sliceString(urlNode.from, urlNode.to);
+              result = {
+                url: state.doc.sliceString(urlNode.from, urlNode.to),
+                from: node.from,
+                to: node.to,
+              };
             }
           }
         }
@@ -25,7 +35,11 @@ export function getLinkUrlAtPos(state: EditorState, pos: number): string | null 
       }
     },
   });
-  return url;
+  return result;
+}
+
+export function getLinkUrlAtPos(state: EditorState, pos: number): string | null {
+  return getLinkInfoAtPos(state, pos)?.url ?? null;
 }
 
 export type LinkTargetKind = "url" | "path" | "anchor";
@@ -47,25 +61,27 @@ export function createLinkClickHandler(
   return EditorView.domEventHandlers({
     mousedown(event, view) {
       if (event.button !== 0) return false;
-      const isMod = event.ctrlKey || event.metaKey;
-      if (!isMod) return false;
+      if (event.ctrlKey || event.metaKey) return false;
 
       const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
       if (pos === null) return false;
 
-      const target = getLinkUrlAtPos(view.state, pos);
-      if (!target) return false;
+      const info = getLinkInfoAtPos(view.state, pos);
+      if (!info) return false;
 
-      const kind = classifyLinkTarget(target);
+      const head = view.state.selection.main.head;
+      if (head >= info.from && head <= info.to) return false;
+
+      const kind = classifyLinkTarget(info.url);
       if (kind === "anchor") return false;
       if (kind === "path") {
         if (!handlers.openFilePath) return false;
         event.preventDefault();
-        handlers.openFilePath(target);
+        handlers.openFilePath(info.url);
         return true;
       }
       event.preventDefault();
-      handlers.openUrl(target);
+      handlers.openUrl(info.url);
       return true;
     },
   });

@@ -6,6 +6,8 @@ import { syntaxTree } from "@codemirror/language";
 export interface WikilinkTarget {
   target: string;
   section: string | null;
+  from: number;
+  to: number;
 }
 
 export function getWikilinkTargetAtPos(
@@ -33,9 +35,11 @@ export function getWikilinkTargetAtPos(
           result = {
             target: raw.substring(0, hashIndex),
             section: raw.substring(hashIndex + 1),
+            from: node.from,
+            to: node.to,
           };
         } else {
-          result = { target: raw, section: null };
+          result = { target: raw, section: null, from: node.from, to: node.to };
         }
         return false;
       }
@@ -52,14 +56,15 @@ export function createWikilinkClickHandler(
   return EditorView.domEventHandlers({
     mousedown(event, view) {
       if (event.button !== 0) return false;
-      const isMod = event.ctrlKey || event.metaKey;
-      if (!isMod) return false;
+      if (event.ctrlKey || event.metaKey) return false;
 
       const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
       if (pos === null) return false;
 
       const wikilink = getWikilinkTargetAtPos(view.state, pos);
       if (wikilink) {
+        const head = view.state.selection.main.head;
+        if (head >= wikilink.from && head <= wikilink.to) return false;
         event.preventDefault();
         navigateToPage(
           wikilink.target,

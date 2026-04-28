@@ -274,7 +274,7 @@ export class EditableTableWidget extends WidgetType {
 
     container.addEventListener("mousedown", (e) => {
       if (e.button !== 0) return;
-      if (!e.metaKey && !e.ctrlKey) return;
+      if (e.metaKey || e.ctrlKey) return;
       const span = (e.target as HTMLElement).closest?.(".cm-preview-wikilink");
       if (!span) return;
       const target = span.getAttribute("data-wikilink-target");

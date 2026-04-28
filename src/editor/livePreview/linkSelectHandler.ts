@@ -22,7 +22,7 @@ function findNodeRange(
 export function createLinkSelectHandler(): Extension {
   return EditorView.domEventHandlers({
     mousedown(event, view) {
-      if (event.ctrlKey || event.metaKey) return false;
+      if (!event.ctrlKey && !event.metaKey) return false;
 
       const target = event.target as HTMLElement;
       const el = target.closest(".cm-preview-link, .cm-preview-wikilink") as HTMLElement | null;
