@@ -6,11 +6,14 @@ function reactDevtools(): Plugin {
   return {
     name: "react-devtools",
     apply: "serve",
-    transformIndexHtml(html) {
-      return html.replace(
-        "<head>",
-        '<head><script src="http://localhost:8097"></script>',
-      );
+    transformIndexHtml() {
+      return [
+        {
+          tag: "script",
+          attrs: { src: "http://localhost:8097" },
+          injectTo: "head-prepend",
+        },
+      ];
     },
   };
 }
