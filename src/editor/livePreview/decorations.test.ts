@@ -52,7 +52,7 @@ type DecoInfo = {
 };
 
 function collectDecos(view: EditorView): DecoInfo[] {
-  const decoSet = buildDecorations(view);
+  const { decorations: decoSet } = buildDecorations(view);
   const result: DecoInfo[] = [];
   const iter = decoSet.iter();
   while (iter.value) {
@@ -896,7 +896,7 @@ describe("buildDecorations — image thumbnail facet", () => {
   it("creates ImageWidget with thumbnail=true when facet is true", () => {
     const doc = "![alt](img.png)\n\nother";
     const view = makeViewWithFacet(doc, doc.length - 1, true);
-    const decoSet = buildDecorations(view);
+    const { decorations: decoSet } = buildDecorations(view);
     const iter = decoSet.iter();
     let found = false;
     while (iter.value) {
@@ -913,7 +913,7 @@ describe("buildDecorations — image thumbnail facet", () => {
   it("creates ImageWidget with thumbnail=false when facet is false", () => {
     const doc = "![alt](img.png)\n\nother";
     const view = makeViewWithFacet(doc, doc.length - 1, false);
-    const decoSet = buildDecorations(view);
+    const { decorations: decoSet } = buildDecorations(view);
     const iter = decoSet.iter();
     let found = false;
     while (iter.value) {
@@ -1017,6 +1017,33 @@ describe("buildBlockReplacements — block comments", () => {
     const view = makeView(doc, doc.length - 1);
     const decos = collectBlockDecos(view);
     expect(decos.length).toBeGreaterThanOrEqual(3);
+    view.destroy();
+  });
+});
+
+describe("buildDecorations — cursorSensitiveLines", () => {
+  it("includes heading lines", () => {
+    const doc = "plain\n## Heading\nmore";
+    const view = makeView(doc, 0);
+    const { cursorSensitiveLines } = buildDecorations(view);
+    expect(cursorSensitiveLines.has(2)).toBe(true);
+    view.destroy();
+  });
+
+  it("includes inline formatting lines", () => {
+    const doc = "plain\n**bold**\nmore";
+    const view = makeView(doc, 0);
+    const { cursorSensitiveLines } = buildDecorations(view);
+    expect(cursorSensitiveLines.has(2)).toBe(true);
+    view.destroy();
+  });
+
+  it("excludes plain text lines", () => {
+    const doc = "plain text\n## Heading";
+    const view = makeView(doc, 0);
+    const { cursorSensitiveLines } = buildDecorations(view);
+    expect(cursorSensitiveLines.has(1)).toBe(false);
+    expect(cursorSensitiveLines.has(2)).toBe(true);
     view.destroy();
   });
 });

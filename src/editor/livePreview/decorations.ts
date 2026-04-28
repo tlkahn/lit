@@ -17,16 +17,33 @@ const headingClass: Record<string, string> = {
   ATXHeading6: "cm-preview-h6",
 };
 
-export function buildDecorations(view: EditorView): DecorationSet {
+export interface BuildDecorationsResult {
+  decorations: DecorationSet;
+  cursorSensitiveLines: Set<number>;
+}
+
+const cursorSensitiveNodeNames = new Set([
+  "StrongEmphasis", "Emphasis", "Image", "Link", "WikiLink",
+  "FencedCode", "Blockquote", "InlineCode", "InlineMath",
+  "InlineComment", "BlockComment", "HorizontalRule", "DisplayMath",
+]);
+
+export function buildDecorations(view: EditorView): BuildDecorationsResult {
   perfMark("buildDecorations:start");
   const { state } = view;
   const decos: { from: number; to: number; deco: Decoration }[] = [];
+  const cursorSensitiveLines = new Set<number>();
 
   for (const { from, to } of view.visibleRanges) {
     syntaxTree(state).iterate({
       from,
       to,
       enter: (node) => {
+        if (headingClass[node.name] || cursorSensitiveNodeNames.has(node.name)) {
+          const startLine = state.doc.lineAt(node.from).number;
+          const endLine = state.doc.lineAt(node.to).number;
+          for (let l = startLine; l <= endLine; l++) cursorSensitiveLines.add(l);
+        }
         const cls = headingClass[node.name];
         if (cls) {
           addHeadingDecos(state, node.from, node.to, cls, node.node, decos);
@@ -108,7 +125,7 @@ export function buildDecorations(view: EditorView): DecorationSet {
 
   const result = RangeSet.of(filtered.map((d) => d.deco.range(d.from, d.to)));
   perfMeasure("buildDecorations", "buildDecorations:start");
-  return result;
+  return { decorations: result, cursorSensitiveLines };
 }
 
 function addHeadingDecos(

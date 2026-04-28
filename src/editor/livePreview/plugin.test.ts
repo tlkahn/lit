@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { EditorState, StateEffect } from "@codemirror/state";
+import { Compartment, EditorState, StateEffect } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { markdown } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
@@ -7,7 +7,9 @@ import { livePreviewPlugin, blockReplacementField } from "./plugin";
 import { WikiLink } from "../markdown/wikilink";
 import { Math as MathExt } from "../markdown/math";
 import { Comment as CommentExt } from "../markdown/comment";
-import { calloutFoldField } from "./callout";
+import { calloutFoldField, toggleCalloutEffect } from "./callout";
+import { imageResolverFacet } from "./imageResolver";
+import { mediaThumbnailsFacet } from "./mediaThumbnails";
 import type { BlockReplacementState } from "./decorations";
 
 vi.mock("katex", () => ({
@@ -224,6 +226,188 @@ describe("blockReplacementField — skip logic", () => {
     const plainQuoteLine = 4;
     expect(ranges.some(r => r.fromLine === plainQuoteLine && r.toLine === plainQuoteLine)).toBe(false);
 
+    view.destroy();
+  });
+});
+
+describe("livePreviewPlugin — effect filtering", () => {
+  it("skips rebuild on unrelated effect", () => {
+    const view = makeView("## Heading\n\nbody", 14);
+    const decosBefore = view.plugin(livePreviewPlugin)!.decorations;
+
+    const unrelated = StateEffect.define<null>();
+    view.dispatch({ effects: [unrelated.of(null)] });
+    const decosAfter = view.plugin(livePreviewPlugin)!.decorations;
+
+    expect(decosAfter).toBe(decosBefore);
+    view.destroy();
+  });
+
+  it("rebuilds on toggleCalloutEffect", () => {
+    const doc = "> [!note]\n> Content\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decosBefore = view.plugin(livePreviewPlugin)!.decorations;
+
+    view.dispatch({ effects: [toggleCalloutEffect.of({ pos: 0 })] });
+    const decosAfter = view.plugin(livePreviewPlugin)!.decorations;
+
+    expect(decosAfter).not.toBe(decosBefore);
+    view.destroy();
+  });
+
+  it("rebuilds on imageResolverFacet change", () => {
+    const compartment = new Compartment();
+    const state = EditorState.create({
+      doc: "![alt](img.png)\n\nother",
+      selection: { anchor: 19 },
+      extensions: [
+        markdown({ extensions: [GFM, WikiLink, MathExt, CommentExt] }),
+        calloutFoldField,
+        compartment.of(imageResolverFacet.of((src) => src)),
+        livePreviewPlugin,
+        blockReplacementField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    const decosBefore = view.plugin(livePreviewPlugin)!.decorations;
+
+    view.dispatch({ effects: compartment.reconfigure(imageResolverFacet.of((src) => `/resolved/${src}`)) });
+    const decosAfter = view.plugin(livePreviewPlugin)!.decorations;
+
+    expect(decosAfter).not.toBe(decosBefore);
+    view.destroy();
+  });
+
+  it("rebuilds on mediaThumbnailsFacet change", () => {
+    const compartment = new Compartment();
+    const state = EditorState.create({
+      doc: "![alt](img.png)\n\nother",
+      selection: { anchor: 19 },
+      extensions: [
+        markdown({ extensions: [GFM, WikiLink, MathExt, CommentExt] }),
+        calloutFoldField,
+        compartment.of(mediaThumbnailsFacet.of(true)),
+        livePreviewPlugin,
+        blockReplacementField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    const decosBefore = view.plugin(livePreviewPlugin)!.decorations;
+
+    view.dispatch({ effects: compartment.reconfigure(mediaThumbnailsFacet.of(false)) });
+    const decosAfter = view.plugin(livePreviewPlugin)!.decorations;
+
+    expect(decosAfter).not.toBe(decosBefore);
+    view.destroy();
+  });
+
+  it("rebuilds when relevant + irrelevant effects in same transaction", () => {
+    const doc = "> [!note]\n> Content\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decosBefore = view.plugin(livePreviewPlugin)!.decorations;
+
+    const unrelated = StateEffect.define<null>();
+    view.dispatch({ effects: [unrelated.of(null), toggleCalloutEffect.of({ pos: 0 })] });
+    const decosAfter = view.plugin(livePreviewPlugin)!.decorations;
+
+    expect(decosAfter).not.toBe(decosBefore);
+    view.destroy();
+  });
+
+  it("skips rebuild on multiple unrelated effects", () => {
+    const view = makeView("## Heading\n\nbody", 14);
+    const decosBefore = view.plugin(livePreviewPlugin)!.decorations;
+
+    const unrelated1 = StateEffect.define<null>();
+    const unrelated2 = StateEffect.define<string>();
+    view.dispatch({ effects: [unrelated1.of(null), unrelated2.of("x")] });
+    const decosAfter = view.plugin(livePreviewPlugin)!.decorations;
+
+    expect(decosAfter).toBe(decosBefore);
+    view.destroy();
+  });
+});
+
+describe("livePreviewPlugin — selection smart-skip", () => {
+  it("skips rebuild between two plain-text lines", () => {
+    const view = makeView("line one\nline two\nline three", 0);
+    const decosBefore = view.plugin(livePreviewPlugin)!.decorations;
+
+    view.dispatch({ selection: { anchor: 14 } });
+    const decosAfter = view.plugin(livePreviewPlugin)!.decorations;
+
+    expect(decosAfter).toBe(decosBefore);
+    view.destroy();
+  });
+
+  it("rebuilds when cursor moves to heading line", () => {
+    const doc = "body text\n## Heading";
+    const view = makeView(doc, 0);
+    const decosBefore = view.plugin(livePreviewPlugin)!.decorations;
+
+    view.dispatch({ selection: { anchor: 15 } });
+    const decosAfter = view.plugin(livePreviewPlugin)!.decorations;
+
+    expect(decosAfter).not.toBe(decosBefore);
+    view.destroy();
+  });
+
+  it("rebuilds when cursor leaves heading line", () => {
+    const doc = "## Heading\nbody text";
+    const view = makeView(doc, 5);
+    const decosBefore = view.plugin(livePreviewPlugin)!.decorations;
+
+    view.dispatch({ selection: { anchor: 15 } });
+    const decosAfter = view.plugin(livePreviewPlugin)!.decorations;
+
+    expect(decosAfter).not.toBe(decosBefore);
+    view.destroy();
+  });
+
+  it("skips same-line move on plain text", () => {
+    const view = makeView("hello world\nother", 0);
+    const decosBefore = view.plugin(livePreviewPlugin)!.decorations;
+
+    view.dispatch({ selection: { anchor: 5 } });
+    const decosAfter = view.plugin(livePreviewPlugin)!.decorations;
+
+    expect(decosAfter).toBe(decosBefore);
+    view.destroy();
+  });
+
+  it("rebuilds same-line move on line with formatting", () => {
+    const doc = "**bold** text\nother";
+    const view = makeView(doc, 10);
+    const decosBefore = view.plugin(livePreviewPlugin)!.decorations;
+
+    view.dispatch({ selection: { anchor: 3 } });
+    const decosAfter = view.plugin(livePreviewPlugin)!.decorations;
+
+    expect(decosAfter).not.toBe(decosBefore);
+    view.destroy();
+  });
+
+  it("rebuilds between two different sensitive lines", () => {
+    const doc = "## Heading One\n## Heading Two";
+    const view = makeView(doc, 5);
+    const decosBefore = view.plugin(livePreviewPlugin)!.decorations;
+
+    view.dispatch({ selection: { anchor: 20 } });
+    const decosAfter = view.plugin(livePreviewPlugin)!.decorations;
+
+    expect(decosAfter).not.toBe(decosBefore);
+    view.destroy();
+  });
+
+  it("docChanged always rebuilds", () => {
+    const doc = "## Heading\n\nbody";
+    const view = makeView(doc, doc.length);
+    const decosBefore = view.plugin(livePreviewPlugin)!.decorations;
+
+    view.dispatch({ changes: { from: doc.length, insert: "x" } });
+    const decosAfter = view.plugin(livePreviewPlugin)!.decorations;
+
+    expect(decosAfter).not.toBe(decosBefore);
     view.destroy();
   });
 });

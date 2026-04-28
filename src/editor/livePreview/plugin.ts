@@ -2,19 +2,57 @@ import { type DecorationSet, EditorView } from "@codemirror/view";
 import { ViewPlugin, type ViewUpdate, type PluginValue } from "@codemirror/view";
 import { StateField, RangeSet } from "@codemirror/state";
 import { buildDecorations, buildBlockReplacements, type BlockReplacementState } from "./decorations";
-import { perfMark, perfMeasure } from "./perf";
+import { toggleCalloutEffect } from "./callout";
+import { imageResolverFacet } from "./imageResolver";
+import { mediaThumbnailsFacet } from "./mediaThumbnails";
+import { isPerfEnabled, perfMark, perfMeasure } from "./perf";
 
 class LivePreviewPluginValue implements PluginValue {
   decorations: DecorationSet;
+  cursorSensitiveLines: Set<number>;
 
   constructor(view: EditorView) {
-    this.decorations = buildDecorations(view);
+    const result = buildDecorations(view);
+    this.decorations = result.decorations;
+    this.cursorSensitiveLines = result.cursorSensitiveLines;
+  }
+
+  private rebuild(view: EditorView, reason: string) {
+    if (isPerfEnabled()) {
+      perfMark("livePreview:rebuild:start");
+    }
+    const result = buildDecorations(view);
+    this.decorations = result.decorations;
+    this.cursorSensitiveLines = result.cursorSensitiveLines;
+    if (isPerfEnabled()) {
+      const m = perfMeasure("livePreview:rebuild", "livePreview:rebuild:start");
+      console.debug(`[livePreview] rebuild (${reason}) ${m ? m.duration.toFixed(1) + "ms" : ""}`);
+    }
   }
 
   update(update: ViewUpdate) {
     perfMark("livePreview:update:start");
-    if (update.docChanged || update.selectionSet || update.viewportChanged || update.transactions.some(tr => tr.effects.length > 0)) {
-      this.decorations = buildDecorations(update.view);
+    if (update.docChanged || update.viewportChanged) {
+      this.rebuild(update.view, update.docChanged ? "docChanged" : "viewportChanged");
+    } else if (update.transactions.some(tr => tr.effects.some(e => e.is(toggleCalloutEffect)))) {
+      this.rebuild(update.view, "toggleCalloutEffect");
+    } else if (
+      update.startState.facet(imageResolverFacet) !== update.state.facet(imageResolverFacet) ||
+      update.startState.facet(mediaThumbnailsFacet) !== update.state.facet(mediaThumbnailsFacet)
+    ) {
+      this.rebuild(update.view, "facet changed");
+    } else if (update.selectionSet) {
+      const oldLine = update.startState.doc.lineAt(update.startState.selection.main.head).number;
+      const newLine = update.state.doc.lineAt(update.state.selection.main.head).number;
+      if (this.cursorSensitiveLines.has(oldLine) || this.cursorSensitiveLines.has(newLine)) {
+        this.rebuild(update.view, `selection L${oldLine}→L${newLine} (sensitive)`);
+      } else if (isPerfEnabled()) {
+        console.debug(`[livePreview] skip: selection L${oldLine}→L${newLine} (plain)`);
+        perfMark("livePreview:skip:selection");
+      }
+    } else if (isPerfEnabled()) {
+      console.debug("[livePreview] skip: no trigger");
+      perfMark("livePreview:skip:no-trigger");
     }
     perfMeasure("livePreview:update", "livePreview:update:start");
   }
