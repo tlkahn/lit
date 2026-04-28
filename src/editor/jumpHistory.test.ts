@@ -233,4 +233,39 @@ describe("jumpHistoryExtension", () => {
     expect(head - restoredLine.from).toBe(0);
     view.destroy();
   });
+
+  it("navigateBack scrolls with y:'center'", () => {
+    const spy = vi.spyOn(EditorView, "scrollIntoView");
+    const view = createView(lines(20));
+    const line10 = view.state.doc.line(10).from;
+    view.dispatch({ selection: EditorSelection.cursor(line10) });
+
+    spy.mockClear();
+    navigateBack(view);
+
+    expect(spy).toHaveBeenCalledWith(
+      expect.any(Number),
+      expect.objectContaining({ y: "center" }),
+    );
+    spy.mockRestore();
+    view.destroy();
+  });
+
+  it("navigateForward scrolls with y:'center'", () => {
+    const spy = vi.spyOn(EditorView, "scrollIntoView");
+    const view = createView(lines(20));
+    const line10 = view.state.doc.line(10).from;
+    view.dispatch({ selection: EditorSelection.cursor(line10) });
+
+    navigateBack(view);
+    spy.mockClear();
+    navigateForward(view);
+
+    expect(spy).toHaveBeenCalledWith(
+      expect.any(Number),
+      expect.objectContaining({ y: "center" }),
+    );
+    spy.mockRestore();
+    view.destroy();
+  });
 });

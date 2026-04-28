@@ -222,7 +222,7 @@ export function ContentArea() {
         const pos = line.from + Math.min(col, line.length);
         view.dispatch({
           selection: EditorSelection.cursor(pos),
-          effects: EditorView.scrollIntoView(pos, { y: "start" }),
+          effects: EditorView.scrollIntoView(pos, { y: "center" }),
         });
         useWorkspaceStore.setState({ pendingCursorLine: null, pendingCursorCol: null });
       } else if (storeState.pendingSection != null) {

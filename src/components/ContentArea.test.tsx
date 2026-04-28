@@ -635,6 +635,31 @@ describe("ContentArea scroll position", () => {
       expect(useWorkspaceStore.getState().viewStates["Hello.md"]?.cursor).toBe(5);
     });
   });
+
+  it("pendingCursorLine scroll uses y:'center'", async () => {
+    const { EditorView } = await import("@codemirror/view");
+    const spy = vi.spyOn(EditorView, "scrollIntoView");
+
+    useWorkspaceStore.setState({
+      currentPagePath: "Hello.md",
+      pendingCursorLine: 2,
+      pendingCursorCol: 0,
+    });
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor").textContent).toContain("Some content");
+    });
+
+    await waitFor(() => {
+      const centerCalls = spy.mock.calls.filter(
+        (args) => args[1] && (args[1] as Record<string, unknown>).y === "center",
+      );
+      expect(centerCalls.length).toBeGreaterThanOrEqual(1);
+    });
+
+    spy.mockRestore();
+  });
 });
 
 describe("parseYamlErrorLocation", () => {

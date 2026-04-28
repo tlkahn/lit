@@ -89,7 +89,7 @@ export const navigateBack: Command = (view: EditorView) => {
     const targetPos = lineObj.from + Math.min(target.col, lineObj.length);
     view.dispatch({
       selection: { anchor: targetPos },
-      effects: EditorView.scrollIntoView(targetPos),
+      effects: EditorView.scrollIntoView(targetPos, { y: "center" }),
       annotations: isJumpNavigation.of(true),
     });
   } else {
@@ -113,7 +113,7 @@ export const navigateForward: Command = (view: EditorView) => {
     const targetPos = lineObj.from + Math.min(target.col, lineObj.length);
     view.dispatch({
       selection: { anchor: targetPos },
-      effects: EditorView.scrollIntoView(targetPos),
+      effects: EditorView.scrollIntoView(targetPos, { y: "center" }),
       annotations: isJumpNavigation.of(true),
     });
   } else {
