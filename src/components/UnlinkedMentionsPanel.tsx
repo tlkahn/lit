@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { listen } from "@tauri-apps/api/event";
 import { getUnlinkedMentions, linkUnlinkedMention, type UnlinkedMention } from "../lib/ipc";
 import { localeIndexOf } from "../lib/localeSearch";
@@ -17,9 +18,10 @@ function highlightMention(context: string, matchedText: string): (string | JSX.E
 interface UnlinkedMentionsPanelProps {
   pageId: string;
   onCountChange?: (count: number) => void;
+  contentHeight?: number;
 }
 
-export function UnlinkedMentionsPanel({ pageId, onCountChange }: UnlinkedMentionsPanelProps) {
+export function UnlinkedMentionsPanel({ pageId, onCountChange, contentHeight }: UnlinkedMentionsPanelProps) {
   const [entries, setEntries] = useState<UnlinkedMention[]>([]);
   const [loading, setLoading] = useState(true);
   const selectPage = useWorkspaceStore((s) => s.selectPage);
@@ -60,72 +62,95 @@ export function UnlinkedMentionsPanel({ pageId, onCountChange }: UnlinkedMention
     }
   }, [entries, loading, onCountChange]);
 
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const virtualizer = useVirtualizer({
+    count: entries.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 44,
+  });
+
+  const spinner = (size: string) => (
+    <div className={`flex justify-center ${size === "lg" ? "py-2" : "py-1"}`}>
+      <svg
+        data-testid="unlinked-spinner"
+        className={`${size === "lg" ? "h-4 w-4" : "h-3 w-3"} animate-spin text-text-faint`}
+        xmlns="http://www.w3.org/2000/svg"
+        fill="none"
+        viewBox="0 0 24 24"
+      >
+        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+      </svg>
+    </div>
+  );
+
   return (
     <div className="px-6 py-2">
       {loading && entries.length === 0 ? (
-        <div className="flex justify-center py-2">
-          <svg
-            data-testid="unlinked-spinner"
-            className="h-4 w-4 animate-spin text-text-faint"
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-          >
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-          </svg>
-        </div>
+        spinner("lg")
       ) : entries.length === 0 ? (
         <p className="text-xs text-text-faint">
           No unlinked mentions found
         </p>
       ) : (
         <>
-          {loading && (
-            <div className="flex justify-center py-1">
-              <svg
-                data-testid="unlinked-spinner"
-                className="h-3 w-3 animate-spin text-text-faint"
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
-            </div>
-          )}
-          <ul className="space-y-2">
-            {entries.map((entry, i) => (
-              <li key={`${entry.source_id}-${i}`} className="text-xs">
-                <div className="flex items-center justify-between">
-                  <button
-                    className="font-medium text-interactive-accent hover:underline"
-                    onClick={() => selectPage(entry.source_id)}
-                  >
-                    {entry.source_title || entry.source_id}
-                  </button>
-                  <button
-                    className="text-xs text-interactive-accent hover:underline"
-                    onClick={async () => {
-                      await linkUnlinkedMention(entry.source_id, entry.source_line, entry.matched_text);
-                      fetchMentions();
+          {loading && spinner("sm")}
+          <div
+            ref={scrollRef}
+            data-testid="unlinked-scroll-container"
+            data-virtual-scroll
+            className="overflow-y-auto"
+            style={contentHeight != null ? { height: contentHeight } : undefined}
+          >
+            <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+              {virtualizer.getVirtualItems().map((virtualRow) => {
+                const i = virtualRow.index;
+                const entry = entries[i]!;
+                return (
+                  <div
+                    key={`${entry.source_id}-${i}`}
+                    data-index={i}
+                    className="text-xs"
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                      transform: `translateY(${virtualRow.start}px)`,
+                      paddingBottom: 8,
                     }}
                   >
-                    Link
-                  </button>
-                </div>
-                {entry.context && (
-                  <p
-                    data-testid={`unlinked-context-${i}`}
-                    className="mt-0.5 text-text-muted"
-                  >
-                    {highlightMention(entry.context, entry.matched_text)}
-                  </p>
-                )}
-              </li>
-            ))}
-          </ul>
+                    <div className="flex items-center justify-between">
+                      <button
+                        className="font-medium text-interactive-accent hover:underline"
+                        onClick={() => selectPage(entry.source_id)}
+                      >
+                        {entry.source_title || entry.source_id}
+                      </button>
+                      <button
+                        className="text-xs text-interactive-accent hover:underline"
+                        onClick={async () => {
+                          await linkUnlinkedMention(entry.source_id, entry.source_line, entry.matched_text);
+                          fetchMentions();
+                        }}
+                      >
+                        Link
+                      </button>
+                    </div>
+                    {entry.context && (
+                      <p
+                        data-testid={`unlinked-context-${i}`}
+                        className="mt-0.5 text-text-muted"
+                      >
+                        {highlightMention(entry.context, entry.matched_text)}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </>
       )}
     </div>

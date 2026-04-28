@@ -356,6 +356,76 @@ describe("UnlinkedMentionsPanel", () => {
     expect(mark!.textContent).toBe("café");
   });
 
+  describe("virtualization", () => {
+    it("renders all entries when scroll container is large enough", async () => {
+      const entries = Array.from({ length: 10 }, (_, i) =>
+        makeMention({ source_id: `p${i}.md`, source_title: `Page ${i}`, context: `ctx ${i}` }),
+      );
+      mockInvoke((cmd) => {
+        if (cmd === "get_unlinked_mentions") return entries;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      render(<UnlinkedMentionsPanel pageId="target.md" />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Page 0")).toBeInTheDocument();
+      });
+      for (let i = 0; i < 10; i++) {
+        expect(screen.getByText(`Page ${i}`)).toBeInTheDocument();
+      }
+    });
+
+    it("has a scroll container with data-testid", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "get_unlinked_mentions") return [makeMention()];
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      render(<UnlinkedMentionsPanel pageId="target.md" />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Gamma")).toBeInTheDocument();
+      });
+      expect(screen.getByTestId("unlinked-scroll-container")).toBeInTheDocument();
+    });
+
+    it("spinner renders outside the virtualized list", async () => {
+      let callCount = 0;
+      let resolveSecond!: (value: UnlinkedMention[]) => void;
+
+      mockInvoke((cmd) => {
+        if (cmd === "get_unlinked_mentions") {
+          callCount++;
+          if (callCount === 1) return [makeMention({ source_title: "First" })];
+          return new Promise<UnlinkedMention[]>((r) => {
+            resolveSecond = r;
+          });
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      mockListen();
+
+      render(<UnlinkedMentionsPanel pageId="target.md" />);
+
+      await waitFor(() => {
+        expect(screen.getByText("First")).toBeInTheDocument();
+      });
+
+      act(() => {
+        emitMockEvent("lit:graph-updated", {});
+      });
+
+      const spinner = screen.getByTestId("unlinked-spinner");
+      const scrollContainer = screen.getByTestId("unlinked-scroll-container");
+      expect(scrollContainer.contains(spinner)).toBe(false);
+
+      await act(async () => {
+        resolveSecond([makeMention({ source_title: "First" })]);
+      });
+    });
+  });
+
   // Cycle 10.8 — Entry disappears after linking
   it("removes entry from list after linking", async () => {
     let fetchCount = 0;
