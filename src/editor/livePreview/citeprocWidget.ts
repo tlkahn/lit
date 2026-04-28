@@ -47,6 +47,7 @@ export class CiteprocWidget extends WidgetType {
           if (workspacePath && link.bibFile.startsWith(workspacePath + "/")) {
             const relativePath = link.bibFile.slice(workspacePath.length + 1);
             recordCiteprocDeparture(view, currentPagePath, this.charStart);
+            globalJumpTracker.isNavigating = true;
             selectPageAtLine(relativePath, link.lineNumber);
             return;
           }

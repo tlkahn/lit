@@ -217,6 +217,32 @@ describe("CiteprocWidget", () => {
     view.destroy();
   });
 
+  it("click sets isNavigating before calling selectPageAtLine", () => {
+    let isNavigatingAtCall = false;
+    const selectPageAtLine = vi.fn(() => {
+      isNavigatingAtCall = globalJumpTracker.isNavigating;
+    });
+    useWorkspaceStore.setState({
+      workspacePath: "/path",
+      currentPagePath: "note.md",
+      selectPageAtLine,
+    });
+
+    const view = makeView();
+    const widget = new CiteprocWidget(
+      "[@smith2020]",
+      singleLink("Smith 2020", true, "/path/refs.bib", 10),
+      0, 13,
+    );
+    const el = widget.toDOM(view);
+    const key = el.querySelector(".cm-crossref-citeproc-key")!;
+    key.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(selectPageAtLine).toHaveBeenCalled();
+    expect(isNavigatingAtCall).toBe(true);
+    globalJumpTracker.isNavigating = false;
+    view.destroy();
+  });
+
   it("click on invalid widget places cursor at charStart", () => {
     const view = makeView();
     const dispatchSpy = vi.spyOn(view, "dispatch");
