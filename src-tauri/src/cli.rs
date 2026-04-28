@@ -49,12 +49,26 @@ pub fn parse_position_suffix(arg: &str) -> (&str, PositionSuffix) {
     (arg, PositionSuffix::default())
 }
 
+fn expand_tilde(path_str: &str) -> String {
+    if path_str == "~" {
+        if let Some(home) = std::env::var_os("HOME") {
+            return home.to_string_lossy().to_string();
+        }
+    } else if let Some(rest) = path_str.strip_prefix("~/") {
+        if let Some(home) = std::env::var_os("HOME") {
+            return format!("{}/{}", home.to_string_lossy(), rest);
+        }
+    }
+    path_str.to_string()
+}
+
 fn make_absolute(path_str: &str, cwd: &str) -> PathBuf {
-    let p = PathBuf::from(path_str);
+    let expanded = expand_tilde(path_str);
+    let p = PathBuf::from(&expanded);
     if p.is_absolute() {
         p
     } else {
-        PathBuf::from(cwd).join(path_str)
+        PathBuf::from(cwd).join(&expanded)
     }
 }
 
@@ -452,5 +466,63 @@ mod tests {
     fn resolve_deep_link_nonexistent_file() {
         let url = url::Url::parse("lit://open?file=/nonexistent_path_12345/note.md").unwrap();
         assert!(resolve_deep_link(&url).is_none());
+    }
+
+    #[test]
+    fn test_expand_tilde_home_prefix() {
+        let home = std::env::var("HOME").unwrap();
+        assert_eq!(expand_tilde("~/Documents/foo.md"), format!("{}/Documents/foo.md", home));
+    }
+
+    #[test]
+    fn test_expand_tilde_bare() {
+        let home = std::env::var("HOME").unwrap();
+        assert_eq!(expand_tilde("~"), home);
+    }
+
+    #[test]
+    fn test_expand_tilde_no_tilde() {
+        assert_eq!(expand_tilde("/absolute/path"), "/absolute/path");
+    }
+
+    #[test]
+    fn test_expand_tilde_mid_path() {
+        assert_eq!(expand_tilde("/foo/~/bar"), "/foo/~/bar");
+    }
+
+    #[test]
+    fn test_resolve_arg_tilde_file() {
+        let home = std::env::var("HOME").unwrap();
+        let dir = tempfile::TempDir::new_in(&home).unwrap();
+        let file_path = dir.path().join("test.md");
+        fs::write(&file_path, "hello").unwrap();
+
+        let relative = file_path.strip_prefix(&home).unwrap();
+        let tilde_path = format!("~/{}", relative.to_str().unwrap());
+
+        let result = resolve_arg(&tilde_path, "/nonexistent");
+        match result {
+            CliTarget::File { file, .. } => {
+                assert_eq!(file, "test.md");
+            }
+            other => panic!("Expected File, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_resolve_arg_tilde_directory() {
+        let home = std::env::var("HOME").unwrap();
+        let dir = tempfile::TempDir::new_in(&home).unwrap();
+
+        let relative = dir.path().strip_prefix(&home).unwrap();
+        let tilde_path = format!("~/{}", relative.to_str().unwrap());
+
+        let result = resolve_arg(&tilde_path, "/nonexistent");
+        match result {
+            CliTarget::Directory(p) => {
+                assert!(p.is_dir());
+            }
+            other => panic!("Expected Directory, got {:?}", other),
+        }
     }
 }
