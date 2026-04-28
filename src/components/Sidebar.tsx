@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useWorkspaceStore } from "../stores/workspace";
 import { getNextUntitledName } from "../lib/naming";
 import { openInExternalEditor } from "../lib/ipc";
@@ -273,7 +273,7 @@ export function Sidebar() {
     ? pages.filter((p) => localeIncludes(p.title, search))
     : pages;
 
-  const tree = buildTree(filtered);
+  const tree = useMemo(() => buildTree(filtered), [pages, search]);
 
   const handleNewPage = () => {
     const name = getNextUntitledName(pages);
