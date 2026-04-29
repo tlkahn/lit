@@ -1,7 +1,9 @@
+use crate::seed::SeedState;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
-use tauri::Manager;
+use std::sync::Arc;
+use tauri::{Manager, State};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct KeyBinding {
@@ -76,7 +78,11 @@ pub fn seed_default_keymaps(app_handle: &tauri::AppHandle) {
 }
 
 #[tauri::command]
-pub fn get_keymaps(app_handle: tauri::AppHandle) -> Result<Vec<KeyBinding>, String> {
+pub fn get_keymaps(
+    app_handle: tauri::AppHandle,
+    seed_state: State<'_, Arc<SeedState>>,
+) -> Result<Vec<KeyBinding>, String> {
+    seed_state.wait_ready();
     let dir = keymaps_dir(&app_handle)?;
     let defaults = read_keymaps_file(&dir.join("default.json"));
     let user = read_keymaps_file(&dir.join("user.json"));
@@ -84,7 +90,11 @@ pub fn get_keymaps(app_handle: tauri::AppHandle) -> Result<Vec<KeyBinding>, Stri
 }
 
 #[tauri::command]
-pub fn get_default_keymaps(app_handle: tauri::AppHandle) -> Result<Vec<KeyBinding>, String> {
+pub fn get_default_keymaps(
+    app_handle: tauri::AppHandle,
+    seed_state: State<'_, Arc<SeedState>>,
+) -> Result<Vec<KeyBinding>, String> {
+    seed_state.wait_ready();
     let dir = keymaps_dir(&app_handle)?;
     Ok(read_keymaps_file(&dir.join("default.json")))
 }

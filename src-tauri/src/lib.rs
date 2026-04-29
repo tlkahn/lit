@@ -5,6 +5,7 @@ pub mod external_editor;
 pub mod graph;
 mod menu;
 pub mod preferences;
+pub mod seed;
 pub mod socket;
 pub mod workspace;
 
@@ -121,11 +122,18 @@ pub fn run() {
         .manage(Arc::new(WriteHashRegistry::new()))
         .manage(Arc::new(GraphRegistry::new()))
         .manage(Arc::new(commands::graph::GraphBuildState::new()))
+        .manage(Arc::new(seed::SeedState::new()))
         .manage(BibCache::new())
         .setup(move |app| {
-            let _ = commands::theme::seed_bundled_themes(app.handle());
-            commands::keymap::seed_default_keymaps(app.handle());
-            preferences::seed_default_if_missing(app.handle());
+            let seed_state: Arc<seed::SeedState> =
+                app.state::<Arc<seed::SeedState>>().inner().clone();
+            let seed_handle = app.handle().clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let _ = commands::theme::seed_bundled_themes(&seed_handle);
+                commands::keymap::seed_default_keymaps(&seed_handle);
+                preferences::seed_default_if_missing(&seed_handle);
+                seed_state.mark_ready();
+            });
 
             let menu = menu::build_menu(app.handle())?;
             app.set_menu(menu)?;

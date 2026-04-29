@@ -1,7 +1,9 @@
+use crate::seed::SeedState;
 use serde::Serialize;
 use std::fs;
 use std::path::PathBuf;
-use tauri::Manager;
+use std::sync::Arc;
+use tauri::{Manager, State};
 
 #[derive(Debug, Serialize, Clone)]
 pub struct ThemeInfo {
@@ -24,7 +26,11 @@ fn themes_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
-pub fn list_themes(app_handle: tauri::AppHandle) -> Result<Vec<ThemeInfo>, String> {
+pub fn list_themes(
+    app_handle: tauri::AppHandle,
+    seed_state: State<'_, Arc<SeedState>>,
+) -> Result<Vec<ThemeInfo>, String> {
+    seed_state.wait_ready();
     let dir = themes_dir(&app_handle)?;
     let mut themes = Vec::new();
 
@@ -62,7 +68,12 @@ pub fn list_themes(app_handle: tauri::AppHandle) -> Result<Vec<ThemeInfo>, Strin
 }
 
 #[tauri::command]
-pub fn read_theme_css(app_handle: tauri::AppHandle, directory_name: String) -> Result<String, String> {
+pub fn read_theme_css(
+    app_handle: tauri::AppHandle,
+    directory_name: String,
+    seed_state: State<'_, Arc<SeedState>>,
+) -> Result<String, String> {
+    seed_state.wait_ready();
     let dir = themes_dir(&app_handle)?;
     let css_path = dir.join(&directory_name).join("theme.css");
     if !css_path.exists() {
