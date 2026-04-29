@@ -23,7 +23,7 @@ use crate::workspace::normalize::filename_to_page_name;
 pub fn parse_md_file(
     root: &Path,
     relative_path: &str,
-) -> Result<(ParsedNode, Vec<WikiLink>), GraphError> {
+) -> Result<(ParsedNode, Vec<WikiLink>, String), GraphError> {
     let abs = root.join(relative_path);
     let raw = std::fs::read_to_string(&abs).map_err(|e| GraphError::Io {
         source: e,
@@ -42,6 +42,7 @@ pub fn parse_md_file(
     let tags = extract_tags(&fm_json);
     let first_paragraph = extract_first_paragraph(parsed.body);
     let links = extract_wikilinks(parsed.body);
+    let body = parsed.body.to_string();
 
     let node = ParsedNode {
         id: relative_path.to_string(),
@@ -51,7 +52,7 @@ pub fn parse_md_file(
         first_paragraph,
     };
 
-    Ok((node, links))
+    Ok((node, links, body))
 }
 
 fn title_from_relative_path(relative_path: &str) -> String {
@@ -216,10 +217,12 @@ pub fn index_workspace_with_progress(
     let mut all_nodes: Vec<ParsedNode> = Vec::new();
     let mut all_links: HashMap<String, Vec<WikiLink>> = HashMap::new();
     let mut file_mtimes: HashMap<String, i64> = HashMap::new();
+    let mut bodies: HashMap<String, String> = HashMap::new();
 
     for (i, (rel_path, mtime)) in files.iter().enumerate() {
         match parse_md_file(root, rel_path) {
-            Ok((node, links)) => {
+            Ok((node, links, body)) => {
+                bodies.insert(rel_path.clone(), body);
                 file_mtimes.insert(rel_path.clone(), *mtime);
                 all_links.insert(rel_path.clone(), links);
                 all_nodes.push(node);
@@ -263,12 +266,11 @@ pub fn index_workspace_with_progress(
         store.delete_edges_from(&node.id)?;
 
         if let Some(links) = all_links.get(&node.id) {
+            let body = bodies.get(&node.id).map(|s| s.as_str()).unwrap_or("");
             for link in links {
                 let resolved = stem_lookup.resolve(&link.target);
-                let raw = std::fs::read_to_string(root.join(&node.id)).unwrap_or_default();
-                let parsed_fm = parse_frontmatter(&raw);
                 let (context, source_line) = extract_sentence_context(
-                    parsed_fm.body,
+                    body,
                     &link.target,
                 );
                 let target_id = match &resolved.node_id {
@@ -401,7 +403,7 @@ pub fn incremental_reindex(
 
     for path in diff.new.iter().chain(diff.changed.iter()) {
         match parse_md_file(root, path) {
-            Ok((node, links)) => {
+            Ok((node, links, body)) => {
                 let mtime = std::fs::metadata(root.join(path))
                     .ok()
                     .and_then(|m| m.modified().ok())
@@ -434,11 +436,9 @@ pub fn incremental_reindex(
                 let aliases = store.all_aliases()?;
                 let stem_lookup = StemLookup::build(&all_ids, &aliases);
 
-                let raw_content = std::fs::read_to_string(root.join(path)).unwrap_or_default();
-                let parsed_fm = parse_frontmatter(&raw_content);
                 for link in &links {
                     let resolved = stem_lookup.resolve(&link.target);
-                    let (context, source_line) = extract_sentence_context(parsed_fm.body, &link.target);
+                    let (context, source_line) = extract_sentence_context(&body, &link.target);
                     let target_id = match &resolved.node_id {
                         Some(id) => id.clone(),
                         None => {
@@ -495,15 +495,13 @@ pub fn incremental_reindex(
                 continue; // already handled
             }
 
-            if let Ok((_, links)) = parse_md_file(root, source_id) {
+            if let Ok((_, links, body)) = parse_md_file(root, source_id) {
                 store.delete_edges_from(source_id)?;
                 reverse_stems.remove_source(source_id);
 
-                let raw_content = std::fs::read_to_string(root.join(source_id)).unwrap_or_default();
-                let parsed_fm = parse_frontmatter(&raw_content);
                 for link in &links {
                     let resolved = stem_lookup.resolve(&link.target);
-                    let (context, source_line) = extract_sentence_context(parsed_fm.body, &link.target);
+                    let (context, source_line) = extract_sentence_context(&body, &link.target);
                     let target_id = match &resolved.node_id {
                         Some(id) => id.clone(),
                         None => {
@@ -1037,7 +1035,7 @@ mod tests {
             "note.md",
             "---\ntitle: My Note\ntags:\n  - rust\n---\nFirst paragraph.\n\n[[Link]]",
         );
-        let (node, links) = parse_md_file(dir.path(), "note.md").unwrap();
+        let (node, links, _) = parse_md_file(dir.path(), "note.md").unwrap();
         assert_eq!(node.id, "note.md");
         assert_eq!(node.title, "My Note");
         assert_eq!(node.tags, vec!["rust"]);
@@ -1050,7 +1048,7 @@ mod tests {
     fn parse_md_file_no_frontmatter() {
         let dir = create_workspace();
         write_md(dir.path(), "plain.md", "Just some text.\n\n[[Other]]");
-        let (node, links) = parse_md_file(dir.path(), "plain.md").unwrap();
+        let (node, links, _) = parse_md_file(dir.path(), "plain.md").unwrap();
         assert_eq!(node.title, "plain");
         assert!(node.tags.is_empty());
         assert_eq!(node.first_paragraph, "Just some text.");
@@ -1065,7 +1063,7 @@ mod tests {
             "tagged.md",
             "---\ntags:\n  - alpha\n  - beta\n---\nBody.",
         );
-        let (node, _) = parse_md_file(dir.path(), "tagged.md").unwrap();
+        let (node, _, _) = parse_md_file(dir.path(), "tagged.md").unwrap();
         assert_eq!(node.tags, vec!["alpha", "beta"]);
     }
 
@@ -1077,7 +1075,7 @@ mod tests {
             "note.md",
             "---\ntitle: Custom Title\n---\nBody.",
         );
-        let (node, _) = parse_md_file(dir.path(), "note.md").unwrap();
+        let (node, _, _) = parse_md_file(dir.path(), "note.md").unwrap();
         assert_eq!(node.title, "Custom Title");
     }
 
@@ -1096,8 +1094,99 @@ mod tests {
     fn parse_md_file_id_is_relative_path() {
         let dir = create_workspace();
         write_md(dir.path(), "sub/deep.md", "Content.");
-        let (node, _) = parse_md_file(dir.path(), "sub/deep.md").unwrap();
+        let (node, _, _) = parse_md_file(dir.path(), "sub/deep.md").unwrap();
         assert_eq!(node.id, "sub/deep.md");
+    }
+
+    #[test]
+    fn parse_md_file_returns_body() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "note.md",
+            "---\ntitle: Hello\n---\nThe body text.\n\nSecond paragraph.",
+        );
+        let (_, _, body) = parse_md_file(dir.path(), "note.md").unwrap();
+        assert_eq!(body, "The body text.\n\nSecond paragraph.");
+    }
+
+    #[test]
+    fn parse_md_file_returns_body_no_frontmatter() {
+        let dir = create_workspace();
+        write_md(dir.path(), "plain.md", "Just plain text.");
+        let (_, _, body) = parse_md_file(dir.path(), "plain.md").unwrap();
+        assert_eq!(body, "Just plain text.");
+    }
+
+    #[test]
+    fn index_workspace_multiple_links_same_file() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "---\ntitle: Source\n---\nFirst link to [[B]]. Second link to [[C]].",
+        );
+        write_md(dir.path(), "b.md", "Target B.");
+        write_md(dir.path(), "c.md", "Target C.");
+        let store = Store::open_memory().unwrap();
+        index_workspace(&store, dir.path()).unwrap();
+        let bl_b = store.backlinks("b.md").unwrap();
+        assert_eq!(bl_b.len(), 1);
+        assert!(!bl_b[0].context.contains("title:"));
+        let bl_c = store.backlinks("c.md").unwrap();
+        assert_eq!(bl_c.len(), 1);
+        assert!(!bl_c[0].context.contains("title:"));
+    }
+
+    #[test]
+    fn incremental_reindex_context_excludes_frontmatter() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Placeholder.");
+        let store = Store::open_memory().unwrap();
+        let (_, mut reverse) = index_workspace(&store, dir.path()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        write_md(
+            dir.path(),
+            "a.md",
+            "---\ntitle: Updated\ntags:\n  - test\n---\nNow links to [[B]].",
+        );
+        write_md(dir.path(), "b.md", "Target.");
+        let diff = DiffResult {
+            new: vec!["b.md".to_string()],
+            changed: vec!["a.md".to_string()],
+            deleted: vec![],
+        };
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff).unwrap();
+        let bl = store.backlinks("b.md").unwrap();
+        assert_eq!(bl.len(), 1);
+        assert_eq!(bl[0].context, "Now links to [[B]].");
+        assert!(!bl[0].context.contains("title:"));
+    }
+
+    #[test]
+    fn incremental_reindex_affected_context_excludes_frontmatter() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "---\ntitle: Source\n---\nLinks to [[B]].",
+        );
+        write_md(dir.path(), "b.md", "Target.");
+        let store = Store::open_memory().unwrap();
+        let (_, mut reverse) = index_workspace(&store, dir.path()).unwrap();
+        // Delete b.md and recreate — triggers re-resolution of a.md as affected source
+        fs::remove_file(dir.path().join("b.md")).unwrap();
+        write_md(dir.path(), "b.md", "Recreated target.");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let diff = DiffResult {
+            new: vec![],
+            changed: vec!["b.md".to_string()],
+            deleted: vec![],
+        };
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff).unwrap();
+        let bl = store.backlinks("b.md").unwrap();
+        assert_eq!(bl.len(), 1);
+        assert!(!bl[0].context.contains("title:"));
     }
 
     // --- ReverseStemIndex ---
