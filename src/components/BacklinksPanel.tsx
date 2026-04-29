@@ -39,6 +39,7 @@ export function BacklinksPanel({ pageId, onCountChange, contentHeight }: Backlin
   const [entries, setEntries] = useState<BacklinkEntry[]>([]);
   const selectPage = useWorkspaceStore((s) => s.selectPage);
   const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
+  const graphReady = useWorkspaceStore((s) => s.graphReady);
   const pageIdRef = useRef(pageId);
   pageIdRef.current = pageId;
 
@@ -64,8 +65,8 @@ export function BacklinksPanel({ pageId, onCountChange, contentHeight }: Backlin
   }, []);
 
   useEffect(() => {
-    fetchBacklinks();
-  }, [pageId, fetchBacklinks]);
+    if (graphReady) fetchBacklinks();
+  }, [pageId, graphReady, fetchBacklinks]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -80,8 +81,8 @@ export function BacklinksPanel({ pageId, onCountChange, contentHeight }: Backlin
   }, [fetchBacklinks]);
 
   useEffect(() => {
-    onCountChange?.(entries.length);
-  }, [entries, onCountChange]);
+    if (graphReady) onCountChange?.(entries.length);
+  }, [entries, graphReady, onCountChange]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -90,6 +91,25 @@ export function BacklinksPanel({ pageId, onCountChange, contentHeight }: Backlin
     getScrollElement: () => scrollRef.current,
     estimateSize: () => 40,
   });
+
+  if (!graphReady) {
+    return (
+      <div className="px-6 py-2" data-testid="backlinks-building">
+        <div className="flex items-center gap-2 py-1">
+          <svg
+            className="h-3 w-3 animate-spin text-text-faint"
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+          >
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          <span className="text-xs text-text-faint">Building index...</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="px-6 py-2">

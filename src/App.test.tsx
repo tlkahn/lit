@@ -285,24 +285,32 @@ describe("App", () => {
     });
   });
 
-  it("shows IndexingScreen when workspace set but graphReady is false", () => {
+  it("shows Sidebar and StatusBar when workspace set but graphReady is false", () => {
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: false });
     render(<App />);
-    expect(screen.getByTestId("indexing-screen")).toBeInTheDocument();
-    expect(screen.queryByText("Files")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("indexing-screen")).not.toBeInTheDocument();
+    expect(screen.getByText("Files")).toBeInTheDocument();
+    expect(screen.getByTestId("status-bar")).toBeInTheDocument();
   });
 
-  it("shows Sidebar when workspace set and graphReady is true", () => {
+  it("shows Sidebar without StatusBar when workspace set and graphReady is true", () => {
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
     render(<App />);
     expect(screen.queryByTestId("indexing-screen")).not.toBeInTheDocument();
     expect(screen.getByText("Files")).toBeInTheDocument();
+    expect(screen.queryByTestId("status-bar")).not.toBeInTheDocument();
+  });
+
+  it("shows Sidebar and ContentArea while graphReady is false", () => {
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: samplePages, graphReady: false });
+    render(<App />);
+    expect(screen.getByText("Files")).toBeInTheDocument();
+    expect(screen.getByTestId("empty-state")).toBeInTheDocument();
   });
 
   it("shows WorkspaceChooser when no workspacePath", () => {
     render(<App />);
     expect(screen.getByText("Open Workspace")).toBeInTheDocument();
-    expect(screen.queryByTestId("indexing-screen")).not.toBeInTheDocument();
   });
 
   it("file-modified event for current page triggers reload", async () => {

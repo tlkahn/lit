@@ -10,6 +10,7 @@ beforeEach(() => {
   useWorkspaceStore.setState({
     workspacePath: "/test",
     currentPagePath: "target.md",
+    graphReady: true,
   });
   usePreferencesStore.setState({ experimentalUnlinkedReferences: true });
   mockInvoke((cmd) => {

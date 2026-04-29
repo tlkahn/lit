@@ -254,6 +254,21 @@ describe("wikilinkCompletionSource — section phase", () => {
     expect(result).toBeNull();
   });
 
+  it("returns null when searchPagesByTitle throws", async () => {
+    mockInvoke(() => {
+      throw new Error("graph not ready");
+    });
+    const doc = "[[Alph";
+    const state = EditorState.create({ doc });
+    const ctx = {
+      state,
+      pos: doc.length,
+      explicit: true,
+    } as unknown as CompletionContext;
+    const result = await wikilinkCompletionSource(ctx);
+    expect(result).toBeNull();
+  });
+
   it("same-page [[# uses extractHeadings from current doc (no IPC)", async () => {
     const doc = "# My Heading\n\nSome text\n\n## Sub Heading\n\n[[#";
     const state = EditorState.create({ doc });

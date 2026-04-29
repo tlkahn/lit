@@ -4,7 +4,7 @@ import { ContentArea } from "./components/ContentArea";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ContentErrorFallback } from "./components/ContentErrorFallback";
 import { WorkspaceChooser } from "./components/WorkspaceChooser";
-import { IndexingScreen } from "./components/IndexingScreen";
+import { StatusBar } from "./components/StatusBar";
 import { useTheme } from "./hooks/useTheme";
 import { useSidebarPosition } from "./hooks/useSidebarPosition";
 import { useFileWatcher } from "./hooks/useFileWatcher";
@@ -32,8 +32,6 @@ function App() {
   useTheme();
   const { position } = useSidebarPosition();
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
-  const graphReady = useWorkspaceStore((s) => s.graphReady);
-  const indexProgress = useWorkspaceStore((s) => s.indexProgress);
   const openWorkspace = useWorkspaceStore((s) => s.openWorkspace);
   const selectPage = useWorkspaceStore((s) => s.selectPage);
   const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
@@ -125,10 +123,6 @@ function App() {
     return <WorkspaceChooser />;
   }
 
-  if (!graphReady) {
-    return <IndexingScreen progress={indexProgress} />;
-  }
-
   return (
     <div className={`flex h-screen flex-col bg-bg-primary${focusModeActive ? " focus-mode-zen" : ""}`}>
       <div className={`flex min-h-0 flex-1 ${position === "right" ? "flex-row-reverse" : "flex-row"}`}>
@@ -139,6 +133,7 @@ function App() {
           </ErrorBoundary>
         </div>
       </div>
+      <StatusBar />
       <HeadingQuickSwitcher
         open={quickSwitcherOpen}
         onClose={() => setQuickSwitcherOpen(false)}

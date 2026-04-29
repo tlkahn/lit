@@ -22,6 +22,7 @@ beforeEach(() => {
   useWorkspaceStore.setState({
     workspacePath: "/test",
     currentPagePath: "target.md",
+    graphReady: true,
   });
 });
 
@@ -242,6 +243,62 @@ describe("BacklinksPanel", () => {
       await waitFor(() => {
         expect(screen.getByTestId("backlink-context-0")).toBeInTheDocument();
       });
+    });
+  });
+
+  describe("graphReady guard", () => {
+    it("shows building-index spinner when graphReady is false", async () => {
+      useWorkspaceStore.setState({ graphReady: false });
+      mockInvoke(() => {
+        throw new Error("should not be called");
+      });
+
+      render(<BacklinksPanel pageId="target.md" />);
+
+      expect(screen.getByTestId("backlinks-building")).toBeInTheDocument();
+      expect(screen.queryByText("No other pages link to this page")).not.toBeInTheDocument();
+    });
+
+    it("does not call getBacklinks when graphReady is false", async () => {
+      useWorkspaceStore.setState({ graphReady: false });
+      const invokeSpy = vi.fn();
+      mockInvoke(invokeSpy);
+
+      render(<BacklinksPanel pageId="target.md" />);
+
+      expect(invokeSpy).not.toHaveBeenCalled();
+    });
+
+    it("fetches backlinks when graphReady becomes true", async () => {
+      useWorkspaceStore.setState({ graphReady: false });
+      mockInvoke((cmd) => {
+        if (cmd === "get_backlinks") return [makeEntry({ source_title: "Arrived" })];
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      render(<BacklinksPanel pageId="target.md" />);
+      expect(screen.getByTestId("backlinks-building")).toBeInTheDocument();
+
+      act(() => {
+        useWorkspaceStore.setState({ graphReady: true });
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("Arrived")).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId("backlinks-building")).not.toBeInTheDocument();
+    });
+
+    it("does not call onCountChange when graphReady is false", () => {
+      useWorkspaceStore.setState({ graphReady: false });
+      const spy = vi.fn();
+      mockInvoke(() => {
+        throw new Error("should not be called");
+      });
+
+      render(<BacklinksPanel pageId="target.md" onCountChange={spy} />);
+
+      expect(spy).not.toHaveBeenCalled();
     });
   });
 
