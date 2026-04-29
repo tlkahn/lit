@@ -132,7 +132,7 @@ const PageItem = memo(function PageItem({
         </button>
       )}
       {showMenu && (
-        <div ref={menuRef} className="absolute right-2 top-0 z-10 select-none rounded border border-border bg-bg-primary shadow-lg">
+        <div ref={menuRef} className="absolute right-2 top-0 z-50 select-none rounded border border-border bg-bg-primary shadow-lg">
           <button
             onClick={() => {
               onMenuClose();
@@ -259,6 +259,7 @@ export function Sidebar() {
             <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
               {virtualizer.getVirtualItems().map((virtualRow) => {
                 const row = rows[virtualRow.index]!;
+                const hasMenu = row.type === "page" && menuPath === row.page.relative_path;
                 return (
                   <div
                     key={row.key}
@@ -268,6 +269,7 @@ export function Sidebar() {
                       top: 0,
                       left: 0,
                       width: "100%",
+                      zIndex: hasMenu ? 50 : undefined,
                       transform: `translateY(${virtualRow.start}px)`,
                     }}
                   >
@@ -305,10 +307,10 @@ export function Sidebar() {
       ) : (
         <Outline />
       )}
-      <div className="border-t border-border p-2">
+      <div className="flex h-8 shrink-0 items-center bg-bg-primary-alt px-4 shadow-[0_-2px_4px_rgba(0,0,0,0.08)]">
         <button
           onClick={handleNewPage}
-          className="w-full rounded px-2 py-1 text-sm text-text-faint hover:bg-bg-hover"
+          className="flex h-full items-center px-3 text-sm text-text-muted hover:text-text-normal"
           aria-label="New page"
         >
           + New Page

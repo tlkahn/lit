@@ -214,7 +214,7 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
     <div
       ref={panelRef}
       data-testid="bottom-panel"
-      className="flex-shrink-0 overflow-hidden border-t border-border-faint"
+      className="relative z-10 flex-shrink-0 overflow-hidden shadow-[0_-2px_4px_rgba(0,0,0,0.08)]"
       style={{
         height,
         transition: "height 150ms ease-out",
