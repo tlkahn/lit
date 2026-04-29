@@ -2,8 +2,9 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ContentArea, parseYamlErrorLocation } from "./ContentArea";
-import { mockInvoke } from "../test/tauri-mock";
+import { mockInvoke, mockListen, emitMockEvent, resetListenMock } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
+import { commandRegistry } from "../lib/commands";
 
 import { globalJumpTracker } from "../editor/jumpTracker";
 
@@ -908,5 +909,46 @@ describe("ContentArea jump recording on page switch", () => {
 
     expect(globalJumpTracker.jumps).toHaveLength(0);
     globalJumpTracker.isNavigating = false;
+  });
+});
+
+describe("ContentArea menu://open-in-external-editor", () => {
+  beforeEach(() => {
+    resetListenMock();
+    mockListen();
+  });
+
+  it("delegates to commandRegistry.execute with the editor view", async () => {
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    const spy = vi.spyOn(commandRegistry, "execute").mockReturnValue(true);
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor").textContent).toContain("Some content");
+    });
+
+    act(() => {
+      emitMockEvent("menu://open-in-external-editor", {});
+    });
+
+    expect(spy).toHaveBeenCalledWith(
+      "editor.openInExternalEditor",
+      expect.any(Object),
+    );
+    spy.mockRestore();
+  });
+
+  it("does not call commandRegistry.execute when no editor view", async () => {
+    const spy = vi.spyOn(commandRegistry, "execute");
+    render(<ContentArea />);
+
+    expect(screen.getByTestId("empty-state")).toBeInTheDocument();
+
+    act(() => {
+      emitMockEvent("menu://open-in-external-editor", {});
+    });
+
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 });
