@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -21,9 +22,6 @@ pub enum CliTarget {
 pub fn parse_position_suffix(arg: &str) -> (&str, PositionSuffix) {
     if let Some((rest, last)) = arg.rsplit_once(':') {
         if let Ok(n) = last.parse::<u32>() {
-            if n == 0 {
-                return (arg, PositionSuffix::default());
-            }
             if let Some((path, mid)) = rest.rsplit_once(':') {
                 if let Ok(line) = mid.parse::<u32>() {
                     if line > 0 {
@@ -35,15 +33,19 @@ pub fn parse_position_suffix(arg: &str) -> (&str, PositionSuffix) {
                             },
                         );
                     }
+                    // line == 0 is invalid even with a col present
+                    return (arg, PositionSuffix::default());
                 }
             }
-            return (
-                rest,
-                PositionSuffix {
-                    line: Some(n),
-                    col: None,
-                },
-            );
+            if n > 0 {
+                return (
+                    rest,
+                    PositionSuffix {
+                        line: Some(n),
+                        col: None,
+                    },
+                );
+            }
         }
     }
     (arg, PositionSuffix::default())
@@ -122,17 +124,65 @@ pub fn process_instance_args(args: &[String], cwd: &str) -> Option<CliTarget> {
     Some(resolve_arg(user_arg, cwd))
 }
 
-pub fn generate_cli_script(app_binary: &str) -> String {
+pub fn generate_cli_script(macos_dir: &str) -> String {
     format!(
         r#"#!/bin/bash
 # Lit command-line launcher
 # Opens files and directories in the Lit app
 
-"{}" "$@" &>/dev/null &
-disown
+"{}/lit-cli" "$@"
 "#,
-        app_binary
+        macos_dir
     )
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SocketRequest {
+    pub action: String,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub col: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SocketResponse {
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+pub fn socket_path() -> PathBuf {
+    if let Some(home) = std::env::var_os("HOME") {
+        PathBuf::from(home)
+            .join("Library/Application Support/com.lit.app/lit.sock")
+    } else {
+        PathBuf::from("/tmp/com.lit.app/lit.sock")
+    }
+}
+
+pub fn cli_target_to_socket_request(target: &CliTarget) -> Option<SocketRequest> {
+    match target {
+        CliTarget::Directory(path) => Some(SocketRequest {
+            action: "open".to_string(),
+            path: path.to_string_lossy().to_string(),
+            line: None,
+            col: None,
+        }),
+        CliTarget::File {
+            workspace,
+            file,
+            line,
+            col,
+        } => Some(SocketRequest {
+            action: "open".to_string(),
+            path: workspace.join(file).to_string_lossy().to_string(),
+            line: *line,
+            col: *col,
+        }),
+        CliTarget::Invalid(_) => None,
+    }
 }
 
 pub fn cli_script_path() -> PathBuf {
@@ -152,25 +202,6 @@ pub fn cli_init_script(
         "window.__LIT_CLI__ = {};",
         serde_json::json!({ "workspace": workspace, "file": file, "line": line, "col": col })
     ))
-}
-
-pub fn resolve_deep_link(url: &url::Url) -> Option<CliTarget> {
-    if url.scheme() != "lit" {
-        return None;
-    }
-    if url.host_str() != Some("open") {
-        return None;
-    }
-
-    let pairs: std::collections::HashMap<_, _> = url.query_pairs().collect();
-    let file_str = pairs.get("file")?;
-    let path = PathBuf::from(file_str.as_ref());
-    let canonical = path.canonicalize().ok()?;
-
-    let line: Option<u32> = pairs.get("line").and_then(|v| v.parse().ok()).filter(|&n: &u32| n > 0);
-    let col: Option<u32> = pairs.get("col").and_then(|v| v.parse().ok()).filter(|&n: &u32| n > 0);
-
-    Some(classify(canonical, line, col))
 }
 
 #[cfg(test)]
@@ -218,9 +249,16 @@ mod tests {
     #[test]
     fn parse_position_suffix_line_zero_with_col() {
         let (path, pos) = parse_position_suffix("notes.md:0:5");
-        assert_eq!(path, "notes.md:0");
-        assert_eq!(pos.line, Some(5));
-        assert_eq!(pos.col, None);
+        assert_eq!(path, "notes.md:0:5");
+        assert_eq!(pos, PositionSuffix::default());
+    }
+
+    #[test]
+    fn parse_position_suffix_col_zero() {
+        let (path, pos) = parse_position_suffix("notes.md:10:0");
+        assert_eq!(path, "notes.md");
+        assert_eq!(pos.line, Some(10));
+        assert_eq!(pos.col, Some(0));
     }
 
     #[test]
@@ -380,92 +418,15 @@ mod tests {
 
     #[test]
     fn generate_cli_script_content() {
-        let script = generate_cli_script("/Applications/Lit.app/Contents/MacOS/Lit");
+        let script = generate_cli_script("/Applications/Lit.app/Contents/MacOS");
         assert!(script.starts_with("#!/bin/bash"));
-        assert!(script.contains("/Applications/Lit.app/Contents/MacOS/Lit"));
-        assert!(script.contains("&>/dev/null &"));
-        assert!(script.contains("disown"));
+        assert!(script.contains("/Applications/Lit.app/Contents/MacOS/lit-cli"));
         assert!(script.contains("\"$@\""));
     }
 
     #[test]
     fn cli_script_path_is_correct() {
         assert_eq!(cli_script_path(), PathBuf::from("/usr/local/bin/lit"));
-    }
-
-    #[test]
-    fn resolve_deep_link_with_position() {
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("note.md");
-        fs::write(&file_path, "hello").unwrap();
-
-        let url_str = format!(
-            "lit://open?file={}&line=10&col=5",
-            file_path.to_str().unwrap()
-        );
-        let url = url::Url::parse(&url_str).unwrap();
-        let result = resolve_deep_link(&url);
-        match result {
-            Some(CliTarget::File {
-                file, line, col, ..
-            }) => {
-                assert_eq!(file, "note.md");
-                assert_eq!(line, Some(10));
-                assert_eq!(col, Some(5));
-            }
-            other => panic!("Expected File with position, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn resolve_deep_link_no_position() {
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("note.md");
-        fs::write(&file_path, "hello").unwrap();
-
-        let url_str = format!("lit://open?file={}", file_path.to_str().unwrap());
-        let url = url::Url::parse(&url_str).unwrap();
-        let result = resolve_deep_link(&url);
-        match result {
-            Some(CliTarget::File {
-                file, line, col, ..
-            }) => {
-                assert_eq!(file, "note.md");
-                assert_eq!(line, None);
-                assert_eq!(col, None);
-            }
-            other => panic!("Expected File without position, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn resolve_deep_link_directory() {
-        let dir = tempfile::tempdir().unwrap();
-        let url_str = format!("lit://open?file={}", dir.path().to_str().unwrap());
-        let url = url::Url::parse(&url_str).unwrap();
-        let result = resolve_deep_link(&url);
-        match result {
-            Some(CliTarget::Directory(_)) => {}
-            other => panic!("Expected Directory, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn resolve_deep_link_wrong_scheme() {
-        let url = url::Url::parse("http://open?file=/tmp").unwrap();
-        assert!(resolve_deep_link(&url).is_none());
-    }
-
-    #[test]
-    fn resolve_deep_link_wrong_host() {
-        let url = url::Url::parse("lit://close?file=/tmp").unwrap();
-        assert!(resolve_deep_link(&url).is_none());
-    }
-
-    #[test]
-    fn resolve_deep_link_nonexistent_file() {
-        let url = url::Url::parse("lit://open?file=/nonexistent_path_12345/note.md").unwrap();
-        assert!(resolve_deep_link(&url).is_none());
     }
 
     #[test]
@@ -524,5 +485,88 @@ mod tests {
             }
             other => panic!("Expected Directory, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_socket_request_serialize() {
+        let req = SocketRequest {
+            action: "open".to_string(),
+            path: "/tmp/test.md".to_string(),
+            line: Some(10),
+            col: Some(5),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let roundtrip: SocketRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req, roundtrip);
+    }
+
+    #[test]
+    fn test_socket_request_deserialize_minimal() {
+        let json = r#"{"action":"open","path":"/tmp/test.md"}"#;
+        let req: SocketRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.action, "open");
+        assert_eq!(req.path, "/tmp/test.md");
+        assert_eq!(req.line, None);
+        assert_eq!(req.col, None);
+    }
+
+    #[test]
+    fn test_socket_response_serialize_ok() {
+        let resp = SocketResponse {
+            ok: true,
+            error: None,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert_eq!(json, r#"{"ok":true}"#);
+    }
+
+    #[test]
+    fn test_socket_response_serialize_error() {
+        let resp = SocketResponse {
+            ok: false,
+            error: Some("not found".to_string()),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let roundtrip: SocketResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(roundtrip.ok, false);
+        assert_eq!(roundtrip.error, Some("not found".to_string()));
+    }
+
+    #[test]
+    fn test_socket_path_ends_with_expected_suffix() {
+        let path = socket_path();
+        assert!(path.ends_with("com.lit.app/lit.sock"));
+    }
+
+    #[test]
+    fn test_cli_target_to_socket_request_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = CliTarget::File {
+            workspace: dir.path().to_path_buf(),
+            file: "note.md".to_string(),
+            line: Some(10),
+            col: Some(5),
+        };
+        let req = cli_target_to_socket_request(&target).unwrap();
+        assert_eq!(req.action, "open");
+        assert!(req.path.ends_with("note.md"));
+        assert_eq!(req.line, Some(10));
+        assert_eq!(req.col, Some(5));
+    }
+
+    #[test]
+    fn test_cli_target_to_socket_request_directory() {
+        let target = CliTarget::Directory(PathBuf::from("/tmp/mydir"));
+        let req = cli_target_to_socket_request(&target).unwrap();
+        assert_eq!(req.action, "open");
+        assert_eq!(req.path, "/tmp/mydir");
+        assert_eq!(req.line, None);
+        assert_eq!(req.col, None);
+    }
+
+    #[test]
+    fn test_cli_target_to_socket_request_invalid() {
+        let target = CliTarget::Invalid("bad".to_string());
+        assert!(cli_target_to_socket_request(&target).is_none());
     }
 }

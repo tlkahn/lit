@@ -307,6 +307,7 @@ describe("WorkspaceStore", () => {
     expect(state.currentPagePath).toBe("Page A.md");
     expect(state.pendingCursorLine).toBe(10);
     expect(state.pendingCursorCol).toBe(7);
+    expect(state.pendingCursorFileAbsolute).toBe(false);
   });
 
   it("selectPageAtLine defaults pendingCursorCol to null when col omitted", () => {
@@ -316,6 +317,26 @@ describe("WorkspaceStore", () => {
     const state = useWorkspaceStore.getState();
     expect(state.pendingCursorLine).toBe(5);
     expect(state.pendingCursorCol).toBeNull();
+  });
+
+  it("selectPageAtLine with fileAbsolute sets pendingCursorFileAbsolute", () => {
+    act(() => {
+      useWorkspaceStore.getState().selectPageAtLine("Page A.md", 16, 5, true);
+    });
+    const state = useWorkspaceStore.getState();
+    expect(state.pendingCursorLine).toBe(16);
+    expect(state.pendingCursorFileAbsolute).toBe(true);
+  });
+
+  it("selectPage clears pendingCursorFileAbsolute", () => {
+    act(() => {
+      useWorkspaceStore.getState().selectPageAtLine("Page A.md", 16, 5, true);
+    });
+    expect(useWorkspaceStore.getState().pendingCursorFileAbsolute).toBe(true);
+    act(() => {
+      useWorkspaceStore.getState().selectPage("Page B.md");
+    });
+    expect(useWorkspaceStore.getState().pendingCursorFileAbsolute).toBe(false);
   });
 
   it("pendingSection initializes as null", () => {

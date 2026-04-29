@@ -400,6 +400,7 @@ describe("App", () => {
       expect(useWorkspaceStore.getState().currentPagePath).toBe("notes.md");
       expect(useWorkspaceStore.getState().pendingCursorLine).toBe(7);
       expect(useWorkspaceStore.getState().pendingCursorCol).toBe(3);
+      expect(useWorkspaceStore.getState().pendingCursorFileAbsolute).toBe(true);
     });
   });
 
@@ -493,6 +494,7 @@ describe("App", () => {
       expect(useWorkspaceStore.getState().currentPagePath).toBe("readme.md");
       expect(useWorkspaceStore.getState().pendingCursorLine).toBe(20);
       expect(useWorkspaceStore.getState().pendingCursorCol).toBe(3);
+      expect(useWorkspaceStore.getState().pendingCursorFileAbsolute).toBe(true);
     });
   });
 
@@ -543,6 +545,7 @@ describe("App", () => {
       expect(useWorkspaceStore.getState().currentPagePath).toBe("notes.md");
       expect(useWorkspaceStore.getState().pendingCursorLine).toBe(15);
       expect(useWorkspaceStore.getState().pendingCursorCol).toBeNull();
+      expect(useWorkspaceStore.getState().pendingCursorFileAbsolute).toBe(true);
     });
   });
 });

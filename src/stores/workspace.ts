@@ -20,8 +20,10 @@ export interface WorkspaceStore {
   pendingTitleFocus: boolean;
   pendingCursorLine: number | null;
   pendingCursorCol: number | null;
+  pendingCursorFileAbsolute: boolean;
   pendingSection: string | null;
   currentPageHeadings: Heading[];
+  currentFrontmatterLineCount: number;
   isDirty: boolean;
   reloadTrigger: number;
   viewStates: Record<string, ViewState>;
@@ -33,12 +35,13 @@ export interface WorkspaceStore {
   openWorkspace: (path: string) => Promise<void>;
   refreshPages: () => Promise<void>;
   selectPage: (relativePath: string | null) => void;
-  selectPageAtLine: (relativePath: string, line: number, col?: number) => void;
+  selectPageAtLine: (relativePath: string, line: number, col?: number, fileAbsolute?: boolean) => void;
   createPage: (name: string, parentDir?: string) => Promise<void>;
   renamePage: (oldPath: string, newName: string) => Promise<void>;
   deletePage: (relativePath: string) => Promise<void>;
   clearPendingTitleFocus: () => void;
   setCurrentPageHeadings: (headings: Heading[]) => void;
+  setCurrentFrontmatterLineCount: (count: number) => void;
   setDirty: (dirty: boolean) => void;
   triggerReload: () => void;
   saveViewState: (path: string, scrollTop: number, cursor: number) => void;
@@ -51,8 +54,10 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   pendingTitleFocus: false,
   pendingCursorLine: null,
   pendingCursorCol: null,
+  pendingCursorFileAbsolute: false,
   pendingSection: null,
   currentPageHeadings: [],
+  currentFrontmatterLineCount: 0,
   isDirty: false,
   reloadTrigger: 0,
   viewStates: {},
@@ -100,11 +105,11 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     if (relativePath === null) {
       console.warn("[WorkspaceStore] selectPage(null) called — stack:", new Error().stack);
     }
-    set({ currentPagePath: relativePath, currentPageHeadings: [], isDirty: false, reloadTrigger: 0, pendingCursorLine: null, pendingSection: null });
+    set({ currentPagePath: relativePath, currentPageHeadings: [], isDirty: false, reloadTrigger: 0, pendingCursorLine: null, pendingCursorFileAbsolute: false, pendingSection: null });
   },
 
-  selectPageAtLine: (relativePath: string, line: number, col?: number) => {
-    set({ currentPagePath: relativePath, currentPageHeadings: [], isDirty: false, reloadTrigger: 0, pendingCursorLine: line, pendingCursorCol: col ?? null });
+  selectPageAtLine: (relativePath: string, line: number, col?: number, fileAbsolute?: boolean) => {
+    set({ currentPagePath: relativePath, currentPageHeadings: [], isDirty: false, reloadTrigger: 0, pendingCursorLine: line, pendingCursorCol: col ?? null, pendingCursorFileAbsolute: fileAbsolute ?? false });
   },
 
   createPage: async (name: string, parentDir?: string) => {
@@ -147,6 +152,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   clearPendingTitleFocus: () => set({ pendingTitleFocus: false }),
 
   setCurrentPageHeadings: (headings: Heading[]) => set({ currentPageHeadings: headings }),
+
+  setCurrentFrontmatterLineCount: (count: number) => set({ currentFrontmatterLineCount: count }),
 
   setDirty: (dirty: boolean) => set({ isDirty: dirty }),
 

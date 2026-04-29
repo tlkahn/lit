@@ -15,6 +15,8 @@ bun run lint                         # eslint
 bun run typecheck                    # tsc --noEmit
 cd src-tauri && cargo test           # rust tests
 cd src-tauri && cargo test page      # run rust tests matching "page"
+bash scripts/install.sh              # full release build + install to /Applications
+bun tauri build                      # release build (lit-cli bundled via externalBin)
 ```
 
 ## Core Architecture

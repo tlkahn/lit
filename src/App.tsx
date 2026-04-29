@@ -68,7 +68,7 @@ function App() {
           await openWorkspace(cliArgs.workspace);
           if (cliArgs.file) {
             if (cliArgs.line != null) {
-              selectPageAtLine(cliArgs.file, cliArgs.line, cliArgs.col ?? undefined);
+              selectPageAtLine(cliArgs.file, cliArgs.line, cliArgs.col ?? undefined, true);
             } else {
               selectPage(cliArgs.file);
             }
@@ -84,7 +84,7 @@ function App() {
           const line = await getPendingLine().catch(() => null);
           if (line != null) {
             const col = await getPendingCol().catch(() => null);
-            selectPageAtLine(file, line, col ?? undefined);
+            selectPageAtLine(file, line, col ?? undefined, true);
           } else {
             selectPage(file);
           }
@@ -99,7 +99,7 @@ function App() {
           const line = await getInitialLine().catch(() => null);
           if (line != null) {
             const col = await getInitialCol().catch(() => null);
-            selectPageAtLine(file, line, col ?? undefined);
+            selectPageAtLine(file, line, col ?? undefined, true);
           } else {
             selectPage(file);
           }

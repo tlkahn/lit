@@ -660,6 +660,59 @@ describe("ContentArea scroll position", () => {
 
     spy.mockRestore();
   });
+
+  it("pendingCursorLine with fileAbsolute adjusts for frontmatter", async () => {
+    const { EditorView } = await import("@codemirror/view");
+
+    // samplePage has raw_yaml "tags:\n  - test\n" → 2 YAML lines + 2 fences = 4 line offset
+    // File line 6 should become body line 2
+    useWorkspaceStore.setState({
+      currentPagePath: "Hello.md",
+      pendingCursorLine: 6,
+      pendingCursorCol: 0,
+      pendingCursorFileAbsolute: true,
+    });
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor").textContent).toContain("Some content");
+    });
+
+    const cmEditor = screen.getByTestId("editor").querySelector(".cm-editor");
+    const view = EditorView.findFromDOM(cmEditor as HTMLElement)!;
+
+    await waitFor(() => {
+      const pos = view.state.selection.main.head;
+      const line = view.state.doc.lineAt(pos);
+      expect(line.number).toBe(2);
+    });
+  });
+
+  it("pendingCursorLine with fileAbsolute and no frontmatter passes through unchanged", async () => {
+    const { EditorView } = await import("@codemirror/view");
+
+    // otherPage has raw_yaml "" → no offset, line 2 stays line 2
+    useWorkspaceStore.setState({
+      currentPagePath: "Other.md",
+      pendingCursorLine: 2,
+      pendingCursorCol: 0,
+      pendingCursorFileAbsolute: true,
+    });
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor").textContent).toContain("Different content");
+    });
+
+    const cmEditor = screen.getByTestId("editor").querySelector(".cm-editor");
+    const view = EditorView.findFromDOM(cmEditor as HTMLElement)!;
+
+    await waitFor(() => {
+      const pos = view.state.selection.main.head;
+      const line = view.state.doc.lineAt(pos);
+      expect(line.number).toBe(2);
+    });
+  });
 });
 
 describe("parseYamlErrorLocation", () => {

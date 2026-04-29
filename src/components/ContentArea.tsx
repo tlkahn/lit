@@ -37,6 +37,11 @@ function resolveRelativePath(base: string, relative: string): string {
   return resolved.join("/");
 }
 
+function frontmatterLineCount(rawYaml: string): number {
+  if (!rawYaml) return 0;
+  return rawYaml.trimEnd().split("\n").length + 2;
+}
+
 export function ContentArea() {
   const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
@@ -72,6 +77,7 @@ export function ContentArea() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cancelledRef = useRef(false);
   const pendingScrollLineRef = useRef<number | null>(null);
+  const rawYamlRef = useRef("");
 
   const loadPage = useCallback(async (path: string) => {
     try {
@@ -83,6 +89,8 @@ export function ContentArea() {
         setEditingTitle(content.meta.title);
         setFrontmatter(content.meta.frontmatter);
         setRawYaml(content.raw_yaml);
+        rawYamlRef.current = content.raw_yaml;
+        useWorkspaceStore.getState().setCurrentFrontmatterLineCount(frontmatterLineCount(content.raw_yaml));
         setCurrentPageHeadings(extractHeadings(content.body));
       } else {
         console.debug("[ContentArea] loadPage stale, ignoring:", path);
@@ -94,6 +102,7 @@ export function ContentArea() {
       setEditingTitle("");
       setFrontmatter({});
       setRawYaml("");
+      rawYamlRef.current = "";
       setCurrentPageHeadings([]);
     }
   }, [setCurrentPageHeadings]);
@@ -121,6 +130,7 @@ export function ContentArea() {
       setEditingTitle("");
       setFrontmatter({});
       setRawYaml("");
+      rawYamlRef.current = "";
     }
     setEditingYaml(false);
     setYamlDraft("");
@@ -217,7 +227,11 @@ export function ContentArea() {
       const view = editorViewRef.current;
       if (!view) return;
       if (storeState.pendingCursorLine != null) {
-        const lineNum = Math.min(storeState.pendingCursorLine, view.state.doc.lines);
+        let adjustedLine = storeState.pendingCursorLine;
+        if (storeState.pendingCursorFileAbsolute && rawYamlRef.current) {
+          adjustedLine = Math.max(1, adjustedLine - frontmatterLineCount(rawYamlRef.current));
+        }
+        const lineNum = Math.min(adjustedLine, view.state.doc.lines);
         const line = view.state.doc.line(lineNum);
         const col = storeState.pendingCursorCol ?? 0;
         const pos = line.from + Math.min(col, line.length);
@@ -225,7 +239,7 @@ export function ContentArea() {
           selection: EditorSelection.cursor(pos),
           effects: EditorView.scrollIntoView(pos, { y: "center" }),
         });
-        useWorkspaceStore.setState({ pendingCursorLine: null, pendingCursorCol: null });
+        useWorkspaceStore.setState({ pendingCursorLine: null, pendingCursorCol: null, pendingCursorFileAbsolute: false });
       } else if (storeState.pendingSection != null) {
         const section = storeState.pendingSection;
         useWorkspaceStore.setState({ pendingSection: null });
@@ -386,7 +400,8 @@ export function ContentArea() {
       if (!view || !path) return;
       const pos = view.state.selection.main.head;
       const line = view.state.doc.lineAt(pos);
-      openInExternalEditor(path, line.number, pos - line.from + 1);
+      const offset = frontmatterLineCount(rawYamlRef.current);
+      openInExternalEditor(path, line.number + offset, pos - line.from + 1);
     }).then((fn) => { unlisten = fn; });
     return () => { unlisten?.(); };
   }, []);

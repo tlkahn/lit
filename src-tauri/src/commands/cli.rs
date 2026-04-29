@@ -8,17 +8,16 @@ use crate::cli;
 
 #[tauri::command]
 pub fn install_cli(app_handle: tauri::AppHandle) -> Result<(), String> {
-    let binary = app_handle
+    let resource_dir = app_handle
         .path()
         .resource_dir()
         .map_err(|e| e.to_string())?;
-    let app_binary = binary
+    let macos_dir = resource_dir
         .parent()
-        .unwrap_or(&binary)
-        .join("MacOS")
-        .join("Lit");
-    let app_binary_str = app_binary.to_string_lossy();
-    let script = cli::generate_cli_script(&app_binary_str);
+        .unwrap_or(&resource_dir)
+        .join("MacOS");
+    let macos_dir_str = macos_dir.to_string_lossy();
+    let script = cli::generate_cli_script(&macos_dir_str);
     let target = cli::cli_script_path();
 
     write_cli_script(&target, &script)

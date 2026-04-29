@@ -5,6 +5,7 @@ pub mod external_editor;
 pub mod graph;
 mod menu;
 pub mod preferences;
+pub mod socket;
 pub mod workspace;
 
 use commands::graph::GraphRegistry;
@@ -12,7 +13,6 @@ use commands::workspace::{PendingCols, PendingFiles, PendingLines, PendingWorksp
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager, WebviewWindowBuilder};
-use tauri_plugin_deep_link::DeepLinkExt;
 use workspace::write_hash::WriteHashRegistry;
 use bib::cache::BibCache;
 
@@ -99,7 +99,6 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_deep_link::init())
         .manage(WorkspaceRegistry {
             workspaces: Mutex::new(HashMap::new()),
         })
@@ -164,37 +163,6 @@ pub fn run() {
                 }
             }
 
-            let app_handle_for_deep_link = app.handle().clone();
-            app.deep_link().on_open_url(move |event| {
-                for url_str in event.urls() {
-                    if let Some(target) = cli::resolve_deep_link(&url_str) {
-                        match target {
-                            cli::CliTarget::Directory(path) => {
-                                let path_str = path.to_string_lossy().to_string();
-                                let _ = commands::workspace::create_workspace_window(
-                                    &app_handle_for_deep_link,
-                                    Some(path_str),
-                                    None,
-                                    None,
-                                    None,
-                                );
-                            }
-                            cli::CliTarget::File { workspace, file, line, col } => {
-                                let workspace_str = workspace.to_string_lossy().to_string();
-                                let _ = commands::workspace::create_workspace_window(
-                                    &app_handle_for_deep_link,
-                                    Some(workspace_str),
-                                    Some(file),
-                                    line,
-                                    col,
-                                );
-                            }
-                            cli::CliTarget::Invalid(_) => {}
-                        }
-                    }
-                }
-            });
-
             let mut builder =
                 WebviewWindowBuilder::new(app.handle(), "main", tauri::WebviewUrl::default())
                     .title("Lit")
@@ -205,6 +173,46 @@ pub fn run() {
             }
 
             builder.build()?;
+
+            let handle = app.handle().clone();
+            let sock = cli::socket_path();
+            tauri::async_runtime::spawn(async move {
+                socket::start_listener(sock, move |target| {
+                    match target {
+                        cli::CliTarget::Directory(path) => {
+                            let path_str = path.to_string_lossy().to_string();
+                            commands::workspace::create_workspace_window(
+                                &handle,
+                                Some(path_str),
+                                None,
+                                None,
+                                None,
+                            )
+                            .map(|_| ())
+                            .map_err(|e| e.to_string())
+                        }
+                        cli::CliTarget::File {
+                            workspace,
+                            file,
+                            line,
+                            col,
+                        } => {
+                            let workspace_str = workspace.to_string_lossy().to_string();
+                            commands::workspace::create_workspace_window(
+                                &handle,
+                                Some(workspace_str),
+                                Some(file),
+                                line,
+                                col,
+                            )
+                            .map(|_| ())
+                            .map_err(|e| e.to_string())
+                        }
+                        cli::CliTarget::Invalid(s) => Err(format!("invalid target: {s}")),
+                    }
+                })
+                .await;
+            });
 
             Ok(())
         })
@@ -335,6 +343,11 @@ pub fn run() {
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            if let tauri::RunEvent::Exit = event {
+                socket::cleanup_socket(&cli::socket_path());
+            }
+        });
 }

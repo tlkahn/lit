@@ -20,11 +20,9 @@ function ensureCommandsRegistered() {
     const v = view as EditorView;
     const pos = v.state.selection.main.head;
     const line = v.state.doc.lineAt(pos);
-    const lineNumber = line.number;
-    const col = pos - line.from + 1;
-    const currentPagePath = useWorkspaceStore.getState().currentPagePath;
+    const { currentPagePath, currentFrontmatterLineCount } = useWorkspaceStore.getState();
     if (currentPagePath) {
-      openInExternalEditor(currentPagePath, lineNumber, col);
+      openInExternalEditor(currentPagePath, line.number + currentFrontmatterLineCount, pos - line.from + 1);
     }
   });
   commandRegistry.register("editor.navigateBack", (view) => navigateBack(view as EditorView));
