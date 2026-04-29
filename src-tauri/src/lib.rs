@@ -140,6 +140,27 @@ pub fn run() {
                     build_state.start_build(root.clone());
 
                     tauri::async_runtime::spawn_blocking(move || {
+                        match crate::graph::indexer::GraphIndex::load_from_store(root.clone()) {
+                            Ok(Some(gi)) => {
+                                let gi = Arc::new(gi);
+                                graph_reg.indices.lock().unwrap().insert(root.clone(), Arc::clone(&gi));
+                                build_state.mark_ready(&root);
+                                let _ = handle.emit("lit:graph-updated", ());
+
+                                let handle2 = handle.clone();
+                                tauri::async_runtime::spawn_blocking(move || {
+                                    match gi.sync_with_disk() {
+                                        Ok(true) => { let _ = handle2.emit("lit:graph-updated", ()); }
+                                        Ok(false) => {}
+                                        Err(e) => tracing::error!(error = %e, "background graph sync failed"),
+                                    }
+                                });
+                                return;
+                            }
+                            Ok(None) => {}
+                            Err(e) => tracing::warn!(error = %e, "load_from_store failed, falling back to cold start"),
+                        }
+
                         let emit_handle = handle.clone();
                         let callback = move |p: crate::graph::progress::IndexProgress| {
                             let _ = emit_handle.emit("lit:index-progress", &p);

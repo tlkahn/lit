@@ -541,6 +541,50 @@ pub struct GraphIndex {
 }
 
 impl GraphIndex {
+    pub fn load_from_store(workspace_root: std::path::PathBuf) -> Result<Option<Self>, GraphError> {
+        let db_path = workspace_root.join(".lit").join("graph.db");
+        if !db_path.exists() {
+            return Ok(None);
+        }
+        let store = Store::open(&db_path)?;
+        if !store.has_data()? {
+            return Ok(None);
+        }
+        let edges: Vec<(String, String)> = store
+            .all_raw_edges()?
+            .into_iter()
+            .map(|(source, _target, raw_target)| (source, raw_target))
+            .collect();
+        let reverse_stems = ReverseStemIndex::build_from_edges(&edges);
+        let knowledge = KnowledgeGraph::from_store(&store)?;
+        info!("loaded graph from store (skipped disk diff)");
+        Ok(Some(Self {
+            store: Mutex::new(store),
+            reverse_stems: Mutex::new(reverse_stems),
+            knowledge: Mutex::new(knowledge),
+            workspace_root,
+        }))
+    }
+
+    pub fn sync_with_disk(&self) -> Result<bool, GraphError> {
+        let store = self.store.lock().unwrap();
+        let diff = compute_diff(&store, &self.workspace_root)?;
+        if diff.is_empty() {
+            return Ok(false);
+        }
+        info!(
+            new = diff.new.len(),
+            changed = diff.changed.len(),
+            deleted = diff.deleted.len(),
+            "background sync: applying diff"
+        );
+        let mut reverse_stems = self.reverse_stems.lock().unwrap();
+        incremental_reindex(&store, &self.workspace_root, &mut reverse_stems, &diff)?;
+        let mut knowledge = self.knowledge.lock().unwrap();
+        *knowledge = KnowledgeGraph::from_store(&store)?;
+        Ok(true)
+    }
+
     pub fn build(workspace_root: std::path::PathBuf) -> Result<Self, GraphError> {
         Self::build_with_progress(workspace_root, &super::progress::noop_callback())
     }
@@ -2860,5 +2904,96 @@ mod tests {
         for r in &results {
             assert!(r.score < 0.0, "score should be negative (negated count)");
         }
+    }
+
+    // --- load_from_store ---
+
+    #[test]
+    fn load_from_store_returns_none_when_no_db() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Content.");
+        let result = GraphIndex::load_from_store(dir.path().to_path_buf()).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn load_from_store_returns_none_when_empty_store() {
+        let dir = create_workspace();
+        let db_path = dir.path().join(".lit").join("graph.db");
+        fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+        let _store = Store::open(&db_path).unwrap();
+        let result = GraphIndex::load_from_store(dir.path().to_path_buf()).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn load_from_store_returns_graph_from_cached_data() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Links to [[b]].");
+        write_md(dir.path(), "b.md", "Target.");
+        let gi1 = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let stats1 = gi1.stats().unwrap();
+        drop(gi1);
+
+        let gi2 = GraphIndex::load_from_store(dir.path().to_path_buf()).unwrap();
+        assert!(gi2.is_some());
+        let gi2 = gi2.unwrap();
+        let stats2 = gi2.stats().unwrap();
+        assert_eq!(stats1.nodes, stats2.nodes);
+        assert_eq!(stats1.edges, stats2.edges);
+    }
+
+    // --- sync_with_disk ---
+
+    #[test]
+    fn sync_with_disk_no_changes() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Content.");
+        GraphIndex::build(dir.path().to_path_buf()).unwrap();
+
+        let gi = GraphIndex::load_from_store(dir.path().to_path_buf()).unwrap().unwrap();
+        assert_eq!(gi.sync_with_disk().unwrap(), false);
+    }
+
+    #[test]
+    fn sync_with_disk_detects_new_file() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Content.");
+        GraphIndex::build(dir.path().to_path_buf()).unwrap();
+
+        write_md(dir.path(), "b.md", "New file.");
+        let gi = GraphIndex::load_from_store(dir.path().to_path_buf()).unwrap().unwrap();
+        let before = gi.stats().unwrap().nodes;
+        assert_eq!(gi.sync_with_disk().unwrap(), true);
+        assert!(gi.stats().unwrap().nodes > before);
+    }
+
+    #[test]
+    fn sync_with_disk_detects_changed_file() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Original.");
+        GraphIndex::build(dir.path().to_path_buf()).unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        write_md(dir.path(), "a.md", "Modified content with [[b]].");
+        write_md(dir.path(), "b.md", "Target.");
+        let gi = GraphIndex::load_from_store(dir.path().to_path_buf()).unwrap().unwrap();
+        assert_eq!(gi.sync_with_disk().unwrap(), true);
+        let backlinks = gi.backlinks("b.md").unwrap();
+        assert_eq!(backlinks.len(), 1);
+    }
+
+    #[test]
+    fn sync_with_disk_detects_deleted_file() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Keep.");
+        write_md(dir.path(), "b.md", "Delete me.");
+        GraphIndex::build(dir.path().to_path_buf()).unwrap();
+
+        fs::remove_file(dir.path().join("b.md")).unwrap();
+        let gi = GraphIndex::load_from_store(dir.path().to_path_buf()).unwrap().unwrap();
+        let before = gi.stats().unwrap().nodes;
+        assert_eq!(gi.sync_with_disk().unwrap(), true);
+        assert!(gi.stats().unwrap().nodes < before);
     }
 }
