@@ -465,6 +465,52 @@ describe("context menu hover suppression", () => {
   });
 });
 
+describe("context menu theme-aware colors", () => {
+  beforeEach(() => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha", "Alpha.md")],
+    });
+  });
+
+  function openMenu() {
+    render(<Sidebar />);
+    fireEvent.contextMenu(screen.getByText("Alpha"), { clientX: 150, clientY: 200 });
+  }
+
+  it("normal items use hover:text-text-on-accent, not hover:text-white", () => {
+    openMenu();
+    const rename = screen.getByText("Rename");
+    const openExt = screen.getByText("Open in External Editor");
+    for (const btn of [rename, openExt]) {
+      expect(btn.className).toContain("hover:text-text-on-accent");
+      expect(btn.className).not.toContain("hover:text-white");
+    }
+  });
+
+  it("Delete uses hover:bg-destructive, not hover:bg-red-500", () => {
+    openMenu();
+    const del = screen.getByText("Delete");
+    expect(del.className).toContain("hover:bg-destructive");
+    expect(del.className).not.toContain("hover:bg-red-500");
+  });
+
+  it("menu container border uses theme token, not hardcoded white", () => {
+    openMenu();
+    const menu = screen.getByTestId("context-menu");
+    expect(menu.className).toContain("dark:border-border/10");
+    expect(menu.className).not.toContain("dark:border-white/10");
+  });
+
+  it("separator uses theme border token", () => {
+    openMenu();
+    const menu = screen.getByTestId("context-menu");
+    const sep = menu.querySelector(".border-t");
+    expect(sep).toBeTruthy();
+    expect(sep!.className).toContain("dark:border-border/10");
+    expect(sep!.className).not.toContain("dark:border-white/10");
+  });
+});
+
 describe("context menu dismissal", () => {
   it("Escape closes the menu", () => {
     useWorkspaceStore.setState({

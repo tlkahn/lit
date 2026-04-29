@@ -158,33 +158,39 @@ const PageItem = memo(function PageItem({
         </button>
       )}
       {showMenu && createPortal(
-        <div ref={menuRef} data-testid="context-menu" className="z-50 select-none rounded border border-border bg-bg-primary shadow-lg" style={{ position: "fixed", left: `${menuPosRef.current.x}px`, top: `${menuPosRef.current.y}px` }}>
+        <div
+          ref={menuRef}
+          data-testid="context-menu"
+          className="z-50 min-w-[160px] select-none rounded-lg border border-border/40 bg-bg-primary/80 p-1 shadow-xl shadow-black/20 backdrop-blur-xl backdrop-saturate-150 dark:border-border/10 dark:bg-bg-primary/70"
+          style={{ position: "fixed", left: `${menuPosRef.current.x}px`, top: `${menuPosRef.current.y}px` }}
+        >
           <button
             onClick={() => {
               onMenuClose();
               onRenameStart(page.relative_path);
             }}
-            className="block w-full px-4 py-1 text-start text-sm text-text-normal hover:bg-bg-hover"
+            className="block w-full rounded-md px-3 py-1 text-start text-[13px] text-text-normal hover:bg-interactive-accent hover:text-text-on-accent"
           >
             Rename
           </button>
           <button
             onClick={() => {
               onMenuClose();
-              onDelete(page.relative_path);
+              openInExternalEditor(page.relative_path, 1, 1);
             }}
-            className="block w-full px-4 py-1 text-start text-sm text-text-error hover:bg-bg-hover"
+            className="block w-full rounded-md px-3 py-1 text-start text-[13px] text-text-normal hover:bg-interactive-accent hover:text-text-on-accent"
           >
-            Delete
+            Open in External Editor
           </button>
+          <div className="mx-2 my-1 border-t border-border/40 dark:border-border/10" />
           <button
             onClick={() => {
               onMenuClose();
-              openInExternalEditor(page.relative_path, 1, 1);
+              onDelete(page.relative_path);
             }}
-            className="block w-full px-4 py-1 text-start text-sm text-text-normal hover:bg-bg-hover"
+            className="block w-full rounded-md px-3 py-1 text-start text-[13px] text-text-error hover:bg-destructive hover:text-text-on-accent"
           >
-            Open in External Editor
+            Delete
           </button>
         </div>,
         document.body,
