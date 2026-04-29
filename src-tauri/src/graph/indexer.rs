@@ -401,6 +401,9 @@ pub fn incremental_reindex(
     // Handle new + changed files — track old aliases to detect alias changes
     let old_aliases = store.all_aliases()?;
 
+    let all_ids = store.all_node_ids()?;
+    let mut stem_lookup = StemLookup::build(&all_ids, &old_aliases);
+
     for path in diff.new.iter().chain(diff.changed.iter()) {
         match parse_md_file(root, path) {
             Ok((node, links, body)) => {
@@ -426,15 +429,12 @@ pub fn incremental_reindex(
                 }
 
                 store.upsert_node(&node, mtime)?;
+                stem_lookup.insert(&node.id, &new_aliases);
                 nodes_indexed += 1;
 
                 // Re-resolve outgoing links
                 store.delete_edges_from(&node.id)?;
                 reverse_stems.remove_source(&node.id);
-
-                let all_ids = store.all_node_ids()?;
-                let aliases = store.all_aliases()?;
-                let stem_lookup = StemLookup::build(&all_ids, &aliases);
 
                 for link in &links {
                     let resolved = stem_lookup.resolve(&link.target);
@@ -1674,6 +1674,51 @@ mod tests {
         incremental_reindex(&store, dir.path(), &mut reverse, &diff).unwrap();
         let ids = store.all_node_ids().unwrap();
         assert!(!ids.contains(&"b.md".to_string()));
+    }
+
+    #[test]
+    fn incremental_multiple_new_files_resolve_chain() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Alpha.");
+        let store = Store::open_memory().unwrap();
+        let (_, mut reverse) = index_workspace(&store, dir.path()).unwrap();
+
+        write_md(dir.path(), "b.md", "Links to [[A]].");
+        write_md(dir.path(), "c.md", "Links to [[B]].");
+        let diff = DiffResult {
+            new: vec!["b.md".to_string(), "c.md".to_string()],
+            changed: vec![],
+            deleted: vec![],
+        };
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff).unwrap();
+
+        let bl_a = store.backlinks("a.md").unwrap();
+        assert!(bl_a.iter().any(|bl| bl.source_id == "b.md"), "b.md should link to a.md");
+        let bl_b = store.backlinks("b.md").unwrap();
+        assert!(bl_b.iter().any(|bl| bl.source_id == "c.md"), "c.md should link to b.md");
+    }
+
+    #[test]
+    fn incremental_new_file_with_alias_resolves() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "---\naliases:\n  - Alpha\n---\nContent.",
+        );
+        let store = Store::open_memory().unwrap();
+        let (_, mut reverse) = index_workspace(&store, dir.path()).unwrap();
+
+        write_md(dir.path(), "b.md", "Links to [[Alpha]].");
+        let diff = DiffResult {
+            new: vec!["b.md".to_string()],
+            changed: vec![],
+            deleted: vec![],
+        };
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff).unwrap();
+
+        let bl = store.backlinks("a.md").unwrap();
+        assert!(bl.iter().any(|bl| bl.source_id == "b.md"), "b.md should link to a.md via alias");
     }
 
     // --- GraphIndex ---

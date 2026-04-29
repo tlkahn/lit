@@ -48,6 +48,18 @@ impl StemLookup {
         }
     }
 
+    pub fn insert(&mut self, id: &str, aliases: &[String]) {
+        let stem = extract_stem(id);
+        self.stems.entry(stem).or_default().push(id.to_string());
+        if self.ids.insert(id.to_string()) {
+            self.all_ids.push(id.to_string());
+        }
+        for alias in aliases {
+            let key = alias.to_lowercase();
+            self.stems.entry(key).or_default().push(id.to_string());
+        }
+    }
+
     pub fn resolve(&self, target: &str) -> ResolvedLink {
         // Tier 1: exact path
         if self.ids.contains(target) {
@@ -310,5 +322,80 @@ mod tests {
         let r = lookup.resolve("Topic");
         assert_eq!(r.tier, ResolutionTier::Stem);
         assert_eq!(r.node_id, Some("Notes/Topic.md".into()));
+    }
+
+    // --- StemLookup::insert ---
+
+    #[test]
+    fn insert_makes_node_resolvable_by_stem() {
+        let mut lookup = StemLookup::build(&[], &empty_aliases());
+        lookup.insert("People/Alice.md", &[]);
+        let r = lookup.resolve("alice");
+        assert_eq!(r.tier, ResolutionTier::Stem);
+        assert_eq!(r.node_id, Some("People/Alice.md".into()));
+    }
+
+    #[test]
+    fn insert_adds_aliases() {
+        let mut lookup = StemLookup::build(&[], &empty_aliases());
+        lookup.insert("People/Alice.md", &["Ally".to_string()]);
+        assert!(lookup.stems.contains_key("ally"));
+    }
+
+    #[test]
+    fn insert_no_duplicate_in_all_ids() {
+        let ids = vec!["a.md".to_string()];
+        let mut lookup = StemLookup::build(&ids, &empty_aliases());
+        lookup.insert("a.md", &[]);
+        assert_eq!(lookup.all_ids.len(), 1);
+    }
+
+    #[test]
+    fn insert_existing_id_adds_new_aliases() {
+        let ids = vec!["People/Alice.md".to_string()];
+        let mut aliases = HashMap::new();
+        aliases.insert("People/Alice.md".to_string(), vec!["OldAlias".to_string()]);
+        let mut lookup = StemLookup::build(&ids, &aliases);
+        lookup.insert("People/Alice.md", &["NewAlias".to_string()]);
+        assert!(lookup.stems.contains_key("oldalias"));
+        assert!(lookup.stems.contains_key("newalias"));
+    }
+
+    #[test]
+    fn insert_new_node_resolves_correctly() {
+        let ids = vec!["dir/a.md".to_string()];
+        let mut lookup = StemLookup::build(&ids, &empty_aliases());
+        lookup.insert("dir/b.md", &[]);
+        let r = lookup.resolve("b");
+        assert_eq!(r.tier, ResolutionTier::Stem);
+        assert_eq!(r.node_id, Some("dir/b.md".into()));
+    }
+
+    #[test]
+    fn insert_preserves_existing_entries() {
+        let ids = vec!["dir/a.md".to_string()];
+        let mut lookup = StemLookup::build(&ids, &empty_aliases());
+        lookup.insert("dir/b.md", &[]);
+        let r = lookup.resolve("a");
+        assert_eq!(r.tier, ResolutionTier::Stem);
+        assert_eq!(r.node_id, Some("dir/a.md".into()));
+    }
+
+    #[test]
+    fn insert_with_aliases_resolves_by_alias() {
+        let mut lookup = StemLookup::build(&[], &empty_aliases());
+        lookup.insert("People/Alice.md", &["Ally".to_string()]);
+        let r = lookup.resolve("Ally");
+        assert_eq!(r.tier, ResolutionTier::Stem);
+        assert_eq!(r.node_id, Some("People/Alice.md".into()));
+    }
+
+    #[test]
+    fn insert_duplicate_stem_creates_ambiguity() {
+        let ids = vec!["a/Note.md".to_string()];
+        let mut lookup = StemLookup::build(&ids, &empty_aliases());
+        lookup.insert("b/Note.md", &[]);
+        let r = lookup.resolve("Note");
+        assert_eq!(r.tier, ResolutionTier::Ambiguous);
     }
 }
