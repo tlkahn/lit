@@ -67,40 +67,19 @@ export async function parseRawYaml(rawYaml: string): Promise<Record<string, unkn
   return invoke<Record<string, unknown>>("parse_raw_yaml", { rawYaml });
 }
 
-export async function getInitialWorkspace(): Promise<string | null> {
-  return invoke<string | null>("get_initial_workspace");
+export interface StartupContext {
+  workspace: string | null;
+  file: string | null;
+  line: number | null;
+  col: number | null;
+}
+
+export async function getStartupContext(): Promise<StartupContext> {
+  return invoke<StartupContext>("get_startup_context");
 }
 
 export async function openWorkspaceWindow(path?: string): Promise<string> {
   return invoke<string>("open_workspace_window", { path: path ?? null });
-}
-
-export async function getPendingWorkspace(): Promise<string | null> {
-  return invoke<string | null>("get_pending_workspace");
-}
-
-export async function getInitialFile(): Promise<string | null> {
-  return invoke<string | null>("get_initial_file");
-}
-
-export async function getPendingFile(): Promise<string | null> {
-  return invoke<string | null>("get_pending_file");
-}
-
-export async function getInitialLine(): Promise<number | null> {
-  return invoke<number | null>("get_initial_line");
-}
-
-export async function getInitialCol(): Promise<number | null> {
-  return invoke<number | null>("get_initial_col");
-}
-
-export async function getPendingLine(): Promise<number | null> {
-  return invoke<number | null>("get_pending_line");
-}
-
-export async function getPendingCol(): Promise<number | null> {
-  return invoke<number | null>("get_pending_col");
 }
 
 export async function installCli(): Promise<void> {

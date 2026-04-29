@@ -4,6 +4,7 @@ use crate::workspace::page::PageMeta;
 use crate::workspace::scan::scan_pages;
 use crate::workspace::watcher::FileWatcher;
 use crate::workspace::write_hash::WriteHashRegistry;
+use crate::{InitialWorkspace, InitialFile, InitialLine, InitialCol};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -230,6 +231,44 @@ pub fn get_pending_col(
     state.0.lock().unwrap().remove(window.label())
 }
 
+#[derive(serde::Serialize, Debug, PartialEq)]
+pub struct StartupContext {
+    pub workspace: Option<String>,
+    pub file: Option<String>,
+    pub line: Option<u32>,
+    pub col: Option<u32>,
+}
+
+#[tauri::command]
+pub fn get_startup_context(
+    window: tauri::Window,
+    pending_ws: State<PendingWorkspaces>,
+    pending_files: State<PendingFiles>,
+    pending_lines: State<PendingLines>,
+    pending_cols: State<PendingCols>,
+    initial_ws: State<InitialWorkspace>,
+    initial_file: State<InitialFile>,
+    initial_line: State<InitialLine>,
+    initial_col: State<InitialCol>,
+) -> StartupContext {
+    let label = window.label();
+    let workspace = pending_ws.0.lock().unwrap().remove(label);
+    if workspace.is_some() {
+        return StartupContext {
+            workspace,
+            file: pending_files.0.lock().unwrap().remove(label),
+            line: pending_lines.0.lock().unwrap().remove(label),
+            col: pending_cols.0.lock().unwrap().remove(label),
+        };
+    }
+    StartupContext {
+        workspace: initial_ws.0.lock().unwrap().take(),
+        file: initial_file.0.lock().unwrap().take(),
+        line: initial_line.0.lock().unwrap().take(),
+        col: initial_col.0.lock().unwrap().take(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -311,5 +350,129 @@ mod tests {
             read_last_workspace(dir.path()),
             Some("/my/vault".to_string())
         );
+    }
+
+    fn make_startup_context(
+        pending_ws: Option<&str>,
+        pending_file: Option<&str>,
+        pending_line: Option<u32>,
+        pending_col: Option<u32>,
+        initial_ws: Option<&str>,
+        initial_file: Option<&str>,
+        initial_line: Option<u32>,
+        initial_col: Option<u32>,
+        label: &str,
+    ) -> StartupContext {
+        let mut pw = HashMap::new();
+        if let Some(v) = pending_ws {
+            pw.insert(label.to_string(), v.to_string());
+        }
+        let mut pf = HashMap::new();
+        if let Some(v) = pending_file {
+            pf.insert(label.to_string(), v.to_string());
+        }
+        let mut pl = HashMap::new();
+        if let Some(v) = pending_line {
+            pl.insert(label.to_string(), v);
+        }
+        let mut pc = HashMap::new();
+        if let Some(v) = pending_col {
+            pc.insert(label.to_string(), v);
+        }
+
+        let pws = PendingWorkspaces(Mutex::new(pw));
+        let pfs = PendingFiles(Mutex::new(pf));
+        let pls = PendingLines(Mutex::new(pl));
+        let pcs = PendingCols(Mutex::new(pc));
+        let iws = InitialWorkspace(Mutex::new(initial_ws.map(|s| s.to_string())));
+        let ifs = InitialFile(Mutex::new(initial_file.map(|s| s.to_string())));
+        let ils = InitialLine(Mutex::new(initial_line));
+        let ics = InitialCol(Mutex::new(initial_col));
+
+        let workspace = pws.0.lock().unwrap().remove(label);
+        if workspace.is_some() {
+            return StartupContext {
+                workspace,
+                file: pfs.0.lock().unwrap().remove(label),
+                line: pls.0.lock().unwrap().remove(label),
+                col: pcs.0.lock().unwrap().remove(label),
+            };
+        }
+        let workspace = iws.0.lock().unwrap().take();
+        let file = ifs.0.lock().unwrap().take();
+        let line = ils.0.lock().unwrap().take();
+        let col = ics.0.lock().unwrap().take();
+        StartupContext { workspace, file, line, col }
+    }
+
+    #[test]
+    fn startup_context_pending_wins_over_initial() {
+        let ctx = make_startup_context(
+            Some("/pending/vault"),
+            Some("pending.md"),
+            Some(10),
+            Some(5),
+            Some("/initial/vault"),
+            Some("initial.md"),
+            Some(1),
+            Some(1),
+            "main",
+        );
+        assert_eq!(ctx, StartupContext {
+            workspace: Some("/pending/vault".to_string()),
+            file: Some("pending.md".to_string()),
+            line: Some(10),
+            col: Some(5),
+        });
+    }
+
+    #[test]
+    fn startup_context_falls_back_to_initial() {
+        let ctx = make_startup_context(
+            None, None, None, None,
+            Some("/initial/vault"),
+            Some("initial.md"),
+            Some(42),
+            Some(7),
+            "main",
+        );
+        assert_eq!(ctx, StartupContext {
+            workspace: Some("/initial/vault".to_string()),
+            file: Some("initial.md".to_string()),
+            line: Some(42),
+            col: Some(7),
+        });
+    }
+
+    #[test]
+    fn startup_context_returns_all_none_when_empty() {
+        let ctx = make_startup_context(
+            None, None, None, None,
+            None, None, None, None,
+            "main",
+        );
+        assert_eq!(ctx, StartupContext {
+            workspace: None,
+            file: None,
+            line: None,
+            col: None,
+        });
+    }
+
+    #[test]
+    fn startup_context_pending_workspace_only() {
+        let ctx = make_startup_context(
+            Some("/pending/vault"),
+            None, None, None,
+            Some("/initial/vault"),
+            Some("initial.md"),
+            Some(1),
+            Some(1),
+            "main",
+        );
+        assert_eq!(ctx.workspace, Some("/pending/vault".to_string()));
+        assert_eq!(ctx.file, None);
+        assert_eq!(ctx.line, None);
+        assert_eq!(ctx.col, None);
     }
 }

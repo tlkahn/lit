@@ -12,7 +12,7 @@ import { useWorkspaceStore, getRecentWorkspaces } from "./stores/workspace";
 import { useThemeStore } from "./stores/theme";
 import { usePreferencesStore } from "./stores/preferences";
 import { useFocusModeStore } from "./stores/focusMode";
-import { getInitialWorkspace, getInitialFile, getInitialLine, getInitialCol, getPendingWorkspace, getPendingFile, getPendingLine, getPendingCol } from "./lib/ipc";
+import { getStartupContext } from "./lib/ipc";
 import { HeadingQuickSwitcher } from "./components/HeadingQuickSwitcher";
 
 interface LitCliArgs {
@@ -47,12 +47,8 @@ function App() {
   const toggleFocusMode = useFocusModeStore((s) => s.toggleFocusMode);
 
   useEffect(() => {
-    loadPreferences();
-  }, [loadPreferences]);
-
-  useEffect(() => {
-    initThemes();
-  }, [initThemes]);
+    Promise.all([loadPreferences(), initThemes()]);
+  }, [loadPreferences, initThemes]);
 
   useEffect(() => {
     syncFromPreferences();
@@ -76,32 +72,14 @@ function App() {
           return;
         }
       }
-      const pending = await getPendingWorkspace().catch(() => null);
-      if (pending) {
-        await openWorkspace(pending);
-        const file = await getPendingFile().catch(() => null);
-        if (file) {
-          const line = await getPendingLine().catch(() => null);
-          if (line != null) {
-            const col = await getPendingCol().catch(() => null);
-            selectPageAtLine(file, line, col ?? undefined, true);
+      const ctx = await getStartupContext().catch(() => null);
+      if (ctx?.workspace) {
+        await openWorkspace(ctx.workspace);
+        if (ctx.file) {
+          if (ctx.line != null) {
+            selectPageAtLine(ctx.file, ctx.line, ctx.col ?? undefined, true);
           } else {
-            selectPage(file);
-          }
-        }
-        return;
-      }
-      const cliPath = await getInitialWorkspace().catch(() => null);
-      if (cliPath) {
-        await openWorkspace(cliPath);
-        const file = await getInitialFile().catch(() => null);
-        if (file) {
-          const line = await getInitialLine().catch(() => null);
-          if (line != null) {
-            const col = await getInitialCol().catch(() => null);
-            selectPageAtLine(file, line, col ?? undefined, true);
-          } else {
-            selectPage(file);
+            selectPage(ctx.file);
           }
         }
         return;

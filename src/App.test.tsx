@@ -43,22 +43,8 @@ describe("App", () => {
           return samplePages;
         case "list_pages":
           return samplePages;
-        case "get_initial_workspace":
-          return null;
-        case "get_initial_file":
-          return null;
-        case "get_pending_workspace":
-          return null;
-        case "get_pending_file":
-          return null;
-        case "get_initial_line":
-          return null;
-        case "get_initial_col":
-          return null;
-        case "get_pending_line":
-          return null;
-        case "get_pending_col":
-          return null;
+        case "get_startup_context":
+          return { workspace: null, file: null, line: null, col: null };
         case "list_themes":
           return [];
         case "get_preferences":
@@ -113,12 +99,10 @@ describe("App", () => {
   it("auto-opens workspace from pending workspace", async () => {
     mockInvoke((cmd) => {
       switch (cmd) {
-        case "get_pending_workspace":
-          return "/pending/workspace";
+        case "get_startup_context":
+          return { workspace: "/pending/workspace", file: null, line: null, col: null };
         case "open_workspace":
           return samplePages;
-        case "get_initial_workspace":
-          return null;
         case "get_keymaps":
           return [];
         case "ensure_graph_ready":
@@ -196,14 +180,8 @@ describe("App", () => {
   it("auto-selects initial file after CLI workspace opens", async () => {
     mockInvoke((cmd) => {
       switch (cmd) {
-        case "get_pending_workspace":
-          return null;
-        case "get_pending_file":
-          return null;
-        case "get_initial_workspace":
-          return "/cli/workspace";
-        case "get_initial_file":
-          return "notes.md";
+        case "get_startup_context":
+          return { workspace: "/cli/workspace", file: "notes.md", line: null, col: null };
         case "open_workspace":
           return samplePages;
         case "list_themes":
@@ -237,17 +215,11 @@ describe("App", () => {
     });
   });
 
-  it("does not select file when get_initial_file returns null", async () => {
+  it("does not select file when startup context has no file", async () => {
     mockInvoke((cmd) => {
       switch (cmd) {
-        case "get_pending_workspace":
-          return null;
-        case "get_pending_file":
-          return null;
-        case "get_initial_workspace":
-          return "/cli/workspace";
-        case "get_initial_file":
-          return null;
+        case "get_startup_context":
+          return { workspace: "/cli/workspace", file: null, line: null, col: null };
         case "open_workspace":
           return samplePages;
         case "list_themes":
@@ -278,14 +250,8 @@ describe("App", () => {
   it("auto-selects pending file in second-instance window", async () => {
     mockInvoke((cmd) => {
       switch (cmd) {
-        case "get_pending_workspace":
-          return "/pending/workspace";
-        case "get_pending_file":
-          return "readme.md";
-        case "get_initial_workspace":
-          return null;
-        case "get_initial_file":
-          return null;
+        case "get_startup_context":
+          return { workspace: "/pending/workspace", file: "readme.md", line: null, col: null };
         case "open_workspace":
           return samplePages;
         case "list_themes":
@@ -446,22 +412,8 @@ describe("App", () => {
   it("pending file with line sets pendingCursorLine", async () => {
     mockInvoke((cmd) => {
       switch (cmd) {
-        case "get_pending_workspace":
-          return "/pending/workspace";
-        case "get_pending_file":
-          return "readme.md";
-        case "get_pending_line":
-          return 20;
-        case "get_pending_col":
-          return 3;
-        case "get_initial_workspace":
-          return null;
-        case "get_initial_file":
-          return null;
-        case "get_initial_line":
-          return null;
-        case "get_initial_col":
-          return null;
+        case "get_startup_context":
+          return { workspace: "/pending/workspace", file: "readme.md", line: 20, col: 3 };
         case "open_workspace":
           return samplePages;
         case "list_themes":
@@ -501,18 +453,8 @@ describe("App", () => {
   it("initial file with line sets pendingCursorLine", async () => {
     mockInvoke((cmd) => {
       switch (cmd) {
-        case "get_pending_workspace":
-          return null;
-        case "get_pending_file":
-          return null;
-        case "get_initial_workspace":
-          return "/cli/workspace";
-        case "get_initial_file":
-          return "notes.md";
-        case "get_initial_line":
-          return 15;
-        case "get_initial_col":
-          return null;
+        case "get_startup_context":
+          return { workspace: "/cli/workspace", file: "notes.md", line: 15, col: null };
         case "open_workspace":
           return samplePages;
         case "list_themes":

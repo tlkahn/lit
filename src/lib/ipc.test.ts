@@ -12,9 +12,7 @@ import {
   deletePage,
   parseRawYaml,
   openWorkspaceWindow,
-  getPendingWorkspace,
-  getInitialFile,
-  getPendingFile,
+  getStartupContext,
   installCli,
   uninstallCli,
   isCliInstalled,
@@ -27,10 +25,6 @@ import {
   expandTemplate,
   resolveBibEntries,
   renderBibCitations,
-  getInitialLine,
-  getInitialCol,
-  getPendingLine,
-  getPendingCol,
   openInExternalEditor,
   getUnlinkedMentions,
   linkUnlinkedMention,
@@ -83,20 +77,8 @@ describe("ipc", () => {
           return { title: "Hello" };
         case "open_workspace_window":
           return "workspace-1";
-        case "get_pending_workspace":
-          return null;
-        case "get_initial_file":
-          return "notes.md";
-        case "get_pending_file":
-          return null;
-        case "get_initial_line":
-          return 10;
-        case "get_initial_col":
-          return 5;
-        case "get_pending_line":
-          return null;
-        case "get_pending_col":
-          return null;
+        case "get_startup_context":
+          return { workspace: "/my/vault", file: "notes.md", line: 10, col: 5 };
         case "install_cli":
           return null;
         case "uninstall_cli":
@@ -338,9 +320,11 @@ describe("ipc", () => {
     expect(invoke).toHaveBeenCalledWith("parse_raw_yaml", { rawYaml: "title: Hello\n" });
   });
 
-  it("getPendingWorkspace returns null by default", async () => {
-    const result = await getPendingWorkspace();
-    expect(result).toBeNull();
+  it("getStartupContext returns startup context", async () => {
+    const ctx = await getStartupContext();
+    expect(ctx).toEqual({ workspace: "/my/vault", file: "notes.md", line: 10, col: 5 });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("get_startup_context");
   });
 
   it("getKeymaps returns merged keybindings", async () => {
@@ -365,16 +349,6 @@ describe("ipc", () => {
     await saveUserKeymaps(bindings);
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("save_user_keymaps", { bindings });
-  });
-
-  it("getInitialFile returns the initial file", async () => {
-    const file = await getInitialFile();
-    expect(file).toBe("notes.md");
-  });
-
-  it("getPendingFile returns null by default", async () => {
-    const file = await getPendingFile();
-    expect(file).toBeNull();
   });
 
   it("installCli invokes install_cli", async () => {
@@ -628,26 +602,6 @@ describe("ipc", () => {
       throw new Error(`Unknown command: ${cmd}`);
     });
     await expect(ensureGraphReady("/my/workspace")).rejects.toThrow("build failed");
-  });
-
-  it("getInitialLine returns the initial line", async () => {
-    const line = await getInitialLine();
-    expect(line).toBe(10);
-  });
-
-  it("getInitialCol returns the initial col", async () => {
-    const col = await getInitialCol();
-    expect(col).toBe(5);
-  });
-
-  it("getPendingLine returns null by default", async () => {
-    const line = await getPendingLine();
-    expect(line).toBeNull();
-  });
-
-  it("getPendingCol returns null by default", async () => {
-    const col = await getPendingCol();
-    expect(col).toBeNull();
   });
 
 });

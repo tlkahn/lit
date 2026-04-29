@@ -22,26 +22,6 @@ pub struct InitialFile(pub Mutex<Option<String>>);
 pub struct InitialLine(pub Mutex<Option<u32>>);
 pub struct InitialCol(pub Mutex<Option<u32>>);
 
-#[tauri::command]
-fn get_initial_workspace(state: tauri::State<InitialWorkspace>) -> Option<String> {
-    state.0.lock().unwrap().take()
-}
-
-#[tauri::command]
-fn get_initial_file(state: tauri::State<InitialFile>) -> Option<String> {
-    state.0.lock().unwrap().take()
-}
-
-#[tauri::command]
-fn get_initial_line(state: tauri::State<InitialLine>) -> Option<u32> {
-    state.0.lock().unwrap().take()
-}
-
-#[tauri::command]
-fn get_initial_col(state: tauri::State<InitialCol>) -> Option<u32> {
-    state.0.lock().unwrap().take()
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt()
@@ -336,10 +316,7 @@ pub fn run() {
             commands::graph::get_unlinked_mentions,
             commands::graph::link_unlinked_mention,
             commands::graph::ensure_graph_ready,
-            get_initial_workspace,
-            get_initial_file,
-            get_initial_line,
-            get_initial_col,
+            commands::workspace::get_startup_context,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
