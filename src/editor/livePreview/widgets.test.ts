@@ -13,14 +13,19 @@ import {
 import { calloutFoldField } from "./callout";
 import { renderMermaid, getMermaidCached } from "./mermaid";
 import { navigateToPageFacet } from "./navigateToPageFacet";
+import { getKatexSync } from "./katexLoader";
 
-vi.mock("katex", () => ({
-  default: {
-    render: vi.fn((tex: string, el: HTMLElement) => {
-      el.textContent = tex;
-    }),
-    renderToString: vi.fn((tex: string) => `<span class="katex">${tex}</span>`),
-  },
+const mockKatex = {
+  render: vi.fn((tex: string, el: HTMLElement) => {
+    el.textContent = tex;
+  }),
+  renderToString: vi.fn((tex: string) => `<span class="katex">${tex}</span>`),
+};
+
+vi.mock("./katexLoader", () => ({
+  getKatexSync: vi.fn(() => mockKatex),
+  loadKatex: vi.fn(async () => mockKatex),
+  resetKatexLoader: vi.fn(),
 }));
 
 vi.mock("katex/dist/katex.min.css", () => ({}));
@@ -317,6 +322,35 @@ describe("InlineMathWidget", () => {
   it("ignoreEvent returns false to allow click-to-edit", () => {
     expect(new InlineMathWidget("x").ignoreEvent()).toBe(false);
   });
+
+  it("toDOM shows placeholder when katex not loaded, renders after load", async () => {
+    vi.mocked(getKatexSync).mockReturnValueOnce(null);
+    const widget = new InlineMathWidget("E=mc^2");
+    const el = widget.toDOM();
+    document.body.appendChild(el);
+    expect(el.textContent).toBe("E=mc^2");
+    expect(el.classList.contains("cm-preview-math-placeholder")).toBe(true);
+    await vi.waitFor(() => {
+      expect(el.classList.contains("cm-preview-math-placeholder")).toBe(false);
+    });
+    expect(el.textContent).toBe("E=mc^2");
+    el.remove();
+  });
+
+  it("updateDOM shows placeholder when katex not loaded", async () => {
+    const a = new InlineMathWidget("x^2");
+    const dom = a.toDOM();
+    document.body.appendChild(dom);
+    vi.mocked(getKatexSync).mockReturnValueOnce(null);
+    const b = new InlineMathWidget("y^3");
+    expect(b.updateDOM(dom)).toBe(true);
+    expect(dom.textContent).toBe("y^3");
+    expect(dom.classList.contains("cm-preview-math-placeholder")).toBe(true);
+    await vi.waitFor(() => {
+      expect(dom.classList.contains("cm-preview-math-placeholder")).toBe(false);
+    });
+    dom.remove();
+  });
 });
 
 describe("DisplayMathWidget", () => {
@@ -351,6 +385,34 @@ describe("DisplayMathWidget", () => {
 
   it("ignoreEvent returns false to allow click-to-edit", () => {
     expect(new DisplayMathWidget("x").ignoreEvent()).toBe(false);
+  });
+
+  it("toDOM shows placeholder when katex not loaded, renders after load", async () => {
+    vi.mocked(getKatexSync).mockReturnValueOnce(null);
+    const widget = new DisplayMathWidget("\\sum x");
+    const el = widget.toDOM();
+    document.body.appendChild(el);
+    expect(el.textContent).toBe("\\sum x");
+    expect(el.classList.contains("cm-preview-math-placeholder")).toBe(true);
+    await vi.waitFor(() => {
+      expect(el.classList.contains("cm-preview-math-placeholder")).toBe(false);
+    });
+    el.remove();
+  });
+
+  it("updateDOM shows placeholder when katex not loaded", async () => {
+    const a = new DisplayMathWidget("\\sum x");
+    const dom = a.toDOM();
+    document.body.appendChild(dom);
+    vi.mocked(getKatexSync).mockReturnValueOnce(null);
+    const b = new DisplayMathWidget("\\int y");
+    expect(b.updateDOM(dom)).toBe(true);
+    expect(dom.textContent).toBe("\\int y");
+    expect(dom.classList.contains("cm-preview-math-placeholder")).toBe(true);
+    await vi.waitFor(() => {
+      expect(dom.classList.contains("cm-preview-math-placeholder")).toBe(false);
+    });
+    dom.remove();
   });
 });
 

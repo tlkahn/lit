@@ -1,10 +1,16 @@
 import { describe, it, expect, vi } from "vitest";
 import { parseTableAlignment, parseTable, renderInlineMarkdown, getCellPosition, serializeTable } from "./table";
+import { getKatexSync } from "./katexLoader";
 
-vi.mock("katex", () => ({
-  default: {
-    renderToString: vi.fn((tex: string) => `<span class="katex">${tex}</span>`),
-  },
+const mockKatex = {
+  render: vi.fn(),
+  renderToString: vi.fn((tex: string) => `<span class="katex">${tex}</span>`),
+};
+
+vi.mock("./katexLoader", () => ({
+  getKatexSync: vi.fn(() => mockKatex),
+  loadKatex: vi.fn(async () => mockKatex),
+  resetKatexLoader: vi.fn(),
 }));
 
 vi.mock("katex/dist/katex.min.css", () => ({}));
@@ -196,6 +202,14 @@ describe("renderInlineMarkdown", () => {
 
   it("returns empty string for empty input", () => {
     expect(renderInlineMarkdown("")).toBe("");
+  });
+
+  it("renders raw latex placeholder when katex not loaded", () => {
+    vi.mocked(getKatexSync).mockReturnValueOnce(null);
+    const result = renderInlineMarkdown("$E=mc^2$");
+    expect(result).toContain("cm-preview-math-placeholder");
+    expect(result).toContain("E=mc^2");
+    expect(result).not.toContain("katex");
   });
 
   it("renders underscore italic", () => {

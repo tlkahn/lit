@@ -4,7 +4,7 @@ import { parseTable, renderInlineMarkdown, serializeTable, type Alignment, type 
 import { renderMermaid, getMermaidCached } from "./mermaid";
 import { showMediaLightbox } from "./lightbox";
 import { navigateToPageFacet } from "./navigateToPageFacet";
-import katex from "katex";
+import { getKatexSync, loadKatex } from "./katexLoader";
 import "katex/dist/katex.min.css";
 
 const SPINNER_SVG = `<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><style>.spinner{transform-origin:center;animation:rotate .75s linear infinite}@keyframes rotate{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}</style><g class="spinner"><circle cx="12" cy="2.5" r="1.5" opacity=".14"/><circle cx="16.75" cy="3.77" r="1.5" opacity=".29"/><circle cx="20.23" cy="7.25" r="1.5" opacity=".43"/><circle cx="21.5" cy="12" r="1.5" opacity=".57"/><circle cx="20.23" cy="16.75" r="1.5" opacity=".71"/><circle cx="16.75" cy="20.23" r="1.5" opacity=".86"/><circle cx="12" cy="21.5" r="1.5"/></g></svg>`;
@@ -184,23 +184,55 @@ export class InlineMathWidget extends WidgetType {
   toDOM(): HTMLElement {
     const span = document.createElement("span");
     span.className = "cm-preview-math-inline";
-    try {
-      katex.render(this.latex, span, { throwOnError: false, displayMode: false });
-    } catch {
+    const katex = getKatexSync();
+    if (katex) {
+      try {
+        katex.render(this.latex, span, { throwOnError: false, displayMode: false });
+      } catch {
+        span.textContent = this.latex;
+        span.classList.add("cm-preview-math-error");
+      }
+    } else {
       span.textContent = this.latex;
-      span.classList.add("cm-preview-math-error");
+      span.classList.add("cm-preview-math-placeholder");
+      loadKatex().then((k) => {
+        if (!span.isConnected) return;
+        span.classList.remove("cm-preview-math-placeholder");
+        try {
+          k.render(this.latex, span, { throwOnError: false, displayMode: false });
+        } catch {
+          span.textContent = this.latex;
+          span.classList.add("cm-preview-math-error");
+        }
+      });
     }
     return span;
   }
 
   updateDOM(dom: HTMLElement): boolean {
     dom.innerHTML = "";
-    dom.classList.remove("cm-preview-math-error");
-    try {
-      katex.render(this.latex, dom, { throwOnError: false, displayMode: false });
-    } catch {
+    dom.classList.remove("cm-preview-math-error", "cm-preview-math-placeholder");
+    const katex = getKatexSync();
+    if (katex) {
+      try {
+        katex.render(this.latex, dom, { throwOnError: false, displayMode: false });
+      } catch {
+        dom.textContent = this.latex;
+        dom.classList.add("cm-preview-math-error");
+      }
+    } else {
       dom.textContent = this.latex;
-      dom.classList.add("cm-preview-math-error");
+      dom.classList.add("cm-preview-math-placeholder");
+      loadKatex().then((k) => {
+        if (!dom.isConnected) return;
+        dom.classList.remove("cm-preview-math-placeholder");
+        try {
+          k.render(this.latex, dom, { throwOnError: false, displayMode: false });
+        } catch {
+          dom.textContent = this.latex;
+          dom.classList.add("cm-preview-math-error");
+        }
+      });
     }
     return true;
   }
@@ -226,23 +258,55 @@ export class DisplayMathWidget extends WidgetType {
   toDOM(): HTMLElement {
     const div = document.createElement("div");
     div.className = "cm-preview-math-display";
-    try {
-      katex.render(this.latex, div, { throwOnError: false, displayMode: true });
-    } catch {
+    const katex = getKatexSync();
+    if (katex) {
+      try {
+        katex.render(this.latex, div, { throwOnError: false, displayMode: true });
+      } catch {
+        div.textContent = this.latex;
+        div.classList.add("cm-preview-math-error");
+      }
+    } else {
       div.textContent = this.latex;
-      div.classList.add("cm-preview-math-error");
+      div.classList.add("cm-preview-math-placeholder");
+      loadKatex().then((k) => {
+        if (!div.isConnected) return;
+        div.classList.remove("cm-preview-math-placeholder");
+        try {
+          k.render(this.latex, div, { throwOnError: false, displayMode: true });
+        } catch {
+          div.textContent = this.latex;
+          div.classList.add("cm-preview-math-error");
+        }
+      });
     }
     return div;
   }
 
   updateDOM(dom: HTMLElement): boolean {
     dom.innerHTML = "";
-    dom.classList.remove("cm-preview-math-error");
-    try {
-      katex.render(this.latex, dom, { throwOnError: false, displayMode: true });
-    } catch {
+    dom.classList.remove("cm-preview-math-error", "cm-preview-math-placeholder");
+    const katex = getKatexSync();
+    if (katex) {
+      try {
+        katex.render(this.latex, dom, { throwOnError: false, displayMode: true });
+      } catch {
+        dom.textContent = this.latex;
+        dom.classList.add("cm-preview-math-error");
+      }
+    } else {
       dom.textContent = this.latex;
-      dom.classList.add("cm-preview-math-error");
+      dom.classList.add("cm-preview-math-placeholder");
+      loadKatex().then((k) => {
+        if (!dom.isConnected) return;
+        dom.classList.remove("cm-preview-math-placeholder");
+        try {
+          k.render(this.latex, dom, { throwOnError: false, displayMode: true });
+        } catch {
+          dom.textContent = this.latex;
+          dom.classList.add("cm-preview-math-error");
+        }
+      });
     }
     return true;
   }

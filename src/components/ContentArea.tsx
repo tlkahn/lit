@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback, useMemo } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo, lazy, Suspense } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { EditorView } from "@codemirror/view";
@@ -13,10 +13,11 @@ import { extractHeadings, type Heading } from "../lib/headings";
 import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
 import { BottomPanel } from "./BottomPanel";
 import { ConflictDialog } from "./ConflictDialog";
-import { MindmapView } from "./MindmapView";
 import { buildHeadingTree, applyRename, applyMove } from "../lib/headingTree";
 import { YamlHighlighter } from "./YamlHighlighter";
 import { useKeymaps } from "../hooks/useKeymaps";
+
+const LazyMindmapView = lazy(() => import("./MindmapView"));
 
 import { globalJumpTracker } from "../editor/jumpTracker";
 
@@ -512,27 +513,30 @@ export function ContentArea() {
         navigateToPage={navigateToPage}
         style={viewMode !== "editor" ? { display: "none" } : undefined}
       />
-      <div
-        data-testid="mindmap-view"
-        className="flex-1 min-h-0"
-        style={viewMode !== "mindmap" ? { display: "none" } : undefined}
-      >
-        <MindmapView
-          tree={headingTree}
-          onNodeClick={(node) => {
-            pendingScrollLineRef.current = node.line;
-            setViewMode("editor");
-          }}
-          onNodeRename={(node, newText) => {
-            const newBody = applyRename(body, node, newText);
-            handleChange(newBody);
-          }}
-          onNodeMove={(sourceId, targetParentId, targetIndex) => {
-            const newBody = applyMove(body, headingTree, sourceId, targetParentId, targetIndex);
-            handleChange(newBody);
-          }}
-        />
-      </div>
+      {viewMode === "mindmap" && (
+        <div
+          data-testid="mindmap-view"
+          className="flex-1 min-h-0"
+        >
+          <Suspense fallback={<div className="flex items-center justify-center h-full text-text-faint">Loading…</div>}>
+            <LazyMindmapView
+              tree={headingTree}
+              onNodeClick={(node) => {
+                pendingScrollLineRef.current = node.line;
+                setViewMode("editor");
+              }}
+              onNodeRename={(node, newText) => {
+                const newBody = applyRename(body, node, newText);
+                handleChange(newBody);
+              }}
+              onNodeMove={(sourceId, targetParentId, targetIndex) => {
+                const newBody = applyMove(body, headingTree, sourceId, targetParentId, targetIndex);
+                handleChange(newBody);
+              }}
+            />
+          </Suspense>
+        </div>
+      )}
       <BottomPanel pageId={currentPagePath} />
       <ConflictDialog
         open={showConflict}

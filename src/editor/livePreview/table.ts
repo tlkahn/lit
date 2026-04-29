@@ -1,4 +1,4 @@
-import katex from "katex";
+import { getKatexSync } from "./katexLoader";
 import "katex/dist/katex.min.css";
 
 export type Alignment = "left" | "right" | "center" | "default";
@@ -68,15 +68,22 @@ export function renderInlineMarkdown(text: string): string {
   // Inline math
   working = working.replace(/\$([^$]+)\$/g, (_, latex) => {
     const idx = placeholders.length;
-    try {
-      const html = katex.renderToString(latex, {
-        throwOnError: false,
-        displayMode: false,
-      });
-      placeholders.push(`<span class="cm-preview-math-inline">${html}</span>`);
-    } catch {
+    const katex = getKatexSync();
+    if (katex) {
+      try {
+        const html = katex.renderToString(latex, {
+          throwOnError: false,
+          displayMode: false,
+        });
+        placeholders.push(`<span class="cm-preview-math-inline">${html}</span>`);
+      } catch {
+        placeholders.push(
+          `<span class="cm-preview-math-inline cm-preview-math-error">${escapeHtml(latex)}</span>`,
+        );
+      }
+    } else {
       placeholders.push(
-        `<span class="cm-preview-math-inline cm-preview-math-error">${escapeHtml(latex)}</span>`,
+        `<span class="cm-preview-math-inline cm-preview-math-placeholder">${escapeHtml(latex)}</span>`,
       );
     }
     return `￰PH${idx}￰`;

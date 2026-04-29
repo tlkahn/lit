@@ -769,16 +769,19 @@ describe("ContentArea mindmap toggle", () => {
     await waitFor(() => {
       expect(screen.getByTestId("editor")).toBeInTheDocument();
     });
+    expect(screen.queryByTestId("mindmap-view")).not.toBeInTheDocument();
 
     const mindmapBtn = screen.getByRole("button", { name: /mindmap/i });
     await user.click(mindmapBtn);
     expect(screen.getByTestId("editor")).not.toBeVisible();
-    expect(screen.getByTestId("mindmap-view")).toBeVisible();
+    await waitFor(() => {
+      expect(screen.getByTestId("mindmap-view")).toBeInTheDocument();
+    });
 
     const editorBtn = screen.getByRole("button", { name: /editor/i });
     await user.click(editorBtn);
     expect(screen.getByTestId("editor")).toBeVisible();
-    expect(screen.getByTestId("mindmap-view")).not.toBeVisible();
+    expect(screen.queryByTestId("mindmap-view")).not.toBeInTheDocument();
   });
 
   it("clicking a mindmap node scrolls editor to the heading line", async () => {
@@ -806,12 +809,17 @@ describe("ContentArea mindmap toggle", () => {
     // Switch to mindmap
     const mindmapBtn = screen.getByRole("button", { name: /mindmap/i });
     await user.click(mindmapBtn);
-    expect(screen.getByTestId("mindmap-view")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByTestId("mindmap-view")).toBeInTheDocument();
+    });
 
-    // Click the "## Second" node (line index 2 in the doc, 0-based)
-    const mindmapContainer = screen.getByTestId("mindmap-view");
+    // Wait for lazy MindmapView to load (past Suspense fallback)
     const { within } = await import("@testing-library/react");
-    const secondNode = within(mindmapContainer).getByText("Second");
+    const mindmapContainer = screen.getByTestId("mindmap-view");
+    let secondNode!: HTMLElement;
+    await waitFor(() => {
+      secondNode = within(mindmapContainer).getByText("Second");
+    });
     await user.click(secondNode);
 
     // Editor is always mounted (hidden via display:none), viewMode switches back

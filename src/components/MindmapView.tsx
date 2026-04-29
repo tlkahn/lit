@@ -382,3 +382,5 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: Min
     </div>
   );
 }
+
+export default MindmapView;
