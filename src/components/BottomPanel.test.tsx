@@ -512,6 +512,69 @@ describe("BottomPanel", () => {
         expect(() => unmount()).not.toThrow();
       });
     });
+
+    describe("ref-based drag optimization", () => {
+      it("child contentHeight does NOT update during drag, only on mouseUp", async () => {
+        const backlinkEntry = { source_id: "a.md", source_title: "A", context: "ctx", source_line: 1 };
+        mockInvoke((cmd) => {
+          if (cmd === "get_backlinks") return [backlinkEntry];
+          if (cmd === "get_unlinked_mentions") return [];
+          throw new Error(`Unknown command: ${cmd}`);
+        });
+
+        render(<BottomPanel pageId="target.md" />);
+        await userEvent.click(screen.getByText("Linked References"));
+
+        await waitFor(() => {
+          expect(screen.getByTestId("backlinks-scroll-container")).toBeInTheDocument();
+        });
+
+        const scrollContainer = screen.getByTestId("backlinks-scroll-container");
+        expect(scrollContainer.style.height).toBe("168px");
+
+        const panel = screen.getByTestId("bottom-panel");
+        mockParentBoundingRect(panel, 1000);
+
+        const handle = screen.getByTestId("resize-handle");
+        act(() => {
+          fireEvent.mouseDown(handle, { clientY: 500 });
+        });
+        act(() => {
+          fireEvent.mouseMove(document, { clientY: 400 });
+        });
+
+        expect(scrollContainer.style.height).toBe("168px");
+
+        act(() => {
+          fireEvent.mouseUp(document);
+        });
+        expect(scrollContainer.style.height).toBe("268px");
+      });
+
+      it("tabpanel height updates via DOM during drag", async () => {
+        render(<BottomPanel pageId="target.md" />);
+        await userEvent.click(screen.getByText("Linked References"));
+
+        const tabpanel = screen.getByRole("tabpanel");
+        expect(tabpanel.style.height).toBe("168px");
+
+        const panel = screen.getByTestId("bottom-panel");
+        mockParentBoundingRect(panel, 1000);
+
+        const handle = screen.getByTestId("resize-handle");
+        act(() => {
+          fireEvent.mouseDown(handle, { clientY: 500 });
+          fireEvent.mouseMove(document, { clientY: 400 });
+        });
+
+        expect(tabpanel.style.height).toBe("268px");
+
+        act(() => {
+          fireEvent.mouseUp(document);
+        });
+        expect(tabpanel.style.height).toBe("268px");
+      });
+    });
   });
 
   describe("ARIA attributes", () => {

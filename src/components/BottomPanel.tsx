@@ -64,9 +64,9 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
   const [linkedCount, setLinkedCount] = useState<number | null>(null);
   const [unlinkedCount, setUnlinkedCount] = useState<number | null>(null);
   const [hasOpenedUnlinked, setHasOpenedUnlinked] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
 
   const panelRef = useRef<HTMLDivElement>(null);
+  const tabpanelRef = useRef<HTMLDivElement>(null);
   const dragStartY = useRef(0);
   const dragStartHeight = useRef(0);
   const lastDragHeight = useRef(0);
@@ -96,11 +96,11 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
       if (!unfolded) return;
       e.preventDefault();
 
-      setIsDragging(true);
       dragStartY.current = e.clientY;
       dragStartHeight.current = panelHeight;
       lastDragHeight.current = panelHeight;
       document.body.style.userSelect = "none";
+      if (panelRef.current) panelRef.current.style.transition = "none";
 
       const onMouseMove = (ev: MouseEvent) => {
         const parentHeight =
@@ -112,14 +112,16 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
           maxHeight,
         );
         lastDragHeight.current = newHeight;
-        setPanelHeight(newHeight);
+        if (panelRef.current) panelRef.current.style.height = newHeight + "px";
+        if (tabpanelRef.current) tabpanelRef.current.style.height = (newHeight - TAB_BAR_HEIGHT) + "px";
       };
 
       const onMouseUp = () => {
         document.removeEventListener("mousemove", onMouseMove);
         document.removeEventListener("mouseup", onMouseUp);
-        setIsDragging(false);
         document.body.style.userSelect = "";
+        setPanelHeight(lastDragHeight.current);
+        if (panelRef.current) panelRef.current.style.transition = "height 150ms ease-out";
         localStorage.setItem(STORAGE_KEY, String(lastDragHeight.current));
         cleanupRef.current = null;
       };
@@ -215,7 +217,7 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
       className="flex-shrink-0 overflow-hidden border-t border-border-faint"
       style={{
         height,
-        transition: isDragging ? "none" : "height 150ms ease-out",
+        transition: "height 150ms ease-out",
       }}
     >
       <div role="tablist" className="relative flex h-8 items-center gap-0 bg-bg-primary-alt px-4">
@@ -254,6 +256,7 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
         )}
       </div>
       <div
+        ref={tabpanelRef}
         role="tabpanel"
         id="bp-tabpanel"
         aria-labelledby={`bp-tab-${activeTab}`}
