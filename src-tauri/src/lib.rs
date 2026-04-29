@@ -78,17 +78,25 @@ pub fn run() {
             match cli::process_instance_args(&args, &cwd) {
                 Some(cli::CliTarget::Directory(path)) => {
                     let path_str = path.to_string_lossy().to_string();
-                    let _ = commands::workspace::create_workspace_window(app, Some(path_str), None, None, None);
+                    if let Ok(label) = commands::workspace::create_workspace_window(app, Some(path_str), None, None, None) {
+                        if let Some(win) = app.get_webview_window(&label) {
+                            let _ = win.set_focus();
+                        }
+                    }
                 }
                 Some(cli::CliTarget::File { workspace, file, line, col }) => {
                     let workspace_str = workspace.to_string_lossy().to_string();
-                    let _ = commands::workspace::create_workspace_window(
+                    if let Ok(label) = commands::workspace::create_workspace_window(
                         app,
                         Some(workspace_str),
                         Some(file),
                         line,
                         col,
-                    );
+                    ) {
+                        if let Some(win) = app.get_webview_window(&label) {
+                            let _ = win.set_focus();
+                        }
+                    }
                 }
                 _ => {
                     if let Some(win) = app.webview_windows().values().next() {
@@ -178,7 +186,7 @@ pub fn run() {
             let sock = cli::socket_path();
             tauri::async_runtime::spawn(async move {
                 socket::start_listener(sock, move |target| {
-                    match target {
+                    let label = match target {
                         cli::CliTarget::Directory(path) => {
                             let path_str = path.to_string_lossy().to_string();
                             commands::workspace::create_workspace_window(
@@ -188,7 +196,6 @@ pub fn run() {
                                 None,
                                 None,
                             )
-                            .map(|_| ())
                             .map_err(|e| e.to_string())
                         }
                         cli::CliTarget::File {
@@ -205,11 +212,14 @@ pub fn run() {
                                 line,
                                 col,
                             )
-                            .map(|_| ())
                             .map_err(|e| e.to_string())
                         }
                         cli::CliTarget::Invalid(s) => Err(format!("invalid target: {s}")),
+                    }?;
+                    if let Some(win) = handle.get_webview_window(&label) {
+                        let _ = win.set_focus();
                     }
+                    Ok(())
                 })
                 .await;
             });
