@@ -14,11 +14,10 @@ function makeRoot(): HeadingNode {
   return { id: "root", level: 0, text: "", line: -1, from: -1, to: -1, children: [] };
 }
 
-export function buildHeadingTree(body: string): HeadingNode {
+export function buildHeadingTree(headings: Heading[]): HeadingNode {
   const root = makeRoot();
-  if (!body) return root;
+  if (headings.length === 0) return root;
 
-  const headings = extractHeadings(body);
   const stack: HeadingNode[] = [root];
 
   for (const h of headings) {
@@ -43,12 +42,11 @@ export function buildHeadingTree(body: string): HeadingNode {
   return root;
 }
 
-export function sectionRange(body: string, node: HeadingNode): { from: number; to: number } {
-  const headings = extractHeadings(body);
+export function sectionRange(headings: Heading[], bodyLength: number, node: HeadingNode): { from: number; to: number } {
   const idx = headings.findIndex((h) => h.from === node.from);
   if (idx === -1) return { from: node.from, to: node.to };
 
-  const sectionEnd = findSectionEnd(headings, idx, body.length);
+  const sectionEnd = findSectionEnd(headings, idx, bodyLength);
   return { from: node.from, to: sectionEnd };
 }
 
@@ -80,7 +78,8 @@ export function applyMove(
   const targetParent = findNode(tree, targetParentId);
   if (!targetParent) return body;
 
-  const srcRange = sectionRange(body, source);
+  const headings = extractHeadings(body);
+  const srcRange = sectionRange(headings, body.length, source);
   let sectionText = body.slice(srcRange.from, srcRange.to);
   const addedNewline = !sectionText.endsWith("\n");
   if (addedNewline) sectionText += "\n";
@@ -98,13 +97,13 @@ export function applyMove(
   if (siblings.length === 0 && targetParent.level === 0) {
     insertAt = body.length;
   } else if (siblings.length === 0) {
-    const parentSection = sectionRange(body, targetParent);
+    const parentSection = sectionRange(headings, body.length, targetParent);
     insertAt = parentSection.to;
   } else if (targetIndex <= 0) {
     insertAt = siblings[0]!.from;
   } else {
     const idx = Math.min(targetIndex, siblings.length) - 1;
-    const prevRange = sectionRange(body, siblings[idx]!);
+    const prevRange = sectionRange(headings, body.length, siblings[idx]!);
     insertAt = prevRange.to;
   }
 

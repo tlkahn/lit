@@ -3,9 +3,10 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MindmapView } from "./MindmapView";
 import { buildHeadingTree } from "../lib/headingTree";
+import { extractHeadings } from "../lib/headings";
 
 function makeTree(body: string) {
-  return buildHeadingTree(body);
+  return buildHeadingTree(extractHeadings(body));
 }
 
 const defaultProps = () => ({

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { hierarchy, tree as d3tree } from "d3-hierarchy";
 import type { HeadingNode } from "./headingTree";
 import { buildHeadingTree } from "./headingTree";
+import { extractHeadings } from "./headings";
 import {
   classifyDrag,
   parseViewBox,
@@ -27,7 +28,7 @@ function uniformWidths(descendants: PointNode[], w = NODE_WIDTH): Map<string, nu
 }
 
 function layoutTree(body: string) {
-  const tree = buildHeadingTree(body);
+  const tree = buildHeadingTree(extractHeadings(body));
   const root = hierarchy(tree, (d) => (d.children.length > 0 ? d.children : undefined));
   const treeLayout = d3tree<HeadingNode>().nodeSize([44, 200]);
   treeLayout(root);
@@ -222,21 +223,21 @@ describe("resolveDropTarget", () => {
 
 describe("isDescendantOf", () => {
   it("returns true for a child", () => {
-    const tree = buildHeadingTree("# A\n## B");
+    const tree = buildHeadingTree(extractHeadings("# A\n## B"));
     const parentId = tree.children[0]!.id;
     const childId = tree.children[0]!.children[0]!.id;
     expect(isDescendantOf(childId, parentId, tree)).toBe(true);
   });
 
   it("returns false for non-descendant", () => {
-    const tree = buildHeadingTree("# A\n## B\n# C");
+    const tree = buildHeadingTree(extractHeadings("# A\n## B\n# C"));
     const idA = tree.children[0]!.id;
     const idC = tree.children[1]!.id;
     expect(isDescendantOf(idC, idA, tree)).toBe(false);
   });
 
   it("returns true for self", () => {
-    const tree = buildHeadingTree("# A");
+    const tree = buildHeadingTree(extractHeadings("# A"));
     const id = tree.children[0]!.id;
     expect(isDescendantOf(id, id, tree)).toBe(true);
   });
@@ -244,7 +245,7 @@ describe("isDescendantOf", () => {
 
 describe("getDescendantIds", () => {
   it("returns all descendant IDs including self", () => {
-    const tree = buildHeadingTree("# A\n## B\n### C");
+    const tree = buildHeadingTree(extractHeadings("# A\n## B\n### C"));
     const idA = tree.children[0]!.id;
     const idB = tree.children[0]!.children[0]!.id;
     const idC = tree.children[0]!.children[0]!.children[0]!.id;

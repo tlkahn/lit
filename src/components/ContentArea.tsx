@@ -8,7 +8,7 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { readPage, writePage, parseRawYaml, openInExternalEditor, resolveWikilink, createPage as ipcCreatePage } from "../lib/ipc";
 import { navigateWikilink } from "../lib/wikilinkNavigation";
 import { setCurrentEditorView } from "../lib/editorViewRef";
-import { extractHeadings } from "../lib/headings";
+import { extractHeadings, type Heading } from "../lib/headings";
 import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
 import { BottomPanel } from "./BottomPanel";
 import { ConflictDialog } from "./ConflictDialog";
@@ -65,6 +65,7 @@ export function ContentArea() {
   const [yamlError, setYamlError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const headingDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const headingsRef = useRef<Heading[]>([]);
   const editGenRef = useRef(0);
   const currentPathRef = useRef<string | null>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
@@ -282,11 +283,15 @@ export function ContentArea() {
     }, 300);
     if (headingDebounceRef.current) clearTimeout(headingDebounceRef.current);
     headingDebounceRef.current = setTimeout(() => {
-      setCurrentPageHeadings(extractHeadings(newBody));
+      setCurrentPageHeadings(headingsRef.current);
     }, 150);
   };
 
-  const headingTree = useMemo(() => buildHeadingTree(body), [body]);
+  const headingTree = useMemo(() => {
+    const h = extractHeadings(body);
+    headingsRef.current = h;
+    return buildHeadingTree(h);
+  }, [body]);
 
   const enterYamlEdit = () => {
     setYamlDraft(rawYaml);

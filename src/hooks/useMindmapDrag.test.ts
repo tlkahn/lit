@@ -3,6 +3,7 @@ import { renderHook, act } from "@testing-library/react";
 import { hierarchy, tree as d3tree } from "d3-hierarchy";
 import type { HeadingNode } from "../lib/headingTree";
 import { buildHeadingTree } from "../lib/headingTree";
+import { extractHeadings } from "../lib/headings";
 import { buildNodeRects, buildGapZones, type PointNode } from "../lib/mindmapDnd";
 import { useMindmapDrag } from "./useMindmapDrag";
 
@@ -16,7 +17,7 @@ function uniformWidths(descendants: PointNode[], w = NODE_WIDTH): Map<string, nu
 }
 
 function setupLayout(body: string) {
-  const tree = buildHeadingTree(body);
+  const tree = buildHeadingTree(extractHeadings(body));
   const root = hierarchy(tree, (d) => (d.children.length > 0 ? d.children : undefined));
   const treeLayout = d3tree<HeadingNode>().nodeSize([44, 200]);
   treeLayout(root);
