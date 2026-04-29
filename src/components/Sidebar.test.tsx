@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { mockInvoke } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
@@ -235,6 +235,7 @@ describe("Sidebar context menu – Open in External Editor", () => {
 
     const pageButton = screen.getByText("Notes");
     await user.pointer({ keys: "[MouseRight]", target: pageButton });
+    fireEvent.pointerMove(document);
     await user.click(screen.getByText("Open in External Editor"));
 
     const call = invokedCommands.find((c) => c.cmd === "open_in_external_editor");
@@ -338,5 +339,156 @@ describe("Sidebar virtualization", () => {
     expect(screen.getByText("Rename")).toBeInTheDocument();
     expect(screen.getByText("Delete")).toBeInTheDocument();
     expect(screen.getByText("Open in External Editor")).toBeInTheDocument();
+  });
+});
+
+describe("context menu positioning", () => {
+  it("renders at cursor coordinates with fixed positioning", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha", "Alpha.md")],
+    });
+    render(<Sidebar />);
+
+    const pageButton = screen.getByText("Alpha");
+    fireEvent.contextMenu(pageButton, { clientX: 150, clientY: 200 });
+
+    const menu = screen.getByTestId("context-menu");
+    expect(menu.style.position).toBe("fixed");
+    expect(menu.style.left).toBe("150px");
+    expect(menu.style.top).toBe("200px");
+  });
+
+  it("repositions when right-clicking a different item", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha", "Alpha.md"), makePage("Beta", "Beta.md")],
+    });
+    render(<Sidebar />);
+
+    fireEvent.contextMenu(screen.getByText("Alpha"), { clientX: 100, clientY: 150 });
+    let menu = screen.getByTestId("context-menu");
+    expect(menu.style.left).toBe("100px");
+    expect(menu.style.top).toBe("150px");
+
+    fireEvent.contextMenu(screen.getByText("Beta"), { clientX: 200, clientY: 300 });
+    menu = screen.getByTestId("context-menu");
+    expect(menu.style.left).toBe("200px");
+    expect(menu.style.top).toBe("300px");
+  });
+});
+
+describe("context menu viewport clamping", () => {
+  it("clamps when menu overflows bottom", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha", "Alpha.md")],
+    });
+
+    const origGetBCR = HTMLElement.prototype.getBoundingClientRect;
+    HTMLElement.prototype.getBoundingClientRect = function () {
+      if (this.dataset?.testid === "context-menu") {
+        return { x: 0, y: 0, width: 120, height: 100, top: 0, left: 0, bottom: 100, right: 120 } as DOMRect;
+      }
+      return origGetBCR.call(this);
+    };
+
+    try {
+      render(<Sidebar />);
+      fireEvent.contextMenu(screen.getByText("Alpha"), { clientX: 100, clientY: 720 });
+      const menu = screen.getByTestId("context-menu");
+      expect(parseInt(menu.style.top)).toBeLessThanOrEqual(window.innerHeight - 100);
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = origGetBCR;
+    }
+  });
+
+  it("clamps when menu overflows right", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha", "Alpha.md")],
+    });
+
+    const origGetBCR = HTMLElement.prototype.getBoundingClientRect;
+    HTMLElement.prototype.getBoundingClientRect = function () {
+      if (this.dataset?.testid === "context-menu") {
+        return { x: 0, y: 0, width: 120, height: 100, top: 0, left: 0, bottom: 100, right: 120 } as DOMRect;
+      }
+      return origGetBCR.call(this);
+    };
+
+    try {
+      render(<Sidebar />);
+      fireEvent.contextMenu(screen.getByText("Alpha"), { clientX: 960, clientY: 200 });
+      const menu = screen.getByTestId("context-menu");
+      expect(parseInt(menu.style.left)).toBeLessThanOrEqual(window.innerWidth - 120);
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = origGetBCR;
+    }
+  });
+});
+
+describe("context menu hover suppression", () => {
+  it("has pointer-events:none immediately after opening", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha", "Alpha.md")],
+    });
+    render(<Sidebar />);
+
+    fireEvent.contextMenu(screen.getByText("Alpha"), { clientX: 150, clientY: 200 });
+    const menu = screen.getByTestId("context-menu");
+    expect(menu.style.pointerEvents).toBe("none");
+  });
+
+  it("re-enables pointer-events after pointermove", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha", "Alpha.md")],
+    });
+    render(<Sidebar />);
+
+    fireEvent.contextMenu(screen.getByText("Alpha"), { clientX: 150, clientY: 200 });
+    const menu = screen.getByTestId("context-menu");
+    expect(menu.style.pointerEvents).toBe("none");
+
+    fireEvent.pointerMove(document);
+    expect(menu.style.pointerEvents).toBe("");
+  });
+
+  it("menu items clickable after pointermove", async () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha", "Alpha.md")],
+    });
+    render(<Sidebar />);
+
+    fireEvent.contextMenu(screen.getByText("Alpha"), { clientX: 150, clientY: 200 });
+    fireEvent.pointerMove(document);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByText("Rename"));
+    expect(screen.getByDisplayValue("Alpha")).toBeInTheDocument();
+  });
+});
+
+describe("context menu dismissal", () => {
+  it("Escape closes the menu", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha", "Alpha.md")],
+    });
+    render(<Sidebar />);
+
+    fireEvent.contextMenu(screen.getByText("Alpha"), { clientX: 150, clientY: 200 });
+    expect(screen.getByTestId("context-menu")).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByTestId("context-menu")).not.toBeInTheDocument();
+  });
+
+  it("clicking outside closes the menu", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha", "Alpha.md")],
+    });
+    render(<Sidebar />);
+
+    fireEvent.contextMenu(screen.getByText("Alpha"), { clientX: 150, clientY: 200 });
+    expect(screen.getByTestId("context-menu")).toBeInTheDocument();
+
+    fireEvent.mouseDown(document);
+    expect(screen.queryByTestId("context-menu")).not.toBeInTheDocument();
   });
 });

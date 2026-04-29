@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useMemo, useDeferredValue, useCallback, memo } from "react";
+import { createPortal } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useWorkspaceStore } from "../stores/workspace";
 import { getNextUntitledName } from "../lib/naming";
@@ -56,6 +57,7 @@ const PageItem = memo(function PageItem({
   const [renameValue, setRenameValue] = useState(page.title);
   const inputRef = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const menuPosRef = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
     if (!showMenu) return;
@@ -74,6 +76,27 @@ const PageItem = memo(function PageItem({
       document.removeEventListener("keydown", handleKey);
     };
   }, [showMenu, onMenuClose]);
+
+  useEffect(() => {
+    if (!showMenu || !menuRef.current) return;
+    const menu = menuRef.current;
+    const rect = menu.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let left = menuPosRef.current.x;
+    let top = menuPosRef.current.y;
+    if (left + rect.width > vw) left = vw - rect.width;
+    if (top + rect.height > vh) top = vh - rect.height;
+    if (left < 0) left = 0;
+    if (top < 0) top = 0;
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+
+    menu.style.pointerEvents = "none";
+    const onMove = () => { menu.style.pointerEvents = ""; };
+    document.addEventListener("pointermove", onMove, { once: true });
+    return () => { document.removeEventListener("pointermove", onMove); };
+  }, [showMenu]);
 
   useEffect(() => {
     if (isRenaming) {
@@ -99,7 +122,10 @@ const PageItem = memo(function PageItem({
       className="group relative"
       onContextMenu={(e) => {
         e.preventDefault();
-        if (!isRenaming) onMenuOpen(page.relative_path);
+        if (!isRenaming) {
+          menuPosRef.current = { x: e.clientX, y: e.clientY };
+          onMenuOpen(page.relative_path);
+        }
       }}
     >
       {isRenaming ? (
@@ -131,8 +157,8 @@ const PageItem = memo(function PageItem({
           {page.title}
         </button>
       )}
-      {showMenu && (
-        <div ref={menuRef} className="absolute right-2 top-0 z-50 select-none rounded border border-border bg-bg-primary shadow-lg">
+      {showMenu && createPortal(
+        <div ref={menuRef} data-testid="context-menu" className="z-50 select-none rounded border border-border bg-bg-primary shadow-lg" style={{ position: "fixed", left: `${menuPosRef.current.x}px`, top: `${menuPosRef.current.y}px` }}>
           <button
             onClick={() => {
               onMenuClose();
@@ -160,7 +186,8 @@ const PageItem = memo(function PageItem({
           >
             Open in External Editor
           </button>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
