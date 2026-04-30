@@ -5,7 +5,7 @@ use crate::workspace::scan::scan_pages;
 use crate::workspace::watcher::FileWatcher;
 use crate::workspace::write_hash::WriteHashRegistry;
 use crate::{InitialWorkspace, InitialFile, InitialLine, InitialCol};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -68,12 +68,15 @@ pub fn open_workspace(
         .allow_directory(&root, true)
         .map_err(|e| e.to_string())?;
 
+    let initial_paths: HashSet<String> = pages.iter().map(|p| p.relative_path.clone()).collect();
+
     let label = window.label().to_string();
     let watcher = FileWatcher::new(
         root.clone(),
         label.clone(),
         app_handle.clone(),
         Arc::clone(&registry),
+        initial_paths,
     )
     .ok();
 

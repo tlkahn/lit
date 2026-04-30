@@ -3,10 +3,35 @@ use crate::commands::graph::GraphRegistry;
 use notify_debouncer_mini::notify::RecursiveMode;
 use notify_debouncer_mini::{new_debouncer, DebouncedEventKind};
 use serde::Serialize;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
+
+#[derive(Debug, PartialEq)]
+pub enum FileChangeKind {
+    Created,
+    Modified,
+    Deleted,
+}
+
+pub fn classify_file_event(
+    relative: &str,
+    exists: bool,
+    known: &mut HashSet<String>,
+) -> FileChangeKind {
+    if exists {
+        if known.insert(relative.to_string()) {
+            FileChangeKind::Created
+        } else {
+            FileChangeKind::Modified
+        }
+    } else {
+        known.remove(relative);
+        FileChangeKind::Deleted
+    }
+}
 
 pub struct FileWatcher {
     _debouncer: notify_debouncer_mini::Debouncer<notify_debouncer_mini::notify::RecommendedWatcher>,
@@ -23,6 +48,7 @@ impl FileWatcher {
         window_label: String,
         app_handle: AppHandle,
         registry: Arc<WriteHashRegistry>,
+        initial_paths: HashSet<String>,
     ) -> Result<Self, String> {
         let root_clone = root.clone();
 
@@ -36,6 +62,8 @@ impl FileWatcher {
             .map_err(|e| format!("Failed to watch directory: {e}"))?;
 
         std::thread::spawn(move || {
+            let mut known_files = initial_paths;
+
             while let Ok(result) = rx.recv() {
                 let events = match result {
                     Ok(events) => events,
@@ -65,20 +93,27 @@ impl FileWatcher {
                         match event.kind {
                             DebouncedEventKind::Any => {
                                 let exists = path.exists();
-                                if exists {
-                                    if !is_external_change(path, &registry) {
-                                        eprintln!("[watcher] self-write filtered: {}", relative);
-                                        continue;
-                                    }
-                                    eprintln!("[watcher] file-modified: {}", relative);
-                                } else {
-                                    eprintln!("[watcher] file-DELETED (exists=false): {}", relative);
+                                if exists && !is_external_change(path, &registry) {
+                                    eprintln!("[watcher] self-write filtered: {}", relative);
+                                    continue;
                                 }
+
+                                let kind = classify_file_event(&relative, exists, &mut known_files);
+
                                 let payload = FileEvent { path: relative.clone() };
-                                if exists {
-                                    let _ = win.emit("workspace://file-modified", &payload);
-                                } else {
-                                    let _ = win.emit("workspace://file-deleted", &payload);
+                                match kind {
+                                    FileChangeKind::Created => {
+                                        eprintln!("[watcher] file-CREATED: {}", relative);
+                                        let _ = win.emit("workspace://file-created", &payload);
+                                    }
+                                    FileChangeKind::Modified => {
+                                        eprintln!("[watcher] file-modified: {}", relative);
+                                        let _ = win.emit("workspace://file-modified", &payload);
+                                    }
+                                    FileChangeKind::Deleted => {
+                                        eprintln!("[watcher] file-DELETED: {}", relative);
+                                        let _ = win.emit("workspace://file-deleted", &payload);
+                                    }
                                 }
 
                                 let is_md = path.extension().and_then(|e| e.to_str()) == Some("md");
@@ -139,6 +174,58 @@ fn is_relevant_file(path: &Path, _root: &Path) -> bool {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn classify_new_file_returns_created() {
+        let mut known = HashSet::new();
+        assert_eq!(
+            classify_file_event("note.md", true, &mut known),
+            FileChangeKind::Created
+        );
+        assert!(known.contains("note.md"));
+    }
+
+    #[test]
+    fn classify_known_file_returns_modified() {
+        let mut known = HashSet::from(["note.md".to_string()]);
+        assert_eq!(
+            classify_file_event("note.md", true, &mut known),
+            FileChangeKind::Modified
+        );
+        assert!(known.contains("note.md"));
+    }
+
+    #[test]
+    fn classify_deleted_known_file_returns_deleted() {
+        let mut known = HashSet::from(["note.md".to_string()]);
+        assert_eq!(
+            classify_file_event("note.md", false, &mut known),
+            FileChangeKind::Deleted
+        );
+        assert!(!known.contains("note.md"));
+    }
+
+    #[test]
+    fn classify_deleted_unknown_file_returns_deleted() {
+        let mut known = HashSet::new();
+        assert_eq!(
+            classify_file_event("note.md", false, &mut known),
+            FileChangeKind::Deleted
+        );
+    }
+
+    #[test]
+    fn classify_lifecycle_create_then_modify() {
+        let mut known = HashSet::new();
+        assert_eq!(
+            classify_file_event("note.md", true, &mut known),
+            FileChangeKind::Created
+        );
+        assert_eq!(
+            classify_file_event("note.md", true, &mut known),
+            FileChangeKind::Modified
+        );
+    }
 
     #[test]
     fn relevant_file_detection() {
