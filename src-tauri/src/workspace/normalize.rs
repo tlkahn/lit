@@ -33,7 +33,10 @@ pub fn page_name_to_filename(name: &str) -> String {
 }
 
 pub fn filename_to_page_name(filename: &str) -> String {
-    let name = filename.strip_suffix(".md").unwrap_or(filename);
+    let name = filename
+        .strip_suffix(".md")
+        .or_else(|| filename.strip_suffix(".pdf"))
+        .unwrap_or(filename);
     normalize_to_nfc(name)
 }
 
@@ -110,6 +113,11 @@ mod tests {
         let filename = page_name_to_filename(name);
         let recovered = filename_to_page_name(&filename);
         assert_eq!(recovered, name);
+    }
+
+    #[test]
+    fn filename_to_page_name_strips_pdf_extension() {
+        assert_eq!(filename_to_page_name("Research Paper.pdf"), "Research Paper");
     }
 
     #[test]

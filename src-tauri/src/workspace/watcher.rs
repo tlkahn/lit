@@ -44,7 +44,7 @@ impl FileWatcher {
 
                 for event in events {
                     let path = &event.path;
-                    if !is_relevant_md_file(path, &root_clone) {
+                    if !is_relevant_file(path, &root_clone) {
                         continue;
                     }
 
@@ -81,17 +81,20 @@ impl FileWatcher {
                                     let _ = win.emit("workspace://file-deleted", &payload);
                                 }
 
-                                if let Some(graph_reg) = app_handle.try_state::<std::sync::Arc<GraphRegistry>>() {
-                                    let indices = graph_reg.indices.lock().unwrap();
-                                    if let Some(gi) = indices.get(&root_clone) {
-                                        if exists {
-                                            let _ = gi.reindex_file(&relative);
-                                        } else {
-                                            let _ = gi.remove_file(&relative);
+                                let is_md = path.extension().and_then(|e| e.to_str()) == Some("md");
+                                if is_md {
+                                    if let Some(graph_reg) = app_handle.try_state::<std::sync::Arc<GraphRegistry>>() {
+                                        let indices = graph_reg.indices.lock().unwrap();
+                                        if let Some(gi) = indices.get(&root_clone) {
+                                            if exists {
+                                                let _ = gi.reindex_file(&relative);
+                                            } else {
+                                                let _ = gi.remove_file(&relative);
+                                            }
                                         }
+                                        drop(indices);
+                                        let _ = app_handle.emit("lit:graph-updated", ());
                                     }
-                                    drop(indices);
-                                    let _ = app_handle.emit("lit:graph-updated", ());
                                 }
                             }
                             DebouncedEventKind::AnyContinuous | _ => {}
@@ -115,9 +118,9 @@ pub fn is_external_change(path: &Path, registry: &WriteHashRegistry) -> bool {
     !registry.check_and_clear(path, &content)
 }
 
-fn is_relevant_md_file(path: &Path, _root: &Path) -> bool {
+fn is_relevant_file(path: &Path, _root: &Path) -> bool {
     let extension = path.extension().and_then(|e| e.to_str());
-    if extension != Some("md") {
+    if !matches!(extension, Some("md") | Some("pdf")) {
         return false;
     }
 
@@ -138,23 +141,24 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn relevant_md_file_detection() {
+    fn relevant_file_detection() {
         let root = Path::new("/workspace");
-        assert!(is_relevant_md_file(Path::new("/workspace/page.md"), root));
-        assert!(is_relevant_md_file(
-            Path::new("/workspace/sub/page.md"),
-            root
-        ));
-        assert!(!is_relevant_md_file(
-            Path::new("/workspace/file.txt"),
-            root
-        ));
-        assert!(!is_relevant_md_file(
-            Path::new("/workspace/.hidden.md"),
-            root
-        ));
-        assert!(!is_relevant_md_file(
+        assert!(is_relevant_file(Path::new("/workspace/page.md"), root));
+        assert!(is_relevant_file(Path::new("/workspace/sub/page.md"), root));
+        assert!(!is_relevant_file(Path::new("/workspace/file.txt"), root));
+        assert!(!is_relevant_file(Path::new("/workspace/.hidden.md"), root));
+        assert!(!is_relevant_file(
             Path::new("/workspace/.obsidian/config.md"),
+            root
+        ));
+    }
+
+    #[test]
+    fn relevant_file_accepts_pdf() {
+        let root = Path::new("/workspace");
+        assert!(is_relevant_file(Path::new("/workspace/paper.pdf"), root));
+        assert!(!is_relevant_file(
+            Path::new("/workspace/.hidden.pdf"),
             root
         ));
     }

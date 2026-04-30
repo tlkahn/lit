@@ -11,6 +11,7 @@ export interface PageMeta {
   frontmatter: Record<string, unknown>;
   created_at: number | null;
   modified_at: number | null;
+  file_type: 'markdown' | 'pdf';
 }
 
 export interface PageContent {

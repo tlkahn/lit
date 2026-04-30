@@ -14,6 +14,7 @@ function makeRoot(
       frontmatter: {},
       created_at: null,
       modified_at: null,
+      file_type: 'markdown' as const,
     })),
     children: children ?? new Map(),
   };
@@ -31,6 +32,7 @@ function makeFolder(
       frontmatter: {},
       created_at: null,
       modified_at: null,
+      file_type: 'markdown' as const,
     })),
     children: children ?? new Map(),
   };

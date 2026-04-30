@@ -17,6 +17,7 @@ const samplePage = {
     relative_path: "Hello.md",
     created_at: 1000,
     modified_at: 2000,
+    file_type: 'markdown' as const,
   },
 };
 
@@ -29,6 +30,7 @@ const otherPage = {
     relative_path: "Other.md",
     created_at: 1000,
     modified_at: 2000,
+    file_type: 'markdown' as const,
   },
 };
 
@@ -757,6 +759,7 @@ const multiHeadingPage = {
     relative_path: "Multi.md",
     created_at: 1000,
     modified_at: 2000,
+    file_type: 'markdown' as const,
   },
 };
 

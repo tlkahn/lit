@@ -10,6 +10,7 @@ const samplePages = [
     frontmatter: {},
     created_at: 1000,
     modified_at: 2000,
+    file_type: 'markdown' as const,
   },
   {
     title: "Page B",
@@ -17,6 +18,7 @@ const samplePages = [
     frontmatter: {},
     created_at: 1000,
     modified_at: 2000,
+    file_type: 'markdown' as const,
   },
 ];
 
@@ -53,6 +55,7 @@ describe("WorkspaceStore", () => {
             frontmatter: {},
             created_at: 3000,
             modified_at: 3000,
+            file_type: 'markdown',
           };
         case "rename_page":
           return `${(args as Record<string, unknown>)?.newName as string}.md`;

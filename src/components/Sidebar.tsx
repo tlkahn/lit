@@ -154,6 +154,9 @@ const PageItem = memo(function PageItem({
           style={{ paddingInlineStart: `${depth * 12 + 8}px` }}
           title={page.relative_path}
         >
+          {page.file_type === 'pdf' && (
+            <span className="mr-1 opacity-60" aria-label="PDF file">{''}</span>
+          )}
           {page.title}
         </button>
       )}

@@ -12,6 +12,7 @@ const samplePages = [
     frontmatter: {},
     created_at: 1000,
     modified_at: 2000,
+    file_type: 'markdown' as const,
   },
 ];
 
@@ -56,7 +57,7 @@ describe("App", () => {
         case "get_keymaps":
           return [];
         case "read_page":
-          return { meta: { title: "Test", relative_path: "test.md", frontmatter: {}, created_at: null, modified_at: null }, body: "", raw_yaml: "" };
+          return { meta: { title: "Test", relative_path: "test.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "", raw_yaml: "" };
         case "get_backlinks":
           return [];
         case "parse_raw_yaml":
@@ -195,7 +196,7 @@ describe("App", () => {
         case "get_keymaps":
           return [];
         case "read_page":
-          return { meta: { title: "Test", relative_path: "test.md", frontmatter: {}, created_at: null, modified_at: null }, body: "", raw_yaml: "" };
+          return { meta: { title: "Test", relative_path: "test.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "", raw_yaml: "" };
         case "get_backlinks":
           return [];
         case "parse_raw_yaml":
@@ -265,7 +266,7 @@ describe("App", () => {
         case "get_keymaps":
           return [];
         case "read_page":
-          return { meta: { title: "Test", relative_path: "test.md", frontmatter: {}, created_at: null, modified_at: null }, body: "", raw_yaml: "" };
+          return { meta: { title: "Test", relative_path: "test.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "", raw_yaml: "" };
         case "get_backlinks":
           return [];
         case "parse_raw_yaml":
@@ -355,7 +356,7 @@ describe("App", () => {
         case "get_keymaps":
           return [];
         case "read_page":
-          return { meta: { title: "Test", relative_path: "test.md", frontmatter: {}, created_at: null, modified_at: null }, body: "", raw_yaml: "" };
+          return { meta: { title: "Test", relative_path: "test.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "", raw_yaml: "" };
         case "get_backlinks":
           return [];
         case "parse_raw_yaml":
@@ -396,7 +397,7 @@ describe("App", () => {
         case "get_keymaps":
           return [];
         case "read_page":
-          return { meta: { title: "Test", relative_path: "test.md", frontmatter: {}, created_at: null, modified_at: null }, body: "", raw_yaml: "" };
+          return { meta: { title: "Test", relative_path: "test.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "", raw_yaml: "" };
         case "get_backlinks":
           return [];
         case "parse_raw_yaml":
@@ -435,7 +436,7 @@ describe("App", () => {
         case "get_keymaps":
           return [];
         case "read_page":
-          return { meta: { title: "Test", relative_path: "test.md", frontmatter: {}, created_at: null, modified_at: null }, body: "", raw_yaml: "" };
+          return { meta: { title: "Test", relative_path: "test.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "", raw_yaml: "" };
         case "get_backlinks":
           return [];
         case "parse_raw_yaml":
@@ -476,7 +477,7 @@ describe("App", () => {
         case "get_keymaps":
           return [];
         case "read_page":
-          return { meta: { title: "Test", relative_path: "test.md", frontmatter: {}, created_at: null, modified_at: null }, body: "", raw_yaml: "" };
+          return { meta: { title: "Test", relative_path: "test.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "", raw_yaml: "" };
         case "get_backlinks":
           return [];
         case "parse_raw_yaml":

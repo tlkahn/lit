@@ -28,6 +28,7 @@ beforeEach(() => {
         frontmatter: {},
         created_at: 1000,
         modified_at: 1000,
+        file_type: 'markdown' as const,
       };
     }
     if (cmd === "open_in_external_editor") {
@@ -103,6 +104,7 @@ describe("Sidebar instant create", () => {
           frontmatter: {},
           created_at: 1000,
           modified_at: 1000,
+          file_type: 'markdown' as const,
         },
       ],
     });
@@ -140,8 +142,8 @@ describe("Sidebar accent-insensitive filter", () => {
   it("filters pages with accent-insensitive matching", async () => {
     useWorkspaceStore.setState({
       pages: [
-        { title: "Café Notes", relative_path: "Café Notes.md", frontmatter: {}, created_at: 1000, modified_at: 1000 },
-        { title: "Other", relative_path: "Other.md", frontmatter: {}, created_at: 1000, modified_at: 1000 },
+        { title: "Café Notes", relative_path: "Café Notes.md", frontmatter: {}, created_at: 1000, modified_at: 1000, file_type: 'markdown' as const },
+        { title: "Other", relative_path: "Other.md", frontmatter: {}, created_at: 1000, modified_at: 1000, file_type: 'markdown' as const },
       ],
     });
 
@@ -157,7 +159,7 @@ describe("Sidebar accent-insensitive filter", () => {
   it("filters pages matching diacritics like ü to u", async () => {
     useWorkspaceStore.setState({
       pages: [
-        { title: "Über alles", relative_path: "Über alles.md", frontmatter: {}, created_at: 1000, modified_at: 1000 },
+        { title: "Über alles", relative_path: "Über alles.md", frontmatter: {}, created_at: 1000, modified_at: 1000, file_type: 'markdown' as const },
       ],
     });
 
@@ -174,8 +176,8 @@ describe("Sidebar context menu during search", () => {
   it("context menu interaction does not break active search filter", async () => {
     useWorkspaceStore.setState({
       pages: [
-        { title: "Café Notes", relative_path: "Café Notes.md", frontmatter: {}, created_at: 1000, modified_at: 1000 },
-        { title: "Other", relative_path: "Other.md", frontmatter: {}, created_at: 1000, modified_at: 1000 },
+        { title: "Café Notes", relative_path: "Café Notes.md", frontmatter: {}, created_at: 1000, modified_at: 1000, file_type: 'markdown' as const },
+        { title: "Other", relative_path: "Other.md", frontmatter: {}, created_at: 1000, modified_at: 1000, file_type: 'markdown' as const },
       ],
     });
 
@@ -204,6 +206,7 @@ describe("Sidebar context menu – Open in External Editor", () => {
           frontmatter: {},
           created_at: 1000,
           modified_at: 1000,
+          file_type: 'markdown' as const,
         },
       ],
     });
@@ -226,6 +229,7 @@ describe("Sidebar context menu – Open in External Editor", () => {
           frontmatter: {},
           created_at: 1000,
           modified_at: 1000,
+          file_type: 'markdown' as const,
         },
       ],
     });
@@ -244,15 +248,36 @@ describe("Sidebar context menu – Open in External Editor", () => {
   });
 });
 
-function makePage(title: string, relativePath?: string) {
+function makePage(title: string, relativePath?: string, fileType: 'markdown' | 'pdf' = 'markdown') {
   return {
     title,
     relative_path: relativePath ?? `${title}.md`,
     frontmatter: {},
     created_at: 1000,
     modified_at: 1000,
+    file_type: fileType,
   };
 }
+
+describe("Sidebar PDF icon", () => {
+  it("renders PDF icon for PDF files", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("paper", "paper.pdf", "pdf")],
+    });
+
+    render(<Sidebar />);
+    expect(screen.getByLabelText("PDF file")).toBeInTheDocument();
+  });
+
+  it("does not render PDF icon for markdown files", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("notes", "notes.md", "markdown")],
+    });
+
+    render(<Sidebar />);
+    expect(screen.queryByLabelText("PDF file")).not.toBeInTheDocument();
+  });
+});
 
 describe("Sidebar virtualization", () => {
   it("renders page items via virtualized list", () => {

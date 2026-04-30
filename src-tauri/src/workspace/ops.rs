@@ -1,6 +1,6 @@
 use super::frontmatter::{parse_frontmatter, serialize_frontmatter};
 use super::normalize::{filename_to_page_name, normalize_to_nfc, page_name_to_filename, validate_page_name};
-use super::page::{PageContent, PageMeta};
+use super::page::{FileType, PageContent, PageMeta};
 use super::write_hash::WriteHashRegistry;
 use super::WorkspaceError;
 use std::collections::HashMap;
@@ -41,6 +41,7 @@ pub fn read_page(root: &Path, relative_path: &str) -> Result<PageContent, Worksp
             frontmatter: parsed.map,
             created_at,
             modified_at,
+            file_type: FileType::Markdown,
         },
         body: parsed.body.to_string(),
         raw_yaml: parsed.raw_yaml,
@@ -103,6 +104,7 @@ pub fn create_page(
         frontmatter: HashMap::new(),
         created_at,
         modified_at,
+        file_type: FileType::Markdown,
     })
 }
 

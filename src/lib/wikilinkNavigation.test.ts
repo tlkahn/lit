@@ -14,6 +14,7 @@ function makeDeps(overrides?: Partial<NavigationDeps>): NavigationDeps {
       frontmatter: {},
       created_at: null,
       modified_at: null,
+      file_type: 'markdown',
     }),
     selectPage: vi.fn(),
     setPendingSection: vi.fn(),
@@ -45,6 +46,7 @@ describe("navigateWikilink", () => {
         frontmatter: {},
         created_at: null,
         modified_at: null,
+        file_type: 'markdown',
       }),
     });
     await navigateWikilink("NewPage", undefined, deps);
@@ -103,6 +105,7 @@ describe("navigateWikilink", () => {
         frontmatter: {},
         created_at: null,
         modified_at: null,
+        file_type: 'markdown',
       }),
     });
     await navigateWikilink("NewPage", undefined, deps);

@@ -125,6 +125,12 @@ export function ContentArea() {
     }
     currentPathRef.current = currentPagePath;
     if (currentPagePath) {
+      const { pages: currentPages, workspacePath: wsPath } = useWorkspaceStore.getState();
+      const page = currentPages.find(p => p.relative_path === currentPagePath);
+      if (page?.file_type === 'pdf' && wsPath) {
+        openPath(wsPath + '/' + currentPagePath);
+        return;
+      }
       loadPage(currentPagePath);
     } else {
       setBody("");

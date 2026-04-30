@@ -49,6 +49,7 @@ const sampleMeta = {
   frontmatter: {},
   created_at: 1000,
   modified_at: 2000,
+  file_type: 'markdown' as const,
 };
 
 describe("ipc", () => {

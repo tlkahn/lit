@@ -100,9 +100,9 @@ describe("parseWikilinkTrigger", () => {
 
 describe("wikilinkCompletionSource — page phase", () => {
   const mockPages = [
-    { title: "Alpha", relative_path: "Alpha.md", frontmatter: {}, created_at: 100, modified_at: 300 },
-    { title: "Beta", relative_path: "sub/Beta.md", frontmatter: {}, created_at: 200, modified_at: 200 },
-    { title: "Gamma", relative_path: "Gamma.md", frontmatter: {}, created_at: 50, modified_at: 400 },
+    { title: "Alpha", relative_path: "Alpha.md", frontmatter: {}, created_at: 100, modified_at: 300, file_type: 'markdown' as const },
+    { title: "Beta", relative_path: "sub/Beta.md", frontmatter: {}, created_at: 200, modified_at: 200, file_type: 'markdown' as const },
+    { title: "Gamma", relative_path: "Gamma.md", frontmatter: {}, created_at: 50, modified_at: 400, file_type: 'markdown' as const },
   ];
 
   const mockSearchResults = [
@@ -153,6 +153,7 @@ describe("wikilinkCompletionSource — page phase", () => {
       frontmatter: {},
       created_at: 100,
       modified_at: 100 + i,
+      file_type: 'markdown' as const,
     }));
     mockInvoke((cmd) => {
       if (cmd === "list_pages") return manyPages;

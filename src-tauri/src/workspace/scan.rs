@@ -1,5 +1,5 @@
 use super::normalize::{filename_to_page_name, normalize_to_nfc};
-use super::page::PageMeta;
+use super::page::{FileType, PageMeta};
 use super::WorkspaceError;
 use std::collections::HashMap;
 use std::path::Path;
@@ -20,9 +20,11 @@ pub fn scan_pages(root: &Path) -> Result<Vec<PageMeta>, WorkspaceError> {
 
         let path = entry.path();
         let extension = path.extension().and_then(|e| e.to_str());
-        if extension != Some("md") {
-            continue;
-        }
+        let file_type = match extension {
+            Some("md") => FileType::Markdown,
+            Some("pdf") => FileType::Pdf,
+            _ => continue,
+        };
 
         let relative = path
             .strip_prefix(root)
@@ -53,6 +55,7 @@ pub fn scan_pages(root: &Path) -> Result<Vec<PageMeta>, WorkspaceError> {
             frontmatter: HashMap::new(),
             created_at,
             modified_at,
+            file_type,
         });
     }
 
@@ -113,7 +116,7 @@ mod tests {
     }
 
     #[test]
-    fn non_md_files_ignored() {
+    fn non_supported_files_ignored() {
         let dir = TempDir::new().unwrap();
         fs::write(dir.path().join("readme.txt"), "text").unwrap();
         fs::write(dir.path().join("image.png"), "data").unwrap();
@@ -122,6 +125,53 @@ mod tests {
         let pages = scan_pages(dir.path()).unwrap();
         assert_eq!(pages.len(), 1);
         assert_eq!(pages[0].title, "page");
+    }
+
+    #[test]
+    fn finds_pdf_files() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("paper.pdf"), b"%PDF-1.4").unwrap();
+
+        let pages = scan_pages(dir.path()).unwrap();
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0].title, "paper");
+    }
+
+    #[test]
+    fn pdf_pages_have_pdf_file_type() {
+        use super::super::page::FileType;
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("paper.pdf"), b"%PDF-1.4").unwrap();
+        fs::write(dir.path().join("note.md"), "# note").unwrap();
+
+        let pages = scan_pages(dir.path()).unwrap();
+        assert_eq!(pages.len(), 2);
+        let pdf = pages.iter().find(|p| p.relative_path == "paper.pdf").unwrap();
+        let md = pages.iter().find(|p| p.relative_path == "note.md").unwrap();
+        assert_eq!(pdf.file_type, FileType::Pdf);
+        assert_eq!(md.file_type, FileType::Markdown);
+    }
+
+    #[test]
+    fn pdf_title_is_filename_without_extension() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("Research Paper.pdf"), b"%PDF").unwrap();
+
+        let pages = scan_pages(dir.path()).unwrap();
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0].title, "Research Paper");
+    }
+
+    #[test]
+    fn pdf_pages_have_empty_frontmatter() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("doc.pdf"), b"%PDF").unwrap();
+
+        let pages = scan_pages(dir.path()).unwrap();
+        assert_eq!(pages.len(), 1);
+        assert!(pages[0].frontmatter.is_empty());
+        assert!(pages[0].created_at.is_some());
+        assert!(pages[0].modified_at.is_some());
     }
 
     #[test]
