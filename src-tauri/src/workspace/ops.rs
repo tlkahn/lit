@@ -3,7 +3,7 @@ use super::normalize::{filename_to_page_name, normalize_to_nfc, page_name_to_fil
 use super::page::{FileType, PageContent, PageMeta};
 use super::write_hash::WriteHashRegistry;
 use super::WorkspaceError;
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::fs;
 use std::path::Path;
 use std::time::UNIX_EPOCH;
@@ -52,7 +52,7 @@ pub fn write_page(
     root: &Path,
     relative_path: &str,
     body: &str,
-    frontmatter: &HashMap<String, serde_yaml::Value>,
+    frontmatter: &IndexMap<String, serde_yaml::Value>,
     registry: &WriteHashRegistry,
 ) -> Result<(), WorkspaceError> {
     let full_path = root.join(relative_path);
@@ -101,7 +101,7 @@ pub fn create_page(
     Ok(PageMeta {
         title: name.to_string(),
         relative_path: normalize_to_nfc(&relative_path),
-        frontmatter: HashMap::new(),
+        frontmatter: IndexMap::new(),
         created_at,
         modified_at,
         file_type: FileType::Markdown,
@@ -190,7 +190,7 @@ mod tests {
     fn write_page_with_frontmatter() {
         let dir = TempDir::new().unwrap();
         let registry = WriteHashRegistry::new();
-        let mut fm = HashMap::new();
+        let mut fm = IndexMap::new();
         fm.insert(
             "title".to_string(),
             serde_yaml::Value::String("Test".to_string()),
@@ -208,7 +208,7 @@ mod tests {
     fn write_page_without_frontmatter() {
         let dir = TempDir::new().unwrap();
         let registry = WriteHashRegistry::new();
-        write_page(dir.path(), "plain.md", "# Body\n", &HashMap::new(), &registry).unwrap();
+        write_page(dir.path(), "plain.md", "# Body\n", &IndexMap::new(), &registry).unwrap();
 
         let content = fs::read_to_string(dir.path().join("plain.md")).unwrap();
         assert!(!content.contains("---"));
@@ -219,7 +219,7 @@ mod tests {
     fn write_page_records_hash() {
         let dir = TempDir::new().unwrap();
         let registry = WriteHashRegistry::new();
-        let mut fm = HashMap::new();
+        let mut fm = IndexMap::new();
         fm.insert(
             "title".to_string(),
             serde_yaml::Value::String("T".to_string()),

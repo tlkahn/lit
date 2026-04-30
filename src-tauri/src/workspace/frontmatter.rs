@@ -1,14 +1,14 @@
-use std::collections::HashMap;
+use indexmap::IndexMap;
 
 pub struct ParsedFrontmatter<'a> {
-    pub map: HashMap<String, serde_yaml::Value>,
+    pub map: IndexMap<String, serde_yaml::Value>,
     pub raw_yaml: String,
     pub body: &'a str,
 }
 
 pub fn parse_frontmatter(raw: &str) -> ParsedFrontmatter<'_> {
     let empty = || ParsedFrontmatter {
-        map: HashMap::new(),
+        map: IndexMap::new(),
         raw_yaml: String::new(),
         body: raw,
     };
@@ -35,8 +35,8 @@ pub fn parse_frontmatter(raw: &str) -> ParsedFrontmatter<'_> {
         None => return empty(),
     };
 
-    let map: HashMap<String, serde_yaml::Value> = if yaml_str.trim().is_empty() {
-        HashMap::new()
+    let map: IndexMap<String, serde_yaml::Value> = if yaml_str.trim().is_empty() {
+        IndexMap::new()
     } else {
         match serde_yaml::from_str(yaml_str) {
             Ok(m) => m,
@@ -75,15 +75,15 @@ fn find_closing_fence(s: &str) -> Option<(usize, usize)> {
     None
 }
 
-pub fn parse_raw_yaml(raw: &str) -> Result<HashMap<String, serde_yaml::Value>, String> {
+pub fn parse_raw_yaml(raw: &str) -> Result<IndexMap<String, serde_yaml::Value>, String> {
     if raw.trim().is_empty() {
-        return Ok(HashMap::new());
+        return Ok(IndexMap::new());
     }
     serde_yaml::from_str(raw).map_err(|e| e.to_string())
 }
 
 pub fn serialize_frontmatter(
-    frontmatter: &HashMap<String, serde_yaml::Value>,
+    frontmatter: &IndexMap<String, serde_yaml::Value>,
     body: &str,
 ) -> String {
     if frontmatter.is_empty() {
@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn round_trip() {
-        let mut fm = HashMap::new();
+        let mut fm = IndexMap::new();
         fm.insert(
             "title".to_string(),
             serde_yaml::Value::String("Test Page".to_string()),
@@ -200,7 +200,7 @@ mod tests {
 
     #[test]
     fn serialize_empty_frontmatter_omits_fences() {
-        let fm = HashMap::new();
+        let fm = IndexMap::new();
         let body = "Just content\n";
         let result = serialize_frontmatter(&fm, body);
         assert_eq!(result, body);
@@ -222,7 +222,7 @@ mod tests {
 
     #[test]
     fn round_trip_cjk_frontmatter() {
-        let mut fm = HashMap::new();
+        let mut fm = IndexMap::new();
         fm.insert(
             "title".to_string(),
             serde_yaml::Value::String("日本語のタイトル".to_string()),
@@ -232,5 +232,38 @@ mod tests {
         let parsed = parse_frontmatter(&serialized);
         assert_eq!(parsed.map.get("title"), fm.get("title"));
         assert_eq!(parsed.body, body);
+    }
+
+    #[test]
+    fn serialize_preserves_field_order() {
+        let mut fm = IndexMap::new();
+        fm.insert("author".into(), serde_yaml::Value::String("Alice".into()));
+        fm.insert("description".into(), serde_yaml::Value::String("A note".into()));
+        fm.insert("published".into(), serde_yaml::Value::Bool(true));
+        fm.insert("title".into(), serde_yaml::Value::String("My Page".into()));
+
+        let output = serialize_frontmatter(&fm, "body\n");
+        let lines: Vec<&str> = output.lines().collect();
+        assert_eq!(lines[0], "---");
+        assert!(lines[1].starts_with("author:"));
+        assert!(lines[2].starts_with("description:"));
+        assert!(lines[3].starts_with("published:"));
+        assert!(lines[4].starts_with("title:"));
+    }
+
+    #[test]
+    fn round_trip_preserves_field_order() {
+        let input = "---\nauthor: Alice\ndescription: A note\npublished: true\ntitle: My Page\n---\nbody\n";
+        let parsed = parse_frontmatter(input);
+        let output = serialize_frontmatter(&parsed.map, parsed.body);
+        assert_eq!(output, input);
+    }
+
+    #[test]
+    fn parse_raw_yaml_preserves_order() {
+        let yaml = "zebra: 1\nalpha: 2\nmiddle: 3\n";
+        let map = parse_raw_yaml(yaml).unwrap();
+        let keys: Vec<&String> = map.keys().collect();
+        assert_eq!(keys, vec!["zebra", "alpha", "middle"]);
     }
 }

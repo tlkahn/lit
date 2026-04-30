@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use indexmap::IndexMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -18,7 +18,7 @@ impl Default for FileType {
 pub struct PageMeta {
     pub title: String,
     pub relative_path: String,
-    pub frontmatter: HashMap<String, serde_yaml::Value>,
+    pub frontmatter: IndexMap<String, serde_yaml::Value>,
     pub created_at: Option<u64>,
     pub modified_at: Option<u64>,
     #[serde(default)]
@@ -56,7 +56,7 @@ mod tests {
         let meta = PageMeta {
             title: "test".to_string(),
             relative_path: "test.pdf".to_string(),
-            frontmatter: HashMap::new(),
+            frontmatter: IndexMap::new(),
             created_at: None,
             modified_at: None,
             file_type: FileType::Pdf,

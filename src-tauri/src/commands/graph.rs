@@ -340,7 +340,7 @@ pub fn link_unlinked_mention(
         crate::graph::extract::replace_mention_with_wikilink(&page.body, source_line, &matched_text)
             .map_err(|e| e.to_string())?;
 
-    let fm: HashMap<String, serde_yaml::Value> =
+    let fm: indexmap::IndexMap<String, serde_yaml::Value> =
         crate::workspace::frontmatter::parse_raw_yaml(&page.raw_yaml)
             .unwrap_or_default();
 
@@ -621,7 +621,7 @@ mod tests {
         assert_eq!(new_body, "I met [[Alice]] yesterday.");
 
         let registry = crate::workspace::write_hash::WriteHashRegistry::new();
-        let fm: std::collections::HashMap<String, serde_yaml::Value> = std::collections::HashMap::new();
+        let fm: indexmap::IndexMap<String, serde_yaml::Value> = indexmap::IndexMap::new();
         crate::workspace::ops::write_page(dir.path(), "other.md", &new_body, &fm, &registry)
             .unwrap();
         gi.reindex_file("other.md").unwrap();

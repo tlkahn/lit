@@ -2259,6 +2259,7 @@ dependencies = [
  "grep-matcher",
  "grep-regex",
  "grep-searcher",
+ "indexmap 2.14.0",
  "notify-debouncer-mini",
  "petgraph",
  "rayon",

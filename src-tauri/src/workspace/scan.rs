@@ -1,7 +1,7 @@
 use super::normalize::{filename_to_page_name, normalize_to_nfc};
 use super::page::{FileType, PageMeta};
 use super::WorkspaceError;
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 use walkdir::WalkDir;
@@ -52,7 +52,7 @@ pub fn scan_pages(root: &Path) -> Result<Vec<PageMeta>, WorkspaceError> {
         pages.push(PageMeta {
             title,
             relative_path: relative_str,
-            frontmatter: HashMap::new(),
+            frontmatter: IndexMap::new(),
             created_at,
             modified_at,
             file_type,

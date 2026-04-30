@@ -60,7 +60,7 @@ fn title_from_relative_path(relative_path: &str) -> String {
     filename_to_page_name(basename)
 }
 
-fn yaml_map_to_json(map: &HashMap<String, serde_yaml::Value>) -> serde_json::Value {
+fn yaml_map_to_json(map: &indexmap::IndexMap<String, serde_yaml::Value>) -> serde_json::Value {
     let json_str = match serde_json::to_string(map) {
         Ok(s) => s,
         Err(_) => return serde_json::Value::Object(serde_json::Map::new()),

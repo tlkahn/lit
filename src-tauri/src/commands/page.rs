@@ -3,12 +3,12 @@ use crate::commands::workspace::{get_workspace_root, WorkspaceRegistry};
 use crate::workspace::ops;
 use crate::workspace::page::{PageContent, PageMeta};
 use crate::workspace::write_hash::WriteHashRegistry;
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::sync::Arc;
 use tauri::State;
 
 #[tauri::command]
-pub fn parse_raw_yaml(raw_yaml: String) -> Result<HashMap<String, serde_yaml::Value>, String> {
+pub fn parse_raw_yaml(raw_yaml: String) -> Result<IndexMap<String, serde_yaml::Value>, String> {
     crate::workspace::frontmatter::parse_raw_yaml(&raw_yaml)
 }
 
@@ -26,7 +26,7 @@ pub fn read_page(
 pub fn write_page(
     relative_path: String,
     body: String,
-    frontmatter: HashMap<String, serde_yaml::Value>,
+    frontmatter: IndexMap<String, serde_yaml::Value>,
     window: tauri::Window,
     state: State<WorkspaceRegistry>,
     registry: State<Arc<WriteHashRegistry>>,
