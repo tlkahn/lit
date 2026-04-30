@@ -260,13 +260,15 @@ function makePage(title: string, relativePath?: string, fileType: 'markdown' | '
 }
 
 describe("Sidebar PDF icon", () => {
-  it("renders PDF icon for PDF files", () => {
+  it("renders PDF icon with nerd-font class for PDF files", () => {
     useWorkspaceStore.setState({
       pages: [makePage("paper", "paper.pdf", "pdf")],
     });
 
     render(<Sidebar />);
-    expect(screen.getByLabelText("PDF file")).toBeInTheDocument();
+    const icon = screen.getByLabelText("PDF file");
+    expect(icon).toBeInTheDocument();
+    expect(icon.classList.contains("nerd-font")).toBe(true);
   });
 
   it("does not render PDF icon for markdown files", () => {

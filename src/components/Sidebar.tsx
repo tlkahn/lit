@@ -155,7 +155,7 @@ const PageItem = memo(function PageItem({
           title={page.relative_path}
         >
           {page.file_type === 'pdf' && (
-            <span className="mr-1 opacity-60" aria-label="PDF file">{''}</span>
+            <span className="nerd-font mr-1 opacity-60" aria-label="PDF file">{''}</span>
           )}
           {page.title}
         </button>
