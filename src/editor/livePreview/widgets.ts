@@ -7,7 +7,7 @@ import { navigateToPageFacet } from "./navigateToPageFacet";
 import { getKatexSync, loadKatex } from "./katexLoader";
 import "katex/dist/katex.min.css";
 
-const SPINNER_SVG = `<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><style>.spinner{transform-origin:center;animation:rotate .75s linear infinite}@keyframes rotate{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}</style><g class="spinner"><circle cx="12" cy="2.5" r="1.5" opacity=".14"/><circle cx="16.75" cy="3.77" r="1.5" opacity=".29"/><circle cx="20.23" cy="7.25" r="1.5" opacity=".43"/><circle cx="21.5" cy="12" r="1.5" opacity=".57"/><circle cx="20.23" cy="16.75" r="1.5" opacity=".71"/><circle cx="16.75" cy="20.23" r="1.5" opacity=".86"/><circle cx="12" cy="21.5" r="1.5"/></g></svg>`;
+const SPINNER_HTML = `<span class="nerd-font inline-block animate-spin" style="font-size: 24px; line-height: 1;"></span>`;
 
 export class ImageWidget extends WidgetType {
   constructor(
@@ -527,7 +527,7 @@ export class MermaidWidget extends WidgetType {
 
     const loading = document.createElement("div");
     loading.className = "cm-preview-mermaid-loading";
-    loading.innerHTML = SPINNER_SVG;
+    loading.innerHTML = SPINNER_HTML;
     container.appendChild(loading);
 
     renderMermaid(this.source, this.theme)
@@ -563,7 +563,7 @@ export class MermaidWidget extends WidgetType {
     dom.innerHTML = "";
     const loading = document.createElement("div");
     loading.className = "cm-preview-mermaid-loading";
-    loading.innerHTML = SPINNER_SVG;
+    loading.innerHTML = SPINNER_HTML;
     dom.appendChild(loading);
 
     renderMermaid(this.source, this.theme)

@@ -210,7 +210,9 @@ describe("UnlinkedMentionsPanel", () => {
 
     render(<UnlinkedMentionsPanel pageId="target.md" />);
 
-    expect(screen.getByTestId("unlinked-spinner")).toBeInTheDocument();
+    const spinner = screen.getByTestId("unlinked-spinner");
+    expect(spinner).toBeInTheDocument();
+    expect(spinner.classList.contains("nerd-font")).toBe(true);
 
     await act(async () => {
       resolveIpc([]);

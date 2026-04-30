@@ -9,19 +9,7 @@ export function AppErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
       className="flex h-screen flex-col items-center justify-center bg-bg-primary px-6 text-text-normal"
       data-testid="app-error-fallback"
     >
-      <svg
-        className="mb-4 h-14 w-14 text-text-error"
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
-        strokeWidth={1.5}
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"
-        />
-      </svg>
+      <span className="nerd-font mb-4 text-[3.5rem] leading-none text-text-error">{''}</span>
 
       <h1 className="mb-2 text-2xl font-semibold">Lit ran into a problem</h1>
       <p className="mb-8 max-w-md text-center text-sm text-text-faint">

@@ -257,6 +257,8 @@ describe("BacklinksPanel", () => {
 
       expect(screen.getByTestId("backlinks-building")).toBeInTheDocument();
       expect(screen.queryByText("No other pages link to this page")).not.toBeInTheDocument();
+      const spinner = screen.getByTestId("backlinks-building").querySelector(".nerd-font");
+      expect(spinner).not.toBeNull();
     });
 
     it("does not call getBacklinks when graphReady is false", async () => {

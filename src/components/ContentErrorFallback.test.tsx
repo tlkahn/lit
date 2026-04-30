@@ -16,6 +16,18 @@ describe("ContentErrorFallback", () => {
     expect(screen.getByText(/files are safe/)).toBeInTheDocument();
   });
 
+  it("renders warning icon with nerd-font class", () => {
+    const { container } = render(
+      <ContentErrorFallback
+        error={new Error("test")}
+        resetErrorBoundary={vi.fn()}
+      />,
+    );
+    const icon = container.querySelector(".nerd-font");
+    expect(icon).not.toBeNull();
+    expect(icon!.textContent).toBe("");
+  });
+
   it("shows error message in details", () => {
     render(
       <ContentErrorFallback

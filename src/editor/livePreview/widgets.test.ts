@@ -887,7 +887,7 @@ describe("MermaidWidget", () => {
     const el = widget.toDOM();
     const loading = el.querySelector(".cm-preview-mermaid-loading");
     expect(loading).not.toBeNull();
-    expect(loading!.querySelector("svg")).not.toBeNull();
+    expect(loading!.querySelector(".nerd-font")).not.toBeNull();
   });
 
   it("toDOM shows cached SVG immediately when cache has a value", () => {
