@@ -45,6 +45,8 @@ import {
   getGraphPaths,
   getGraphSubgraph,
   ensureGraphReady,
+  parseAnnotations,
+  resolveAnnotationScope,
 } from "./ipc";
 
 const sampleMeta = {
@@ -181,6 +183,29 @@ describe("ipc", () => {
           return null;
         case "open_in_external_editor":
           return null;
+        case "parse_annotations": {
+          const a = args as Record<string, unknown> | undefined;
+          if (!a?.content || (a.content as string).length === 0) return [];
+          return [
+            {
+              form: "compact",
+              annotation_type: "note",
+              certainty: "neutral",
+              scope: { kind: "sentence", value: 1 },
+              body: "a note",
+              date: null,
+              is_structured: true,
+              char_start: 0,
+              char_end: 16,
+              original: "%%! n: | a note %%",
+            },
+          ];
+        }
+        case "resolve_annotation_scope": {
+          const a = args as Record<string, unknown> | undefined;
+          if ((a?.charStart as number) === 0) return null;
+          return { start: 6, end: 11 };
+        }
         case "ensure_graph_ready":
           return null;
         case "get_backlinks":
@@ -648,6 +673,50 @@ describe("ipc", () => {
       throw new Error(`Unknown command: ${cmd}`);
     });
     await expect(ensureGraphReady("/my/workspace")).rejects.toThrow("build failed");
+  });
+
+  it("parseAnnotations returns parsed results", async () => {
+    const anns = await parseAnnotations("%%! n: | a note %%");
+    expect(anns).toHaveLength(1);
+    expect(anns[0]!.annotation_type).toBe("note");
+    expect(anns[0]!.body).toBe("a note");
+    expect(anns[0]!.is_structured).toBe(true);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("parse_annotations", { content: "%%! n: | a note %%" });
+  });
+
+  it("parseAnnotations empty content returns empty array", async () => {
+    const anns = await parseAnnotations("");
+    expect(anns).toHaveLength(0);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("parse_annotations", { content: "" });
+  });
+
+  it("resolveAnnotationScope returns range", async () => {
+    const result = await resolveAnnotationScope(
+      "hello world %%! n: _ | note %%",
+      12,
+      { kind: "words", value: 1 },
+      "en",
+    );
+    expect(result).toEqual({ start: 6, end: 11 });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("resolve_annotation_scope", {
+      content: "hello world %%! n: _ | note %%",
+      charStart: 12,
+      scope: { kind: "words", value: 1 },
+      lang: "en",
+    });
+  });
+
+  it("resolveAnnotationScope returns null when unresolvable", async () => {
+    const result = await resolveAnnotationScope(
+      "%%! n: _ | note %%",
+      0,
+      { kind: "words", value: 1 },
+      "en",
+    );
+    expect(result).toBeNull();
   });
 
 });

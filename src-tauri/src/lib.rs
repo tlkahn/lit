@@ -1,3 +1,4 @@
+pub mod annotation;
 pub mod bib;
 pub mod pdf;
 pub mod cli;
@@ -344,6 +345,8 @@ pub fn run() {
             commands::pdf_viewer::pdf_render_page,
             commands::pdf_viewer::pdf_prefetch,
             commands::pdf_viewer::pdf_close,
+            commands::annotation::parse_annotations,
+            commands::annotation::resolve_annotation_scope,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

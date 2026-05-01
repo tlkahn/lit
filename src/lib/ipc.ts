@@ -445,4 +445,62 @@ export async function openInExternalEditor(
   return invoke<void>("open_in_external_editor", { relativePath, line, col });
 }
 
+// Annotation DSL
+
+export type AnnotationType =
+  | "note"
+  | "question"
+  | "todo"
+  | "crossref"
+  | "apparatus"
+  | "translation"
+  | "bare";
+
+export type Certainty = "tentative" | "firm" | "neutral";
+
+export type AnnotationForm = "compact" | "block";
+
+export type Scope =
+  | { kind: "words"; value: number }
+  | { kind: "paragraph"; value: number }
+  | { kind: "page"; value: number }
+  | { kind: "sentence"; value: number }
+  | { kind: "anchor"; value: string };
+
+export interface Annotation {
+  form: AnnotationForm;
+  annotation_type: AnnotationType;
+  certainty: Certainty;
+  scope: Scope;
+  body: string | null;
+  date: string | null;
+  is_structured: boolean;
+  char_start: number;
+  char_end: number;
+  original: string;
+}
+
+export interface ScopeRange {
+  start: number;
+  end: number;
+}
+
+export async function parseAnnotations(content: string): Promise<Annotation[]> {
+  return invoke<Annotation[]>("parse_annotations", { content });
+}
+
+export async function resolveAnnotationScope(
+  content: string,
+  charStart: number,
+  scope: Scope,
+  lang: string,
+): Promise<ScopeRange | null> {
+  return invoke<ScopeRange | null>("resolve_annotation_scope", {
+    content,
+    charStart,
+    scope,
+    lang,
+  });
+}
+
 
