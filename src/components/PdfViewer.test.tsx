@@ -7,7 +7,7 @@ import { mockInvoke } from "../test/tauri-mock";
 const mockPdfInfo = { page_count: 3, path: "/test/doc.pdf" };
 const mockRenderedPage = {
   page_index: 0,
-  png_base64: "iVBORw0KGgoAAAANSUhEUg==",
+  png_path: "/tmp/lit-pdf-test/page_0.png",
   width: 1224,
   height: 1584,
 };
@@ -23,7 +23,8 @@ beforeEach(() => {
         return mockPdfInfo;
       case "pdf_render_page": {
         const a = args as Record<string, unknown>;
-        return { ...mockRenderedPage, page_index: a?.pageIndex ?? 0 };
+        const idx = a?.pageIndex ?? 0;
+        return { ...mockRenderedPage, page_index: idx, png_path: `/tmp/lit-pdf-test/page_${idx}.png` };
       }
       case "pdf_close":
         return null;
@@ -34,13 +35,13 @@ beforeEach(() => {
 });
 
 describe("PdfViewer", () => {
-  it("renders an img with base64 png src", async () => {
+  it("renders an img with asset protocol src", async () => {
     render(<PdfViewer filePath="/test/doc.pdf" />);
 
     await waitFor(() => {
       const img = screen.getByTestId("pdf-page-image") as HTMLImageElement;
-      expect(img.src).toContain("data:image/png;base64,");
-      expect(img.src).toContain(mockRenderedPage.png_base64);
+      expect(img.src).toContain("asset://localhost/");
+      expect(img.src).not.toContain("data:image/png;base64");
     });
   });
 

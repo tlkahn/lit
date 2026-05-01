@@ -170,7 +170,7 @@ describe("ipc", () => {
         case "pdf_render_page":
           return {
             page_index: (args as Record<string, unknown>)?.pageIndex ?? 0,
-            png_base64: "iVBOR...",
+            png_path: `/tmp/lit-pdf/page_${(args as Record<string, unknown>)?.pageIndex ?? 0}.png`,
             width: 612,
             height: 792,
           };

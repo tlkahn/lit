@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { pdfOpen, pdfRenderPage, pdfClose } from "../lib/ipc";
 import type { PdfInfo, RenderedPage } from "../lib/ipc";
 
@@ -113,7 +114,7 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
       <div className="flex-1 overflow-auto px-4 pb-4">
         <img
           data-testid="pdf-page-image"
-          src={`data:image/png;base64,${rendered.png_base64}`}
+          src={convertFileSrc(rendered.png_path)}
           alt={`Page ${currentPage + 1}`}
           className="mx-auto shadow-lg"
           style={{ maxWidth: "100%", width: `${rendered.width / (window.devicePixelRatio || 1)}px` }}

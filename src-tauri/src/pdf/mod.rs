@@ -1,5 +1,6 @@
-use base64::Engine;
 use image::ImageEncoder;
+use std::fs;
+use std::io::BufWriter;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
@@ -17,7 +18,7 @@ pub struct PdfInfo {
 #[serde(rename_all = "snake_case")]
 pub struct RenderedPage {
     pub page_index: i32,
-    pub png_base64: String,
+    pub png_path: String,
     pub width: u32,
     pub height: u32,
 }
@@ -37,8 +38,26 @@ enum PdfCommand {
     },
 }
 
+pub fn create_pdf_temp_dir() -> Result<PathBuf, String> {
+    let dir = std::env::temp_dir().join(format!(
+        "lit-pdf-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&dir).map_err(|e| format!("Failed to create temp dir: {e}"))?;
+    Ok(dir)
+}
+
+pub fn cleanup_pdf_temp_dir(dir: &std::path::Path) {
+    let _ = fs::remove_dir_all(dir);
+}
+
 pub struct PdfRenderThread {
     cmd_tx: mpsc::Sender<PdfCommand>,
+    temp_dir: PathBuf,
 }
 
 impl PdfRenderThread {
@@ -46,6 +65,8 @@ impl PdfRenderThread {
         let lib_path = lib_path.to_string();
         let (cmd_tx, cmd_rx) = mpsc::channel::<PdfCommand>();
         let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
+        let temp_dir = create_pdf_temp_dir()?;
+        let thread_temp_dir = temp_dir.clone();
 
         thread::spawn(move || {
             let pdfium = match lmpdf::Pdfium::open(&lib_path) {
@@ -99,22 +120,26 @@ impl PdfRenderThread {
                             let width = img.width();
                             let height = img.height();
 
-                            let mut png_buf = Vec::new();
-                            image::codecs::png::PngEncoder::new(&mut png_buf)
-                                .write_image(
-                                    img.as_bytes(),
-                                    width,
-                                    height,
-                                    img.color().into(),
-                                )
-                                .map_err(|e| format!("PNG encode failed: {e}"))?;
-
-                            let png_base64 =
-                                base64::engine::general_purpose::STANDARD.encode(&png_buf);
+                            let png_path = thread_temp_dir.join(format!("page_{page_index}.png"));
+                            let file = fs::File::create(&png_path)
+                                .map_err(|e| format!("Failed to create PNG file: {e}"))?;
+                            let writer = BufWriter::new(file);
+                            image::codecs::png::PngEncoder::new_with_quality(
+                                writer,
+                                image::codecs::png::CompressionType::Fast,
+                                image::codecs::png::FilterType::Sub,
+                            )
+                            .write_image(
+                                img.as_bytes(),
+                                width,
+                                height,
+                                img.color().into(),
+                            )
+                            .map_err(|e| format!("PNG encode failed: {e}"))?;
 
                             Ok(RenderedPage {
                                 page_index,
-                                png_base64,
+                                png_path: png_path.to_string_lossy().to_string(),
                                 width,
                                 height,
                             })
@@ -123,6 +148,7 @@ impl PdfRenderThread {
                     }
                     PdfCommand::Close { reply } => {
                         document = None;
+                        cleanup_pdf_temp_dir(&thread_temp_dir);
                         let _ = reply.send(Ok(()));
                     }
                 }
@@ -133,7 +159,7 @@ impl PdfRenderThread {
             .recv()
             .map_err(|_| "Render thread died during init".to_string())??;
 
-        Ok(Self { cmd_tx })
+        Ok(Self { cmd_tx, temp_dir })
     }
 
     pub fn open(&self, path: &str) -> Result<PdfInfo, String> {
@@ -165,6 +191,10 @@ impl PdfRenderThread {
             .send(PdfCommand::Close { reply: tx })
             .map_err(|_| "Render thread died".to_string())?;
         rx.recv().map_err(|_| "Render thread died".to_string())?
+    }
+
+    pub fn temp_dir(&self) -> &std::path::Path {
+        &self.temp_dir
     }
 }
 
@@ -210,6 +240,14 @@ mod tests {
     }
 
     #[test]
+    fn test_create_and_cleanup_temp_dir() {
+        let dir = create_pdf_temp_dir().unwrap();
+        assert!(dir.exists());
+        cleanup_pdf_temp_dir(&dir);
+        assert!(!dir.exists());
+    }
+
+    #[test]
     #[ignore]
     fn test_open_returns_pdf_info() {
         let lib = require_pdfium();
@@ -221,21 +259,34 @@ mod tests {
 
     #[test]
     #[ignore]
-    fn test_render_page_returns_png_data() {
+    fn test_render_page_writes_png_file() {
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
         thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
 
         let rendered = thread.render_page(0, 144).unwrap();
-        assert!(!rendered.png_base64.is_empty());
+        let path = std::path::Path::new(&rendered.png_path);
+        assert!(path.exists(), "PNG file should exist on disk");
+        let bytes = fs::read(path).unwrap();
+        assert_eq!(&bytes[..4], &[0x89, 0x50, 0x4E, 0x47]); // PNG magic
         assert!(rendered.width > 0);
         assert!(rendered.height > 0);
         assert_eq!(rendered.page_index, 0);
 
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(&rendered.png_base64)
-            .unwrap();
-        assert_eq!(&bytes[..4], &[0x89, 0x50, 0x4E, 0x47]); // PNG magic
+        thread.close().unwrap();
+    }
+
+    #[test]
+    #[ignore]
+    fn test_close_cleans_up_temp_dir() {
+        let lib = require_pdfium();
+        let thread = PdfRenderThread::new(&lib).unwrap();
+        let temp_dir = thread.temp_dir().to_path_buf();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+        thread.render_page(0, 144).unwrap();
+        assert!(temp_dir.exists());
+        thread.close().unwrap();
+        assert!(!temp_dir.exists());
     }
 
     #[test]
@@ -295,5 +346,7 @@ mod tests {
             "2x scale should produce larger image: {}x{} vs {}x{}",
             r2.width, r2.height, r1.width, r1.height,
         );
+
+        thread.close().unwrap();
     }
 }

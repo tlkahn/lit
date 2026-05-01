@@ -414,7 +414,7 @@ export interface PdfInfo {
 
 export interface RenderedPage {
   page_index: number;
-  png_base64: string;
+  png_path: string;
   width: number;
   height: number;
 }

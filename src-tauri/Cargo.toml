@@ -37,7 +37,6 @@ rayon = "1"
 indexmap = { version = "2", features = ["serde"] }
 tokio = { version = "1", features = ["net", "io-util", "rt", "macros", "time"] }
 lmpdf = { git = "https://github.com/tlkahn/lmpdf.git", features = ["image"] }
-base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 [[bin]]
