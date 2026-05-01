@@ -25,6 +25,9 @@ import {
   expandTemplate,
   resolveBibEntries,
   renderBibCitations,
+  pdfOpen,
+  pdfRenderPage,
+  pdfClose,
   openInExternalEditor,
   getUnlinkedMentions,
   linkUnlinkedMention,
@@ -161,6 +164,17 @@ describe("ipc", () => {
             },
           ];
         case "link_unlinked_mention":
+          return null;
+        case "pdf_open":
+          return { page_count: 3, path: (args as Record<string, unknown>)?.path ?? "" };
+        case "pdf_render_page":
+          return {
+            page_index: (args as Record<string, unknown>)?.pageIndex ?? 0,
+            png_base64: "iVBOR...",
+            width: 612,
+            height: 792,
+          };
+        case "pdf_close":
           return null;
         case "open_in_external_editor":
           return null;
@@ -595,6 +609,28 @@ describe("ipc", () => {
 
   it("ensureGraphReady resolves on success", async () => {
     await expect(ensureGraphReady("/my/workspace")).resolves.toBeNull();
+  });
+
+  it("pdfOpen calls pdf_open with path", async () => {
+    const info = await pdfOpen("/path/to/doc.pdf");
+    expect(info.page_count).toBe(3);
+    expect(info.path).toBe("/path/to/doc.pdf");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("pdf_open", { path: "/path/to/doc.pdf" });
+  });
+
+  it("pdfRenderPage calls pdf_render_page", async () => {
+    const page = await pdfRenderPage(1, 2.0);
+    expect(page.page_index).toBe(1);
+    expect(page.width).toBe(612);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("pdf_render_page", { pageIndex: 1, scale: 2.0 });
+  });
+
+  it("pdfClose calls pdf_close", async () => {
+    await pdfClose();
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("pdf_close");
   });
 
   it("ensureGraphReady rejects on error", async () => {

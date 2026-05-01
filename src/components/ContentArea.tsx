@@ -11,6 +11,7 @@ import { navigateWikilink } from "../lib/wikilinkNavigation";
 import { setCurrentEditorView } from "../lib/editorViewRef";
 import { extractHeadings, type Heading } from "../lib/headings";
 import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
+import { PdfViewer } from "./PdfViewer";
 import { BottomPanel } from "./BottomPanel";
 import { ConflictDialog } from "./ConflictDialog";
 import { buildHeadingTree, applyRename, applyMove } from "../lib/headingTree";
@@ -125,10 +126,9 @@ export function ContentArea() {
     }
     currentPathRef.current = currentPagePath;
     if (currentPagePath) {
-      const { pages: currentPages, workspacePath: wsPath } = useWorkspaceStore.getState();
+      const { pages: currentPages } = useWorkspaceStore.getState();
       const page = currentPages.find(p => p.relative_path === currentPagePath);
-      if (page?.file_type === 'pdf' && wsPath) {
-        openPath(wsPath + '/' + currentPagePath);
+      if (page?.file_type === 'pdf') {
         return;
       }
       loadPage(currentPagePath);
@@ -420,6 +420,13 @@ export function ContentArea() {
         </p>
       </main>
     );
+  }
+
+  const currentPageMeta = useWorkspaceStore.getState().pages.find(
+    (p) => p.relative_path === currentPagePath,
+  );
+  if (currentPageMeta?.file_type === "pdf" && workspacePath) {
+    return <PdfViewer filePath={`${workspacePath}/${currentPagePath}`} />;
   }
 
   return (

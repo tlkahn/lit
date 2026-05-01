@@ -1,4 +1,5 @@
 pub mod bib;
+pub mod pdf;
 pub mod cli;
 mod commands;
 pub mod external_editor;
@@ -104,6 +105,7 @@ pub fn run() {
         .manage(Arc::new(commands::graph::GraphBuildState::new()))
         .manage(Arc::new(seed::SeedState::new()))
         .manage(BibCache::new())
+        .manage(commands::pdf_viewer::PdfViewerState::new(&pdf::find_libpdfium_or_default()))
         .setup(move |app| {
             let seed_state: Arc<seed::SeedState> =
                 app.state::<Arc<seed::SeedState>>().inner().clone();
@@ -338,6 +340,9 @@ pub fn run() {
             commands::graph::link_unlinked_mention,
             commands::graph::ensure_graph_ready,
             commands::workspace::get_startup_context,
+            commands::pdf_viewer::pdf_open,
+            commands::pdf_viewer::pdf_render_page,
+            commands::pdf_viewer::pdf_close,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
@@ -356,6 +361,9 @@ pub fn run() {
                 }
                 if let Some(pending) = window.try_state::<PendingCols>() {
                     pending.0.lock().unwrap().remove(&label);
+                }
+                if let Some(pdf_state) = window.try_state::<commands::pdf_viewer::PdfViewerState>() {
+                    let _ = pdf_state.close_for_window(&label);
                 }
             }
         })

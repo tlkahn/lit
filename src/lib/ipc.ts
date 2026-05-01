@@ -405,6 +405,32 @@ export async function ensureGraphReady(path: string): Promise<void> {
   return invoke<void>("ensure_graph_ready", { path });
 }
 
+// PDF viewer
+
+export interface PdfInfo {
+  page_count: number;
+  path: string;
+}
+
+export interface RenderedPage {
+  page_index: number;
+  png_base64: string;
+  width: number;
+  height: number;
+}
+
+export async function pdfOpen(path: string): Promise<PdfInfo> {
+  return invoke<PdfInfo>("pdf_open", { path });
+}
+
+export async function pdfRenderPage(pageIndex: number, scale: number): Promise<RenderedPage> {
+  return invoke<RenderedPage>("pdf_render_page", { pageIndex, scale });
+}
+
+export async function pdfClose(): Promise<void> {
+  return invoke<void>("pdf_close");
+}
+
 // External editor
 
 export async function openInExternalEditor(

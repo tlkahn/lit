@@ -923,6 +923,54 @@ describe("ContentArea jump recording on page switch", () => {
   });
 });
 
+describe("ContentArea PDF rendering", () => {
+  it("renders PdfViewer when file_type is pdf", async () => {
+    const pdfPage = {
+      title: "Doc",
+      relative_path: "doc.pdf",
+      frontmatter: {},
+      created_at: 1000,
+      modified_at: 2000,
+      file_type: "pdf" as const,
+    };
+    useWorkspaceStore.setState({
+      workspacePath: "/test",
+      pages: [pdfPage],
+      currentPagePath: "doc.pdf",
+    });
+
+    mockInvoke((cmd, args) => {
+      if (cmd === "pdf_open") return { page_count: 2, path: (args as Record<string, unknown>)?.path ?? "" };
+      if (cmd === "pdf_render_page") return { page_index: 0, png_base64: "AAAA", width: 100, height: 200 };
+      if (cmd === "pdf_close") return null;
+      if (cmd === "get_keymaps") return [];
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("editor")).not.toBeInTheDocument();
+  });
+
+  it("does NOT render PdfViewer for markdown files", async () => {
+    useWorkspaceStore.setState({
+      workspacePath: "/test",
+      pages: [samplePage.meta],
+      currentPagePath: "Hello.md",
+    });
+
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("pdf-viewer")).not.toBeInTheDocument();
+  });
+});
+
 describe("ContentArea menu://open-in-external-editor", () => {
   beforeEach(() => {
     resetListenMock();

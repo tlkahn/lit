@@ -7,4 +7,5 @@ pub mod keymap;
 pub mod page;
 pub mod preferences;
 pub mod theme;
+pub mod pdf_viewer;
 pub mod workspace;

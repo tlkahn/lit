@@ -32,6 +32,7 @@ Thumbs.db
 # Tauri
 src-tauri/target/
 src-tauri/binaries/
+src-tauri/libs/
 src-tauri/WixTools/
 src-tauri/Frameworks/
 
