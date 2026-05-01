@@ -423,8 +423,8 @@ export async function pdfOpen(path: string): Promise<PdfInfo> {
   return invoke<PdfInfo>("pdf_open", { path });
 }
 
-export async function pdfRenderPage(pageIndex: number, scale: number): Promise<RenderedPage> {
-  return invoke<RenderedPage>("pdf_render_page", { pageIndex, scale });
+export async function pdfRenderPage(pageIndex: number, dpi: number): Promise<RenderedPage> {
+  return invoke<RenderedPage>("pdf_render_page", { pageIndex, dpi });
 }
 
 export async function pdfClose(): Promise<void> {

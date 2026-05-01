@@ -620,11 +620,11 @@ describe("ipc", () => {
   });
 
   it("pdfRenderPage calls pdf_render_page", async () => {
-    const page = await pdfRenderPage(1, 2.0);
+    const page = await pdfRenderPage(1, 288);
     expect(page.page_index).toBe(1);
     expect(page.width).toBe(612);
     const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("pdf_render_page", { pageIndex: 1, scale: 2.0 });
+    expect(invoke).toHaveBeenCalledWith("pdf_render_page", { pageIndex: 1, dpi: 288 });
   });
 
   it("pdfClose calls pdf_close", async () => {

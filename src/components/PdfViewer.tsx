@@ -2,6 +2,12 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { pdfOpen, pdfRenderPage, pdfClose } from "../lib/ipc";
 import type { PdfInfo, RenderedPage } from "../lib/ipc";
 
+const BASE_DPI = 144;
+
+function getEffectiveDpi(): number {
+  return Math.round(BASE_DPI * (window.devicePixelRatio || 1));
+}
+
 interface PdfViewerProps {
   filePath: string;
 }
@@ -24,7 +30,7 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
         setPdfInfo(info);
         setCurrentPage(0);
 
-        const page = await pdfRenderPage(0, 1.0);
+        const page = await pdfRenderPage(0, getEffectiveDpi());
         if (cancelled) return;
         setRendered(page);
       } catch (err) {
@@ -42,7 +48,7 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
   const goToPage = useCallback(
     async (index: number) => {
       try {
-        const page = await pdfRenderPage(index, 1.0);
+        const page = await pdfRenderPage(index, getEffectiveDpi());
         if (filePathRef.current === filePath) {
           setRendered(page);
           setCurrentPage(index);
@@ -110,7 +116,7 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
           src={`data:image/png;base64,${rendered.png_base64}`}
           alt={`Page ${currentPage + 1}`}
           className="mx-auto shadow-lg"
-          style={{ maxWidth: "100%" }}
+          style={{ maxWidth: "100%", width: `${rendered.width / (window.devicePixelRatio || 1)}px` }}
         />
       </div>
     </main>

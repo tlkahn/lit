@@ -29,7 +29,7 @@ enum PdfCommand {
     },
     RenderPage {
         page_index: i32,
-        scale: f32,
+        dpi: u32,
         reply: mpsc::Sender<Result<RenderedPage, String>>,
     },
     Close {
@@ -80,7 +80,7 @@ impl PdfRenderThread {
                     }
                     PdfCommand::RenderPage {
                         page_index,
-                        scale,
+                        dpi,
                         reply,
                     } => {
                         let result = (|| -> Result<RenderedPage, String> {
@@ -90,7 +90,7 @@ impl PdfRenderThread {
                             let page_ref = doc
                                 .page(page_index)
                                 .map_err(|e| format!("Failed to get page: {e}"))?;
-                            let config = lmpdf::RenderConfig::new().scale(scale);
+                            let config = lmpdf::RenderConfig::new().dpi(dpi);
                             let bitmap = doc
                                 .render_page(page_ref, &config)
                                 .map_err(|e| format!("Failed to render page: {e}"))?;
@@ -147,12 +147,12 @@ impl PdfRenderThread {
         rx.recv().map_err(|_| "Render thread died".to_string())?
     }
 
-    pub fn render_page(&self, page_index: i32, scale: f32) -> Result<RenderedPage, String> {
+    pub fn render_page(&self, page_index: i32, dpi: u32) -> Result<RenderedPage, String> {
         let (tx, rx) = mpsc::channel();
         self.cmd_tx
             .send(PdfCommand::RenderPage {
                 page_index,
-                scale,
+                dpi,
                 reply: tx,
             })
             .map_err(|_| "Render thread died".to_string())?;
@@ -226,7 +226,7 @@ mod tests {
         let thread = PdfRenderThread::new(&lib).unwrap();
         thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
 
-        let rendered = thread.render_page(0, 1.0).unwrap();
+        let rendered = thread.render_page(0, 144).unwrap();
         assert!(!rendered.png_base64.is_empty());
         assert!(rendered.width > 0);
         assert!(rendered.height > 0);
@@ -255,7 +255,7 @@ mod tests {
         thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
         thread.close().unwrap();
 
-        let result = thread.render_page(0, 1.0);
+        let result = thread.render_page(0, 144);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("No document open"));
     }
@@ -282,13 +282,13 @@ mod tests {
 
     #[test]
     #[ignore]
-    fn test_render_page_with_scale() {
+    fn test_render_page_with_dpi() {
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
         thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
 
-        let r1 = thread.render_page(0, 1.0).unwrap();
-        let r2 = thread.render_page(0, 2.0).unwrap();
+        let r1 = thread.render_page(0, 72).unwrap();
+        let r2 = thread.render_page(0, 288).unwrap();
 
         assert!(
             r2.width > r1.width || r2.height > r1.height,

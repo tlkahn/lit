@@ -8,11 +8,15 @@ const mockPdfInfo = { page_count: 3, path: "/test/doc.pdf" };
 const mockRenderedPage = {
   page_index: 0,
   png_base64: "iVBORw0KGgoAAAANSUhEUg==",
-  width: 612,
-  height: 792,
+  width: 1224,
+  height: 1584,
 };
 
 beforeEach(() => {
+  Object.defineProperty(window, "devicePixelRatio", {
+    writable: true,
+    value: 1,
+  });
   mockInvoke((cmd, args) => {
     switch (cmd) {
       case "pdf_open":
@@ -120,6 +124,31 @@ describe("PdfViewer", () => {
       const error = screen.getByTestId("pdf-error");
       expect(error).toBeInTheDocument();
       expect(error.textContent).toContain("Failed to open PDF");
+    });
+  });
+
+  it("passes DPI = 144 × devicePixelRatio to pdfRenderPage", async () => {
+    Object.defineProperty(window, "devicePixelRatio", { value: 2 });
+    render(<PdfViewer filePath="/test/doc.pdf" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+    });
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("pdf_render_page", {
+      pageIndex: 0,
+      dpi: 288,
+    });
+  });
+
+  it("sets CSS width to rendered.width / devicePixelRatio", async () => {
+    Object.defineProperty(window, "devicePixelRatio", { value: 2 });
+    render(<PdfViewer filePath="/test/doc.pdf" />);
+
+    await waitFor(() => {
+      const img = screen.getByTestId("pdf-page-image") as HTMLImageElement;
+      expect(img.style.width).toBe("612px");
     });
   });
 });

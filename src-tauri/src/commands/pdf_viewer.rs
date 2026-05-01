@@ -29,13 +29,13 @@ impl PdfViewerState {
         &self,
         label: &str,
         page_index: i32,
-        scale: f32,
+        dpi: u32,
     ) -> Result<RenderedPage, String> {
         let threads = self.threads.lock().unwrap();
         let thread = threads
             .get(label)
             .ok_or_else(|| "No PDF open in this window".to_string())?;
-        thread.render_page(page_index, scale)
+        thread.render_page(page_index, dpi)
     }
 
     pub fn close_for_window(&self, label: &str) -> Result<(), String> {
@@ -59,11 +59,11 @@ pub fn pdf_open(
 #[tauri::command]
 pub fn pdf_render_page(
     page_index: i32,
-    scale: f32,
+    dpi: u32,
     window: tauri::Window,
     state: tauri::State<'_, PdfViewerState>,
 ) -> Result<RenderedPage, String> {
-    state.render_for_window(window.label(), page_index, scale)
+    state.render_for_window(window.label(), page_index, dpi)
 }
 
 #[tauri::command]
@@ -112,7 +112,7 @@ mod tests {
         state
             .open_for_window("main", fixture_path("sample.pdf").to_str().unwrap())
             .unwrap();
-        let rendered = state.render_for_window("main", 0, 1.0).unwrap();
+        let rendered = state.render_for_window("main", 0, 144).unwrap();
         assert!(!rendered.png_base64.is_empty());
     }
 
@@ -125,7 +125,7 @@ mod tests {
             .open_for_window("main", fixture_path("sample.pdf").to_str().unwrap())
             .unwrap();
         state.close_for_window("main").unwrap();
-        let result = state.render_for_window("main", 0, 1.0);
+        let result = state.render_for_window("main", 0, 144);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("No PDF open in this window"));
     }
@@ -133,7 +133,7 @@ mod tests {
     #[test]
     fn test_render_unknown_window_returns_error() {
         let state = PdfViewerState::new("dummy");
-        let result = state.render_for_window("unknown", 0, 1.0);
+        let result = state.render_for_window("unknown", 0, 144);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("No PDF open in this window"));
     }
