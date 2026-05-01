@@ -342,6 +342,7 @@ pub fn run() {
             commands::workspace::get_startup_context,
             commands::pdf_viewer::pdf_open,
             commands::pdf_viewer::pdf_render_page,
+            commands::pdf_viewer::pdf_prefetch,
             commands::pdf_viewer::pdf_close,
         ])
         .on_window_event(|window, event| {

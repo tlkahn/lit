@@ -27,6 +27,7 @@ import {
   renderBibCitations,
   pdfOpen,
   pdfRenderPage,
+  pdfPrefetch,
   pdfClose,
   openInExternalEditor,
   getUnlinkedMentions,
@@ -174,6 +175,8 @@ describe("ipc", () => {
             width: 612,
             height: 792,
           };
+        case "pdf_prefetch":
+          return null;
         case "pdf_close":
           return null;
         case "open_in_external_editor":
@@ -625,6 +628,12 @@ describe("ipc", () => {
     expect(page.width).toBe(612);
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("pdf_render_page", { pageIndex: 1, dpi: 288 });
+  });
+
+  it("pdfPrefetch calls pdf_prefetch", async () => {
+    await pdfPrefetch(1, 288);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("pdf_prefetch", { pageIndex: 1, dpi: 288 });
   });
 
   it("pdfClose calls pdf_close", async () => {

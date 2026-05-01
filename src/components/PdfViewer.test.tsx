@@ -26,6 +26,8 @@ beforeEach(() => {
         const idx = a?.pageIndex ?? 0;
         return { ...mockRenderedPage, page_index: idx, png_path: `/tmp/lit-pdf-test/page_${idx}.png` };
       }
+      case "pdf_prefetch":
+        return null;
       case "pdf_close":
         return null;
       default:
@@ -151,5 +153,189 @@ describe("PdfViewer", () => {
       const img = screen.getByTestId("pdf-page-image") as HTMLImageElement;
       expect(img.style.width).toBe("612px");
     });
+  });
+
+  it("serves cached page without re-invoking pdf_render_page", async () => {
+    const user = userEvent.setup();
+    render(<PdfViewer filePath="/test/doc.pdf" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+    });
+
+    const { invoke } = await import("@tauri-apps/api/core");
+
+    await user.click(screen.getByTestId("pdf-next"));
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 2 / 3");
+    });
+
+    const callsBefore = (invoke as unknown as ReturnType<typeof import("vitest").vi.fn>).mock.calls
+      .filter((c: unknown[]) => c[0] === "pdf_render_page").length;
+
+    await user.click(screen.getByTestId("pdf-prev"));
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+    });
+
+    const callsAfter = (invoke as unknown as ReturnType<typeof import("vitest").vi.fn>).mock.calls
+      .filter((c: unknown[]) => c[0] === "pdf_render_page").length;
+
+    expect(callsAfter).toBe(callsBefore);
+  });
+
+  it("clears cache when filePath changes", async () => {
+    const { rerender } = render(<PdfViewer filePath="/test/doc.pdf" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+    });
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    (invoke as unknown as ReturnType<typeof import("vitest").vi.fn>).mockClear();
+
+    mockInvoke((cmd, args) => {
+      switch (cmd) {
+        case "pdf_open":
+          return { page_count: 2, path: "/test/other.pdf" };
+        case "pdf_render_page": {
+          const a = args as Record<string, unknown>;
+          const idx = a?.pageIndex ?? 0;
+          return { ...mockRenderedPage, page_index: idx, png_path: `/tmp/lit-pdf-test/page_${idx}.png` };
+        }
+        case "pdf_prefetch":
+          return null;
+        case "pdf_close":
+          return null;
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    rerender(<PdfViewer filePath="/test/other.pdf" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+    });
+
+    expect(invoke).toHaveBeenCalledWith("pdf_render_page", expect.objectContaining({ pageIndex: 0 }));
+  });
+
+  it("prefetches adjacent pages after rendering current page", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+    });
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    const prefetchCalls = (invoke as unknown as ReturnType<typeof import("vitest").vi.fn>).mock.calls
+      .filter((c: unknown[]) => c[0] === "pdf_prefetch");
+
+    expect(prefetchCalls).toHaveLength(1);
+    expect(prefetchCalls[0]![1]).toEqual(expect.objectContaining({ pageIndex: 1 }));
+  });
+
+  it("prefetches both neighbors on middle page", async () => {
+    const user = userEvent.setup();
+    render(<PdfViewer filePath="/test/doc.pdf" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+    });
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    (invoke as unknown as ReturnType<typeof import("vitest").vi.fn>).mockClear();
+
+    mockInvoke((cmd, args) => {
+      switch (cmd) {
+        case "pdf_render_page": {
+          const a = args as Record<string, unknown>;
+          const idx = a?.pageIndex ?? 0;
+          return { ...mockRenderedPage, page_index: idx, png_path: `/tmp/lit-pdf-test/page_${idx}.png` };
+        }
+        case "pdf_prefetch":
+          return null;
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    await user.click(screen.getByTestId("pdf-next"));
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 2 / 3");
+    });
+
+    const prefetchCalls = (invoke as unknown as ReturnType<typeof import("vitest").vi.fn>).mock.calls
+      .filter((c: unknown[]) => c[0] === "pdf_prefetch");
+
+    const prefetchedPages = prefetchCalls.map(
+      (c: unknown[]) => (c[1] as Record<string, unknown>).pageIndex
+    );
+    expect(prefetchedPages).toContain(0);
+    expect(prefetchedPages).toContain(2);
+  });
+
+  it("evicts oldest entry when cache exceeds MAX_CACHE", async () => {
+    const bigPdfInfo = { page_count: 8, path: "/test/big.pdf" };
+    mockInvoke((cmd, args) => {
+      switch (cmd) {
+        case "pdf_open":
+          return bigPdfInfo;
+        case "pdf_render_page": {
+          const a = args as Record<string, unknown>;
+          const idx = a?.pageIndex ?? 0;
+          return { ...mockRenderedPage, page_index: idx, png_path: `/tmp/lit-pdf-test/page_${idx}.png` };
+        }
+        case "pdf_prefetch":
+          return null;
+        case "pdf_close":
+          return null;
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const user = userEvent.setup();
+    render(<PdfViewer filePath="/test/big.pdf" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 8");
+    });
+
+    for (let i = 0; i < 6; i++) {
+      await user.click(screen.getByTestId("pdf-next"));
+      await waitFor(() => {
+        expect(screen.getByTestId("pdf-page-indicator").textContent).toBe(`Page ${i + 2} / 8`);
+      });
+    }
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    (invoke as unknown as ReturnType<typeof import("vitest").vi.fn>).mockClear();
+
+    mockInvoke((cmd, args) => {
+      switch (cmd) {
+        case "pdf_render_page": {
+          const a = args as Record<string, unknown>;
+          const idx = a?.pageIndex ?? 0;
+          return { ...mockRenderedPage, page_index: idx, png_path: `/tmp/lit-pdf-test/page_${idx}.png` };
+        }
+        case "pdf_prefetch":
+          return null;
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    for (let i = 5; i >= 0; i--) {
+      await user.click(screen.getByTestId("pdf-prev"));
+      await waitFor(() => {
+        expect(screen.getByTestId("pdf-page-indicator").textContent).toBe(`Page ${i + 1} / 8`);
+      });
+    }
+
+    const renderCalls = (invoke as unknown as ReturnType<typeof import("vitest").vi.fn>).mock.calls
+      .filter((c: unknown[]) => c[0] === "pdf_render_page");
+    expect(renderCalls.length).toBeGreaterThan(0);
   });
 });

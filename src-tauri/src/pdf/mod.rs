@@ -1,4 +1,5 @@
 use image::ImageEncoder;
+use std::collections::HashMap;
 use std::fs;
 use std::io::BufWriter;
 use std::path::PathBuf;
@@ -35,6 +36,10 @@ enum PdfCommand {
     },
     Close {
         reply: mpsc::Sender<Result<(), String>>,
+    },
+    PreRender {
+        page_index: i32,
+        dpi: u32,
     },
 }
 
@@ -81,6 +86,44 @@ impl PdfRenderThread {
             };
 
             let mut document: Option<lmpdf::Document> = None;
+            let mut cache: HashMap<(i32, u32), RenderedPage> = HashMap::new();
+
+            let render_page = |doc: &lmpdf::Document,
+                               page_index: i32,
+                               dpi: u32,
+                               temp_dir: &std::path::Path|
+             -> Result<RenderedPage, String> {
+                let page_ref = doc
+                    .page(page_index)
+                    .map_err(|e| format!("Failed to get page: {e}"))?;
+                let config = lmpdf::RenderConfig::new().dpi(dpi);
+                let bitmap = doc
+                    .render_page(page_ref, &config)
+                    .map_err(|e| format!("Failed to render page: {e}"))?;
+
+                let img = bitmap.to_image();
+                let width = img.width();
+                let height = img.height();
+
+                let png_path = temp_dir.join(format!("page_{page_index}_{dpi}.png"));
+                let file = fs::File::create(&png_path)
+                    .map_err(|e| format!("Failed to create PNG file: {e}"))?;
+                let writer = BufWriter::new(file);
+                image::codecs::png::PngEncoder::new_with_quality(
+                    writer,
+                    image::codecs::png::CompressionType::Fast,
+                    image::codecs::png::FilterType::Sub,
+                )
+                .write_image(img.as_bytes(), width, height, img.color().into())
+                .map_err(|e| format!("PNG encode failed: {e}"))?;
+
+                Ok(RenderedPage {
+                    page_index,
+                    png_path: png_path.to_string_lossy().to_string(),
+                    width,
+                    height,
+                })
+            };
 
             while let Ok(cmd) = cmd_rx.recv() {
                 match cmd {
@@ -92,6 +135,7 @@ impl PdfRenderThread {
                                     path: path.clone(),
                                 };
                                 document = Some(doc);
+                                cache.clear();
                                 let _ = reply.send(Ok(info));
                             }
                             Err(e) => {
@@ -104,52 +148,38 @@ impl PdfRenderThread {
                         dpi,
                         reply,
                     } => {
+                        if let Some(cached) = cache.get(&(page_index, dpi)) {
+                            let _ = reply.send(Ok(cached.clone()));
+                            continue;
+                        }
                         let result = (|| -> Result<RenderedPage, String> {
                             let doc = document
                                 .as_ref()
                                 .ok_or_else(|| "No document open".to_string())?;
-                            let page_ref = doc
-                                .page(page_index)
-                                .map_err(|e| format!("Failed to get page: {e}"))?;
-                            let config = lmpdf::RenderConfig::new().dpi(dpi);
-                            let bitmap = doc
-                                .render_page(page_ref, &config)
-                                .map_err(|e| format!("Failed to render page: {e}"))?;
-
-                            let img = bitmap.to_image();
-                            let width = img.width();
-                            let height = img.height();
-
-                            let png_path = thread_temp_dir.join(format!("page_{page_index}.png"));
-                            let file = fs::File::create(&png_path)
-                                .map_err(|e| format!("Failed to create PNG file: {e}"))?;
-                            let writer = BufWriter::new(file);
-                            image::codecs::png::PngEncoder::new_with_quality(
-                                writer,
-                                image::codecs::png::CompressionType::Fast,
-                                image::codecs::png::FilterType::Sub,
-                            )
-                            .write_image(
-                                img.as_bytes(),
-                                width,
-                                height,
-                                img.color().into(),
-                            )
-                            .map_err(|e| format!("PNG encode failed: {e}"))?;
-
-                            Ok(RenderedPage {
-                                page_index,
-                                png_path: png_path.to_string_lossy().to_string(),
-                                width,
-                                height,
-                            })
+                            render_page(doc, page_index, dpi, &thread_temp_dir)
                         })();
+                        if let Ok(ref rendered) = result {
+                            cache.insert((page_index, dpi), rendered.clone());
+                        }
                         let _ = reply.send(result);
                     }
                     PdfCommand::Close { reply } => {
                         document = None;
+                        cache.clear();
                         cleanup_pdf_temp_dir(&thread_temp_dir);
                         let _ = reply.send(Ok(()));
+                    }
+                    PdfCommand::PreRender { page_index, dpi } => {
+                        if cache.contains_key(&(page_index, dpi)) {
+                            continue;
+                        }
+                        if let Some(doc) = document.as_ref() {
+                            if let Ok(rendered) =
+                                render_page(doc, page_index, dpi, &thread_temp_dir)
+                            {
+                                cache.insert((page_index, dpi), rendered);
+                            }
+                        }
                     }
                 }
             }
@@ -191,6 +221,12 @@ impl PdfRenderThread {
             .send(PdfCommand::Close { reply: tx })
             .map_err(|_| "Render thread died".to_string())?;
         rx.recv().map_err(|_| "Render thread died".to_string())?
+    }
+
+    pub fn prefetch(&self, page_index: i32, dpi: u32) -> Result<(), String> {
+        self.cmd_tx
+            .send(PdfCommand::PreRender { page_index, dpi })
+            .map_err(|_| "Render thread died".to_string())
     }
 
     pub fn temp_dir(&self) -> &std::path::Path {
@@ -346,6 +382,113 @@ mod tests {
             "2x scale should produce larger image: {}x{} vs {}x{}",
             r2.width, r2.height, r1.width, r1.height,
         );
+
+        thread.close().unwrap();
+    }
+
+    #[test]
+    #[ignore]
+    fn test_render_page_encodes_dpi_in_filename() {
+        let lib = require_pdfium();
+        let thread = PdfRenderThread::new(&lib).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+
+        let rendered = thread.render_page(0, 144).unwrap();
+        assert!(
+            rendered.png_path.contains("page_0_144.png"),
+            "Expected DPI in filename, got: {}",
+            rendered.png_path
+        );
+
+        thread.close().unwrap();
+    }
+
+    #[test]
+    #[ignore]
+    fn test_render_page_returns_cached_without_rewrite() {
+        let lib = require_pdfium();
+        let thread = PdfRenderThread::new(&lib).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+
+        let r1 = thread.render_page(0, 144).unwrap();
+        let mtime1 = fs::metadata(&r1.png_path).unwrap().modified().unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let r2 = thread.render_page(0, 144).unwrap();
+        let mtime2 = fs::metadata(&r2.png_path).unwrap().modified().unwrap();
+
+        assert_eq!(r1.png_path, r2.png_path);
+        assert_eq!(mtime1, mtime2, "File should not have been rewritten");
+
+        thread.close().unwrap();
+    }
+
+    #[test]
+    #[ignore]
+    fn test_cache_invalidated_on_open() {
+        let lib = require_pdfium();
+        let thread = PdfRenderThread::new(&lib).unwrap();
+        let pdf = fixture_path("sample.pdf").to_str().unwrap().to_string();
+        thread.open(&pdf).unwrap();
+
+        let r1 = thread.render_page(0, 144).unwrap();
+        let mtime1 = fs::metadata(&r1.png_path).unwrap().modified().unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        thread.open(&pdf).unwrap();
+        let r2 = thread.render_page(0, 144).unwrap();
+        let mtime2 = fs::metadata(&r2.png_path).unwrap().modified().unwrap();
+
+        assert!(mtime2 > mtime1, "File should have been re-rendered after re-open");
+
+        thread.close().unwrap();
+    }
+
+    #[test]
+    #[ignore]
+    fn test_prefetch_creates_png_without_blocking() {
+        let lib = require_pdfium();
+        let thread = PdfRenderThread::new(&lib).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+
+        thread.prefetch(1, 144).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(500));
+
+        let expected = thread.temp_dir().join("page_1_144.png");
+        assert!(expected.exists(), "Prefetched PNG should exist at {:?}", expected);
+
+        thread.close().unwrap();
+    }
+
+    #[test]
+    #[ignore]
+    fn test_prefetch_no_document_does_not_panic() {
+        let lib = require_pdfium();
+        let thread = PdfRenderThread::new(&lib).unwrap();
+        let result = thread.prefetch(0, 144);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    #[ignore]
+    fn test_prefetch_populates_cache_for_subsequent_render() {
+        let lib = require_pdfium();
+        let thread = PdfRenderThread::new(&lib).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+
+        thread.prefetch(0, 144).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(500));
+
+        let png_path = thread.temp_dir().join("page_0_144.png");
+        let mtime1 = fs::metadata(&png_path).unwrap().modified().unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let rendered = thread.render_page(0, 144).unwrap();
+        let mtime2 = fs::metadata(&rendered.png_path).unwrap().modified().unwrap();
+        assert_eq!(mtime1, mtime2, "render_page should use prefetched cache");
 
         thread.close().unwrap();
     }

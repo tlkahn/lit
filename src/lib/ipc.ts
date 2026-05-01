@@ -427,6 +427,10 @@ export async function pdfRenderPage(pageIndex: number, dpi: number): Promise<Ren
   return invoke<RenderedPage>("pdf_render_page", { pageIndex, dpi });
 }
 
+export async function pdfPrefetch(pageIndex: number, dpi: number): Promise<void> {
+  return invoke<void>("pdf_prefetch", { pageIndex, dpi });
+}
+
 export async function pdfClose(): Promise<void> {
   return invoke<void>("pdf_close");
 }

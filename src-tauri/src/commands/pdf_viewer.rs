@@ -51,6 +51,19 @@ impl PdfViewerState {
         Ok(())
     }
 
+    pub fn prefetch_for_window(
+        &self,
+        label: &str,
+        page_index: i32,
+        dpi: u32,
+    ) -> Result<(), String> {
+        let threads = self.threads.lock().unwrap();
+        if let Some(thread) = threads.get(label) {
+            thread.prefetch(page_index, dpi)?;
+        }
+        Ok(())
+    }
+
     pub fn temp_dir_for_window(&self, label: &str) -> Option<PathBuf> {
         let threads = self.threads.lock().unwrap();
         threads.get(label).map(|t| t.temp_dir().to_path_buf())
@@ -84,6 +97,16 @@ pub fn pdf_render_page(
     state: tauri::State<'_, PdfViewerState>,
 ) -> Result<RenderedPage, String> {
     state.render_for_window(window.label(), page_index, dpi)
+}
+
+#[tauri::command]
+pub fn pdf_prefetch(
+    page_index: i32,
+    dpi: u32,
+    window: tauri::Window,
+    state: tauri::State<'_, PdfViewerState>,
+) -> Result<(), String> {
+    state.prefetch_for_window(window.label(), page_index, dpi)
 }
 
 #[tauri::command]
@@ -179,5 +202,24 @@ mod tests {
     fn test_temp_dir_for_unknown_window_returns_none() {
         let state = PdfViewerState::new("dummy");
         assert!(state.temp_dir_for_window("unknown").is_none());
+    }
+
+    #[test]
+    #[ignore]
+    fn test_prefetch_for_window_succeeds() {
+        let lib = require_pdfium();
+        let state = PdfViewerState::new(&lib);
+        state
+            .open_for_window("main", fixture_path("sample.pdf").to_str().unwrap())
+            .unwrap();
+        let result = state.prefetch_for_window("main", 1, 144);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_prefetch_for_unknown_window_returns_ok() {
+        let state = PdfViewerState::new("dummy");
+        let result = state.prefetch_for_window("unknown", 0, 144);
+        assert!(result.is_ok());
     }
 }

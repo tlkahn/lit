@@ -1,12 +1,35 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { pdfOpen, pdfRenderPage, pdfClose } from "../lib/ipc";
+import { pdfOpen, pdfRenderPage, pdfPrefetch, pdfClose } from "../lib/ipc";
 import type { PdfInfo, RenderedPage } from "../lib/ipc";
 
 const BASE_DPI = 144;
+const MAX_CACHE = 5;
 
 function getEffectiveDpi(): number {
   return Math.round(BASE_DPI * (window.devicePixelRatio || 1));
+}
+
+function cacheKey(pageIndex: number, dpi: number): string {
+  return `${pageIndex}_${dpi}`;
+}
+
+function cacheSet(cache: Map<string, RenderedPage>, key: string, value: RenderedPage) {
+  cache.delete(key);
+  cache.set(key, value);
+  if (cache.size > MAX_CACHE) {
+    const oldest = cache.keys().next().value!;
+    cache.delete(oldest);
+  }
+}
+
+function cacheGet(cache: Map<string, RenderedPage>, key: string): RenderedPage | undefined {
+  const val = cache.get(key);
+  if (val !== undefined) {
+    cache.delete(key);
+    cache.set(key, val);
+  }
+  return val;
 }
 
 interface PdfViewerProps {
@@ -19,9 +42,16 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
   const [rendered, setRendered] = useState<RenderedPage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const filePathRef = useRef(filePath);
+  const cacheRef = useRef(new Map<string, RenderedPage>());
+
+  const prefetchAdjacent = useCallback((pageIndex: number, pageCount: number, dpi: number) => {
+    if (pageIndex > 0) pdfPrefetch(pageIndex - 1, dpi).catch(() => {});
+    if (pageIndex < pageCount - 1) pdfPrefetch(pageIndex + 1, dpi).catch(() => {});
+  }, []);
 
   useEffect(() => {
     filePathRef.current = filePath;
+    cacheRef.current.clear();
     let cancelled = false;
 
     (async () => {
@@ -31,9 +61,12 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
         setPdfInfo(info);
         setCurrentPage(0);
 
-        const page = await pdfRenderPage(0, getEffectiveDpi());
+        const dpi = getEffectiveDpi();
+        const page = await pdfRenderPage(0, dpi);
         if (cancelled) return;
+        cacheSet(cacheRef.current, cacheKey(0, dpi), page);
         setRendered(page);
+        prefetchAdjacent(0, info.page_count, dpi);
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : String(err));
@@ -44,21 +77,33 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
       cancelled = true;
       pdfClose().catch(() => {});
     };
-  }, [filePath]);
+  }, [filePath, prefetchAdjacent]);
 
   const goToPage = useCallback(
     async (index: number) => {
       try {
-        const page = await pdfRenderPage(index, getEffectiveDpi());
+        const dpi = getEffectiveDpi();
+        const key = cacheKey(index, dpi);
+        const cached = cacheGet(cacheRef.current, key);
+        if (cached && filePathRef.current === filePath) {
+          setRendered(cached);
+          setCurrentPage(index);
+          prefetchAdjacent(index, pdfInfo?.page_count ?? 0, dpi);
+          return;
+        }
+
+        const page = await pdfRenderPage(index, dpi);
         if (filePathRef.current === filePath) {
+          cacheSet(cacheRef.current, key, page);
           setRendered(page);
           setCurrentPage(index);
+          prefetchAdjacent(index, pdfInfo?.page_count ?? 0, dpi);
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       }
     },
-    [filePath],
+    [filePath, pdfInfo, prefetchAdjacent],
   );
 
   if (error) {
