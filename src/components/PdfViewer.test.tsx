@@ -276,6 +276,88 @@ describe("PdfViewer", () => {
     expect(prefetchedPages).toContain(2);
   });
 
+  it("shows spinner during initial loading", () => {
+    render(<PdfViewer filePath="/test/doc.pdf" />);
+    const loading = screen.getByTestId("pdf-loading");
+    expect(loading.querySelector("svg")).toBeInTheDocument();
+    expect(loading.textContent).toContain("Loading PDF…");
+  });
+
+  it("shows spinner overlay during page navigation (cache miss)", async () => {
+    const user = userEvent.setup();
+    render(<PdfViewer filePath="/test/doc.pdf" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+    });
+
+    let resolveRender!: (v: unknown) => void;
+    const deferred = new Promise((r) => {
+      resolveRender = r;
+    });
+    mockInvoke((cmd) => {
+      if (cmd === "pdf_render_page") return deferred;
+      if (cmd === "pdf_prefetch") return null;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    await user.click(screen.getByTestId("pdf-next"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-loading")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+
+    resolveRender({ ...mockRenderedPage, page_index: 1, png_path: "/tmp/lit-pdf-test/page_1.png" });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("pdf-page-loading")).not.toBeInTheDocument();
+    });
+  });
+
+  it("does not show spinner overlay on cache hit", async () => {
+    const user = userEvent.setup();
+    render(<PdfViewer filePath="/test/doc.pdf" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+    });
+
+    await user.click(screen.getByTestId("pdf-next"));
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 2 / 3");
+    });
+
+    await user.click(screen.getByTestId("pdf-prev"));
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+    });
+
+    expect(screen.queryByTestId("pdf-page-loading")).not.toBeInTheDocument();
+  });
+
+  it("hides spinner overlay when page render fails", async () => {
+    const user = userEvent.setup();
+    render(<PdfViewer filePath="/test/doc.pdf" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+    });
+
+    mockInvoke((cmd) => {
+      if (cmd === "pdf_render_page") throw new Error("render failed");
+      if (cmd === "pdf_prefetch") return null;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    await user.click(screen.getByTestId("pdf-next"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-error")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("pdf-page-loading")).not.toBeInTheDocument();
+  });
+
   it("evicts oldest entry when cache exceeds MAX_CACHE", async () => {
     const bigPdfInfo = { page_count: 8, path: "/test/big.pdf" };
     mockInvoke((cmd, args) => {

@@ -32,6 +32,15 @@ function cacheGet(cache: Map<string, RenderedPage>, key: string): RenderedPage |
   return val;
 }
 
+function SpinnerSvg({ className }: { className: string }) {
+  return (
+    <svg className={`animate-spin ${className}`} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+    </svg>
+  );
+}
+
 interface PdfViewerProps {
   filePath: string;
 }
@@ -41,6 +50,7 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
   const [currentPage, setCurrentPage] = useState(0);
   const [rendered, setRendered] = useState<RenderedPage | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pageLoading, setPageLoading] = useState(false);
   const filePathRef = useRef(filePath);
   const cacheRef = useRef(new Map<string, RenderedPage>());
 
@@ -92,12 +102,17 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
           return;
         }
 
-        const page = await pdfRenderPage(index, dpi);
-        if (filePathRef.current === filePath) {
-          cacheSet(cacheRef.current, key, page);
-          setRendered(page);
-          setCurrentPage(index);
-          prefetchAdjacent(index, pdfInfo?.page_count ?? 0, dpi);
+        setPageLoading(true);
+        try {
+          const page = await pdfRenderPage(index, dpi);
+          if (filePathRef.current === filePath) {
+            cacheSet(cacheRef.current, key, page);
+            setRendered(page);
+            setCurrentPage(index);
+            prefetchAdjacent(index, pdfInfo?.page_count ?? 0, dpi);
+          }
+        } finally {
+          setPageLoading(false);
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
@@ -120,9 +135,10 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
   if (!rendered) {
     return (
       <main
-        className="flex flex-1 items-center justify-center bg-bg-primary-alt"
+        className="flex flex-1 flex-col items-center justify-center gap-2 bg-bg-primary-alt"
         data-testid="pdf-loading"
       >
+        <SpinnerSvg className="h-5 w-5 text-text-faint" />
         <p className="text-text-faint">Loading PDF…</p>
       </main>
     );
@@ -156,7 +172,7 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
           Next →
         </button>
       </div>
-      <div className="flex-1 overflow-auto px-4 pb-4">
+      <div className="relative flex-1 overflow-auto px-4 pb-4">
         <img
           data-testid="pdf-page-image"
           src={convertFileSrc(rendered.png_path)}
@@ -164,6 +180,16 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
           className="mx-auto shadow-lg"
           style={{ maxWidth: "100%", width: `${rendered.width / (window.devicePixelRatio || 1)}px` }}
         />
+        {pageLoading && (
+          <div
+            data-testid="pdf-page-loading"
+            className="absolute inset-0 flex items-center justify-center pointer-events-none"
+          >
+            <div className="rounded-full bg-bg-primary-alt/80 p-3 shadow">
+              <SpinnerSvg className="h-6 w-6 text-text-faint" />
+            </div>
+          </div>
+        )}
       </div>
     </main>
   );
