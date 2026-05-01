@@ -11,14 +11,14 @@ use serde::Serialize;
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct PdfInfo {
-    pub page_count: i32,
+    pub page_count: usize,
     pub path: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct RenderedPage {
-    pub page_index: i32,
+    pub page_index: usize,
     pub png_path: String,
     pub width: u32,
     pub height: u32,
@@ -30,7 +30,7 @@ enum PdfCommand {
         reply: mpsc::Sender<Result<PdfInfo, String>>,
     },
     RenderPage {
-        page_index: i32,
+        page_index: usize,
         dpi: u32,
         reply: mpsc::Sender<Result<RenderedPage, String>>,
     },
@@ -38,7 +38,7 @@ enum PdfCommand {
         reply: mpsc::Sender<Result<(), String>>,
     },
     PreRender {
-        page_index: i32,
+        page_index: usize,
         dpi: u32,
     },
 }
@@ -86,10 +86,10 @@ impl PdfRenderThread {
             };
 
             let mut document: Option<lmpdf::Document> = None;
-            let mut cache: HashMap<(i32, u32), RenderedPage> = HashMap::new();
+            let mut cache: HashMap<(usize, u32), RenderedPage> = HashMap::new();
 
             let render_page = |doc: &lmpdf::Document,
-                               page_index: i32,
+                               page_index: usize,
                                dpi: u32,
                                temp_dir: &std::path::Path|
              -> Result<RenderedPage, String> {
@@ -203,7 +203,7 @@ impl PdfRenderThread {
         rx.recv().map_err(|_| "Render thread died".to_string())?
     }
 
-    pub fn render_page(&self, page_index: i32, dpi: u32) -> Result<RenderedPage, String> {
+    pub fn render_page(&self, page_index: usize, dpi: u32) -> Result<RenderedPage, String> {
         let (tx, rx) = mpsc::channel();
         self.cmd_tx
             .send(PdfCommand::RenderPage {
@@ -223,7 +223,7 @@ impl PdfRenderThread {
         rx.recv().map_err(|_| "Render thread died".to_string())?
     }
 
-    pub fn prefetch(&self, page_index: i32, dpi: u32) -> Result<(), String> {
+    pub fn prefetch(&self, page_index: usize, dpi: u32) -> Result<(), String> {
         self.cmd_tx
             .send(PdfCommand::PreRender { page_index, dpi })
             .map_err(|_| "Render thread died".to_string())
@@ -491,5 +491,19 @@ mod tests {
         assert_eq!(mtime1, mtime2, "render_page should use prefetched cache");
 
         thread.close().unwrap();
+    }
+
+    #[test]
+    fn test_page_types_are_usize() {
+        let info = PdfInfo { page_count: 0usize, path: String::new() };
+        let _: usize = info.page_count;
+
+        let rendered = RenderedPage {
+            page_index: 0usize,
+            png_path: String::new(),
+            width: 0,
+            height: 0,
+        };
+        let _: usize = rendered.page_index;
     }
 }

@@ -33,7 +33,7 @@ impl PdfViewerState {
     pub fn render_for_window(
         &self,
         label: &str,
-        page_index: i32,
+        page_index: usize,
         dpi: u32,
     ) -> Result<RenderedPage, String> {
         let threads = self.threads.lock().unwrap();
@@ -54,7 +54,7 @@ impl PdfViewerState {
     pub fn prefetch_for_window(
         &self,
         label: &str,
-        page_index: i32,
+        page_index: usize,
         dpi: u32,
     ) -> Result<(), String> {
         let threads = self.threads.lock().unwrap();
@@ -91,7 +91,7 @@ pub fn pdf_open(
 
 #[tauri::command]
 pub fn pdf_render_page(
-    page_index: i32,
+    page_index: usize,
     dpi: u32,
     window: tauri::Window,
     state: tauri::State<'_, PdfViewerState>,
@@ -101,7 +101,7 @@ pub fn pdf_render_page(
 
 #[tauri::command]
 pub fn pdf_prefetch(
-    page_index: i32,
+    page_index: usize,
     dpi: u32,
     window: tauri::Window,
     state: tauri::State<'_, PdfViewerState>,
@@ -221,5 +221,13 @@ mod tests {
         let state = PdfViewerState::new("dummy");
         let result = state.prefetch_for_window("unknown", 0, 144);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_page_index_accepts_usize() {
+        let state = PdfViewerState::new("dummy");
+        let idx: usize = 0;
+        let _ = state.render_for_window("x", idx, 72);
+        let _ = state.prefetch_for_window("x", idx, 72);
     }
 }
