@@ -16,6 +16,7 @@ export interface PreferencesState {
   crossrefEnableCiteproc: boolean;
   mediaThumbnails: boolean;
   experimentalUnlinkedReferences: boolean;
+  annotationDefaultLang: string;
   loaded: boolean;
   loadPreferences: () => Promise<void>;
 }
@@ -48,6 +49,7 @@ function mapPreferences(prefs: Preferences) {
     crossrefEnableCiteproc: (prefs["crossref.enableCiteproc"] as boolean) ?? true,
     mediaThumbnails: (prefs["editor.mediaThumbnails"] as boolean) ?? true,
     experimentalUnlinkedReferences: (prefs["experimental.unlinkedReferences"] as boolean) ?? true,
+    annotationDefaultLang: (prefs["annotations.defaultLang"] as string) ?? "en",
   };
 }
 
@@ -62,6 +64,7 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   crossrefEnableCiteproc: true,
   mediaThumbnails: true,
   experimentalUnlinkedReferences: true,
+  annotationDefaultLang: "en",
   loaded: false,
 
   loadPreferences: async () => {

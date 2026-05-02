@@ -1,9 +1,11 @@
 import { type Extension, StateEffect, StateField } from "@codemirror/state";
-import { Decoration, EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view";
+import { Decoration, EditorView, ViewPlugin, type ViewUpdate, keymap } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { parseAnnotations, type Annotation } from "../../lib/ipc";
 import { isCursorOnLine } from "./proximity";
 import { PillWidget, CalloutWidget, annotationFoldField } from "./annotationWidgets";
+import { scopeHighlightExtension } from "./scopeHighlight";
+import { escapeAnnotationKeymap } from "./escapeAnnotation";
 
 export const setAnnotationData = StateEffect.define<Annotation[]>();
 
@@ -117,5 +119,12 @@ export const annotationDecorationProvider = EditorView.decorations.compute(
 );
 
 export function annotationExtension(): Extension {
-  return [annotationDataField, annotationPlugin, annotationDecorationProvider, annotationFoldField];
+  return [
+    annotationDataField,
+    annotationPlugin,
+    annotationDecorationProvider,
+    annotationFoldField,
+    scopeHighlightExtension(),
+    keymap.of(escapeAnnotationKeymap),
+  ];
 }

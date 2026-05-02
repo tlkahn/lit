@@ -1,15 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EditorState } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
 import { PillWidget, CalloutWidget, toggleAnnotationFoldEffect, annotationFoldField } from "./annotationWidgets";
 import type { Annotation } from "../../lib/ipc";
 
 vi.mock("../../lib/ipc", () => ({
   parseAnnotations: vi.fn(async () => []),
+  resolveAnnotationScope: vi.fn(async () => null),
 }));
 
 beforeEach(() => {
   vi.clearAllMocks();
 });
+
+function makeEditorView(doc = "hello world"): EditorView {
+  const state = EditorState.create({ doc });
+  return new EditorView({ state, parent: document.createElement("div") });
+}
 
 function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
   return {
@@ -29,13 +36,16 @@ function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
 
 describe("PillWidget", () => {
   it("toDOM returns span.cm-annotation-pill", () => {
+    const view = makeEditorView();
     const w = new PillWidget(makeAnnotation({ body: "body" }));
-    const dom = w.toDOM();
+    const dom = w.toDOM(view);
     expect(dom.tagName).toBe("SPAN");
     expect(dom.classList.contains("cm-annotation-pill")).toBe(true);
+    view.destroy();
   });
 
   it("renders type icon, body, and date", () => {
+    const view = makeEditorView();
     const ann = makeAnnotation({
       annotation_type: "note",
       certainty: "firm",
@@ -46,26 +56,31 @@ describe("PillWidget", () => {
       original: "%%!n | hello @2026-04%%",
     });
     const w = new PillWidget(ann);
-    const dom = w.toDOM();
+    const dom = w.toDOM(view);
     expect(dom.querySelector(".cm-annotation-pill-icon")!.textContent).toBe("N");
     expect(dom.querySelector(".cm-annotation-pill-body")!.textContent).toBe("hello");
     expect(dom.querySelector(".cm-annotation-date")!.textContent).toBe("2026-04");
     expect(dom.classList.contains("cm-annotation-firm")).toBe(true);
+    view.destroy();
   });
 
   it("adds tentative class for tentative certainty", () => {
+    const view = makeEditorView();
     const w = new PillWidget(makeAnnotation({ certainty: "tentative", body: "maybe" }));
-    const dom = w.toDOM();
+    const dom = w.toDOM(view);
     expect(dom.classList.contains("cm-annotation-tentative")).toBe(true);
+    view.destroy();
   });
 
   it("truncates body longer than 60 chars", () => {
+    const view = makeEditorView();
     const longBody = "a".repeat(80);
     const w = new PillWidget(makeAnnotation({ body: longBody }));
-    const dom = w.toDOM();
+    const dom = w.toDOM(view);
     const bodyText = dom.querySelector(".cm-annotation-pill-body")!.textContent!;
     expect(bodyText.length).toBe(61);
     expect(bodyText.endsWith("…")).toBe(true);
+    view.destroy();
   });
 
   it("eq returns true when original + charStart + charEnd match", () => {
@@ -162,5 +177,43 @@ describe("CalloutWidget", () => {
     const expanded = new CalloutWidget(ann, false, 0);
     const collapsed = new CalloutWidget(ann, true, 0);
     expect(expanded.estimatedHeight).toBeGreaterThan(collapsed.estimatedHeight);
+  });
+});
+
+describe("PillWidget click-to-navigate", () => {
+  it("pill click dispatches selection to char_start", () => {
+    const view = makeEditorView("hello %%!n | test%% world");
+    const ann = makeAnnotation({ char_start: 6, char_end: 19 });
+    const w = new PillWidget(ann);
+    const dom = w.toDOM(view);
+    dom.click();
+    expect(view.state.selection.main.head).toBe(6);
+    view.destroy();
+  });
+});
+
+describe("CalloutWidget click-to-navigate", () => {
+  it("header click navigates to char_start", () => {
+    const view = makeEditorView("hello %%!n\n---\nbody\n%% world");
+    const ann = makeAnnotation({ form: "block", char_start: 6, char_end: 22 });
+    const w = new CalloutWidget(ann, false, 6);
+    const dom = w.toDOM(view);
+    const header = dom.querySelector(".cm-annotation-callout-header")! as HTMLElement;
+    const label = header.querySelector(".cm-annotation-callout-label")! as HTMLElement;
+    label.click();
+    expect(view.state.selection.main.head).toBe(6);
+    view.destroy();
+  });
+
+  it("fold arrow click does NOT navigate", () => {
+    const view = makeEditorView("hello %%!n\n---\nbody\n%% world");
+    const ann = makeAnnotation({ form: "block", char_start: 6, char_end: 22 });
+    const w = new CalloutWidget(ann, false, 6);
+    const dom = w.toDOM(view);
+    const arrow = dom.querySelector(".cm-annotation-fold-icon")! as HTMLElement;
+    const initialHead = view.state.selection.main.head;
+    arrow.click();
+    expect(view.state.selection.main.head).toBe(initialHead);
+    view.destroy();
   });
 });

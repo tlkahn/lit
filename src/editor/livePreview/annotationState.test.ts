@@ -352,10 +352,10 @@ describe("annotationDecorationProvider", () => {
 });
 
 describe("annotationExtension", () => {
-  it("returns array with 4 extensions", () => {
+  it("returns array with 6 extensions", () => {
     const ext = annotationExtension();
     expect(Array.isArray(ext)).toBe(true);
-    expect((ext as unknown[]).length).toBe(4);
+    expect((ext as unknown[]).length).toBe(6);
   });
 
   it("includes annotationDataField", () => {

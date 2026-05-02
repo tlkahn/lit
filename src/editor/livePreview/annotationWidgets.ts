@@ -1,6 +1,7 @@
 import { type EditorView, WidgetType } from "@codemirror/view";
 import { StateEffect, StateField, type Transaction } from "@codemirror/state";
 import type { Annotation, AnnotationType } from "../../lib/ipc";
+import { handleAnnotationHover, handleAnnotationLeave } from "./annotationHover";
 import "./annotation.css";
 
 const TYPE_ICON: Record<AnnotationType, string> = {
@@ -59,8 +60,15 @@ export class PillWidget extends WidgetType {
     super();
   }
 
-  toDOM(): HTMLElement {
-    return buildPillDOM(this.annotation);
+  toDOM(view: EditorView): HTMLElement {
+    const pill = buildPillDOM(this.annotation);
+    pill.onmouseenter = () => handleAnnotationHover(view, this.annotation);
+    pill.onmouseleave = () => handleAnnotationLeave(view);
+    pill.onclick = (e) => {
+      e.preventDefault();
+      view.dispatch({ selection: { anchor: this.annotation.char_start } });
+    };
+    return pill;
   }
 
   eq(other: PillWidget): boolean {
@@ -142,8 +150,16 @@ export class CalloutWidget extends WidgetType {
     if (cert) container.classList.add(cert);
     container.dataset.annotationType = ann.annotation_type;
 
+    container.onmouseenter = () => handleAnnotationHover(view, ann);
+    container.onmouseleave = () => handleAnnotationLeave(view);
+
     const header = document.createElement("div");
     header.className = "cm-annotation-callout-header";
+    header.onclick = (e) => {
+      if ((e.target as HTMLElement).closest(".cm-annotation-fold-icon")) return;
+      e.preventDefault();
+      view.dispatch({ selection: { anchor: ann.char_start } });
+    };
 
     const icon = document.createElement("span");
     icon.className = "cm-annotation-pill-icon";

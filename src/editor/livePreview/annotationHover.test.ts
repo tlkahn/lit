@@ -1,0 +1,112 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { EditorState } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
+import {
+  handleAnnotationHover,
+  handleAnnotationLeave,
+  getHoverGeneration,
+  resetHoverGeneration,
+} from "./annotationHover";
+import { scopeHighlightField, setScopeHighlight } from "./scopeHighlight";
+import { Decoration } from "@codemirror/view";
+import type { Annotation } from "../../lib/ipc";
+import { usePreferencesStore } from "../../stores/preferences";
+
+vi.mock("../../lib/ipc", () => ({
+  parseAnnotations: vi.fn(async () => []),
+  resolveAnnotationScope: vi.fn(),
+}));
+
+import { resolveAnnotationScope } from "../../lib/ipc";
+const mockResolve = resolveAnnotationScope as ReturnType<typeof vi.fn>;
+
+function makeView(doc = "hello world"): EditorView {
+  const state = EditorState.create({
+    doc,
+    extensions: [scopeHighlightField],
+  });
+  return new EditorView({ state, parent: document.createElement("div") });
+}
+
+function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
+  return {
+    form: "compact",
+    annotation_type: "note",
+    certainty: "neutral",
+    scope: { kind: "words", value: 2 },
+    body: "test",
+    date: null,
+    is_structured: true,
+    char_start: 6,
+    char_end: 11,
+    original: "%%!n%%",
+    ...overrides,
+  };
+}
+
+describe("annotationHover", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetHoverGeneration();
+  });
+
+  it("handleAnnotationHover calls IPC with lang from preferences and dispatches highlight", async () => {
+    usePreferencesStore.setState({ annotationDefaultLang: "zh" });
+    const view = makeView();
+    mockResolve.mockResolvedValue({ start: 0, end: 5 });
+
+    await handleAnnotationHover(view, makeAnnotation());
+
+    expect(mockResolve).toHaveBeenCalledWith(
+      "hello world",
+      6,
+      { kind: "words", value: 2 },
+      "zh",
+    );
+    const decos = view.state.field(scopeHighlightField);
+    const iter = decos.iter();
+    expect(iter.from).toBe(0);
+    expect(iter.to).toBe(5);
+    view.destroy();
+  });
+
+  it("stale IPC response is discarded when generation advances", async () => {
+    usePreferencesStore.setState({ annotationDefaultLang: "en" });
+    const view = makeView();
+    let resolvePromise: (v: { start: number; end: number } | null) => void;
+    mockResolve.mockReturnValue(
+      new Promise((res) => {
+        resolvePromise = res;
+      }),
+    );
+
+    const promise = handleAnnotationHover(view, makeAnnotation());
+    handleAnnotationLeave(view);
+    resolvePromise!({ start: 0, end: 5 });
+    await promise;
+
+    expect(view.state.field(scopeHighlightField)).toBe(Decoration.none);
+    view.destroy();
+  });
+
+  it("handleAnnotationLeave clears highlight and advances generation", () => {
+    const view = makeView();
+    view.dispatch({ effects: setScopeHighlight.of({ from: 0, to: 5 }) });
+    const genBefore = getHoverGeneration();
+    handleAnnotationLeave(view);
+    expect(view.state.field(scopeHighlightField)).toBe(Decoration.none);
+    expect(getHoverGeneration()).toBe(genBefore + 1);
+    view.destroy();
+  });
+
+  it("IPC returning null does not dispatch", async () => {
+    usePreferencesStore.setState({ annotationDefaultLang: "en" });
+    const view = makeView();
+    mockResolve.mockResolvedValue(null);
+
+    await handleAnnotationHover(view, makeAnnotation());
+
+    expect(view.state.field(scopeHighlightField)).toBe(Decoration.none);
+    view.destroy();
+  });
+});

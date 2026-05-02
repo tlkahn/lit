@@ -345,6 +345,46 @@ describe("PreferencesStore", () => {
     expect(usePreferencesStore.getState().experimentalUnlinkedReferences).toBe(true);
   });
 
+  it("defaults annotationDefaultLang to 'en'", () => {
+    const state = usePreferencesStore.getState();
+    expect(state.annotationDefaultLang).toBe("en");
+  });
+
+  it("maps annotations.defaultLang from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "annotations.defaultLang": "zh",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().annotationDefaultLang).toBe("zh");
+  });
+
+  it("defaults annotationDefaultLang to 'en' when key missing from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().annotationDefaultLang).toBe("en");
+  });
+
   it("updates experimentalUnlinkedReferences on preferences://changed event", async () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {

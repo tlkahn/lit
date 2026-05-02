@@ -143,3 +143,13 @@
   border-inline-start-color: rgba(158, 158, 158, 0.6);
   background: rgba(158, 158, 158, 0.05);
 }
+
+/* Scope highlight */
+.scope-highlight {
+  background: rgba(68, 138, 255, 0.12);
+  border-radius: 2px;
+  transition: background 150ms ease;
+}
+.dark .scope-highlight {
+  background: rgba(68, 138, 255, 0.20);
+}
