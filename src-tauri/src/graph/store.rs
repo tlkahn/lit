@@ -593,6 +593,7 @@ impl Store {
                  JOIN annotations a ON a.id = f.rowid
                  JOIN nodes n ON n.id = a.node_id
                  WHERE annotations_fts MATCH ?1 AND a.annotation_type = ?2
+                 ORDER BY rank
                  LIMIT ?3",
                 3,
             )
@@ -603,6 +604,7 @@ impl Store {
                  JOIN annotations a ON a.id = f.rowid
                  JOIN nodes n ON n.id = a.node_id
                  WHERE annotations_fts MATCH ?1
+                 ORDER BY rank
                  LIMIT ?2",
                 2,
             )
@@ -2020,6 +2022,33 @@ mod tests {
         let results = store.search_annotations("important", Some("note"), 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].annotation_type, "note");
+    }
+
+    #[test]
+    fn search_annotations_returns_results_ordered_by_relevance() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "Alpha", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let ann_a = super::IndexableAnnotation {
+            body: Some("The trade agreement was signed alongside many other economic policies and regulations that affect imports".into()),
+            ..make_annotation("note", None)
+        };
+        let ann_b = super::IndexableAnnotation {
+            body: Some("Trade trade trade: this is all about trade and trade policy and trade agreements".into()),
+            ..make_annotation("note", None)
+        };
+        let ann_c = super::IndexableAnnotation {
+            body: Some("A short note on trade".into()),
+            ..make_annotation("note", None)
+        };
+
+        store.upsert_annotations("a.md", &[ann_a, ann_b, ann_c]).unwrap();
+
+        let results = store.search_annotations("trade", None, 10).unwrap();
+        assert_eq!(results.len(), 3);
+        // BM25 rank: ann_b (most mentions) should be first
+        assert_eq!(results[0].body.as_deref(), Some("Trade trade trade: this is all about trade and trade policy and trade agreements"));
     }
 
     // --- Cycle 7: list_annotations ---
