@@ -235,6 +235,106 @@ describe("annotationPlugin", () => {
     view.destroy();
   });
 
+  it("does NOT fire lit:annotations-changed when both prev and new annotations are empty", async () => {
+    vi.mocked(parseAnnotations).mockResolvedValue([]);
+
+    const state = EditorState.create({
+      doc: "hello",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const spy = vi.fn();
+    window.addEventListener("lit:annotations-changed", spy);
+
+    view.dispatch({ changes: { from: 5, insert: " world" } });
+    await vi.advanceTimersByTimeAsync(150);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(spy).not.toHaveBeenCalled();
+
+    window.removeEventListener("lit:annotations-changed", spy);
+    view.destroy();
+  });
+
+  it("fires lit:annotations-changed when annotations appear (empty → non-empty)", async () => {
+    vi.mocked(parseAnnotations).mockResolvedValue([]);
+
+    const state = EditorState.create({
+      doc: "hello",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const spy = vi.fn();
+    window.addEventListener("lit:annotations-changed", spy);
+
+    vi.mocked(parseAnnotations).mockResolvedValue([makeAnnotation()]);
+
+    view.dispatch({ changes: { from: 5, insert: " world" } });
+    await vi.advanceTimersByTimeAsync(150);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    window.removeEventListener("lit:annotations-changed", spy);
+    view.destroy();
+  });
+
+  it("fires lit:annotations-changed when annotations disappear (non-empty → empty)", async () => {
+    vi.mocked(parseAnnotations).mockResolvedValue([makeAnnotation()]);
+
+    const state = EditorState.create({
+      doc: "hello",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(view.state.field(annotationDataField)).toHaveLength(1);
+
+    const spy = vi.fn();
+    window.addEventListener("lit:annotations-changed", spy);
+
+    vi.mocked(parseAnnotations).mockResolvedValue([]);
+
+    view.dispatch({ changes: { from: 5, insert: " world" } });
+    await vi.advanceTimersByTimeAsync(150);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    window.removeEventListener("lit:annotations-changed", spy);
+    view.destroy();
+  });
+
+  it("does NOT dispatch setAnnotationData effect for empty → empty", async () => {
+    vi.mocked(parseAnnotations).mockResolvedValue([]);
+
+    const state = EditorState.create({
+      doc: "hello",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const fieldBefore = view.state.field(annotationDataField);
+
+    view.dispatch({ changes: { from: 5, insert: " world" } });
+    await vi.advanceTimersByTimeAsync(150);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(view.state.field(annotationDataField)).toBe(fieldBefore);
+
+    view.destroy();
+  });
+
   it("dispatches setAnnotationData with IPC result", async () => {
     const testAnnotations = [
       makeAnnotation({ body: "parsed result", char_start: 0, char_end: 5 }),

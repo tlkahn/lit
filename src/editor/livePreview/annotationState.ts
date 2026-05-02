@@ -61,6 +61,8 @@ export const annotationPlugin = ViewPlugin.fromClass(
       parseAnnotations(docStr)
         .then((annotations) => {
           if (this.view.state.doc.toString() !== this.lastDocStr) return;
+          const prev = this.view.state.field(annotationDataField);
+          if (annotations.length === 0 && prev.length === 0) return;
           this.view.dispatch({ effects: setAnnotationData.of(annotations) });
           window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
         })
