@@ -3,7 +3,6 @@ import { generateDsl, type AnnotationFields } from "../lib/annotationDsl";
 import type { AnnotationType, Certainty, Scope } from "../lib/ipc";
 
 interface AnnotationBuilderModalProps {
-  open: boolean;
   onClose: () => void;
   onInsert: (dsl: string) => void;
   initialFields?: Partial<AnnotationFields>;
@@ -12,7 +11,6 @@ interface AnnotationBuilderModalProps {
 type ScopeKind = "none" | "words" | "sentence" | "paragraph" | "page" | "anchor";
 
 export function AnnotationBuilderModal({
-  open,
   onClose,
   onInsert,
   initialFields,
@@ -43,10 +41,9 @@ export function AnnotationBuilderModal({
   );
 
   useEffect(() => {
-    if (!open) return;
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [open, handleKeyDown]);
+  }, [handleKeyDown]);
 
   const scope: Scope | null = useMemo(() => {
     if (scopeKind === "none") return null;
@@ -70,8 +67,6 @@ export function AnnotationBuilderModal({
   const handleInsert = () => {
     onInsert(preview);
   };
-
-  if (!open) return null;
 
   return (
     <div

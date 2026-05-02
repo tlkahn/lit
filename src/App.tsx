@@ -170,11 +170,12 @@ function App() {
         open={commandPaletteOpen}
         onClose={() => setCommandPaletteOpen(false)}
       />
-      <AnnotationBuilderModal
-        open={annotationBuilderOpen}
-        onClose={() => setAnnotationBuilderOpen(false)}
-        onInsert={handleAnnotationInsert}
-      />
+      {annotationBuilderOpen && (
+        <AnnotationBuilderModal
+          onClose={() => setAnnotationBuilderOpen(false)}
+          onInsert={handleAnnotationInsert}
+        />
+      )}
     </div>
   );
 }
