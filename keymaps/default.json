@@ -9,5 +9,6 @@
   { "key": "Ctrl--", "command": "editor.navigateBack", "when": "editorFocus" },
   { "key": "Ctrl-Shift--", "command": "editor.navigateForward", "when": "editorFocus" },
   { "key": "Mod-Shift-f", "command": "app.toggleFocusMode" },
-  { "key": "Mod-`", "command": "panel.toggleBottom" }
+  { "key": "Mod-`", "command": "panel.toggleBottom" },
+  { "key": "Mod-Shift-a", "command": "panel.toggleAnnotations" }
 ]

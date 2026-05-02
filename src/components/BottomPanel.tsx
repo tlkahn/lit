@@ -82,6 +82,11 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
   const experimentalUnlinkedReferences = usePreferencesStore(
     (s) => s.experimentalUnlinkedReferences,
   );
+  const annotationDisplayMode = usePreferencesStore(
+    (s) => s.annotationDisplayMode,
+  );
+
+  const prevDisplayModeRef = useRef(annotationDisplayMode);
 
   const handleTabClick = useCallback(
     (tab: TabId) => {
@@ -191,6 +196,35 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
     window.addEventListener("lit:show-annotation", handler);
     return () => window.removeEventListener("lit:show-annotation", handler);
   }, [annotationCount]);
+
+  useEffect(() => {
+    const prev = prevDisplayModeRef.current;
+    prevDisplayModeRef.current = annotationDisplayMode;
+    if (prev === annotationDisplayMode) return;
+
+    if (annotationDisplayMode === "footnote" && annotationCount > 0) {
+      setHasOpenedAnnotations(true);
+      setActiveTab("annotations");
+      setUnfolded(true);
+    } else if (annotationDisplayMode === "pill" && activeTab === "annotations") {
+      setUnfolded(false);
+    }
+  }, [annotationDisplayMode, annotationCount, activeTab]);
+
+  useEffect(() => {
+    const handler = () => {
+      if (annotationCount === 0) return;
+      if (unfolded && activeTab === "annotations") {
+        setUnfolded(false);
+      } else {
+        setHasOpenedAnnotations(true);
+        setActiveTab("annotations");
+        setUnfolded(true);
+      }
+    };
+    window.addEventListener("lit:toggle-annotation-panel", handler);
+    return () => window.removeEventListener("lit:toggle-annotation-panel", handler);
+  }, [annotationCount, unfolded, activeTab]);
 
   useEffect(() => {
     if (!experimentalUnlinkedReferences && activeTab === "unlinked") {

@@ -408,6 +408,150 @@ describe("BottomPanel", () => {
     });
   });
 
+  describe("Panel lifecycle", () => {
+    it("auto-shows annotations tab when display mode changes to footnote", () => {
+      testEditorView = setupEditorWithAnnotations([
+        makeAnnotation({ char_start: 0, char_end: 10 }),
+      ]);
+      render(<BottomPanel pageId="target.md" />);
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+      });
+
+      const panel = screen.getByTestId("bottom-panel");
+      expect(panel.style.height).toBe("32px");
+
+      act(() => {
+        usePreferencesStore.setState({ annotationDisplayMode: "footnote" });
+      });
+
+      expect(panel.style.height).not.toBe("32px");
+      expect(screen.getByTestId("tab-annotations")).toHaveAttribute("aria-selected", "true");
+    });
+
+    it("does not auto-show when no annotations exist in footnote mode", () => {
+      render(<BottomPanel pageId="target.md" />);
+
+      const panel = screen.getByTestId("bottom-panel");
+      expect(panel.style.height).toBe("32px");
+
+      act(() => {
+        usePreferencesStore.setState({ annotationDisplayMode: "footnote" });
+      });
+
+      expect(panel.style.height).toBe("32px");
+    });
+
+    it("auto-hides when display mode changes to pill while on annotations tab", async () => {
+      usePreferencesStore.setState({ annotationDisplayMode: "footnote" });
+      testEditorView = setupEditorWithAnnotations([
+        makeAnnotation({ char_start: 0, char_end: 10 }),
+      ]);
+      render(<BottomPanel pageId="target.md" />);
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+      });
+
+      await userEvent.click(screen.getByText("Annotations (1)"));
+      const panel = screen.getByTestId("bottom-panel");
+      expect(panel.style.height).not.toBe("32px");
+
+      act(() => {
+        usePreferencesStore.setState({ annotationDisplayMode: "pill" });
+      });
+
+      expect(panel.style.height).toBe("32px");
+    });
+
+    it("does not auto-hide when on a different tab", async () => {
+      usePreferencesStore.setState({ annotationDisplayMode: "footnote" });
+      testEditorView = setupEditorWithAnnotations([
+        makeAnnotation({ char_start: 0, char_end: 10 }),
+      ]);
+      render(<BottomPanel pageId="target.md" />);
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+      });
+
+      await userEvent.click(screen.getByText("Linked References"));
+      const panel = screen.getByTestId("bottom-panel");
+      expect(panel.style.height).not.toBe("32px");
+
+      act(() => {
+        usePreferencesStore.setState({ annotationDisplayMode: "pill" });
+      });
+
+      expect(panel.style.height).not.toBe("32px");
+    });
+
+    it("lit:toggle-annotation-panel event unfolds and switches to annotations tab", () => {
+      testEditorView = setupEditorWithAnnotations([
+        makeAnnotation({ char_start: 0, char_end: 10 }),
+      ]);
+      render(<BottomPanel pageId="target.md" />);
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+      });
+
+      const panel = screen.getByTestId("bottom-panel");
+      expect(panel.style.height).toBe("32px");
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("lit:toggle-annotation-panel"));
+      });
+
+      expect(panel.style.height).not.toBe("32px");
+      expect(screen.getByTestId("tab-annotations")).toHaveAttribute("aria-selected", "true");
+    });
+
+    it("lit:toggle-annotation-panel folds when already on annotations tab and unfolded", async () => {
+      testEditorView = setupEditorWithAnnotations([
+        makeAnnotation({ char_start: 0, char_end: 10 }),
+      ]);
+      render(<BottomPanel pageId="target.md" />);
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+      });
+
+      await userEvent.click(screen.getByText("Annotations (1)"));
+      const panel = screen.getByTestId("bottom-panel");
+      expect(panel.style.height).not.toBe("32px");
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("lit:toggle-annotation-panel"));
+      });
+
+      expect(panel.style.height).toBe("32px");
+    });
+
+    it("lit:toggle-annotation-panel switches to annotations when on different tab", async () => {
+      testEditorView = setupEditorWithAnnotations([
+        makeAnnotation({ char_start: 0, char_end: 10 }),
+      ]);
+      render(<BottomPanel pageId="target.md" />);
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+      });
+
+      await userEvent.click(screen.getByText("Linked References"));
+      const panel = screen.getByTestId("bottom-panel");
+      expect(panel.style.height).not.toBe("32px");
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("lit:toggle-annotation-panel"));
+      });
+
+      expect(panel.style.height).not.toBe("32px");
+      expect(screen.getByTestId("tab-annotations")).toHaveAttribute("aria-selected", "true");
+    });
+  });
+
   describe("drag resize", () => {
     function mockParentBoundingRect(panel: HTMLElement, height: number) {
       const parent = panel.parentElement!;
