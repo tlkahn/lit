@@ -503,4 +503,39 @@ export async function resolveAnnotationScope(
   });
 }
 
+export interface AnnotationSearchResult {
+  annotation_id: number;
+  node_id: string;
+  node_title: string;
+  annotation_type: AnnotationType;
+  certainty: Certainty;
+  body: string | null;
+  date: string | null;
+  source_line: number;
+  char_start: number;
+  char_end: number;
+}
 
+export async function searchAnnotations(
+  query: string,
+  annotationType?: AnnotationType,
+  limit?: number,
+): Promise<AnnotationSearchResult[]> {
+  return invoke<AnnotationSearchResult[]>("search_annotations", {
+    query,
+    annotationType: annotationType ?? null,
+    limit: limit ?? null,
+  });
+}
+
+export async function listAnnotations(
+  nodeId: string,
+  annotationType?: AnnotationType,
+  limit?: number,
+): Promise<AnnotationSearchResult[]> {
+  return invoke<AnnotationSearchResult[]>("list_annotations", {
+    nodeId,
+    annotationType: annotationType ?? null,
+    limit: limit ?? null,
+  });
+}

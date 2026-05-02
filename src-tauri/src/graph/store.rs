@@ -5,9 +5,24 @@ use rusqlite::Connection;
 use tracing::{debug, info};
 
 use super::error::GraphError;
-use super::types::{extract_aliases, BacklinkEntry, LinkEntry, ParsedNode, Stats};
+use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, IndexableAnnotation, LinkEntry, ParsedNode, Stats};
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 5;
+pub const CURRENT_SCHEMA_VERSION: i64 = 6;
+
+fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rusqlite::Error> {
+    Ok(AnnotationSearchResult {
+        annotation_id: row.get(0)?,
+        node_id: row.get(1)?,
+        node_title: row.get(2)?,
+        annotation_type: row.get(3)?,
+        certainty: row.get(4)?,
+        body: row.get(5)?,
+        date: row.get(6)?,
+        source_line: row.get(7)?,
+        char_start: row.get(8)?,
+        char_end: row.get(9)?,
+    })
+}
 
 pub struct Store {
     pub(crate) conn: Connection,
@@ -140,6 +155,29 @@ impl Store {
             )?;
         }
 
+        if version < 6 {
+            info!(from = version, to = 6, "migrating schema: adding annotations + FTS5");
+            self.conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS annotations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    node_id TEXT NOT NULL,
+                    annotation_type TEXT NOT NULL,
+                    certainty TEXT NOT NULL,
+                    body TEXT,
+                    date TEXT,
+                    source_line INTEGER NOT NULL,
+                    char_start INTEGER NOT NULL,
+                    char_end INTEGER NOT NULL,
+                    scope_kind TEXT NOT NULL,
+                    scope_value TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_annotations_node_id ON annotations(node_id);
+                CREATE INDEX IF NOT EXISTS idx_annotations_type ON annotations(annotation_type);
+                CREATE VIRTUAL TABLE IF NOT EXISTS annotations_fts USING fts5(body, node_id UNINDEXED, annotation_type UNINDEXED);
+                UPDATE meta SET value = '6' WHERE key = 'schema_version';"
+            )?;
+        }
+
         Ok(())
     }
 
@@ -210,6 +248,8 @@ impl Store {
     }
 
     pub fn delete_node(&self, id: &str) -> Result<(), GraphError> {
+        self.conn.execute("DELETE FROM annotations_fts WHERE node_id = ?1", [id])?;
+        self.conn.execute("DELETE FROM annotations WHERE node_id = ?1", [id])?;
         self.conn.execute("DELETE FROM nodes WHERE id = ?1", [id])?;
         self.conn
             .execute("DELETE FROM tags WHERE node_id = ?1", [id])?;
@@ -506,6 +546,121 @@ impl Store {
         Ok(format!("{}:{}:{}", total_nodes, stats.edges, max_mtime))
     }
 
+    // --- Annotations ---
+
+    pub fn upsert_annotations(&self, node_id: &str, annotations: &[IndexableAnnotation]) -> Result<(), GraphError> {
+        self.conn.execute("DELETE FROM annotations_fts WHERE node_id = ?1", [node_id])?;
+        self.conn.execute("DELETE FROM annotations WHERE node_id = ?1", [node_id])?;
+        for ann in annotations {
+            self.conn.execute(
+                "INSERT INTO annotations(node_id, annotation_type, certainty, body, date, source_line, char_start, char_end, scope_kind, scope_value)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                rusqlite::params![
+                    node_id,
+                    ann.annotation_type,
+                    ann.certainty,
+                    ann.body,
+                    ann.date,
+                    ann.source_line,
+                    ann.char_start,
+                    ann.char_end,
+                    ann.scope_kind,
+                    ann.scope_value,
+                ],
+            )?;
+            if ann.body.is_some() {
+                let rowid = self.conn.last_insert_rowid();
+                self.conn.execute(
+                    "INSERT INTO annotations_fts(rowid, body, node_id, annotation_type) VALUES (?1, ?2, ?3, ?4)",
+                    rusqlite::params![rowid, ann.body, node_id, ann.annotation_type],
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn search_annotations(&self, query: &str, type_filter: Option<&str>, limit: i64) -> Result<Vec<AnnotationSearchResult>, GraphError> {
+        let fts_query: String = query
+            .split_whitespace()
+            .map(|w| format!("\"{}\"", w.replace('"', "")))
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let (sql, params_count) = if type_filter.is_some() {
+            (
+                "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end
+                 FROM annotations_fts f
+                 JOIN annotations a ON a.id = f.rowid
+                 JOIN nodes n ON n.id = a.node_id
+                 WHERE annotations_fts MATCH ?1 AND a.annotation_type = ?2
+                 LIMIT ?3",
+                3,
+            )
+        } else {
+            (
+                "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end
+                 FROM annotations_fts f
+                 JOIN annotations a ON a.id = f.rowid
+                 JOIN nodes n ON n.id = a.node_id
+                 WHERE annotations_fts MATCH ?1
+                 LIMIT ?2",
+                2,
+            )
+        };
+
+        let mut stmt = self.conn.prepare(sql)?;
+        let results = if params_count == 3 {
+            stmt.query_map(
+                rusqlite::params![fts_query, type_filter.unwrap(), limit],
+                map_annotation_row,
+            )?
+            .collect::<Result<Vec<_>, _>>()?
+        } else {
+            stmt.query_map(
+                rusqlite::params![fts_query, limit],
+                map_annotation_row,
+            )?
+            .collect::<Result<Vec<_>, _>>()?
+        };
+        Ok(results)
+    }
+
+    pub fn list_annotations(&self, node_id: &str, type_filter: Option<&str>, limit: i64) -> Result<Vec<AnnotationSearchResult>, GraphError> {
+        if type_filter.is_some() {
+            let mut stmt = self.conn.prepare(
+                "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end
+                 FROM annotations a
+                 JOIN nodes n ON n.id = a.node_id
+                 WHERE a.node_id = ?1 AND a.annotation_type = ?2
+                 ORDER BY a.source_line
+                 LIMIT ?3",
+            )?;
+            let results = stmt
+                .query_map(
+                    rusqlite::params![node_id, type_filter.unwrap(), limit],
+                    map_annotation_row,
+                )?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(results)
+        } else {
+            let mut stmt = self.conn.prepare(
+                "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end
+                 FROM annotations a
+                 JOIN nodes n ON n.id = a.node_id
+                 WHERE a.node_id = ?1
+                 ORDER BY a.source_line
+                 LIMIT ?2",
+            )?;
+            let results = stmt
+                .query_map(
+                    rusqlite::params![node_id, limit],
+                    map_annotation_row,
+                )?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(results)
+        }
+    }
+
     // --- Transactions ---
 
     pub fn begin_transaction(&self) -> Result<(), GraphError> {
@@ -648,11 +803,11 @@ mod tests {
         let db_path = dir.path().join("test.db");
         {
             let store = Store::open(&db_path).unwrap();
-            assert_eq!(store.schema_version().unwrap(), 5);
+            assert_eq!(store.schema_version().unwrap(), 6);
         }
         {
             let store = Store::open(&db_path).unwrap();
-            assert_eq!(store.schema_version().unwrap(), 5);
+            assert_eq!(store.schema_version().unwrap(), 6);
         }
     }
 
@@ -682,7 +837,7 @@ mod tests {
     #[test]
     fn schema_version_readable_via_get_meta() {
         let store = Store::open_memory().unwrap();
-        assert_eq!(store.get_meta("schema_version").unwrap(), Some("5".into()));
+        assert_eq!(store.get_meta("schema_version").unwrap(), Some("6".into()));
     }
 
     // --- Phase 5: Node CRUD ---
@@ -1389,7 +1544,7 @@ mod tests {
         }
 
         let store = Store::open(&db_path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 5);
+        assert_eq!(store.schema_version().unwrap(), 6);
 
         let tags_text: String = store
             .conn
@@ -1436,7 +1591,7 @@ mod tests {
         }
 
         let store = Store::open(&db_path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 5);
+        assert_eq!(store.schema_version().unwrap(), 6);
 
         let raw_edges = store.all_raw_edges().unwrap();
         assert_eq!(raw_edges.len(), 1);
@@ -1487,7 +1642,7 @@ mod tests {
         }
 
         let store = Store::open(&db_path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 5);
+        assert_eq!(store.schema_version().unwrap(), 6);
 
         let fts_count: i64 = store
             .conn
@@ -1644,5 +1799,274 @@ mod tests {
             .prepare("SELECT source_line FROM edges LIMIT 0")
             .is_ok();
         assert!(has_column, "edges table should have source_line column");
+    }
+
+    // --- Cycle 2: Schema v6 ---
+
+    #[test]
+    fn schema_version_is_six() {
+        assert_eq!(CURRENT_SCHEMA_VERSION, 6);
+    }
+
+    #[test]
+    fn annotations_table_exists() {
+        let store = Store::open_memory().unwrap();
+        let count: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='annotations'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn annotations_fts_table_exists() {
+        let store = Store::open_memory().unwrap();
+        let count: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='annotations_fts'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    // --- Cycle 3: v5 → v6 migration path ---
+
+    #[test]
+    fn v5_to_v6_migration_creates_annotations_tables() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
+            conn.execute_batch(
+                "CREATE TABLE nodes (
+                    id TEXT PRIMARY KEY, title TEXT, first_paragraph TEXT,
+                    frontmatter JSON, mtime INTEGER, is_stub INTEGER DEFAULT 0, tags_text TEXT DEFAULT ''
+                );
+                CREATE TABLE tags (node_id TEXT, tag TEXT);
+                CREATE TABLE aliases (node_id TEXT, alias TEXT);
+                CREATE TABLE edges (source TEXT, target TEXT, context TEXT, raw_target TEXT DEFAULT '', source_line INTEGER DEFAULT 0);
+                CREATE TABLE sync (path TEXT PRIMARY KEY, mtime INTEGER);
+                CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+                INSERT INTO meta(key, value) VALUES ('schema_version', '5');",
+            )
+            .unwrap();
+        }
+
+        let store = Store::open(&db_path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), 6);
+        let ann_count: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='annotations'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(ann_count, 1);
+        let fts_count: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='annotations_fts'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(fts_count, 1);
+    }
+
+    // --- Cycle 4: upsert_annotations ---
+
+    fn make_annotation(ann_type: &str, body: Option<&str>) -> super::IndexableAnnotation {
+        super::IndexableAnnotation {
+            annotation_type: ann_type.into(),
+            certainty: "neutral".into(),
+            body: body.map(String::from),
+            date: None,
+            source_line: 1,
+            char_start: 0,
+            char_end: 10,
+            scope_kind: "words".into(),
+            scope_value: "1".into(),
+        }
+    }
+
+    #[test]
+    fn upsert_annotations_inserts_rows() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let anns = vec![
+            make_annotation("note", Some("first note")),
+            make_annotation("question", Some("a question")),
+        ];
+        store.upsert_annotations("a.md", &anns).unwrap();
+
+        let count: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 2);
+
+        let fts_count: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM annotations_fts WHERE node_id = 'a.md'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(fts_count, 2);
+    }
+
+    #[test]
+    fn upsert_annotations_replaces_on_reupsert() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let anns = vec![
+            make_annotation("note", Some("first")),
+            make_annotation("note", Some("second")),
+        ];
+        store.upsert_annotations("a.md", &anns).unwrap();
+        assert_eq!(
+            store.conn.query_row("SELECT COUNT(*) FROM annotations", [], |r| r.get::<_, i64>(0)).unwrap(),
+            2
+        );
+
+        let anns2 = vec![make_annotation("note", Some("only one now"))];
+        store.upsert_annotations("a.md", &anns2).unwrap();
+        assert_eq!(
+            store.conn.query_row("SELECT COUNT(*) FROM annotations", [], |r| r.get::<_, i64>(0)).unwrap(),
+            1
+        );
+        assert_eq!(
+            store.conn.query_row("SELECT COUNT(*) FROM annotations_fts", [], |r| r.get::<_, i64>(0)).unwrap(),
+            1
+        );
+    }
+
+    // --- Cycle 5: delete_node cascades ---
+
+    #[test]
+    fn delete_node_removes_annotations() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.upsert_annotations("a.md", &[make_annotation("note", Some("body"))]).unwrap();
+
+        store.delete_node("a.md").unwrap();
+
+        let ann_count: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ann_count, 0);
+        let fts_count: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM annotations_fts WHERE node_id = 'a.md'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(fts_count, 0);
+    }
+
+    // --- Cycle 6: search_annotations ---
+
+    #[test]
+    fn search_annotations_finds_by_body() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "Alpha", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let ann = super::IndexableAnnotation {
+            annotation_type: "note".into(),
+            certainty: "neutral".into(),
+            body: Some("Silk Road flourished in Tang dynasty".into()),
+            date: None,
+            source_line: 5,
+            char_start: 10,
+            char_end: 50,
+            scope_kind: "words".into(),
+            scope_value: "2".into(),
+        };
+        store.upsert_annotations("a.md", &[ann]).unwrap();
+
+        let results = store.search_annotations("Silk Road", None, 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].node_id, "a.md");
+        assert_eq!(results[0].node_title, "Alpha");
+        assert_eq!(results[0].annotation_type, "note");
+        assert_eq!(results[0].body, Some("Silk Road flourished in Tang dynasty".into()));
+        assert_eq!(results[0].source_line, 5);
+    }
+
+    #[test]
+    fn search_annotations_filters_by_type() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "Alpha", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let anns = vec![
+            make_annotation("note", Some("important note")),
+            make_annotation("question", Some("important question")),
+        ];
+        store.upsert_annotations("a.md", &anns).unwrap();
+
+        let results = store.search_annotations("important", Some("note"), 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].annotation_type, "note");
+    }
+
+    // --- Cycle 7: list_annotations ---
+
+    #[test]
+    fn list_annotations_for_node() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "Alpha", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let mut ann1 = make_annotation("note", Some("first"));
+        ann1.source_line = 1;
+        let mut ann2 = make_annotation("note", Some("second"));
+        ann2.source_line = 5;
+        let mut ann3 = make_annotation("question", Some("third"));
+        ann3.source_line = 10;
+
+        store.upsert_annotations("a.md", &[ann1, ann2, ann3]).unwrap();
+
+        let results = store.list_annotations("a.md", None, 100).unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].source_line, 1);
+        assert_eq!(results[1].source_line, 5);
+        assert_eq!(results[2].source_line, 10);
+    }
+
+    #[test]
+    fn list_annotations_with_type_filter() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "Alpha", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let anns = vec![
+            make_annotation("note", Some("a note")),
+            make_annotation("question", Some("a question")),
+        ];
+        store.upsert_annotations("a.md", &anns).unwrap();
+
+        let results = store.list_annotations("a.md", Some("note"), 100).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].annotation_type, "note");
+    }
+
+    #[test]
+    fn list_annotations_empty_for_nonexistent() {
+        let store = Store::open_memory().unwrap();
+        let results = store.list_annotations("unknown.md", None, 100).unwrap();
+        assert!(results.is_empty());
     }
 }

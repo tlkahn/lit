@@ -185,13 +185,14 @@ pub fn index_workspace(
     store: &Store,
     root: &Path,
 ) -> Result<(IndexResult, ReverseStemIndex), GraphError> {
-    index_workspace_with_progress(store, root, &super::progress::noop_callback())
+    index_workspace_with_progress(store, root, &super::progress::noop_callback(), true)
 }
 
 pub fn index_workspace_with_progress(
     store: &Store,
     root: &Path,
     on_progress: &dyn Fn(super::progress::IndexProgress),
+    annotations_enabled: bool,
 ) -> Result<(IndexResult, ReverseStemIndex), GraphError> {
     use super::progress::{IndexPhase, IndexProgress};
 
@@ -262,6 +263,15 @@ pub fn index_workspace_with_progress(
         let mtime = file_mtimes.get(&node.id).copied().unwrap_or(0);
         store.upsert_node(node, mtime)?;
         nodes_indexed += 1;
+
+        if annotations_enabled {
+            if let Some(body) = bodies.get(&node.id) {
+                let annotations = super::extract::extract_annotations(body);
+                if !annotations.is_empty() {
+                    store.upsert_annotations(&node.id, &annotations)?;
+                }
+            }
+        }
 
         store.delete_edges_from(&node.id)?;
 
@@ -379,6 +389,7 @@ pub fn incremental_reindex(
     root: &Path,
     reverse_stems: &mut ReverseStemIndex,
     diff: &DiffResult,
+    annotations_enabled: bool,
 ) -> Result<IndexResult, GraphError> {
     store.begin_transaction()?;
 
@@ -431,6 +442,11 @@ pub fn incremental_reindex(
                 store.upsert_node(&node, mtime)?;
                 stem_lookup.insert(&node.id, &new_aliases);
                 nodes_indexed += 1;
+
+                if annotations_enabled {
+                    let annotations = super::extract::extract_annotations(&body);
+                    store.upsert_annotations(&node.id, &annotations)?;
+                }
 
                 // Re-resolve outgoing links
                 store.delete_edges_from(&node.id)?;
@@ -579,7 +595,7 @@ impl GraphIndex {
             "background sync: applying diff"
         );
         let mut reverse_stems = self.reverse_stems.lock().unwrap();
-        incremental_reindex(&store, &self.workspace_root, &mut reverse_stems, &diff)?;
+        incremental_reindex(&store, &self.workspace_root, &mut reverse_stems, &diff, true)?;
         let mut knowledge = self.knowledge.lock().unwrap();
         *knowledge = KnowledgeGraph::from_store(&store)?;
         Ok(true)
@@ -629,12 +645,12 @@ impl GraphIndex {
                     .map(|(source, _target, raw_target)| (source, raw_target))
                     .collect();
                 let mut reverse = ReverseStemIndex::build_from_edges(&edges);
-                incremental_reindex(&store, &workspace_root, &mut reverse, &diff)?;
+                incremental_reindex(&store, &workspace_root, &mut reverse, &diff, true)?;
                 reverse
             }
         } else {
             info!("cold start: no existing store data, full index");
-            let (_, reverse_stems) = index_workspace_with_progress(&store, &workspace_root, on_progress)?;
+            let (_, reverse_stems) = index_workspace_with_progress(&store, &workspace_root, on_progress, true)?;
             reverse_stems
         };
 
@@ -656,7 +672,7 @@ impl GraphIndex {
         };
         let store = self.store.lock().unwrap();
         let mut reverse = self.reverse_stems.lock().unwrap();
-        incremental_reindex(&store, &self.workspace_root, &mut reverse, &diff)?;
+        incremental_reindex(&store, &self.workspace_root, &mut reverse, &diff, true)?;
         let mut knowledge = self.knowledge.lock().unwrap();
         *knowledge = KnowledgeGraph::from_store(&store)?;
         Ok(())
@@ -670,7 +686,7 @@ impl GraphIndex {
         };
         let store = self.store.lock().unwrap();
         let mut reverse = self.reverse_stems.lock().unwrap();
-        incremental_reindex(&store, &self.workspace_root, &mut reverse, &diff)?;
+        incremental_reindex(&store, &self.workspace_root, &mut reverse, &diff, true)?;
         let mut knowledge = self.knowledge.lock().unwrap();
         *knowledge = KnowledgeGraph::from_store(&store)?;
         Ok(())
@@ -917,6 +933,16 @@ impl GraphIndex {
         store.set_meta("pagerank_scores", &json)?;
         store.set_meta("pagerank_fingerprint", &fingerprint)?;
         Ok(scores)
+    }
+
+    pub fn search_annotations(&self, query: &str, type_filter: Option<&str>, limit: i64) -> Result<Vec<super::types::AnnotationSearchResult>, GraphError> {
+        let store = self.store.lock().unwrap();
+        store.search_annotations(query, type_filter, limit)
+    }
+
+    pub fn list_annotations(&self, node_id: &str, type_filter: Option<&str>, limit: i64) -> Result<Vec<super::types::AnnotationSearchResult>, GraphError> {
+        let store = self.store.lock().unwrap();
+        store.list_annotations(node_id, type_filter, limit)
     }
 
     pub fn top_by_pagerank(&self, n: usize) -> Result<Vec<(String, f64)>, GraphError> {
@@ -1200,7 +1226,7 @@ mod tests {
             changed: vec!["a.md".to_string()],
             deleted: vec![],
         };
-        incremental_reindex(&store, dir.path(), &mut reverse, &diff).unwrap();
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
         let bl = store.backlinks("b.md").unwrap();
         assert_eq!(bl.len(), 1);
         assert_eq!(bl[0].context, "Now links to [[B]].");
@@ -1227,7 +1253,7 @@ mod tests {
             changed: vec!["b.md".to_string()],
             deleted: vec![],
         };
-        incremental_reindex(&store, dir.path(), &mut reverse, &diff).unwrap();
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
         let bl = store.backlinks("b.md").unwrap();
         assert_eq!(bl.len(), 1);
         assert!(!bl[0].context.contains("title:"));
@@ -1453,7 +1479,7 @@ mod tests {
             log_clone.lock().unwrap().push(p);
         };
 
-        let (result, _) = index_workspace_with_progress(&store, dir.path(), &callback).unwrap();
+        let (result, _) = index_workspace_with_progress(&store, dir.path(), &callback, true).unwrap();
         assert_eq!(result.nodes_indexed, 3);
 
         let events = log.lock().unwrap();
@@ -1498,7 +1524,7 @@ mod tests {
             }
         };
 
-        index_workspace_with_progress(&store, dir.path(), &callback).unwrap();
+        index_workspace_with_progress(&store, dir.path(), &callback, true).unwrap();
 
         let phases = log.lock().unwrap();
         assert_eq!(*phases, vec![IndexPhase::Scanning, IndexPhase::Parsing, IndexPhase::Resolving]);
@@ -1639,7 +1665,7 @@ mod tests {
             changed: vec!["a.md".to_string()],
             deleted: vec![],
         };
-        incremental_reindex(&store, dir.path(), &mut reverse, &diff).unwrap();
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
         let titles = store.node_titles().unwrap();
         assert_eq!(titles.len(), 1);
     }
@@ -1657,7 +1683,7 @@ mod tests {
             changed: vec!["a.md".to_string()],
             deleted: vec![],
         };
-        incremental_reindex(&store, dir.path(), &mut reverse, &diff).unwrap();
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
         let edges = store.all_edges().unwrap();
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].1, "b.md");
@@ -1676,7 +1702,7 @@ mod tests {
             changed: vec!["a.md".to_string()],
             deleted: vec![],
         };
-        incremental_reindex(&store, dir.path(), &mut reverse, &diff).unwrap();
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
         assert_eq!(store.stats().unwrap().nodes, 2);
     }
 
@@ -1693,7 +1719,7 @@ mod tests {
             changed: vec![],
             deleted: vec![],
         };
-        incremental_reindex(&store, dir.path(), &mut reverse, &diff).unwrap();
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
         let edges = store.all_edges().unwrap();
         assert!(
             edges.iter().any(|(s, t)| s == "a.md" && t == "b.md"),
@@ -1715,7 +1741,7 @@ mod tests {
             changed: vec![],
             deleted: vec!["b.md".to_string()],
         };
-        incremental_reindex(&store, dir.path(), &mut reverse, &diff).unwrap();
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
         let ids = store.all_node_ids().unwrap();
         assert!(!ids.contains(&"b.md".to_string()));
     }
@@ -1734,7 +1760,7 @@ mod tests {
             changed: vec![],
             deleted: vec![],
         };
-        incremental_reindex(&store, dir.path(), &mut reverse, &diff).unwrap();
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
 
         let bl_a = store.backlinks("a.md").unwrap();
         assert!(bl_a.iter().any(|bl| bl.source_id == "b.md"), "b.md should link to a.md");
@@ -1759,7 +1785,7 @@ mod tests {
             changed: vec![],
             deleted: vec![],
         };
-        incremental_reindex(&store, dir.path(), &mut reverse, &diff).unwrap();
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
 
         let bl = store.backlinks("a.md").unwrap();
         assert!(bl.iter().any(|bl| bl.source_id == "b.md"), "b.md should link to a.md via alias");
@@ -2995,5 +3021,79 @@ mod tests {
         let before = gi.stats().unwrap().nodes;
         assert_eq!(gi.sync_with_disk().unwrap(), true);
         assert!(gi.stats().unwrap().nodes < before);
+    }
+
+    // --- Cycle 10: full index stores annotations ---
+
+    #[test]
+    fn full_index_stores_annotations() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Some text %%! n: _ | important discovery %% more.");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let results = gi.search_annotations("important", None, 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].node_id, "a.md");
+        assert!(results[0].body.as_deref().unwrap().contains("important discovery"));
+    }
+
+    // --- Cycle 11: incremental reindex updates annotations ---
+
+    #[test]
+    fn incremental_reindex_updates_annotations() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "%%! n: _ | old body %%");
+        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let results = gi.search_annotations("old", None, 10).unwrap();
+        assert_eq!(results.len(), 1);
+
+        write_md(dir.path(), "a.md", "%%! n: _ | new body %%");
+        gi.reindex_file("a.md").unwrap();
+
+        let old_results = gi.search_annotations("old", None, 10).unwrap();
+        assert!(old_results.is_empty());
+        let new_results = gi.search_annotations("new", None, 10).unwrap();
+        assert_eq!(new_results.len(), 1);
+        assert!(new_results[0].body.as_deref().unwrap().contains("new body"));
+    }
+
+    // --- Cycle 12: annotations_enabled gating ---
+
+    #[test]
+    fn full_index_skips_annotations_when_disabled() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "%%! n: _ | note body %%");
+        fs::create_dir_all(dir.path().join(".lit")).unwrap();
+        let store = Store::open(&dir.path().join(".lit").join("graph.db")).unwrap();
+        index_workspace_with_progress(&store, dir.path(), &crate::graph::progress::noop_callback(), false).unwrap();
+
+        let count: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM annotations", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn incremental_reindex_skips_when_disabled() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "initial content");
+        fs::create_dir_all(dir.path().join(".lit")).unwrap();
+        let store = Store::open(&dir.path().join(".lit").join("graph.db")).unwrap();
+        index_workspace(&store, dir.path()).unwrap();
+
+        write_md(dir.path(), "a.md", "%%! n: _ | annotated %%");
+        let diff = DiffResult {
+            new: vec![],
+            changed: vec!["a.md".to_string()],
+            deleted: vec![],
+        };
+        let mut reverse = ReverseStemIndex::new();
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, false).unwrap();
+
+        let count: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM annotations", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
     }
 }

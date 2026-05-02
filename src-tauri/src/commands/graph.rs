@@ -83,7 +83,7 @@ impl GraphBuildState {
     }
 }
 
-fn with_graph_index<F, T>(
+pub(super) fn with_graph_index<F, T>(
     workspace_state: &State<crate::commands::workspace::WorkspaceRegistry>,
     graph_state: &State<Arc<GraphRegistry>>,
     window_label: &str,

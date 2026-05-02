@@ -47,6 +47,8 @@ import {
   ensureGraphReady,
   parseAnnotations,
   resolveAnnotationScope,
+  searchAnnotations,
+  listAnnotations,
 } from "./ipc";
 
 const sampleMeta = {
@@ -205,6 +207,84 @@ describe("ipc", () => {
           const a = args as Record<string, unknown> | undefined;
           if ((a?.charStart as number) === 0) return null;
           return { start: 6, end: 11 };
+        }
+        case "search_annotations": {
+          const a = args as Record<string, unknown> | undefined;
+          if (a?.annotationType) {
+            return [
+              {
+                annotation_id: 1,
+                node_id: "a.md",
+                node_title: "Alpha",
+                annotation_type: a.annotationType,
+                certainty: "neutral",
+                body: "found by search",
+                date: null,
+                source_line: 3,
+                char_start: 10,
+                char_end: 30,
+              },
+            ];
+          }
+          return [
+            {
+              annotation_id: 1,
+              node_id: "a.md",
+              node_title: "Alpha",
+              annotation_type: "note",
+              certainty: "neutral",
+              body: "Silk Road flourished",
+              date: null,
+              source_line: 5,
+              char_start: 10,
+              char_end: 50,
+            },
+          ];
+        }
+        case "list_annotations": {
+          const a = args as Record<string, unknown> | undefined;
+          if (a?.annotationType) {
+            return [
+              {
+                annotation_id: 2,
+                node_id: a?.nodeId ?? "a.md",
+                node_title: "Alpha",
+                annotation_type: a.annotationType,
+                certainty: "firm",
+                body: "filtered note",
+                date: null,
+                source_line: 1,
+                char_start: 0,
+                char_end: 20,
+              },
+            ];
+          }
+          return [
+            {
+              annotation_id: 1,
+              node_id: a?.nodeId ?? "a.md",
+              node_title: "Alpha",
+              annotation_type: "note",
+              certainty: "neutral",
+              body: "a note",
+              date: null,
+              source_line: 1,
+              char_start: 0,
+              char_end: 10,
+            },
+            {
+              annotation_id: 2,
+              node_id: a?.nodeId ?? "a.md",
+              node_title: "Alpha",
+              annotation_type: "question",
+              certainty: "tentative",
+              body: "a question",
+              date: null,
+              source_line: 3,
+              char_start: 20,
+              char_end: 40,
+            },
+          ];
         }
         case "ensure_graph_ready":
           return null;
@@ -717,6 +797,57 @@ describe("ipc", () => {
       "en",
     );
     expect(result).toBeNull();
+  });
+
+  it("searchAnnotations returns results", async () => {
+    const results = await searchAnnotations("Silk Road");
+    expect(results).toHaveLength(1);
+    expect(results[0]!.node_id).toBe("a.md");
+    expect(results[0]!.body).toBe("Silk Road flourished");
+    expect(results[0]!.annotation_type).toBe("note");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("search_annotations", {
+      query: "Silk Road",
+      annotationType: null,
+      limit: null,
+    });
+  });
+
+  it("searchAnnotations with type filter", async () => {
+    const results = await searchAnnotations("important", "note");
+    expect(results).toHaveLength(1);
+    expect(results[0]!.annotation_type).toBe("note");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("search_annotations", {
+      query: "important",
+      annotationType: "note",
+      limit: null,
+    });
+  });
+
+  it("listAnnotations returns results", async () => {
+    const results = await listAnnotations("a.md");
+    expect(results).toHaveLength(2);
+    expect(results[0]!.annotation_type).toBe("note");
+    expect(results[1]!.annotation_type).toBe("question");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("list_annotations", {
+      nodeId: "a.md",
+      annotationType: null,
+      limit: null,
+    });
+  });
+
+  it("listAnnotations with type filter", async () => {
+    const results = await listAnnotations("a.md", "note");
+    expect(results).toHaveLength(1);
+    expect(results[0]!.annotation_type).toBe("note");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("list_annotations", {
+      nodeId: "a.md",
+      annotationType: "note",
+      limit: null,
+    });
   });
 
 });

@@ -336,6 +336,71 @@ pub fn replace_mention_with_wikilink(
     }
 }
 
+pub fn utf16_offset_to_line(content: &str, utf16_offset: usize) -> u32 {
+    let mut accumulated: usize = 0;
+    let mut line: u32 = 1;
+    for ch in content.chars() {
+        if accumulated >= utf16_offset {
+            return line;
+        }
+        if ch == '\n' {
+            line += 1;
+        }
+        accumulated += ch.len_utf16();
+    }
+    line
+}
+
+pub fn extract_annotations(content: &str) -> Vec<super::types::IndexableAnnotation> {
+    use crate::annotation::types::{AnnotationType, Certainty, Scope};
+
+    let parsed = crate::annotation::parser::parse_annotations(content);
+    parsed
+        .into_iter()
+        .map(|ann| {
+            let annotation_type = match ann.annotation_type {
+                AnnotationType::Note => "note",
+                AnnotationType::Question => "question",
+                AnnotationType::Todo => "todo",
+                AnnotationType::CrossRef => "crossref",
+                AnnotationType::Apparatus => "apparatus",
+                AnnotationType::Translation => "translation",
+                AnnotationType::Bare => "bare",
+            }
+            .to_string();
+
+            let certainty = match ann.certainty {
+                Certainty::Tentative => "tentative",
+                Certainty::Firm => "firm",
+                Certainty::Neutral => "neutral",
+            }
+            .to_string();
+
+            let (scope_kind, scope_value) = match &ann.scope {
+                Scope::Words(n) => ("words".to_string(), n.to_string()),
+                Scope::Paragraph(n) => ("paragraph".to_string(), n.to_string()),
+                Scope::Page(n) => ("page".to_string(), n.to_string()),
+                Scope::Sentence(n) => ("sentence".to_string(), n.to_string()),
+                Scope::Anchor(s) => ("anchor".to_string(), s.clone()),
+            };
+
+            let source_line = utf16_offset_to_line(content, ann.char_start);
+
+            super::types::IndexableAnnotation {
+                annotation_type,
+                certainty,
+                body: ann.body,
+                date: ann.date,
+                source_line,
+                char_start: ann.char_start,
+                char_end: ann.char_end,
+                scope_kind,
+                scope_value,
+            }
+        })
+        .collect()
+}
+
 fn split_sentences(text: &str) -> Vec<&str> {
     let mut sentences = Vec::new();
     let mut start = 0;
@@ -829,5 +894,76 @@ mod tests {
             let ctx = extract_mention_context(body, m.byte_offset);
             assert!(ctx.contains(&m.matched_text));
         }
+    }
+
+    // --- Cycle 8: utf16_offset_to_line ---
+
+    #[test]
+    fn utf16_offset_to_line_first_line() {
+        assert_eq!(utf16_offset_to_line("hello world", 3), 1);
+    }
+
+    #[test]
+    fn utf16_offset_to_line_second_line() {
+        assert_eq!(utf16_offset_to_line("line one\nline two", 12), 2);
+    }
+
+    #[test]
+    fn utf16_offset_to_line_cjk() {
+        // '中' is 1 UTF-16 code unit, '\n' is 1, '世' is 1
+        let text = "中\n世";
+        // offset 0 = '中' → line 1
+        assert_eq!(utf16_offset_to_line(text, 0), 1);
+        // offset 1 = '\n' → line 1
+        assert_eq!(utf16_offset_to_line(text, 1), 1);
+        // offset 2 = '世' → line 2
+        assert_eq!(utf16_offset_to_line(text, 2), 2);
+    }
+
+    #[test]
+    fn utf16_offset_to_line_zero() {
+        assert_eq!(utf16_offset_to_line("hello", 0), 1);
+    }
+
+    // --- Cycle 9: extract_annotations ---
+
+    #[test]
+    fn extract_annotations_basic() {
+        let content = "Some text %%! n: _ | a note %% more";
+        let result = extract_annotations(content);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].annotation_type, "note");
+        assert_eq!(result[0].certainty, "neutral");
+        assert_eq!(result[0].scope_kind, "words");
+        assert_eq!(result[0].source_line, 1);
+    }
+
+    #[test]
+    fn extract_annotations_multiple() {
+        let content = "%%! n: _ | first %% stuff %%! q: _ | second %%";
+        let result = extract_annotations(content);
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn extract_annotations_no_body() {
+        let content = "%%! n: _ %%";
+        let result = extract_annotations(content);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].body, None);
+    }
+
+    #[test]
+    fn extract_annotations_multiline() {
+        let content = "line one\nline two\n%%! n: _ | note %%";
+        let result = extract_annotations(content);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].source_line, 3);
+    }
+
+    #[test]
+    fn extract_annotations_empty() {
+        let result = extract_annotations("");
+        assert!(result.is_empty());
     }
 }

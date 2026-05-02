@@ -66,6 +66,33 @@ pub fn extract_tags(fm: &serde_json::Value) -> Vec<String> {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct IndexableAnnotation {
+    pub annotation_type: String,
+    pub certainty: String,
+    pub body: Option<String>,
+    pub date: Option<String>,
+    pub source_line: u32,
+    pub char_start: usize,
+    pub char_end: usize,
+    pub scope_kind: String,
+    pub scope_value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AnnotationSearchResult {
+    pub annotation_id: i64,
+    pub node_id: String,
+    pub node_title: String,
+    pub annotation_type: String,
+    pub certainty: String,
+    pub body: Option<String>,
+    pub date: Option<String>,
+    pub source_line: u32,
+    pub char_start: usize,
+    pub char_end: usize,
+}
+
 pub fn extract_aliases(fm: &serde_json::Value) -> Vec<String> {
     match fm.get("aliases") {
         Some(serde_json::Value::Array(arr)) => {
@@ -203,5 +230,42 @@ mod tests {
     fn extract_aliases_non_string_items() {
         let fm = json!({"aliases": ["Good", 42, null, "Also Good"]});
         assert_eq!(extract_aliases(&fm), vec!["Good", "Also Good"]);
+    }
+
+    #[test]
+    fn indexable_annotation_round_trips() {
+        let ia = IndexableAnnotation {
+            annotation_type: "note".into(),
+            certainty: "tentative".into(),
+            body: Some("a note".into()),
+            date: Some("2026-03".into()),
+            source_line: 5,
+            char_start: 10,
+            char_end: 50,
+            scope_kind: "words".into(),
+            scope_value: "2".into(),
+        };
+        let json_str = serde_json::to_string(&ia).expect("serialize");
+        let back: IndexableAnnotation = serde_json::from_str(&json_str).expect("deserialize");
+        assert_eq!(back, ia);
+    }
+
+    #[test]
+    fn annotation_search_result_round_trips() {
+        let asr = AnnotationSearchResult {
+            annotation_id: 42,
+            node_id: "a.md".into(),
+            node_title: "Alpha".into(),
+            annotation_type: "note".into(),
+            certainty: "neutral".into(),
+            body: Some("Silk Road".into()),
+            date: None,
+            source_line: 3,
+            char_start: 10,
+            char_end: 30,
+        };
+        let json_str = serde_json::to_string(&asr).expect("serialize");
+        let back: AnnotationSearchResult = serde_json::from_str(&json_str).expect("deserialize");
+        assert_eq!(back, asr);
     }
 }

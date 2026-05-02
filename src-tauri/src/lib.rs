@@ -347,6 +347,8 @@ pub fn run() {
             commands::pdf_viewer::pdf_close,
             commands::annotation::parse_annotations,
             commands::annotation::resolve_annotation_scope,
+            commands::annotation::search_annotations,
+            commands::annotation::list_annotations,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
