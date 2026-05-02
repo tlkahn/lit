@@ -529,12 +529,12 @@ export async function searchAnnotations(
 }
 
 export async function listAnnotations(
-  nodeId: string,
+  nodeId?: string,
   annotationType?: AnnotationType,
   limit?: number,
 ): Promise<AnnotationSearchResult[]> {
   return invoke<AnnotationSearchResult[]>("list_annotations", {
-    nodeId,
+    nodeId: nodeId ?? null,
     annotationType: annotationType ?? null,
     limit: limit ?? null,
   });

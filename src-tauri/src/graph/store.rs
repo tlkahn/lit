@@ -627,39 +627,63 @@ impl Store {
         Ok(results)
     }
 
-    pub fn list_annotations(&self, node_id: &str, type_filter: Option<&str>, limit: i64) -> Result<Vec<AnnotationSearchResult>, GraphError> {
-        if type_filter.is_some() {
-            let mut stmt = self.conn.prepare(
-                "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end
-                 FROM annotations a
-                 JOIN nodes n ON n.id = a.node_id
-                 WHERE a.node_id = ?1 AND a.annotation_type = ?2
-                 ORDER BY a.source_line
-                 LIMIT ?3",
-            )?;
-            let results = stmt
-                .query_map(
-                    rusqlite::params![node_id, type_filter.unwrap(), limit],
-                    map_annotation_row,
-                )?
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(results)
-        } else {
-            let mut stmt = self.conn.prepare(
-                "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end
-                 FROM annotations a
-                 JOIN nodes n ON n.id = a.node_id
-                 WHERE a.node_id = ?1
-                 ORDER BY a.source_line
-                 LIMIT ?2",
-            )?;
-            let results = stmt
-                .query_map(
-                    rusqlite::params![node_id, limit],
-                    map_annotation_row,
-                )?
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(results)
+    pub fn list_annotations(&self, node_id: Option<&str>, type_filter: Option<&str>, limit: i64) -> Result<Vec<AnnotationSearchResult>, GraphError> {
+        match (node_id, type_filter) {
+            (Some(nid), Some(tf)) => {
+                let mut stmt = self.conn.prepare(
+                    "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end
+                     FROM annotations a
+                     JOIN nodes n ON n.id = a.node_id
+                     WHERE a.node_id = ?1 AND a.annotation_type = ?2
+                     ORDER BY a.source_line
+                     LIMIT ?3",
+                )?;
+                let results = stmt
+                    .query_map(rusqlite::params![nid, tf, limit], map_annotation_row)?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(results)
+            }
+            (Some(nid), None) => {
+                let mut stmt = self.conn.prepare(
+                    "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end
+                     FROM annotations a
+                     JOIN nodes n ON n.id = a.node_id
+                     WHERE a.node_id = ?1
+                     ORDER BY a.source_line
+                     LIMIT ?2",
+                )?;
+                let results = stmt
+                    .query_map(rusqlite::params![nid, limit], map_annotation_row)?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(results)
+            }
+            (None, Some(tf)) => {
+                let mut stmt = self.conn.prepare(
+                    "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end
+                     FROM annotations a
+                     JOIN nodes n ON n.id = a.node_id
+                     WHERE a.annotation_type = ?1
+                     ORDER BY a.node_id, a.source_line
+                     LIMIT ?2",
+                )?;
+                let results = stmt
+                    .query_map(rusqlite::params![tf, limit], map_annotation_row)?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(results)
+            }
+            (None, None) => {
+                let mut stmt = self.conn.prepare(
+                    "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end
+                     FROM annotations a
+                     JOIN nodes n ON n.id = a.node_id
+                     ORDER BY a.node_id, a.source_line
+                     LIMIT ?1",
+                )?;
+                let results = stmt
+                    .query_map(rusqlite::params![limit], map_annotation_row)?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(results)
+            }
         }
     }
 
@@ -2068,7 +2092,7 @@ mod tests {
 
         store.upsert_annotations("a.md", &[ann1, ann2, ann3]).unwrap();
 
-        let results = store.list_annotations("a.md", None, 100).unwrap();
+        let results = store.list_annotations(Some("a.md"), None, 100).unwrap();
         assert_eq!(results.len(), 3);
         assert_eq!(results[0].source_line, 1);
         assert_eq!(results[1].source_line, 5);
@@ -2087,7 +2111,7 @@ mod tests {
         ];
         store.upsert_annotations("a.md", &anns).unwrap();
 
-        let results = store.list_annotations("a.md", Some("note"), 100).unwrap();
+        let results = store.list_annotations(Some("a.md"), Some("note"), 100).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].annotation_type, "note");
     }
@@ -2095,7 +2119,54 @@ mod tests {
     #[test]
     fn list_annotations_empty_for_nonexistent() {
         let store = Store::open_memory().unwrap();
-        let results = store.list_annotations("unknown.md", None, 100).unwrap();
+        let results = store.list_annotations(Some("unknown.md"), None, 100).unwrap();
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn list_annotations_vault_wide() {
+        let store = Store::open_memory().unwrap();
+        let node_a = make_node("a.md", "Alpha", &[], json!({}));
+        let node_b = make_node("b.md", "Beta", &[], json!({}));
+        store.upsert_node(&node_a, 1).unwrap();
+        store.upsert_node(&node_b, 1).unwrap();
+
+        let mut ann1 = make_annotation("note", Some("first"));
+        ann1.source_line = 1;
+        let mut ann2 = make_annotation("question", Some("second"));
+        ann2.source_line = 5;
+        store.upsert_annotations("a.md", &[ann1, ann2]).unwrap();
+
+        let mut ann3 = make_annotation("note", Some("third"));
+        ann3.source_line = 2;
+        store.upsert_annotations("b.md", &[ann3]).unwrap();
+
+        let results = store.list_annotations(None, None, 100).unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].node_id, "a.md");
+        assert_eq!(results[1].node_id, "a.md");
+        assert_eq!(results[2].node_id, "b.md");
+    }
+
+    #[test]
+    fn list_annotations_vault_wide_with_type_filter() {
+        let store = Store::open_memory().unwrap();
+        let node_a = make_node("a.md", "Alpha", &[], json!({}));
+        let node_b = make_node("b.md", "Beta", &[], json!({}));
+        store.upsert_node(&node_a, 1).unwrap();
+        store.upsert_node(&node_b, 1).unwrap();
+
+        let ann1 = make_annotation("note", Some("a note"));
+        let ann2 = make_annotation("question", Some("a question"));
+        store.upsert_annotations("a.md", &[ann1, ann2]).unwrap();
+
+        let ann3 = make_annotation("note", Some("b note"));
+        store.upsert_annotations("b.md", &[ann3]).unwrap();
+
+        let results = store.list_annotations(None, Some("note"), 100).unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|r| r.annotation_type == "note"));
+        assert_eq!(results[0].node_id, "a.md");
+        assert_eq!(results[1].node_id, "b.md");
     }
 }

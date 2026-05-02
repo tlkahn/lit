@@ -45,13 +45,13 @@ pub fn list_annotations(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
     graph_state: State<Arc<super::graph::GraphRegistry>>,
-    node_id: String,
+    node_id: Option<String>,
     annotation_type: Option<String>,
     limit: Option<i64>,
 ) -> Result<serde_json::Value, String> {
     super::graph::with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
         let results = gi.list_annotations(
-            &node_id,
+            node_id.as_deref(),
             annotation_type.as_deref(),
             limit.unwrap_or(100),
         )?;
@@ -132,7 +132,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "%%! n: _ | first %% text %%! q: _ | second %%");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
-        let results = gi.list_annotations("a.md", None, 100).unwrap();
+        let results = gi.list_annotations(Some("a.md"), None, 100).unwrap();
         assert_eq!(results.len(), 2);
     }
 
@@ -141,8 +141,32 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "%%! n: _ | note body %% and %%! q: _ | question body %%");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
-        let results = gi.list_annotations("a.md", Some("note"), 100).unwrap();
+        let results = gi.list_annotations(Some("a.md"), Some("note"), 100).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].annotation_type, "note");
+    }
+
+    #[test]
+    fn cmd_list_annotations_vault_wide() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "%%! n: _ | alpha note %%");
+        write_md(dir.path(), "b.md", "%%! q: _ | beta question %%");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let results = gi.list_annotations(None, None, 100).unwrap();
+        assert_eq!(results.len(), 2);
+        let node_ids: Vec<&str> = results.iter().map(|r| r.node_id.as_str()).collect();
+        assert!(node_ids.contains(&"a.md"));
+        assert!(node_ids.contains(&"b.md"));
+    }
+
+    #[test]
+    fn cmd_list_annotations_vault_wide_with_type_filter() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "%%! n: _ | alpha note %% and %%! q: _ | alpha question %%");
+        write_md(dir.path(), "b.md", "%%! n: _ | beta note %%");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let results = gi.list_annotations(None, Some("note"), 100).unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|r| r.annotation_type == "note"));
     }
 }

@@ -946,7 +946,7 @@ impl GraphIndex {
         store.search_annotations(query, type_filter, limit)
     }
 
-    pub fn list_annotations(&self, node_id: &str, type_filter: Option<&str>, limit: i64) -> Result<Vec<super::types::AnnotationSearchResult>, GraphError> {
+    pub fn list_annotations(&self, node_id: Option<&str>, type_filter: Option<&str>, limit: i64) -> Result<Vec<super::types::AnnotationSearchResult>, GraphError> {
         let store = self.store.lock().unwrap();
         store.list_annotations(node_id, type_filter, limit)
     }

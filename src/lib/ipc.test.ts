@@ -850,4 +850,15 @@ describe("ipc", () => {
     });
   });
 
+  it("listAnnotations vault-wide (no nodeId)", async () => {
+    const results = await listAnnotations();
+    expect(results).toHaveLength(2);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("list_annotations", {
+      nodeId: null,
+      annotationType: null,
+      limit: null,
+    });
+  });
+
 });
