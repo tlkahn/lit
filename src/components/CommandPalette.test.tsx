@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
-import { CommandPalette } from "./CommandPalette";
+import { CommandPalette, _resetRegistration } from "./CommandPalette";
 import { mockInvoke } from "../test/tauri-mock";
+import { paletteRegistry } from "../lib/paletteRegistry";
 import type { AnnotationSearchResult } from "../lib/ipc";
 
 const mockResults: AnnotationSearchResult[] = [
@@ -88,6 +89,8 @@ describe("CommandPalette", () => {
     mockSelectPageAtLine.mockClear();
     mockRecordJump.mockClear();
     vi.useFakeTimers();
+    paletteRegistry._clear();
+    _resetRegistration();
   });
 
   afterEach(() => {
@@ -141,7 +144,7 @@ describe("CommandPalette", () => {
       expect(screen.getByTestId("command-palette-mode-badge")).toHaveTextContent("@");
     });
 
-    it('typing "meeting" with no prefix sets mode to titles', () => {
+    it('typing "meeting" with no prefix sets mode to omni (no badge)', () => {
       render(<CommandPalette open={true} onClose={onClose} />);
       fireEvent.change(screen.getByTestId("command-palette-input"), {
         target: { value: "meeting" },
@@ -454,33 +457,171 @@ describe("CommandPalette", () => {
       const allButton = screen.getByTestId("type-filter-all");
       expect(allButton.getAttribute("data-active")).toBe("true");
     });
+
+    it("filter row only appears when active provider has filterOptions", () => {
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "$test" },
+      });
+      expect(screen.queryByTestId("command-palette-type-filter")).not.toBeInTheDocument();
+    });
   });
 
-  // Step 7: Stub modes
+  // Step 7: Stub modes — now show empty results / "No results" instead of "coming soon"
 
   describe("stub modes", () => {
-    it('no-prefix mode shows "Title search coming soon" placeholder', () => {
+    it("no-prefix mode (omni) shows no results for query when no providers return data", async () => {
+      mockInvoke(() => []);
       render(<CommandPalette open={true} onClose={onClose} />);
       fireEvent.change(screen.getByTestId("command-palette-input"), {
         target: { value: "meeting" },
       });
-      expect(screen.getByText("Title search coming soon")).toBeInTheDocument();
+      await advanceDebounce();
+      expect(screen.getByText("No results")).toBeInTheDocument();
     });
 
-    it('# mode shows "Tag search coming soon" placeholder', () => {
+    it("# mode shows No results after search", async () => {
       render(<CommandPalette open={true} onClose={onClose} />);
       fireEvent.change(screen.getByTestId("command-palette-input"), {
         target: { value: "#tag" },
       });
-      expect(screen.getByText("Tag search coming soon")).toBeInTheDocument();
+      await advanceDebounce();
+      expect(screen.getByText("No results")).toBeInTheDocument();
     });
 
-    it('/ mode shows "Content search coming soon" placeholder', () => {
+    it("/ mode shows No results after search", async () => {
       render(<CommandPalette open={true} onClose={onClose} />);
       fireEvent.change(screen.getByTestId("command-palette-input"), {
         target: { value: "/pattern" },
       });
-      expect(screen.getByText("Content search coming soon")).toBeInTheDocument();
+      await advanceDebounce();
+      expect(screen.getByText("No results")).toBeInTheDocument();
+    });
+
+    it("$ mode shows No results after search", async () => {
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "$file" },
+      });
+      await advanceDebounce();
+      expect(screen.getByText("No results")).toBeInTheDocument();
+    });
+
+    it("! mode shows No results after search", async () => {
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "!cmd" },
+      });
+      await advanceDebounce();
+      expect(screen.getByText("No results")).toBeInTheDocument();
+    });
+  });
+
+  // Step 8: Provider integration
+
+  describe("provider integration", () => {
+    it("@silk delegates to annotation provider", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "search_annotations") return mockResults;
+        return [];
+      });
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "@silk" },
+      });
+      await advanceDebounce();
+      expect(screen.getAllByTestId("command-palette-result")).toHaveLength(3);
+    });
+
+    it("$ delegates to file provider (stub, empty)", async () => {
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "$test" },
+      });
+      await advanceDebounce();
+      expect(screen.getByText("No results")).toBeInTheDocument();
+    });
+
+    it("! delegates to command provider (stub, empty)", async () => {
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "!test" },
+      });
+      await advanceDebounce();
+      expect(screen.getByText("No results")).toBeInTheDocument();
+    });
+  });
+
+  // Step 9: Omni-search
+
+  describe("omni-search", () => {
+    it("no-prefix queries all providers, results grouped by section", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "search_annotations") return mockResults.slice(0, 1);
+        return [];
+      });
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "silk" },
+      });
+      await advanceDebounce();
+      expect(screen.getAllByTestId("palette-section-header")).toHaveLength(1);
+      expect(screen.getAllByTestId("palette-section-header")[0]).toHaveTextContent("Annotations");
+      expect(screen.getAllByTestId("command-palette-result")).toHaveLength(1);
+    });
+
+    it("omni-search caps at 5 results per section", async () => {
+      const manyResults: typeof mockResults = Array.from({ length: 10 }, (_, i) => ({
+        annotation_id: i + 1,
+        node_id: `page-${i}.md`,
+        node_title: `Page ${i}`,
+        annotation_type: "note" as const,
+        certainty: "neutral" as const,
+        body: `Body ${i}`,
+        date: null,
+        source_line: i,
+        char_start: 0,
+        char_end: 10,
+      }));
+      mockInvoke((cmd) => {
+        if (cmd === "search_annotations") return manyResults;
+        return [];
+      });
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "page" },
+      });
+      await advanceDebounce();
+      expect(screen.getAllByTestId("command-palette-result")).toHaveLength(5);
+    });
+
+    it("selecting omni result calls correct provider's onSelect", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "search_annotations") return mockResults.slice(0, 1);
+        return [];
+      });
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "silk" },
+      });
+      await advanceDebounce();
+      const results = screen.getAllByTestId("command-palette-result");
+      fireEvent.click(results[0]!);
+      expect(mockRecordJump).toHaveBeenCalled();
+      expect(onClose).toHaveBeenCalled();
+    });
+
+    it("prefix hint row rendered only in omni mode (no input)", () => {
+      render(<CommandPalette open={true} onClose={onClose} />);
+      expect(screen.getByTestId("palette-prefix-hints")).toBeInTheDocument();
+    });
+
+    it("prefix hint row hidden when a prefix is active", () => {
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "@test" },
+      });
+      expect(screen.queryByTestId("palette-prefix-hints")).not.toBeInTheDocument();
     });
   });
 });
