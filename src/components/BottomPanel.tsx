@@ -1,7 +1,10 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { BacklinksPanel } from "./BacklinksPanel";
 import { UnlinkedMentionsPanel } from "./UnlinkedMentionsPanel";
+import { AnnotationPanel } from "./AnnotationPanel";
 import { usePreferencesStore } from "../stores/preferences";
+import { getCurrentEditorView } from "../lib/editorViewRef";
+import { annotationDataField } from "../editor/livePreview/annotationState";
 
 interface BottomPanelProps {
   pageId: string;
@@ -51,8 +54,10 @@ function TabButton({
   );
 }
 
+type TabId = "linked" | "unlinked" | "annotations";
+
 export function BottomPanel({ pageId }: BottomPanelProps) {
-  const [activeTab, setActiveTab] = useState<"linked" | "unlinked">("linked");
+  const [activeTab, setActiveTab] = useState<TabId>("linked");
   const [unfolded, setUnfolded] = useState(false);
   const [panelHeight, setPanelHeight] = useState(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
@@ -63,7 +68,9 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
   });
   const [linkedCount, setLinkedCount] = useState<number | null>(null);
   const [unlinkedCount, setUnlinkedCount] = useState<number | null>(null);
+  const [annotationCount, setAnnotationCount] = useState(0);
   const [hasOpenedUnlinked, setHasOpenedUnlinked] = useState(false);
+  const [hasOpenedAnnotations, setHasOpenedAnnotations] = useState(false);
 
   const panelRef = useRef<HTMLDivElement>(null);
   const tabpanelRef = useRef<HTMLDivElement>(null);
@@ -77,8 +84,9 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
   );
 
   const handleTabClick = useCallback(
-    (tab: "linked" | "unlinked") => {
+    (tab: TabId) => {
       if (tab === "unlinked") setHasOpenedUnlinked(true);
+      if (tab === "annotations") setHasOpenedAnnotations(true);
       if (!unfolded) {
         setActiveTab(tab);
         setUnfolded(true);
@@ -159,6 +167,32 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
   }, []);
 
   useEffect(() => {
+    const handler = () => {
+      const view = getCurrentEditorView();
+      if (!view) {
+        setAnnotationCount(0);
+        return;
+      }
+      const data = view.state.field(annotationDataField, false);
+      setAnnotationCount(data ? data.length : 0);
+    };
+    window.addEventListener("lit:annotations-changed", handler);
+    return () => window.removeEventListener("lit:annotations-changed", handler);
+  }, []);
+
+  useEffect(() => {
+    const handler = () => {
+      if (annotationCount > 0) {
+        setHasOpenedAnnotations(true);
+        setActiveTab("annotations");
+        setUnfolded(true);
+      }
+    };
+    window.addEventListener("lit:show-annotation", handler);
+    return () => window.removeEventListener("lit:show-annotation", handler);
+  }, [annotationCount]);
+
+  useEffect(() => {
     if (!experimentalUnlinkedReferences && activeTab === "unlinked") {
       setActiveTab("linked");
       setUnfolded(false);
@@ -166,7 +200,15 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
   }, [experimentalUnlinkedReferences, activeTab]);
 
   useEffect(() => {
+    if (annotationCount === 0 && activeTab === "annotations") {
+      setActiveTab("linked");
+    }
+  }, [annotationCount, activeTab]);
+
+  useEffect(() => {
     setUnlinkedCount(null);
+    setAnnotationCount(0);
+    setHasOpenedAnnotations(false);
     if (activeTab !== "unlinked" || !unfolded) {
       setHasOpenedUnlinked(false);
     }
@@ -254,6 +296,17 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
             onClick={() => handleTabClick("unlinked")}
           />
         )}
+        {annotationCount > 0 && (
+          <TabButton
+            id="bp-tab-annotations"
+            testId="tab-annotations"
+            label="Annotations"
+            count={annotationCount}
+            active={activeTab === "annotations"}
+            folded={!unfolded}
+            onClick={() => handleTabClick("annotations")}
+          />
+        )}
       </div>
       <div
         ref={tabpanelRef}
@@ -269,6 +322,11 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
         {hasOpenedUnlinked && (
           <div style={{ display: activeTab === "unlinked" ? undefined : "none" }}>
             <UnlinkedMentionsPanel pageId={pageId} onCountChange={setUnlinkedCount} contentHeight={panelHeight - TAB_BAR_HEIGHT} />
+          </div>
+        )}
+        {hasOpenedAnnotations && (
+          <div style={{ display: activeTab === "annotations" ? undefined : "none" }}>
+            <AnnotationPanel pageId={pageId} contentHeight={panelHeight - TAB_BAR_HEIGHT} />
           </div>
         )}
       </div>

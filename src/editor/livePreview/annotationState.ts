@@ -3,9 +3,23 @@ import { Decoration, EditorView, ViewPlugin, type ViewUpdate, keymap } from "@co
 import { syntaxTree } from "@codemirror/language";
 import { parseAnnotations, type Annotation } from "../../lib/ipc";
 import { isCursorOnLine } from "./proximity";
-import { PillWidget, CalloutWidget, annotationFoldField } from "./annotationWidgets";
+import { PillWidget, MarkerWidget, CalloutWidget, annotationFoldField } from "./annotationWidgets";
 import { scopeHighlightExtension } from "./scopeHighlight";
 import { escapeAnnotationKeymap } from "./escapeAnnotation";
+
+export type DisplayMode = "pill" | "footnote";
+
+export const setDisplayMode = StateEffect.define<DisplayMode>();
+
+export const displayModeField = StateField.define<DisplayMode>({
+  create: () => "pill",
+  update(value, tr) {
+    for (const e of tr.effects) {
+      if (e.is(setDisplayMode)) return e.value;
+    }
+    return value;
+  },
+});
 
 export const setAnnotationData = StateEffect.define<Annotation[]>();
 
@@ -49,6 +63,7 @@ export const annotationPlugin = ViewPlugin.fromClass(
         .then((annotations) => {
           if (this.view.state.doc.toString() !== this.lastDocStr) return;
           this.view.dispatch({ effects: setAnnotationData.of(annotations) });
+          window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
         })
         .catch(() => {});
     }
@@ -70,10 +85,11 @@ function findAnnotationForRange(
 }
 
 export const annotationDecorationProvider = EditorView.decorations.compute(
-  [annotationDataField, annotationFoldField, "selection"],
+  [annotationDataField, annotationFoldField, displayModeField, "selection"],
   (state) => {
     const annotations = state.field(annotationDataField);
     if (annotations.length === 0) return Decoration.none;
+    const mode = state.field(displayModeField);
 
     const docLen = state.doc.length;
     const decos: { from: number; to: number; deco: Decoration }[] = [];
@@ -104,10 +120,11 @@ export const annotationDecorationProvider = EditorView.decorations.compute(
             }),
           });
         } else {
+          const widget = mode === "footnote" ? new MarkerWidget(ann) : new PillWidget(ann);
           decos.push({
             from,
             to,
-            deco: Decoration.replace({ widget: new PillWidget(ann) }),
+            deco: Decoration.replace({ widget }),
           });
         }
       },
@@ -120,6 +137,7 @@ export const annotationDecorationProvider = EditorView.decorations.compute(
 
 export function annotationExtension(): Extension {
   return [
+    displayModeField,
     annotationDataField,
     annotationPlugin,
     annotationDecorationProvider,

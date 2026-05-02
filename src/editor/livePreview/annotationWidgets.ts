@@ -1,29 +1,11 @@
 import { type EditorView, WidgetType } from "@codemirror/view";
 import { StateEffect, StateField, type Transaction } from "@codemirror/state";
-import type { Annotation, AnnotationType } from "../../lib/ipc";
+import type { Annotation } from "../../lib/ipc";
 import { handleAnnotationHover, handleAnnotationLeave } from "./annotationHover";
+import { TYPE_ICON, certaintyClass, certaintyMark, truncateBody } from "./annotationConstants";
 import "./annotation.css";
 
-const TYPE_ICON: Record<AnnotationType, string> = {
-  note: "N",
-  question: "?",
-  todo: "T",
-  crossref: "→",
-  apparatus: "⊕",
-  translation: "译",
-  bare: "…",
-};
-
-function certaintyClass(certainty: string): string {
-  if (certainty === "tentative") return "cm-annotation-tentative";
-  if (certainty === "firm") return "cm-annotation-firm";
-  return "";
-}
-
-function truncateBody(body: string | null, max = 60): string {
-  if (!body) return "";
-  return body.length > max ? body.slice(0, max) + "…" : body;
-}
+export { certaintyClass, certaintyMark };
 
 function buildPillDOM(ann: Annotation): HTMLSpanElement {
   const pill = document.createElement("span");
@@ -85,6 +67,48 @@ export class PillWidget extends WidgetType {
 
   get estimatedHeight(): number {
     return 20;
+  }
+}
+
+export class MarkerWidget extends WidgetType {
+  constructor(readonly annotation: Annotation) {
+    super();
+  }
+
+  toDOM(view: EditorView): HTMLElement {
+    const ann = this.annotation;
+    const sup = document.createElement("sup");
+    sup.className = "cm-annotation-marker";
+    const cert = certaintyClass(ann.certainty);
+    if (cert) sup.classList.add(cert);
+    sup.dataset.annotationType = ann.annotation_type;
+    sup.textContent = (TYPE_ICON[ann.annotation_type] ?? "…") + certaintyMark(ann.certainty);
+
+    sup.onmouseenter = () => handleAnnotationHover(view, ann);
+    sup.onmouseleave = () => handleAnnotationLeave(view);
+    sup.onclick = (e) => {
+      e.preventDefault();
+      window.dispatchEvent(
+        new CustomEvent("lit:show-annotation", { detail: { charStart: ann.char_start } }),
+      );
+    };
+    return sup;
+  }
+
+  eq(other: MarkerWidget): boolean {
+    return (
+      this.annotation.original === other.annotation.original &&
+      this.annotation.char_start === other.annotation.char_start &&
+      this.annotation.char_end === other.annotation.char_end
+    );
+  }
+
+  ignoreEvent(): boolean {
+    return false;
+  }
+
+  get estimatedHeight(): number {
+    return 14;
   }
 }
 

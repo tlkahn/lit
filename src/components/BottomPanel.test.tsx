@@ -1,12 +1,58 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { BottomPanel } from "./BottomPanel";
 import { mockInvoke } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePreferencesStore } from "../stores/preferences";
+import { EditorState } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
+import { annotationDataField, setAnnotationData } from "../editor/livePreview/annotationState";
+import { setCurrentEditorView } from "../lib/editorViewRef";
+import type { Annotation } from "../lib/ipc";
+
+vi.mock("../lib/ipc", async (importOriginal) => {
+  const orig = await importOriginal() as Record<string, unknown>;
+  return {
+    ...orig,
+    parseAnnotations: vi.fn(async () => []),
+    resolveAnnotationScope: vi.fn(async () => null),
+  };
+});
+
+function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
+  return {
+    form: "compact",
+    annotation_type: "note",
+    certainty: "neutral",
+    scope: { kind: "words", value: 0 },
+    body: "test body",
+    date: null,
+    is_structured: true,
+    char_start: 0,
+    char_end: 10,
+    original: "%%!n | x%%",
+    ...overrides,
+  };
+}
+
+function setupEditorWithAnnotations(annotations: Annotation[]) {
+  const state = EditorState.create({
+    doc: "a".repeat(50),
+    extensions: [annotationDataField],
+  });
+  const view = new EditorView({ state, parent: document.createElement("div") });
+  if (annotations.length > 0) {
+    view.dispatch({ effects: setAnnotationData.of(annotations) });
+  }
+  setCurrentEditorView(view);
+  return view;
+}
+
+let testEditorView: EditorView | null = null;
 
 beforeEach(() => {
+  setCurrentEditorView(null);
   useWorkspaceStore.setState({
     workspacePath: "/test",
     currentPagePath: "target.md",
@@ -18,6 +64,12 @@ beforeEach(() => {
     if (cmd === "get_unlinked_mentions") return [];
     throw new Error(`Unknown command: ${cmd}`);
   });
+});
+
+afterEach(() => {
+  testEditorView?.destroy();
+  testEditorView = null;
+  setCurrentEditorView(null);
 });
 
 describe("BottomPanel", () => {
@@ -198,6 +250,136 @@ describe("BottomPanel", () => {
 
     expect(screen.queryByText("Unlinked References")).not.toBeInTheDocument();
     expect(panel.style.height).toBe("32px");
+  });
+
+  describe("Annotations tab", () => {
+    it("does not show tab when no annotations exist", () => {
+      render(<BottomPanel pageId="target.md" />);
+      expect(screen.queryByText("Annotations")).not.toBeInTheDocument();
+    });
+
+    it("shows 'Annotations (N)' tab when annotations exist", () => {
+      testEditorView = setupEditorWithAnnotations([
+        makeAnnotation({ char_start: 0, char_end: 10 }),
+        makeAnnotation({ char_start: 15, char_end: 25 }),
+      ]);
+      render(<BottomPanel pageId="target.md" />);
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+      });
+
+      expect(screen.getByText("Annotations (2)")).toBeInTheDocument();
+    });
+
+    it("click Annotations tab unfolds panel and shows annotation content", async () => {
+      testEditorView = setupEditorWithAnnotations([
+        makeAnnotation({ char_start: 0, char_end: 10, body: "my note" }),
+      ]);
+      render(<BottomPanel pageId="target.md" />);
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+      });
+
+      await userEvent.click(screen.getByText("Annotations (1)"));
+
+      const panel = screen.getByTestId("bottom-panel");
+      expect(panel.style.height).not.toBe("32px");
+      expect(screen.getByTestId("annotation-body-0").textContent).toBe("my note");
+    });
+
+    it("Annotations tab has correct ARIA attributes", () => {
+      testEditorView = setupEditorWithAnnotations([
+        makeAnnotation({ char_start: 0, char_end: 10 }),
+      ]);
+      render(<BottomPanel pageId="target.md" />);
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+      });
+
+      const tab = screen.getByTestId("tab-annotations");
+      expect(tab.getAttribute("role")).toBe("tab");
+      expect(tab.id).toBe("bp-tab-annotations");
+      expect(tab.getAttribute("aria-controls")).toBe("bp-tabpanel");
+    });
+
+    it("tab switching works across all 3 tabs", async () => {
+      testEditorView = setupEditorWithAnnotations([
+        makeAnnotation({ char_start: 0, char_end: 10 }),
+      ]);
+      render(<BottomPanel pageId="target.md" />);
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+      });
+
+      await userEvent.click(screen.getByText("Linked References"));
+      expect(screen.getByTestId("tab-linked")).toHaveAttribute("aria-selected", "true");
+
+      await userEvent.click(screen.getByText("Annotations (1)"));
+      expect(screen.getByTestId("tab-annotations")).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByTestId("tab-linked")).toHaveAttribute("aria-selected", "false");
+    });
+
+    it("lazy-mounts AnnotationPanel (not mounted until tab clicked)", () => {
+      testEditorView = setupEditorWithAnnotations([
+        makeAnnotation({ char_start: 0, char_end: 10, body: "lazy" }),
+      ]);
+      render(<BottomPanel pageId="target.md" />);
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+      });
+
+      expect(screen.queryByTestId("annotation-entry-0")).not.toBeInTheDocument();
+    });
+
+    it("lit:show-annotation event switches to Annotations tab and unfolds panel", () => {
+      testEditorView = setupEditorWithAnnotations([
+        makeAnnotation({ char_start: 5, char_end: 15, body: "shown" }),
+      ]);
+      render(<BottomPanel pageId="target.md" />);
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+      });
+
+      const panel = screen.getByTestId("bottom-panel");
+      expect(panel.style.height).toBe("32px");
+
+      act(() => {
+        window.dispatchEvent(
+          new CustomEvent("lit:show-annotation", { detail: { charStart: 5 } }),
+        );
+      });
+
+      expect(panel.style.height).not.toBe("32px");
+      expect(screen.getByTestId("tab-annotations")).toHaveAttribute("aria-selected", "true");
+    });
+
+    it("falls back to linked tab when annotations disappear while on annotations tab", async () => {
+      testEditorView = setupEditorWithAnnotations([
+        makeAnnotation({ char_start: 0, char_end: 10 }),
+      ]);
+      render(<BottomPanel pageId="target.md" />);
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+      });
+
+      await userEvent.click(screen.getByText("Annotations (1)"));
+      expect(screen.getByTestId("tab-annotations")).toHaveAttribute("aria-selected", "true");
+
+      testEditorView!.dispatch({ effects: setAnnotationData.of([]) });
+      act(() => {
+        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+      });
+
+      expect(screen.queryByTestId("tab-annotations")).not.toBeInTheDocument();
+      expect(screen.getByTestId("tab-linked")).toHaveAttribute("aria-selected", "true");
+    });
   });
 
   describe("drag resize", () => {

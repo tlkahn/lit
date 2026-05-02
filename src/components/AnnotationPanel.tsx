@@ -1,0 +1,135 @@
+import { useEffect, useState, useCallback, useRef } from "react";
+import { getCurrentEditorView } from "../lib/editorViewRef";
+import { annotationDataField } from "../editor/livePreview/annotationState";
+import { TYPE_ICON, certaintyMark, truncateBody } from "../editor/livePreview/annotationConstants";
+import type { Annotation } from "../lib/ipc";
+
+interface AnnotationPanelProps {
+  pageId: string;
+  onCountChange?: (count: number) => void;
+  contentHeight?: number;
+}
+
+function lineNumberAt(doc: { lineAt(pos: number): { number: number } }, pos: number): number {
+  try {
+    return doc.lineAt(pos).number;
+  } catch {
+    return 0;
+  }
+}
+
+export function AnnotationPanel({ pageId, onCountChange, contentHeight }: AnnotationPanelProps) {
+  const [annotations, setAnnotations] = useState<Annotation[]>([]);
+  const [highlightedCharStart, setHighlightedCharStart] = useState<number | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const entryRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+
+  const readAnnotations = useCallback(() => {
+    const view = getCurrentEditorView();
+    if (!view) {
+      setAnnotations([]);
+      return;
+    }
+    const data = view.state.field(annotationDataField, false);
+    if (!data) {
+      setAnnotations([]);
+      return;
+    }
+    const sorted = [...data].sort((a, b) => a.char_start - b.char_start);
+    setAnnotations(sorted);
+  }, []);
+
+  useEffect(() => {
+    readAnnotations();
+  }, [pageId, readAnnotations]);
+
+  useEffect(() => {
+    const handler = () => readAnnotations();
+    window.addEventListener("lit:annotations-changed", handler);
+    return () => window.removeEventListener("lit:annotations-changed", handler);
+  }, [readAnnotations]);
+
+  useEffect(() => {
+    onCountChange?.(annotations.length);
+  }, [annotations.length, onCountChange]);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.charStart != null) {
+        setHighlightedCharStart(detail.charStart);
+        const el = entryRefs.current.get(detail.charStart);
+        if (el && typeof el.scrollIntoView === "function") el.scrollIntoView({ block: "nearest" });
+      }
+    };
+    window.addEventListener("lit:show-annotation", handler);
+    return () => window.removeEventListener("lit:show-annotation", handler);
+  }, []);
+
+  const handleEntryClick = useCallback((ann: Annotation) => {
+    const view = getCurrentEditorView();
+    if (!view) return;
+    view.dispatch({ selection: { anchor: ann.char_start } });
+    view.focus();
+  }, []);
+
+  const view = getCurrentEditorView();
+  const doc = view?.state.doc;
+
+  return (
+    <div className="px-6 py-2">
+      {annotations.length === 0 ? (
+        <p className="text-xs text-text-faint" data-testid="annotation-panel-empty">
+          No annotations
+        </p>
+      ) : (
+        <div
+          ref={scrollRef}
+          data-testid="annotations-scroll-container"
+          className="overflow-y-auto"
+          style={contentHeight != null ? { height: contentHeight } : undefined}
+        >
+          {annotations.map((ann, i) => {
+            const lineNum = doc ? lineNumberAt(doc, ann.char_start) : 0;
+            const isHighlighted = highlightedCharStart === ann.char_start;
+            return (
+              <div
+                key={`${ann.char_start}-${ann.char_end}-${i}`}
+                ref={(el) => {
+                  if (el) entryRefs.current.set(ann.char_start, el);
+                }}
+                data-testid={`annotation-entry-${i}`}
+                className={`flex cursor-pointer items-start gap-2 rounded px-2 py-1 text-xs hover:bg-bg-secondary ${isHighlighted ? "bg-bg-secondary" : ""}`}
+                onClick={() => handleEntryClick(ann)}
+              >
+                <span
+                  className="inline-flex shrink-0 items-center rounded px-1 py-0.5 text-[10px] font-semibold uppercase"
+                  data-annotation-type={ann.annotation_type}
+                  data-testid={`annotation-badge-${i}`}
+                >
+                  {TYPE_ICON[ann.annotation_type] ?? "…"}
+                </span>
+                <span className="text-text-faint" data-testid={`annotation-certainty-${i}`}>
+                  {certaintyMark(ann.certainty)}
+                </span>
+                {lineNum > 0 && (
+                  <span className="text-text-faint" data-testid={`annotation-line-${i}`}>
+                    L{lineNum}
+                  </span>
+                )}
+                {ann.date && (
+                  <span className="text-text-faint" data-testid={`annotation-date-${i}`}>
+                    {ann.date}
+                  </span>
+                )}
+                <span className="truncate text-text-muted" data-testid={`annotation-body-${i}`}>
+                  {truncateBody(ann.body)}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}

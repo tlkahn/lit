@@ -71,6 +71,38 @@
   color: rgb(158, 158, 158);
 }
 
+/* Marker (footnote mode superscript) */
+.cm-annotation-marker {
+  display: inline;
+  font-size: 0.7em;
+  vertical-align: super;
+  cursor: pointer;
+  padding: 0 2px;
+  font-weight: 600;
+}
+
+.cm-annotation-marker[data-annotation-type="note"] {
+  color: rgb(68, 138, 255);
+}
+.cm-annotation-marker[data-annotation-type="question"] {
+  color: rgb(255, 145, 0);
+}
+.cm-annotation-marker[data-annotation-type="todo"] {
+  color: rgb(0, 200, 83);
+}
+.cm-annotation-marker[data-annotation-type="crossref"] {
+  color: rgb(156, 39, 176);
+}
+.cm-annotation-marker[data-annotation-type="apparatus"] {
+  color: rgb(233, 30, 99);
+}
+.cm-annotation-marker[data-annotation-type="translation"] {
+  color: rgb(0, 188, 212);
+}
+.cm-annotation-marker[data-annotation-type="bare"] {
+  color: rgb(158, 158, 158);
+}
+
 /* Callout (block annotation) */
 .cm-annotation-callout {
   padding: 8px 12px;

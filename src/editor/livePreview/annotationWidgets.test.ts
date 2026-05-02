@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { PillWidget, CalloutWidget, toggleAnnotationFoldEffect, annotationFoldField } from "./annotationWidgets";
+import { PillWidget, CalloutWidget, MarkerWidget, toggleAnnotationFoldEffect, annotationFoldField } from "./annotationWidgets";
 import type { Annotation } from "../../lib/ipc";
 
 vi.mock("../../lib/ipc", () => ({
@@ -214,6 +214,111 @@ describe("CalloutWidget click-to-navigate", () => {
     const initialHead = view.state.selection.main.head;
     arrow.click();
     expect(view.state.selection.main.head).toBe(initialHead);
+    view.destroy();
+  });
+});
+
+describe("MarkerWidget", () => {
+  it("toDOM returns sup.cm-annotation-marker", () => {
+    const view = makeEditorView();
+    const w = new MarkerWidget(makeAnnotation());
+    const dom = w.toDOM(view);
+    expect(dom.tagName).toBe("SUP");
+    expect(dom.classList.contains("cm-annotation-marker")).toBe(true);
+    view.destroy();
+  });
+
+  it("renders type letter from TYPE_ICON (N for note)", () => {
+    const view = makeEditorView();
+    const w = new MarkerWidget(makeAnnotation({ annotation_type: "note" }));
+    const dom = w.toDOM(view);
+    expect(dom.textContent).toContain("N");
+    view.destroy();
+  });
+
+  it("appends ? for tentative certainty", () => {
+    const view = makeEditorView();
+    const w = new MarkerWidget(makeAnnotation({ certainty: "tentative" }));
+    const dom = w.toDOM(view);
+    expect(dom.textContent).toContain("?");
+    view.destroy();
+  });
+
+  it("appends ! for firm certainty", () => {
+    const view = makeEditorView();
+    const w = new MarkerWidget(makeAnnotation({ certainty: "firm" }));
+    const dom = w.toDOM(view);
+    expect(dom.textContent).toContain("!");
+    view.destroy();
+  });
+
+  it("appends nothing for neutral certainty", () => {
+    const view = makeEditorView();
+    const w = new MarkerWidget(makeAnnotation({ annotation_type: "note", certainty: "neutral" }));
+    const dom = w.toDOM(view);
+    expect(dom.textContent).toBe("N");
+    view.destroy();
+  });
+
+  it("sets data-annotation-type attribute", () => {
+    const view = makeEditorView();
+    const w = new MarkerWidget(makeAnnotation({ annotation_type: "question" }));
+    const dom = w.toDOM(view);
+    expect(dom.dataset.annotationType).toBe("question");
+    view.destroy();
+  });
+
+  it("adds cm-annotation-tentative class", () => {
+    const view = makeEditorView();
+    const w = new MarkerWidget(makeAnnotation({ certainty: "tentative" }));
+    const dom = w.toDOM(view);
+    expect(dom.classList.contains("cm-annotation-tentative")).toBe(true);
+    view.destroy();
+  });
+
+  it("adds cm-annotation-firm class", () => {
+    const view = makeEditorView();
+    const w = new MarkerWidget(makeAnnotation({ certainty: "firm" }));
+    const dom = w.toDOM(view);
+    expect(dom.classList.contains("cm-annotation-firm")).toBe(true);
+    view.destroy();
+  });
+
+  it("eq compares original + char_start + char_end", () => {
+    const a = new MarkerWidget(makeAnnotation({ original: "%%!n%%", char_start: 0, char_end: 6 }));
+    const b = new MarkerWidget(makeAnnotation({ original: "%%!n%%", char_start: 0, char_end: 6, body: "different" }));
+    expect(a.eq(b)).toBe(true);
+  });
+
+  it("eq returns false when different", () => {
+    const a = new MarkerWidget(makeAnnotation({ original: "%%!n%%", char_start: 0, char_end: 6 }));
+    const b = new MarkerWidget(makeAnnotation({ original: "%%!q%%", char_start: 0, char_end: 6 }));
+    expect(a.eq(b)).toBe(false);
+  });
+
+  it("ignoreEvent returns false", () => {
+    const w = new MarkerWidget(makeAnnotation());
+    expect(w.ignoreEvent()).toBe(false);
+  });
+
+  it("estimatedHeight returns 14", () => {
+    const w = new MarkerWidget(makeAnnotation());
+    expect(w.estimatedHeight).toBe(14);
+  });
+
+  it("click dispatches lit:show-annotation CustomEvent with detail.charStart", () => {
+    const view = makeEditorView();
+    const ann = makeAnnotation({ char_start: 5 });
+    const w = new MarkerWidget(ann);
+    const dom = w.toDOM(view);
+
+    const spy = vi.fn();
+    window.addEventListener("lit:show-annotation", spy);
+    dom.click();
+    expect(spy).toHaveBeenCalledTimes(1);
+    const event = spy.mock.calls[0]![0] as CustomEvent;
+    expect(event.detail.charStart).toBe(5);
+    window.removeEventListener("lit:show-annotation", spy);
     view.destroy();
   });
 });

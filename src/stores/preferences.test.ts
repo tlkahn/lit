@@ -385,6 +385,90 @@ describe("PreferencesStore", () => {
     expect(usePreferencesStore.getState().annotationDefaultLang).toBe("en");
   });
 
+  it("defaults annotationDisplayMode to 'pill'", () => {
+    const state = usePreferencesStore.getState();
+    expect(state.annotationDisplayMode).toBe("pill");
+  });
+
+  it("maps annotations.displayMode: 'footnote' from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "annotations.displayMode": "footnote",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().annotationDisplayMode).toBe("footnote");
+  });
+
+  it("falls back to 'pill' when annotations.displayMode key is missing", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().annotationDisplayMode).toBe("pill");
+  });
+
+  it("falls back to 'pill' when annotations.displayMode is invalid", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "annotations.displayMode": "bogus",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().annotationDisplayMode).toBe("pill");
+  });
+
+  it("updates annotationDisplayMode on preferences://changed event", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().annotationDisplayMode).toBe("pill");
+
+    emitMockEvent("preferences://changed", {
+      "workbench.colorTheme": null,
+      "workbench.darkMode": "auto",
+      "workbench.sideBar.location": "left",
+      "annotations.displayMode": "footnote",
+    });
+
+    expect(usePreferencesStore.getState().annotationDisplayMode).toBe("footnote");
+  });
+
   it("updates experimentalUnlinkedReferences on preferences://changed event", async () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {

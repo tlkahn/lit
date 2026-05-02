@@ -5,6 +5,8 @@ import { getPreferences } from "../lib/ipc";
 
 export type FoldingShowControls = "mouseover" | "always" | "never";
 
+export type AnnotationDisplayMode = "pill" | "footnote";
+
 export interface PreferencesState {
   darkMode: DarkModePref;
   colorTheme: string | null;
@@ -17,6 +19,7 @@ export interface PreferencesState {
   mediaThumbnails: boolean;
   experimentalUnlinkedReferences: boolean;
   annotationDefaultLang: string;
+  annotationDisplayMode: AnnotationDisplayMode;
   loaded: boolean;
   loadPreferences: () => Promise<void>;
 }
@@ -28,6 +31,11 @@ function applySidebarLocation(val: string): "left" | "right" {
 function applyFoldingShowControls(val: string): FoldingShowControls {
   if (val === "always" || val === "never") return val;
   return "mouseover";
+}
+
+function applyAnnotationDisplayMode(val: unknown): AnnotationDisplayMode {
+  if (val === "footnote") return "footnote";
+  return "pill";
 }
 
 function applyDarkMode(val: unknown): DarkModePref {
@@ -50,6 +58,7 @@ function mapPreferences(prefs: Preferences) {
     mediaThumbnails: (prefs["editor.mediaThumbnails"] as boolean) ?? true,
     experimentalUnlinkedReferences: (prefs["experimental.unlinkedReferences"] as boolean) ?? true,
     annotationDefaultLang: (prefs["annotations.defaultLang"] as string) ?? "en",
+    annotationDisplayMode: applyAnnotationDisplayMode(prefs["annotations.displayMode"]),
   };
 }
 
@@ -65,6 +74,7 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   mediaThumbnails: true,
   experimentalUnlinkedReferences: true,
   annotationDefaultLang: "en",
+  annotationDisplayMode: "pill",
   loaded: false,
 
   loadPreferences: async () => {

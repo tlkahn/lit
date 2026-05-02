@@ -10,6 +10,7 @@ import { frontmatterFacet, noteDirFacet, mediaThumbnailsFacet } from "./livePrev
 import { docReplaced } from "./jumpHistory";
 import { usePreferencesStore } from "../stores/preferences";
 import { useFocusModeStore } from "../stores/focusMode";
+import { setDisplayMode } from "./livePreview/annotationState";
 
 export interface UseCodeMirrorProps {
   containerRef: React.RefObject<HTMLDivElement | null>;
@@ -176,6 +177,17 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
           focusModeExtension(s.active),
         ),
       });
+    });
+  }, [view]);
+
+  useEffect(() => {
+    const v = viewRef.current;
+    if (!v) return;
+    let prev = usePreferencesStore.getState().annotationDisplayMode;
+    return usePreferencesStore.subscribe((s) => {
+      if (s.annotationDisplayMode === prev) return;
+      prev = s.annotationDisplayMode;
+      v.dispatch({ effects: setDisplayMode.of(s.annotationDisplayMode) });
     });
   }, [view]);
 

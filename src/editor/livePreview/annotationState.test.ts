@@ -8,12 +8,15 @@ import {
   setAnnotationData,
   annotationDecorationProvider,
   annotationExtension,
+  displayModeField,
+  setDisplayMode,
 } from "./annotationState";
 import {
   annotationFoldField,
   toggleAnnotationFoldEffect,
   PillWidget,
   CalloutWidget,
+  MarkerWidget,
 } from "./annotationWidgets";
 import { Annotation as AnnotationGrammar } from "../markdown/annotation";
 import { Comment as CommentGrammar } from "../markdown/comment";
@@ -75,6 +78,33 @@ describe("annotationDataField", () => {
     const tr1 = state.update({ effects: setAnnotationData.of(annotations) });
     const tr2 = tr1.state.update({ changes: { from: 5, insert: " world" } });
     expect(tr2.state.field(annotationDataField)).toBe(annotations);
+  });
+});
+
+describe("displayModeField", () => {
+  it("initial state is 'pill'", () => {
+    const state = EditorState.create({ extensions: [displayModeField] });
+    expect(state.field(displayModeField)).toBe("pill");
+  });
+
+  it("setDisplayMode.of('footnote') updates field", () => {
+    const state = EditorState.create({ extensions: [displayModeField] });
+    const tr = state.update({ effects: setDisplayMode.of("footnote") });
+    expect(tr.state.field(displayModeField)).toBe("footnote");
+  });
+
+  it("round-trip back to 'pill'", () => {
+    const state = EditorState.create({ extensions: [displayModeField] });
+    const tr1 = state.update({ effects: setDisplayMode.of("footnote") });
+    const tr2 = tr1.state.update({ effects: setDisplayMode.of("pill") });
+    expect(tr2.state.field(displayModeField)).toBe("pill");
+  });
+
+  it("unrelated transactions leave field unchanged", () => {
+    const state = EditorState.create({ doc: "hello", extensions: [displayModeField] });
+    const tr1 = state.update({ effects: setDisplayMode.of("footnote") });
+    const tr2 = tr1.state.update({ changes: { from: 5, insert: " world" } });
+    expect(tr2.state.field(displayModeField)).toBe("footnote");
   });
 });
 
@@ -175,6 +205,29 @@ describe("annotationPlugin", () => {
     view.destroy();
   });
 
+  it("dispatches lit:annotations-changed window event after successful parse", async () => {
+    const testAnnotations = [
+      makeAnnotation({ body: "test", char_start: 0, char_end: 5 }),
+    ];
+    vi.mocked(parseAnnotations).mockResolvedValue(testAnnotations);
+
+    const spy = vi.fn();
+    window.addEventListener("lit:annotations-changed", spy);
+
+    const state = EditorState.create({
+      doc: "hello",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(spy).toHaveBeenCalled();
+
+    window.removeEventListener("lit:annotations-changed", spy);
+    view.destroy();
+  });
+
   it("dispatches setAnnotationData with IPC result", async () => {
     const testAnnotations = [
       makeAnnotation({ body: "parsed result", char_start: 0, char_end: 5 }),
@@ -204,6 +257,7 @@ describe("annotationDecorationProvider", () => {
       extensions: [
         markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
         annotationDataField,
+        displayModeField,
         annotationDecorationProvider,
         annotationFoldField,
       ],
@@ -337,6 +391,98 @@ describe("annotationDecorationProvider", () => {
     view.destroy();
   });
 
+  it("InlineAnnotation + mode 'footnote' → MarkerWidget", () => {
+    const doc = "first line\ntext %%!n | body%% more";
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: 0 },
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+        displayModeField,
+        annotationDecorationProvider,
+        annotationFoldField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    ensureSyntaxTree(view.state, view.state.doc.length);
+
+    view.dispatch({ effects: setDisplayMode.of("footnote") });
+
+    const ann = makeAnnotation({ char_start: 16, char_end: 29, original: "%%!n | body%%" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    const decos = collectDecorations(view);
+    const found = decos.find((d) => d.from === 16 && d.to === 29);
+    expect(found).toBeTruthy();
+    expect(found!.widget).toBeInstanceOf(MarkerWidget);
+
+    view.destroy();
+  });
+
+  it("InlineAnnotation + mode 'pill' → PillWidget", () => {
+    const doc = "first line\ntext %%!n | body%% more";
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: 0 },
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+        displayModeField,
+        annotationDecorationProvider,
+        annotationFoldField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    ensureSyntaxTree(view.state, view.state.doc.length);
+
+    view.dispatch({ effects: setDisplayMode.of("pill") });
+
+    const ann = makeAnnotation({ char_start: 16, char_end: 29, original: "%%!n | body%%" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    const decos = collectDecorations(view);
+    const found = decos.find((d) => d.from === 16 && d.to === 29);
+    expect(found).toBeTruthy();
+    expect(found!.widget).toBeInstanceOf(PillWidget);
+
+    view.destroy();
+  });
+
+  it("multi-line BlockAnnotation + mode 'footnote' → CalloutWidget (unchanged)", () => {
+    const doc = "first line\n\n%%!\nbody\n%%\nafter";
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: 24 },
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+        displayModeField,
+        annotationDecorationProvider,
+        annotationFoldField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    ensureSyntaxTree(view.state, view.state.doc.length);
+
+    view.dispatch({ effects: setDisplayMode.of("footnote") });
+
+    const ann = makeAnnotation({
+      form: "block",
+      char_start: 12,
+      char_end: 23,
+      original: "%%!\nbody\n%%",
+    });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    const decos = collectDecorations(view);
+    const found = decos.find((d) => d.from === 12 && d.to === 23);
+    expect(found).toBeTruthy();
+    expect(found!.widget).toBeInstanceOf(CalloutWidget);
+
+    view.destroy();
+  });
+
   it("out-of-range annotation positions → no decoration", () => {
     const doc = "short text";
     const view = makeAnnotationView(doc, 0);
@@ -352,10 +498,10 @@ describe("annotationDecorationProvider", () => {
 });
 
 describe("annotationExtension", () => {
-  it("returns array with 6 extensions", () => {
+  it("returns array with 7 extensions", () => {
     const ext = annotationExtension();
     expect(Array.isArray(ext)).toBe(true);
-    expect((ext as unknown[]).length).toBe(6);
+    expect((ext as unknown[]).length).toBe(7);
   });
 
   it("includes annotationDataField", () => {
