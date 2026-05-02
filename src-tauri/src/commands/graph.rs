@@ -109,9 +109,11 @@ pub fn rebuild_graph_index(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
     graph_state: State<Arc<GraphRegistry>>,
+    app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
+    let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
     with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
-        let result = gi.full_rebuild()?;
+        let result = gi.full_rebuild(ann_enabled)?;
         Ok(format!(
             "Rebuilt: {} nodes, {} edges, {} stubs",
             result.nodes_indexed, result.edges_resolved, result.stubs_created
@@ -326,6 +328,7 @@ pub fn link_unlinked_mention(
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
     graph_state: State<Arc<GraphRegistry>>,
     registry: State<Arc<crate::workspace::write_hash::WriteHashRegistry>>,
+    app_handle: tauri::AppHandle,
     source_id: String,
     source_line: u32,
     matched_text: String,
@@ -352,7 +355,8 @@ pub fn link_unlinked_mention(
         indices.get(&root).cloned()
     };
     if let Some(gi) = gi {
-        let _ = gi.reindex_file(&source_id);
+        let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
+        let _ = gi.reindex_file(&source_id, ann_enabled);
     }
 
     Ok(())
@@ -397,7 +401,7 @@ mod tests {
 
         std::fs::write(dir.path().join("test.md"), "Content.").unwrap();
 
-        let gi = Arc::new(GraphIndex::build(root.clone()).unwrap());
+        let gi = Arc::new(GraphIndex::build(root.clone(), true).unwrap());
         registry.indices.lock().unwrap().insert(root.clone(), gi);
 
         let indices = registry.indices.lock().unwrap();
@@ -411,7 +415,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
         std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let scores = gi.pagerank().unwrap();
         assert_eq!(scores.len(), 2);
         let sum: f64 = scores.values().sum();
@@ -423,7 +427,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
         std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let top = gi.top_by_pagerank(2).unwrap();
         assert_eq!(top.len(), 2);
         assert!(top[0].1 >= top[1].1);
@@ -434,7 +438,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "Links to [[b]].").unwrap();
         std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let bl = gi.backlinks("b.md").unwrap();
         assert_eq!(bl.len(), 1);
         assert_eq!(bl[0].source_id, "a.md");
@@ -445,7 +449,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "Links to [[b]].").unwrap();
         std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let fl = gi.forward_links("a.md").unwrap();
         assert_eq!(fl.len(), 1);
         assert_eq!(fl[0].target_id, "b.md");
@@ -455,7 +459,7 @@ mod tests {
     fn cmd_search_pages() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "---\ntitle: Quantum\n---\nBody.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.search("Quantum", 20).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "a.md");
@@ -472,7 +476,7 @@ mod tests {
             };
             std::fs::write(dir.path().join(format!("n{i}.md")), content).unwrap();
         }
-        let gi = Arc::new(GraphIndex::build(dir.path().to_path_buf()).unwrap());
+        let gi = Arc::new(GraphIndex::build(dir.path().to_path_buf(), true).unwrap());
         let results = gi.search("concurrency", 100).unwrap();
         assert_eq!(results.len(), 5);
         for r in &results {
@@ -485,7 +489,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
         std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let stats = gi.stats().unwrap();
         assert_eq!(stats.nodes, 2);
         assert_eq!(stats.edges, 1);
@@ -496,7 +500,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
         std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let result = gi.neighbors("a.md", 1, true).unwrap();
         let ids: std::collections::HashSet<&str> =
             result.nodes.iter().map(|n| n.id.as_str()).collect();
@@ -510,7 +514,7 @@ mod tests {
         std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
         std::fs::write(dir.path().join("b.md"), "[[c]]").unwrap();
         std::fs::write(dir.path().join("c.md"), "Leaf.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let paths = gi.paths("a.md", "c.md", 3, true).unwrap();
         assert_eq!(paths.len(), 1);
         assert_eq!(paths[0], vec!["a.md", "b.md", "c.md"]);
@@ -520,7 +524,7 @@ mod tests {
     fn cmd_resolve_wikilink_returns_resolved_link() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "Content.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let resolved = gi.resolve_wikilink("a").unwrap();
         assert_eq!(resolved.node_id, Some("a.md".to_string()));
         let json = serde_json::to_value(&resolved).unwrap();
@@ -533,7 +537,7 @@ mod tests {
     fn cmd_resolve_wikilink_unresolved_returns_null_node_id() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "Content.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let resolved = gi.resolve_wikilink("NonExistent").unwrap();
         assert_eq!(resolved.node_id, None);
         let json = serde_json::to_value(&resolved).unwrap();
@@ -544,7 +548,7 @@ mod tests {
     fn cmd_get_page_headings() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "# Intro\n\n## Details").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let headings = gi.page_headings("a").unwrap();
         assert_eq!(headings.len(), 2);
         assert_eq!(headings[0].text, "Intro");
@@ -557,7 +561,7 @@ mod tests {
         std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
         std::fs::write(dir.path().join("b.md"), "[[c]]").unwrap();
         std::fs::write(dir.path().join("c.md"), "Leaf.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let result = gi.subgraph(&["a.md"], 1, true).unwrap();
         let ids: std::collections::HashSet<&str> =
             result.nodes.iter().map(|n| n.id.as_str()).collect();
@@ -576,7 +580,7 @@ mod tests {
         .unwrap();
         std::fs::write(dir.path().join("other.md"), "I met Alice yesterday.")
             .unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let mentions = gi.unlinked_mentions("target.md").unwrap();
         assert_eq!(mentions.len(), 1);
         assert_eq!(mentions[0].source_id, "other.md");
@@ -592,7 +596,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("quantum.md"), "---\ntitle: Quantum Physics\n---\nBody.").unwrap();
         std::fs::write(dir.path().join("classic.md"), "---\ntitle: Classical Mechanics\n---\nBody.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.search_by_title("Quantum", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "quantum.md");
@@ -611,7 +615,7 @@ mod tests {
         .unwrap();
         std::fs::write(dir.path().join("other.md"), "I met Alice yesterday.")
             .unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
 
         // Read the source page, replace, and write back
         let page = crate::workspace::ops::read_page(dir.path(), "other.md").unwrap();
@@ -624,7 +628,7 @@ mod tests {
         let fm: indexmap::IndexMap<String, serde_yaml::Value> = indexmap::IndexMap::new();
         crate::workspace::ops::write_page(dir.path(), "other.md", &new_body, &fm, &registry)
             .unwrap();
-        gi.reindex_file("other.md").unwrap();
+        gi.reindex_file("other.md", true).unwrap();
 
         // Verify the file was updated
         let content = std::fs::read_to_string(dir.path().join("other.md")).unwrap();

@@ -116,6 +116,14 @@ pub fn read_preferences(app_handle: &AppHandle) -> Preferences {
     read_preferences_from_path(&path)
 }
 
+pub fn annotations_enabled(app_handle: &AppHandle) -> bool {
+    read_preferences(app_handle)
+        .extra
+        .get("annotations.enabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true)
+}
+
 pub fn seed_default_if_missing(app_handle: &AppHandle) {
     let path = preferences_path(app_handle);
     if path.exists() {
@@ -595,5 +603,33 @@ mod tests {
         let prefs: Preferences = serde_json::from_str(json).unwrap();
         let config = crossref_config_from_preferences(&prefs, None);
         assert_eq!(config.eq_prefix, vec!["Equation"]);
+    }
+
+    fn annotations_enabled_from_prefs(prefs: &Preferences) -> bool {
+        prefs
+            .extra
+            .get("annotations.enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true)
+    }
+
+    #[test]
+    fn annotations_enabled_defaults_to_true() {
+        let prefs = Preferences::default();
+        assert!(annotations_enabled_from_prefs(&prefs));
+    }
+
+    #[test]
+    fn annotations_enabled_respects_false() {
+        let json = r#"{"annotations.enabled": false}"#;
+        let prefs: Preferences = serde_json::from_str(json).unwrap();
+        assert!(!annotations_enabled_from_prefs(&prefs));
+    }
+
+    #[test]
+    fn annotations_enabled_respects_true() {
+        let json = r#"{"annotations.enabled": true}"#;
+        let prefs: Preferences = serde_json::from_str(json).unwrap();
+        assert!(annotations_enabled_from_prefs(&prefs));
     }
 }

@@ -120,7 +120,7 @@ mod tests {
     fn cmd_search_annotations() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Some text %%! n: _ | Silk Road flourished %% more.");
-        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.search_annotations("Silk Road", None, 20).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].node_id, "a.md");
@@ -131,7 +131,7 @@ mod tests {
     fn cmd_list_annotations() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "%%! n: _ | first %% text %%! q: _ | second %%");
-        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.list_annotations("a.md", None, 100).unwrap();
         assert_eq!(results.len(), 2);
     }
@@ -140,7 +140,7 @@ mod tests {
     fn cmd_list_annotations_filtered() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "%%! n: _ | note body %% and %%! q: _ | question body %%");
-        let gi = GraphIndex::build(dir.path().to_path_buf()).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.list_annotations("a.md", Some("note"), 100).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].annotation_type, "note");

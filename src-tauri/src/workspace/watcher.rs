@@ -121,10 +121,11 @@ impl FileWatcher {
                                     if let Some(graph_reg) = app_handle.try_state::<std::sync::Arc<GraphRegistry>>() {
                                         let indices = graph_reg.indices.lock().unwrap();
                                         if let Some(gi) = indices.get(&root_clone) {
+                                            let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
                                             if exists {
-                                                let _ = gi.reindex_file(&relative);
+                                                let _ = gi.reindex_file(&relative, ann_enabled);
                                             } else {
-                                                let _ = gi.remove_file(&relative);
+                                                let _ = gi.remove_file(&relative, ann_enabled);
                                             }
                                         }
                                         drop(indices);

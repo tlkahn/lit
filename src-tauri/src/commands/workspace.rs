@@ -106,8 +106,9 @@ pub fn open_workspace(
                     let _ = handle.emit("lit:graph-updated", ());
 
                     let handle2 = handle.clone();
+                    let ann_enabled = crate::preferences::annotations_enabled(&handle2);
                     tauri::async_runtime::spawn_blocking(move || {
-                        match gi.sync_with_disk() {
+                        match gi.sync_with_disk(ann_enabled) {
                             Ok(true) => { let _ = handle2.emit("lit:graph-updated", ()); }
                             Ok(false) => {}
                             Err(e) => tracing::error!(error = %e, "background graph sync failed"),
@@ -124,7 +125,8 @@ pub fn open_workspace(
                 let _ = emit_handle.emit("lit:index-progress", &p);
             };
 
-            match GraphIndex::build_with_progress(graph_root.clone(), &callback) {
+            let ann_enabled = crate::preferences::annotations_enabled(&handle);
+            match GraphIndex::build_with_progress(graph_root.clone(), &callback, ann_enabled) {
                 Ok(gi) => {
                     graph_reg
                         .indices

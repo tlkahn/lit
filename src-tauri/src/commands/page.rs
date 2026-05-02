@@ -31,13 +31,15 @@ pub fn write_page(
     state: State<WorkspaceRegistry>,
     registry: State<Arc<WriteHashRegistry>>,
     graph_state: State<Arc<GraphRegistry>>,
+    app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
     let root = get_workspace_root(&state, window.label())?;
     ops::write_page(&root, &relative_path, &body, &frontmatter, &registry).map_err(|e| e.to_string())?;
 
     let indices = graph_state.indices.lock().unwrap();
     if let Some(gi) = indices.get(&root) {
-        let _ = gi.reindex_file(&relative_path);
+        let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
+        let _ = gi.reindex_file(&relative_path, ann_enabled);
     }
 
     Ok(())
