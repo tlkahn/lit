@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
+import { EditorView } from "@codemirror/view";
 import { getCurrentEditorView } from "../lib/editorViewRef";
 import { annotationDataField } from "../editor/livePreview/annotationState";
 import { TYPE_ICON, certaintyMark, truncateBody } from "../editor/livePreview/annotationConstants";
@@ -69,7 +70,10 @@ export function AnnotationPanel({ pageId, onCountChange, contentHeight }: Annota
   const handleEntryClick = useCallback((ann: Annotation) => {
     const view = getCurrentEditorView();
     if (!view) return;
-    view.dispatch({ selection: { anchor: ann.char_start } });
+    view.dispatch({
+      selection: { anchor: ann.char_start },
+      effects: EditorView.scrollIntoView(ann.char_start, { y: "center" }),
+    });
     view.focus();
   }, []);
 

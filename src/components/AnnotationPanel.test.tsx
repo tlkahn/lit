@@ -137,15 +137,23 @@ describe("AnnotationPanel", () => {
     expect(body.endsWith("…")).toBe(true);
   });
 
-  it("click entry dispatches selection to annotation position", async () => {
+  it("click entry dispatches selection and scrollIntoView to annotation position", async () => {
     const annotations = [
       makeAnnotation({ char_start: 5, char_end: 15, body: "clickable" }),
     ];
     editorView = setupEditorView("a".repeat(20), annotations);
+    const dispatchSpy = vi.spyOn(editorView!, "dispatch");
     render(<AnnotationPanel pageId="test.md" />);
 
     await userEvent.click(screen.getByTestId("annotation-entry-0"));
+
     expect(editorView!.state.selection.main.head).toBe(5);
+    expect(dispatchSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selection: { anchor: 5 },
+        effects: expect.anything(),
+      }),
+    );
   });
 
   it("calls onCountChange with annotation count", () => {
