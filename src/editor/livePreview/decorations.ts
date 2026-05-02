@@ -6,7 +6,6 @@ import { ImageWidget, CalloutHeaderWidget, InlineMathWidget, DisplayMathWidget, 
 import { imageResolverFacet } from "./imageResolver";
 import { mediaThumbnailsFacet } from "./mediaThumbnails";
 import { parseCalloutType, calloutFoldField } from "./callout";
-import { PillWidget, CalloutWidget as AnnotationCalloutWidget, annotationFoldField } from "./annotationWidgets";
 import { perfMark, perfMeasure } from "./perf";
 
 const headingClass: Record<string, string> = {
@@ -27,7 +26,6 @@ const cursorSensitiveNodeNames = new Set([
   "StrongEmphasis", "Emphasis", "Image", "Link", "WikiLink",
   "FencedCode", "Blockquote", "InlineCode", "InlineMath",
   "InlineComment", "BlockComment", "HorizontalRule", "DisplayMath",
-  "InlineAnnotation", "BlockAnnotation",
 ]);
 
 export function buildDecorations(view: EditorView): BuildDecorationsResult {
@@ -84,16 +82,6 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
         }
         if (node.name === "InlineMath") {
           addInlineMathDecos(state, node.from, node.to, node.node, decos);
-          return false;
-        }
-        if (node.name === "InlineAnnotation") {
-          addInlineAnnotationDecos(state, node.from, node.to, decos);
-          return false;
-        }
-        if (node.name === "BlockAnnotation") {
-          if (!state.doc.sliceString(node.from, node.to).includes("\n")) {
-            addBlockAnnotationDecos(state, node.from, node.to, decos);
-          }
           return false;
         }
         if (node.name === "InlineComment") {
@@ -504,16 +492,6 @@ export function buildBlockReplacements(state: EditorState): BlockReplacementStat
           });
         }
       }
-      if (node.name === "BlockAnnotation") {
-        const text = state.doc.sliceString(node.from, node.to);
-        if (text.includes("\n")) {
-          addBlockAnnotationCallout(state, node.from, node.to, decos);
-          cursorSensitiveRanges.push({
-            fromLine: state.doc.lineAt(node.from).number,
-            toLine: state.doc.lineAt(node.to).number,
-          });
-        }
-      }
       if (node.name === "BlockComment") {
         const text = state.doc.sliceString(node.from, node.to);
         if (text.includes("\n")) {
@@ -680,52 +658,3 @@ function addBlockCommentDecos(
   decos.push({ from, to, deco: Decoration.mark({ class: "cm-preview-comment" }) });
 }
 
-function addInlineAnnotationDecos(
-  state: EditorState,
-  from: number,
-  to: number,
-  decos: { from: number; to: number; deco: Decoration }[],
-) {
-  if (isCursorOnLine(state, from, to)) return;
-  const docText = state.doc.toString();
-  const original = state.doc.sliceString(from, to);
-  decos.push({
-    from,
-    to,
-    deco: Decoration.replace({ widget: new PillWidget(docText, original, from, to) }),
-  });
-}
-
-function addBlockAnnotationDecos(
-  state: EditorState,
-  from: number,
-  to: number,
-  decos: { from: number; to: number; deco: Decoration }[],
-) {
-  if (isCursorOnLine(state, from, to)) return;
-  const docText = state.doc.toString();
-  const original = state.doc.sliceString(from, to);
-  decos.push({
-    from,
-    to,
-    deco: Decoration.replace({ widget: new PillWidget(docText, original, from, to) }),
-  });
-}
-
-function addBlockAnnotationCallout(
-  state: EditorState,
-  from: number,
-  to: number,
-  decos: { from: number; to: number; deco: Decoration }[],
-) {
-  if (isCursorOnLine(state, from, to)) return;
-  const docText = state.doc.toString();
-  const original = state.doc.sliceString(from, to);
-  const foldState = state.field(annotationFoldField, false);
-  const isCollapsed = foldState?.get(from) ?? false;
-  decos.push({
-    from,
-    to,
-    deco: Decoration.replace({ widget: new AnnotationCalloutWidget(docText, original, from, to, isCollapsed, from) }),
-  });
-}

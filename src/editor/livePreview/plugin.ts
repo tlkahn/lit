@@ -3,7 +3,6 @@ import { ViewPlugin, type ViewUpdate, type PluginValue } from "@codemirror/view"
 import { StateField, RangeSet } from "@codemirror/state";
 import { buildDecorations, buildBlockReplacements, type BlockReplacementState } from "./decorations";
 import { toggleCalloutEffect } from "./callout";
-import { toggleAnnotationFoldEffect } from "./annotationWidgets";
 import { imageResolverFacet } from "./imageResolver";
 import { mediaThumbnailsFacet } from "./mediaThumbnails";
 import { isPerfEnabled, perfMark, perfMeasure } from "./perf";
@@ -35,7 +34,7 @@ class LivePreviewPluginValue implements PluginValue {
     perfMark("livePreview:update:start");
     if (update.docChanged || update.viewportChanged) {
       this.rebuild(update.view, update.docChanged ? "docChanged" : "viewportChanged");
-    } else if (update.transactions.some(tr => tr.effects.some(e => e.is(toggleCalloutEffect) || e.is(toggleAnnotationFoldEffect)))) {
+    } else if (update.transactions.some(tr => tr.effects.some(e => e.is(toggleCalloutEffect)))) {
       this.rebuild(update.view, "toggleEffect");
     } else if (
       update.startState.facet(imageResolverFacet) !== update.state.facet(imageResolverFacet) ||

@@ -1,6 +1,5 @@
 import { type EditorView, WidgetType } from "@codemirror/view";
 import { StateEffect, StateField, type Transaction } from "@codemirror/state";
-import { getAnnotationCached, parseAnnotationAsync } from "./annotationCache";
 import type { Annotation, AnnotationType } from "../../lib/ipc";
 import "./annotation.css";
 
@@ -56,43 +55,20 @@ function buildPillDOM(ann: Annotation): HTMLSpanElement {
 }
 
 export class PillWidget extends WidgetType {
-  constructor(
-    readonly rawText: string,
-    readonly original: string,
-    readonly charStart: number,
-    readonly charEnd: number,
-  ) {
+  constructor(readonly annotation: Annotation) {
     super();
   }
 
   toDOM(): HTMLElement {
-    const cached = getAnnotationCached(this.rawText);
-    if (cached && cached.length > 0) {
-      const ann = cached.find(
-        (a) => a.char_start === this.charStart && a.char_end === this.charEnd,
-      ) ?? cached[0]!;
-      return buildPillDOM(ann);
-    }
-
-    const placeholder = document.createElement("span");
-    placeholder.className = "cm-annotation-pill cm-annotation-loading";
-    placeholder.textContent = "…";
-
-    parseAnnotationAsync(this.rawText).then((annotations) => {
-      if (annotations.length > 0) {
-        const ann = annotations.find(
-          (a) => a.char_start === this.charStart && a.char_end === this.charEnd,
-        ) ?? annotations[0]!;
-        const rendered = buildPillDOM(ann);
-        placeholder.replaceWith(rendered);
-      }
-    }).catch(() => {});
-
-    return placeholder;
+    return buildPillDOM(this.annotation);
   }
 
   eq(other: PillWidget): boolean {
-    return this.original === other.original && this.charStart === other.charStart && this.charEnd === other.charEnd;
+    return (
+      this.annotation.original === other.annotation.original &&
+      this.annotation.char_start === other.annotation.char_start &&
+      this.annotation.char_end === other.annotation.char_end
+    );
   }
 
   ignoreEvent(): boolean {
@@ -150,10 +126,7 @@ function createFoldSvg(): SVGSVGElement {
 
 export class CalloutWidget extends WidgetType {
   constructor(
-    readonly rawText: string,
-    readonly original: string,
-    readonly charStart: number,
-    readonly charEnd: number,
+    readonly annotation: Annotation,
     readonly isCollapsed: boolean,
     readonly pos: number,
   ) {
@@ -161,41 +134,32 @@ export class CalloutWidget extends WidgetType {
   }
 
   toDOM(view: EditorView): HTMLElement {
+    const ann = this.annotation;
     const container = document.createElement("div");
     container.className = "cm-annotation-callout";
 
-    const cached = getAnnotationCached(this.rawText);
-    const ann = cached?.find(
-      (a) => a.char_start === this.charStart && a.char_end === this.charEnd,
-    ) ?? cached?.[0];
+    const cert = certaintyClass(ann.certainty);
+    if (cert) container.classList.add(cert);
+    container.dataset.annotationType = ann.annotation_type;
 
     const header = document.createElement("div");
     header.className = "cm-annotation-callout-header";
 
-    if (ann) {
-      const cert = certaintyClass(ann.certainty);
-      if (cert) container.classList.add(cert);
-      container.dataset.annotationType = ann.annotation_type;
+    const icon = document.createElement("span");
+    icon.className = "cm-annotation-pill-icon";
+    icon.textContent = TYPE_ICON[ann.annotation_type] ?? "…";
+    header.appendChild(icon);
 
-      const icon = document.createElement("span");
-      icon.className = "cm-annotation-pill-icon";
-      icon.textContent = TYPE_ICON[ann.annotation_type] ?? "…";
-      header.appendChild(icon);
+    const label = document.createElement("span");
+    label.className = "cm-annotation-callout-label";
+    label.textContent = ann.annotation_type;
+    header.appendChild(label);
 
-      const label = document.createElement("span");
-      label.className = "cm-annotation-callout-label";
-      label.textContent = ann.annotation_type;
-      header.appendChild(label);
-
-      if (ann.date) {
-        const date = document.createElement("span");
-        date.className = "cm-annotation-date";
-        date.textContent = ann.date;
-        header.appendChild(date);
-      }
-    } else {
-      header.textContent = "…";
-      parseAnnotationAsync(this.rawText).catch(() => {});
+    if (ann.date) {
+      const date = document.createElement("span");
+      date.className = "cm-annotation-date";
+      date.textContent = ann.date;
+      header.appendChild(date);
     }
 
     const arrow = document.createElement("span");
@@ -210,7 +174,7 @@ export class CalloutWidget extends WidgetType {
 
     container.appendChild(header);
 
-    if (!this.isCollapsed && ann?.body) {
+    if (!this.isCollapsed && ann.body) {
       const body = document.createElement("div");
       body.className = "cm-annotation-callout-body";
       body.textContent = ann.body;
@@ -222,9 +186,9 @@ export class CalloutWidget extends WidgetType {
 
   eq(other: CalloutWidget): boolean {
     return (
-      this.original === other.original &&
-      this.charStart === other.charStart &&
-      this.charEnd === other.charEnd &&
+      this.annotation.original === other.annotation.original &&
+      this.annotation.char_start === other.annotation.char_start &&
+      this.annotation.char_end === other.annotation.char_end &&
       this.isCollapsed === other.isCollapsed
     );
   }
