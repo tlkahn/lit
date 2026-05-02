@@ -31,6 +31,7 @@ export function AnnotationPanel({ pageId, onCountChange, contentHeight }: Annota
   const entryRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
   const readAnnotations = useCallback(() => {
+    setHighlightedCharStart(null);
     const view = getCurrentEditorView();
     if (!view) {
       setAnnotations([]);
@@ -72,7 +73,16 @@ export function AnnotationPanel({ pageId, onCountChange, contentHeight }: Annota
     return () => window.removeEventListener("lit:show-annotation", handler);
   }, []);
 
+  useEffect(() => {
+    const view = getCurrentEditorView();
+    if (!view) return;
+    const handler = () => setHighlightedCharStart(null);
+    view.dom.addEventListener("mousedown", handler);
+    return () => view.dom.removeEventListener("mousedown", handler);
+  }, [pageId]);
+
   const handleEntryClick = useCallback((ann: Annotation) => {
+    setHighlightedCharStart(ann.char_start);
     const view = getCurrentEditorView();
     if (!view) return;
     view.dispatch({

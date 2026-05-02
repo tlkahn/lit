@@ -13,6 +13,11 @@ vi.mock("../lib/ipc", () => ({
   resolveAnnotationScope: vi.fn(async () => null),
 }));
 
+if (!Range.prototype.getClientRects) {
+  Range.prototype.getClientRects = () =>
+    ({ length: 0, item: () => null, [Symbol.iterator]: function* () {} }) as DOMRectList;
+}
+
 function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
   return {
     form: "compact",
@@ -199,6 +204,84 @@ describe("AnnotationPanel", () => {
     });
 
     const entry1 = screen.getByTestId("annotation-entry-1");
-    expect(entry1.className).toContain("bg-bg-secondary");
+    expect(entry1.classList.contains("bg-bg-secondary")).toBe(true);
+  });
+
+  it("clicking entry highlights it", async () => {
+    const annotations = [
+      makeAnnotation({ char_start: 0, char_end: 10, body: "first" }),
+      makeAnnotation({ char_start: 15, char_end: 25, body: "second" }),
+    ];
+    editorView = setupEditorView("a".repeat(30), annotations);
+    render(<AnnotationPanel pageId="test.md" />);
+
+    await userEvent.click(screen.getByTestId("annotation-entry-0"));
+
+    const entry0 = screen.getByTestId("annotation-entry-0");
+    expect(entry0.classList.contains("bg-bg-secondary")).toBe(true);
+  });
+
+  it("clicking entry clears previous highlight", async () => {
+    const annotations = [
+      makeAnnotation({ char_start: 0, char_end: 10, body: "first" }),
+      makeAnnotation({ char_start: 15, char_end: 25, body: "second" }),
+    ];
+    editorView = setupEditorView("a".repeat(30), annotations);
+    render(<AnnotationPanel pageId="test.md" />);
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("lit:show-annotation", { detail: { charStart: 15 } }),
+      );
+    });
+
+    await userEvent.click(screen.getByTestId("annotation-entry-0"));
+
+    const entry0 = screen.getByTestId("annotation-entry-0");
+    const entry1 = screen.getByTestId("annotation-entry-1");
+    expect(entry0.classList.contains("bg-bg-secondary")).toBe(true);
+    expect(entry1.classList.contains("bg-bg-secondary")).toBe(false);
+  });
+
+  it("annotations-changed clears highlight", () => {
+    const annotations = [
+      makeAnnotation({ char_start: 0, char_end: 10, body: "first" }),
+    ];
+    editorView = setupEditorView("a".repeat(20), annotations);
+    render(<AnnotationPanel pageId="test.md" />);
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("lit:show-annotation", { detail: { charStart: 0 } }),
+      );
+    });
+    expect(screen.getByTestId("annotation-entry-0").classList.contains("bg-bg-secondary")).toBe(true);
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+    });
+
+    expect(screen.getByTestId("annotation-entry-0").classList.contains("bg-bg-secondary")).toBe(false);
+  });
+
+  it("editor mousedown clears highlight", () => {
+    const annotations = [
+      makeAnnotation({ char_start: 0, char_end: 10, body: "first" }),
+    ];
+    editorView = setupEditorView("a".repeat(20), annotations);
+    render(<AnnotationPanel pageId="test.md" />);
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("lit:show-annotation", { detail: { charStart: 0 } }),
+      );
+    });
+    expect(screen.getByTestId("annotation-entry-0").classList.contains("bg-bg-secondary")).toBe(true);
+
+    act(() => {
+      editorView!.dom.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+
+    expect(screen.getByTestId("annotation-entry-0").classList.contains("bg-bg-secondary")).toBe(false);
   });
 });
