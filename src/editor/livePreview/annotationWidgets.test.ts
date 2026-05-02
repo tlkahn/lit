@@ -9,6 +9,15 @@ vi.mock("../../lib/ipc", () => ({
   resolveAnnotationScope: vi.fn(async () => null),
 }));
 
+vi.mock("./annotationHover", () => ({
+  handleAnnotationHover: vi.fn(),
+  handleAnnotationLeave: vi.fn(),
+}));
+
+import { handleAnnotationHover, handleAnnotationLeave } from "./annotationHover";
+const mockHandleHover = handleAnnotationHover as ReturnType<typeof vi.fn>;
+const mockHandleLeave = handleAnnotationLeave as ReturnType<typeof vi.fn>;
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
@@ -103,6 +112,27 @@ describe("PillWidget", () => {
   it("ignoreEvent returns false", () => {
     const w = new PillWidget(makeAnnotation());
     expect(w.ignoreEvent()).toBe(false);
+  });
+
+  it("mouseenter triggers handleAnnotationHover with (view, annotation)", () => {
+    const view = makeEditorView();
+    const ann = makeAnnotation({ char_start: 3 });
+    const w = new PillWidget(ann);
+    const dom = w.toDOM(view);
+    dom.dispatchEvent(new Event("mouseenter"));
+    expect(mockHandleHover).toHaveBeenCalledOnce();
+    expect(mockHandleHover).toHaveBeenCalledWith(view, ann);
+    view.destroy();
+  });
+
+  it("mouseleave triggers handleAnnotationLeave with (view)", () => {
+    const view = makeEditorView();
+    const w = new PillWidget(makeAnnotation());
+    const dom = w.toDOM(view);
+    dom.dispatchEvent(new Event("mouseleave"));
+    expect(mockHandleLeave).toHaveBeenCalledOnce();
+    expect(mockHandleLeave).toHaveBeenCalledWith(view);
+    view.destroy();
   });
 });
 
@@ -319,6 +349,27 @@ describe("MarkerWidget", () => {
     const event = spy.mock.calls[0]![0] as CustomEvent;
     expect(event.detail.charStart).toBe(5);
     window.removeEventListener("lit:show-annotation", spy);
+    view.destroy();
+  });
+
+  it("mouseenter triggers handleAnnotationHover with (view, annotation)", () => {
+    const view = makeEditorView();
+    const ann = makeAnnotation({ char_start: 3 });
+    const w = new MarkerWidget(ann);
+    const dom = w.toDOM(view);
+    dom.dispatchEvent(new Event("mouseenter"));
+    expect(mockHandleHover).toHaveBeenCalledOnce();
+    expect(mockHandleHover).toHaveBeenCalledWith(view, ann);
+    view.destroy();
+  });
+
+  it("mouseleave triggers handleAnnotationLeave with (view)", () => {
+    const view = makeEditorView();
+    const w = new MarkerWidget(makeAnnotation());
+    const dom = w.toDOM(view);
+    dom.dispatchEvent(new Event("mouseleave"));
+    expect(mockHandleLeave).toHaveBeenCalledOnce();
+    expect(mockHandleLeave).toHaveBeenCalledWith(view);
     view.destroy();
   });
 });
