@@ -39,6 +39,9 @@ function ensureCommandsRegistered() {
   commandRegistry.register("panel.toggleAnnotations", () => {
     window.dispatchEvent(new CustomEvent("lit:toggle-annotation-panel"));
   });
+  commandRegistry.register("app.commandPalette", () => {
+    window.dispatchEvent(new CustomEvent("lit:toggle-command-palette"));
+  });
 }
 
 function keyStringFromEvent(e: KeyboardEvent): string {

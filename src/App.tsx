@@ -14,6 +14,7 @@ import { usePreferencesStore } from "./stores/preferences";
 import { useFocusModeStore } from "./stores/focusMode";
 import { getStartupContext } from "./lib/ipc";
 import { HeadingQuickSwitcher } from "./components/HeadingQuickSwitcher";
+import { CommandPalette } from "./components/CommandPalette";
 
 interface LitCliArgs {
   workspace: string | null;
@@ -92,11 +93,18 @@ function App() {
 
   const currentPageHeadings = useWorkspaceStore((s) => s.currentPageHeadings);
   const [quickSwitcherOpen, setQuickSwitcherOpen] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
 
   useEffect(() => {
     const handler = () => setQuickSwitcherOpen((prev) => !prev);
     window.addEventListener("lit:toggle-quick-switcher", handler);
     return () => window.removeEventListener("lit:toggle-quick-switcher", handler);
+  }, []);
+
+  useEffect(() => {
+    const handler = () => setCommandPaletteOpen((prev) => !prev);
+    window.addEventListener("lit:toggle-command-palette", handler);
+    return () => window.removeEventListener("lit:toggle-command-palette", handler);
   }, []);
 
   const handleQuickSwitcherSelect = useCallback((line: number) => {
@@ -139,6 +147,10 @@ function App() {
         onClose={() => setQuickSwitcherOpen(false)}
         onSelect={handleQuickSwitcherSelect}
         headings={currentPageHeadings}
+      />
+      <CommandPalette
+        open={commandPaletteOpen}
+        onClose={() => setCommandPaletteOpen(false)}
       />
     </div>
   );
