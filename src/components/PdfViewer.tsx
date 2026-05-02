@@ -5,6 +5,7 @@ import type { PdfInfo, RenderedPage } from "../lib/ipc";
 
 const BASE_DPI = 144;
 const MAX_CACHE = 5;
+const DEBOUNCE_MS = 200;
 
 function getEffectiveDpi(): number {
   return Math.round(BASE_DPI * (window.devicePixelRatio || 1));
@@ -53,6 +54,9 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
   const [pageLoading, setPageLoading] = useState(false);
   const filePathRef = useRef(filePath);
   const cacheRef = useRef(new Map<string, RenderedPage>());
+  const [displayPage, setDisplayPage] = useState(0);
+  const displayPageRef = useRef(0);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const prefetchAdjacent = useCallback((pageIndex: number, pageCount: number, dpi: number) => {
     if (pageIndex > 0) pdfPrefetch(pageIndex - 1, dpi).catch(() => {});
@@ -62,6 +66,8 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
   useEffect(() => {
     filePathRef.current = filePath;
     cacheRef.current.clear();
+    setDisplayPage(0);
+    displayPageRef.current = 0;
     let cancelled = false;
 
     (async () => {
@@ -85,6 +91,10 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
 
     return () => {
       cancelled = true;
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
       pdfClose().catch(() => {});
     };
   }, [filePath, prefetchAdjacent]);
@@ -98,6 +108,8 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
         if (cached && filePathRef.current === filePath) {
           setRendered(cached);
           setCurrentPage(index);
+          setDisplayPage(index);
+          displayPageRef.current = index;
           prefetchAdjacent(index, pdfInfo?.page_count ?? 0, dpi);
           return;
         }
@@ -109,6 +121,8 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
             cacheSet(cacheRef.current, key, page);
             setRendered(page);
             setCurrentPage(index);
+            setDisplayPage(index);
+            displayPageRef.current = index;
             prefetchAdjacent(index, pdfInfo?.page_count ?? 0, dpi);
           }
         } finally {
@@ -119,6 +133,41 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
       }
     },
     [filePath, pdfInfo, prefetchAdjacent],
+  );
+
+  const handlePageNav = useCallback(
+    (delta: number) => {
+      const pageCount = pdfInfo?.page_count ?? 0;
+      const targetIndex = displayPageRef.current + delta;
+      if (targetIndex < 0 || targetIndex >= pageCount) return;
+
+      displayPageRef.current = targetIndex;
+      setDisplayPage(targetIndex);
+
+      const dpi = getEffectiveDpi();
+      const key = cacheKey(targetIndex, dpi);
+      const cached = cacheGet(cacheRef.current, key);
+
+      if (cached && filePathRef.current === filePath) {
+        if (debounceRef.current) {
+          clearTimeout(debounceRef.current);
+          debounceRef.current = null;
+        }
+        setRendered(cached);
+        setCurrentPage(targetIndex);
+        prefetchAdjacent(targetIndex, pageCount, dpi);
+        return;
+      }
+
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+      }
+      debounceRef.current = setTimeout(() => {
+        debounceRef.current = null;
+        goToPage(targetIndex);
+      }, DEBOUNCE_MS);
+    },
+    [filePath, pdfInfo, prefetchAdjacent, goToPage],
   );
 
   if (error) {
@@ -154,19 +203,19 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
       <div className="flex items-center gap-3 py-2">
         <button
           data-testid="pdf-prev"
-          disabled={currentPage <= 0}
-          onClick={() => goToPage(currentPage - 1)}
+          disabled={displayPage <= 0}
+          onClick={() => handlePageNav(-1)}
           className="rounded px-2 py-1 text-sm text-text-normal hover:bg-bg-secondary disabled:opacity-30 disabled:cursor-not-allowed"
         >
           ← Prev
         </button>
         <span data-testid="pdf-page-indicator" className="text-sm text-text-muted">
-          Page {currentPage + 1} / {pageCount}
+          Page {displayPage + 1} / {pageCount}
         </span>
         <button
           data-testid="pdf-next"
-          disabled={currentPage >= pageCount - 1}
-          onClick={() => goToPage(currentPage + 1)}
+          disabled={displayPage >= pageCount - 1}
+          onClick={() => handlePageNav(1)}
           className="rounded px-2 py-1 text-sm text-text-normal hover:bg-bg-secondary disabled:opacity-30 disabled:cursor-not-allowed"
         >
           Next →

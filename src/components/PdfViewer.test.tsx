@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PdfViewer } from "./PdfViewer";
 import { mockInvoke } from "../test/tauri-mock";
@@ -263,7 +263,8 @@ describe("PdfViewer", () => {
 
     await user.click(screen.getByTestId("pdf-next"));
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 2 / 3");
+      const img = screen.getByTestId("pdf-page-image") as HTMLImageElement;
+      expect(img.alt).toBe("Page 2");
     });
 
     const prefetchCalls = (invoke as unknown as ReturnType<typeof import("vitest").vi.fn>).mock.calls
@@ -388,7 +389,8 @@ describe("PdfViewer", () => {
     for (let i = 0; i < 6; i++) {
       await user.click(screen.getByTestId("pdf-next"));
       await waitFor(() => {
-        expect(screen.getByTestId("pdf-page-indicator").textContent).toBe(`Page ${i + 2} / 8`);
+        const img = screen.getByTestId("pdf-page-image") as HTMLImageElement;
+        expect(img.alt).toBe(`Page ${i + 2}`);
       });
     }
 
@@ -412,12 +414,180 @@ describe("PdfViewer", () => {
     for (let i = 5; i >= 0; i--) {
       await user.click(screen.getByTestId("pdf-prev"));
       await waitFor(() => {
-        expect(screen.getByTestId("pdf-page-indicator").textContent).toBe(`Page ${i + 1} / 8`);
+        const img = screen.getByTestId("pdf-page-image") as HTMLImageElement;
+        expect(img.alt).toBe(`Page ${i + 1}`);
       });
     }
 
     const renderCalls = (invoke as unknown as ReturnType<typeof import("vitest").vi.fn>).mock.calls
       .filter((c: unknown[]) => c[0] === "pdf_render_page");
     expect(renderCalls.length).toBeGreaterThan(0);
+  });
+
+  describe("click debounce", () => {
+    const bigPdfInfo = { page_count: 10, path: "/test/big.pdf" };
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      mockInvoke((cmd, args) => {
+        switch (cmd) {
+          case "pdf_open":
+            return bigPdfInfo;
+          case "pdf_render_page": {
+            const a = args as Record<string, unknown>;
+            const idx = a?.pageIndex ?? 0;
+            return { ...mockRenderedPage, page_index: idx, png_path: `/tmp/lit-pdf-test/page_${idx}.png` };
+          }
+          case "pdf_prefetch":
+            return null;
+          case "pdf_close":
+            return null;
+          default:
+            throw new Error(`Unknown command: ${cmd}`);
+        }
+      });
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("rapid clicks trigger only one render call for the final page", async () => {
+      render(<PdfViewer filePath="/test/big.pdf" />);
+      await act(async () => { await vi.runAllTimersAsync(); });
+
+      const { invoke } = await import("@tauri-apps/api/core");
+      (invoke as unknown as ReturnType<typeof vi.fn>).mockClear();
+
+      const next = screen.getByTestId("pdf-next");
+      fireEvent.click(next);
+      fireEvent.click(next);
+      fireEvent.click(next);
+
+      let renderCalls = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
+        .filter((c: unknown[]) => c[0] === "pdf_render_page");
+      expect(renderCalls).toHaveLength(0);
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+
+      renderCalls = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
+        .filter((c: unknown[]) => c[0] === "pdf_render_page");
+      expect(renderCalls).toHaveLength(1);
+      expect(renderCalls[0]![1]).toEqual(expect.objectContaining({ pageIndex: 3 }));
+    });
+
+    it("page indicator updates optimistically on every click", async () => {
+      render(<PdfViewer filePath="/test/big.pdf" />);
+      await act(async () => { await vi.runAllTimersAsync(); });
+
+      const next = screen.getByTestId("pdf-next");
+      fireEvent.click(next);
+      fireEvent.click(next);
+      fireEvent.click(next);
+
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 4 / 10");
+    });
+
+    it("single click renders after debounce delay", async () => {
+      render(<PdfViewer filePath="/test/big.pdf" />);
+      await act(async () => { await vi.runAllTimersAsync(); });
+
+      const { invoke } = await import("@tauri-apps/api/core");
+      (invoke as unknown as ReturnType<typeof vi.fn>).mockClear();
+
+      fireEvent.click(screen.getByTestId("pdf-next"));
+
+      let renderCalls = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
+        .filter((c: unknown[]) => c[0] === "pdf_render_page");
+      expect(renderCalls).toHaveLength(0);
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+
+      renderCalls = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
+        .filter((c: unknown[]) => c[0] === "pdf_render_page");
+      expect(renderCalls).toHaveLength(1);
+      expect(renderCalls[0]![1]).toEqual(expect.objectContaining({ pageIndex: 1 }));
+    });
+
+    it("cache hit renders immediately without debounce", async () => {
+      render(<PdfViewer filePath="/test/big.pdf" />);
+      await act(async () => { await vi.runAllTimersAsync(); });
+
+      fireEvent.click(screen.getByTestId("pdf-next"));
+      await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+
+      const { invoke } = await import("@tauri-apps/api/core");
+      (invoke as unknown as ReturnType<typeof vi.fn>).mockClear();
+
+      fireEvent.click(screen.getByTestId("pdf-prev"));
+
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 10");
+
+      const renderCalls = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
+        .filter((c: unknown[]) => c[0] === "pdf_render_page");
+      expect(renderCalls).toHaveLength(0);
+    });
+
+    it("cache hit during rapid clicks clears debounce timer", async () => {
+      render(<PdfViewer filePath="/test/big.pdf" />);
+      await act(async () => { await vi.runAllTimersAsync(); });
+
+      fireEvent.click(screen.getByTestId("pdf-next"));
+      await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+      fireEvent.click(screen.getByTestId("pdf-next"));
+      await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+
+      const { invoke } = await import("@tauri-apps/api/core");
+      (invoke as unknown as ReturnType<typeof vi.fn>).mockClear();
+
+      fireEvent.click(screen.getByTestId("pdf-next"));
+      fireEvent.click(screen.getByTestId("pdf-prev"));
+
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 3 / 10");
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+
+      const renderCalls = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
+        .filter((c: unknown[]) => c[0] === "pdf_render_page");
+      expect(renderCalls).toHaveLength(0);
+    });
+
+    it("debounce timer cleared on filePath change", async () => {
+      const { rerender } = render(<PdfViewer filePath="/test/big.pdf" />);
+      await act(async () => { await vi.runAllTimersAsync(); });
+
+      const { invoke } = await import("@tauri-apps/api/core");
+      (invoke as unknown as ReturnType<typeof vi.fn>).mockClear();
+
+      fireEvent.click(screen.getByTestId("pdf-next"));
+
+      mockInvoke((cmd, args) => {
+        switch (cmd) {
+          case "pdf_open":
+            return { page_count: 5, path: "/test/other.pdf" };
+          case "pdf_render_page": {
+            const a = args as Record<string, unknown>;
+            const idx = a?.pageIndex ?? 0;
+            return { ...mockRenderedPage, page_index: idx, png_path: `/tmp/lit-pdf-test/page_${idx}.png` };
+          }
+          case "pdf_prefetch":
+            return null;
+          case "pdf_close":
+            return null;
+          default:
+            throw new Error(`Unknown command: ${cmd}`);
+        }
+      });
+      rerender(<PdfViewer filePath="/test/other.pdf" />);
+
+      await act(async () => { await vi.runAllTimersAsync(); });
+
+      const renderCalls = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
+        .filter((c: unknown[]) => c[0] === "pdf_render_page");
+      const pageIndices = renderCalls.map(
+        (c: unknown[]) => (c[1] as Record<string, unknown>).pageIndex
+      );
+      expect(pageIndices).not.toContain(1);
+    });
   });
 });
