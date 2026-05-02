@@ -15,6 +15,8 @@ import { useFocusModeStore } from "./stores/focusMode";
 import { getStartupContext } from "./lib/ipc";
 import { HeadingQuickSwitcher } from "./components/HeadingQuickSwitcher";
 import { CommandPalette } from "./components/CommandPalette";
+import { AnnotationBuilderModal } from "./components/AnnotationBuilderModal";
+import { getCurrentEditorView } from "./lib/editorViewRef";
 
 interface LitCliArgs {
   workspace: string | null;
@@ -94,6 +96,7 @@ function App() {
   const currentPageHeadings = useWorkspaceStore((s) => s.currentPageHeadings);
   const [quickSwitcherOpen, setQuickSwitcherOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [annotationBuilderOpen, setAnnotationBuilderOpen] = useState(false);
 
   useEffect(() => {
     const handler = () => setQuickSwitcherOpen((prev) => !prev);
@@ -107,10 +110,25 @@ function App() {
     return () => window.removeEventListener("lit:toggle-command-palette", handler);
   }, []);
 
+  useEffect(() => {
+    const handler = () => setAnnotationBuilderOpen(true);
+    window.addEventListener("lit:open-annotation-builder", handler);
+    return () => window.removeEventListener("lit:open-annotation-builder", handler);
+  }, []);
+
   const handleQuickSwitcherSelect = useCallback((line: number) => {
     window.dispatchEvent(
       new CustomEvent("lit:scroll-to-line", { detail: { line, cursor: true } }),
     );
+  }, []);
+
+  const handleAnnotationInsert = useCallback((dsl: string) => {
+    const view = getCurrentEditorView();
+    if (view) {
+      const pos = view.state.selection.main.head;
+      view.dispatch({ changes: { from: pos, insert: dsl } });
+    }
+    setAnnotationBuilderOpen(false);
   }, []);
 
   useEffect(() => {
@@ -151,6 +169,11 @@ function App() {
       <CommandPalette
         open={commandPaletteOpen}
         onClose={() => setCommandPaletteOpen(false)}
+      />
+      <AnnotationBuilderModal
+        open={annotationBuilderOpen}
+        onClose={() => setAnnotationBuilderOpen(false)}
+        onInsert={handleAnnotationInsert}
       />
     </div>
   );

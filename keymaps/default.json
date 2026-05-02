@@ -11,5 +11,6 @@
   { "key": "Mod-Shift-f", "command": "app.toggleFocusMode" },
   { "key": "Mod-`", "command": "panel.toggleBottom" },
   { "key": "Mod-Shift-a", "command": "panel.toggleAnnotations" },
-  { "key": "Mod-p", "command": "app.commandPalette" }
+  { "key": "Mod-p", "command": "app.commandPalette" },
+  { "key": "Mod-Shift-:", "command": "app.insertAnnotation" }
 ]

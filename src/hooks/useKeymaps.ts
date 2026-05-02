@@ -42,6 +42,9 @@ function ensureCommandsRegistered() {
   commandRegistry.register("app.commandPalette", () => {
     window.dispatchEvent(new CustomEvent("lit:toggle-command-palette"));
   });
+  commandRegistry.register("app.insertAnnotation", () => {
+    window.dispatchEvent(new CustomEvent("lit:open-annotation-builder"));
+  });
 }
 
 function keyStringFromEvent(e: KeyboardEvent): string {
