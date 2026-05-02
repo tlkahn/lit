@@ -22,6 +22,7 @@ import { Annotation as AnnotationGrammar } from "../markdown/annotation";
 import { Comment as CommentGrammar } from "../markdown/comment";
 import type { Annotation } from "../../lib/ipc";
 import { parseAnnotations } from "../../lib/ipc";
+import { type AnnotationDisplayMode } from "../../stores/preferences";
 
 vi.mock("../../lib/ipc", () => ({
   parseAnnotations: vi.fn(async () => []),
@@ -98,6 +99,12 @@ describe("displayModeField", () => {
     const tr1 = state.update({ effects: setDisplayMode.of("footnote") });
     const tr2 = tr1.state.update({ effects: setDisplayMode.of("pill") });
     expect(tr2.state.field(displayModeField)).toBe("pill");
+  });
+
+  it("displayModeField uses AnnotationDisplayMode from preferences", () => {
+    const state = EditorState.create({ extensions: [displayModeField] });
+    const mode: AnnotationDisplayMode = state.field(displayModeField);
+    expect(mode).toBe("pill");
   });
 
   it("unrelated transactions leave field unchanged", () => {

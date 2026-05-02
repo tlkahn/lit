@@ -2,16 +2,15 @@ import { type Extension, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, type ViewUpdate, keymap } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { parseAnnotations, type Annotation } from "../../lib/ipc";
+import { type AnnotationDisplayMode } from "../../stores/preferences";
 import { isCursorOnLine } from "./proximity";
 import { PillWidget, MarkerWidget, CalloutWidget, annotationFoldField } from "./annotationWidgets";
 import { scopeHighlightExtension } from "./scopeHighlight";
 import { escapeAnnotationKeymap } from "./escapeAnnotation";
 
-export type DisplayMode = "pill" | "footnote";
+export const setDisplayMode = StateEffect.define<AnnotationDisplayMode>();
 
-export const setDisplayMode = StateEffect.define<DisplayMode>();
-
-export const displayModeField = StateField.define<DisplayMode>({
+export const displayModeField = StateField.define<AnnotationDisplayMode>({
   create: () => "pill",
   update(value, tr) {
     for (const e of tr.effects) {
