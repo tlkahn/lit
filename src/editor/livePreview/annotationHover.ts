@@ -4,38 +4,45 @@ import { resolveAnnotationScope } from "../../lib/ipc";
 import { usePreferencesStore } from "../../stores/preferences";
 import { dispatchScopeHighlight, clearScopeHighlight } from "./scopeHighlight";
 
-let hoverGeneration = 0;
+const generationMap = new WeakMap<EditorView, number>();
 
-export function getHoverGeneration(): number {
-  return hoverGeneration;
+function getGen(view: EditorView): number {
+  return generationMap.get(view) ?? 0;
+}
+
+function bumpGen(view: EditorView): number {
+  const n = getGen(view) + 1;
+  generationMap.set(view, n);
+  return n;
 }
 
 export async function handleAnnotationHover(
   view: EditorView,
   annotation: Annotation,
 ): Promise<void> {
-  const generation = ++hoverGeneration;
+  const generation = bumpGen(view);
   const content = view.state.doc.toString();
   const lang = usePreferencesStore.getState().annotationDefaultLang;
 
-  const range = await resolveAnnotationScope(
-    content,
-    annotation.char_start,
-    annotation.scope,
-    lang,
-  );
+  let range: { start: number; end: number } | null;
+  try {
+    range = await resolveAnnotationScope(
+      content,
+      annotation.char_start,
+      annotation.scope,
+      lang,
+    );
+  } catch {
+    return;
+  }
 
-  if (hoverGeneration !== generation) return;
+  if (getGen(view) !== generation) return;
   if (!range) return;
 
   dispatchScopeHighlight(view, range.start, range.end);
 }
 
 export function handleAnnotationLeave(view: EditorView): void {
-  hoverGeneration++;
+  bumpGen(view);
   clearScopeHighlight(view);
-}
-
-export function resetHoverGeneration(): void {
-  hoverGeneration = 0;
 }

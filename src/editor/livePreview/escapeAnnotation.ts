@@ -1,6 +1,6 @@
 import type { KeyBinding } from "@codemirror/view";
 import { annotationDataField } from "./annotationState";
-import { clearScopeHighlight } from "./scopeHighlight";
+import { setScopeHighlight } from "./scopeHighlight";
 
 export const escapeAnnotationKeymap: KeyBinding[] = [
   {
@@ -17,8 +17,10 @@ export const escapeAnnotationKeymap: KeyBinding[] = [
       if (!enclosing) return false;
 
       const target = Math.min(enclosing.char_end + 2, view.state.doc.length);
-      view.dispatch({ selection: { anchor: target } });
-      clearScopeHighlight(view);
+      view.dispatch({
+        selection: { anchor: target },
+        effects: setScopeHighlight.of(null),
+      });
       return true;
     },
   },

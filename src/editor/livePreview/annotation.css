@@ -149,6 +149,8 @@
   background: rgba(68, 138, 255, 0.12);
   border-radius: 2px;
   transition: background 150ms ease;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
 }
 .dark .scope-highlight {
   background: rgba(68, 138, 255, 0.20);

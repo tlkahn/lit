@@ -4,8 +4,6 @@ import { EditorView } from "@codemirror/view";
 import {
   handleAnnotationHover,
   handleAnnotationLeave,
-  getHoverGeneration,
-  resetHoverGeneration,
 } from "./annotationHover";
 import { scopeHighlightField, setScopeHighlight } from "./scopeHighlight";
 import { Decoration } from "@codemirror/view";
@@ -47,7 +45,6 @@ function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
 describe("annotationHover", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    resetHoverGeneration();
   });
 
   it("handleAnnotationHover calls IPC with lang from preferences and dispatches highlight", async () => {
@@ -89,13 +86,11 @@ describe("annotationHover", () => {
     view.destroy();
   });
 
-  it("handleAnnotationLeave clears highlight and advances generation", () => {
+  it("handleAnnotationLeave clears highlight", () => {
     const view = makeView();
     view.dispatch({ effects: setScopeHighlight.of({ from: 0, to: 5 }) });
-    const genBefore = getHoverGeneration();
     handleAnnotationLeave(view);
     expect(view.state.field(scopeHighlightField)).toBe(Decoration.none);
-    expect(getHoverGeneration()).toBe(genBefore + 1);
     view.destroy();
   });
 
@@ -108,5 +103,48 @@ describe("annotationHover", () => {
 
     expect(view.state.field(scopeHighlightField)).toBe(Decoration.none);
     view.destroy();
+  });
+
+  it("IPC rejection does not throw and leaves highlight unchanged", async () => {
+    usePreferencesStore.setState({ annotationDefaultLang: "en" });
+    const view = makeView();
+    mockResolve.mockRejectedValue(new Error("IPC channel closed"));
+
+    await handleAnnotationHover(view, makeAnnotation());
+
+    expect(view.state.field(scopeHighlightField)).toBe(Decoration.none);
+    view.destroy();
+  });
+
+  it("hover in view A does not invalidate pending IPC for view B", async () => {
+    usePreferencesStore.setState({ annotationDefaultLang: "en" });
+    const viewA = makeView("aaaa bbbb");
+    const viewB = makeView("cccc dddd");
+
+    let resolveB: (v: { start: number; end: number } | null) => void;
+    mockResolve
+      .mockReturnValueOnce(
+        new Promise((res) => {
+          resolveB = res;
+        }),
+      )
+      .mockResolvedValueOnce({ start: 0, end: 4 });
+
+    const promiseB = handleAnnotationHover(viewB, makeAnnotation());
+    await handleAnnotationHover(viewA, makeAnnotation());
+
+    resolveB!({ start: 0, end: 4 });
+    await promiseB;
+
+    const decosA = viewA.state.field(scopeHighlightField);
+    expect(decosA.iter().from).toBe(0);
+    expect(decosA.iter().to).toBe(4);
+
+    const decosB = viewB.state.field(scopeHighlightField);
+    expect(decosB.iter().from).toBe(0);
+    expect(decosB.iter().to).toBe(4);
+
+    viewA.destroy();
+    viewB.destroy();
   });
 });
