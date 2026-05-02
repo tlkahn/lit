@@ -7,7 +7,7 @@ static DATE_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 static ANCHOR_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"^\^"([^"]+)"$"#).unwrap()
+    Regex::new(r#"^\^"((?:[^"\\]|\\.)+)"$"#).unwrap()
 });
 
 pub fn parse_block(inner: &str) -> Annotation {
@@ -30,7 +30,7 @@ pub fn parse_block(inner: &str) -> Annotation {
         }
 
         if let Some(caps) = ANCHOR_RE.captures(line) {
-            scope = Scope::Anchor(caps.get(1).unwrap().as_str().to_string());
+            scope = Scope::Anchor(caps.get(1).unwrap().as_str().replace("\\\"", "\""));
             continue;
         }
 

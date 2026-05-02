@@ -7,7 +7,7 @@ static DATE_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 static ANCHOR_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"\^"([^"]+)""#).unwrap()
+    Regex::new(r#"\^"((?:[^"\\]|\\.)+)""#).unwrap()
 });
 
 static SCOPE_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -73,7 +73,7 @@ pub fn parse_compact(inner: &str) -> Annotation {
     remaining = remaining.trim_start();
 
     if let Some(caps) = ANCHOR_RE.captures(remaining) {
-        scope = Scope::Anchor(caps.get(1).unwrap().as_str().to_string());
+        scope = Scope::Anchor(caps.get(1).unwrap().as_str().replace("\\\"", "\""));
         remaining = &remaining[caps.get(0).unwrap().end()..];
         is_structured = true;
     }

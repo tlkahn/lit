@@ -166,6 +166,21 @@ mod tests {
     }
 
     #[test]
+    fn compact_anchor_with_escaped_quotes() {
+        let ann = parse_one(r#"%%! n ^"a \"quoted\" phrase" | body %%"#);
+        assert_eq!(ann.scope, Scope::Anchor(r#"a "quoted" phrase"#.to_string()));
+        assert_eq!(ann.body, Some("body".to_string()));
+    }
+
+    #[test]
+    fn block_anchor_with_escaped_quotes() {
+        let dsl = "%%!\nn\n^\"a \\\"quoted\\\" phrase\"\n---\nbody\n%%";
+        let ann = parse_one(dsl);
+        assert_eq!(ann.scope, Scope::Anchor("a \"quoted\" phrase".to_string()));
+        assert_eq!(ann.body, Some("body".to_string()));
+    }
+
+    #[test]
     fn block_bare_multiline() {
         let dsl = "%%!\n---\nline one\nline two\n%%";
         let ann = parse_one(dsl);
