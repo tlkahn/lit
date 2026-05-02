@@ -4368,6 +4368,7 @@ dependencies = [
 [[package]]
 name = "sentenza"
 version = "0.1.0"
+source = "git+https://github.com/tlkahn/sentenza.git?rev=2d9d6b6#2d9d6b6292ff23b696589c59de4a992fe59ffd21"
 dependencies = [
  "regex",
  "sentencex",
