@@ -20,9 +20,12 @@ export async function handleAnnotationHover(
   view: EditorView,
   annotation: Annotation,
 ): Promise<void> {
+  const prefs = usePreferencesStore.getState();
+  if (!prefs.annotationScopeHighlight) return;
+
   const generation = bumpGen(view);
   const content = view.state.doc.toString();
-  const lang = usePreferencesStore.getState().annotationDefaultLang;
+  const lang = prefs.annotationDefaultLang;
 
   let range: { start: number; end: number } | null;
   try {

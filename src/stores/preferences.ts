@@ -18,6 +18,8 @@ export interface PreferencesState {
   crossrefEnableCiteproc: boolean;
   mediaThumbnails: boolean;
   experimentalUnlinkedReferences: boolean;
+  annotationEnabled: boolean;
+  annotationScopeHighlight: boolean;
   annotationDefaultLang: string;
   annotationDisplayMode: AnnotationDisplayMode;
   loaded: boolean;
@@ -57,6 +59,8 @@ function mapPreferences(prefs: Preferences) {
     crossrefEnableCiteproc: (prefs["crossref.enableCiteproc"] as boolean) ?? true,
     mediaThumbnails: (prefs["editor.mediaThumbnails"] as boolean) ?? true,
     experimentalUnlinkedReferences: (prefs["experimental.unlinkedReferences"] as boolean) ?? true,
+    annotationEnabled: (prefs["annotations.enabled"] as boolean) ?? true,
+    annotationScopeHighlight: (prefs["annotations.scopeHighlight"] as boolean) ?? true,
     annotationDefaultLang: (prefs["annotations.defaultLang"] as string) ?? "en",
     annotationDisplayMode: applyAnnotationDisplayMode(prefs["annotations.displayMode"]),
   };
@@ -73,6 +77,8 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   crossrefEnableCiteproc: true,
   mediaThumbnails: true,
   experimentalUnlinkedReferences: true,
+  annotationEnabled: true,
+  annotationScopeHighlight: true,
   annotationDefaultLang: "en",
   annotationDisplayMode: "pill",
   loaded: false,

@@ -469,6 +469,138 @@ describe("PreferencesStore", () => {
     expect(usePreferencesStore.getState().annotationDisplayMode).toBe("footnote");
   });
 
+  it("defaults annotationEnabled to true", () => {
+    const state = usePreferencesStore.getState();
+    expect(state.annotationEnabled).toBe(true);
+  });
+
+  it("maps annotations.enabled: false from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "annotations.enabled": false,
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().annotationEnabled).toBe(false);
+  });
+
+  it("defaults annotationEnabled to true when key missing from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().annotationEnabled).toBe(true);
+  });
+
+  it("updates annotationEnabled on preferences://changed event", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().annotationEnabled).toBe(true);
+
+    emitMockEvent("preferences://changed", {
+      "workbench.colorTheme": null,
+      "workbench.darkMode": "auto",
+      "workbench.sideBar.location": "left",
+      "annotations.enabled": false,
+    });
+
+    expect(usePreferencesStore.getState().annotationEnabled).toBe(false);
+  });
+
+  it("defaults annotationScopeHighlight to true", () => {
+    const state = usePreferencesStore.getState();
+    expect(state.annotationScopeHighlight).toBe(true);
+  });
+
+  it("maps annotations.scopeHighlight: false from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "annotations.scopeHighlight": false,
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().annotationScopeHighlight).toBe(false);
+  });
+
+  it("defaults annotationScopeHighlight to true when key missing from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().annotationScopeHighlight).toBe(true);
+  });
+
+  it("updates annotationScopeHighlight on preferences://changed event", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().annotationScopeHighlight).toBe(true);
+
+    emitMockEvent("preferences://changed", {
+      "workbench.colorTheme": null,
+      "workbench.darkMode": "auto",
+      "workbench.sideBar.location": "left",
+      "annotations.scopeHighlight": false,
+    });
+
+    expect(usePreferencesStore.getState().annotationScopeHighlight).toBe(false);
+  });
+
   it("updates experimentalUnlinkedReferences on preferences://changed event", async () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {

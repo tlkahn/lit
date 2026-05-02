@@ -10,7 +10,7 @@ import { frontmatterFacet, noteDirFacet, mediaThumbnailsFacet } from "./livePrev
 import { docReplaced } from "./jumpHistory";
 import { usePreferencesStore } from "../stores/preferences";
 import { useFocusModeStore } from "../stores/focusMode";
-import { setDisplayMode } from "./livePreview/annotationState";
+import { setDisplayMode, annotationExtension } from "./livePreview/annotationState";
 
 export interface UseCodeMirrorProps {
   containerRef: React.RefObject<HTMLDivElement | null>;
@@ -36,6 +36,7 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
   const foldCompartment = useRef(new Compartment());
   const crossrefCompartment = useRef(new Compartment());
   const noteDirCompartment = useRef(new Compartment());
+  const annotationCompartment = useRef(new Compartment());
   const mediaThumbnailsCompartment = useRef(new Compartment());
   const focusModeCompartment = useRef(new Compartment());
   const suppressOnChange = useRef(false);
@@ -56,7 +57,7 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
 
     const isDark = document.documentElement.classList.contains("dark");
     const theme = isDark ? "dark" : "light";
-    const { foldingEnabled, foldingShowControls, mediaThumbnails } = usePreferencesStore.getState();
+    const { foldingEnabled, foldingShowControls, mediaThumbnails, annotationEnabled } = usePreferencesStore.getState();
 
     const extensions = createExtensions({
       theme,
@@ -65,6 +66,8 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
       foldCompartment: foldCompartment.current,
       crossrefCompartment: crossrefCompartment.current,
       noteDirCompartment: noteDirCompartment.current,
+      annotationCompartment: annotationCompartment.current,
+      annotationEnabled,
       mediaThumbnailsCompartment: mediaThumbnailsCompartment.current,
       focusModeCompartment: focusModeCompartment.current,
       focusModeActive: useFocusModeStore.getState().active,
@@ -160,6 +163,21 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
       v.dispatch({
         effects: mediaThumbnailsCompartment.current.reconfigure(
           mediaThumbnailsFacet.of(s.mediaThumbnails),
+        ),
+      });
+    });
+  }, [view]);
+
+  useEffect(() => {
+    const v = viewRef.current;
+    if (!v) return;
+    let prev = usePreferencesStore.getState().annotationEnabled;
+    return usePreferencesStore.subscribe((s) => {
+      if (s.annotationEnabled === prev) return;
+      prev = s.annotationEnabled;
+      v.dispatch({
+        effects: annotationCompartment.current.reconfigure(
+          s.annotationEnabled ? annotationExtension() : [],
         ),
       });
     });

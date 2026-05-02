@@ -82,6 +82,9 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
   const experimentalUnlinkedReferences = usePreferencesStore(
     (s) => s.experimentalUnlinkedReferences,
   );
+  const annotationEnabled = usePreferencesStore(
+    (s) => s.annotationEnabled,
+  );
   const annotationDisplayMode = usePreferencesStore(
     (s) => s.annotationDisplayMode,
   );
@@ -187,7 +190,7 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
 
   useEffect(() => {
     const handler = () => {
-      if (annotationCount > 0) {
+      if (annotationEnabled && annotationCount > 0) {
         setHasOpenedAnnotations(true);
         setActiveTab("annotations");
         setUnfolded(true);
@@ -195,25 +198,25 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
     };
     window.addEventListener("lit:show-annotation", handler);
     return () => window.removeEventListener("lit:show-annotation", handler);
-  }, [annotationCount]);
+  }, [annotationEnabled, annotationCount]);
 
   useEffect(() => {
     const prev = prevDisplayModeRef.current;
     prevDisplayModeRef.current = annotationDisplayMode;
     if (prev === annotationDisplayMode) return;
 
-    if (annotationDisplayMode === "footnote" && annotationCount > 0) {
+    if (annotationEnabled && annotationDisplayMode === "footnote" && annotationCount > 0) {
       setHasOpenedAnnotations(true);
       setActiveTab("annotations");
       setUnfolded(true);
     } else if (annotationDisplayMode === "pill" && activeTab === "annotations") {
       setUnfolded(false);
     }
-  }, [annotationDisplayMode, annotationCount, activeTab]);
+  }, [annotationEnabled, annotationDisplayMode, annotationCount, activeTab]);
 
   useEffect(() => {
     const handler = () => {
-      if (annotationCount === 0) return;
+      if (!annotationEnabled || annotationCount === 0) return;
       if (unfolded && activeTab === "annotations") {
         setUnfolded(false);
       } else {
@@ -224,7 +227,14 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
     };
     window.addEventListener("lit:toggle-annotation-panel", handler);
     return () => window.removeEventListener("lit:toggle-annotation-panel", handler);
-  }, [annotationCount, unfolded, activeTab]);
+  }, [annotationEnabled, annotationCount, unfolded, activeTab]);
+
+  useEffect(() => {
+    if (!annotationEnabled && activeTab === "annotations") {
+      setActiveTab("linked");
+      setUnfolded(false);
+    }
+  }, [annotationEnabled, activeTab]);
 
   useEffect(() => {
     if (!experimentalUnlinkedReferences && activeTab === "unlinked") {
@@ -330,7 +340,7 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
             onClick={() => handleTabClick("unlinked")}
           />
         )}
-        {annotationCount > 0 && (
+        {annotationEnabled && annotationCount > 0 && (
           <TabButton
             id="bp-tab-annotations"
             testId="tab-annotations"
@@ -358,7 +368,7 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
             <UnlinkedMentionsPanel pageId={pageId} onCountChange={setUnlinkedCount} contentHeight={panelHeight - TAB_BAR_HEIGHT} />
           </div>
         )}
-        {hasOpenedAnnotations && (
+        {annotationEnabled && hasOpenedAnnotations && (
           <div style={{ display: activeTab === "annotations" ? undefined : "none" }}>
             <AnnotationPanel pageId={pageId} onCountChange={setAnnotationCount} contentHeight={panelHeight - TAB_BAR_HEIGHT} />
           </div>

@@ -45,6 +45,7 @@ function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
 describe("annotationHover", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    usePreferencesStore.setState({ annotationScopeHighlight: true });
   });
 
   it("handleAnnotationHover calls IPC with lang from preferences and dispatches highlight", async () => {
@@ -112,6 +113,18 @@ describe("annotationHover", () => {
 
     await handleAnnotationHover(view, makeAnnotation());
 
+    expect(view.state.field(scopeHighlightField)).toBe(Decoration.none);
+    view.destroy();
+  });
+
+  it("annotationScopeHighlight=false skips IPC and highlight dispatch", async () => {
+    usePreferencesStore.setState({ annotationDefaultLang: "en", annotationScopeHighlight: false });
+    const view = makeView();
+    mockResolve.mockResolvedValue({ start: 0, end: 5 });
+
+    await handleAnnotationHover(view, makeAnnotation());
+
+    expect(mockResolve).not.toHaveBeenCalled();
     expect(view.state.field(scopeHighlightField)).toBe(Decoration.none);
     view.destroy();
   });

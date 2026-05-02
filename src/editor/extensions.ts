@@ -10,6 +10,7 @@ import { search, searchKeymap } from "@codemirror/search";
 import { livePreviewExtension, frontmatterFacet, noteDirFacet, mediaThumbnailsFacet } from "./livePreview";
 import { foldExtension, type FoldConfig } from "./fold";
 import { focusModeExtension } from "./focusMode";
+import { annotationExtension } from "./livePreview/annotationState";
 import { jumpHistoryExtension } from "./jumpHistory";
 import { WikiLink } from "./markdown/wikilink";
 import { Frontmatter, FrontmatterYamlWrap } from "./markdown/frontmatter";
@@ -26,6 +27,8 @@ export interface ExtensionConfig {
   crossrefCompartment: Compartment;
   noteDirCompartment: Compartment;
   mediaThumbnailsCompartment: Compartment;
+  annotationCompartment: Compartment;
+  annotationEnabled?: boolean;
   focusModeCompartment: Compartment;
   focusModeActive?: boolean;
   frontmatter?: Record<string, unknown>;
@@ -51,6 +54,9 @@ export function createExtensions(config: ExtensionConfig): Extension[] {
     config.crossrefCompartment.of(frontmatterFacet.of(config.frontmatter ?? {})),
     config.noteDirCompartment.of(noteDirFacet.of(config.noteDir ?? "")),
     config.mediaThumbnailsCompartment.of(mediaThumbnailsFacet.of(config.mediaThumbnails ?? true)),
+    config.annotationCompartment.of(
+      (config.annotationEnabled ?? true) ? annotationExtension() : [],
+    ),
     config.foldCompartment.of(foldExtension(config.foldConfig)),
     config.focusModeCompartment.of(focusModeExtension(config.focusModeActive ?? false)),
     history(),
