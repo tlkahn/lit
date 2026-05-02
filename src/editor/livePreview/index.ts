@@ -6,6 +6,7 @@ import { livePreviewBaseTheme } from "./theme";
 import { imageResolverFacet, type ImageResolver } from "./imageResolver";
 import { navigateToPageFacet } from "./navigateToPageFacet";
 import { calloutFoldField } from "./callout";
+import { annotationFoldField } from "./annotationWidgets";
 import { createCalloutClickHandler } from "./calloutClickHandler";
 import { createMathClickHandler } from "./mathClickHandler";
 import { createImageClickHandler } from "./imageClickHandler";
@@ -45,6 +46,7 @@ export function livePreviewExtension(config?: LivePreviewConfig): Extension {
     createWrappedLineClickFix(),
     livePreviewBaseTheme,
     calloutFoldField,
+    annotationFoldField,
     crossrefExtension(),
     citeprocExtension(),
     citationClickExtension(),
