@@ -326,7 +326,7 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
         )}
         {hasOpenedAnnotations && (
           <div style={{ display: activeTab === "annotations" ? undefined : "none" }}>
-            <AnnotationPanel pageId={pageId} contentHeight={panelHeight - TAB_BAR_HEIGHT} />
+            <AnnotationPanel pageId={pageId} onCountChange={setAnnotationCount} contentHeight={panelHeight - TAB_BAR_HEIGHT} />
           </div>
         )}
       </div>

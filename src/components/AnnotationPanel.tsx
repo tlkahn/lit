@@ -20,7 +20,12 @@ function lineNumberAt(doc: { lineAt(pos: number): { number: number } }, pos: num
 }
 
 export function AnnotationPanel({ pageId, onCountChange, contentHeight }: AnnotationPanelProps) {
-  const [annotations, setAnnotations] = useState<Annotation[]>([]);
+  const [annotations, setAnnotations] = useState<Annotation[]>(() => {
+    const view = getCurrentEditorView();
+    if (!view) return [];
+    const data = view.state.field(annotationDataField, false);
+    return data ? [...data].sort((a, b) => a.char_start - b.char_start) : [];
+  });
   const [highlightedCharStart, setHighlightedCharStart] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const entryRefs = useRef<Map<number, HTMLDivElement>>(new Map());

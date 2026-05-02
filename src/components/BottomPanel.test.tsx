@@ -359,6 +359,32 @@ describe("BottomPanel", () => {
       expect(screen.getByTestId("tab-annotations")).toHaveAttribute("aria-selected", "true");
     });
 
+    it("annotation count updates via onCountChange when panel is mounted", async () => {
+      testEditorView = setupEditorWithAnnotations([
+        makeAnnotation({ char_start: 0, char_end: 10 }),
+      ]);
+      render(<BottomPanel pageId="target.md" />);
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+      });
+
+      await userEvent.click(screen.getByText("Annotations (1)"));
+
+      // Add a second annotation and notify
+      testEditorView!.dispatch({
+        effects: setAnnotationData.of([
+          makeAnnotation({ char_start: 0, char_end: 10 }),
+          makeAnnotation({ char_start: 15, char_end: 25 }),
+        ]),
+      });
+      act(() => {
+        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+      });
+
+      expect(screen.getByText("Annotations (2)")).toBeInTheDocument();
+    });
+
     it("falls back to linked tab when annotations disappear while on annotations tab", async () => {
       testEditorView = setupEditorWithAnnotations([
         makeAnnotation({ char_start: 0, char_end: 10 }),
