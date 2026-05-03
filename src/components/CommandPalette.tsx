@@ -74,18 +74,23 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
     }
   }, [open]);
 
+  const providerId = provider?.id ?? null;
+
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
-    if (provider) {
+    if (providerId) {
       if (!query) {
         setSections([]);
         setHasSearched(false);
         return;
       }
+      const currentPrefix = prefix!;
       debounceRef.current = setTimeout(async () => {
-        const results = await provider.search(query, filter ?? undefined);
-        setSections([{ section: provider.label, provider, results }]);
+        const p = registry.getByPrefix(currentPrefix);
+        if (!p) return;
+        const results = await p.search(query, filter ?? undefined);
+        setSections([{ section: p.label, provider: p, results }]);
         setActiveIndex(0);
         setHasSearched(true);
       }, 250);
@@ -122,7 +127,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [provider, query, filter]);
+  }, [providerId, prefix, query, filter]);
 
   const allResults = sections.flatMap((s) => s.results);
   const totalItems = allResults.length;

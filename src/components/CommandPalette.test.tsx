@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import { CommandPalette, _resetRegistration } from "./CommandPalette";
 import { mockInvoke } from "../test/tauri-mock";
+import * as registry from "../lib/paletteRegistry";
 import type { AnnotationSearchResult } from "../lib/ipc";
 
 const mockResults: AnnotationSearchResult[] = [
@@ -597,6 +598,47 @@ describe("CommandPalette", () => {
         target: { value: "@test" },
       });
       expect(screen.queryByTestId("prefix-hints")).not.toBeInTheDocument();
+    });
+
+    it("re-registering provider with new object reference does not re-trigger search", async () => {
+      let callCount = 0;
+      mockInvoke((cmd) => {
+        if (cmd === "search_annotations") {
+          callCount++;
+          return mockResults;
+        }
+        return [];
+      });
+      const { rerender } = render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "@silk" },
+      });
+      await advanceDebounce();
+      expect(callCount).toBe(1);
+
+      // Re-register annotation provider with a NEW object reference (same id/prefix)
+      registry.register({
+        id: "annotations",
+        prefix: "@",
+        label: "Annotations",
+        priority: 20,
+        filterOptions: [],
+        async search(query: string) {
+          const { searchAnnotations } = await import("../lib/ipc");
+          const results = await searchAnnotations(query);
+          return results.map((r) => ({
+            id: `annotation-${r.annotation_id}`,
+            title: r.node_title,
+            section: "Annotations",
+          }));
+        },
+        onSelect() {},
+      });
+
+      // Re-render — the effect should NOT re-fire since prefix+query+filter are unchanged
+      rerender(<CommandPalette open={true} onClose={onClose} />);
+      await advanceDebounce();
+      expect(callCount).toBe(1);
     });
 
     it("arrow keys navigate correctly across multiple sections", async () => {
