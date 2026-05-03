@@ -1328,4 +1328,66 @@ describe("MindmapView fold/unfold", () => {
     fireEvent.keyDown(svg, { key: "ArrowRight" });
     expect(props.onNodeClick).not.toHaveBeenCalled();
   });
+
+  it("orphaned foldedIds are pruned when tree changes", () => {
+    const tree1 = makeTree("# A\n## B\n### C");
+    const nodeB = tree1.children[0]!.children[0]!;
+    const onFoldChange = vi.fn();
+    const props = { ...defaultProps(), onFoldChange };
+    const { container, rerender } = render(
+      <MindmapView tree={tree1} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: " " });
+    expect(onFoldChange).toHaveBeenCalledWith(new Set([nodeB.id]));
+    onFoldChange.mockClear();
+
+    const tree2 = makeTree("# A");
+    rerender(<MindmapView tree={tree2} {...props} selectedId={null} />);
+    expect(onFoldChange).toHaveBeenCalledWith(new Set());
+  });
+
+  it("partial orphan: only stale IDs pruned", () => {
+    const tree1 = makeTree("# A\n## B\n### C\n## D\n### E");
+    const nodeB = tree1.children[0]!.children[0]!;
+    const nodeD = tree1.children[0]!.children[1]!;
+    const onFoldChange = vi.fn();
+    const props = { ...defaultProps(), onFoldChange };
+    const { rerender } = render(
+      <MindmapView tree={tree1} {...props} selectedId={nodeB.id} initialFoldedIds={new Set([nodeB.id, nodeD.id])} />,
+    );
+    onFoldChange.mockClear();
+
+    const tree2 = makeTree("# A\n## D\n### E");
+    const nodeDNew = tree2.children[0]!.children[0]!;
+    rerender(<MindmapView tree={tree2} {...props} selectedId={null} />);
+    expect(onFoldChange).toHaveBeenCalledWith(new Set([nodeDNew.id]));
+  });
+
+  it("no onFoldChange when all foldedIds are valid", () => {
+    const tree = makeTree("# A\n## B\n### C");
+    const nodeB = tree.children[0]!.children[0]!;
+    const onFoldChange = vi.fn();
+    const props = { ...defaultProps(), onFoldChange };
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: " " });
+    expect(onFoldChange).toHaveBeenCalledTimes(1);
+    onFoldChange.mockClear();
+
+    // no tree change, no orphans — should not fire again
+    expect(onFoldChange).not.toHaveBeenCalled();
+  });
+
+  it("initialFoldedIds with orphan IDs are cleaned on mount", () => {
+    const tree = makeTree("# A\n## B");
+    const onFoldChange = vi.fn();
+    const props = { ...defaultProps(), onFoldChange };
+    render(
+      <MindmapView tree={tree} {...props} initialFoldedIds={new Set(["h-99", "h-100"])} />,
+    );
+    expect(onFoldChange).toHaveBeenCalledWith(new Set());
+  });
 });

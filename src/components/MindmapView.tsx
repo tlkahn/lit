@@ -87,6 +87,15 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
     return nodes;
   }, [tree]);
 
+  useEffect(() => {
+    const validIds = new Set(allNodes.map(n => n.id));
+    const cleaned = new Set([...foldedIds].filter(id => validIds.has(id)));
+    if (cleaned.size !== foldedIds.size) {
+      setFoldedIds(cleaned);
+      onFoldChange?.(cleaned);
+    }
+  }, [allNodes, foldedIds, onFoldChange]);
+
   const nodeWidths = useMemo(() => {
     const widths = new Map<string, number>();
     for (const n of allNodes) {
