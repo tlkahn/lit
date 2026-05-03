@@ -33,6 +33,7 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
   const [editText, setEditText] = useState("");
   const [pendingEditId, setPendingEditId] = useState<string | null>(null);
   const [isNewNode, setIsNewNode] = useState(false);
+  const deletedNewNodeRef = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const [contextMenu, setContextMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null);
 
@@ -415,6 +416,7 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
                 setIsNewNode(false);
               } else if (e.key === "Escape") {
                 if (isNewNode && onDeleteNode) {
+                  deletedNewNodeRef.current = true;
                   onDeleteNode(editingId);
                 }
                 setEditingId(null);
@@ -422,9 +424,10 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
               }
             }}
             onBlur={() => {
-              if (isNewNode && onDeleteNode) {
+              if (isNewNode && onDeleteNode && !deletedNewNodeRef.current) {
                 onDeleteNode(editingId);
               }
+              deletedNewNodeRef.current = false;
               setEditingId(null);
               setIsNewNode(false);
             }}

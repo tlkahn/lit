@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MindmapView } from "./MindmapView";
 import { buildHeadingTree } from "../lib/headingTree";
@@ -797,6 +797,30 @@ describe("MindmapView node creation", () => {
     expect(input).toBeTruthy();
     fireEvent.keyDown(input, { key: "Escape" });
     expect(props.onDeleteNode).toHaveBeenCalledWith("h-2");
+  });
+
+  it("Escape during new-node edit calls onDeleteNode exactly once even if blur fires", () => {
+    const body1 = "# A\n## B";
+    const tree1 = makeTree(body1);
+    const nodeB = tree1.children[0]!.children[0]!;
+    const props = defaultProps();
+    props.onInsertChild.mockReturnValue("h-2");
+    const { container, rerender } = render(
+      <MindmapView tree={tree1} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "Tab" });
+
+    const body2 = "# A\n## B\n### Untitled";
+    const tree2 = makeTree(body2);
+    rerender(<MindmapView tree={tree2} {...props} selectedId={nodeB.id} />);
+    const input = container.querySelector("[data-mindmap-edit]") as HTMLInputElement;
+    expect(input).toBeTruthy();
+    act(() => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
+    expect(props.onDeleteNode).toHaveBeenCalledTimes(1);
   });
 
   it("Escape during existing-node edit does NOT call onDeleteNode", async () => {
