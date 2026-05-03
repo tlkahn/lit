@@ -14,11 +14,15 @@ interface MindmapViewProps {
   onNodeClick: (node: HeadingNode) => void;
   onNodeRename: (node: HeadingNode, newText: string) => void;
   onNodeMove: (sourceId: string, targetParentId: string, targetIndex: number) => void;
+  onInsertChild?: (parentId: string, text: string) => string | null;
+  onInsertSibling?: (siblingId: string, text: string) => string | null;
+  onInsertDangling?: (text: string) => string | null;
+  onDeleteNode?: (nodeId: string) => void;
 }
 
 const FONT_SIZES = [16, 15, 14, 13, 12, 11];
 
-export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNodeMove }: MindmapViewProps) {
+export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNodeMove, onInsertChild, onInsertSibling, onInsertDangling, onDeleteNode }: MindmapViewProps) {
   const lastChildRef = useRef<Map<string, string>>(new Map());
   const prevTreeRef = useRef(tree);
   if (prevTreeRef.current !== tree) {
@@ -27,10 +31,23 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
   }
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
+  const [pendingEditId, setPendingEditId] = useState<string | null>(null);
+  const [isNewNode, setIsNewNode] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const [contextMenu, setContextMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null);
 
   const dismissContextMenu = useCallback(() => setContextMenu(null), []);
+
+  useEffect(() => {
+    if (!pendingEditId) return;
+    const node = findNode(tree, pendingEditId);
+    if (!node) return;
+    setEditingId(pendingEditId);
+    setEditText(node.text);
+    setIsNewNode(true);
+    setPendingEditId(null);
+    onNodeClick(node);
+  }, [tree, pendingEditId, onNodeClick]);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -159,9 +176,28 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
         className={`w-full h-full ${dragState.isDragging ? "cursor-grabbing" : ""}`}
         onPointerMove={handlers.onPointerMove}
         onPointerUp={handlers.onPointerUp}
+        onDoubleClick={(e) => {
+          if ((e.target as Element).closest("[data-mindmap-node]")) return;
+          if (onInsertDangling) {
+            const nodeId = onInsertDangling("Untitled");
+            if (nodeId) setPendingEditId(nodeId);
+          }
+        }}
         onKeyDown={(e) => {
           handlers.onKeyDown(e);
-          if (!selectedId || dragState.isDragging) return;
+          if (!selectedId || dragState.isDragging || editingId) return;
+          if (e.key === "Tab" && onInsertChild) {
+            e.preventDefault();
+            const nodeId = onInsertChild(selectedId, "Untitled");
+            if (nodeId) setPendingEditId(nodeId);
+            return;
+          }
+          if (e.key === "Enter" && onInsertSibling) {
+            e.preventDefault();
+            const nodeId = onInsertSibling(selectedId, "Untitled");
+            if (nodeId) setPendingEditId(nodeId);
+            return;
+          }
           let target: HeadingNode | null = null;
           switch (e.key) {
             case "ArrowDown":
@@ -257,6 +293,15 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
                 }
                 onClick={() => {
                   if (!isEditing && !dragOccurredRef.current) onNodeClick(d.data);
+                }}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  if (!dragOccurredRef.current) {
+                    setEditingId(d.data.id);
+                    setEditText(d.data.text);
+                    setIsNewNode(false);
+                    onNodeClick(d.data);
+                  }
                 }}
                 onContextMenu={(e) => {
                   e.preventDefault();
@@ -367,11 +412,22 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
               if (e.key === "Enter") {
                 onNodeRename(editNode.data, editText);
                 setEditingId(null);
+                setIsNewNode(false);
               } else if (e.key === "Escape") {
+                if (isNewNode && onDeleteNode) {
+                  onDeleteNode(editingId);
+                }
                 setEditingId(null);
+                setIsNewNode(false);
               }
             }}
-            onBlur={() => setEditingId(null)}
+            onBlur={() => {
+              if (isNewNode && onDeleteNode) {
+                onDeleteNode(editingId);
+              }
+              setEditingId(null);
+              setIsNewNode(false);
+            }}
             autoFocus
             className="absolute bg-white dark:bg-neutral-800 border border-blue-500 dark:border-blue-400 rounded px-1 outline-none text-neutral-900 dark:text-neutral-100 z-40"
             style={{ left, top, width, height, fontSize: fontSize * t.k, lineHeight: `${height}px` }}

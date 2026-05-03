@@ -14,6 +14,10 @@ const defaultProps = () => ({
   onNodeClick: vi.fn(),
   onNodeRename: vi.fn(),
   onNodeMove: vi.fn(),
+  onInsertChild: vi.fn(),
+  onInsertSibling: vi.fn(),
+  onInsertDangling: vi.fn(),
+  onDeleteNode: vi.fn(),
 });
 
 describe("MindmapView", () => {
@@ -131,13 +135,15 @@ describe("MindmapView", () => {
     expect(container.querySelector("[data-mindmap-context-menu]")).toBeNull();
   });
 
-  it("double-clicking a node does NOT enter edit mode", async () => {
+  it("double-clicking a node enters edit mode", async () => {
     const tree = makeTree("# A\n## B");
     const { container } = render(<MindmapView tree={tree} {...defaultProps()} />);
     const user = userEvent.setup();
     const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
     await user.dblClick(nodeB);
-    expect(container.querySelector("[data-mindmap-edit]")).toBeNull();
+    const input = container.querySelector("[data-mindmap-edit]") as HTMLInputElement;
+    expect(input).toBeTruthy();
+    expect(input.value).toBe("B");
   });
 
   it("short-text node has a narrower rect than long-text node", () => {
@@ -645,5 +651,188 @@ describe("MindmapView arrow-key navigation", () => {
 
     fireEvent.keyDown(svg, { key: "ArrowDown" });
     expect(props.onNodeClick).not.toHaveBeenCalled();
+  });
+});
+
+describe("MindmapView node creation", () => {
+  it("Tab on selected node calls onInsertChild", () => {
+    const tree = makeTree("# A\n## B\n## C");
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "Tab" });
+    expect(props.onInsertChild).toHaveBeenCalledWith(nodeB.id, "Untitled");
+  });
+
+  it("Enter on selected node calls onInsertSibling", () => {
+    const tree = makeTree("# A\n## B\n## C");
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "Enter" });
+    expect(props.onInsertSibling).toHaveBeenCalledWith(nodeB.id, "Untitled");
+  });
+
+  it("Tab does nothing when no selection", () => {
+    const tree = makeTree("# A\n## B");
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={null} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "Tab" });
+    expect(props.onInsertChild).not.toHaveBeenCalled();
+  });
+
+  it("Enter does nothing when no selection", () => {
+    const tree = makeTree("# A\n## B");
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={null} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "Enter" });
+    expect(props.onInsertSibling).not.toHaveBeenCalled();
+  });
+
+  it("Tab does nothing during drag", () => {
+    const tree = makeTree("# A\n## B\n## C");
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    const nodeEl = container.querySelector(`[data-mindmap-node="${nodeB.id}"]`)!;
+    firePointer(nodeEl, "pointerdown", { clientX: 0, clientY: 0 });
+    firePointer(svg, "pointermove", { clientX: 50, clientY: 50 });
+    fireEvent.keyDown(svg, { key: "Tab" });
+    expect(props.onInsertChild).not.toHaveBeenCalled();
+  });
+
+  it("Tab does nothing during edit mode", () => {
+    const tree = makeTree("# A\n## B");
+    const props = defaultProps();
+    const nodeB = tree.children[0]!.children[0]!;
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const nodeEl = container.querySelector(`[data-mindmap-node="${nodeB.id}"]`)!;
+    fireEvent.contextMenu(nodeEl);
+    fireEvent.click(container.querySelector("[data-mindmap-context-edit]")!);
+    expect(container.querySelector("[data-mindmap-edit]")).toBeTruthy();
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "Tab" });
+    expect(props.onInsertChild).not.toHaveBeenCalled();
+  });
+
+  it("after insert + tree update, edit input appears with 'Untitled' text", () => {
+    const body1 = "# A\n## B";
+    const tree1 = makeTree(body1);
+    const nodeB = tree1.children[0]!.children[0]!;
+    const props = defaultProps();
+    props.onInsertChild.mockReturnValue("h-2");
+    const { container, rerender } = render(
+      <MindmapView tree={tree1} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "Tab" });
+    expect(props.onInsertChild).toHaveBeenCalled();
+
+    const body2 = "# A\n## B\n### Untitled";
+    const tree2 = makeTree(body2);
+    rerender(<MindmapView tree={tree2} {...props} selectedId={nodeB.id} />);
+    const input = container.querySelector("[data-mindmap-edit]") as HTMLInputElement;
+    expect(input).toBeTruthy();
+    expect(input.value).toBe("Untitled");
+  });
+
+  it("double-click on SVG background calls onInsertDangling", () => {
+    const tree = makeTree("# A\n## B");
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.doubleClick(svg);
+    expect(props.onInsertDangling).toHaveBeenCalledWith("Untitled");
+  });
+
+  it("double-click on node enters edit mode", async () => {
+    const tree = makeTree("# A\n## B");
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} />,
+    );
+    const user = userEvent.setup();
+    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
+    await user.dblClick(nodeB);
+    const input = container.querySelector("[data-mindmap-edit]") as HTMLInputElement;
+    expect(input).toBeTruthy();
+    expect(input.value).toBe("B");
+  });
+
+  it("Escape during new-node edit calls onDeleteNode", () => {
+    const body1 = "# A\n## B";
+    const tree1 = makeTree(body1);
+    const nodeB = tree1.children[0]!.children[0]!;
+    const props = defaultProps();
+    props.onInsertChild.mockReturnValue("h-2");
+    const { container, rerender } = render(
+      <MindmapView tree={tree1} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "Tab" });
+
+    const body2 = "# A\n## B\n### Untitled";
+    const tree2 = makeTree(body2);
+    rerender(<MindmapView tree={tree2} {...props} selectedId={nodeB.id} />);
+    const input = container.querySelector("[data-mindmap-edit]") as HTMLInputElement;
+    expect(input).toBeTruthy();
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(props.onDeleteNode).toHaveBeenCalledWith("h-2");
+  });
+
+  it("Escape during existing-node edit does NOT call onDeleteNode", async () => {
+    const tree = makeTree("# A\n## B");
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} />,
+    );
+    const user = userEvent.setup();
+    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
+    await user.dblClick(nodeB);
+    const input = container.querySelector("[data-mindmap-edit]") as HTMLInputElement;
+    expect(input).toBeTruthy();
+    await user.type(input, "{Escape}");
+    expect(props.onDeleteNode).not.toHaveBeenCalled();
+  });
+
+  it("Enter during new-node edit calls onNodeRename and not onDeleteNode", () => {
+    const body1 = "# A\n## B";
+    const tree1 = makeTree(body1);
+    const nodeB = tree1.children[0]!.children[0]!;
+    const props = defaultProps();
+    props.onInsertSibling.mockReturnValue("h-2");
+    const { container, rerender } = render(
+      <MindmapView tree={tree1} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "Enter" });
+
+    const body2 = "# A\n## B\n## Untitled";
+    const tree2 = makeTree(body2);
+    rerender(<MindmapView tree={tree2} {...props} selectedId={nodeB.id} />);
+    const input = container.querySelector("[data-mindmap-edit]") as HTMLInputElement;
+    expect(input).toBeTruthy();
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(props.onNodeRename).toHaveBeenCalled();
+    expect(props.onDeleteNode).not.toHaveBeenCalled();
   });
 });

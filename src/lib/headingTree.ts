@@ -175,9 +175,19 @@ export function firstChild(node: HeadingNode): HeadingNode | null {
   return node.children[0] ?? null;
 }
 
-export function applyInsertChild(body: string, tree: HeadingNode, parentId: string, text: string): string {
+function countNewlines(s: string): number {
+  let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === "\n") n++;
+  }
+  return n;
+}
+
+export function insertChild(
+  body: string, tree: HeadingNode, parentId: string, text: string,
+): { body: string; nodeId: string } | null {
   const parent = findNode(tree, parentId);
-  if (!parent) return body;
+  if (!parent) return null;
   const childLevel = parent.level === 0 ? 1 : Math.min(6, parent.level + 1);
   const newLine = "#".repeat(childLevel) + " " + text;
   const headings = extractHeadings(body);
@@ -194,12 +204,20 @@ export function applyInsertChild(body: string, tree: HeadingNode, parentId: stri
   const after = body.slice(insertAt);
   const sep = before.length > 0 && !before.endsWith("\n") ? "\n" : "";
   const trail = after.length > 0 && !after.startsWith("\n") ? "\n" : "";
-  return before + sep + newLine + trail + after;
+  const newBody = before + sep + newLine + trail + after;
+  const lineNum = countNewlines(before + sep);
+  return { body: newBody, nodeId: `h-${lineNum}` };
 }
 
-export function applyInsertSibling(body: string, tree: HeadingNode, siblingId: string, text: string): string {
+export function applyInsertChild(body: string, tree: HeadingNode, parentId: string, text: string): string {
+  return insertChild(body, tree, parentId, text)?.body ?? body;
+}
+
+export function insertSibling(
+  body: string, tree: HeadingNode, siblingId: string, text: string,
+): { body: string; nodeId: string } | null {
   const node = findNode(tree, siblingId);
-  if (!node) return body;
+  if (!node) return null;
   const newLine = "#".repeat(node.level) + " " + text;
   const headings = extractHeadings(body);
   const range = sectionRange(headings, body.length, node);
@@ -208,7 +226,21 @@ export function applyInsertSibling(body: string, tree: HeadingNode, siblingId: s
   const after = body.slice(range.to);
   const sep = before.length > 0 && !before.endsWith("\n") ? "\n" : "";
   const trail = after.length > 0 && !after.startsWith("\n") ? "\n" : "";
-  return before + sep + newLine + trail + after;
+  const newBody = before + sep + newLine + trail + after;
+  const lineNum = countNewlines(before + sep);
+  return { body: newBody, nodeId: `h-${lineNum}` };
+}
+
+export function applyInsertSibling(body: string, tree: HeadingNode, siblingId: string, text: string): string {
+  return insertSibling(body, tree, siblingId, text)?.body ?? body;
+}
+
+export function insertDangling(body: string, level: number, text: string): { body: string; nodeId: string } {
+  const newLine = "#".repeat(level) + " " + text;
+  const sep = body.length > 0 && !body.endsWith("\n") ? "\n" : "";
+  const newBody = body + sep + newLine;
+  const lineNum = countNewlines(body + sep);
+  return { body: newBody, nodeId: `h-${lineNum}` };
 }
 
 export function applyDeleteSection(body: string, tree: HeadingNode, nodeId: string): string {

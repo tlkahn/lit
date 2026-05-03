@@ -14,7 +14,7 @@ import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
 import { PdfViewer } from "./PdfViewer";
 import { BottomPanel } from "./BottomPanel";
 import { ConflictDialog } from "./ConflictDialog";
-import { buildHeadingTree, applyRename, applyMove } from "../lib/headingTree";
+import { buildHeadingTree, applyRename, applyMove, insertChild, insertSibling, insertDangling, applyDeleteSection } from "../lib/headingTree";
 import { YamlHighlighter } from "./YamlHighlighter";
 import { useKeymaps } from "../hooks/useKeymaps";
 import { useModalLock } from "../hooks/useModalLock";
@@ -552,6 +552,31 @@ export function ContentArea() {
               onNodeMove={(sourceId, targetParentId, targetIndex) => {
                 const newBody = applyMove(body, headingTree, sourceId, targetParentId, targetIndex);
                 handleChange(newBody);
+              }}
+              onInsertChild={(parentId, text) => {
+                const result = insertChild(body, headingTree, parentId, text);
+                if (!result) return null;
+                handleChange(result.body);
+                setMindmapSelectedId(result.nodeId);
+                return result.nodeId;
+              }}
+              onInsertSibling={(siblingId, text) => {
+                const result = insertSibling(body, headingTree, siblingId, text);
+                if (!result) return null;
+                handleChange(result.body);
+                setMindmapSelectedId(result.nodeId);
+                return result.nodeId;
+              }}
+              onInsertDangling={(text) => {
+                const result = insertDangling(body, 2, text);
+                handleChange(result.body);
+                setMindmapSelectedId(result.nodeId);
+                return result.nodeId;
+              }}
+              onDeleteNode={(nodeId) => {
+                const newBody = applyDeleteSection(body, headingTree, nodeId);
+                handleChange(newBody);
+                setMindmapSelectedId(null);
               }}
             />
           </Suspense>
