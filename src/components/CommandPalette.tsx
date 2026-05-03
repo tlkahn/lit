@@ -1,58 +1,40 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import {
-  searchAnnotations,
-  type AnnotationType,
-  type AnnotationSearchResult,
-} from "../lib/ipc";
-import {
-  TYPE_ICON,
-  certaintyMark,
-  truncateBody,
-} from "../editor/livePreview/annotationConstants";
-import { useWorkspaceStore } from "../stores/workspace";
-import { globalJumpTracker } from "../editor/jumpTracker";
+import { useState, useEffect, useRef, useCallback } from "react";
+import * as registry from "../lib/paletteRegistry";
+import type { PaletteProvider, PaletteResult } from "../lib/paletteRegistry";
+import { annotationProvider } from "../lib/annotationProvider";
+import { fileProvider, tagProvider, contentProvider, commandProvider } from "../lib/stubProviders";
+import { recordAccess, sortByFrecency } from "../lib/frecency";
 
-interface StaticCommand {
-  id: string;
-  label: string;
-  icon: string;
-  action: () => void;
+interface SectionedResults {
+  section: string;
+  provider: PaletteProvider;
+  results: PaletteResult[];
 }
 
-const STATIC_COMMANDS: StaticCommand[] = [
-  {
-    id: "insert-annotation",
-    label: "Insert Annotation",
-    icon: "✏️",
-    action: () => window.dispatchEvent(new CustomEvent("lit:open-annotation-builder")),
-  },
-];
+let registered = false;
 
-type PaletteMode = "titles" | "annotations" | "tags" | "content";
+function ensureRegistered(): void {
+  if (registered) return;
+  registered = true;
+  registry.register(fileProvider);
+  registry.register(annotationProvider);
+  registry.register(tagProvider);
+  registry.register(contentProvider);
+  registry.register(commandProvider);
+}
 
-const PREFIX_MAP: Record<string, PaletteMode> = {
-  "@": "annotations",
-  "#": "tags",
-  "/": "content",
-};
+export function _resetRegistration(): void {
+  registered = false;
+  registry._clear();
+}
 
-const ANNOTATION_TYPES: (AnnotationType | "all")[] = [
-  "all",
-  "note",
-  "question",
-  "todo",
-  "crossref",
-  "apparatus",
-  "translation",
-];
-
-function parseInput(raw: string): { mode: PaletteMode; query: string; prefix: string | null } {
+function resolveProvider(raw: string): { provider: PaletteProvider | null; query: string; prefix: string | null } {
   const firstChar = raw.charAt(0);
-  const mode = PREFIX_MAP[firstChar];
-  if (mode) {
-    return { mode, query: raw.slice(1), prefix: firstChar };
+  const provider = firstChar ? registry.getByPrefix(firstChar) : null;
+  if (provider) {
+    return { provider, query: raw.slice(1), prefix: firstChar };
   }
-  return { mode: "titles", query: raw, prefix: null };
+  return { provider: null, query: raw, prefix: null };
 }
 
 interface CommandPaletteProps {
@@ -61,69 +43,89 @@ interface CommandPaletteProps {
 }
 
 export function CommandPalette({ open, onClose }: CommandPaletteProps) {
+  ensureRegistered();
+
   const [rawInput, setRawInput] = useState("");
-  const [results, setResults] = useState<AnnotationSearchResult[]>([]);
+  const [sections, setSections] = useState<SectionedResults[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
-  const [typeFilter, setTypeFilter] = useState<AnnotationType | null>(null);
+  const [filter, setFilter] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const prevModeRef = useRef<PaletteMode>("titles");
+  const prevPrefixRef = useRef<string | null>(null);
 
-  const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
-  const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
+  const { provider, query, prefix } = resolveProvider(rawInput);
 
-  const { mode, query, prefix } = parseInput(rawInput);
-
-  const filteredCommands = useMemo(() => {
-    if (mode !== "titles") return [];
-    const q = query.toLowerCase();
-    return STATIC_COMMANDS.filter((cmd) => cmd.label.toLowerCase().includes(q));
-  }, [mode, query]);
-
-  if (mode !== prevModeRef.current) {
-    if (prevModeRef.current !== mode) {
-      setTypeFilter(null);
-    }
-    prevModeRef.current = mode;
+  if (prefix !== prevPrefixRef.current) {
+    setFilter(null);
+    prevPrefixRef.current = prefix;
   }
 
   useEffect(() => {
     if (open) {
       setRawInput("");
-      setResults([]);
+      setSections([]);
       setActiveIndex(0);
-      setTypeFilter(null);
+      setFilter(null);
       setHasSearched(false);
-      prevModeRef.current = "titles";
+      prevPrefixRef.current = null;
       inputRef.current?.focus();
     }
   }, [open]);
 
   useEffect(() => {
-    if (mode !== "annotations" || !query) {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      setResults([]);
-      setHasSearched(false);
-      return;
-    }
-
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
-    debounceRef.current = setTimeout(async () => {
-      const res = await searchAnnotations(query, typeFilter ?? undefined);
-      setResults(res);
-      setActiveIndex(0);
-      setHasSearched(true);
-    }, 250);
+    if (provider) {
+      if (!query) {
+        setSections([]);
+        setHasSearched(false);
+        return;
+      }
+      debounceRef.current = setTimeout(async () => {
+        const results = await provider.search(query, filter ?? undefined);
+        setSections([{ section: provider.label, provider, results }]);
+        setActiveIndex(0);
+        setHasSearched(true);
+      }, 250);
+    } else {
+      if (!query) {
+        setSections([]);
+        setHasSearched(false);
+        return;
+      }
+      debounceRef.current = setTimeout(async () => {
+        const allProviders = registry.getAll();
+        const allSections: SectionedResults[] = [];
+        const settled = await Promise.all(
+          allProviders.map(async (p) => {
+            const results = await p.search(query);
+            return { provider: p, results };
+          }),
+        );
+        for (const { provider: p, results } of settled) {
+          if (results.length > 0) {
+            allSections.push({
+              section: p.label,
+              provider: p,
+              results: sortByFrecency(results.slice(0, 5), (r) => r.id),
+            });
+          }
+        }
+        setSections(allSections);
+        setActiveIndex(0);
+        setHasSearched(true);
+      }, 250);
+    }
 
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [mode, query, typeFilter]);
+  }, [provider, query, filter]);
 
-  const totalItems = filteredCommands.length + results.length;
+  const allResults = sections.flatMap((s) => s.results);
+  const totalItems = allResults.length;
 
   useEffect(() => {
     if (totalItems === 0) return;
@@ -134,33 +136,15 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   }, [activeIndex, totalItems]);
 
   const handleSelect = useCallback(
-    (result: AnnotationSearchResult) => {
-      globalJumpTracker.recordJump(
-        { notePath: currentPagePath ?? "", line: 1, col: 0 },
-        { notePath: result.node_id, line: result.source_line, col: 0 },
-      );
-
-      if (result.node_id === currentPagePath) {
-        window.dispatchEvent(
-          new CustomEvent("lit:scroll-to-line", {
-            detail: { line: result.source_line, cursor: true },
-          }),
-        );
-      } else {
-        selectPageAtLine(result.node_id, result.source_line);
+    (result: PaletteResult) => {
+      recordAccess(result.id);
+      const owningSection = sections.find((s) => s.results.includes(result));
+      if (owningSection) {
+        owningSection.provider.onSelect(result);
       }
-
       onClose();
     },
-    [currentPagePath, selectPageAtLine, onClose],
-  );
-
-  const handleCommandSelect = useCallback(
-    (cmd: StaticCommand) => {
-      cmd.action();
-      onClose();
-    },
-    [onClose],
+    [sections, onClose],
   );
 
   const handleKeyDown = useCallback(
@@ -180,18 +164,12 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
         }
       } else if (e.key === "Enter") {
         e.preventDefault();
-        if (activeIndex < filteredCommands.length) {
-          const cmd = filteredCommands[activeIndex];
-          if (cmd) handleCommandSelect(cmd);
-        } else {
-          const resultIndex = activeIndex - filteredCommands.length;
-          if (results[resultIndex]) {
-            handleSelect(results[resultIndex]);
-          }
+        if (allResults[activeIndex]) {
+          handleSelect(allResults[activeIndex]);
         }
       }
     },
-    [results, activeIndex, totalItems, filteredCommands, handleSelect, handleCommandSelect, onClose],
+    [allResults, activeIndex, totalItems, handleSelect, onClose],
   );
 
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -200,6 +178,12 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   }, []);
 
   if (!open) return null;
+
+  const isOmniMode = !prefix;
+  const activeProvider = provider;
+  const showFilter = activeProvider?.filterOptions && activeProvider.filterOptions.length > 0;
+
+  let flatIndex = 0;
 
   return (
     <div
@@ -226,30 +210,31 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
             ref={inputRef}
             className="w-full bg-bg-primary px-4 py-3 text-text-normal outline-none"
             data-testid="command-palette-input"
-            placeholder="Search… (@ annotations, # tags, / content)"
+            placeholder="Search… (@ annotations, # tags, / content, ! commands)"
             value={rawInput}
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
           />
         </div>
 
-        {mode === "annotations" && (
+        {showFilter && (
           <div
             className="flex gap-1 border-b border-bg-hover px-3 py-1.5"
             data-testid="command-palette-type-filter"
           >
-            {ANNOTATION_TYPES.map((t) => {
-              const isActive = t === "all" ? typeFilter === null : typeFilter === t;
+            {activeProvider!.filterOptions!.map((opt) => {
+              const isActive = opt.id === "all" ? filter === null : filter === opt.id;
               return (
                 <button
-                  key={t}
-                  data-testid={`type-filter-${t}`}
+                  key={opt.id}
+                  data-testid={`type-filter-${opt.id}`}
                   data-active={isActive ? "true" : "false"}
                   className={`rounded px-2 py-0.5 text-xs ${isActive ? "bg-bg-hover text-text-accent font-medium" : "text-text-muted hover:bg-bg-hover"}`}
-                  onClick={() => setTypeFilter(t === "all" ? null : (t as AnnotationType))}
+                  onClick={() => setFilter(opt.id === "all" ? null : opt.id)}
                 >
-                  {t === "all" ? "All" : TYPE_ICON[t as AnnotationType]}
-                  {t !== "all" && <span className="ml-1">{t}</span>}
+                  {opt.icon && <span>{opt.icon}</span>}
+                  {opt.id !== "all" && <span className="ml-1">{opt.label}</span>}
+                  {opt.id === "all" && <span>{opt.label}</span>}
                 </button>
               );
             })}
@@ -257,86 +242,73 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
         )}
 
         <div ref={listRef} className="flex-1 overflow-y-auto">
-          {filteredCommands.map((cmd, i) => (
-            <div
-              key={cmd.id}
-              data-testid="command-palette-command"
-              data-active={i === activeIndex ? "true" : "false"}
-              className={`cursor-pointer px-4 py-2 text-sm ${i === activeIndex ? "bg-bg-hover" : ""}`}
-              onClick={() => handleCommandSelect(cmd)}
-            >
-              <div className="flex items-center gap-2">
-                <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center text-base">
-                  {cmd.icon}
-                </span>
-                <span className="font-medium text-text-normal">{cmd.label}</span>
-              </div>
-            </div>
-          ))}
-
-          {mode === "annotations" && !query && (
+          {provider && !query && (
             <div className="px-4 py-3 text-sm text-text-muted">
-              Type to search annotations…
+              Type to search {provider.label.toLowerCase()}…
             </div>
           )}
 
-          {mode === "annotations" && query && hasSearched && results.length === 0 && (
+          {hasSearched && totalItems === 0 && (
             <div className="px-4 py-3 text-sm text-text-muted">No results</div>
           )}
 
-          {mode === "annotations" &&
-            results.map((r, i) => {
-              const itemIndex = filteredCommands.length + i;
+          {sections.map((section) => {
+            const sectionElements = section.results.map((result) => {
+              const idx = flatIndex++;
               return (
                 <div
-                  key={r.annotation_id}
+                  key={result.id}
                   data-testid="command-palette-result"
-                  data-active={itemIndex === activeIndex ? "true" : "false"}
-                  className={`cursor-pointer px-4 py-2 text-sm ${itemIndex === activeIndex ? "bg-bg-hover" : ""}`}
-                  onClick={() => handleSelect(r)}
+                  data-active={idx === activeIndex ? "true" : "false"}
+                  className={`cursor-pointer px-4 py-2 text-sm ${idx === activeIndex ? "bg-bg-hover" : ""}`}
+                  onClick={() => handleSelect(result)}
                 >
                   <div className="flex items-center gap-2">
-                    <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded bg-bg-hover text-xs font-medium text-text-accent">
-                      {TYPE_ICON[r.annotation_type]}
-                    </span>
-                    {certaintyMark(r.certainty) && (
-                      <span className="text-xs text-text-muted">
-                        {certaintyMark(r.certainty)}
+                    {result.icon && (
+                      <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded bg-bg-hover text-xs font-medium text-text-accent">
+                        {result.icon}
                       </span>
                     )}
                     <span className="font-medium text-text-normal">
-                      {r.node_title}
+                      {result.title}
                     </span>
-                    {r.date && (
+                    {result.shortcut && (
                       <span className="ml-auto text-xs text-text-muted">
-                        {r.date}
+                        {result.shortcut}
                       </span>
                     )}
                   </div>
-                  {r.body && (
+                  {result.subtitle && (
                     <div className="mt-0.5 pl-7 text-xs text-text-muted">
-                      {truncateBody(r.body)}
+                      {result.subtitle}
                     </div>
                   )}
                 </div>
               );
-            })}
+            });
 
-          {mode === "titles" && query && (
-            <div className="px-4 py-3 text-sm text-text-muted">
-              Title search coming soon
-            </div>
-          )}
+            return (
+              <div key={section.section}>
+                {isOmniMode && (
+                  <div
+                    className="px-4 py-1.5 text-xs font-medium text-text-muted uppercase"
+                    data-testid="palette-section-header"
+                  >
+                    {section.section}
+                  </div>
+                )}
+                {sectionElements}
+              </div>
+            );
+          })}
 
-          {mode === "tags" && (
-            <div className="px-4 py-3 text-sm text-text-muted">
-              Tag search coming soon
-            </div>
-          )}
-
-          {mode === "content" && (
-            <div className="px-4 py-3 text-sm text-text-muted">
-              Content search coming soon
+          {isOmniMode && !query && (
+            <div className="px-4 py-3 text-xs text-text-muted" data-testid="prefix-hints">
+              <span className="mr-3">@ annotations</span>
+              <span className="mr-3"># tags</span>
+              <span className="mr-3">/ content</span>
+              <span className="mr-3">$ files</span>
+              <span>! commands</span>
             </div>
           )}
         </div>

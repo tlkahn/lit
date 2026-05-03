@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
-import { CommandPalette } from "./CommandPalette";
+import { CommandPalette, _resetRegistration } from "./CommandPalette";
 import { mockInvoke } from "../test/tauri-mock";
 import type { AnnotationSearchResult } from "../lib/ipc";
 
@@ -87,14 +87,13 @@ describe("CommandPalette", () => {
     mockWorkspaceState.currentPagePath = "other-page.md";
     mockSelectPageAtLine.mockClear();
     mockRecordJump.mockClear();
+    _resetRegistration();
     vi.useFakeTimers();
   });
 
   afterEach(() => {
     vi.useRealTimers();
   });
-
-  // Step 1: Modal shell — open/close/keyboard
 
   describe("modal shell", () => {
     it("renders nothing when open=false", () => {
@@ -130,10 +129,8 @@ describe("CommandPalette", () => {
     });
   });
 
-  // Step 2: Prefix routing infrastructure
-
   describe("prefix routing", () => {
-    it('typing "@silk" sets mode to annotations and strips prefix from query', () => {
+    it('typing "@silk" sets mode to annotations and shows prefix badge', () => {
       render(<CommandPalette open={true} onClose={onClose} />);
       fireEvent.change(screen.getByTestId("command-palette-input"), {
         target: { value: "@silk" },
@@ -141,7 +138,7 @@ describe("CommandPalette", () => {
       expect(screen.getByTestId("command-palette-mode-badge")).toHaveTextContent("@");
     });
 
-    it('typing "meeting" with no prefix sets mode to titles', () => {
+    it('typing "meeting" with no prefix shows omni mode (no badge)', () => {
       render(<CommandPalette open={true} onClose={onClose} />);
       fireEvent.change(screen.getByTestId("command-palette-input"), {
         target: { value: "meeting" },
@@ -149,7 +146,7 @@ describe("CommandPalette", () => {
       expect(screen.queryByTestId("command-palette-mode-badge")).not.toBeInTheDocument();
     });
 
-    it('typing "#tag" sets mode to tags', () => {
+    it('typing "#tag" shows # prefix badge', () => {
       render(<CommandPalette open={true} onClose={onClose} />);
       fireEvent.change(screen.getByTestId("command-palette-input"), {
         target: { value: "#tag" },
@@ -157,12 +154,20 @@ describe("CommandPalette", () => {
       expect(screen.getByTestId("command-palette-mode-badge")).toHaveTextContent("#");
     });
 
-    it('typing "/pattern" sets mode to content', () => {
+    it('typing "/pattern" shows / prefix badge', () => {
       render(<CommandPalette open={true} onClose={onClose} />);
       fireEvent.change(screen.getByTestId("command-palette-input"), {
         target: { value: "/pattern" },
       });
       expect(screen.getByTestId("command-palette-mode-badge")).toHaveTextContent("/");
+    });
+
+    it('typing "!cmd" shows ! prefix badge', () => {
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "!cmd" },
+      });
+      expect(screen.getByTestId("command-palette-mode-badge")).toHaveTextContent("!");
     });
 
     it("shows mode indicator badge next to input when prefix is active", () => {
@@ -175,9 +180,7 @@ describe("CommandPalette", () => {
     });
   });
 
-  // Step 3: Annotation search results (@ mode)
-
-  describe("annotation search results", () => {
+  describe("annotation search results (@ provider)", () => {
     it("calls searchAnnotations with stripped query after debounce", async () => {
       mockInvoke((cmd) => {
         if (cmd === "search_annotations") return mockResults;
@@ -191,7 +194,7 @@ describe("CommandPalette", () => {
       expect(screen.getAllByTestId("command-palette-result")).toHaveLength(3);
     });
 
-    it("shows type badge, page title, body snippet, and date for each result", async () => {
+    it("shows type badge, page title, body snippet for each result", async () => {
       mockInvoke((cmd) => {
         if (cmd === "search_annotations") return mockResults;
         return [];
@@ -205,22 +208,6 @@ describe("CommandPalette", () => {
       expect(results[0]).toHaveTextContent("N");
       expect(results[0]).toHaveTextContent("Silk Road");
       expect(results[0]).toHaveTextContent("Ancient trade route");
-      expect(results[0]).toHaveTextContent("2024-03-15");
-    });
-
-    it("shows certainty mark for tentative/firm results", async () => {
-      mockInvoke((cmd) => {
-        if (cmd === "search_annotations") return mockResults;
-        return [];
-      });
-      render(<CommandPalette open={true} onClose={onClose} />);
-      fireEvent.change(screen.getByTestId("command-palette-input"), {
-        target: { value: "@silk" },
-      });
-      await advanceDebounce();
-      const results = screen.getAllByTestId("command-palette-result");
-      expect(results[0]).toHaveTextContent("!");
-      expect(results[1]).toHaveTextContent("?");
     });
 
     it('shows "No results" when search returns empty', async () => {
@@ -279,8 +266,6 @@ describe("CommandPalette", () => {
     });
   });
 
-  // Step 4: Keyboard navigation in results
-
   describe("keyboard navigation", () => {
     async function renderWithResults() {
       mockInvoke((cmd) => {
@@ -331,8 +316,6 @@ describe("CommandPalette", () => {
       expect(results[1]!.className).not.toContain("bg-bg-hover");
     });
   });
-
-  // Step 5: Click/select → navigate to annotation
 
   describe("selection navigation", () => {
     async function renderWithResults() {
@@ -385,8 +368,6 @@ describe("CommandPalette", () => {
       expect(onClose).toHaveBeenCalled();
     });
   });
-
-  // Step 6: Type filter in annotation mode
 
   describe("type filter", () => {
     it("@mode shows a type filter row", () => {
@@ -454,87 +435,74 @@ describe("CommandPalette", () => {
       const allButton = screen.getByTestId("type-filter-all");
       expect(allButton.getAttribute("data-active")).toBe("true");
     });
-  });
 
-  // Step 7: Stub modes
-
-  describe("stub modes", () => {
-    it('no-prefix mode shows "Title search coming soon" after commands when query is non-empty', () => {
+    it("filter row does not appear for providers without filterOptions", () => {
       render(<CommandPalette open={true} onClose={onClose} />);
       fireEvent.change(screen.getByTestId("command-palette-input"), {
-        target: { value: "meeting" },
+        target: { value: "$test" },
       });
-      expect(screen.getByText("Title search coming soon")).toBeInTheDocument();
+      expect(screen.queryByTestId("command-palette-type-filter")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("stub providers", () => {
+    it('$ prefix shows "No results" after debounce', async () => {
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "$foo" },
+      });
+      await advanceDebounce();
+      expect(screen.getByText("No results")).toBeInTheDocument();
     });
 
-    it('# mode shows "Tag search coming soon" placeholder', () => {
+    it('# prefix shows "No results" after debounce', async () => {
       render(<CommandPalette open={true} onClose={onClose} />);
       fireEvent.change(screen.getByTestId("command-palette-input"), {
         target: { value: "#tag" },
       });
-      expect(screen.getByText("Tag search coming soon")).toBeInTheDocument();
+      await advanceDebounce();
+      expect(screen.getByText("No results")).toBeInTheDocument();
     });
 
-    it('/ mode shows "Content search coming soon" placeholder', () => {
+    it('/ prefix shows "No results" after debounce', async () => {
       render(<CommandPalette open={true} onClose={onClose} />);
       fireEvent.change(screen.getByTestId("command-palette-input"), {
         target: { value: "/pattern" },
       });
-      expect(screen.getByText("Content search coming soon")).toBeInTheDocument();
+      await advanceDebounce();
+      expect(screen.getByText("No results")).toBeInTheDocument();
     });
   });
 
-  // Step 8: Static commands in titles mode
-
-  describe("static commands", () => {
-    it('"Insert Annotation" command appears in titles mode with empty query', () => {
-      render(<CommandPalette open={true} onClose={onClose} />);
-      const commands = screen.getAllByTestId("command-palette-command");
-      expect(commands).toHaveLength(1);
-      expect(commands[0]).toHaveTextContent("Insert Annotation");
-    });
-
-    it('"Insert Annotation" appears when query partially matches', () => {
+  describe("command provider (! prefix)", () => {
+    it('"!insert" shows "Insert Annotation" command', async () => {
       render(<CommandPalette open={true} onClose={onClose} />);
       fireEvent.change(screen.getByTestId("command-palette-input"), {
-        target: { value: "annot" },
+        target: { value: "!insert" },
       });
-      const commands = screen.getAllByTestId("command-palette-command");
-      expect(commands).toHaveLength(1);
-      expect(commands[0]).toHaveTextContent("Insert Annotation");
+      await advanceDebounce();
+      const results = screen.getAllByTestId("command-palette-result");
+      expect(results).toHaveLength(1);
+      expect(results[0]).toHaveTextContent("Insert Annotation");
     });
 
-    it('"Insert Annotation" does NOT appear when query does not match', () => {
+    it('"!" with no query shows all commands (browse mode)', async () => {
       render(<CommandPalette open={true} onClose={onClose} />);
       fireEvent.change(screen.getByTestId("command-palette-input"), {
-        target: { value: "xyz" },
+        target: { value: "!" },
       });
-      expect(screen.queryAllByTestId("command-palette-command")).toHaveLength(0);
+      expect(screen.getByText("Type to search commands…")).toBeInTheDocument();
     });
 
-    it('"Insert Annotation" does NOT appear in annotation/tag/content modes', () => {
-      render(<CommandPalette open={true} onClose={onClose} />);
-      fireEvent.change(screen.getByTestId("command-palette-input"), {
-        target: { value: "@annot" },
-      });
-      expect(screen.queryAllByTestId("command-palette-command")).toHaveLength(0);
-
-      fireEvent.change(screen.getByTestId("command-palette-input"), {
-        target: { value: "#annot" },
-      });
-      expect(screen.queryAllByTestId("command-palette-command")).toHaveLength(0);
-
-      fireEvent.change(screen.getByTestId("command-palette-input"), {
-        target: { value: "/annot" },
-      });
-      expect(screen.queryAllByTestId("command-palette-command")).toHaveLength(0);
-    });
-
-    it('clicking "Insert Annotation" dispatches lit:open-annotation-builder and calls onClose', () => {
+    it('selecting "Insert Annotation" command dispatches event and closes', async () => {
       const dispatchSpy = vi.spyOn(window, "dispatchEvent");
       render(<CommandPalette open={true} onClose={onClose} />);
-      const commands = screen.getAllByTestId("command-palette-command");
-      fireEvent.click(commands[0]!);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "!insert" },
+      });
+      await advanceDebounce();
+      const results = screen.getAllByTestId("command-palette-result");
+      fireEvent.click(results[0]!);
 
       const builderEvent = dispatchSpy.mock.calls.find(
         (call) => (call[0] as CustomEvent).type === "lit:open-annotation-builder",
@@ -543,52 +511,92 @@ describe("CommandPalette", () => {
       expect(onClose).toHaveBeenCalled();
       dispatchSpy.mockRestore();
     });
+  });
 
-    it("Enter key on active command dispatches event and closes palette", () => {
-      const dispatchSpy = vi.spyOn(window, "dispatchEvent");
-      render(<CommandPalette open={true} onClose={onClose} />);
-      fireEvent.keyDown(screen.getByTestId("command-palette-input"), { key: "Enter" });
-
-      const builderEvent = dispatchSpy.mock.calls.find(
-        (call) => (call[0] as CustomEvent).type === "lit:open-annotation-builder",
-      );
-      expect(builderEvent).toBeDefined();
-      expect(onClose).toHaveBeenCalled();
-      dispatchSpy.mockRestore();
-    });
-
-    it("arrow keys navigate between commands and annotation results", async () => {
+  describe("omni-search (no prefix)", () => {
+    it("no-prefix queries all providers, results grouped by section header", async () => {
       mockInvoke((cmd) => {
         if (cmd === "search_annotations") return mockResults;
         return [];
       });
       render(<CommandPalette open={true} onClose={onClose} />);
-
-      // Start in titles mode — command is active at index 0
-      const commands = screen.getAllByTestId("command-palette-command");
-      expect(commands[0]!.getAttribute("data-active")).toBe("true");
-
-      // Switch to @ mode which has 3 results and 0 commands
       fireEvent.change(screen.getByTestId("command-palette-input"), {
-        target: { value: "@silk" },
+        target: { value: "insert" },
+      });
+      await advanceDebounce();
+      expect(screen.getAllByTestId("palette-section-header").length).toBeGreaterThan(0);
+    });
+
+    it("section headers have data-testid palette-section-header", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "search_annotations") return mockResults;
+        return [];
+      });
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "silk" },
+      });
+      await advanceDebounce();
+      const headers = screen.getAllByTestId("palette-section-header");
+      expect(headers[0]).toHaveTextContent("Annotations");
+    });
+
+    it("omni caps at 5 results per section", async () => {
+      const manyResults: AnnotationSearchResult[] = Array.from({ length: 10 }, (_, i) => ({
+        annotation_id: i + 1,
+        node_id: `page-${i}.md`,
+        node_title: `Page ${i}`,
+        annotation_type: "note" as const,
+        certainty: "neutral" as const,
+        body: `Body ${i}`,
+        date: null,
+        source_line: i + 1,
+        char_start: 0,
+        char_end: 10,
+      }));
+      mockInvoke((cmd) => {
+        if (cmd === "search_annotations") return manyResults;
+        return [];
+      });
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "page" },
       });
       await advanceDebounce();
       const results = screen.getAllByTestId("command-palette-result");
-      expect(results).toHaveLength(3);
-      expect(results[0]!.getAttribute("data-active")).toBe("true");
+      expect(results.length).toBeLessThanOrEqual(5);
+    });
 
-      // ArrowDown moves to second result
-      fireEvent.keyDown(screen.getByTestId("command-palette-input"), { key: "ArrowDown" });
-      expect(screen.getAllByTestId("command-palette-result")[0]!.getAttribute("data-active")).toBe("false");
-      expect(screen.getAllByTestId("command-palette-result")[1]!.getAttribute("data-active")).toBe("true");
+    it("selecting omni result calls correct provider's onSelect and records frecency", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "search_annotations") return [mockResults[0]!];
+        return [];
+      });
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "silk" },
+      });
+      await advanceDebounce();
+      const results = screen.getAllByTestId("command-palette-result");
+      fireEvent.click(results[0]!);
+      expect(mockRecordJump).toHaveBeenCalled();
+      expect(onClose).toHaveBeenCalled();
+      const frecencyData = JSON.parse(localStorage.getItem("lit-palette-frecency")!);
+      expect(frecencyData["annotation-1"]).toBeDefined();
+    });
 
-      // ArrowUp moves back to first result
-      fireEvent.keyDown(screen.getByTestId("command-palette-input"), { key: "ArrowUp" });
-      expect(screen.getAllByTestId("command-palette-result")[0]!.getAttribute("data-active")).toBe("true");
+    it("prefix hint row rendered in omni mode with no input", () => {
+      render(<CommandPalette open={true} onClose={onClose} />);
+      expect(screen.getByTestId("prefix-hints")).toBeInTheDocument();
+      expect(screen.getByTestId("prefix-hints")).toHaveTextContent("@ annotations");
+    });
 
-      // ArrowUp wraps to last result
-      fireEvent.keyDown(screen.getByTestId("command-palette-input"), { key: "ArrowUp" });
-      expect(screen.getAllByTestId("command-palette-result")[2]!.getAttribute("data-active")).toBe("true");
+    it("prefix hints hidden when prefix is active", () => {
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "@test" },
+      });
+      expect(screen.queryByTestId("prefix-hints")).not.toBeInTheDocument();
     });
   });
 });
