@@ -183,7 +183,13 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   const activeProvider = provider;
   const showFilter = activeProvider?.filterOptions && activeProvider.filterOptions.length > 0;
 
-  let flatIndex = 0;
+  const resultIndexMap = new Map<PaletteResult, number>();
+  let idx = 0;
+  for (const section of sections) {
+    for (const result of section.results) {
+      resultIndexMap.set(result, idx++);
+    }
+  }
 
   return (
     <div
@@ -254,13 +260,13 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
 
           {sections.map((section) => {
             const sectionElements = section.results.map((result) => {
-              const idx = flatIndex++;
+              const i = resultIndexMap.get(result)!;
               return (
                 <div
                   key={result.id}
                   data-testid="command-palette-result"
-                  data-active={idx === activeIndex ? "true" : "false"}
-                  className={`cursor-pointer px-4 py-2 text-sm ${idx === activeIndex ? "bg-bg-hover" : ""}`}
+                  data-active={i === activeIndex ? "true" : "false"}
+                  className={`cursor-pointer px-4 py-2 text-sm ${i === activeIndex ? "bg-bg-hover" : ""}`}
                   onClick={() => handleSelect(result)}
                 >
                   <div className="flex items-center gap-2">
