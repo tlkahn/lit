@@ -14,7 +14,7 @@ import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
 import { PdfViewer } from "./PdfViewer";
 import { BottomPanel } from "./BottomPanel";
 import { ConflictDialog } from "./ConflictDialog";
-import { buildHeadingTree, applyRename, applyMove, insertChild, insertSibling, insertDangling, applyDeleteSection } from "../lib/headingTree";
+import { buildHeadingTree, applyRename, applyMove, insertChild, insertSibling, insertDangling, applyDeleteSection, findNode } from "../lib/headingTree";
 import { YamlHighlighter } from "./YamlHighlighter";
 import { useKeymaps } from "../hooks/useKeymaps";
 import { useModalLock } from "../hooks/useModalLock";
@@ -319,8 +319,10 @@ export function ContentArea() {
   }, [body]);
 
   useEffect(() => {
-    setMindmapSelectedId(null);
-  }, [headingTree]);
+    if (mindmapSelectedId && !findNode(headingTree, mindmapSelectedId)) {
+      setMindmapSelectedId(null);
+    }
+  }, [headingTree, mindmapSelectedId]);
 
   const enterYamlEdit = () => {
     setYamlDraft(rawYaml);

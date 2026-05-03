@@ -830,6 +830,110 @@ describe("ContentArea mindmap toggle", () => {
   });
 });
 
+describe("ContentArea mindmap selection persistence", () => {
+  function setupMultiHeadingMock() {
+    mockInvoke((cmd, args) => {
+      if (cmd === "read_page") {
+        const rp = (args as Record<string, unknown>)?.relativePath;
+        if (rp === "Multi.md") return multiHeadingPage;
+        return samplePage;
+      }
+      if (cmd === "write_page") return null;
+      if (cmd === "parse_raw_yaml") return {};
+      if (cmd === "get_backlinks") return [];
+      if (cmd === "get_keymaps") return [];
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+  }
+
+  it("selection persists when body changes and selected node still exists", async () => {
+    setupMultiHeadingMock();
+    useWorkspaceStore.setState({ currentPagePath: "Multi.md" });
+    const user = userEvent.setup();
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor")).toBeInTheDocument();
+    });
+
+    const mindmapBtn = screen.getByRole("button", { name: /mindmap/i });
+    await user.click(mindmapBtn);
+    await waitFor(() => {
+      expect(screen.getByTestId("mindmap-view")).toBeInTheDocument();
+    });
+
+    const { within } = await import("@testing-library/react");
+    const mindmapContainer = screen.getByTestId("mindmap-view");
+    let secondNode!: HTMLElement;
+    await waitFor(() => {
+      secondNode = within(mindmapContainer).getByText("Second");
+    });
+    await user.click(secondNode);
+
+    await waitFor(() => {
+      expect(mindmapContainer.querySelector("[data-mindmap-selected]")).toBeTruthy();
+    });
+
+    const cmEditor = screen.getByTestId("editor").querySelector(".cm-editor");
+    const { EditorView } = await import("@codemirror/view");
+    const view = EditorView.findFromDOM(cmEditor as HTMLElement)!;
+
+    act(() => {
+      view.dispatch({
+        changes: { from: view.state.doc.length, insert: "\n## Third\nNew content" },
+      });
+    });
+
+    await waitFor(() => {
+      expect(mindmapContainer.querySelector("[data-mindmap-selected]")).toBeTruthy();
+    });
+  });
+
+  it("selection clears when selected node is removed from body", async () => {
+    setupMultiHeadingMock();
+    useWorkspaceStore.setState({ currentPagePath: "Multi.md" });
+    const user = userEvent.setup();
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor")).toBeInTheDocument();
+    });
+
+    const mindmapBtn = screen.getByRole("button", { name: /mindmap/i });
+    await user.click(mindmapBtn);
+    await waitFor(() => {
+      expect(screen.getByTestId("mindmap-view")).toBeInTheDocument();
+    });
+
+    const { within } = await import("@testing-library/react");
+    const mindmapContainer = screen.getByTestId("mindmap-view");
+    let secondNode!: HTMLElement;
+    await waitFor(() => {
+      secondNode = within(mindmapContainer).getByText("Second");
+    });
+    await user.click(secondNode);
+
+    await waitFor(() => {
+      expect(mindmapContainer.querySelector("[data-mindmap-selected]")).toBeTruthy();
+    });
+
+    const cmEditor = screen.getByTestId("editor").querySelector(".cm-editor");
+    const { EditorView } = await import("@codemirror/view");
+    const view = EditorView.findFromDOM(cmEditor as HTMLElement)!;
+
+    const secondStart = view.state.doc.toString().indexOf("## Second");
+    act(() => {
+      view.dispatch({
+        changes: { from: secondStart, to: view.state.doc.length },
+      });
+    });
+
+    await waitFor(() => {
+      expect(mindmapContainer.querySelector("[data-mindmap-selected]")).toBeFalsy();
+    });
+  });
+});
+
 describe("ContentArea bottom panel", () => {
   beforeEach(() => {
     mockInvoke((cmd) => {
