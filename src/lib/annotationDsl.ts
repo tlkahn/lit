@@ -32,7 +32,7 @@ export function getEditCursorOffset(dsl: string): number {
   return 4;
 }
 
-const EXPLICIT_SCOPE_RE = /[_\\]|^\^"/;
+const EXPLICIT_SCOPE_RE = /[_\\]/;
 
 export function annotationToFields(ann: Annotation): AnnotationFields {
   const type: AnnotationType | null = ann.annotation_type === "bare" ? null : ann.annotation_type;

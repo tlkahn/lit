@@ -478,6 +478,14 @@ describe("annotationToFields", () => {
       }));
       expect(f.scope).toEqual({ kind: "sentence", value: 1 });
     });
+
+    it("sentence(1) with ^\" in body but no scope marker → null", () => {
+      const f = annotationToFields(makeAnnotation({
+        scope: { kind: "sentence", value: 1 },
+        original: '%%! n | see ^"foo" %%',
+      }));
+      expect(f.scope).toBeNull();
+    });
   });
 
   it("body: null → empty string", () => {
