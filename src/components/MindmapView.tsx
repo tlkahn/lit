@@ -439,6 +439,7 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
               setEditingId(null);
               setIsNewNode(false);
             }}
+            onFocus={(e) => { if (isNewNode) e.currentTarget.select(); }}
             autoFocus
             className="absolute bg-white dark:bg-neutral-800 border border-blue-500 dark:border-blue-400 rounded px-1 outline-none text-neutral-900 dark:text-neutral-100 z-40"
             style={{ left, top, width, height, fontSize: fontSize * t.k, lineHeight: `${height}px` }}

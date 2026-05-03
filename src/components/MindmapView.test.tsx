@@ -753,6 +753,43 @@ describe("MindmapView node creation", () => {
     expect(input.value).toBe("Untitled");
   });
 
+  it("new node edit input has 'Untitled' text fully selected", () => {
+    const body1 = "# A\n## B";
+    const tree1 = makeTree(body1);
+    const nodeB = tree1.children[0]!.children[0]!;
+    const props = defaultProps();
+    props.onInsertChild.mockReturnValue("h-2");
+    const { container, rerender } = render(
+      <MindmapView tree={tree1} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "Tab" });
+
+    const body2 = "# A\n## B\n### Untitled";
+    const tree2 = makeTree(body2);
+    rerender(<MindmapView tree={tree2} {...props} selectedId={nodeB.id} />);
+    const input = container.querySelector("[data-mindmap-edit]") as HTMLInputElement;
+    expect(input).toBeTruthy();
+    fireEvent.focus(input);
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe(8);
+  });
+
+  it("double-click edit does NOT auto-select existing node text", async () => {
+    const tree = makeTree("# A\n## B");
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} />,
+    );
+    const user = userEvent.setup();
+    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
+    await user.dblClick(nodeB);
+    const input = container.querySelector("[data-mindmap-edit]") as HTMLInputElement;
+    expect(input).toBeTruthy();
+    fireEvent.focus(input);
+    expect(input.selectionStart === 0 && input.selectionEnd === input.value.length).toBe(false);
+  });
+
   it("double-click on empty canvas ('No headings') calls onInsertDangling", () => {
     const tree = makeTree("");
     const props = defaultProps();
