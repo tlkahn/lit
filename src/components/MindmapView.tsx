@@ -19,6 +19,12 @@ interface MindmapViewProps {
 const FONT_SIZES = [16, 15, 14, 13, 12, 11];
 
 export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNodeMove }: MindmapViewProps) {
+  const lastChildRef = useRef<Map<string, string>>(new Map());
+  const prevTreeRef = useRef(tree);
+  if (prevTreeRef.current !== tree) {
+    prevTreeRef.current = tree;
+    lastChildRef.current.clear();
+  }
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
@@ -166,12 +172,25 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
               break;
             case "ArrowRight": {
               const node = findNode(tree, selectedId);
-              if (node) target = firstChild(node);
+              if (node && node.children.length > 0) {
+                const rememberedId = lastChildRef.current.get(selectedId);
+                if (rememberedId) {
+                  const remembered = findNode(tree, rememberedId);
+                  if (remembered && findParent(tree, rememberedId)?.id === selectedId) {
+                    target = remembered;
+                    break;
+                  }
+                }
+                target = firstChild(node);
+              }
               break;
             }
             case "ArrowLeft": {
               const parent = findParent(tree, selectedId);
-              if (parent && parent.level > 0) target = parent;
+              if (parent && parent.level > 0) {
+                lastChildRef.current.set(parent.id, selectedId);
+                target = parent;
+              }
               break;
             }
           }

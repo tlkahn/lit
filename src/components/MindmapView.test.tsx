@@ -534,6 +534,102 @@ describe("MindmapView arrow-key navigation", () => {
     expect(props.onNodeClick).not.toHaveBeenCalled();
   });
 
+  it("ArrowRight after ArrowLeft returns to previously-visited child", () => {
+    const tree = makeTree("# A\n## B\n## C\n## D");
+    const nodeA = tree.children[0]!;
+    const nodeC = nodeA.children[1]!;
+    const props = defaultProps();
+    const { container, rerender } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeC.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+
+    fireEvent.keyDown(svg, { key: "ArrowLeft" });
+    expect(props.onNodeClick).toHaveBeenCalledWith(nodeA);
+
+    rerender(<MindmapView tree={tree} {...props} selectedId={nodeA.id} />);
+    props.onNodeClick.mockClear();
+
+    fireEvent.keyDown(svg, { key: "ArrowRight" });
+    expect(props.onNodeClick).toHaveBeenCalledWith(nodeC);
+  });
+
+  it("ArrowRight returns to remembered child across multiple levels", () => {
+    const tree = makeTree("# A\n## B\n### X\n### Y\n## C");
+    const nodeA = tree.children[0]!;
+    const nodeB = nodeA.children[0]!;
+    const nodeY = nodeB.children[1]!;
+    const props = defaultProps();
+    const { container, rerender } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeY.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+
+    fireEvent.keyDown(svg, { key: "ArrowLeft" });
+    expect(props.onNodeClick).toHaveBeenCalledWith(nodeB);
+    rerender(<MindmapView tree={tree} {...props} selectedId={nodeB.id} />);
+    props.onNodeClick.mockClear();
+
+    fireEvent.keyDown(svg, { key: "ArrowLeft" });
+    expect(props.onNodeClick).toHaveBeenCalledWith(nodeA);
+    rerender(<MindmapView tree={tree} {...props} selectedId={nodeA.id} />);
+    props.onNodeClick.mockClear();
+
+    fireEvent.keyDown(svg, { key: "ArrowRight" });
+    expect(props.onNodeClick).toHaveBeenCalledWith(nodeB);
+    rerender(<MindmapView tree={tree} {...props} selectedId={nodeB.id} />);
+    props.onNodeClick.mockClear();
+
+    fireEvent.keyDown(svg, { key: "ArrowRight" });
+    expect(props.onNodeClick).toHaveBeenCalledWith(nodeY);
+  });
+
+  it("ArrowRight falls back to first child if remembered child no longer exists", () => {
+    const tree1 = makeTree("# A\n## B\n## C");
+    const nodeA1 = tree1.children[0]!;
+    const nodeC1 = nodeA1.children[1]!;
+    const props = defaultProps();
+    const { container, rerender } = render(
+      <MindmapView tree={tree1} {...props} selectedId={nodeC1.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+
+    fireEvent.keyDown(svg, { key: "ArrowLeft" });
+    expect(props.onNodeClick).toHaveBeenCalledWith(nodeA1);
+
+    const tree2 = makeTree("# A\n## B");
+    const nodeA2 = tree2.children[0]!;
+    const nodeB2 = nodeA2.children[0]!;
+    rerender(<MindmapView tree={tree2} {...props} selectedId={nodeA2.id} />);
+    props.onNodeClick.mockClear();
+
+    fireEvent.keyDown(svg, { key: "ArrowRight" });
+    expect(props.onNodeClick).toHaveBeenCalledWith(nodeB2);
+  });
+
+  it("remembered child resets when tree identity changes", () => {
+    const tree1 = makeTree("# A\n## B\n## C");
+    const nodeA1 = tree1.children[0]!;
+    const nodeC1 = nodeA1.children[1]!;
+    const props = defaultProps();
+    const { container, rerender } = render(
+      <MindmapView tree={tree1} {...props} selectedId={nodeC1.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+
+    fireEvent.keyDown(svg, { key: "ArrowLeft" });
+    expect(props.onNodeClick).toHaveBeenCalledWith(nodeA1);
+
+    const tree2 = makeTree("# X\n## Y\n## Z");
+    const nodeX = tree2.children[0]!;
+    const nodeY = nodeX.children[0]!;
+    rerender(<MindmapView tree={tree2} {...props} selectedId={nodeX.id} />);
+    props.onNodeClick.mockClear();
+
+    fireEvent.keyDown(svg, { key: "ArrowRight" });
+    expect(props.onNodeClick).toHaveBeenCalledWith(nodeY);
+  });
+
   it("arrow keys during drag are no-ops", () => {
     const tree = makeTree("# A\n## B\n## C");
     const nodeB = tree.children[0]!.children[0]!;
