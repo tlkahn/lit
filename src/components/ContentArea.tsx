@@ -575,6 +575,10 @@ export function ContentArea() {
                 setMindmapSelectedId(result.nodeId);
                 return result.nodeId;
               }}
+              onNodeJump={(node) => {
+                pendingScrollLineRef.current = node.line;
+                setViewMode("editor");
+              }}
               onDeleteNode={(nodeId) => {
                 const newBody = applyDeleteSection(body, headingTree, nodeId);
                 handleChange(newBody);

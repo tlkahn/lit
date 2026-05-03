@@ -18,11 +18,12 @@ interface MindmapViewProps {
   onInsertSibling?: (siblingId: string, text: string) => string | null;
   onInsertDangling?: (text: string) => string | null;
   onDeleteNode?: (nodeId: string) => void;
+  onNodeJump?: (node: HeadingNode) => void;
 }
 
 const FONT_SIZES = [16, 15, 14, 13, 12, 11];
 
-export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNodeMove, onInsertChild, onInsertSibling, onInsertDangling, onDeleteNode }: MindmapViewProps) {
+export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNodeMove, onInsertChild, onInsertSibling, onInsertDangling, onDeleteNode, onNodeJump }: MindmapViewProps) {
   const lastChildRef = useRef<Map<string, string>>(new Map());
   const prevTreeRef = useRef(tree);
   if (prevTreeRef.current !== tree) {
@@ -195,6 +196,15 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
         onKeyDown={(e) => {
           handlers.onKeyDown(e);
           if (!selectedId || dragState.isDragging || editingId) return;
+          if (e.key === "Tab" && e.shiftKey) {
+            e.preventDefault();
+            const parent = findParent(tree, selectedId);
+            if (parent && parent.level > 0) {
+              lastChildRef.current.set(parent.id, selectedId);
+              onNodeClick(parent);
+            }
+            return;
+          }
           if (e.key === "Tab" && onInsertChild) {
             e.preventDefault();
             const nodeId = onInsertChild(selectedId, "Untitled");
@@ -205,6 +215,16 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
             e.preventDefault();
             const nodeId = onInsertSibling(selectedId, "Untitled");
             if (nodeId) setPendingEditId(nodeId);
+            return;
+          }
+          if (e.key === "F2") {
+            e.preventDefault();
+            const node = findNode(tree, selectedId);
+            if (node) {
+              setEditingId(node.id);
+              setEditText(node.text);
+              setIsNewNode(false);
+            }
             return;
           }
           let target: HeadingNode | null = null;
@@ -305,11 +325,8 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
                 }}
                 onDoubleClick={(e) => {
                   e.stopPropagation();
-                  if (!dragOccurredRef.current) {
-                    setEditingId(d.data.id);
-                    setEditText(d.data.text);
-                    setIsNewNode(false);
-                    onNodeClick(d.data);
+                  if (!dragOccurredRef.current && onNodeJump) {
+                    onNodeJump(d.data);
                   }
                 }}
                 onContextMenu={(e) => {
