@@ -17,7 +17,7 @@ import { HeadingQuickSwitcher } from "./components/HeadingQuickSwitcher";
 import { CommandPalette } from "./components/CommandPalette";
 import { AnnotationBuilderModal } from "./components/AnnotationBuilderModal";
 import { getCurrentEditorView } from "./lib/editorViewRef";
-import { annotationToFields, type AnnotationBuilderEventDetail, type EditRawInfo } from "./lib/annotationDsl";
+import { annotationToFields, getEditCursorOffset, type AnnotationBuilderEventDetail, type EditRawInfo } from "./lib/annotationDsl";
 import type { Annotation } from "./lib/ipc";
 
 interface LitCliArgs {
@@ -165,7 +165,7 @@ function App() {
     } else {
       const pos = view.state.selection.main.head;
       view.dispatch({ changes: { from: pos, insert: info.draftDsl } });
-      const innerPos = pos + "%%! ".length;
+      const innerPos = pos + getEditCursorOffset(info.draftDsl);
       view.dispatch({ selection: { anchor: innerPos } });
       view.focus();
     }

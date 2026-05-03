@@ -21,6 +21,17 @@ export interface EditRawInfo {
   originalRange?: { from: number; to: number };
 }
 
+export function getEditCursorOffset(dsl: string): number {
+  if (dsl.startsWith("%%!\n")) {
+    const separatorIdx = dsl.indexOf("\n---\n");
+    if (separatorIdx !== -1) {
+      return separatorIdx + 5;
+    }
+    return 4;
+  }
+  return 4;
+}
+
 const EXPLICIT_SCOPE_RE = /[_\\]|^\^"/;
 
 export function annotationToFields(ann: Annotation): AnnotationFields {

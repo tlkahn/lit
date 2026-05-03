@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { generateDsl, annotationToFields, type AnnotationFields } from "./annotationDsl";
+import { generateDsl, annotationToFields, getEditCursorOffset, type AnnotationFields } from "./annotationDsl";
 import type { Annotation } from "./ipc";
 
 function fields(overrides: Partial<AnnotationFields> = {}): AnnotationFields {
@@ -332,6 +332,32 @@ describe("generateDsl", () => {
         generateDsl(fields({ type: "note", date: "2026-03" })),
       ).toBe("%%! n @2026-03 %%");
     });
+  });
+});
+
+describe("getEditCursorOffset", () => {
+  it("compact bare body", () => {
+    expect(getEditCursorOffset("%%! body %%")).toBe(4);
+  });
+
+  it("compact typed", () => {
+    expect(getEditCursorOffset("%%! n | a note %%")).toBe(4);
+  });
+
+  it("compact with scope+date", () => {
+    expect(getEditCursorOffset("%%! q? __ | x @2026-03 %%")).toBe(4);
+  });
+
+  it("block with type+body", () => {
+    expect(getEditCursorOffset("%%!\nn\n---\nbody\n%%")).toBe(10);
+  });
+
+  it("block full headers", () => {
+    expect(getEditCursorOffset("%%!\nn!\n\\p\n@2026-03\n---\nbody\n%%")).toBe(23);
+  });
+
+  it("block bare body", () => {
+    expect(getEditCursorOffset("%%!\n---\nline one\nline two\n%%")).toBe(8);
   });
 });
 
