@@ -140,7 +140,7 @@ export function findAnnotationAtCursor(
   annotations: Annotation[],
   pos: number,
 ): Annotation | undefined {
-  return annotations.find((a) => pos >= a.char_start && pos <= a.char_end);
+  return annotations.find((a) => pos >= a.char_start && pos < a.char_end);
 }
 
 export function annotationExtension(): Extension {

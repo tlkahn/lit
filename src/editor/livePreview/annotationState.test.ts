@@ -616,15 +616,20 @@ describe("findAnnotationAtCursor", () => {
     expect(findAnnotationAtCursor([ann], 5)).toBe(ann);
   });
 
-  it("returns annotation when pos === char_end", () => {
+  it("returns undefined when pos === char_end (exclusive boundary)", () => {
     const ann = makeAnnotation({ char_start: 5, char_end: 15 });
-    expect(findAnnotationAtCursor([ann], 15)).toBe(ann);
+    expect(findAnnotationAtCursor([ann], 15)).toBeUndefined();
+  });
+
+  it("returns annotation when pos === char_end - 1 (last inclusive position)", () => {
+    const ann = makeAnnotation({ char_start: 5, char_end: 15 });
+    expect(findAnnotationAtCursor([ann], 14)).toBe(ann);
   });
 
   it("returns undefined when pos is outside all annotations", () => {
     const ann = makeAnnotation({ char_start: 5, char_end: 15 });
     expect(findAnnotationAtCursor([ann], 3)).toBeUndefined();
-    expect(findAnnotationAtCursor([ann], 16)).toBeUndefined();
+    expect(findAnnotationAtCursor([ann], 15)).toBeUndefined();
   });
 
   it("returns undefined for empty annotations array", () => {
