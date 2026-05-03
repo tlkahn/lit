@@ -254,6 +254,28 @@ export function applyDeleteSection(body: string, tree: HeadingNode, nodeId: stri
   return result.replace(/\n{3,}/g, "\n\n");
 }
 
+export function resolveDeleteFallback(
+  body: string,
+  tree: HeadingNode,
+  nodeId: string,
+): { newBody: string; fallbackId: string | null } {
+  const newBody = applyDeleteSection(body, tree, nodeId);
+  if (newBody === body) return { newBody: body, fallbackId: null };
+
+  const next = findNextSibling(tree, nodeId)
+    ?? findPrevSibling(tree, nodeId)
+    ?? findParent(tree, nodeId);
+
+  if (!next || next.level === 0) return { newBody, fallbackId: null };
+
+  const newTree = buildHeadingTree(extractHeadings(newBody));
+  const match = flattenTree(newTree).find(
+    (n) => n.text === next.text && n.level === next.level,
+  );
+
+  return { newBody, fallbackId: match?.id ?? null };
+}
+
 const HEADING_LINE_RE = /^(#{1,6})\s/gm;
 
 function adjustLevels(sectionText: string, delta: number): string {

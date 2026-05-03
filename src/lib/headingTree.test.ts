@@ -4,6 +4,7 @@ import {
   findNextSibling, findPrevSibling, firstChild,
   applyInsertChild, applyInsertSibling, applyDeleteSection,
   insertChild, insertSibling, insertDangling,
+  resolveDeleteFallback,
 } from "./headingTree";
 import { extractHeadings } from "./headings";
 
@@ -546,5 +547,68 @@ describe("insertDangling", () => {
     const inserted = findNode(newTree, result.nodeId);
     expect(inserted).not.toBeNull();
     expect(inserted!.text).toBe("New");
+  });
+});
+
+describe("resolveDeleteFallback", () => {
+  it("delete first sibling, fallback is next sibling (shifted ID)", () => {
+    const body = "# A\n## B\n## C\n## D";
+    const tree = buildHeadingTree(extractHeadings(body));
+    const nodeB = tree.children[0]!.children[0]!;
+    const { newBody, fallbackId } = resolveDeleteFallback(body, tree, nodeB.id);
+    expect(newBody).toBe("# A\n## C\n## D");
+    expect(fallbackId).toBe("h-1");
+  });
+
+  it("delete middle sibling, fallback is next sibling", () => {
+    const body = "# A\n## B\n## C\n## D";
+    const tree = buildHeadingTree(extractHeadings(body));
+    const nodeC = tree.children[0]!.children[1]!;
+    const { newBody, fallbackId } = resolveDeleteFallback(body, tree, nodeC.id);
+    expect(newBody).toBe("# A\n## B\n## D");
+    expect(fallbackId).toBe("h-2");
+  });
+
+  it("delete last sibling, fallback is prev sibling", () => {
+    const body = "# A\n## B\n## C";
+    const tree = buildHeadingTree(extractHeadings(body));
+    const nodeC = tree.children[0]!.children[1]!;
+    const { newBody, fallbackId } = resolveDeleteFallback(body, tree, nodeC.id);
+    expect(newBody).toBe("# A\n## B\n");
+    expect(fallbackId).toBe("h-1");
+  });
+
+  it("delete only child, fallback is parent", () => {
+    const body = "# A\n## B";
+    const tree = buildHeadingTree(extractHeadings(body));
+    const nodeB = tree.children[0]!.children[0]!;
+    const { newBody, fallbackId } = resolveDeleteFallback(body, tree, nodeB.id);
+    expect(newBody).toBe("# A\n");
+    expect(fallbackId).toBe("h-0");
+  });
+
+  it("delete node with children (subtree), fallback is next sibling", () => {
+    const body = "# A\n## B\n### X\n## C";
+    const tree = buildHeadingTree(extractHeadings(body));
+    const nodeB = tree.children[0]!.children[0]!;
+    const { newBody, fallbackId } = resolveDeleteFallback(body, tree, nodeB.id);
+    expect(newBody).toBe("# A\n## C");
+    expect(fallbackId).toBe("h-1");
+  });
+
+  it("delete root-level H1 that's the only heading", () => {
+    const body = "# Only";
+    const tree = buildHeadingTree(extractHeadings(body));
+    const { newBody, fallbackId } = resolveDeleteFallback(body, tree, tree.children[0]!.id);
+    expect(newBody).toBe("");
+    expect(fallbackId).toBeNull();
+  });
+
+  it("delete nonexistent node returns body unchanged", () => {
+    const body = "# A\n## B";
+    const tree = buildHeadingTree(extractHeadings(body));
+    const { newBody, fallbackId } = resolveDeleteFallback(body, tree, "h-999");
+    expect(newBody).toBe(body);
+    expect(fallbackId).toBeNull();
   });
 });

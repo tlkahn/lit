@@ -1122,35 +1122,34 @@ describe("MindmapView delete", () => {
     expect(container.querySelector("[data-testid='confirm-delete-dialog']")).toBeNull();
   });
 
-  it("after delete, selection moves to next sibling", () => {
+  it("after delete leaf, onDeleteNode called (selection is ContentArea's job)", () => {
     const tree = makeTree("# A\n## B\n## C\n## D");
     const nodeB = tree.children[0]!.children[0]!;
-    const nodeC = tree.children[0]!.children[1]!;
     const props = defaultProps();
     const { container } = render(
       <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
     );
     const svg = container.querySelector("[data-mindmap-svg]")!;
     fireEvent.keyDown(svg, { key: "Delete" });
-    expect(props.onNodeClick).toHaveBeenCalledWith(nodeC);
+    expect(props.onDeleteNode).toHaveBeenCalledWith(nodeB.id);
+    expect(props.onNodeClick).not.toHaveBeenCalled();
   });
 
-  it("after delete last sibling, selection moves to prev", () => {
+  it("after delete last sibling, no onNodeClick (selection is ContentArea's job)", () => {
     const tree = makeTree("# A\n## B\n## C\n## D");
     const nodeD = tree.children[0]!.children[2]!;
-    const nodeC = tree.children[0]!.children[1]!;
     const props = defaultProps();
     const { container } = render(
       <MindmapView tree={tree} {...props} selectedId={nodeD.id} />,
     );
     const svg = container.querySelector("[data-mindmap-svg]")!;
     fireEvent.keyDown(svg, { key: "Delete" });
-    expect(props.onNodeClick).toHaveBeenCalledWith(nodeC);
+    expect(props.onDeleteNode).toHaveBeenCalledWith(nodeD.id);
+    expect(props.onNodeClick).not.toHaveBeenCalled();
   });
 
-  it("after delete only child, selection moves to parent", () => {
+  it("after delete only child, no onNodeClick (selection is ContentArea's job)", () => {
     const tree = makeTree("# A\n## B");
-    const nodeA = tree.children[0]!;
     const nodeB = tree.children[0]!.children[0]!;
     const props = defaultProps();
     const { container } = render(
@@ -1158,13 +1157,13 @@ describe("MindmapView delete", () => {
     );
     const svg = container.querySelector("[data-mindmap-svg]")!;
     fireEvent.keyDown(svg, { key: "Delete" });
-    expect(props.onNodeClick).toHaveBeenCalledWith(nodeA);
+    expect(props.onDeleteNode).toHaveBeenCalledWith(nodeB.id);
+    expect(props.onNodeClick).not.toHaveBeenCalled();
   });
 
-  it("after confirm dialog, selection moves to next sibling", () => {
+  it("after confirm dialog, no onNodeClick (selection is ContentArea's job)", () => {
     const tree = makeTree("# A\n## B\n### X\n## C");
     const nodeB = tree.children[0]!.children[0]!;
-    const nodeC = tree.children[0]!.children[1]!;
     const props = defaultProps();
     const { container } = render(
       <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
@@ -1172,7 +1171,8 @@ describe("MindmapView delete", () => {
     const svg = container.querySelector("[data-mindmap-svg]")!;
     fireEvent.keyDown(svg, { key: "Delete" });
     fireEvent.click(container.querySelector("[data-testid='confirm-delete-btn']")!);
-    expect(props.onNodeClick).toHaveBeenCalledWith(nodeC);
+    expect(props.onDeleteNode).toHaveBeenCalledWith(nodeB.id);
+    expect(props.onNodeClick).not.toHaveBeenCalled();
   });
 });
 

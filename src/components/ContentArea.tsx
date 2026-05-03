@@ -14,7 +14,7 @@ import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
 import { PdfViewer } from "./PdfViewer";
 import { BottomPanel } from "./BottomPanel";
 import { ConflictDialog } from "./ConflictDialog";
-import { buildHeadingTree, applyRename, applyMove, insertChild, insertSibling, insertDangling, applyDeleteSection, findNode } from "../lib/headingTree";
+import { buildHeadingTree, applyRename, applyMove, insertChild, insertSibling, insertDangling, resolveDeleteFallback, findNode } from "../lib/headingTree";
 import { YamlHighlighter } from "./YamlHighlighter";
 import { useKeymaps } from "../hooks/useKeymaps";
 import { useModalLock } from "../hooks/useModalLock";
@@ -595,9 +595,9 @@ export function ContentArea() {
                 setViewMode("editor");
               }}
               onDeleteNode={(nodeId) => {
-                const newBody = applyDeleteSection(body, headingTree, nodeId);
+                const { newBody, fallbackId } = resolveDeleteFallback(body, headingTree, nodeId);
                 handleChange(newBody);
-                setMindmapSelectedId(null);
+                setMindmapSelectedId(fallbackId);
               }}
             />
           </Suspense>

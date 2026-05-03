@@ -256,9 +256,7 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
             if (countDescendants(node) > 0) {
               setPendingDeleteId(selectedId);
             } else if (onDeleteNode) {
-              const next = findNextSibling(tree, selectedId) ?? findPrevSibling(tree, selectedId) ?? findParent(tree, selectedId);
               onDeleteNode(selectedId);
-              if (next && next.level > 0) onNodeClick(next);
             }
             return;
           }
@@ -581,9 +579,7 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
             nodeName={deleteNode.text}
             childCount={countDescendants(deleteNode)}
             onConfirm={() => {
-              const next = findNextSibling(tree, pendingDeleteId) ?? findPrevSibling(tree, pendingDeleteId) ?? findParent(tree, pendingDeleteId);
               if (onDeleteNode) onDeleteNode(pendingDeleteId);
-              if (next && next.level > 0) onNodeClick(next);
               setPendingDeleteId(null);
             }}
             onCancel={() => setPendingDeleteId(null)}
