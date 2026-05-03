@@ -319,6 +319,16 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
           if (target) {
             e.preventDefault();
             onNodeClick(target);
+            return;
+          }
+          if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+            e.preventDefault();
+            const node = findNode(tree, selectedId);
+            if (node) {
+              setEditingId(node.id);
+              setEditText(e.key);
+              setIsNewNode(false);
+            }
           }
         }}
         tabIndex={0}

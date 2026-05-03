@@ -1416,3 +1416,114 @@ describe("MindmapView fold/unfold", () => {
     expect(container.querySelector(`[data-mindmap-node="${nodeC2.id}"]`)).toBeNull();
   });
 });
+
+describe("MindmapView type-to-rename", () => {
+  it("pressing a printable key on selected node enters edit mode with that character", () => {
+    const tree = makeTree("# A\n## B");
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "a" });
+    const input = container.querySelector("[data-mindmap-edit]") as HTMLInputElement;
+    expect(input).toBeTruthy();
+    expect(input.value).toBe("a");
+  });
+
+  it("Shift+letter enters edit with uppercase character", () => {
+    const tree = makeTree("# A\n## B");
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "A", shiftKey: true });
+    const input = container.querySelector("[data-mindmap-edit]") as HTMLInputElement;
+    expect(input).toBeTruthy();
+    expect(input.value).toBe("A");
+  });
+
+  it("digit key enters edit", () => {
+    const tree = makeTree("# A\n## B");
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "5" });
+    const input = container.querySelector("[data-mindmap-edit]") as HTMLInputElement;
+    expect(input).toBeTruthy();
+    expect(input.value).toBe("5");
+  });
+
+  it("Ctrl+key does NOT trigger type-to-rename", () => {
+    const tree = makeTree("# A\n## B");
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "a", ctrlKey: true });
+    expect(container.querySelector("[data-mindmap-edit]")).toBeNull();
+  });
+
+  it("Meta+key does NOT trigger type-to-rename", () => {
+    const tree = makeTree("# A\n## B");
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "a", metaKey: true });
+    expect(container.querySelector("[data-mindmap-edit]")).toBeNull();
+  });
+
+  it("Alt+key does NOT trigger type-to-rename", () => {
+    const tree = makeTree("# A\n## B");
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "a", altKey: true });
+    expect(container.querySelector("[data-mindmap-edit]")).toBeNull();
+  });
+
+  it("Escape after type-to-rename cancels without committing", () => {
+    const tree = makeTree("# A\n## B");
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "a" });
+    const input = container.querySelector("[data-mindmap-edit]") as HTMLInputElement;
+    expect(input).toBeTruthy();
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(props.onNodeRename).not.toHaveBeenCalled();
+    expect(container.querySelector("[data-mindmap-edit]")).toBeNull();
+  });
+
+  it("Enter after type-to-rename commits the text", () => {
+    const tree = makeTree("# A\n## B");
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "a" });
+    const input = container.querySelector("[data-mindmap-edit]") as HTMLInputElement;
+    expect(input).toBeTruthy();
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(props.onNodeRename).toHaveBeenCalledWith(nodeB, "a");
+  });
+});
