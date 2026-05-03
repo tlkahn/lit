@@ -7,6 +7,7 @@ import type { ContentBounds } from "../lib/mindmapZoom";
 import { computeNodeWidth, wrapText, computeNodeHeight, MAX_NODE_WIDTH, LINE_HEIGHT_RATIO } from "../lib/mindmapLayout";
 import { useMindmapDrag } from "../hooks/useMindmapDrag";
 import { useMindmapZoom } from "../hooks/useMindmapZoom";
+import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog";
 
 interface MindmapViewProps {
   tree: HeadingNode;
@@ -19,11 +20,21 @@ interface MindmapViewProps {
   onInsertDangling?: (text: string) => string | null;
   onDeleteNode?: (nodeId: string) => void;
   onNodeJump?: (node: HeadingNode) => void;
+  initialFoldedIds?: Set<string>;
+  onFoldChange?: (foldedIds: Set<string>) => void;
 }
 
 const FONT_SIZES = [16, 15, 14, 13, 12, 11];
 
-export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNodeMove, onInsertChild, onInsertSibling, onInsertDangling, onDeleteNode, onNodeJump }: MindmapViewProps) {
+function countDescendants(node: HeadingNode): number {
+  let count = 0;
+  for (const child of node.children) {
+    count += 1 + countDescendants(child);
+  }
+  return count;
+}
+
+export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNodeMove, onInsertChild, onInsertSibling, onInsertDangling, onDeleteNode, onNodeJump, initialFoldedIds, onFoldChange }: MindmapViewProps) {
   const lastChildRef = useRef<Map<string, string>>(new Map());
   const prevTreeRef = useRef(tree);
   if (prevTreeRef.current !== tree) {
@@ -37,6 +48,8 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
   const deletedNewNodeRef = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const [contextMenu, setContextMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [foldedIds, setFoldedIds] = useState<Set<string>>(() => initialFoldedIds ?? new Set());
 
   const dismissContextMenu = useCallback(() => setContextMenu(null), []);
 
@@ -50,6 +63,12 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
     setPendingEditId(null);
     onNodeClick(node);
   }, [tree, pendingEditId, onNodeClick]);
+
+  useEffect(() => {
+    if (pendingDeleteId && !findNode(tree, pendingDeleteId)) {
+      setPendingDeleteId(null);
+    }
+  }, [tree, pendingDeleteId]);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -104,7 +123,10 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
   const layout = useMemo(() => {
     if (allNodes.length === 0) return null;
 
-    const root = hierarchy(tree, (d) => (d.children.length > 0 ? d.children : undefined));
+    const root = hierarchy(tree, (d) => {
+      if (foldedIds.has(d.id)) return undefined;
+      return d.children.length > 0 ? d.children : undefined;
+    });
     const treeLayout = d3tree<HeadingNode>().nodeSize([maxNodeHeight + 12, MAX_NODE_WIDTH + 40]);
     treeLayout(root);
 
@@ -112,7 +134,7 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
     const links = root.links().filter((l) => l.source.data.level > 0);
 
     return { descendants, links };
-  }, [tree, allNodes.length, maxNodeHeight]);
+  }, [tree, allNodes.length, maxNodeHeight, foldedIds]);
 
   const contentBounds: ContentBounds | null = useMemo(() => {
     if (!layout) return null;
@@ -195,7 +217,7 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
         }}
         onKeyDown={(e) => {
           handlers.onKeyDown(e);
-          if (!selectedId || dragState.isDragging || editingId) return;
+          if (!selectedId || dragState.isDragging || editingId || pendingDeleteId) return;
           if (e.key === "Tab" && e.shiftKey) {
             e.preventDefault();
             const parent = findParent(tree, selectedId);
@@ -227,6 +249,30 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
             }
             return;
           }
+          if (e.key === "Delete" || e.key === "Backspace") {
+            e.preventDefault();
+            const node = findNode(tree, selectedId);
+            if (!node) return;
+            if (countDescendants(node) > 0) {
+              setPendingDeleteId(selectedId);
+            } else if (onDeleteNode) {
+              const next = findNextSibling(tree, selectedId) ?? findPrevSibling(tree, selectedId) ?? findParent(tree, selectedId);
+              onDeleteNode(selectedId);
+              if (next && next.level > 0) onNodeClick(next);
+            }
+            return;
+          }
+          if (e.key === " ") {
+            e.preventDefault();
+            const node = findNode(tree, selectedId);
+            if (!node || node.children.length === 0) return;
+            const newSet = new Set(foldedIds);
+            if (newSet.has(selectedId)) newSet.delete(selectedId);
+            else newSet.add(selectedId);
+            setFoldedIds(newSet);
+            onFoldChange?.(newSet);
+            return;
+          }
           let target: HeadingNode | null = null;
           switch (e.key) {
             case "ArrowDown":
@@ -236,6 +282,7 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
               target = findPrevSibling(tree, selectedId);
               break;
             case "ArrowRight": {
+              if (foldedIds.has(selectedId)) break;
               const node = findNode(tree, selectedId);
               if (node && node.children.length > 0) {
                 const rememberedId = lastChildRef.current.get(selectedId);
@@ -365,6 +412,17 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
                     <tspan key={i} x={0} dy={i === 0 ? "0.35em" : lineHeight}>{line}</tspan>
                   ))}
                 </text>
+                {foldedIds.has(d.data.id) && d.data.children.length > 0 && (
+                  <text
+                    x={nw + 4}
+                    fontSize={fontSize - 2}
+                    className="fill-neutral-500 dark:fill-neutral-400 select-none"
+                    dominantBaseline="central"
+                    data-mindmap-fold-badge
+                  >
+                    +{countDescendants(d.data)}
+                  </text>
+                )}
               </g>
             );
           })}
@@ -514,6 +572,24 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
           Fit
         </button>
       </div>
+      {pendingDeleteId && (() => {
+        const deleteNode = findNode(tree, pendingDeleteId);
+        if (!deleteNode) return null;
+        return (
+          <ConfirmDeleteDialog
+            open={true}
+            nodeName={deleteNode.text}
+            childCount={countDescendants(deleteNode)}
+            onConfirm={() => {
+              const next = findNextSibling(tree, pendingDeleteId) ?? findPrevSibling(tree, pendingDeleteId) ?? findParent(tree, pendingDeleteId);
+              if (onDeleteNode) onDeleteNode(pendingDeleteId);
+              if (next && next.level > 0) onNodeClick(next);
+              setPendingDeleteId(null);
+            }}
+            onCancel={() => setPendingDeleteId(null)}
+          />
+        );
+      })()}
     </div>
   );
 }

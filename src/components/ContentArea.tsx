@@ -57,7 +57,7 @@ export function ContentArea() {
   const setDirty = useWorkspaceStore((s) => s.setDirty);
   const reloadTrigger = useWorkspaceStore((s) => s.reloadTrigger);
   const saveViewState = useWorkspaceStore((s) => s.saveViewState);
-
+  const saveMindmapFoldState = useWorkspaceStore((s) => s.saveMindmapFoldState);
 
   const { editorBindings } = useKeymaps();
   const editorViewRef = useRef<EditorView | null>(null);
@@ -324,6 +324,18 @@ export function ContentArea() {
     }
   }, [headingTree, mindmapSelectedId]);
 
+  const mindmapInitialFoldedIds = useMemo(() => {
+    if (!currentPagePath) return undefined;
+    const vs = useWorkspaceStore.getState().viewStates[currentPagePath];
+    return vs?.mindmapFoldedIds ? new Set(vs.mindmapFoldedIds) : undefined;
+  }, [currentPagePath]);
+
+  const handleFoldChange = useCallback((ids: Set<string>) => {
+    if (currentPagePath) {
+      saveMindmapFoldState(currentPagePath, Array.from(ids));
+    }
+  }, [currentPagePath, saveMindmapFoldState]);
+
   const enterYamlEdit = () => {
     setYamlDraft(rawYaml);
     setYamlError(null);
@@ -542,8 +554,11 @@ export function ContentArea() {
         >
           <Suspense fallback={<div className="flex items-center justify-center h-full text-text-faint">Loading…</div>}>
             <LazyMindmapView
+              key={currentPagePath}
               tree={headingTree}
               selectedId={mindmapSelectedId}
+              initialFoldedIds={mindmapInitialFoldedIds}
+              onFoldChange={handleFoldChange}
               onNodeClick={(node) => {
                 setMindmapSelectedId(node.id);
               }}

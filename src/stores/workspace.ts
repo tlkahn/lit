@@ -11,6 +11,7 @@ const MAX_RECENT = 10;
 export interface ViewState {
   scrollTop: number;
   cursor: number;
+  mindmapFoldedIds?: string[];
 }
 
 export interface WorkspaceStore {
@@ -45,6 +46,7 @@ export interface WorkspaceStore {
   setDirty: (dirty: boolean) => void;
   triggerReload: () => void;
   saveViewState: (path: string, scrollTop: number, cursor: number) => void;
+  saveMindmapFoldState: (path: string, ids: string[]) => void;
 }
 
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
@@ -161,7 +163,15 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
 
   saveViewState: (path: string, scrollTop: number, cursor: number) =>
     set((state) => ({
-      viewStates: { ...state.viewStates, [path]: { scrollTop, cursor } },
+      viewStates: { ...state.viewStates, [path]: { ...state.viewStates[path], scrollTop, cursor } },
+    })),
+
+  saveMindmapFoldState: (path: string, ids: string[]) =>
+    set((state) => ({
+      viewStates: {
+        ...state.viewStates,
+        [path]: { ...(state.viewStates[path] ?? { scrollTop: 0, cursor: 0 }), mindmapFoldedIds: ids },
+      },
     })),
 
   deletePage: async (relativePath: string) => {

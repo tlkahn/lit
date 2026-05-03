@@ -448,6 +448,35 @@ describe("WorkspaceStore", () => {
     expect(useWorkspaceStore.getState().viewStates).toEqual({});
   });
 
+  it("saveMindmapFoldState stores ids in viewStates", () => {
+    act(() => {
+      useWorkspaceStore.getState().saveMindmapFoldState("Page A.md", ["h-1", "h-3"]);
+    });
+    expect(useWorkspaceStore.getState().viewStates["Page A.md"]?.mindmapFoldedIds).toEqual(["h-1", "h-3"]);
+  });
+
+  it("saveMindmapFoldState preserves existing scrollTop and cursor", () => {
+    act(() => {
+      useWorkspaceStore.getState().saveViewState("Page A.md", 150, 42);
+    });
+    act(() => {
+      useWorkspaceStore.getState().saveMindmapFoldState("Page A.md", ["h-2"]);
+    });
+    const vs = useWorkspaceStore.getState().viewStates["Page A.md"];
+    expect(vs).toEqual({ scrollTop: 150, cursor: 42, mindmapFoldedIds: ["h-2"] });
+  });
+
+  it("saveViewState preserves existing mindmapFoldedIds", () => {
+    act(() => {
+      useWorkspaceStore.getState().saveMindmapFoldState("Page A.md", ["h-1"]);
+    });
+    act(() => {
+      useWorkspaceStore.getState().saveViewState("Page A.md", 200, 50);
+    });
+    const vs = useWorkspaceStore.getState().viewStates["Page A.md"];
+    expect(vs).toEqual({ scrollTop: 200, cursor: 50, mindmapFoldedIds: ["h-1"] });
+  });
+
   it("refreshPages re-fetches page list", async () => {
     useWorkspaceStore.setState({ workspacePath: "/workspace" });
 

@@ -1016,3 +1016,316 @@ describe("MindmapView node creation", () => {
     expect(props.onDeleteNode).not.toHaveBeenCalled();
   });
 });
+
+describe("MindmapView delete", () => {
+  it("Delete key on leaf node calls onDeleteNode", () => {
+    const tree = makeTree("# A\n## B\n## C");
+    const nodeC = tree.children[0]!.children[1]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeC.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "Delete" });
+    expect(props.onDeleteNode).toHaveBeenCalledWith(nodeC.id);
+  });
+
+  it("Backspace key on leaf node calls onDeleteNode", () => {
+    const tree = makeTree("# A\n## B\n## C");
+    const nodeC = tree.children[0]!.children[1]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeC.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "Backspace" });
+    expect(props.onDeleteNode).toHaveBeenCalledWith(nodeC.id);
+  });
+
+  it("Delete with no selection is no-op", () => {
+    const tree = makeTree("# A\n## B");
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={null} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "Delete" });
+    expect(props.onDeleteNode).not.toHaveBeenCalled();
+  });
+
+  it("Delete during drag is no-op", () => {
+    const tree = makeTree("# A\n## B\n## C");
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    const nodeEl = container.querySelector(`[data-mindmap-node="${nodeB.id}"]`)!;
+    firePointer(nodeEl, "pointerdown", { clientX: 0, clientY: 0 });
+    firePointer(svg, "pointermove", { clientX: 50, clientY: 50 });
+    fireEvent.keyDown(svg, { key: "Delete" });
+    expect(props.onDeleteNode).not.toHaveBeenCalled();
+  });
+
+  it("Delete during edit mode is no-op", () => {
+    const tree = makeTree("# A\n## B");
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "F2" });
+    expect(container.querySelector("[data-mindmap-edit]")).toBeTruthy();
+    fireEvent.keyDown(svg, { key: "Delete" });
+    expect(props.onDeleteNode).not.toHaveBeenCalled();
+  });
+
+  it("Delete on node with children shows dialog, does NOT call onDeleteNode", () => {
+    const tree = makeTree("# A\n## B\n### C\n### D");
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "Delete" });
+    expect(container.querySelector("[data-testid='confirm-delete-dialog']")).toBeTruthy();
+    expect(props.onDeleteNode).not.toHaveBeenCalled();
+  });
+
+  it("Confirming dialog calls onDeleteNode", () => {
+    const tree = makeTree("# A\n## B\n### C");
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "Delete" });
+    fireEvent.click(container.querySelector("[data-testid='confirm-delete-btn']")!);
+    expect(props.onDeleteNode).toHaveBeenCalledWith(nodeB.id);
+  });
+
+  it("Cancelling dialog does not delete", () => {
+    const tree = makeTree("# A\n## B\n### C");
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "Delete" });
+    fireEvent.click(container.querySelector("[data-testid='confirm-delete-cancel']")!);
+    expect(props.onDeleteNode).not.toHaveBeenCalled();
+    expect(container.querySelector("[data-testid='confirm-delete-dialog']")).toBeNull();
+  });
+
+  it("after delete, selection moves to next sibling", () => {
+    const tree = makeTree("# A\n## B\n## C\n## D");
+    const nodeB = tree.children[0]!.children[0]!;
+    const nodeC = tree.children[0]!.children[1]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "Delete" });
+    expect(props.onNodeClick).toHaveBeenCalledWith(nodeC);
+  });
+
+  it("after delete last sibling, selection moves to prev", () => {
+    const tree = makeTree("# A\n## B\n## C\n## D");
+    const nodeD = tree.children[0]!.children[2]!;
+    const nodeC = tree.children[0]!.children[1]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeD.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "Delete" });
+    expect(props.onNodeClick).toHaveBeenCalledWith(nodeC);
+  });
+
+  it("after delete only child, selection moves to parent", () => {
+    const tree = makeTree("# A\n## B");
+    const nodeA = tree.children[0]!;
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "Delete" });
+    expect(props.onNodeClick).toHaveBeenCalledWith(nodeA);
+  });
+
+  it("after confirm dialog, selection moves to next sibling", () => {
+    const tree = makeTree("# A\n## B\n### X\n## C");
+    const nodeB = tree.children[0]!.children[0]!;
+    const nodeC = tree.children[0]!.children[1]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "Delete" });
+    fireEvent.click(container.querySelector("[data-testid='confirm-delete-btn']")!);
+    expect(props.onNodeClick).toHaveBeenCalledWith(nodeC);
+  });
+});
+
+describe("MindmapView fold/unfold", () => {
+  it("Space on node with children hides child nodes", () => {
+    const tree = makeTree("# A\n## B\n### C");
+    const nodeB = tree.children[0]!.children[0]!;
+    const nodeC = nodeB.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    expect(container.querySelector(`[data-mindmap-node="${nodeC.id}"]`)).toBeTruthy();
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: " " });
+    expect(container.querySelector(`[data-mindmap-node="${nodeC.id}"]`)).toBeNull();
+  });
+
+  it("Space toggles fold off, restoring children", () => {
+    const tree = makeTree("# A\n## B\n### C");
+    const nodeB = tree.children[0]!.children[0]!;
+    const nodeC = nodeB.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: " " });
+    expect(container.querySelector(`[data-mindmap-node="${nodeC.id}"]`)).toBeNull();
+    fireEvent.keyDown(svg, { key: " " });
+    expect(container.querySelector(`[data-mindmap-node="${nodeC.id}"]`)).toBeTruthy();
+  });
+
+  it("Space on leaf node is no-op", () => {
+    const tree = makeTree("# A\n## B\n## C");
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    const nodesBefore = container.querySelectorAll("[data-mindmap-node]").length;
+    fireEvent.keyDown(svg, { key: " " });
+    const nodesAfter = container.querySelectorAll("[data-mindmap-node]").length;
+    expect(nodesAfter).toBe(nodesBefore);
+  });
+
+  it("Space with no selection is no-op", () => {
+    const tree = makeTree("# A\n## B");
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={null} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    const nodesBefore = container.querySelectorAll("[data-mindmap-node]").length;
+    fireEvent.keyDown(svg, { key: " " });
+    const nodesAfter = container.querySelectorAll("[data-mindmap-node]").length;
+    expect(nodesAfter).toBe(nodesBefore);
+  });
+
+  it("Space during drag is no-op", () => {
+    const tree = makeTree("# A\n## B\n### C");
+    const nodeB = tree.children[0]!.children[0]!;
+    const nodeC = nodeB.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    const nodeEl = container.querySelector(`[data-mindmap-node="${nodeB.id}"]`)!;
+    firePointer(nodeEl, "pointerdown", { clientX: 0, clientY: 0 });
+    firePointer(svg, "pointermove", { clientX: 50, clientY: 50 });
+    fireEvent.keyDown(svg, { key: " " });
+    expect(container.querySelector(`[data-mindmap-node="${nodeC.id}"]`)).toBeTruthy();
+  });
+
+  it("folded node shows +N badge", () => {
+    const tree = makeTree("# A\n## B\n### C\n### D\n### E");
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: " " });
+    const badge = container.querySelector("[data-mindmap-fold-badge]");
+    expect(badge).toBeTruthy();
+    expect(badge!.textContent).toBe("+3");
+  });
+
+  it("badge disappears after unfolding", () => {
+    const tree = makeTree("# A\n## B\n### C\n### D\n### E");
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: " " });
+    expect(container.querySelector("[data-mindmap-fold-badge]")).toBeTruthy();
+    fireEvent.keyDown(svg, { key: " " });
+    expect(container.querySelector("[data-mindmap-fold-badge]")).toBeNull();
+  });
+
+  it("links to folded children not rendered", () => {
+    const tree = makeTree("# A\n## B\n### C\n### D");
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const linksBefore = container.querySelectorAll("[data-mindmap-link]").length;
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: " " });
+    const linksAfter = container.querySelectorAll("[data-mindmap-link]").length;
+    expect(linksAfter).toBeLessThan(linksBefore);
+  });
+
+  it("initialFoldedIds pre-folds nodes on mount", () => {
+    const tree = makeTree("# A\n## B\n### C");
+    const nodeB = tree.children[0]!.children[0]!;
+    const nodeC = nodeB.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} initialFoldedIds={new Set([nodeB.id])} />,
+    );
+    expect(container.querySelector(`[data-mindmap-node="${nodeC.id}"]`)).toBeNull();
+  });
+
+  it("Space calls onFoldChange with updated set", () => {
+    const tree = makeTree("# A\n## B\n### C");
+    const nodeB = tree.children[0]!.children[0]!;
+    const onFoldChange = vi.fn();
+    const props = { ...defaultProps(), onFoldChange };
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: " " });
+    expect(onFoldChange).toHaveBeenCalledWith(new Set([nodeB.id]));
+  });
+
+  it("ArrowRight on folded node is no-op", () => {
+    const tree = makeTree("# A\n## B\n### C");
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: " " });
+    props.onNodeClick.mockClear();
+    fireEvent.keyDown(svg, { key: "ArrowRight" });
+    expect(props.onNodeClick).not.toHaveBeenCalled();
+  });
+});
