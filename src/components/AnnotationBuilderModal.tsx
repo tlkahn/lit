@@ -1,11 +1,15 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
-import { generateDsl, type AnnotationFields } from "../lib/annotationDsl";
+import { generateDsl, type AnnotationFields, type EditRawInfo } from "../lib/annotationDsl";
 import type { AnnotationType, Certainty, Scope } from "../lib/ipc";
 
 interface AnnotationBuilderModalProps {
   onClose: () => void;
   onInsert: (dsl: string) => void;
   initialFields?: Partial<AnnotationFields>;
+  mode?: "create" | "edit";
+  originalRange?: { from: number; to: number };
+  onEditRaw?: (info: EditRawInfo) => void;
+  selectedText?: string;
 }
 
 type ScopeKind = "none" | "words" | "sentence" | "paragraph" | "page" | "anchor";
@@ -14,12 +18,17 @@ export function AnnotationBuilderModal({
   onClose,
   onInsert,
   initialFields,
+  mode,
+  originalRange,
+  onEditRaw,
+  selectedText,
 }: AnnotationBuilderModalProps) {
   const [type, setType] = useState<AnnotationType | null>(initialFields?.type ?? null);
   const [certainty, setCertainty] = useState<Certainty>(initialFields?.certainty ?? "neutral");
   const [scopeKind, setScopeKind] = useState<ScopeKind>(() => {
-    if (!initialFields?.scope) return "none";
-    return initialFields.scope.kind;
+    if (initialFields?.scope) return initialFields.scope.kind;
+    if (selectedText) return "anchor";
+    return "none";
   });
   const [scopeCount, setScopeCount] = useState<number>(() => {
     if (!initialFields?.scope) return 1;
@@ -28,6 +37,7 @@ export function AnnotationBuilderModal({
   });
   const [anchorText, setAnchorText] = useState<string>(() => {
     if (initialFields?.scope?.kind === "anchor") return initialFields.scope.value;
+    if (!initialFields?.scope && selectedText) return selectedText;
     return "";
   });
   const [body, setBody] = useState(initialFields?.body ?? "");
@@ -198,12 +208,21 @@ export function AnnotationBuilderModal({
           >
             Cancel
           </button>
+          {onEditRaw && (
+            <button
+              className="rounded px-3 py-1.5 text-sm text-text-muted hover:bg-bg-secondary"
+              data-testid="annotation-edit-raw-btn"
+              onClick={() => onEditRaw({ mode: mode ?? "create", draftDsl: preview, originalRange })}
+            >
+              Edit Raw
+            </button>
+          )}
           <button
             className="rounded bg-interactive-accent px-3 py-1.5 text-sm text-white hover:opacity-90"
             data-testid="annotation-insert-btn"
             onClick={handleInsert}
           >
-            Insert
+            {mode === "edit" ? "Update" : "Insert"}
           </button>
         </div>
       </div>

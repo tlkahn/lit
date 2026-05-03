@@ -1,11 +1,24 @@
 import { type EditorView, WidgetType } from "@codemirror/view";
 import { StateEffect, StateField, type Transaction } from "@codemirror/state";
 import type { Annotation } from "../../lib/ipc";
+import type { AnnotationBuilderEventDetail } from "../../lib/annotationDsl";
 import { handleAnnotationHover, handleAnnotationLeave } from "./annotationHover";
 import { TYPE_ICON, certaintyClass, certaintyMark, truncateBody } from "./annotationConstants";
 import "./annotation.css";
 
 export { certaintyClass, certaintyMark };
+
+function dispatchEditEvent(ann: Annotation): void {
+  window.dispatchEvent(
+    new CustomEvent<AnnotationBuilderEventDetail>("lit:open-annotation-builder", {
+      detail: {
+        mode: "edit",
+        annotation: ann,
+        originalRange: { from: ann.char_start, to: ann.char_end },
+      },
+    }),
+  );
+}
 
 function buildPillDOM(ann: Annotation): HTMLSpanElement {
   const pill = document.createElement("span");
@@ -48,7 +61,7 @@ export class PillWidget extends WidgetType {
     pill.onmouseleave = () => handleAnnotationLeave(view);
     pill.onclick = (e) => {
       e.preventDefault();
-      view.dispatch({ selection: { anchor: this.annotation.char_start } });
+      dispatchEditEvent(this.annotation);
     };
     return pill;
   }
@@ -88,9 +101,13 @@ export class MarkerWidget extends WidgetType {
     sup.onmouseleave = () => handleAnnotationLeave(view);
     sup.onclick = (e) => {
       e.preventDefault();
-      window.dispatchEvent(
-        new CustomEvent("lit:show-annotation", { detail: { charStart: ann.char_start } }),
-      );
+      if (e.metaKey || e.ctrlKey) {
+        dispatchEditEvent(ann);
+      } else {
+        window.dispatchEvent(
+          new CustomEvent("lit:show-annotation", { detail: { charStart: ann.char_start } }),
+        );
+      }
     };
     return sup;
   }
@@ -182,7 +199,7 @@ export class CalloutWidget extends WidgetType {
     header.onclick = (e) => {
       if ((e.target as HTMLElement).closest(".cm-annotation-fold-icon")) return;
       e.preventDefault();
-      view.dispatch({ selection: { anchor: ann.char_start } });
+      dispatchEditEvent(ann);
     };
 
     const icon = document.createElement("span");

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { generateDsl, type AnnotationFields } from "./annotationDsl";
+import { generateDsl, annotationToFields, type AnnotationFields } from "./annotationDsl";
+import type { Annotation } from "./ipc";
 
 function fields(overrides: Partial<AnnotationFields> = {}): AnnotationFields {
   return {
@@ -8,6 +9,22 @@ function fields(overrides: Partial<AnnotationFields> = {}): AnnotationFields {
     scope: null,
     body: "",
     date: null,
+    ...overrides,
+  };
+}
+
+function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
+  return {
+    form: "compact",
+    annotation_type: "note",
+    certainty: "neutral",
+    scope: { kind: "sentence", value: 1 },
+    body: null,
+    date: null,
+    is_structured: true,
+    char_start: 0,
+    char_end: 10,
+    original: "%%! n %%",
     ...overrides,
   };
 }
@@ -314,6 +331,190 @@ describe("generateDsl", () => {
       expect(
         generateDsl(fields({ type: "note", date: "2026-03" })),
       ).toBe("%%! n @2026-03 %%");
+    });
+  });
+});
+
+describe("annotationToFields", () => {
+  it("bare annotation_type maps to null", () => {
+    const f = annotationToFields(makeAnnotation({ annotation_type: "bare" }));
+    expect(f.type).toBeNull();
+  });
+
+  it("note annotation_type passes through", () => {
+    const f = annotationToFields(makeAnnotation({ annotation_type: "note" }));
+    expect(f.type).toBe("note");
+  });
+
+  it("question annotation_type passes through", () => {
+    const f = annotationToFields(makeAnnotation({ annotation_type: "question" }));
+    expect(f.type).toBe("question");
+  });
+
+  it("todo annotation_type passes through", () => {
+    const f = annotationToFields(makeAnnotation({ annotation_type: "todo" }));
+    expect(f.type).toBe("todo");
+  });
+
+  it("crossref annotation_type passes through", () => {
+    const f = annotationToFields(makeAnnotation({ annotation_type: "crossref" }));
+    expect(f.type).toBe("crossref");
+  });
+
+  it("apparatus annotation_type passes through", () => {
+    const f = annotationToFields(makeAnnotation({ annotation_type: "apparatus" }));
+    expect(f.type).toBe("apparatus");
+  });
+
+  it("translation annotation_type passes through", () => {
+    const f = annotationToFields(makeAnnotation({ annotation_type: "translation" }));
+    expect(f.type).toBe("translation");
+  });
+
+  describe("certainty passthrough", () => {
+    it("tentative", () => {
+      const f = annotationToFields(makeAnnotation({ certainty: "tentative" }));
+      expect(f.certainty).toBe("tentative");
+    });
+
+    it("firm", () => {
+      const f = annotationToFields(makeAnnotation({ certainty: "firm" }));
+      expect(f.certainty).toBe("firm");
+    });
+
+    it("neutral", () => {
+      const f = annotationToFields(makeAnnotation({ certainty: "neutral" }));
+      expect(f.certainty).toBe("neutral");
+    });
+  });
+
+  describe("scope mapping", () => {
+    it("words scope passes through", () => {
+      const f = annotationToFields(makeAnnotation({
+        scope: { kind: "words", value: 2 },
+        original: "%%! n __ | body %%",
+      }));
+      expect(f.scope).toEqual({ kind: "words", value: 2 });
+    });
+
+    it("paragraph scope passes through", () => {
+      const f = annotationToFields(makeAnnotation({
+        scope: { kind: "paragraph", value: 1 },
+        original: "%%! n \\p | body %%",
+      }));
+      expect(f.scope).toEqual({ kind: "paragraph", value: 1 });
+    });
+
+    it("page scope passes through", () => {
+      const f = annotationToFields(makeAnnotation({
+        scope: { kind: "page", value: 1 },
+        original: "%%! n \\f | body %%",
+      }));
+      expect(f.scope).toEqual({ kind: "page", value: 1 });
+    });
+
+    it("anchor scope passes through", () => {
+      const f = annotationToFields(makeAnnotation({
+        scope: { kind: "anchor", value: "some text" },
+        original: '%%! n ^"some text" | body %%',
+      }));
+      expect(f.scope).toEqual({ kind: "anchor", value: "some text" });
+    });
+
+    it("sentence(1) without explicit scope in original → null", () => {
+      const f = annotationToFields(makeAnnotation({
+        scope: { kind: "sentence", value: 1 },
+        original: "%%! n | body %%",
+      }));
+      expect(f.scope).toBeNull();
+    });
+
+    it("sentence(1) with explicit \\s in original → passes through", () => {
+      const f = annotationToFields(makeAnnotation({
+        scope: { kind: "sentence", value: 1 },
+        original: "%%! n \\s | body %%",
+      }));
+      expect(f.scope).toEqual({ kind: "sentence", value: 1 });
+    });
+
+    it("sentence(2) always passes through", () => {
+      const f = annotationToFields(makeAnnotation({
+        scope: { kind: "sentence", value: 2 },
+        original: "%%! n \\ss | body %%",
+      }));
+      expect(f.scope).toEqual({ kind: "sentence", value: 2 });
+    });
+
+    it("sentence(1) with _ in original → passes through (words detected)", () => {
+      const f = annotationToFields(makeAnnotation({
+        scope: { kind: "sentence", value: 1 },
+        original: "%%! n _ | body %%",
+      }));
+      expect(f.scope).toEqual({ kind: "sentence", value: 1 });
+    });
+  });
+
+  it("body: null → empty string", () => {
+    const f = annotationToFields(makeAnnotation({ body: null }));
+    expect(f.body).toBe("");
+  });
+
+  it("body: 'text' → 'text'", () => {
+    const f = annotationToFields(makeAnnotation({ body: "some text" }));
+    expect(f.body).toBe("some text");
+  });
+
+  it("date passthrough: null stays null", () => {
+    const f = annotationToFields(makeAnnotation({ date: null }));
+    expect(f.date).toBeNull();
+  });
+
+  it("date passthrough: string stays string", () => {
+    const f = annotationToFields(makeAnnotation({ date: "2026-03" }));
+    expect(f.date).toBe("2026-03");
+  });
+
+  describe("round-trip", () => {
+    it("note with body round-trips", () => {
+      const ann = makeAnnotation({
+        annotation_type: "note",
+        scope: { kind: "sentence", value: 1 },
+        body: "a note",
+        original: "%%! n | a note %%",
+      });
+      expect(generateDsl(annotationToFields(ann))).toBe("%%! n | a note %%");
+    });
+
+    it("question tentative with words scope round-trips", () => {
+      const ann = makeAnnotation({
+        annotation_type: "question",
+        certainty: "tentative",
+        scope: { kind: "words", value: 2 },
+        body: "same sense?",
+        date: "2026-03",
+        original: "%%! q? __ | same sense? @2026-03 %%",
+      });
+      expect(generateDsl(annotationToFields(ann))).toBe("%%! q? __ | same sense? @2026-03 %%");
+    });
+
+    it("bare annotation with just body round-trips", () => {
+      const ann = makeAnnotation({
+        annotation_type: "bare",
+        scope: { kind: "sentence", value: 1 },
+        body: "compare Vasugupta",
+        original: "%%! compare Vasugupta %%",
+      });
+      expect(generateDsl(annotationToFields(ann))).toBe("%%! compare Vasugupta %%");
+    });
+
+    it("note with explicit \\s scope round-trips", () => {
+      const ann = makeAnnotation({
+        annotation_type: "note",
+        scope: { kind: "sentence", value: 1 },
+        body: "one sentence",
+        original: "%%! n \\s | one sentence %%",
+      });
+      expect(generateDsl(annotationToFields(ann))).toBe("%%! n \\s | one sentence %%");
     });
   });
 });

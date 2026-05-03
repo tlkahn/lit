@@ -17,6 +17,8 @@ import { HeadingQuickSwitcher } from "./components/HeadingQuickSwitcher";
 import { CommandPalette } from "./components/CommandPalette";
 import { AnnotationBuilderModal } from "./components/AnnotationBuilderModal";
 import { getCurrentEditorView } from "./lib/editorViewRef";
+import { annotationToFields, type AnnotationBuilderEventDetail, type EditRawInfo } from "./lib/annotationDsl";
+import type { Annotation } from "./lib/ipc";
 
 interface LitCliArgs {
   workspace: string | null;
@@ -97,6 +99,10 @@ function App() {
   const [quickSwitcherOpen, setQuickSwitcherOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [annotationBuilderOpen, setAnnotationBuilderOpen] = useState(false);
+  const [annotationBuilderMode, setAnnotationBuilderMode] = useState<"create" | "edit">("create");
+  const [editingAnnotation, setEditingAnnotation] = useState<Annotation | undefined>();
+  const [editingRange, setEditingRange] = useState<{ from: number; to: number } | undefined>();
+  const [selectionText, setSelectionText] = useState<string | undefined>();
 
   useEffect(() => {
     const handler = () => setQuickSwitcherOpen((prev) => !prev);
@@ -111,7 +117,21 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const handler = () => setAnnotationBuilderOpen(true);
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<AnnotationBuilderEventDetail>).detail;
+      if (detail?.mode === "edit" && detail.annotation) {
+        setAnnotationBuilderMode("edit");
+        setEditingAnnotation(detail.annotation);
+        setEditingRange(detail.originalRange);
+        setSelectionText(undefined);
+      } else {
+        setAnnotationBuilderMode("create");
+        setEditingAnnotation(undefined);
+        setEditingRange(undefined);
+        setSelectionText(detail?.selectedText);
+      }
+      setAnnotationBuilderOpen(true);
+    };
     window.addEventListener("lit:open-annotation-builder", handler);
     return () => window.removeEventListener("lit:open-annotation-builder", handler);
   }, []);
@@ -125,11 +145,31 @@ function App() {
   const handleAnnotationInsert = useCallback((dsl: string) => {
     const view = getCurrentEditorView();
     if (view) {
-      const pos = view.state.selection.main.head;
-      view.dispatch({ changes: { from: pos, insert: dsl } });
+      if (editingRange) {
+        view.dispatch({ changes: { from: editingRange.from, to: editingRange.to, insert: dsl } });
+      } else {
+        const pos = view.state.selection.main.head;
+        view.dispatch({ changes: { from: pos, insert: dsl } });
+      }
     }
     setAnnotationBuilderOpen(false);
-  }, []);
+  }, [editingRange]);
+
+  const handleEditRaw = useCallback((info: EditRawInfo) => {
+    const view = getCurrentEditorView();
+    setAnnotationBuilderOpen(false);
+    if (!view) return;
+    if (info.mode === "edit" && editingAnnotation) {
+      view.dispatch({ selection: { anchor: editingAnnotation.char_start } });
+      view.focus();
+    } else {
+      const pos = view.state.selection.main.head;
+      view.dispatch({ changes: { from: pos, insert: info.draftDsl } });
+      const innerPos = pos + "%%! ".length;
+      view.dispatch({ selection: { anchor: innerPos } });
+      view.focus();
+    }
+  }, [editingAnnotation]);
 
   useEffect(() => {
     if (!focusModeActive) return;
@@ -174,6 +214,11 @@ function App() {
         <AnnotationBuilderModal
           onClose={() => setAnnotationBuilderOpen(false)}
           onInsert={handleAnnotationInsert}
+          onEditRaw={handleEditRaw}
+          mode={annotationBuilderMode}
+          originalRange={editingRange}
+          selectedText={selectionText}
+          initialFields={editingAnnotation ? annotationToFields(editingAnnotation) : undefined}
         />
       )}
     </div>

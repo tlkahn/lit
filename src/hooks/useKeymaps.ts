@@ -8,6 +8,9 @@ import { navigateBack, navigateForward } from "../editor/jumpHistory";
 import { openInExternalEditor } from "../lib/ipc";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useFocusModeStore } from "../stores/focusMode";
+import { getCurrentEditorView } from "../lib/editorViewRef";
+import { annotationDataField, findAnnotationAtCursor } from "../editor/livePreview/annotationState";
+import type { AnnotationBuilderEventDetail } from "../lib/annotationDsl";
 import type { EditorView } from "@codemirror/view";
 
 function ensureCommandsRegistered() {
@@ -43,7 +46,33 @@ function ensureCommandsRegistered() {
     window.dispatchEvent(new CustomEvent("lit:toggle-command-palette"));
   });
   commandRegistry.register("app.insertAnnotation", () => {
-    window.dispatchEvent(new CustomEvent("lit:open-annotation-builder"));
+    const view = getCurrentEditorView();
+    if (view) {
+      const annotations = view.state.field(annotationDataField, false) ?? [];
+      const pos = view.state.selection.main.head;
+      const ann = findAnnotationAtCursor(annotations, pos);
+      if (ann) {
+        window.dispatchEvent(
+          new CustomEvent<AnnotationBuilderEventDetail>("lit:open-annotation-builder", {
+            detail: {
+              mode: "edit",
+              annotation: ann,
+              originalRange: { from: ann.char_start, to: ann.char_end },
+            },
+          }),
+        );
+        return;
+      }
+      const sel = view.state.selection.main;
+      const selectedText = sel.from !== sel.to ? view.state.sliceDoc(sel.from, sel.to) : undefined;
+      window.dispatchEvent(
+        new CustomEvent<AnnotationBuilderEventDetail>("lit:open-annotation-builder", {
+          detail: { mode: "create", selectedText },
+        }),
+      );
+    } else {
+      window.dispatchEvent(new CustomEvent("lit:open-annotation-builder"));
+    }
   });
 }
 

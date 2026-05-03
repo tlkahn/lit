@@ -10,6 +10,7 @@ import {
   annotationExtension,
   displayModeField,
   setDisplayMode,
+  findAnnotationAtCursor,
 } from "./annotationState";
 import {
   annotationFoldField,
@@ -601,6 +602,39 @@ describe("annotationDecorationProvider", () => {
     expect(decos).toHaveLength(0);
 
     view.destroy();
+  });
+});
+
+describe("findAnnotationAtCursor", () => {
+  it("returns the annotation containing pos", () => {
+    const ann = makeAnnotation({ char_start: 5, char_end: 15 });
+    expect(findAnnotationAtCursor([ann], 10)).toBe(ann);
+  });
+
+  it("returns annotation when pos === char_start", () => {
+    const ann = makeAnnotation({ char_start: 5, char_end: 15 });
+    expect(findAnnotationAtCursor([ann], 5)).toBe(ann);
+  });
+
+  it("returns annotation when pos === char_end", () => {
+    const ann = makeAnnotation({ char_start: 5, char_end: 15 });
+    expect(findAnnotationAtCursor([ann], 15)).toBe(ann);
+  });
+
+  it("returns undefined when pos is outside all annotations", () => {
+    const ann = makeAnnotation({ char_start: 5, char_end: 15 });
+    expect(findAnnotationAtCursor([ann], 3)).toBeUndefined();
+    expect(findAnnotationAtCursor([ann], 16)).toBeUndefined();
+  });
+
+  it("returns undefined for empty annotations array", () => {
+    expect(findAnnotationAtCursor([], 5)).toBeUndefined();
+  });
+
+  it("returns the first matching annotation when multiple overlap", () => {
+    const a = makeAnnotation({ char_start: 0, char_end: 20 });
+    const b = makeAnnotation({ char_start: 5, char_end: 15 });
+    expect(findAnnotationAtCursor([a, b], 10)).toBe(a);
   });
 });
 

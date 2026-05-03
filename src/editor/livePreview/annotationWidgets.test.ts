@@ -210,40 +210,59 @@ describe("CalloutWidget", () => {
   });
 });
 
-describe("PillWidget click-to-navigate", () => {
-  it("pill click dispatches selection to char_start", () => {
+describe("PillWidget click → edit event", () => {
+  it("pill click dispatches lit:open-annotation-builder with edit detail", () => {
     const view = makeEditorView("hello %%!n | test%% world");
-    const ann = makeAnnotation({ char_start: 6, char_end: 19 });
+    const ann = makeAnnotation({ char_start: 6, char_end: 19, original: "%%!n | test%%" });
     const w = new PillWidget(ann);
     const dom = w.toDOM(view);
+
+    const spy = vi.fn();
+    window.addEventListener("lit:open-annotation-builder", spy);
     dom.click();
-    expect(view.state.selection.main.head).toBe(6);
+    expect(spy).toHaveBeenCalledTimes(1);
+    const event = spy.mock.calls[0]![0] as CustomEvent;
+    expect(event.detail.mode).toBe("edit");
+    expect(event.detail.annotation).toBe(ann);
+    expect(event.detail.originalRange).toEqual({ from: 6, to: 19 });
+    window.removeEventListener("lit:open-annotation-builder", spy);
     view.destroy();
   });
 });
 
-describe("CalloutWidget click-to-navigate", () => {
-  it("header click navigates to char_start", () => {
+describe("CalloutWidget click → edit event", () => {
+  it("header click dispatches lit:open-annotation-builder with edit detail", () => {
     const view = makeEditorView("hello %%!n\n---\nbody\n%% world");
     const ann = makeAnnotation({ form: "block", char_start: 6, char_end: 22 });
     const w = new CalloutWidget(ann, false, 6);
     const dom = w.toDOM(view);
+
+    const spy = vi.fn();
+    window.addEventListener("lit:open-annotation-builder", spy);
     const header = dom.querySelector(".cm-annotation-callout-header")! as HTMLElement;
     const label = header.querySelector(".cm-annotation-callout-label")! as HTMLElement;
     label.click();
-    expect(view.state.selection.main.head).toBe(6);
+    expect(spy).toHaveBeenCalledTimes(1);
+    const event = spy.mock.calls[0]![0] as CustomEvent;
+    expect(event.detail.mode).toBe("edit");
+    expect(event.detail.annotation).toBe(ann);
+    expect(event.detail.originalRange).toEqual({ from: 6, to: 22 });
+    window.removeEventListener("lit:open-annotation-builder", spy);
     view.destroy();
   });
 
-  it("fold arrow click does NOT navigate", () => {
+  it("fold arrow click does NOT dispatch edit event", () => {
     const view = makeEditorView("hello %%!n\n---\nbody\n%% world");
     const ann = makeAnnotation({ form: "block", char_start: 6, char_end: 22 });
     const w = new CalloutWidget(ann, false, 6);
     const dom = w.toDOM(view);
+
+    const spy = vi.fn();
+    window.addEventListener("lit:open-annotation-builder", spy);
     const arrow = dom.querySelector(".cm-annotation-fold-icon")! as HTMLElement;
-    const initialHead = view.state.selection.main.head;
     arrow.click();
-    expect(view.state.selection.main.head).toBe(initialHead);
+    expect(spy).not.toHaveBeenCalled();
+    window.removeEventListener("lit:open-annotation-builder", spy);
     view.destroy();
   });
 });
@@ -336,7 +355,7 @@ describe("MarkerWidget", () => {
     expect(w.estimatedHeight).toBe(14);
   });
 
-  it("click dispatches lit:show-annotation CustomEvent with detail.charStart", () => {
+  it("plain click dispatches lit:show-annotation CustomEvent with detail.charStart", () => {
     const view = makeEditorView();
     const ann = makeAnnotation({ char_start: 5 });
     const w = new MarkerWidget(ann);
@@ -349,6 +368,42 @@ describe("MarkerWidget", () => {
     const event = spy.mock.calls[0]![0] as CustomEvent;
     expect(event.detail.charStart).toBe(5);
     window.removeEventListener("lit:show-annotation", spy);
+    view.destroy();
+  });
+
+  it("Mod+click dispatches lit:open-annotation-builder with edit detail", () => {
+    const view = makeEditorView();
+    const ann = makeAnnotation({ char_start: 5, char_end: 13 });
+    const w = new MarkerWidget(ann);
+    const dom = w.toDOM(view);
+
+    const editSpy = vi.fn();
+    const showSpy = vi.fn();
+    window.addEventListener("lit:open-annotation-builder", editSpy);
+    window.addEventListener("lit:show-annotation", showSpy);
+    dom.dispatchEvent(new MouseEvent("click", { bubbles: true, metaKey: true }));
+    expect(editSpy).toHaveBeenCalledTimes(1);
+    const event = editSpy.mock.calls[0]![0] as CustomEvent;
+    expect(event.detail.mode).toBe("edit");
+    expect(event.detail.annotation).toBe(ann);
+    expect(event.detail.originalRange).toEqual({ from: 5, to: 13 });
+    expect(showSpy).not.toHaveBeenCalled();
+    window.removeEventListener("lit:open-annotation-builder", editSpy);
+    window.removeEventListener("lit:show-annotation", showSpy);
+    view.destroy();
+  });
+
+  it("Ctrl+click dispatches lit:open-annotation-builder with edit detail", () => {
+    const view = makeEditorView();
+    const ann = makeAnnotation({ char_start: 5, char_end: 13 });
+    const w = new MarkerWidget(ann);
+    const dom = w.toDOM(view);
+
+    const editSpy = vi.fn();
+    window.addEventListener("lit:open-annotation-builder", editSpy);
+    dom.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true }));
+    expect(editSpy).toHaveBeenCalledTimes(1);
+    window.removeEventListener("lit:open-annotation-builder", editSpy);
     view.destroy();
   });
 

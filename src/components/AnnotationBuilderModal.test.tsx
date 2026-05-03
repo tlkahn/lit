@@ -5,10 +5,12 @@ import { AnnotationBuilderModal } from "./AnnotationBuilderModal";
 describe("AnnotationBuilderModal", () => {
   let onClose: ReturnType<typeof vi.fn>;
   let onInsert: ReturnType<typeof vi.fn>;
+  let onEditRaw: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     onClose = vi.fn();
     onInsert = vi.fn();
+    onEditRaw = vi.fn();
   });
 
   it("renders panel when mounted", () => {
@@ -158,5 +160,133 @@ describe("AnnotationBuilderModal", () => {
     );
     expect(screen.getByTestId("annotation-preview").textContent).toContain("second");
     expect(screen.getByTestId("annotation-type-select")).toHaveValue("note");
+  });
+
+  describe("edit mode", () => {
+    it("mode='edit' renders 'Update' button text", () => {
+      render(
+        <AnnotationBuilderModal onClose={onClose} onInsert={onInsert} mode="edit" />,
+      );
+      expect(screen.getByTestId("annotation-insert-btn").textContent).toBe("Update");
+    });
+
+    it("mode='create' renders 'Insert' button text", () => {
+      render(
+        <AnnotationBuilderModal onClose={onClose} onInsert={onInsert} mode="create" />,
+      );
+      expect(screen.getByTestId("annotation-insert-btn").textContent).toBe("Insert");
+    });
+
+    it("no mode renders 'Insert' button text", () => {
+      render(
+        <AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />,
+      );
+      expect(screen.getByTestId("annotation-insert-btn").textContent).toBe("Insert");
+    });
+
+    it("mode='edit' with initialFields pre-fills all fields correctly", () => {
+      render(
+        <AnnotationBuilderModal
+          onClose={onClose}
+          onInsert={onInsert}
+          mode="edit"
+          initialFields={{
+            type: "question",
+            certainty: "tentative",
+            scope: { kind: "words", value: 2 },
+            body: "is this right?",
+            date: "2026-03",
+          }}
+        />,
+      );
+      expect(screen.getByTestId("annotation-type-select")).toHaveValue("question");
+      expect(screen.getByTestId("annotation-certainty-select")).toHaveValue("tentative");
+      expect(screen.getByTestId("annotation-scope-select")).toHaveValue("words");
+      expect(screen.getByTestId("annotation-scope-count")).toHaveValue(2);
+      expect(screen.getByTestId("annotation-body-input")).toHaveValue("is this right?");
+      expect(screen.getByTestId("annotation-date-input")).toHaveValue("2026-03");
+    });
+
+    it("'Update' click calls onInsert with generated DSL", () => {
+      render(
+        <AnnotationBuilderModal
+          onClose={onClose}
+          onInsert={onInsert}
+          mode="edit"
+          initialFields={{ type: "note", body: "edited" }}
+        />,
+      );
+      fireEvent.click(screen.getByTestId("annotation-insert-btn"));
+      expect(onInsert).toHaveBeenCalledWith("%%! n | edited %%");
+    });
+  });
+
+  describe("Edit Raw button", () => {
+    it("renders Edit Raw button in create mode", () => {
+      render(
+        <AnnotationBuilderModal onClose={onClose} onInsert={onInsert} onEditRaw={onEditRaw} />,
+      );
+      expect(screen.getByTestId("annotation-edit-raw-btn")).toBeInTheDocument();
+    });
+
+    it("renders Edit Raw button in edit mode", () => {
+      render(
+        <AnnotationBuilderModal onClose={onClose} onInsert={onInsert} onEditRaw={onEditRaw} mode="edit" />,
+      );
+      expect(screen.getByTestId("annotation-edit-raw-btn")).toBeInTheDocument();
+    });
+
+    it("clicking Edit Raw calls onEditRaw with mode, draftDsl, and originalRange", () => {
+      const originalRange = { from: 10, to: 25 };
+      render(
+        <AnnotationBuilderModal
+          onClose={onClose}
+          onInsert={onInsert}
+          onEditRaw={onEditRaw}
+          mode="edit"
+          originalRange={originalRange}
+          initialFields={{ type: "note", body: "test" }}
+        />,
+      );
+      fireEvent.click(screen.getByTestId("annotation-edit-raw-btn"));
+      expect(onEditRaw).toHaveBeenCalledWith({
+        mode: "edit",
+        draftDsl: "%%! n | test %%",
+        originalRange,
+      });
+    });
+
+    it("Edit Raw not rendered when onEditRaw is not provided", () => {
+      render(
+        <AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />,
+      );
+      expect(screen.queryByTestId("annotation-edit-raw-btn")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("selection auto-fill", () => {
+    it("selectedText sets scope to anchor and fills anchor text", () => {
+      render(
+        <AnnotationBuilderModal
+          onClose={onClose}
+          onInsert={onInsert}
+          selectedText="hello world"
+        />,
+      );
+      expect(screen.getByTestId("annotation-scope-select")).toHaveValue("anchor");
+      expect(screen.getByTestId("annotation-anchor-input")).toHaveValue("hello world");
+    });
+
+    it("selectedText does not override explicit scope in initialFields", () => {
+      render(
+        <AnnotationBuilderModal
+          onClose={onClose}
+          onInsert={onInsert}
+          selectedText="hello world"
+          initialFields={{ scope: { kind: "paragraph", value: 1 } }}
+        />,
+      );
+      expect(screen.getByTestId("annotation-scope-select")).toHaveValue("paragraph");
+    });
   });
 });

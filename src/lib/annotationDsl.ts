@@ -1,4 +1,4 @@
-import type { AnnotationType, Certainty, Scope } from "./ipc";
+import type { Annotation, AnnotationType, Certainty, Scope } from "./ipc";
 
 export interface AnnotationFields {
   type: AnnotationType | null;
@@ -6,6 +6,42 @@ export interface AnnotationFields {
   scope: Scope | null;
   body: string;
   date: string | null;
+}
+
+export interface AnnotationBuilderEventDetail {
+  mode: "create" | "edit";
+  annotation?: Annotation;
+  originalRange?: { from: number; to: number };
+  selectedText?: string;
+}
+
+export interface EditRawInfo {
+  mode: "create" | "edit";
+  draftDsl: string;
+  originalRange?: { from: number; to: number };
+}
+
+const EXPLICIT_SCOPE_RE = /[_\\]|^\^"/;
+
+export function annotationToFields(ann: Annotation): AnnotationFields {
+  const type: AnnotationType | null = ann.annotation_type === "bare" ? null : ann.annotation_type;
+  const certainty: Certainty = ann.certainty;
+
+  let scope: Scope | null;
+  if (
+    ann.scope.kind === "sentence" &&
+    ann.scope.value === 1 &&
+    !EXPLICIT_SCOPE_RE.test(ann.original)
+  ) {
+    scope = null;
+  } else {
+    scope = ann.scope;
+  }
+
+  const body = ann.body ?? "";
+  const date = ann.date ?? null;
+
+  return { type, certainty, scope, body, date };
 }
 
 const TYPE_KEYWORDS: Record<string, string> = {
