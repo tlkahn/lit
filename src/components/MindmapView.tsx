@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState, useEffect, useCallback } from "react";
 import { hierarchy, tree as d3tree } from "d3-hierarchy";
 import { linkHorizontal } from "d3-shape";
-import { findNode, findParent, findNextSibling, findPrevSibling, firstChild, type HeadingNode } from "../lib/headingTree";
+import { findNode, findParent, findNextSibling, findPrevSibling, firstChild, migrateFoldIds, setsEqual, type HeadingNode } from "../lib/headingTree";
 import { buildNodeRects, buildGapZones, type PointNode } from "../lib/mindmapDnd";
 import type { ContentBounds } from "../lib/mindmapZoom";
 import { computeNodeWidth, wrapText, computeNodeHeight, MAX_NODE_WIDTH, LINE_HEIGHT_RATIO } from "../lib/mindmapLayout";
@@ -50,6 +50,7 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
   const [contextMenu, setContextMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [foldedIds, setFoldedIds] = useState<Set<string>>(() => initialFoldedIds ?? new Set());
+  const foldTreeRef = useRef(tree);
 
   const dismissContextMenu = useCallback(() => setContextMenu(null), []);
 
@@ -88,13 +89,15 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
   }, [tree]);
 
   useEffect(() => {
-    const validIds = new Set(allNodes.map(n => n.id));
-    const cleaned = new Set([...foldedIds].filter(id => validIds.has(id)));
-    if (cleaned.size !== foldedIds.size) {
-      setFoldedIds(cleaned);
-      onFoldChange?.(cleaned);
+    const prevTree = foldTreeRef.current;
+    foldTreeRef.current = tree;
+    if (foldedIds.size === 0) return;
+    const migrated = migrateFoldIds(prevTree, tree, foldedIds);
+    if (!setsEqual(migrated, foldedIds)) {
+      setFoldedIds(migrated);
+      onFoldChange?.(migrated);
     }
-  }, [allNodes, foldedIds, onFoldChange]);
+  }, [tree, foldedIds, onFoldChange]);
 
   const nodeWidths = useMemo(() => {
     const widths = new Map<string, number>();

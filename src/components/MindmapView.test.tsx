@@ -1390,4 +1390,29 @@ describe("MindmapView fold/unfold", () => {
     );
     expect(onFoldChange).toHaveBeenCalledWith(new Set());
   });
+
+  it("fold survives tree rerender with shifted lines", () => {
+    const tree1 = makeTree("# A\n## B\n### C");
+    const nodeB1 = tree1.children[0]!.children[0]!;
+    const onFoldChange = vi.fn();
+    const props = { ...defaultProps(), onFoldChange };
+    const { container, rerender } = render(
+      <MindmapView tree={tree1} {...props} selectedId={nodeB1.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: " " });
+    expect(onFoldChange).toHaveBeenCalledWith(new Set([nodeB1.id]));
+    expect(container.querySelector("[data-mindmap-fold-badge]")).toBeTruthy();
+    onFoldChange.mockClear();
+
+    const tree2 = makeTree("# A\n\n## B\n### C");
+    const nodeB2 = tree2.children[0]!.children[0]!;
+    expect(nodeB2.id).not.toBe(nodeB1.id);
+    rerender(<MindmapView tree={tree2} {...props} selectedId={nodeB2.id} />);
+
+    expect(onFoldChange).toHaveBeenCalledWith(new Set([nodeB2.id]));
+    expect(container.querySelector("[data-mindmap-fold-badge]")).toBeTruthy();
+    const nodeC2 = nodeB2.children[0]!;
+    expect(container.querySelector(`[data-mindmap-node="${nodeC2.id}"]`)).toBeNull();
+  });
 });

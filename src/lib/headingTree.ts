@@ -276,6 +276,50 @@ export function resolveDeleteFallback(
   return { newBody, fallbackId: match?.id ?? null };
 }
 
+export function setsEqual(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const v of a) if (!b.has(v)) return false;
+  return true;
+}
+
+export function migrateFoldIds(
+  prevTree: HeadingNode,
+  nextTree: HeadingNode,
+  foldedIds: Set<string>,
+): Set<string> {
+  if (foldedIds.size === 0) return foldedIds;
+
+  const prevNodes = flattenTree(prevTree);
+  const nextNodes = flattenTree(nextTree);
+  const claimed = new Set<string>();
+  const result = new Set<string>();
+
+  for (const foldedId of foldedIds) {
+    const prevNode = prevNodes.find(n => n.id === foldedId);
+    if (!prevNode) continue;
+
+    const candidates = nextNodes.filter(
+      n => n.text === prevNode.text && n.level === prevNode.level && !claimed.has(n.id),
+    );
+    if (candidates.length === 0) continue;
+
+    let best = candidates[0]!;
+    let bestDist = Math.abs(best.line - prevNode.line);
+    for (let i = 1; i < candidates.length; i++) {
+      const dist = Math.abs(candidates[i]!.line - prevNode.line);
+      if (dist < bestDist) {
+        best = candidates[i]!;
+        bestDist = dist;
+      }
+    }
+
+    claimed.add(best.id);
+    result.add(best.id);
+  }
+
+  return result;
+}
+
 const HEADING_LINE_RE = /^(#{1,6})\s/gm;
 
 function adjustLevels(sectionText: string, delta: number): string {

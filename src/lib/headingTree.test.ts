@@ -5,6 +5,7 @@ import {
   applyInsertChild, applyInsertSibling, applyDeleteSection,
   insertChild, insertSibling, insertDangling,
   resolveDeleteFallback,
+  migrateFoldIds, setsEqual,
 } from "./headingTree";
 import { extractHeadings } from "./headings";
 
@@ -610,5 +611,113 @@ describe("resolveDeleteFallback", () => {
     const { newBody, fallbackId } = resolveDeleteFallback(body, tree, "h-999");
     expect(newBody).toBe(body);
     expect(fallbackId).toBeNull();
+  });
+});
+
+describe("migrateFoldIds", () => {
+  it("empty foldedIds returns empty set", () => {
+    const tree = buildHeadingTree(extractHeadings("# A\n## B"));
+    const result = migrateFoldIds(tree, tree, new Set());
+    expect(result.size).toBe(0);
+  });
+
+  it("tree unchanged returns same IDs", () => {
+    const tree = buildHeadingTree(extractHeadings("# A\n## B\n### C"));
+    const nodeB = tree.children[0]!.children[0]!;
+    const result = migrateFoldIds(tree, tree, new Set([nodeB.id]));
+    expect(result).toEqual(new Set([nodeB.id]));
+  });
+
+  it("line inserted above migrates fold ID to new line number", () => {
+    const prev = buildHeadingTree(extractHeadings("# A\n## B\n## C"));
+    const nodeB = prev.children[0]!.children[0]!;
+    expect(nodeB.id).toBe("h-1");
+
+    const next = buildHeadingTree(extractHeadings("# A\n\n## B\n## C"));
+    const nodeBNew = next.children[0]!.children[0]!;
+    expect(nodeBNew.id).toBe("h-2");
+
+    const result = migrateFoldIds(prev, next, new Set(["h-1"]));
+    expect(result).toEqual(new Set(["h-2"]));
+  });
+
+  it("line deleted above migrates fold ID to new line number", () => {
+    const prev = buildHeadingTree(extractHeadings("# A\n\n## B\n## C"));
+    const nodeB = prev.children[0]!.children[0]!;
+    expect(nodeB.id).toBe("h-2");
+
+    const next = buildHeadingTree(extractHeadings("# A\n## B\n## C"));
+    const nodeBNew = next.children[0]!.children[0]!;
+    expect(nodeBNew.id).toBe("h-1");
+
+    const result = migrateFoldIds(prev, next, new Set(["h-2"]));
+    expect(result).toEqual(new Set(["h-1"]));
+  });
+
+  it("heading deleted drops fold", () => {
+    const prev = buildHeadingTree(extractHeadings("# A\n## B\n## C"));
+    const nodeB = prev.children[0]!.children[0]!;
+
+    const next = buildHeadingTree(extractHeadings("# A\n## C"));
+
+    const result = migrateFoldIds(prev, next, new Set([nodeB.id]));
+    expect(result).toEqual(new Set());
+  });
+
+  it("multiple folds migrate correctly", () => {
+    const prev = buildHeadingTree(extractHeadings("# A\n## B\n### X\n## C\n### Y"));
+    const nodeB = prev.children[0]!.children[0]!;
+    const nodeC = prev.children[0]!.children[1]!;
+    expect(nodeB.id).toBe("h-1");
+    expect(nodeC.id).toBe("h-3");
+
+    const next = buildHeadingTree(extractHeadings("# A\n\n## B\n### X\n## C\n### Y"));
+    const nodeBNew = next.children[0]!.children[0]!;
+    const nodeCNew = next.children[0]!.children[1]!;
+    expect(nodeBNew.id).toBe("h-2");
+    expect(nodeCNew.id).toBe("h-4");
+
+    const result = migrateFoldIds(prev, next, new Set(["h-1", "h-3"]));
+    expect(result).toEqual(new Set(["h-2", "h-4"]));
+  });
+
+  it("duplicate heading text disambiguates by closest line", () => {
+    const prev = buildHeadingTree(extractHeadings("# A\n## B\n## B"));
+    const firstB = prev.children[0]!.children[0]!;
+    expect(firstB.id).toBe("h-1");
+    expect(firstB.text).toBe("B");
+
+    const next = buildHeadingTree(extractHeadings("# A\n\n## B\n## B"));
+    const firstBNew = next.children[0]!.children[0]!;
+    expect(firstBNew.id).toBe("h-2");
+
+    const result = migrateFoldIds(prev, next, new Set(["h-1"]));
+    expect(result).toEqual(new Set(["h-2"]));
+  });
+
+  it("stale ID not in old tree is dropped", () => {
+    const prev = buildHeadingTree(extractHeadings("# A\n## B"));
+    const next = buildHeadingTree(extractHeadings("# A\n## B"));
+
+    const result = migrateFoldIds(prev, next, new Set(["h-99"]));
+    expect(result).toEqual(new Set());
+  });
+});
+
+describe("setsEqual", () => {
+  it("equal sets return true", () => {
+    expect(setsEqual(new Set(["a", "b"]), new Set(["a", "b"]))).toBe(true);
+  });
+
+  it("different sizes return false", () => {
+    expect(setsEqual(new Set(["a"]), new Set(["a", "b"]))).toBe(false);
+  });
+
+  it("same size different values return false", () => {
+    expect(setsEqual(new Set(["a", "b"]), new Set(["a", "c"]))).toBe(false);
+  });
+
+  it("empty sets are equal", () => {
+    expect(setsEqual(new Set(), new Set())).toBe(true);
   });
 });
