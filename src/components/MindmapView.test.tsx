@@ -753,6 +753,15 @@ describe("MindmapView node creation", () => {
     expect(input.value).toBe("Untitled");
   });
 
+  it("double-click on empty canvas ('No headings') calls onInsertDangling", () => {
+    const tree = makeTree("");
+    const props = defaultProps();
+    render(<MindmapView tree={tree} {...props} />);
+    const noHeadings = screen.getByText("No headings");
+    fireEvent.doubleClick(noHeadings);
+    expect(props.onInsertDangling).toHaveBeenCalledWith("Untitled");
+  });
+
   it("double-click on SVG background calls onInsertDangling", () => {
     const tree = makeTree("# A\n## B");
     const props = defaultProps();

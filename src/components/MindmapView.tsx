@@ -150,7 +150,15 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
 
   if (allNodes.length === 0) {
     return (
-      <div className="flex items-center justify-center h-full text-neutral-500 dark:text-neutral-400">
+      <div
+        className="flex items-center justify-center h-full text-neutral-500 dark:text-neutral-400"
+        onDoubleClick={() => {
+          if (onInsertDangling) {
+            const nodeId = onInsertDangling("Untitled");
+            if (nodeId) setPendingEditId(nodeId);
+          }
+        }}
+      >
         No headings
       </div>
     );
