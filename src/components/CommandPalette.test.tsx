@@ -557,18 +557,38 @@ describe("CommandPalette", () => {
       dispatchSpy.mockRestore();
     });
 
-    it("arrow keys navigate through command list", () => {
+    it("arrow keys navigate between commands and annotation results", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "search_annotations") return mockResults;
+        return [];
+      });
       render(<CommandPalette open={true} onClose={onClose} />);
+
+      // Start in titles mode — command is active at index 0
       const commands = screen.getAllByTestId("command-palette-command");
       expect(commands[0]!.getAttribute("data-active")).toBe("true");
 
-      // With only 1 command, ArrowDown wraps back to index 0
-      fireEvent.keyDown(screen.getByTestId("command-palette-input"), { key: "ArrowDown" });
-      expect(screen.getAllByTestId("command-palette-command")[0]!.getAttribute("data-active")).toBe("true");
+      // Switch to @ mode which has 3 results and 0 commands
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "@silk" },
+      });
+      await advanceDebounce();
+      const results = screen.getAllByTestId("command-palette-result");
+      expect(results).toHaveLength(3);
+      expect(results[0]!.getAttribute("data-active")).toBe("true");
 
-      // ArrowUp also wraps back to index 0
+      // ArrowDown moves to second result
+      fireEvent.keyDown(screen.getByTestId("command-palette-input"), { key: "ArrowDown" });
+      expect(screen.getAllByTestId("command-palette-result")[0]!.getAttribute("data-active")).toBe("false");
+      expect(screen.getAllByTestId("command-palette-result")[1]!.getAttribute("data-active")).toBe("true");
+
+      // ArrowUp moves back to first result
       fireEvent.keyDown(screen.getByTestId("command-palette-input"), { key: "ArrowUp" });
-      expect(screen.getAllByTestId("command-palette-command")[0]!.getAttribute("data-active")).toBe("true");
+      expect(screen.getAllByTestId("command-palette-result")[0]!.getAttribute("data-active")).toBe("true");
+
+      // ArrowUp wraps to last result
+      fireEvent.keyDown(screen.getByTestId("command-palette-input"), { key: "ArrowUp" });
+      expect(screen.getAllByTestId("command-palette-result")[2]!.getAttribute("data-active")).toBe("true");
     });
   });
 });

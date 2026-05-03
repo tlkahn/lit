@@ -288,37 +288,37 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
             results.map((r, i) => {
               const itemIndex = filteredCommands.length + i;
               return (
-              <div
-                key={r.annotation_id}
-                data-testid="command-palette-result"
-                data-active={itemIndex === activeIndex ? "true" : "false"}
-                className={`cursor-pointer px-4 py-2 text-sm ${itemIndex === activeIndex ? "bg-bg-hover" : ""}`}
-                onClick={() => handleSelect(r)}
-              >
-                <div className="flex items-center gap-2">
-                  <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded bg-bg-hover text-xs font-medium text-text-accent">
-                    {TYPE_ICON[r.annotation_type]}
-                  </span>
-                  {certaintyMark(r.certainty) && (
-                    <span className="text-xs text-text-muted">
-                      {certaintyMark(r.certainty)}
+                <div
+                  key={r.annotation_id}
+                  data-testid="command-palette-result"
+                  data-active={itemIndex === activeIndex ? "true" : "false"}
+                  className={`cursor-pointer px-4 py-2 text-sm ${itemIndex === activeIndex ? "bg-bg-hover" : ""}`}
+                  onClick={() => handleSelect(r)}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded bg-bg-hover text-xs font-medium text-text-accent">
+                      {TYPE_ICON[r.annotation_type]}
                     </span>
-                  )}
-                  <span className="font-medium text-text-normal">
-                    {r.node_title}
-                  </span>
-                  {r.date && (
-                    <span className="ml-auto text-xs text-text-muted">
-                      {r.date}
+                    {certaintyMark(r.certainty) && (
+                      <span className="text-xs text-text-muted">
+                        {certaintyMark(r.certainty)}
+                      </span>
+                    )}
+                    <span className="font-medium text-text-normal">
+                      {r.node_title}
                     </span>
+                    {r.date && (
+                      <span className="ml-auto text-xs text-text-muted">
+                        {r.date}
+                      </span>
+                    )}
+                  </div>
+                  {r.body && (
+                    <div className="mt-0.5 pl-7 text-xs text-text-muted">
+                      {truncateBody(r.body)}
+                    </div>
                   )}
                 </div>
-                {r.body && (
-                  <div className="mt-0.5 pl-7 text-xs text-text-muted">
-                    {truncateBody(r.body)}
-                  </div>
-                )}
-              </div>
               );
             })}
 

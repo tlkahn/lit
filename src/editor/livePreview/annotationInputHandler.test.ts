@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { EditorState, type Transaction } from "@codemirror/state";
+import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { markdown } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
 import { createAnnotationInputHandler } from "./annotationInputHandler";
+
+const views: EditorView[] = [];
 
 function makeView(doc: string, cursorPos?: number): EditorView {
   const state = EditorState.create({
@@ -11,7 +13,9 @@ function makeView(doc: string, cursorPos?: number): EditorView {
     extensions: [markdown({ extensions: GFM }), createAnnotationInputHandler()],
     selection: { anchor: cursorPos ?? doc.length },
   });
-  return new EditorView({ state });
+  const view = new EditorView({ state });
+  views.push(view);
+  return view;
 }
 
 function simulateInput(view: EditorView, text: string): boolean {
@@ -21,7 +25,7 @@ function simulateInput(view: EditorView, text: string): boolean {
     if (h(view, from, to, text, () => {
       const tr = view.state.update(view.state.replaceSelection(text));
       view.dispatch(tr);
-      return tr as unknown as Transaction;
+      return tr;
     })) {
       return true;
     }
@@ -41,6 +45,8 @@ describe("createAnnotationInputHandler", () => {
 
   afterEach(() => {
     window.removeEventListener("lit:open-annotation-builder", listener);
+    views.forEach((v) => v.destroy());
+    views.length = 0;
   });
 
   it("extension is valid and can be used in EditorState", () => {
