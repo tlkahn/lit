@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
+import { EditorView } from "@codemirror/view";
 import { openSearchPanel, closeSearchPanel } from "@codemirror/search";
 import { useCodeMirror } from "./useCodeMirror";
 import { usePreferencesStore } from "../stores/preferences";
+import { useModalLockStore } from "../stores/modalLock";
 import { mediaThumbnailsFacet } from "./livePreview";
 
 function makeContainer() {
@@ -206,6 +208,40 @@ describe("useCodeMirror", () => {
     });
 
     expect(view.state.facet(mediaThumbnailsFacet)).toBe(false);
+  });
+
+  it("editor becomes non-editable when modalLock store is locked", () => {
+    useModalLockStore.setState({ openCount: 0, locked: false });
+    const { result } = renderHook(() =>
+      useCodeMirror({
+        containerRef: container.ref,
+        doc: "hello",
+      }),
+    );
+    const view = result.current.view!;
+    expect(view.state.facet(EditorView.editable)).toBe(true);
+
+    act(() => {
+      useModalLockStore.getState().increment();
+    });
+    expect(view.state.facet(EditorView.editable)).toBe(false);
+  });
+
+  it("editor becomes editable again when modalLock store unlocks", () => {
+    useModalLockStore.setState({ openCount: 1, locked: true });
+    const { result } = renderHook(() =>
+      useCodeMirror({
+        containerRef: container.ref,
+        doc: "hello",
+      }),
+    );
+    const view = result.current.view!;
+    expect(view.state.facet(EditorView.editable)).toBe(false);
+
+    act(() => {
+      useModalLockStore.getState().decrement();
+    });
+    expect(view.state.facet(EditorView.editable)).toBe(true);
   });
 
   it("reconfigures theme when dark class changes on document element", () => {

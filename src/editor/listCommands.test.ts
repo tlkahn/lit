@@ -25,6 +25,7 @@ function makeView(doc: string, cursorPos: number): EditorView {
     annotationCompartment: new Compartment(),
     mediaThumbnailsCompartment: new Compartment(),
     focusModeCompartment: new Compartment(),
+    editableCompartment: new Compartment(),
   };
   const state = EditorState.create({
     doc,

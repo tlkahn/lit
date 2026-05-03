@@ -28,7 +28,7 @@ vi.mock("katex", () => ({
 
 vi.mock("katex/dist/katex.min.css", () => ({}));
 
-function makeConfig(overrides?: { onChange?: (content: string) => void }) {
+function makeConfig(overrides?: { onChange?: (content: string) => void; editorLocked?: boolean }) {
   return {
     theme: "light" as const,
     themeCompartment: new Compartment(),
@@ -39,6 +39,7 @@ function makeConfig(overrides?: { onChange?: (content: string) => void }) {
     annotationCompartment: new Compartment(),
     mediaThumbnailsCompartment: new Compartment(),
     focusModeCompartment: new Compartment(),
+    editableCompartment: new Compartment(),
     ...overrides,
   };
 }
@@ -237,6 +238,18 @@ describe("createExtensions", () => {
     const names: string[] = [];
     tree.iterate({ enter: (node) => { names.push(node.name); } });
     expect(names).toContain("BlockComment");
+  });
+
+  it("editor is editable when editorLocked is false", () => {
+    const exts = createExtensions(makeConfig({ editorLocked: false }));
+    const state = EditorState.create({ doc: "hello", extensions: exts });
+    expect(state.facet(EditorView.editable)).toBe(true);
+  });
+
+  it("editor is not editable when editorLocked is true", () => {
+    const exts = createExtensions(makeConfig({ editorLocked: true }));
+    const state = EditorState.create({ doc: "hello", extensions: exts });
+    expect(state.facet(EditorView.editable)).toBe(false);
   });
 });
 

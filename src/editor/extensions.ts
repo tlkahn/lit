@@ -31,6 +31,8 @@ export interface ExtensionConfig {
   annotationEnabled?: boolean;
   focusModeCompartment: Compartment;
   focusModeActive?: boolean;
+  editableCompartment: Compartment;
+  editorLocked?: boolean;
   frontmatter?: Record<string, unknown>;
   noteDir?: string;
   mediaThumbnails?: boolean;
@@ -59,6 +61,7 @@ export function createExtensions(config: ExtensionConfig): Extension[] {
     ),
     config.foldCompartment.of(foldExtension(config.foldConfig)),
     config.focusModeCompartment.of(focusModeExtension(config.focusModeActive ?? false)),
+    config.editableCompartment.of(EditorView.editable.of(!(config.editorLocked ?? false))),
     history(),
     search(),
     keymap.of(searchKeymap),

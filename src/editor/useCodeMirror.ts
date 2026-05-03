@@ -10,6 +10,7 @@ import { frontmatterFacet, noteDirFacet, mediaThumbnailsFacet } from "./livePrev
 import { docReplaced } from "./jumpHistory";
 import { usePreferencesStore } from "../stores/preferences";
 import { useFocusModeStore } from "../stores/focusMode";
+import { useModalLockStore } from "../stores/modalLock";
 import { setDisplayMode, annotationExtension } from "./livePreview/annotationState";
 
 export interface UseCodeMirrorProps {
@@ -39,6 +40,7 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
   const annotationCompartment = useRef(new Compartment());
   const mediaThumbnailsCompartment = useRef(new Compartment());
   const focusModeCompartment = useRef(new Compartment());
+  const editableCompartment = useRef(new Compartment());
   const suppressOnChange = useRef(false);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
@@ -71,6 +73,8 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
       mediaThumbnailsCompartment: mediaThumbnailsCompartment.current,
       focusModeCompartment: focusModeCompartment.current,
       focusModeActive: useFocusModeStore.getState().active,
+      editableCompartment: editableCompartment.current,
+      editorLocked: useModalLockStore.getState().locked,
       mediaThumbnails,
       foldConfig: { enabled: foldingEnabled, showControls: foldingShowControls },
       frontmatter,
@@ -193,6 +197,21 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
       v.dispatch({
         effects: focusModeCompartment.current.reconfigure(
           focusModeExtension(s.active),
+        ),
+      });
+    });
+  }, [view]);
+
+  useEffect(() => {
+    const v = viewRef.current;
+    if (!v) return;
+    let prev = useModalLockStore.getState().locked;
+    return useModalLockStore.subscribe((s) => {
+      if (s.locked === prev) return;
+      prev = s.locked;
+      v.dispatch({
+        effects: editableCompartment.current.reconfigure(
+          EditorView.editable.of(!s.locked),
         ),
       });
     });

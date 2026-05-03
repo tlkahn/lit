@@ -16,6 +16,7 @@ import { getStartupContext } from "./lib/ipc";
 import { HeadingQuickSwitcher } from "./components/HeadingQuickSwitcher";
 import { CommandPalette } from "./components/CommandPalette";
 import { AnnotationBuilderModal } from "./components/AnnotationBuilderModal";
+import { useModalLock } from "./hooks/useModalLock";
 import { getCurrentEditorView } from "./lib/editorViewRef";
 import { annotationToFields, getEditCursorOffset, type AnnotationBuilderEventDetail, type EditRawInfo } from "./lib/annotationDsl";
 import type { Annotation } from "./lib/ipc";
@@ -103,6 +104,10 @@ function App() {
   const [editingAnnotation, setEditingAnnotation] = useState<Annotation | undefined>();
   const [editingRange, setEditingRange] = useState<{ from: number; to: number } | undefined>();
   const [selectionText, setSelectionText] = useState<string | undefined>();
+
+  useModalLock(quickSwitcherOpen);
+  useModalLock(commandPaletteOpen);
+  useModalLock(annotationBuilderOpen);
 
   useEffect(() => {
     const handler = () => setQuickSwitcherOpen((prev) => !prev);

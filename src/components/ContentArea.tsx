@@ -17,6 +17,7 @@ import { ConflictDialog } from "./ConflictDialog";
 import { buildHeadingTree, applyRename, applyMove } from "../lib/headingTree";
 import { YamlHighlighter } from "./YamlHighlighter";
 import { useKeymaps } from "../hooks/useKeymaps";
+import { useModalLock } from "../hooks/useModalLock";
 
 const LazyMindmapView = lazy(() => import("./MindmapView"));
 
@@ -63,6 +64,7 @@ export function ContentArea() {
   const [body, setBody] = useState("");
   const [viewMode, setViewMode] = useState<"editor" | "mindmap">("editor");
   const [showConflict, setShowConflict] = useState(false);
+  useModalLock(showConflict);
   const [title, setTitle] = useState("");
   const [editingTitle, setEditingTitle] = useState("");
   const [frontmatter, setFrontmatter] = useState<Record<string, unknown>>({});

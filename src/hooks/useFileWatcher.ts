@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useWorkspaceStore } from "../stores/workspace";
+import { useModalLockStore } from "../stores/modalLock";
 import type { FileEvent } from "../lib/ipc";
 
 export function useFileWatcher(onCurrentPageModified?: () => void) {
@@ -9,10 +10,21 @@ export function useFileWatcher(onCurrentPageModified?: () => void) {
   const refreshPages = useWorkspaceStore((s) => s.refreshPages);
   const selectPage = useWorkspaceStore((s) => s.selectPage);
   const currentPageRef = useRef(currentPagePath);
+  const pendingReloadRef = useRef(false);
 
   useEffect(() => {
     currentPageRef.current = currentPagePath;
   }, [currentPagePath]);
+
+  useEffect(() => {
+    const unsub = useModalLockStore.subscribe((s) => {
+      if (!s.locked && pendingReloadRef.current) {
+        pendingReloadRef.current = false;
+        onCurrentPageModified?.();
+      }
+    });
+    return unsub;
+  }, [onCurrentPageModified]);
 
   useEffect(() => {
     if (!workspacePath) return;
@@ -30,7 +42,11 @@ export function useFileWatcher(onCurrentPageModified?: () => void) {
             currentPageRef.current &&
             event.payload.path === currentPageRef.current
           ) {
-            onCurrentPageModified?.();
+            if (useModalLockStore.getState().locked) {
+              pendingReloadRef.current = true;
+            } else {
+              onCurrentPageModified?.();
+            }
           }
         },
       );
