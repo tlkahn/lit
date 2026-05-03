@@ -459,7 +459,7 @@ describe("CommandPalette", () => {
   // Step 7: Stub modes
 
   describe("stub modes", () => {
-    it('no-prefix mode shows "Title search coming soon" placeholder', () => {
+    it('no-prefix mode shows "Title search coming soon" after commands when query is non-empty', () => {
       render(<CommandPalette open={true} onClose={onClose} />);
       fireEvent.change(screen.getByTestId("command-palette-input"), {
         target: { value: "meeting" },
@@ -481,6 +481,94 @@ describe("CommandPalette", () => {
         target: { value: "/pattern" },
       });
       expect(screen.getByText("Content search coming soon")).toBeInTheDocument();
+    });
+  });
+
+  // Step 8: Static commands in titles mode
+
+  describe("static commands", () => {
+    it('"Insert Annotation" command appears in titles mode with empty query', () => {
+      render(<CommandPalette open={true} onClose={onClose} />);
+      const commands = screen.getAllByTestId("command-palette-command");
+      expect(commands).toHaveLength(1);
+      expect(commands[0]).toHaveTextContent("Insert Annotation");
+    });
+
+    it('"Insert Annotation" appears when query partially matches', () => {
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "annot" },
+      });
+      const commands = screen.getAllByTestId("command-palette-command");
+      expect(commands).toHaveLength(1);
+      expect(commands[0]).toHaveTextContent("Insert Annotation");
+    });
+
+    it('"Insert Annotation" does NOT appear when query does not match', () => {
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "xyz" },
+      });
+      expect(screen.queryAllByTestId("command-palette-command")).toHaveLength(0);
+    });
+
+    it('"Insert Annotation" does NOT appear in annotation/tag/content modes', () => {
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "@annot" },
+      });
+      expect(screen.queryAllByTestId("command-palette-command")).toHaveLength(0);
+
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "#annot" },
+      });
+      expect(screen.queryAllByTestId("command-palette-command")).toHaveLength(0);
+
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "/annot" },
+      });
+      expect(screen.queryAllByTestId("command-palette-command")).toHaveLength(0);
+    });
+
+    it('clicking "Insert Annotation" dispatches lit:open-annotation-builder and calls onClose', () => {
+      const dispatchSpy = vi.spyOn(window, "dispatchEvent");
+      render(<CommandPalette open={true} onClose={onClose} />);
+      const commands = screen.getAllByTestId("command-palette-command");
+      fireEvent.click(commands[0]!);
+
+      const builderEvent = dispatchSpy.mock.calls.find(
+        (call) => (call[0] as CustomEvent).type === "lit:open-annotation-builder",
+      );
+      expect(builderEvent).toBeDefined();
+      expect(onClose).toHaveBeenCalled();
+      dispatchSpy.mockRestore();
+    });
+
+    it("Enter key on active command dispatches event and closes palette", () => {
+      const dispatchSpy = vi.spyOn(window, "dispatchEvent");
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.keyDown(screen.getByTestId("command-palette-input"), { key: "Enter" });
+
+      const builderEvent = dispatchSpy.mock.calls.find(
+        (call) => (call[0] as CustomEvent).type === "lit:open-annotation-builder",
+      );
+      expect(builderEvent).toBeDefined();
+      expect(onClose).toHaveBeenCalled();
+      dispatchSpy.mockRestore();
+    });
+
+    it("arrow keys navigate through command list", () => {
+      render(<CommandPalette open={true} onClose={onClose} />);
+      const commands = screen.getAllByTestId("command-palette-command");
+      expect(commands[0]!.getAttribute("data-active")).toBe("true");
+
+      // With only 1 command, ArrowDown wraps back to index 0
+      fireEvent.keyDown(screen.getByTestId("command-palette-input"), { key: "ArrowDown" });
+      expect(screen.getAllByTestId("command-palette-command")[0]!.getAttribute("data-active")).toBe("true");
+
+      // ArrowUp also wraps back to index 0
+      fireEvent.keyDown(screen.getByTestId("command-palette-input"), { key: "ArrowUp" });
+      expect(screen.getAllByTestId("command-palette-command")[0]!.getAttribute("data-active")).toBe("true");
     });
   });
 });

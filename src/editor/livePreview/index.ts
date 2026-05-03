@@ -14,6 +14,7 @@ import { createWrappedLineClickFix } from "./clickFix";
 import { crossrefExtension } from "./crossref";
 import { citeprocExtension } from "./citeproc";
 import { citationClickExtension } from "./citationClickHandler";
+import { createAnnotationInputHandler } from "./annotationInputHandler";
 import { autocompletion } from "@codemirror/autocomplete";
 import { crossrefCompletionSource } from "./crossrefCompletion";
 import { wikilinkCompletionSource } from "./wikilinkCompletion";
@@ -48,6 +49,7 @@ export function livePreviewExtension(config?: LivePreviewConfig): Extension {
     crossrefExtension(),
     citeprocExtension(),
     citationClickExtension(),
+    createAnnotationInputHandler(),
     autocompletion({ override: [crossrefCompletionSource, wikilinkCompletionSource] }),
   ];
   if (config?.resolveImageSrc) {

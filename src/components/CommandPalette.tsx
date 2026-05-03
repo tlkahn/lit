@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   searchAnnotations,
   type AnnotationType,
@@ -11,6 +11,22 @@ import {
 } from "../editor/livePreview/annotationConstants";
 import { useWorkspaceStore } from "../stores/workspace";
 import { globalJumpTracker } from "../editor/jumpTracker";
+
+interface StaticCommand {
+  id: string;
+  label: string;
+  icon: string;
+  action: () => void;
+}
+
+const STATIC_COMMANDS: StaticCommand[] = [
+  {
+    id: "insert-annotation",
+    label: "Insert Annotation",
+    icon: "✏️",
+    action: () => window.dispatchEvent(new CustomEvent("lit:open-annotation-builder")),
+  },
+];
 
 type PaletteMode = "titles" | "annotations" | "tags" | "content";
 
@@ -60,6 +76,12 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
 
   const { mode, query, prefix } = parseInput(rawInput);
 
+  const filteredCommands = useMemo(() => {
+    if (mode !== "titles") return [];
+    const q = query.toLowerCase();
+    return STATIC_COMMANDS.filter((cmd) => cmd.label.toLowerCase().includes(q));
+  }, [mode, query]);
+
   if (mode !== prevModeRef.current) {
     if (prevModeRef.current !== mode) {
       setTypeFilter(null);
@@ -101,13 +123,15 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
     };
   }, [mode, query, typeFilter]);
 
+  const totalItems = filteredCommands.length + results.length;
+
   useEffect(() => {
-    if (results.length === 0) return;
+    if (totalItems === 0) return;
     const activeEl = listRef.current?.querySelector('[data-active="true"]');
     if (activeEl && typeof activeEl.scrollIntoView === "function") {
       activeEl.scrollIntoView({ block: "nearest" });
     }
-  }, [activeIndex, results.length]);
+  }, [activeIndex, totalItems]);
 
   const handleSelect = useCallback(
     (result: AnnotationSearchResult) => {
@@ -131,6 +155,14 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
     [currentPagePath, selectPageAtLine, onClose],
   );
 
+  const handleCommandSelect = useCallback(
+    (cmd: StaticCommand) => {
+      cmd.action();
+      onClose();
+    },
+    [onClose],
+  );
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -138,22 +170,28 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
         onClose();
       } else if (e.key === "ArrowDown") {
         e.preventDefault();
-        if (results.length > 0) {
-          setActiveIndex((prev) => (prev + 1) % results.length);
+        if (totalItems > 0) {
+          setActiveIndex((prev) => (prev + 1) % totalItems);
         }
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
-        if (results.length > 0) {
-          setActiveIndex((prev) => (prev - 1 + results.length) % results.length);
+        if (totalItems > 0) {
+          setActiveIndex((prev) => (prev - 1 + totalItems) % totalItems);
         }
       } else if (e.key === "Enter") {
         e.preventDefault();
-        if (results.length > 0 && results[activeIndex]) {
-          handleSelect(results[activeIndex]);
+        if (activeIndex < filteredCommands.length) {
+          const cmd = filteredCommands[activeIndex];
+          if (cmd) handleCommandSelect(cmd);
+        } else {
+          const resultIndex = activeIndex - filteredCommands.length;
+          if (results[resultIndex]) {
+            handleSelect(results[resultIndex]);
+          }
         }
       }
     },
-    [results, activeIndex, handleSelect, onClose],
+    [results, activeIndex, totalItems, filteredCommands, handleSelect, handleCommandSelect, onClose],
   );
 
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -219,6 +257,23 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
         )}
 
         <div ref={listRef} className="flex-1 overflow-y-auto">
+          {filteredCommands.map((cmd, i) => (
+            <div
+              key={cmd.id}
+              data-testid="command-palette-command"
+              data-active={i === activeIndex ? "true" : "false"}
+              className={`cursor-pointer px-4 py-2 text-sm ${i === activeIndex ? "bg-bg-hover" : ""}`}
+              onClick={() => handleCommandSelect(cmd)}
+            >
+              <div className="flex items-center gap-2">
+                <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center text-base">
+                  {cmd.icon}
+                </span>
+                <span className="font-medium text-text-normal">{cmd.label}</span>
+              </div>
+            </div>
+          ))}
+
           {mode === "annotations" && !query && (
             <div className="px-4 py-3 text-sm text-text-muted">
               Type to search annotations…
@@ -230,12 +285,14 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
           )}
 
           {mode === "annotations" &&
-            results.map((r, i) => (
+            results.map((r, i) => {
+              const itemIndex = filteredCommands.length + i;
+              return (
               <div
                 key={r.annotation_id}
                 data-testid="command-palette-result"
-                data-active={i === activeIndex ? "true" : "false"}
-                className={`cursor-pointer px-4 py-2 text-sm ${i === activeIndex ? "bg-bg-hover" : ""}`}
+                data-active={itemIndex === activeIndex ? "true" : "false"}
+                className={`cursor-pointer px-4 py-2 text-sm ${itemIndex === activeIndex ? "bg-bg-hover" : ""}`}
                 onClick={() => handleSelect(r)}
               >
                 <div className="flex items-center gap-2">
@@ -262,7 +319,8 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
                   </div>
                 )}
               </div>
-            ))}
+              );
+            })}
 
           {mode === "titles" && query && (
             <div className="px-4 py-3 text-sm text-text-muted">
