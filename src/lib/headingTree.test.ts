@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { buildHeadingTree, sectionRange, applyRename, applyMove, findNode, findParent } from "./headingTree";
+import {
+  buildHeadingTree, sectionRange, applyRename, applyMove, findNode, findParent,
+  findNextSibling, findPrevSibling, firstChild,
+  applyInsertChild, applyInsertSibling, applyDeleteSection,
+} from "./headingTree";
 import { extractHeadings } from "./headings";
 
 describe("buildHeadingTree", () => {
@@ -204,5 +208,222 @@ describe("applyMove", () => {
     expect(nodeB.text).toBe("B");
     const result = applyMove(body, root, nodeB.id, root.children[0]!.id, 0);
     expect(result).toBe("## A\n### B\n#### C\n##### D");
+  });
+});
+
+describe("findNextSibling", () => {
+  it("returns the next sibling when one exists", () => {
+    const root = buildHeadingTree(extractHeadings("# A\n## B\n## C"));
+    const nodeB = root.children[0]!.children[0]!;
+    const result = findNextSibling(root, nodeB.id);
+    expect(result).not.toBeNull();
+    expect(result!.text).toBe("C");
+  });
+
+  it("returns null for the last sibling", () => {
+    const root = buildHeadingTree(extractHeadings("# A\n## B\n## C"));
+    const nodeC = root.children[0]!.children[1]!;
+    expect(findNextSibling(root, nodeC.id)).toBeNull();
+  });
+
+  it("returns null for root", () => {
+    const root = buildHeadingTree(extractHeadings("# A"));
+    expect(findNextSibling(root, "root")).toBeNull();
+  });
+
+  it("works for top-level siblings under virtual root", () => {
+    const root = buildHeadingTree(extractHeadings("# A\n# B\n# C"));
+    const nodeA = root.children[0]!;
+    const result = findNextSibling(root, nodeA.id);
+    expect(result).not.toBeNull();
+    expect(result!.text).toBe("B");
+  });
+});
+
+describe("findPrevSibling", () => {
+  it("returns the previous sibling when one exists", () => {
+    const root = buildHeadingTree(extractHeadings("# A\n## B\n## C"));
+    const nodeC = root.children[0]!.children[1]!;
+    const result = findPrevSibling(root, nodeC.id);
+    expect(result).not.toBeNull();
+    expect(result!.text).toBe("B");
+  });
+
+  it("returns null for the first sibling", () => {
+    const root = buildHeadingTree(extractHeadings("# A\n## B\n## C"));
+    const nodeB = root.children[0]!.children[0]!;
+    expect(findPrevSibling(root, nodeB.id)).toBeNull();
+  });
+
+  it("returns null for root", () => {
+    const root = buildHeadingTree(extractHeadings("# A"));
+    expect(findPrevSibling(root, "root")).toBeNull();
+  });
+});
+
+describe("firstChild", () => {
+  it("returns first child when children exist", () => {
+    const root = buildHeadingTree(extractHeadings("# A\n## B\n## C"));
+    const nodeA = root.children[0]!;
+    const result = firstChild(nodeA);
+    expect(result).not.toBeNull();
+    expect(result!.text).toBe("B");
+  });
+
+  it("returns null for a leaf node", () => {
+    const root = buildHeadingTree(extractHeadings("# A\n## B"));
+    const nodeB = root.children[0]!.children[0]!;
+    expect(firstChild(nodeB)).toBeNull();
+  });
+});
+
+describe("applyInsertChild", () => {
+  it("inserts H2 under H1 with no existing children", () => {
+    const body = "# Parent\nSome content";
+    const tree = buildHeadingTree(extractHeadings(body));
+    const result = applyInsertChild(body, tree, tree.children[0]!.id, "Child");
+    expect(result).toBe("# Parent\nSome content\n## Child");
+  });
+
+  it("inserts H2 after existing children", () => {
+    const body = "# Parent\n## Existing\nContent";
+    const tree = buildHeadingTree(extractHeadings(body));
+    const result = applyInsertChild(body, tree, tree.children[0]!.id, "New Child");
+    expect(result).toBe("# Parent\n## Existing\nContent\n## New Child");
+  });
+
+  it("inserts H3 under H2", () => {
+    const body = "# A\n## B\nB content";
+    const tree = buildHeadingTree(extractHeadings(body));
+    const nodeB = tree.children[0]!.children[0]!;
+    const result = applyInsertChild(body, tree, nodeB.id, "Sub");
+    expect(result).toBe("# A\n## B\nB content\n### Sub");
+  });
+
+  it("inserts H1 under virtual root (appended to body)", () => {
+    const body = "# Existing\nContent";
+    const tree = buildHeadingTree(extractHeadings(body));
+    const result = applyInsertChild(body, tree, "root", "New Top");
+    expect(result).toBe("# Existing\nContent\n# New Top");
+  });
+
+  it("clamps at H6 (no H7)", () => {
+    const body = "###### Deep";
+    const tree = buildHeadingTree(extractHeadings(body));
+    const node = tree.children[0]!;
+    const result = applyInsertChild(body, tree, node.id, "Deeper");
+    expect(result).toBe("###### Deep\n###### Deeper");
+  });
+
+  it("returns body unchanged when parentId not found", () => {
+    const body = "# A";
+    const tree = buildHeadingTree(extractHeadings(body));
+    const result = applyInsertChild(body, tree, "h-999", "Ghost");
+    expect(result).toBe(body);
+  });
+
+  it("preserves trailing newline", () => {
+    const body = "# A\n";
+    const tree = buildHeadingTree(extractHeadings(body));
+    const result = applyInsertChild(body, tree, tree.children[0]!.id, "B");
+    expect(result).toContain("## B");
+    expect(result.indexOf("# A")).toBe(0);
+  });
+});
+
+describe("applyInsertSibling", () => {
+  it("inserts after middle sibling", () => {
+    const body = "# A\n## B\nB body\n## C\nC body";
+    const tree = buildHeadingTree(extractHeadings(body));
+    const nodeB = tree.children[0]!.children[0]!;
+    const result = applyInsertSibling(body, tree, nodeB.id, "New");
+    expect(result).toBe("# A\n## B\nB body\n## New\n## C\nC body");
+  });
+
+  it("inserts after last sibling", () => {
+    const body = "# A\n## B\nB body";
+    const tree = buildHeadingTree(extractHeadings(body));
+    const nodeB = tree.children[0]!.children[0]!;
+    const result = applyInsertSibling(body, tree, nodeB.id, "New");
+    expect(result).toBe("# A\n## B\nB body\n## New");
+  });
+
+  it("inserts H1 sibling under root", () => {
+    const body = "# A\nContent";
+    const tree = buildHeadingTree(extractHeadings(body));
+    const nodeA = tree.children[0]!;
+    const result = applyInsertSibling(body, tree, nodeA.id, "B");
+    expect(result).toBe("# A\nContent\n# B");
+  });
+
+  it("preserves reference node's level", () => {
+    const body = "# A\n### B\nB content";
+    const tree = buildHeadingTree(extractHeadings(body));
+    const nodeB = tree.children[0]!.children[0]!;
+    expect(nodeB.level).toBe(3);
+    const result = applyInsertSibling(body, tree, nodeB.id, "C");
+    expect(result).toContain("### C");
+  });
+
+  it("returns body unchanged when siblingId not found", () => {
+    const body = "# A";
+    const tree = buildHeadingTree(extractHeadings(body));
+    const result = applyInsertSibling(body, tree, "h-999", "Ghost");
+    expect(result).toBe(body);
+  });
+});
+
+describe("applyDeleteSection", () => {
+  it("deletes leaf H2 with content", () => {
+    const body = "# Title\n## A\nA content\n## B\nB content";
+    const tree = buildHeadingTree(extractHeadings(body));
+    const nodeA = tree.children[0]!.children[0]!;
+    const result = applyDeleteSection(body, tree, nodeA.id);
+    expect(result).toBe("# Title\n## B\nB content");
+  });
+
+  it("deletes parent + all children", () => {
+    const body = "# Title\n## Parent\n### Child\nChild content\n## After";
+    const tree = buildHeadingTree(extractHeadings(body));
+    const parent = tree.children[0]!.children[0]!;
+    expect(parent.text).toBe("Parent");
+    const result = applyDeleteSection(body, tree, parent.id);
+    expect(result).toBe("# Title\n## After");
+  });
+
+  it("deletes only heading when that's all there is", () => {
+    const body = "# Only";
+    const tree = buildHeadingTree(extractHeadings(body));
+    const result = applyDeleteSection(body, tree, tree.children[0]!.id);
+    expect(result).toBe("");
+  });
+
+  it("deletes last heading, preserving content before it", () => {
+    const body = "Some intro\n# Heading\nHeading content";
+    const tree = buildHeadingTree(extractHeadings(body));
+    const result = applyDeleteSection(body, tree, tree.children[0]!.id);
+    expect(result).toBe("Some intro\n");
+  });
+
+  it("returns unchanged when nodeId not found", () => {
+    const body = "# A\n## B";
+    const tree = buildHeadingTree(extractHeadings(body));
+    const result = applyDeleteSection(body, tree, "h-999");
+    expect(result).toBe(body);
+  });
+
+  it("returns unchanged for root", () => {
+    const body = "# A\n## B";
+    const tree = buildHeadingTree(extractHeadings(body));
+    const result = applyDeleteSection(body, tree, "root");
+    expect(result).toBe(body);
+  });
+
+  it("does not leave double blank lines after deletion", () => {
+    const body = "# A\n\n## B\n\n## C";
+    const tree = buildHeadingTree(extractHeadings(body));
+    const nodeB = tree.children[0]!.children[0]!;
+    const result = applyDeleteSection(body, tree, nodeB.id);
+    expect(result).not.toContain("\n\n\n");
   });
 });

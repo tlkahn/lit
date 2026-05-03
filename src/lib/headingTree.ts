@@ -157,6 +157,71 @@ export function findParent(tree: HeadingNode, id: string): HeadingNode | null {
   return null;
 }
 
+export function findNextSibling(tree: HeadingNode, id: string): HeadingNode | null {
+  const parent = findParent(tree, id);
+  if (!parent) return null;
+  const idx = parent.children.findIndex((c) => c.id === id);
+  return parent.children[idx + 1] ?? null;
+}
+
+export function findPrevSibling(tree: HeadingNode, id: string): HeadingNode | null {
+  const parent = findParent(tree, id);
+  if (!parent) return null;
+  const idx = parent.children.findIndex((c) => c.id === id);
+  return idx > 0 ? parent.children[idx - 1]! : null;
+}
+
+export function firstChild(node: HeadingNode): HeadingNode | null {
+  return node.children[0] ?? null;
+}
+
+export function applyInsertChild(body: string, tree: HeadingNode, parentId: string, text: string): string {
+  const parent = findNode(tree, parentId);
+  if (!parent) return body;
+  const childLevel = parent.level === 0 ? 1 : Math.min(6, parent.level + 1);
+  const newLine = "#".repeat(childLevel) + " " + text;
+  const headings = extractHeadings(body);
+
+  let insertAt: number;
+  if (parent.level === 0) {
+    insertAt = body.length;
+  } else {
+    const range = sectionRange(headings, body.length, parent);
+    insertAt = range.to;
+  }
+
+  const before = body.slice(0, insertAt);
+  const after = body.slice(insertAt);
+  const sep = before.length > 0 && !before.endsWith("\n") ? "\n" : "";
+  const trail = after.length > 0 && !after.startsWith("\n") ? "\n" : "";
+  return before + sep + newLine + trail + after;
+}
+
+export function applyInsertSibling(body: string, tree: HeadingNode, siblingId: string, text: string): string {
+  const node = findNode(tree, siblingId);
+  if (!node) return body;
+  const newLine = "#".repeat(node.level) + " " + text;
+  const headings = extractHeadings(body);
+  const range = sectionRange(headings, body.length, node);
+
+  const before = body.slice(0, range.to);
+  const after = body.slice(range.to);
+  const sep = before.length > 0 && !before.endsWith("\n") ? "\n" : "";
+  const trail = after.length > 0 && !after.startsWith("\n") ? "\n" : "";
+  return before + sep + newLine + trail + after;
+}
+
+export function applyDeleteSection(body: string, tree: HeadingNode, nodeId: string): string {
+  if (nodeId === "root") return body;
+  const node = findNode(tree, nodeId);
+  if (!node) return body;
+  const headings = extractHeadings(body);
+  const range = sectionRange(headings, body.length, node);
+
+  const result = body.slice(0, range.from) + body.slice(range.to);
+  return result.replace(/\n{3,}/g, "\n\n");
+}
+
 const HEADING_LINE_RE = /^(#{1,6})\s/gm;
 
 function adjustLevels(sectionText: string, delta: number): string {

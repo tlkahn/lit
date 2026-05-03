@@ -10,6 +10,7 @@ function makeTree(body: string) {
 }
 
 const defaultProps = () => ({
+  selectedId: null as string | null,
   onNodeClick: vi.fn(),
   onNodeRename: vi.fn(),
   onNodeMove: vi.fn(),
@@ -360,5 +361,193 @@ describe("MindmapView drag-and-drop", () => {
 
     expect(props.onNodeClick).toHaveBeenCalledWith(tree.children[0]!.children[0]!);
     expect(props.onNodeMove).not.toHaveBeenCalled();
+  });
+});
+
+describe("MindmapView selection", () => {
+  it("selected node has data-mindmap-selected attribute", () => {
+    const tree = makeTree("# A\n## B\n## C");
+    const nodeB = tree.children[0]!.children[0]!;
+    const { container } = render(
+      <MindmapView tree={tree} {...defaultProps()} selectedId={nodeB.id} />,
+    );
+    const selected = container.querySelector("[data-mindmap-selected]");
+    expect(selected).toBeTruthy();
+    expect(selected!.getAttribute("data-mindmap-node")).toBe(nodeB.id);
+  });
+
+  it("selected node rect gets focus ring stroke", () => {
+    const tree = makeTree("# A\n## B");
+    const nodeB = tree.children[0]!.children[0]!;
+    const { container } = render(
+      <MindmapView tree={tree} {...defaultProps()} selectedId={nodeB.id} />,
+    );
+    const selected = container.querySelector("[data-mindmap-selected]")!;
+    const rect = selected.querySelector("rect")!;
+    const cls = rect.getAttribute("class") ?? "";
+    expect(cls).toContain("stroke-blue-500");
+  });
+
+  it("selectedId={null} means no data-mindmap-selected", () => {
+    const tree = makeTree("# A\n## B");
+    const { container } = render(
+      <MindmapView tree={tree} {...defaultProps()} selectedId={null} />,
+    );
+    expect(container.querySelector("[data-mindmap-selected]")).toBeNull();
+  });
+
+  it("click still calls onNodeClick when selected", () => {
+    const tree = makeTree("# A\n## B");
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const el = container.querySelector(`[data-mindmap-node="${nodeB.id}"]`)!;
+    fireEvent.click(el);
+    expect(props.onNodeClick).toHaveBeenCalledWith(nodeB);
+  });
+
+  it("only one node can be selected", () => {
+    const tree = makeTree("# A\n## B\n## C");
+    const nodeB = tree.children[0]!.children[0]!;
+    const { container } = render(
+      <MindmapView tree={tree} {...defaultProps()} selectedId={nodeB.id} />,
+    );
+    const allSelected = container.querySelectorAll("[data-mindmap-selected]");
+    expect(allSelected).toHaveLength(1);
+  });
+});
+
+describe("MindmapView arrow-key navigation", () => {
+  it("ArrowDown selects next sibling", () => {
+    const tree = makeTree("# A\n## B\n## C");
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "ArrowDown" });
+    const nodeC = tree.children[0]!.children[1]!;
+    expect(props.onNodeClick).toHaveBeenCalledWith(nodeC);
+  });
+
+  it("ArrowUp selects previous sibling", () => {
+    const tree = makeTree("# A\n## B\n## C");
+    const nodeC = tree.children[0]!.children[1]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeC.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "ArrowUp" });
+    const nodeB = tree.children[0]!.children[0]!;
+    expect(props.onNodeClick).toHaveBeenCalledWith(nodeB);
+  });
+
+  it("ArrowRight selects first child", () => {
+    const tree = makeTree("# A\n## B\n## C");
+    const nodeA = tree.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeA.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "ArrowRight" });
+    const nodeB = tree.children[0]!.children[0]!;
+    expect(props.onNodeClick).toHaveBeenCalledWith(nodeB);
+  });
+
+  it("ArrowLeft selects parent", () => {
+    const tree = makeTree("# A\n## B");
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "ArrowLeft" });
+    const nodeA = tree.children[0]!;
+    expect(props.onNodeClick).toHaveBeenCalledWith(nodeA);
+  });
+
+  it("ArrowDown at last sibling is no-op", () => {
+    const tree = makeTree("# A\n## B\n## C");
+    const nodeC = tree.children[0]!.children[1]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeC.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "ArrowDown" });
+    expect(props.onNodeClick).not.toHaveBeenCalled();
+  });
+
+  it("ArrowUp at first sibling is no-op", () => {
+    const tree = makeTree("# A\n## B\n## C");
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "ArrowUp" });
+    expect(props.onNodeClick).not.toHaveBeenCalled();
+  });
+
+  it("ArrowRight on leaf is no-op", () => {
+    const tree = makeTree("# A\n## B");
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "ArrowRight" });
+    expect(props.onNodeClick).not.toHaveBeenCalled();
+  });
+
+  it("ArrowLeft at root-level heading (parent is virtual root) is no-op", () => {
+    const tree = makeTree("# A\n## B");
+    const nodeA = tree.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeA.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "ArrowLeft" });
+    expect(props.onNodeClick).not.toHaveBeenCalled();
+  });
+
+  it("all arrows with selectedId={null} are no-ops", () => {
+    const tree = makeTree("# A\n## B\n## C");
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={null} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "ArrowDown" });
+    fireEvent.keyDown(svg, { key: "ArrowUp" });
+    fireEvent.keyDown(svg, { key: "ArrowLeft" });
+    fireEvent.keyDown(svg, { key: "ArrowRight" });
+    expect(props.onNodeClick).not.toHaveBeenCalled();
+  });
+
+  it("arrow keys during drag are no-ops", () => {
+    const tree = makeTree("# A\n## B\n## C");
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    const nodeEl = container.querySelector(`[data-mindmap-node="${nodeB.id}"]`)!;
+    firePointer(nodeEl, "pointerdown", { clientX: 0, clientY: 0 });
+    firePointer(svg, "pointermove", { clientX: 50, clientY: 50 });
+    expect(container.querySelector("[data-mindmap-dragging]")).toBeTruthy();
+
+    fireEvent.keyDown(svg, { key: "ArrowDown" });
+    expect(props.onNodeClick).not.toHaveBeenCalled();
   });
 });

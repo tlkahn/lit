@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState, useEffect, useCallback } from "react";
 import { hierarchy, tree as d3tree } from "d3-hierarchy";
 import { linkHorizontal } from "d3-shape";
-import type { HeadingNode } from "../lib/headingTree";
+import { findNode, findParent, findNextSibling, findPrevSibling, firstChild, type HeadingNode } from "../lib/headingTree";
 import { buildNodeRects, buildGapZones, type PointNode } from "../lib/mindmapDnd";
 import type { ContentBounds } from "../lib/mindmapZoom";
 import { computeNodeWidth, wrapText, computeNodeHeight, MAX_NODE_WIDTH, LINE_HEIGHT_RATIO } from "../lib/mindmapLayout";
@@ -10,6 +10,7 @@ import { useMindmapZoom } from "../hooks/useMindmapZoom";
 
 interface MindmapViewProps {
   tree: HeadingNode;
+  selectedId: string | null;
   onNodeClick: (node: HeadingNode) => void;
   onNodeRename: (node: HeadingNode, newText: string) => void;
   onNodeMove: (sourceId: string, targetParentId: string, targetIndex: number) => void;
@@ -17,7 +18,7 @@ interface MindmapViewProps {
 
 const FONT_SIZES = [16, 15, 14, 13, 12, 11];
 
-export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: MindmapViewProps) {
+export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNodeMove }: MindmapViewProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
@@ -152,7 +153,33 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: Min
         className={`w-full h-full ${dragState.isDragging ? "cursor-grabbing" : ""}`}
         onPointerMove={handlers.onPointerMove}
         onPointerUp={handlers.onPointerUp}
-        onKeyDown={handlers.onKeyDown}
+        onKeyDown={(e) => {
+          handlers.onKeyDown(e);
+          if (!selectedId || dragState.isDragging) return;
+          let target: HeadingNode | null = null;
+          switch (e.key) {
+            case "ArrowDown":
+              target = findNextSibling(tree, selectedId);
+              break;
+            case "ArrowUp":
+              target = findPrevSibling(tree, selectedId);
+              break;
+            case "ArrowRight": {
+              const node = findNode(tree, selectedId);
+              if (node) target = firstChild(node);
+              break;
+            }
+            case "ArrowLeft": {
+              const parent = findParent(tree, selectedId);
+              if (parent && parent.level > 0) target = parent;
+              break;
+            }
+          }
+          if (target) {
+            e.preventDefault();
+            onNodeClick(target);
+          }
+        }}
         tabIndex={0}
         data-mindmap-svg
       >
@@ -188,6 +215,7 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: Min
               dragState.dropTarget?.kind === "node" &&
               dragState.dropTarget.nodeId === d.data.id;
             const isInvalid = dragState.isDragging && dragState.invalidIds.has(d.data.id);
+            const isSelected = d.data.id === selectedId;
             const lines = wrappedLines.get(d.data.id) ?? [d.data.text];
             const nh = nodeHeights.get(d.data.id) ?? (fontSize + 8);
             const lineHeight = Math.ceil(fontSize * LINE_HEIGHT_RATIO);
@@ -200,6 +228,7 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: Min
                 {...(isDragging ? { "data-mindmap-dragging": true } : {})}
                 {...(isDropTarget ? { "data-mindmap-drop-target": true } : {})}
                 {...(isInvalid ? { "data-mindmap-drop-invalid": true } : {})}
+                {...(isSelected ? { "data-mindmap-selected": true } : {})}
                 className={
                   isDragging
                     ? "cursor-grabbing opacity-[0.3]"
@@ -230,9 +259,11 @@ export function MindmapView({ tree, onNodeClick, onNodeRename, onNodeMove }: Min
                   className={
                     isDropTarget
                       ? "fill-blue-100 dark:fill-blue-900 stroke-blue-500 dark:stroke-blue-400"
-                      : "fill-white dark:fill-neutral-800 stroke-neutral-300 dark:stroke-neutral-600"
+                      : isSelected
+                        ? "fill-white dark:fill-neutral-800 stroke-blue-500 dark:stroke-blue-400"
+                        : "fill-white dark:fill-neutral-800 stroke-neutral-300 dark:stroke-neutral-600"
                   }
-                  strokeWidth={isDropTarget ? 2 : 1}
+                  strokeWidth={isDropTarget || isSelected ? 2 : 1}
                 />
                 <text
                   y={-((lines.length - 1) * lineHeight) / 2}

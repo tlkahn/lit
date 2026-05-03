@@ -63,6 +63,7 @@ export function ContentArea() {
   const editorViewRef = useRef<EditorView | null>(null);
   const [body, setBody] = useState("");
   const [viewMode, setViewMode] = useState<"editor" | "mindmap">("editor");
+  const [mindmapSelectedId, setMindmapSelectedId] = useState<string | null>(null);
   const [showConflict, setShowConflict] = useState(false);
   useModalLock(showConflict);
   const [title, setTitle] = useState("");
@@ -317,6 +318,10 @@ export function ContentArea() {
     return buildHeadingTree(h);
   }, [body]);
 
+  useEffect(() => {
+    setMindmapSelectedId(null);
+  }, [headingTree]);
+
   const enterYamlEdit = () => {
     setYamlDraft(rawYaml);
     setYamlError(null);
@@ -536,9 +541,9 @@ export function ContentArea() {
           <Suspense fallback={<div className="flex items-center justify-center h-full text-text-faint">Loading…</div>}>
             <LazyMindmapView
               tree={headingTree}
+              selectedId={mindmapSelectedId}
               onNodeClick={(node) => {
-                pendingScrollLineRef.current = node.line;
-                setViewMode("editor");
+                setMindmapSelectedId(node.id);
               }}
               onNodeRename={(node, newText) => {
                 const newBody = applyRename(body, node, newText);
