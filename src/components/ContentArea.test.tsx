@@ -934,6 +934,95 @@ describe("ContentArea mindmap selection persistence", () => {
   });
 });
 
+describe("ContentArea outline-to-mindmap selection", () => {
+  function setupMultiHeadingMock() {
+    mockInvoke((cmd, args) => {
+      if (cmd === "read_page") {
+        const rp = (args as Record<string, unknown>)?.relativePath;
+        if (rp === "Multi.md") return multiHeadingPage;
+        return samplePage;
+      }
+      if (cmd === "write_page") return null;
+      if (cmd === "parse_raw_yaml") return {};
+      if (cmd === "get_backlinks") return [];
+      if (cmd === "get_keymaps") return [];
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+  }
+
+  it("dispatching lit:scroll-to-line selects corresponding mindmap node", async () => {
+    setupMultiHeadingMock();
+    useWorkspaceStore.setState({ currentPagePath: "Multi.md" });
+    const user = userEvent.setup();
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor")).toBeInTheDocument();
+    });
+
+    const mindmapBtn = screen.getByRole("button", { name: /mindmap/i });
+    await user.click(mindmapBtn);
+    await waitFor(() => {
+      expect(screen.getByTestId("mindmap-view")).toBeInTheDocument();
+    });
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("lit:scroll-to-line", { detail: { line: 2 } }),
+      );
+    });
+
+    const mindmapContainer = screen.getByTestId("mindmap-view");
+    await waitFor(() => {
+      expect(mindmapContainer.querySelector('[data-mindmap-node="h-2"][data-mindmap-selected]')).toBeTruthy();
+    });
+  });
+
+  it("dispatching lit:scroll-to-line with nonexistent line does not select any node", async () => {
+    setupMultiHeadingMock();
+    useWorkspaceStore.setState({ currentPagePath: "Multi.md" });
+    const user = userEvent.setup();
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor")).toBeInTheDocument();
+    });
+
+    const mindmapBtn = screen.getByRole("button", { name: /mindmap/i });
+    await user.click(mindmapBtn);
+    await waitFor(() => {
+      expect(screen.getByTestId("mindmap-view")).toBeInTheDocument();
+    });
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("lit:scroll-to-line", { detail: { line: 999 } }),
+      );
+    });
+
+    const mindmapContainer = screen.getByTestId("mindmap-view");
+    expect(mindmapContainer.querySelector("[data-mindmap-selected]")).toBeFalsy();
+  });
+
+  it("dispatching lit:scroll-to-line in editor mode does NOT affect mindmap", async () => {
+    setupMultiHeadingMock();
+    useWorkspaceStore.setState({ currentPagePath: "Multi.md" });
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor")).toBeInTheDocument();
+    });
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("lit:scroll-to-line", { detail: { line: 2 } }),
+      );
+    });
+
+    expect(screen.queryByTestId("mindmap-view")).not.toBeInTheDocument();
+  });
+});
+
 describe("ContentArea bottom panel", () => {
   beforeEach(() => {
     mockInvoke((cmd) => {

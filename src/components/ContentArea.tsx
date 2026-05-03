@@ -422,6 +422,19 @@ export function ContentArea() {
   }, [viewMode]);
 
   useEffect(() => {
+    const handler = (e: Event) => {
+      if (viewMode !== "mindmap") return;
+      const { line } = (e as CustomEvent<{ line: number }>).detail;
+      const nodeId = `h-${line}`;
+      if (findNode(headingTree, nodeId)) {
+        setMindmapSelectedId(nodeId);
+      }
+    };
+    window.addEventListener("lit:scroll-to-line", handler);
+    return () => window.removeEventListener("lit:scroll-to-line", handler);
+  }, [viewMode, headingTree]);
+
+  useEffect(() => {
     let unlisten: (() => void) | undefined;
     listen("menu://open-in-external-editor", () => {
       const view = editorViewRef.current;
