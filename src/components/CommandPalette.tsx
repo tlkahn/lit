@@ -2,7 +2,8 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import * as registry from "../lib/paletteRegistry";
 import type { PaletteProvider, PaletteResult } from "../lib/paletteRegistry";
 import { annotationProvider } from "../lib/annotationProvider";
-import { fileProvider, tagProvider, contentProvider, commandProvider } from "../lib/stubProviders";
+import { fileProvider } from "../lib/fileProvider";
+import { tagProvider, contentProvider, commandProvider } from "../lib/stubProviders";
 import { recordAccess, sortByFrecency } from "../lib/frecency";
 
 interface SectionedResults {
@@ -276,7 +277,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
                 >
                   <div className="flex items-center gap-2">
                     {result.icon && (
-                      <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded bg-bg-hover text-xs font-medium text-text-accent">
+                      <span className="nerd-font inline-flex h-5 w-5 shrink-0 items-center justify-center rounded bg-bg-hover text-xs font-medium text-text-accent">
                         {result.icon}
                       </span>
                     )}

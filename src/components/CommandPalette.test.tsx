@@ -3,7 +3,7 @@ import { render, screen, fireEvent, act } from "@testing-library/react";
 import { CommandPalette, _resetRegistration } from "./CommandPalette";
 import { mockInvoke } from "../test/tauri-mock";
 import * as registry from "../lib/paletteRegistry";
-import type { AnnotationSearchResult } from "../lib/ipc";
+import type { AnnotationSearchResult, GraphSearchResult } from "../lib/ipc";
 
 const mockResults: AnnotationSearchResult[] = [
   {
@@ -44,14 +44,16 @@ const mockResults: AnnotationSearchResult[] = [
   },
 ];
 
-const { mockSelectPageAtLine, mockRecordJump, mockWorkspaceState } = vi.hoisted(() => {
+const { mockSelectPageAtLine, mockSelectPage, mockRecordJump, mockWorkspaceState } = vi.hoisted(() => {
   const mockSelectPageAtLine = vi.fn();
+  const mockSelectPage = vi.fn();
   const mockRecordJump = vi.fn();
   const mockWorkspaceState = {
     currentPagePath: "other-page.md" as string | null,
     selectPageAtLine: mockSelectPageAtLine,
+    selectPage: mockSelectPage,
   };
-  return { mockSelectPageAtLine, mockRecordJump, mockWorkspaceState };
+  return { mockSelectPageAtLine, mockSelectPage, mockRecordJump, mockWorkspaceState };
 });
 
 vi.mock("../stores/workspace", () => ({
@@ -87,6 +89,7 @@ describe("CommandPalette", () => {
     onClose = vi.fn();
     mockWorkspaceState.currentPagePath = "other-page.md";
     mockSelectPageAtLine.mockClear();
+    mockSelectPage.mockClear();
     mockRecordJump.mockClear();
     _resetRegistration();
     vi.useFakeTimers();
@@ -447,13 +450,42 @@ describe("CommandPalette", () => {
   });
 
   describe("stub providers", () => {
-    it('$ prefix shows "No results" after debounce', async () => {
+    it("$ prefix searches files via searchPagesByTitle and shows results", async () => {
+      const fileResults: GraphSearchResult[] = [
+        { id: "silk-road.md", title: "Silk Road", score: 1.0, excerpt: "Ancient trade route" },
+        { id: "report.pdf", title: "Trade Report", score: 0.5, excerpt: "" },
+      ];
+      mockInvoke((cmd) => {
+        if (cmd === "search_pages_by_title") return fileResults;
+        return [];
+      });
       render(<CommandPalette open={true} onClose={onClose} />);
       fireEvent.change(screen.getByTestId("command-palette-input"), {
-        target: { value: "$foo" },
+        target: { value: "$silk" },
       });
       await advanceDebounce();
-      expect(screen.getByText("No results")).toBeInTheDocument();
+      const results = screen.getAllByTestId("command-palette-result");
+      expect(results).toHaveLength(2);
+      expect(results[0]).toHaveTextContent("Silk Road");
+    });
+
+    it("selecting a $ file result calls selectPage and closes palette", async () => {
+      const fileResults: GraphSearchResult[] = [
+        { id: "silk-road.md", title: "Silk Road", score: 1.0, excerpt: "" },
+      ];
+      mockInvoke((cmd) => {
+        if (cmd === "search_pages_by_title") return fileResults;
+        return [];
+      });
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "$silk" },
+      });
+      await advanceDebounce();
+      const results = screen.getAllByTestId("command-palette-result");
+      fireEvent.click(results[0]!);
+      expect(mockSelectPage).toHaveBeenCalledWith("silk-road.md");
+      expect(onClose).toHaveBeenCalled();
     });
 
     it('# prefix shows "No results" after debounce', async () => {

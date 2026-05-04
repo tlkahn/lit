@@ -18,17 +18,6 @@ const COMMANDS: Command[] = [
 
 const COMMAND_MAP = new Map(COMMANDS.map((cmd) => [cmd.id, cmd]));
 
-export const fileProvider: PaletteProvider = {
-  id: "files",
-  prefix: "$",
-  label: "Files",
-  priority: 10,
-  async search(): Promise<PaletteResult[]> {
-    return [];
-  },
-  onSelect() {},
-};
-
 export const tagProvider: PaletteProvider = {
   id: "tags",
   prefix: "#",
