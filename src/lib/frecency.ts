@@ -41,11 +41,13 @@ export function getScore(id: string): number {
 }
 
 export function sortByFrecency<T>(items: T[], getId: (item: T) => string): T[] {
-  return [...items].sort((a, b) => {
-    const diff = getScore(getId(b)) - getScore(getId(a));
+  const indexed = items.map((item, i) => ({ item, i }));
+  indexed.sort((a, b) => {
+    const diff = getScore(getId(b.item)) - getScore(getId(a.item));
     if (diff !== 0) return diff;
-    return 0;
+    return a.i - b.i;
   });
+  return indexed.map((e) => e.item);
 }
 
 export function _clear(): void {

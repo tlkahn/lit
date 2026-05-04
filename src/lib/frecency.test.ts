@@ -63,6 +63,36 @@ describe("frecency", () => {
     expect(sorted[2]!.name).toBe("c");
   });
 
+  it("sortByFrecency preserves original order for equal-scored items even with unstable sort", () => {
+    // All items have score 0 (never accessed), so they're all "equal"
+    const items = [
+      { name: "alpha" },
+      { name: "beta" },
+      { name: "gamma" },
+      { name: "delta" },
+    ];
+
+    // Monkey-patch Array.prototype.sort to simulate an unstable engine:
+    // when comparator returns 0, reverse the pair
+    const originalSort = Array.prototype.sort;
+    Array.prototype.sort = function (compareFn?: (a: unknown, b: unknown) => number) {
+      if (!compareFn) return originalSort.call(this);
+      return originalSort.call(this, (a: unknown, b: unknown) => {
+        const result = compareFn(a, b);
+        // Simulate instability: when comparator says "equal", prefer reverse order
+        return result === 0 ? -1 : result;
+      });
+    };
+
+    try {
+      const sorted = sortByFrecency(items, (i) => i.name);
+      // Should preserve original insertion order: alpha, beta, gamma, delta
+      expect(sorted.map((i) => i.name)).toEqual(["alpha", "beta", "gamma", "delta"]);
+    } finally {
+      Array.prototype.sort = originalSort;
+    }
+  });
+
   it("_clear removes localStorage data", () => {
     recordAccess("item-1");
     _clear();
