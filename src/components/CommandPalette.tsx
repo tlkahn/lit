@@ -56,6 +56,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevPrefixRef = useRef<string | null>(null);
+  const requestIdRef = useRef(0);
 
   const { provider, query, prefix } = resolveProvider(rawInput);
 
@@ -91,13 +92,16 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
       }
       const currentPrefix = prefix!;
       debounceRef.current = setTimeout(async () => {
+        const id = ++requestIdRef.current;
         const p = registry.getByPrefix(currentPrefix);
         if (!p) return;
         try {
           const results = await p.search(query, filter ?? undefined);
+          if (id !== requestIdRef.current) return;
           setSections([{ section: p.label, provider: p, results }]);
           setSearchError(null);
         } catch (err) {
+          if (id !== requestIdRef.current) return;
           console.warn("[CommandPalette] search failed:", err);
           setSections([]);
           setSearchError("Search failed");
@@ -113,6 +117,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
         return;
       }
       debounceRef.current = setTimeout(async () => {
+        const id = ++requestIdRef.current;
         const allProviders = registry.getAll();
         const allSections: SectionedResults[] = [];
         let hasError = false;
@@ -128,6 +133,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
             }
           }),
         );
+        if (id !== requestIdRef.current) return;
         for (const { provider: p, results } of settled) {
           if (results.length > 0) {
             allSections.push({
@@ -146,6 +152,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
 
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
+      requestIdRef.current++;
     };
   }, [providerId, prefix, query, filter]);
 

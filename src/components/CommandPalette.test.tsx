@@ -3,6 +3,7 @@ import { render, screen, fireEvent, act } from "@testing-library/react";
 import { CommandPalette, _resetRegistration } from "./CommandPalette";
 import { mockInvoke } from "../test/tauri-mock";
 import * as registry from "../lib/paletteRegistry";
+import type { PaletteResult } from "../lib/paletteRegistry";
 import type { AnnotationSearchResult, GraphSearchResult } from "../lib/ipc";
 
 const mockResults: AnnotationSearchResult[] = [
@@ -75,6 +76,16 @@ vi.mock("../editor/jumpTracker", () => ({
 vi.mock("../lib/editorViewRef", () => ({
   getCurrentEditorView: vi.fn(() => null),
 }));
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
 
 async function advanceDebounce() {
   await act(async () => {
@@ -905,6 +916,178 @@ describe("CommandPalette", () => {
       expect(screen.getByTestId("search-error-message")).toBeInTheDocument();
       expect(screen.queryByText("No results")).not.toBeInTheDocument();
       vi.mocked(console.warn).mockRestore();
+    });
+  });
+
+  describe("stale search race condition", () => {
+    it("prefix mode: stale result doesn't overwrite newer result", async () => {
+      const deferreds: ReturnType<typeof createDeferred<PaletteResult[]>>[] = [];
+      render(<CommandPalette open={true} onClose={onClose} />);
+      registry.register({
+        id: "annotations",
+        prefix: "@",
+        label: "Test",
+        priority: 20,
+        search() {
+          const d = createDeferred<PaletteResult[]>();
+          deferreds.push(d);
+          return d.promise;
+        },
+        onSelect() {},
+      });
+
+      const input = screen.getByTestId("command-palette-input");
+      fireEvent.change(input, { target: { value: "@silk" } });
+      await advanceDebounce();
+      fireEvent.change(input, { target: { value: "@silver" } });
+      await advanceDebounce();
+
+      expect(deferreds).toHaveLength(2);
+
+      await act(async () => {
+        deferreds[1]!.resolve([{ id: "r-silver", title: "Silver Result", section: "Test" }]);
+      });
+      expect(screen.getByText("Silver Result")).toBeInTheDocument();
+
+      await act(async () => {
+        deferreds[0]!.resolve([{ id: "r-silk", title: "Silk Result", section: "Test" }]);
+      });
+      expect(screen.getByText("Silver Result")).toBeInTheDocument();
+      expect(screen.queryByText("Silk Result")).not.toBeInTheDocument();
+    });
+
+    it("omni mode: stale result doesn't overwrite newer result", async () => {
+      const deferreds: ReturnType<typeof createDeferred<AnnotationSearchResult[]>>[] = [];
+      mockInvoke((cmd) => {
+        if (cmd === "search_annotations") {
+          const d = createDeferred<AnnotationSearchResult[]>();
+          deferreds.push(d);
+          return d.promise;
+        }
+        return [];
+      });
+      render(<CommandPalette open={true} onClose={onClose} />);
+      const input = screen.getByTestId("command-palette-input");
+
+      fireEvent.change(input, { target: { value: "silk" } });
+      await advanceDebounce();
+      fireEvent.change(input, { target: { value: "silver" } });
+      await advanceDebounce();
+
+      expect(deferreds).toHaveLength(2);
+
+      const silverResult: AnnotationSearchResult = {
+        annotation_id: 10,
+        node_id: "silver-mine.md",
+        node_title: "Silver Mine",
+        annotation_type: "note",
+        certainty: "firm",
+        body: "Silver mining operations",
+        date: null,
+        source_line: 1,
+        char_start: 0,
+        char_end: 10,
+      };
+      const silkResult: AnnotationSearchResult = {
+        annotation_id: 11,
+        node_id: "silk-road.md",
+        node_title: "Silk Road",
+        annotation_type: "note",
+        certainty: "firm",
+        body: "Ancient trade route",
+        date: null,
+        source_line: 1,
+        char_start: 0,
+        char_end: 10,
+      };
+
+      await act(async () => {
+        deferreds[1]!.resolve([silverResult]);
+      });
+      expect(screen.getByText("Silver Mine")).toBeInTheDocument();
+
+      await act(async () => {
+        deferreds[0]!.resolve([silkResult]);
+      });
+      expect(screen.getByText("Silver Mine")).toBeInTheDocument();
+      expect(screen.queryByText("Silk Road")).not.toBeInTheDocument();
+    });
+
+    it("prefix mode: stale error doesn't overwrite newer success", async () => {
+      const deferreds: ReturnType<typeof createDeferred<PaletteResult[]>>[] = [];
+      render(<CommandPalette open={true} onClose={onClose} />);
+      registry.register({
+        id: "annotations",
+        prefix: "@",
+        label: "Test",
+        priority: 20,
+        search() {
+          const d = createDeferred<PaletteResult[]>();
+          deferreds.push(d);
+          return d.promise;
+        },
+        onSelect() {},
+      });
+
+      const input = screen.getByTestId("command-palette-input");
+      fireEvent.change(input, { target: { value: "@silk" } });
+      await advanceDebounce();
+      fireEvent.change(input, { target: { value: "@silver" } });
+      await advanceDebounce();
+
+      expect(deferreds).toHaveLength(2);
+
+      await act(async () => {
+        deferreds[1]!.resolve([{ id: "r-silver", title: "Silver Result", section: "Test" }]);
+      });
+      expect(screen.getByText("Silver Result")).toBeInTheDocument();
+
+      await act(async () => {
+        deferreds[0]!.reject(new Error("IPC timeout"));
+      });
+      expect(screen.queryByTestId("search-error-message")).not.toBeInTheDocument();
+      expect(screen.getByText("Silver Result")).toBeInTheDocument();
+    });
+
+    it("prefix mode: filter change discards stale result", async () => {
+      const deferreds: ReturnType<typeof createDeferred<PaletteResult[]>>[] = [];
+      render(<CommandPalette open={true} onClose={onClose} />);
+      registry.register({
+        id: "annotations",
+        prefix: "@",
+        label: "Test",
+        priority: 20,
+        filterOptions: [
+          { id: "all", label: "All" },
+          { id: "note", label: "Notes" },
+        ],
+        search() {
+          const d = createDeferred<PaletteResult[]>();
+          deferreds.push(d);
+          return d.promise;
+        },
+        onSelect() {},
+      });
+
+      const input = screen.getByTestId("command-palette-input");
+      fireEvent.change(input, { target: { value: "@silk" } });
+      await advanceDebounce();
+
+      fireEvent.click(screen.getByTestId("type-filter-note"));
+      await advanceDebounce();
+
+      expect(deferreds).toHaveLength(2);
+
+      await act(async () => {
+        deferreds[1]!.resolve([{ id: "r-filtered", title: "Filtered Result", section: "Test" }]);
+      });
+      expect(screen.getByText("Filtered Result")).toBeInTheDocument();
+
+      await act(async () => {
+        deferreds[0]!.resolve([{ id: "r-unfiltered", title: "Unfiltered Result", section: "Test" }]);
+      });
+      expect(screen.getByText("Filtered Result")).toBeInTheDocument();
+      expect(screen.queryByText("Unfiltered Result")).not.toBeInTheDocument();
     });
   });
 });
