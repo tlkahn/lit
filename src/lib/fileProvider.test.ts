@@ -99,7 +99,7 @@ describe("fileProvider", () => {
 
   it(".md file gets file_text_o icon, .pdf gets file_o icon", () => {
     expect(_fileIcon("notes.md")).toBe("");
-    expect(_fileIcon("report.pdf")).toBe("");
+    expect(_fileIcon("report.pdf")).toBe("");
   });
 
   it("unknown extension gets default icon", () => {

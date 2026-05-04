@@ -5,7 +5,7 @@ import type { PaletteProvider, PaletteResult } from "./paletteRegistry";
 
 const FILE_ICONS: Record<string, string> = {
   md: "",
-  pdf: "",
+  pdf: "",
 };
 const DEFAULT_ICON = "";
 
