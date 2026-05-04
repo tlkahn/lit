@@ -634,6 +634,48 @@ mod tests {
     }
 
     #[test]
+    fn cmd_search_tags() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "---\ntags: [rust, coding]\n---\nBody.").unwrap();
+        std::fs::write(dir.path().join("b.md"), "---\ntags: [rust]\n---\nBody.").unwrap();
+        std::fs::write(dir.path().join("c.md"), "---\ntags: [python]\n---\nBody.").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let results = gi.search_tags("rust", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].tag, "rust");
+        assert_eq!(results[0].count, 2);
+    }
+
+    #[test]
+    fn cmd_search_tags_empty_query() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "---\ntags: [rust]\n---\nBody.").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        assert!(gi.search_tags("", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn cmd_list_pages_by_tag() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("b.md"), "---\ntitle: Beta\ntags: [rust]\n---\nBeta body.").unwrap();
+        std::fs::write(dir.path().join("a.md"), "---\ntitle: Alpha\ntags: [rust, coding]\n---\nAlpha body.").unwrap();
+        std::fs::write(dir.path().join("c.md"), "---\ntitle: Charlie\ntags: [python]\n---\nCharlie body.").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let results = gi.list_pages_by_tag("rust", 10).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].title, "Alpha");
+        assert_eq!(results[1].title, "Beta");
+    }
+
+    #[test]
+    fn cmd_list_pages_by_tag_no_match() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "---\ntags: [rust]\n---\nBody.").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        assert!(gi.list_pages_by_tag("nonexistent", 10).unwrap().is_empty());
+    }
+
+    #[test]
     fn cmd_link_unlinked_mention() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
