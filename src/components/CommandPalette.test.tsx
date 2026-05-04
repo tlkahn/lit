@@ -577,6 +577,28 @@ describe("CommandPalette", () => {
       expect(headers[0]).toHaveTextContent("Annotations");
     });
 
+    it("file results appear in omni-search with Files section before Annotations (priority 10 < 20)", async () => {
+      const fileResults: GraphSearchResult[] = [
+        { id: "silk-road.md", title: "Silk Road", score: 1.0, excerpt: "Ancient trade route" },
+      ];
+      mockInvoke((cmd) => {
+        if (cmd === "search_pages_by_title") return fileResults;
+        if (cmd === "search_annotations") return mockResults;
+        return [];
+      });
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "silk" },
+      });
+      await advanceDebounce();
+      const headers = screen.getAllByTestId("palette-section-header");
+      expect(headers.length).toBeGreaterThanOrEqual(2);
+      expect(headers[0]).toHaveTextContent("Files");
+      expect(headers[1]).toHaveTextContent("Annotations");
+      const results = screen.getAllByTestId("command-palette-result");
+      expect(results[0]).toHaveTextContent("Silk Road");
+    });
+
     it("omni caps at 5 results per section", async () => {
       const manyResults: AnnotationSearchResult[] = Array.from({ length: 10 }, (_, i) => ({
         annotation_id: i + 1,
