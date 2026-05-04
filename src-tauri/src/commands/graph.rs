@@ -363,6 +363,34 @@ pub fn link_unlinked_mention(
 }
 
 #[tauri::command]
+pub fn search_tags(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<GraphRegistry>>,
+    query: String,
+    limit: Option<i64>,
+) -> Result<serde_json::Value, String> {
+    with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+        let results = gi.search_tags(&query, limit.unwrap_or(20))?;
+        serde_json::to_value(results).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+    })
+}
+
+#[tauri::command]
+pub fn list_pages_by_tag(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<GraphRegistry>>,
+    tag: String,
+    limit: Option<i64>,
+) -> Result<serde_json::Value, String> {
+    with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+        let results = gi.list_pages_by_tag(&tag, limit.unwrap_or(50))?;
+        serde_json::to_value(results).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+    })
+}
+
+#[tauri::command]
 pub async fn ensure_graph_ready(
     path: String,
     build_state: State<'_, Arc<GraphBuildState>>,

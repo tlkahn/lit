@@ -341,6 +341,8 @@ pub fn run() {
             commands::graph::get_page_headings,
             commands::graph::get_unlinked_mentions,
             commands::graph::link_unlinked_mention,
+            commands::graph::search_tags,
+            commands::graph::list_pages_by_tag,
             commands::graph::ensure_graph_ready,
             commands::workspace::get_startup_context,
             commands::pdf_viewer::pdf_open,

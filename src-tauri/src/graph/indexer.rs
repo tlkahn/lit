@@ -941,6 +941,16 @@ impl GraphIndex {
         Ok(scores)
     }
 
+    pub fn search_tags(&self, query: &str, limit: i64) -> Result<Vec<super::types::TagSearchResult>, GraphError> {
+        let store = self.store.lock().unwrap();
+        store.search_tags(query, limit)
+    }
+
+    pub fn list_pages_by_tag(&self, tag: &str, limit: i64) -> Result<Vec<super::types::TagPageResult>, GraphError> {
+        let store = self.store.lock().unwrap();
+        store.list_pages_by_tag(tag, limit)
+    }
+
     pub fn search_annotations(&self, query: &str, type_filter: Option<&str>, limit: i64) -> Result<Vec<super::types::AnnotationSearchResult>, GraphError> {
         let store = self.store.lock().unwrap();
         store.search_annotations(query, type_filter, limit)

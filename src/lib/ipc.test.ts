@@ -33,6 +33,8 @@ import {
   getUnlinkedMentions,
   linkUnlinkedMention,
   rebuildGraphIndex,
+  searchTags,
+  listPagesByTag,
   resolveWikilink,
   getPageHeadings,
   getPagerank,
@@ -286,6 +288,16 @@ describe("ipc", () => {
             },
           ];
         }
+        case "search_tags":
+          return [
+            { tag: "rust", count: 5 },
+            { tag: "rust-lang", count: 2 },
+          ];
+        case "list_pages_by_tag":
+          return [
+            { id: "a.md", title: "Alpha", first_paragraph: "First paragraph of Alpha" },
+            { id: "b.md", title: "Beta", first_paragraph: "First paragraph of Beta" },
+          ];
         case "ensure_graph_ready":
           return null;
         case "get_backlinks":
@@ -745,6 +757,37 @@ describe("ipc", () => {
     await pdfClose();
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("pdf_close");
+  });
+
+  it("searchTags returns tag results", async () => {
+    const results = await searchTags("rust");
+    expect(results).toHaveLength(2);
+    expect(results[0]!.tag).toBe("rust");
+    expect(results[0]!.count).toBe(5);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("search_tags", { query: "rust", limit: null });
+  });
+
+  it("searchTags passes limit when provided", async () => {
+    await searchTags("rust", 10);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("search_tags", { query: "rust", limit: 10 });
+  });
+
+  it("listPagesByTag returns page results", async () => {
+    const results = await listPagesByTag("rust");
+    expect(results).toHaveLength(2);
+    expect(results[0]!.id).toBe("a.md");
+    expect(results[0]!.title).toBe("Alpha");
+    expect(results[0]!.first_paragraph).toBe("First paragraph of Alpha");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("list_pages_by_tag", { tag: "rust", limit: null });
+  });
+
+  it("listPagesByTag passes limit when provided", async () => {
+    await listPagesByTag("rust", 25);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("list_pages_by_tag", { tag: "rust", limit: 25 });
   });
 
   it("ensureGraphReady rejects on error", async () => {

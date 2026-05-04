@@ -18,17 +18,6 @@ const COMMANDS: Command[] = [
 
 const COMMAND_MAP = new Map(COMMANDS.map((cmd) => [cmd.id, cmd]));
 
-export const tagProvider: PaletteProvider = {
-  id: "tags",
-  prefix: "#",
-  label: "Tags",
-  priority: 30,
-  async search(): Promise<PaletteResult[]> {
-    return [];
-  },
-  onSelect() {},
-};
-
 export const contentProvider: PaletteProvider = {
   id: "content",
   prefix: "/",

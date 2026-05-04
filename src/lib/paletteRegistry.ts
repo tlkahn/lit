@@ -21,7 +21,7 @@ export interface PaletteProvider {
   priority: number;
   filterOptions?: PaletteFilterOption[];
   search(query: string, filter?: string): Promise<PaletteResult[]>;
-  onSelect(result: PaletteResult): void;
+  onSelect(result: PaletteResult): void | false;
 }
 
 const providers = new Map<string, PaletteProvider>();

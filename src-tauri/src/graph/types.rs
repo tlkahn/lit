@@ -93,6 +93,19 @@ pub struct AnnotationSearchResult {
     pub char_end: usize,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TagSearchResult {
+    pub tag: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TagPageResult {
+    pub id: String,
+    pub title: String,
+    pub first_paragraph: String,
+}
+
 pub fn extract_aliases(fm: &serde_json::Value) -> Vec<String> {
     match fm.get("aliases") {
         Some(serde_json::Value::Array(arr)) => {
@@ -248,6 +261,29 @@ mod tests {
         let json_str = serde_json::to_string(&ia).expect("serialize");
         let back: IndexableAnnotation = serde_json::from_str(&json_str).expect("deserialize");
         assert_eq!(back, ia);
+    }
+
+    #[test]
+    fn tag_search_result_round_trips() {
+        let result = TagSearchResult {
+            tag: "rust".into(),
+            count: 5,
+        };
+        let json_str = serde_json::to_string(&result).expect("serialize");
+        let back: TagSearchResult = serde_json::from_str(&json_str).expect("deserialize");
+        assert_eq!(back, result);
+    }
+
+    #[test]
+    fn tag_page_result_round_trips() {
+        let result = TagPageResult {
+            id: "a.md".into(),
+            title: "Alpha".into(),
+            first_paragraph: "First paragraph.".into(),
+        };
+        let json_str = serde_json::to_string(&result).expect("serialize");
+        let back: TagPageResult = serde_json::from_str(&json_str).expect("deserialize");
+        assert_eq!(back, result);
     }
 
     #[test]

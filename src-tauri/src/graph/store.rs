@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use tracing::{debug, info};
 
 use super::error::GraphError;
-use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, IndexableAnnotation, LinkEntry, ParsedNode, Stats};
+use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, IndexableAnnotation, LinkEntry, ParsedNode, Stats, TagPageResult, TagSearchResult};
 
 pub const CURRENT_SCHEMA_VERSION: i64 = 7;
 
@@ -511,6 +511,50 @@ impl Store {
         let results = stmt
             .query_map(rusqlite::params![query, limit], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(results)
+    }
+
+    // --- Tags ---
+
+    pub fn search_tags(&self, query: &str, limit: i64) -> Result<Vec<TagSearchResult>, GraphError> {
+        if query.is_empty() {
+            return Ok(vec![]);
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT tag, COUNT(*) as cnt FROM tags
+             WHERE tag LIKE '%' || ?1 || '%' COLLATE NOCASE
+             GROUP BY tag
+             ORDER BY cnt DESC, tag ASC
+             LIMIT ?2"
+        )?;
+        let results = stmt
+            .query_map(rusqlite::params![query, limit], |row| {
+                Ok(TagSearchResult {
+                    tag: row.get(0)?,
+                    count: row.get(1)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(results)
+    }
+
+    pub fn list_pages_by_tag(&self, tag: &str, limit: i64) -> Result<Vec<TagPageResult>, GraphError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT n.id, n.title, n.first_paragraph FROM nodes n
+             JOIN tags t ON n.id = t.node_id
+             WHERE t.tag = ?1
+             ORDER BY n.title ASC
+             LIMIT ?2"
+        )?;
+        let results = stmt
+            .query_map(rusqlite::params![tag, limit], |row| {
+                Ok(TagPageResult {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    first_paragraph: row.get(2)?,
+                })
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(results)
@@ -2352,5 +2396,120 @@ mod tests {
         let results = store.search_annotations("丝绸之路", None, 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].node_id, "a.md");
+    }
+
+    // --- Tag search ---
+
+    #[test]
+    fn search_tags_finds_matching_tags_with_counts() {
+        let store = Store::open_memory().unwrap();
+        let a = make_node("a.md", "A", &["rust", "coding"], json!({}));
+        let b = make_node("b.md", "B", &["rust"], json!({}));
+        let c = make_node("c.md", "C", &["python"], json!({}));
+        store.upsert_node(&a, 1).unwrap();
+        store.upsert_node(&b, 2).unwrap();
+        store.upsert_node(&c, 3).unwrap();
+
+        let results = store.search_tags("rust", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].tag, "rust");
+        assert_eq!(results[0].count, 2);
+    }
+
+    #[test]
+    fn search_tags_empty_query_returns_empty() {
+        let store = Store::open_memory().unwrap();
+        let a = make_node("a.md", "A", &["rust"], json!({}));
+        store.upsert_node(&a, 1).unwrap();
+        assert!(store.search_tags("", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn search_tags_no_match_returns_empty() {
+        let store = Store::open_memory().unwrap();
+        let a = make_node("a.md", "A", &["rust"], json!({}));
+        store.upsert_node(&a, 1).unwrap();
+        assert!(store.search_tags("zzz", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn search_tags_substring_match() {
+        let store = Store::open_memory().unwrap();
+        let a = make_node("a.md", "A", &["project/lit"], json!({}));
+        store.upsert_node(&a, 1).unwrap();
+        let results = store.search_tags("proj", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].tag, "project/lit");
+    }
+
+    #[test]
+    fn search_tags_limit_enforced() {
+        let store = Store::open_memory().unwrap();
+        let a = make_node("a.md", "A", &["alpha", "beta", "gamma"], json!({}));
+        store.upsert_node(&a, 1).unwrap();
+        let results = store.search_tags("a", 2).unwrap();
+        assert!(results.len() <= 2);
+    }
+
+    #[test]
+    fn search_tags_ordered_by_count_desc_then_name() {
+        let store = Store::open_memory().unwrap();
+        let a = make_node("a.md", "A", &["alpha", "beta"], json!({}));
+        let b = make_node("b.md", "B", &["beta"], json!({}));
+        store.upsert_node(&a, 1).unwrap();
+        store.upsert_node(&b, 2).unwrap();
+        // both contain "a" or "b" — "beta" has count=2, "alpha" has count=1
+        let results = store.search_tags("a", 10).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].tag, "beta");
+        assert_eq!(results[0].count, 2);
+        assert_eq!(results[1].tag, "alpha");
+        assert_eq!(results[1].count, 1);
+    }
+
+    #[test]
+    fn list_pages_by_tag_returns_matching_pages() {
+        let store = Store::open_memory().unwrap();
+        let a = make_node("a.md", "Alpha", &["rust", "coding"], json!({}));
+        let b = make_node("b.md", "Beta", &["rust"], json!({}));
+        let c = make_node("c.md", "Charlie", &["python"], json!({}));
+        store.upsert_node(&a, 1).unwrap();
+        store.upsert_node(&b, 2).unwrap();
+        store.upsert_node(&c, 3).unwrap();
+
+        let results = store.list_pages_by_tag("rust", 10).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].id, "a.md");
+        assert_eq!(results[0].title, "Alpha");
+        assert_eq!(results[1].id, "b.md");
+        assert_eq!(results[1].title, "Beta");
+    }
+
+    #[test]
+    fn list_pages_by_tag_nonexistent_returns_empty() {
+        let store = Store::open_memory().unwrap();
+        let a = make_node("a.md", "A", &["rust"], json!({}));
+        store.upsert_node(&a, 1).unwrap();
+        assert!(store.list_pages_by_tag("zzz", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn list_pages_by_tag_exact_match_only() {
+        let store = Store::open_memory().unwrap();
+        let a = make_node("a.md", "A", &["rust-lang"], json!({}));
+        store.upsert_node(&a, 1).unwrap();
+        assert!(store.list_pages_by_tag("rust", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn list_pages_by_tag_ordered_by_title() {
+        let store = Store::open_memory().unwrap();
+        let b = make_node("b.md", "Zebra", &["tag"], json!({}));
+        let a = make_node("a.md", "Apple", &["tag"], json!({}));
+        store.upsert_node(&b, 1).unwrap();
+        store.upsert_node(&a, 2).unwrap();
+        let results = store.list_pages_by_tag("tag", 10).unwrap();
+        assert_eq!(results[0].title, "Apple");
+        assert_eq!(results[1].title, "Zebra");
     }
 }

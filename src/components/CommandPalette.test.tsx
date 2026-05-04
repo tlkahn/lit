@@ -4,7 +4,7 @@ import { CommandPalette, _resetRegistration } from "./CommandPalette";
 import { mockInvoke } from "../test/tauri-mock";
 import * as registry from "../lib/paletteRegistry";
 import type { PaletteResult } from "../lib/paletteRegistry";
-import type { AnnotationSearchResult, GraphSearchResult } from "../lib/ipc";
+import type { AnnotationSearchResult, GraphSearchResult, TagSearchResult, TagPageResult } from "../lib/ipc";
 
 const mockResults: AnnotationSearchResult[] = [
   {
@@ -501,16 +501,103 @@ describe("CommandPalette", () => {
 
   });
 
-  describe("stub providers (# tags, / content)", () => {
-    it('# prefix shows "No results" after debounce', async () => {
+  describe("tag provider (# prefix)", () => {
+    const tagResults: TagSearchResult[] = [
+      { tag: "rust", count: 5 },
+      { tag: "rust-lang", count: 2 },
+    ];
+
+    const tagPages: TagPageResult[] = [
+      { id: "a.md", title: "Alpha", first_paragraph: "First paragraph" },
+      { id: "b.md", title: "Beta", first_paragraph: "Second paragraph" },
+    ];
+
+    it("#rust searches tags and shows results with counts", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "search_tags") return tagResults;
+        return [];
+      });
       render(<CommandPalette open={true} onClose={onClose} />);
       fireEvent.change(screen.getByTestId("command-palette-input"), {
-        target: { value: "#tag" },
+        target: { value: "#rust" },
       });
       await advanceDebounce();
-      expect(screen.getByText("No results")).toBeInTheDocument();
+      const results = screen.getAllByTestId("command-palette-result");
+      expect(results).toHaveLength(2);
+      expect(results[0]).toHaveTextContent("rust");
+      expect(results[0]).toHaveTextContent("5 pages");
     });
 
+    it("onSelect returning false keeps palette open", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "search_tags") return [tagResults[0]!];
+        return [];
+      });
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "#rust" },
+      });
+      await advanceDebounce();
+      const results = screen.getAllByTestId("command-palette-result");
+      fireEvent.click(results[0]!);
+      expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it("selecting a tag drills down: input becomes #:rust and pages appear", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "search_tags") return [tagResults[0]!];
+        if (cmd === "list_pages_by_tag") return tagPages;
+        return [];
+      });
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "#rust" },
+      });
+      await advanceDebounce();
+
+      const results = screen.getAllByTestId("command-palette-result");
+      fireEvent.click(results[0]!);
+
+      await advanceDebounce();
+      const input = screen.getByTestId("command-palette-input") as HTMLInputElement;
+      expect(input.value).toBe("#:rust");
+
+      const pageResults = screen.getAllByTestId("command-palette-result");
+      expect(pageResults).toHaveLength(2);
+      expect(pageResults[0]).toHaveTextContent("Alpha");
+    });
+
+    it("selecting a page in drill-down navigates and closes palette", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "list_pages_by_tag") return tagPages;
+        return [];
+      });
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "#:rust" },
+      });
+      await advanceDebounce();
+      const results = screen.getAllByTestId("command-palette-result");
+      fireEvent.click(results[0]!);
+      expect(mockSelectPage).toHaveBeenCalledWith("a.md");
+      expect(onClose).toHaveBeenCalled();
+    });
+
+    it("lit:palette-set-input event updates input value", async () => {
+      render(<CommandPalette open={true} onClose={onClose} />);
+      await act(async () => {
+        window.dispatchEvent(
+          new CustomEvent("lit:palette-set-input", {
+            detail: { value: "#:python" },
+          }),
+        );
+      });
+      const input = screen.getByTestId("command-palette-input") as HTMLInputElement;
+      expect(input.value).toBe("#:python");
+    });
+  });
+
+  describe("stub providers (/ content)", () => {
     it('/ prefix shows "No results" after debounce', async () => {
       render(<CommandPalette open={true} onClose={onClose} />);
       fireEvent.change(screen.getByTestId("command-palette-input"), {

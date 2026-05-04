@@ -401,6 +401,25 @@ export interface IndexProgress {
   total: number;
 }
 
+export interface TagSearchResult {
+  tag: string;
+  count: number;
+}
+
+export interface TagPageResult {
+  id: string;
+  title: string;
+  first_paragraph: string;
+}
+
+export async function searchTags(query: string, limit?: number): Promise<TagSearchResult[]> {
+  return invoke<TagSearchResult[]>("search_tags", { query, limit: limit ?? null });
+}
+
+export async function listPagesByTag(tag: string, limit?: number): Promise<TagPageResult[]> {
+  return invoke<TagPageResult[]>("list_pages_by_tag", { tag, limit: limit ?? null });
+}
+
 export async function ensureGraphReady(path: string): Promise<void> {
   return invoke<void>("ensure_graph_ready", { path });
 }

@@ -3,7 +3,8 @@ import * as registry from "../lib/paletteRegistry";
 import type { PaletteProvider, PaletteResult } from "../lib/paletteRegistry";
 import { annotationProvider } from "../lib/annotationProvider";
 import { fileProvider } from "../lib/fileProvider";
-import { tagProvider, contentProvider, commandProvider } from "../lib/stubProviders";
+import { tagProvider } from "../lib/tagProvider";
+import { contentProvider, commandProvider } from "../lib/stubProviders";
 import { recordAccess, sortByFrecency } from "../lib/frecency";
 
 interface SectionedResults {
@@ -76,6 +77,16 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
       prevPrefixRef.current = null;
       inputRef.current?.focus();
     }
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { value: string };
+      if (detail?.value != null) setRawInput(detail.value);
+    };
+    window.addEventListener("lit:palette-set-input", handler);
+    return () => window.removeEventListener("lit:palette-set-input", handler);
   }, [open]);
 
   const providerId = provider?.id ?? null;
@@ -172,7 +183,8 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
       recordAccess(result.id);
       const owningSection = sections.find((s) => s.results.includes(result));
       if (owningSection) {
-        owningSection.provider.onSelect(result);
+        const rv = owningSection.provider.onSelect(result);
+        if (rv === false) return;
       }
       onClose();
     },
