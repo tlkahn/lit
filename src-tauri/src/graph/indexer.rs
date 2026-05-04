@@ -868,6 +868,7 @@ impl GraphIndex {
                 title,
                 score: 0.0,
                 excerpt: String::new(),
+                first_match_line: None,
             })
             .collect())
     }
@@ -903,7 +904,7 @@ impl GraphIndex {
         let mut hits: Vec<SearchResult> = synced
             .par_iter()
             .filter_map(|id| {
-                let (count, excerpt) =
+                let (count, excerpt, first_line_num) =
                     search_file_with_matcher(&self.workspace_root.join(id), &matcher, &terms)?;
                 let title = titles.get(id).cloned().unwrap_or_default();
                 Some(SearchResult {
@@ -911,6 +912,7 @@ impl GraphIndex {
                     title,
                     score: -(count as f64),
                     excerpt,
+                    first_match_line: Some(first_line_num),
                 })
             })
             .collect();
@@ -983,7 +985,7 @@ fn search_file_with_matcher(
     path: &Path,
     matcher: &grep_regex::RegexMatcher,
     terms: &[String],
-) -> Option<(usize, String)> {
+) -> Option<(usize, String, u64)> {
     use grep_searcher::sinks::UTF8;
     use grep_searcher::Searcher;
 
@@ -993,15 +995,17 @@ fn search_file_with_matcher(
 
     let mut match_count: usize = 0;
     let mut first_line: Option<String> = None;
+    let mut first_line_number: u64 = 0;
     let mut seen_terms: HashSet<usize> = HashSet::new();
 
     let result = Searcher::new().search_path(
         matcher,
         path,
-        UTF8(|_line_number, line| {
+        UTF8(|line_number, line| {
             match_count += 1;
             if first_line.is_none() {
                 first_line = Some(line.trim().to_string());
+                first_line_number = line_number;
             }
             let line_lower = line.to_lowercase();
             for (i, term) in terms.iter().enumerate() {
@@ -1015,7 +1019,7 @@ fn search_file_with_matcher(
 
     match result {
         Ok(()) if seen_terms.len() == terms.len() => {
-            Some((match_count, first_line.unwrap_or_default()))
+            Some((match_count, first_line.unwrap_or_default(), first_line_number))
         }
         _ => None,
     }
@@ -1040,7 +1044,7 @@ fn search_file_for_terms(path: &Path, terms: &[String]) -> Option<(usize, String
         .build(&pattern)
         .ok()?;
 
-    search_file_with_matcher(path, &matcher, terms)
+    search_file_with_matcher(path, &matcher, terms).map(|(count, excerpt, _)| (count, excerpt))
 }
 
 fn file_contains_any_name_with_matcher(path: &Path, matcher: &grep_regex::RegexMatcher) -> bool {
@@ -2630,7 +2634,7 @@ mod tests {
         let matcher = build_matcher(&terms);
         let result = search_file_with_matcher(&dir.path().join("note.md"), &matcher, &terms);
         assert!(result.is_some());
-        let (count, excerpt) = result.unwrap();
+        let (count, excerpt, _line) = result.unwrap();
         assert_eq!(count, 1);
         assert!(excerpt.contains("rust"));
     }
@@ -2663,6 +2667,30 @@ mod tests {
         let matcher = build_matcher(&terms);
         let result = search_file_with_matcher(&dir.path().join("note.md"), &matcher, &terms);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn search_file_with_matcher_returns_first_match_line_number() {
+        let dir = create_workspace();
+        write_md(dir.path(), "note.md", "line one\nrust is here\nline three");
+        let terms = vec!["rust".to_string()];
+        let matcher = build_matcher(&terms);
+        let result = search_file_with_matcher(&dir.path().join("note.md"), &matcher, &terms);
+        assert!(result.is_some());
+        let (_count, _excerpt, line_num) = result.unwrap();
+        assert_eq!(line_num, 2);
+    }
+
+    #[test]
+    fn search_file_with_matcher_first_hit_line_number_multi_matches() {
+        let dir = create_workspace();
+        write_md(dir.path(), "note.md", "no match\nno match\nfoo here\nfoo again");
+        let terms = vec!["foo".to_string()];
+        let matcher = build_matcher(&terms);
+        let result = search_file_with_matcher(&dir.path().join("note.md"), &matcher, &terms);
+        assert!(result.is_some());
+        let (_count, _excerpt, line_num) = result.unwrap();
+        assert_eq!(line_num, 3);
     }
 
     // --- search_file_for_terms ---

@@ -4,7 +4,8 @@ import type { PaletteProvider, PaletteResult } from "../lib/paletteRegistry";
 import { annotationProvider } from "../lib/annotationProvider";
 import { fileProvider } from "../lib/fileProvider";
 import { tagProvider } from "../lib/tagProvider";
-import { contentProvider, commandProvider } from "../lib/stubProviders";
+import { contentProvider } from "../lib/contentProvider";
+import { commandProvider } from "../lib/stubProviders";
 import { recordAccess, sortByFrecency } from "../lib/frecency";
 
 interface SectionedResults {

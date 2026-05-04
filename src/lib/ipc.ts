@@ -293,6 +293,7 @@ export interface GraphSearchResult {
   title: string;
   score: number;
   excerpt: string;
+  first_match_line?: number;
 }
 
 export async function getBacklinks(pageId: string): Promise<BacklinkEntry[]> {

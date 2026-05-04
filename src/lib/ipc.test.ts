@@ -310,7 +310,7 @@ describe("ipc", () => {
           ];
         case "search_pages":
           return [
-            { id: "a.md", title: "Alpha", score: -1.5, excerpt: "[Alpha] note" },
+            { id: "a.md", title: "Alpha", score: -1.5, excerpt: "[Alpha] note", first_match_line: 7 },
           ];
         case "search_pages_by_title":
           return [
@@ -638,6 +638,16 @@ describe("ipc", () => {
     await searchPages("Alpha", 5);
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("search_pages", { query: "Alpha", limit: 5 });
+  });
+
+  it("searchPages includes first_match_line when present", async () => {
+    const results = await searchPages("Alpha");
+    expect(results[0]!.first_match_line).toBe(7);
+  });
+
+  it("searchPagesByTitle result has first_match_line undefined when absent", async () => {
+    const results = await searchPagesByTitle("Alpha");
+    expect(results[0]!.first_match_line).toBeUndefined();
   });
 
   it("searchPagesByTitle returns results", async () => {

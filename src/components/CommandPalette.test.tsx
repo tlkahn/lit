@@ -597,14 +597,35 @@ describe("CommandPalette", () => {
     });
   });
 
-  describe("stub providers (/ content)", () => {
-    it('/ prefix shows "No results" after debounce', async () => {
+  describe("content provider (/ prefix)", () => {
+    it('/ prefix shows "No results" when search returns empty', async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "search_pages") return [];
+        return [];
+      });
       render(<CommandPalette open={true} onClose={onClose} />);
       fireEvent.change(screen.getByTestId("command-palette-input"), {
         target: { value: "/pattern" },
       });
       await advanceDebounce();
       expect(screen.getByText("No results")).toBeInTheDocument();
+    });
+
+    it("/ prefix shows results from searchPages IPC", async () => {
+      const searchResults: GraphSearchResult[] = [
+        { id: "a.md", title: "Alpha", score: -2, excerpt: "pattern found here", first_match_line: 5 },
+      ];
+      mockInvoke((cmd) => {
+        if (cmd === "search_pages") return searchResults;
+        return [];
+      });
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "/pattern" },
+      });
+      await advanceDebounce();
+      const results = screen.getAllByTestId("command-palette-result");
+      expect(results).toHaveLength(1);
     });
   });
 

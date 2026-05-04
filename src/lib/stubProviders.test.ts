@@ -1,20 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
-import { contentProvider, commandProvider } from "./stubProviders";
+import { commandProvider } from "./stubProviders";
 
 describe("stubProviders", () => {
-  describe("contentProvider", () => {
-    it('has id "content", prefix "/", label "Content", priority 40', () => {
-      expect(contentProvider.id).toBe("content");
-      expect(contentProvider.prefix).toBe("/");
-      expect(contentProvider.label).toBe("Content");
-      expect(contentProvider.priority).toBe(40);
-    });
-
-    it("search() returns []", async () => {
-      expect(await contentProvider.search("test")).toEqual([]);
-    });
-  });
-
   describe("commandProvider", () => {
     it('has id "commands", prefix "!", label "Commands", priority 50', () => {
       expect(commandProvider.id).toBe("commands");

@@ -15,6 +15,8 @@ pub struct SearchResult {
     pub title: String,
     pub score: f64,
     pub excerpt: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub first_match_line: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -144,10 +146,46 @@ mod tests {
             title: "A".into(),
             score: -2.5,
             excerpt: "some [match]".into(),
+            first_match_line: None,
         };
         let json_str = serde_json::to_string(&result).expect("serialize");
         let back: SearchResult = serde_json::from_str(&json_str).expect("deserialize");
         assert_eq!(back, result);
+    }
+
+    #[test]
+    fn search_result_with_first_match_line_round_trips() {
+        let result = SearchResult {
+            id: "a.md".into(),
+            title: "A".into(),
+            score: -1.0,
+            excerpt: "line content".into(),
+            first_match_line: Some(42),
+        };
+        let json_str = serde_json::to_string(&result).expect("serialize");
+        let back: SearchResult = serde_json::from_str(&json_str).expect("deserialize");
+        assert_eq!(back, result);
+        assert!(json_str.contains("\"first_match_line\":42"));
+    }
+
+    #[test]
+    fn search_result_none_line_omitted_in_json() {
+        let result = SearchResult {
+            id: "a.md".into(),
+            title: "A".into(),
+            score: -1.0,
+            excerpt: "x".into(),
+            first_match_line: None,
+        };
+        let json_str = serde_json::to_string(&result).expect("serialize");
+        assert!(!json_str.contains("first_match_line"));
+    }
+
+    #[test]
+    fn search_result_missing_field_deserializes_as_none() {
+        let json_str = r#"{"id":"a.md","title":"A","score":-1.0,"excerpt":"x"}"#;
+        let result: SearchResult = serde_json::from_str(json_str).expect("deserialize");
+        assert_eq!(result.first_match_line, None);
     }
 
     #[test]
