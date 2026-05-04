@@ -51,6 +51,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [filter, setFilter] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -70,6 +71,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
       setActiveIndex(0);
       setFilter(null);
       setHasSearched(false);
+      setSearchError(null);
       prevPrefixRef.current = null;
       inputRef.current?.focus();
     }
@@ -84,14 +86,22 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
       if (!query) {
         setSections([]);
         setHasSearched(false);
+        setSearchError(null);
         return;
       }
       const currentPrefix = prefix!;
       debounceRef.current = setTimeout(async () => {
         const p = registry.getByPrefix(currentPrefix);
         if (!p) return;
-        const results = await p.search(query, filter ?? undefined);
-        setSections([{ section: p.label, provider: p, results }]);
+        try {
+          const results = await p.search(query, filter ?? undefined);
+          setSections([{ section: p.label, provider: p, results }]);
+          setSearchError(null);
+        } catch (err) {
+          console.warn("[CommandPalette] search failed:", err);
+          setSections([]);
+          setSearchError("Search failed");
+        }
         setActiveIndex(0);
         setHasSearched(true);
       }, 250);
@@ -99,15 +109,23 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
       if (!query) {
         setSections([]);
         setHasSearched(false);
+        setSearchError(null);
         return;
       }
       debounceRef.current = setTimeout(async () => {
         const allProviders = registry.getAll();
         const allSections: SectionedResults[] = [];
+        let hasError = false;
         const settled = await Promise.all(
           allProviders.map(async (p) => {
-            const results = await p.search(query);
-            return { provider: p, results };
+            try {
+              const results = await p.search(query);
+              return { provider: p, results };
+            } catch (err) {
+              console.warn("[CommandPalette] provider failed:", p.id, err);
+              hasError = true;
+              return { provider: p, results: [] as PaletteResult[] };
+            }
           }),
         );
         for (const { provider: p, results } of settled) {
@@ -120,6 +138,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
           }
         }
         setSections(allSections);
+        setSearchError(hasError && allSections.length === 0 ? "Search failed" : null);
         setActiveIndex(0);
         setHasSearched(true);
       }, 250);
@@ -260,8 +279,14 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
             </div>
           )}
 
-          {hasSearched && totalItems === 0 && (
+          {hasSearched && totalItems === 0 && !searchError && (
             <div className="px-4 py-3 text-sm text-text-muted">No results</div>
+          )}
+
+          {searchError && (
+            <div className="px-4 py-3 text-sm text-text-error" data-testid="search-error-message">
+              {searchError}
+            </div>
           )}
 
           {sections.map((section) => {

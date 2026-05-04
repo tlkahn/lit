@@ -738,4 +738,132 @@ describe("CommandPalette", () => {
       expect(results[2]!.getAttribute("data-active")).toBe("true");
     });
   });
+
+  describe("search error handling", () => {
+    it("prefix mode: shows 'Search failed' when provider rejects", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      mockInvoke((cmd) => {
+        if (cmd === "search_annotations") throw new Error("IPC timeout");
+        return [];
+      });
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "@silk" },
+      });
+      await advanceDebounce();
+      expect(screen.getByTestId("search-error-message")).toHaveTextContent("Search failed");
+      expect(screen.queryByText("No results")).not.toBeInTheDocument();
+      expect(screen.queryAllByTestId("command-palette-result")).toHaveLength(0);
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[CommandPalette] search failed:",
+        expect.any(Error),
+      );
+      warnSpy.mockRestore();
+    });
+
+    it("prefix mode: error clears on subsequent success", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      let shouldFail = true;
+      mockInvoke((cmd) => {
+        if (cmd === "search_annotations") {
+          if (shouldFail) throw new Error("IPC timeout");
+          return mockResults;
+        }
+        return [];
+      });
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "@silk" },
+      });
+      await advanceDebounce();
+      expect(screen.getByTestId("search-error-message")).toBeInTheDocument();
+
+      shouldFail = false;
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "@silk road" },
+      });
+      await advanceDebounce();
+      expect(screen.queryByTestId("search-error-message")).not.toBeInTheDocument();
+      expect(screen.getAllByTestId("command-palette-result")).toHaveLength(3);
+      vi.mocked(console.warn).mockRestore();
+    });
+
+    it("omni mode: one failing provider still shows other results", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      mockInvoke((cmd) => {
+        if (cmd === "search_annotations") throw new Error("IPC timeout");
+        return [];
+      });
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "!insert" },
+      });
+      await advanceDebounce();
+
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "insert" },
+      });
+      await advanceDebounce();
+      const results = screen.getAllByTestId("command-palette-result");
+      expect(results.length).toBeGreaterThan(0);
+      expect(screen.queryByTestId("search-error-message")).not.toBeInTheDocument();
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[CommandPalette] provider failed:",
+        "annotations",
+        expect.any(Error),
+      );
+      warnSpy.mockRestore();
+    });
+
+    it("omni mode: all failing shows 'Search failed'", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      mockInvoke(() => {
+        throw new Error("IPC timeout");
+      });
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "silk" },
+      });
+      await advanceDebounce();
+      expect(screen.getByTestId("search-error-message")).toHaveTextContent("Search failed");
+      expect(screen.queryByText("No results")).not.toBeInTheDocument();
+      vi.mocked(console.warn).mockRestore();
+    });
+
+    it("error clears when input is emptied", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      mockInvoke((cmd) => {
+        if (cmd === "search_annotations") throw new Error("IPC timeout");
+        return [];
+      });
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "@silk" },
+      });
+      await advanceDebounce();
+      expect(screen.getByTestId("search-error-message")).toBeInTheDocument();
+
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "" },
+      });
+      expect(screen.queryByTestId("search-error-message")).not.toBeInTheDocument();
+      vi.mocked(console.warn).mockRestore();
+    });
+
+    it("'Search failed' and 'No results' don't appear simultaneously", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      mockInvoke((cmd) => {
+        if (cmd === "search_annotations") throw new Error("IPC timeout");
+        return [];
+      });
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "@silk" },
+      });
+      await advanceDebounce();
+      expect(screen.getByTestId("search-error-message")).toBeInTheDocument();
+      expect(screen.queryByText("No results")).not.toBeInTheDocument();
+      vi.mocked(console.warn).mockRestore();
+    });
+  });
 });
