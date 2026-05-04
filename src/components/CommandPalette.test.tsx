@@ -449,8 +449,8 @@ describe("CommandPalette", () => {
     });
   });
 
-  describe("stub providers", () => {
-    it("$ prefix searches files via searchPagesByTitle and shows results", async () => {
+  describe("file provider ($ prefix)", () => {
+    it("searches files via searchPagesByTitle and shows results", async () => {
       const fileResults: GraphSearchResult[] = [
         { id: "silk-road.md", title: "Silk Road", score: 1.0, excerpt: "Ancient trade route" },
         { id: "report.pdf", title: "Trade Report", score: 0.5, excerpt: "" },
@@ -469,7 +469,7 @@ describe("CommandPalette", () => {
       expect(results[0]).toHaveTextContent("Silk Road");
     });
 
-    it("selecting a $ file result calls selectPage and closes palette", async () => {
+    it("selecting a file result calls selectPage and closes palette", async () => {
       const fileResults: GraphSearchResult[] = [
         { id: "silk-road.md", title: "Silk Road", score: 1.0, excerpt: "" },
       ];
@@ -488,6 +488,9 @@ describe("CommandPalette", () => {
       expect(onClose).toHaveBeenCalled();
     });
 
+  });
+
+  describe("stub providers (# tags, / content)", () => {
     it('# prefix shows "No results" after debounce', async () => {
       render(<CommandPalette open={true} onClose={onClose} />);
       fireEvent.change(screen.getByTestId("command-palette-input"), {
