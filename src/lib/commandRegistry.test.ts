@@ -1,0 +1,108 @@
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import {
+  registerCommand,
+  registerCommands,
+  unregisterCommand,
+  getAllCommands,
+  getVisibleCommands,
+  executeCommand,
+  _clear,
+  type Command,
+} from "./commandRegistry";
+
+function makeCommand(overrides: Partial<Command> = {}): Command {
+  return {
+    id: "test.cmd",
+    label: "Test Command",
+    keywords: [],
+    action: () => {},
+    ...overrides,
+  };
+}
+
+describe("commandRegistry", () => {
+  beforeEach(() => {
+    _clear();
+  });
+
+  it("registerCommand stores a command; getAllCommands returns it", () => {
+    const cmd = makeCommand({ id: "core.hello" });
+    registerCommand(cmd);
+    expect(getAllCommands()).toEqual([cmd]);
+  });
+
+  it("registerCommands batch registers multiple commands", () => {
+    const a = makeCommand({ id: "a" });
+    const b = makeCommand({ id: "b" });
+    registerCommands([a, b]);
+    expect(getAllCommands()).toEqual([a, b]);
+  });
+
+  it("duplicate ID overwrites previous command", () => {
+    const first = makeCommand({ id: "dup", label: "First" });
+    const second = makeCommand({ id: "dup", label: "Second" });
+    registerCommand(first);
+    registerCommand(second);
+    const all = getAllCommands();
+    expect(all).toHaveLength(1);
+    expect(all[0]!.label).toBe("Second");
+  });
+
+  it("unregisterCommand removes by ID", () => {
+    registerCommand(makeCommand({ id: "a" }));
+    registerCommand(makeCommand({ id: "b" }));
+    unregisterCommand("a");
+    expect(getAllCommands().map((c) => c.id)).toEqual(["b"]);
+  });
+
+  it("getVisibleCommands() with no query returns all commands", () => {
+    const a = makeCommand({ id: "a" });
+    const b = makeCommand({ id: "b" });
+    registerCommands([a, b]);
+    expect(getVisibleCommands()).toEqual([a, b]);
+  });
+
+  it("getVisibleCommands(query) filters by label substring (case-insensitive)", () => {
+    registerCommands([
+      makeCommand({ id: "a", label: "Toggle Dark Mode" }),
+      makeCommand({ id: "b", label: "New Page" }),
+    ]);
+    expect(getVisibleCommands("dark").map((c) => c.id)).toEqual(["a"]);
+    expect(getVisibleCommands("DARK").map((c) => c.id)).toEqual(["a"]);
+  });
+
+  it("getVisibleCommands(query) also matches keywords", () => {
+    registerCommands([
+      makeCommand({ id: "a", label: "Toggle Dark Mode", keywords: ["theme", "light"] }),
+      makeCommand({ id: "b", label: "New Page", keywords: ["create"] }),
+    ]);
+    expect(getVisibleCommands("theme").map((c) => c.id)).toEqual(["a"]);
+    expect(getVisibleCommands("create").map((c) => c.id)).toEqual(["b"]);
+  });
+
+  it("getVisibleCommands() excludes commands whose when returns false", () => {
+    registerCommands([
+      makeCommand({ id: "visible", when: () => true }),
+      makeCommand({ id: "hidden", when: () => false }),
+      makeCommand({ id: "default" }), // no when → always visible
+    ]);
+    expect(getVisibleCommands().map((c) => c.id)).toEqual(["visible", "default"]);
+  });
+
+  it("executeCommand(id) calls action and returns true", () => {
+    const action = vi.fn();
+    registerCommand(makeCommand({ id: "run-me", action }));
+    expect(executeCommand("run-me")).toBe(true);
+    expect(action).toHaveBeenCalledOnce();
+  });
+
+  it("executeCommand(unknownId) returns false without throwing", () => {
+    expect(executeCommand("nonexistent")).toBe(false);
+  });
+
+  it("_clear() empties the registry", () => {
+    registerCommands([makeCommand({ id: "a" }), makeCommand({ id: "b" })]);
+    _clear();
+    expect(getAllCommands()).toEqual([]);
+  });
+});
