@@ -80,6 +80,10 @@ html, body, #root {
 }
 .tok-typeName { color: var(--color-cyan); }
 
+/* Clickable URLs in YAML frontmatter panel */
+.yaml-url { color: var(--text-accent); text-decoration: none; cursor: pointer; }
+.yaml-url:hover { text-decoration: underline; }
+
 /* Focus mode: dim text outside current sentence */
 .cm-editor.cm-focus-mode .cm-unfocused {
   opacity: 0.25;
