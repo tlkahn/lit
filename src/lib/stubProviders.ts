@@ -16,6 +16,8 @@ const COMMANDS: Command[] = [
   },
 ];
 
+const COMMAND_MAP = new Map(COMMANDS.map((cmd) => [cmd.id, cmd]));
+
 export const fileProvider: PaletteProvider = {
   id: "files",
   prefix: "$",
@@ -62,11 +64,10 @@ export const commandProvider: PaletteProvider = {
       title: cmd.label,
       icon: cmd.icon,
       section: "Commands",
-      data: { action: cmd.action },
     }));
   },
   onSelect(result: PaletteResult) {
-    const data = result.data as { action: () => void };
-    data.action();
+    const cmd = COMMAND_MAP.get(result.id);
+    if (cmd) cmd.action();
   },
 };

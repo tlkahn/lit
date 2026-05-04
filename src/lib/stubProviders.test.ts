@@ -68,14 +68,23 @@ describe("stubProviders", () => {
       expect(results[0]!.title).toBe("Insert Annotation");
     });
 
-    it("onSelect dispatches the command's action", () => {
+    it("search results have no function references in data (serializable)", async () => {
+      const results = await commandProvider.search("insert");
+      const data = results[0]!.data;
+      if (data && typeof data === "object") {
+        for (const value of Object.values(data as Record<string, unknown>)) {
+          expect(typeof value).not.toBe("function");
+        }
+      }
+    });
+
+    it("onSelect dispatches the command's action using only the result id (lookup)", () => {
       const dispatchSpy = vi.spyOn(window, "dispatchEvent");
       commandProvider.onSelect({
         id: "insert-annotation",
         title: "Insert Annotation",
         icon: "✏️",
         section: "Commands",
-        data: { action: () => window.dispatchEvent(new CustomEvent("lit:open-annotation-builder")) },
       });
       const event = dispatchSpy.mock.calls.find(
         (call) => (call[0] as CustomEvent).type === "lit:open-annotation-builder",
