@@ -50,9 +50,11 @@ const { mockSelectPageAtLine, mockSelectPage, mockRecordJump, mockWorkspaceState
   const mockSelectPage = vi.fn();
   const mockRecordJump = vi.fn();
   const mockWorkspaceState = {
+    workspacePath: "/test/vault" as string | null,
     currentPagePath: "other-page.md" as string | null,
     selectPageAtLine: mockSelectPageAtLine,
     selectPage: mockSelectPage,
+    refreshPages: vi.fn(),
   };
   return { mockSelectPageAtLine, mockSelectPage, mockRecordJump, mockWorkspaceState };
 });
@@ -63,6 +65,26 @@ vi.mock("../stores/workspace", () => ({
       selector(mockWorkspaceState),
     {
       getState: () => mockWorkspaceState,
+    },
+  ),
+}));
+
+vi.mock("../stores/preferences", () => ({
+  usePreferencesStore: Object.assign(
+    (selector: (s: Record<string, unknown>) => unknown) =>
+      selector({ darkMode: "auto" }),
+    {
+      getState: () => ({ darkMode: "auto" }),
+    },
+  ),
+}));
+
+vi.mock("../stores/focusMode", () => ({
+  useFocusModeStore: Object.assign(
+    (selector: (s: Record<string, unknown>) => unknown) =>
+      selector({ focusMode: false, toggleFocusMode: vi.fn() }),
+    {
+      getState: () => ({ focusMode: false, toggleFocusMode: vi.fn() }),
     },
   ),
 }));
@@ -98,6 +120,7 @@ describe("CommandPalette", () => {
 
   beforeEach(() => {
     onClose = vi.fn();
+    mockWorkspaceState.workspacePath = "/test/vault";
     mockWorkspaceState.currentPagePath = "other-page.md";
     mockSelectPageAtLine.mockClear();
     mockSelectPage.mockClear();
@@ -740,8 +763,11 @@ describe("CommandPalette", () => {
         target: { value: "page" },
       });
       await advanceDebounce();
-      const results = screen.getAllByTestId("command-palette-result");
-      expect(results.length).toBeLessThanOrEqual(5);
+      const sections = screen.getAllByTestId("palette-section-header");
+      for (const header of sections) {
+        const sectionResults = header.parentElement!.querySelectorAll('[data-testid="command-palette-result"]');
+        expect(sectionResults.length).toBeLessThanOrEqual(5);
+      }
     });
 
     it("selecting omni result calls correct provider's onSelect and records frecency", async () => {

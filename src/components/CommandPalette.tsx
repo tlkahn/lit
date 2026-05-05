@@ -5,7 +5,9 @@ import { annotationProvider } from "../lib/annotationProvider";
 import { fileProvider } from "../lib/fileProvider";
 import { tagProvider } from "../lib/tagProvider";
 import { contentProvider } from "../lib/contentProvider";
-import { commandProvider } from "../lib/stubProviders";
+import { commandProvider } from "../lib/commandProvider";
+import { initCoreCommands } from "../lib/commands/core";
+import { _clear as _clearCommandRegistry } from "../lib/commandRegistry";
 import { recordAccess, sortByFrecency } from "../lib/frecency";
 
 interface SectionedResults {
@@ -24,11 +26,13 @@ function ensureRegistered(): void {
   registry.register(tagProvider);
   registry.register(contentProvider);
   registry.register(commandProvider);
+  initCoreCommands();
 }
 
 export function _resetRegistration(): void {
   registered = false;
   registry._clear();
+  _clearCommandRegistry();
 }
 
 function resolveProvider(raw: string): { provider: PaletteProvider | null; query: string; prefix: string | null } {
