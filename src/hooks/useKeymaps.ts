@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from "react";
 import type { KeyBinding as CM6KeyBinding } from "@codemirror/view";
 import { getKeymaps } from "../lib/ipc";
 import { resolveKeymaps, type AppBinding } from "../lib/keymapResolver";
-import { registerHandler, hasCommand, executeCommand } from "../lib/commandRegistry";
+import { registerCommand, registerHandler, hasCommand, executeCommand } from "../lib/commandRegistry";
 import { toggleBold, toggleItalic, insertLink, toggleComment } from "../editor/editorCommands";
 import { navigateBack, navigateForward } from "../editor/jumpHistory";
 import { openInExternalEditor } from "../lib/ipc";
@@ -33,8 +33,14 @@ function ensureCommandsRegistered() {
   registerHandler("app.gotoHeading", () => {
     window.dispatchEvent(new CustomEvent("lit:toggle-quick-switcher"));
   });
-  registerHandler("app.toggleFocusMode", () => {
-    useFocusModeStore.getState().toggleFocusMode();
+  registerCommand({
+    id: "app.toggleFocusMode",
+    label: "Toggle Focus Mode",
+    keywords: ["focus", "zen", "distraction"],
+    icon: "\u{1F9D8}",
+    action: () => {
+      useFocusModeStore.getState().toggleFocusMode();
+    },
   });
   registerHandler("panel.toggleBottom", () => {
     window.dispatchEvent(new CustomEvent("lit:toggle-bottom-panel"));
@@ -45,34 +51,44 @@ function ensureCommandsRegistered() {
   registerHandler("app.commandPalette", () => {
     window.dispatchEvent(new CustomEvent("lit:toggle-command-palette"));
   });
-  registerHandler("app.insertAnnotation", () => {
-    const view = getCurrentEditorView();
-    if (view) {
-      const annotations = view.state.field(annotationDataField, false) ?? [];
-      const pos = view.state.selection.main.head;
-      const ann = findAnnotationAtCursor(annotations, pos);
-      if (ann) {
+  registerCommand({
+    id: "app.insertAnnotation",
+    label: "Insert Annotation",
+    keywords: ["annotation", "annotate", "note"],
+    icon: "\u{1F4AC}",
+    when: () => {
+      const s = useWorkspaceStore.getState();
+      return s.workspacePath !== null && s.currentPagePath !== null;
+    },
+    action: () => {
+      const view = getCurrentEditorView();
+      if (view) {
+        const annotations = view.state.field(annotationDataField, false) ?? [];
+        const pos = view.state.selection.main.head;
+        const ann = findAnnotationAtCursor(annotations, pos);
+        if (ann) {
+          window.dispatchEvent(
+            new CustomEvent<AnnotationBuilderEventDetail>("lit:open-annotation-builder", {
+              detail: {
+                mode: "edit",
+                annotation: ann,
+                originalRange: { from: ann.char_start, to: ann.char_end },
+              },
+            }),
+          );
+          return;
+        }
+        const sel = view.state.selection.main;
+        const selectedText = sel.from !== sel.to ? view.state.sliceDoc(sel.from, sel.to) : undefined;
         window.dispatchEvent(
           new CustomEvent<AnnotationBuilderEventDetail>("lit:open-annotation-builder", {
-            detail: {
-              mode: "edit",
-              annotation: ann,
-              originalRange: { from: ann.char_start, to: ann.char_end },
-            },
+            detail: { mode: "create", selectedText },
           }),
         );
-        return;
+      } else {
+        window.dispatchEvent(new CustomEvent("lit:open-annotation-builder"));
       }
-      const sel = view.state.selection.main;
-      const selectedText = sel.from !== sel.to ? view.state.sliceDoc(sel.from, sel.to) : undefined;
-      window.dispatchEvent(
-        new CustomEvent<AnnotationBuilderEventDetail>("lit:open-annotation-builder", {
-          detail: { mode: "create", selectedText },
-        }),
-      );
-    } else {
-      window.dispatchEvent(new CustomEvent("lit:open-annotation-builder"));
-    }
+    },
   });
 }
 

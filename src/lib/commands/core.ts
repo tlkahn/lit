@@ -1,7 +1,6 @@
 import { registerOnce } from "../commandRegistry";
 import { useWorkspaceStore } from "../../stores/workspace";
 import { usePreferencesStore } from "../../stores/preferences";
-import { useFocusModeStore } from "../../stores/focusMode";
 import { setPreference, getPreferencesPath } from "../ipc";
 
 function hasWorkspace(): boolean {
@@ -26,15 +25,6 @@ export function initCoreCommands(): void {
         const idx = DARK_MODE_CYCLE.indexOf(current);
         const next = DARK_MODE_CYCLE[(idx + 1) % DARK_MODE_CYCLE.length];
         setPreference("workbench.darkMode", next).catch(console.error);
-      },
-    },
-    {
-      id: "core.focus.toggle",
-      label: "Toggle Focus Mode",
-      keywords: ["focus", "zen", "distraction"],
-      icon: "🧘",
-      action: () => {
-        useFocusModeStore.getState().toggleFocusMode();
       },
     },
     {
@@ -100,16 +90,6 @@ export function initCoreCommands(): void {
       action: () => {
         const path = useWorkspaceStore.getState().currentPagePath;
         if (path) navigator.clipboard.writeText(path).catch(console.error);
-      },
-    },
-    {
-      id: "core.annotation.insert",
-      label: "Insert Annotation",
-      keywords: ["annotation", "annotate", "note"],
-      icon: "💬",
-      when: hasPage,
-      action: () => {
-        window.dispatchEvent(new CustomEvent("lit:open-annotation-builder"));
       },
     },
   ]);

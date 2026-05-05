@@ -12,10 +12,6 @@ const mockPreferencesState = vi.hoisted(() => ({
   darkMode: "auto" as "light" | "dark" | "auto",
 }));
 
-const mockFocusModeState = vi.hoisted(() => ({
-  toggleFocusMode: vi.fn(),
-}));
-
 const mockSetPreference = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockGetPreferencesPath = vi.hoisted(() => vi.fn().mockResolvedValue("/tmp/prefs.json"));
 
@@ -30,13 +26,6 @@ vi.mock("../../stores/preferences", () => ({
   usePreferencesStore: Object.assign(
     (selector: (s: Record<string, unknown>) => unknown) => selector(mockPreferencesState),
     { getState: () => mockPreferencesState },
-  ),
-}));
-
-vi.mock("../../stores/focusMode", () => ({
-  useFocusModeStore: Object.assign(
-    (selector: (s: Record<string, unknown>) => unknown) => selector(mockFocusModeState),
-    { getState: () => mockFocusModeState },
   ),
 }));
 
@@ -56,14 +45,12 @@ describe("initCoreCommands", () => {
     mockPreferencesState.darkMode = "auto";
   });
 
-  it("registers exactly 9 commands with expected IDs", () => {
+  it("registers exactly 7 commands with expected IDs", () => {
     initCoreCommands();
     const commands = getAllCommands();
-    expect(commands).toHaveLength(9);
+    expect(commands).toHaveLength(7);
     const ids = commands.map((c) => c.id).sort();
     expect(ids).toEqual([
-      "core.annotation.insert",
-      "core.focus.toggle",
       "core.page.copyPath",
       "core.page.delete",
       "core.page.new",
@@ -133,12 +120,6 @@ describe("initCoreCommands", () => {
     expect(mockSetPreference).toHaveBeenLastCalledWith("workbench.darkMode", "auto");
   });
 
-  it("core.focus.toggle calls toggleFocusMode", () => {
-    initCoreCommands();
-    const cmd = getAllCommands().find((c) => c.id === "core.focus.toggle")!;
-    cmd.action();
-    expect(mockFocusModeState.toggleFocusMode).toHaveBeenCalledOnce();
-  });
 
   it("core.page.copyPath writes current page path to clipboard", () => {
     initCoreCommands();
@@ -211,19 +192,7 @@ describe("initCoreCommands", () => {
     initCoreCommands();
     initCoreCommands();
     const commands = getAllCommands();
-    expect(commands).toHaveLength(9);
-  });
-
-  it("registers insert-annotation command that dispatches lit:open-annotation-builder", () => {
-    initCoreCommands();
-    const cmd = getAllCommands().find((c) => c.id === "core.annotation.insert")!;
-    expect(cmd).toBeDefined();
-    expect(cmd.label).toBe("Insert Annotation");
-    const handler = vi.fn();
-    window.addEventListener("lit:open-annotation-builder", handler);
-    cmd.action();
-    expect(handler).toHaveBeenCalledOnce();
-    window.removeEventListener("lit:open-annotation-builder", handler);
+    expect(commands).toHaveLength(7);
   });
 
   it("commands have icons", () => {

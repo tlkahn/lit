@@ -655,15 +655,15 @@ describe("CommandPalette", () => {
   });
 
   describe("command provider (! prefix)", () => {
-    it('"!insert" shows "Insert Annotation" command', async () => {
+    it('"!rename" shows "Rename Current Page" command', async () => {
       render(<CommandPalette open={true} onClose={onClose} />);
       fireEvent.change(screen.getByTestId("command-palette-input"), {
-        target: { value: "!insert" },
+        target: { value: "!rename" },
       });
       await advanceDebounce();
       const results = screen.getAllByTestId("command-palette-result");
       expect(results).toHaveLength(1);
-      expect(results[0]).toHaveTextContent("Insert Annotation");
+      expect(results[0]).toHaveTextContent("Rename Current Page");
     });
 
     it('"!" with no query shows all commands (browse mode)', async () => {
@@ -674,20 +674,20 @@ describe("CommandPalette", () => {
       expect(screen.getByText("Type to search commands…")).toBeInTheDocument();
     });
 
-    it('selecting "Insert Annotation" command dispatches event and closes', async () => {
+    it('selecting "Rename Current Page" command dispatches event and closes', async () => {
       const dispatchSpy = vi.spyOn(window, "dispatchEvent");
       render(<CommandPalette open={true} onClose={onClose} />);
       fireEvent.change(screen.getByTestId("command-palette-input"), {
-        target: { value: "!insert" },
+        target: { value: "!rename" },
       });
       await advanceDebounce();
       const results = screen.getAllByTestId("command-palette-result");
       fireEvent.click(results[0]!);
 
-      const builderEvent = dispatchSpy.mock.calls.find(
-        (call) => (call[0] as CustomEvent).type === "lit:open-annotation-builder",
+      const renameEvent = dispatchSpy.mock.calls.find(
+        (call) => (call[0] as CustomEvent).type === "lit:rename-page",
       );
-      expect(builderEvent).toBeDefined();
+      expect(renameEvent).toBeDefined();
       expect(onClose).toHaveBeenCalled();
       dispatchSpy.mockRestore();
     });
@@ -852,7 +852,7 @@ describe("CommandPalette", () => {
       });
       render(<CommandPalette open={true} onClose={onClose} />);
       fireEvent.change(screen.getByTestId("command-palette-input"), {
-        target: { value: "insert" },
+        target: { value: "reload" },
       });
       await advanceDebounce();
       // Should have annotations section + commands section
@@ -943,7 +943,7 @@ describe("CommandPalette", () => {
       });
       render(<CommandPalette open={true} onClose={onClose} />);
       fireEvent.change(screen.getByTestId("command-palette-input"), {
-        target: { value: "insert" },
+        target: { value: "reload" },
       });
       await advanceDebounce();
       const results = screen.getAllByTestId("command-palette-result");
