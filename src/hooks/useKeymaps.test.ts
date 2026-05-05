@@ -1,11 +1,16 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 import { mockInvoke } from "../test/tauri-mock";
-import { commandRegistry } from "../lib/commands";
+import {
+  registerHandler,
+  hasCommand,
+  executeCommand,
+  _clear,
+} from "../lib/commandRegistry";
 
 describe("useKeymaps", () => {
   beforeEach(() => {
-    commandRegistry._clear();
+    _clear();
     mockInvoke((cmd) => {
       if (cmd === "get_keymaps") {
         return [
@@ -52,12 +57,12 @@ describe("useKeymaps", () => {
 
   it("app.gotoHeading is registered in the command registry", async () => {
     await loadHook();
-    expect(commandRegistry.has("app.gotoHeading")).toBe(true);
+    expect(hasCommand("app.gotoHeading")).toBe(true);
   });
 
   it("editor.openInExternalEditor is registered in the command registry", async () => {
     await loadHook();
-    expect(commandRegistry.has("editor.openInExternalEditor")).toBe(true);
+    expect(hasCommand("editor.openInExternalEditor")).toBe(true);
   });
 
   it("produces a CM6 editor binding for editor.openInExternalEditor", async () => {
@@ -71,27 +76,27 @@ describe("useKeymaps", () => {
     await loadHook();
     const listener = vi.fn();
     window.addEventListener("lit:toggle-quick-switcher", listener);
-    commandRegistry.execute("app.gotoHeading");
+    executeCommand("app.gotoHeading");
     window.removeEventListener("lit:toggle-quick-switcher", listener);
     expect(listener).toHaveBeenCalledTimes(1);
   });
 
   it("panel.toggleBottom is registered in the command registry", async () => {
     await loadHook();
-    expect(commandRegistry.has("panel.toggleBottom")).toBe(true);
+    expect(hasCommand("panel.toggleBottom")).toBe(true);
   });
 
   it("executing panel.toggleBottom dispatches lit:toggle-bottom-panel", async () => {
     await loadHook();
     const listener = vi.fn();
     window.addEventListener("lit:toggle-bottom-panel", listener);
-    commandRegistry.execute("panel.toggleBottom");
+    executeCommand("panel.toggleBottom");
     window.removeEventListener("lit:toggle-bottom-panel", listener);
     expect(listener).toHaveBeenCalledTimes(1);
   });
 
   it("app keydown handler dispatches matching command", async () => {
-    commandRegistry.register("app.newPage", vi.fn());
+    registerHandler("app.newPage", vi.fn());
     const { result } = await loadHook();
     await waitFor(() => expect(result.current.loading).toBe(false));
 
@@ -102,7 +107,6 @@ describe("useKeymaps", () => {
     });
     document.dispatchEvent(event);
 
-    const handler = commandRegistry.list().includes("app.newPage");
-    expect(handler).toBe(true);
+    expect(hasCommand("app.newPage")).toBe(true);
   });
 });

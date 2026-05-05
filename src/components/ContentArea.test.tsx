@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { ContentArea, parseYamlErrorLocation } from "./ContentArea";
 import { mockInvoke, mockListen, emitMockEvent, resetListenMock } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
-import { commandRegistry } from "../lib/commands";
+import * as commandRegistryModule from "../lib/commandRegistry";
 
 import { globalJumpTracker } from "../editor/jumpTracker";
 
@@ -1165,7 +1165,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
 
   it("delegates to commandRegistry.execute with the editor view", async () => {
     useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
-    const spy = vi.spyOn(commandRegistry, "execute").mockReturnValue(true);
+    const spy = vi.spyOn(commandRegistryModule, "executeCommand").mockReturnValue(true);
     render(<ContentArea />);
 
     await waitFor(() => {
@@ -1184,7 +1184,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
   });
 
   it("does not call commandRegistry.execute when no editor view", async () => {
-    const spy = vi.spyOn(commandRegistry, "execute");
+    const spy = vi.spyOn(commandRegistryModule, "executeCommand");
     render(<ContentArea />);
 
     expect(screen.getByTestId("empty-state")).toBeInTheDocument();

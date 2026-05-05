@@ -3,6 +3,8 @@ import {
   registerCommand,
   registerCommands,
   registerOnce,
+  registerHandler,
+  hasCommand,
   unregisterCommand,
   getAllCommands,
   getVisibleCommands,
@@ -133,5 +135,49 @@ describe("commandRegistry", () => {
     _clear();
     registerOnce("my-group", [makeCommand({ id: "a", label: "Second" })]);
     expect(getAllCommands()[0]!.label).toBe("Second");
+  });
+
+  it("registerHandler(id, fn) registers a command callable by ID", () => {
+    const fn = vi.fn();
+    registerHandler("test.handler", fn);
+    expect(hasCommand("test.handler")).toBe(true);
+    executeCommand("test.handler");
+    expect(fn).toHaveBeenCalledOnce();
+  });
+
+  it("hasCommand returns false for unregistered ID", () => {
+    expect(hasCommand("nonexistent")).toBe(false);
+  });
+
+  it("executeCommand passes args through to action", () => {
+    let received: unknown[] = [];
+    registerHandler("args.cmd", (...args) => {
+      received = args;
+    });
+    executeCommand("args.cmd", "a", 42);
+    expect(received).toEqual(["a", 42]);
+  });
+
+  it("action returning false makes executeCommand return false", () => {
+    registerHandler("returns.false", () => false);
+    expect(executeCommand("returns.false")).toBe(false);
+  });
+
+  it("action returning void makes executeCommand return true", () => {
+    registerHandler("returns.void", () => {});
+    expect(executeCommand("returns.void")).toBe(true);
+  });
+
+  it("command without label is excluded from getVisibleCommands", () => {
+    registerHandler("hidden.cmd", () => {});
+    expect(getVisibleCommands().map((c) => c.id)).not.toContain("hidden.cmd");
+  });
+
+  it("command with label still appears in getVisibleCommands", () => {
+    registerCommand(makeCommand({ id: "visible.cmd", label: "Visible" }));
+    registerHandler("hidden.cmd", () => {});
+    const ids = getVisibleCommands().map((c) => c.id);
+    expect(ids).toContain("visible.cmd");
+    expect(ids).not.toContain("hidden.cmd");
   });
 });

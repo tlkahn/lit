@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from "react";
 import type { KeyBinding as CM6KeyBinding } from "@codemirror/view";
 import { getKeymaps } from "../lib/ipc";
 import { resolveKeymaps, type AppBinding } from "../lib/keymapResolver";
-import { commandRegistry } from "../lib/commands";
+import { registerHandler, hasCommand, executeCommand } from "../lib/commandRegistry";
 import { toggleBold, toggleItalic, insertLink, toggleComment } from "../editor/editorCommands";
 import { navigateBack, navigateForward } from "../editor/jumpHistory";
 import { openInExternalEditor } from "../lib/ipc";
@@ -14,12 +14,12 @@ import type { AnnotationBuilderEventDetail } from "../lib/annotationDsl";
 import type { EditorView } from "@codemirror/view";
 
 function ensureCommandsRegistered() {
-  if (commandRegistry.has("editor.toggleBold")) return;
-  commandRegistry.register("editor.toggleBold", (view) => toggleBold(view as EditorView));
-  commandRegistry.register("editor.toggleItalic", (view) => toggleItalic(view as EditorView));
-  commandRegistry.register("editor.insertLink", (view) => insertLink(view as EditorView));
-  commandRegistry.register("editor.toggleComment", (view) => toggleComment(view as EditorView));
-  commandRegistry.register("editor.openInExternalEditor", (view) => {
+  if (hasCommand("editor.toggleBold")) return;
+  registerHandler("editor.toggleBold", (view) => toggleBold(view as EditorView));
+  registerHandler("editor.toggleItalic", (view) => toggleItalic(view as EditorView));
+  registerHandler("editor.insertLink", (view) => insertLink(view as EditorView));
+  registerHandler("editor.toggleComment", (view) => toggleComment(view as EditorView));
+  registerHandler("editor.openInExternalEditor", (view) => {
     const v = view as EditorView;
     const pos = v.state.selection.main.head;
     const line = v.state.doc.lineAt(pos);
@@ -28,24 +28,24 @@ function ensureCommandsRegistered() {
       openInExternalEditor(currentPagePath, line.number + currentFrontmatterLineCount, pos - line.from + 1);
     }
   });
-  commandRegistry.register("editor.navigateBack", (view) => navigateBack(view as EditorView));
-  commandRegistry.register("editor.navigateForward", (view) => navigateForward(view as EditorView));
-  commandRegistry.register("app.gotoHeading", () => {
+  registerHandler("editor.navigateBack", (view) => navigateBack(view as EditorView));
+  registerHandler("editor.navigateForward", (view) => navigateForward(view as EditorView));
+  registerHandler("app.gotoHeading", () => {
     window.dispatchEvent(new CustomEvent("lit:toggle-quick-switcher"));
   });
-  commandRegistry.register("app.toggleFocusMode", () => {
+  registerHandler("app.toggleFocusMode", () => {
     useFocusModeStore.getState().toggleFocusMode();
   });
-  commandRegistry.register("panel.toggleBottom", () => {
+  registerHandler("panel.toggleBottom", () => {
     window.dispatchEvent(new CustomEvent("lit:toggle-bottom-panel"));
   });
-  commandRegistry.register("panel.toggleAnnotations", () => {
+  registerHandler("panel.toggleAnnotations", () => {
     window.dispatchEvent(new CustomEvent("lit:toggle-annotation-panel"));
   });
-  commandRegistry.register("app.commandPalette", () => {
+  registerHandler("app.commandPalette", () => {
     window.dispatchEvent(new CustomEvent("lit:toggle-command-palette"));
   });
-  commandRegistry.register("app.insertAnnotation", () => {
+  registerHandler("app.insertAnnotation", () => {
     const view = getCurrentEditorView();
     if (view) {
       const annotations = view.state.field(annotationDataField, false) ?? [];
@@ -126,7 +126,7 @@ export function useKeymaps(): {
       for (const binding of appBindingsRef.current) {
         if (binding.key === pressed) {
           e.preventDefault();
-          commandRegistry.execute(binding.command);
+          executeCommand(binding.command);
           return;
         }
       }

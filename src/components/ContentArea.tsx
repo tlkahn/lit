@@ -6,7 +6,7 @@ import { EditorSelection } from "@codemirror/state";
 import { listen } from "@tauri-apps/api/event";
 import { useWorkspaceStore } from "../stores/workspace";
 import { readPage, writePage, parseRawYaml, resolveWikilink, createPage as ipcCreatePage } from "../lib/ipc";
-import { commandRegistry } from "../lib/commands";
+import { executeCommand } from "../lib/commandRegistry";
 import { navigateWikilink } from "../lib/wikilinkNavigation";
 import { setCurrentEditorView } from "../lib/editorViewRef";
 import { extractHeadings, type Heading } from "../lib/headings";
@@ -438,7 +438,7 @@ export function ContentArea() {
     let unlisten: (() => void) | undefined;
     listen("menu://open-in-external-editor", () => {
       const view = editorViewRef.current;
-      if (view) commandRegistry.execute("editor.openInExternalEditor", view);
+      if (view) executeCommand("editor.openInExternalEditor", view);
     }).then((fn) => { unlisten = fn; });
     return () => { unlisten?.(); };
   }, []);

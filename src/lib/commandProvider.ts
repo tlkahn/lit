@@ -9,7 +9,7 @@ export const commandProvider: PaletteProvider = {
   async search(query: string): Promise<PaletteResult[]> {
     return getVisibleCommands(query || undefined).map((cmd) => ({
       id: cmd.id,
-      title: cmd.label,
+      title: cmd.label!,
       icon: cmd.icon,
       shortcut: cmd.shortcut,
       section: "Commands",

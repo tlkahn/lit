@@ -1,7 +1,6 @@
 import type { KeyBinding as CM6KeyBinding } from "@codemirror/view";
 import type { KeyBinding } from "./ipc";
-import { commandRegistry } from "./commands";
-import type { EditorView } from "@codemirror/view";
+import { hasCommand, executeCommand } from "./commandRegistry";
 
 export interface AppBinding {
   key: string;
@@ -19,12 +18,12 @@ export function resolveKeymaps(merged: KeyBinding[]): ResolvedKeymaps {
   const appBindings: AppBinding[] = [];
 
   for (const binding of merged) {
-    if (!commandRegistry.has(binding.command)) continue;
+    if (!hasCommand(binding.command)) continue;
 
     if (binding.command.startsWith("editor.")) {
       editorBindings.push({
         key: binding.key,
-        run: (view: EditorView) => commandRegistry.execute(binding.command, view),
+        run: (view) => executeCommand(binding.command, view),
       });
     } else {
       appBindings.push({

@@ -1,15 +1,15 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { commandRegistry } from "./commands";
+import { registerHandler, _clear } from "./commandRegistry";
 import { resolveKeymaps } from "./keymapResolver";
 
 describe("resolveKeymaps", () => {
   beforeEach(() => {
-    commandRegistry._clear();
+    _clear();
   });
 
   it("splits bindings into editor and app groups by command prefix", () => {
-    commandRegistry.register("editor.toggleBold", () => true);
-    commandRegistry.register("app.newPage", () => true);
+    registerHandler("editor.toggleBold", () => true);
+    registerHandler("app.newPage", () => true);
 
     const result = resolveKeymaps([
       { key: "Mod-b", command: "editor.toggleBold", when: "editorFocus" },
@@ -21,7 +21,7 @@ describe("resolveKeymaps", () => {
   });
 
   it("converts editor binding to CM6 KeyBinding format", () => {
-    commandRegistry.register("editor.toggleBold", () => true);
+    registerHandler("editor.toggleBold", () => true);
 
     const result = resolveKeymaps([
       { key: "Mod-b", command: "editor.toggleBold" },
@@ -32,7 +32,7 @@ describe("resolveKeymaps", () => {
   });
 
   it("converts app binding to AppBinding format", () => {
-    commandRegistry.register("app.newPage", () => true);
+    registerHandler("app.newPage", () => true);
 
     const result = resolveKeymaps([
       { key: "Mod-Shift-n", command: "app.newPage", when: "always" },
