@@ -318,6 +318,7 @@ pub fn run() {
             commands::keymap::save_user_keymaps,
             commands::preferences::get_preferences,
             commands::preferences::get_preferences_path,
+            commands::preferences::set_preference,
             commands::cli::install_cli,
             commands::cli::uninstall_cli,
             commands::cli::is_cli_installed,

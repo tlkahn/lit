@@ -124,6 +124,24 @@ pub fn annotations_enabled(app_handle: &AppHandle) -> bool {
         .unwrap_or(true)
 }
 
+pub fn set_preference_at_path(
+    path: &PathBuf,
+    key: &str,
+    value: serde_json::Value,
+) -> Result<(), String> {
+    let content = fs::read_to_string(path).unwrap_or_else(|_| "{}".to_string());
+    let mut obj: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| format!("invalid JSON: {e}"))?;
+    obj[key] = value;
+    let pretty = serde_json::to_string_pretty(&obj).map_err(|e| e.to_string())?;
+    fs::write(path, pretty).map_err(|e| format!("write failed: {e}"))
+}
+
+pub fn set_preference(app_handle: &AppHandle, key: &str, value: serde_json::Value) -> Result<(), String> {
+    let path = preferences_path(app_handle);
+    set_preference_at_path(&path, key, value)
+}
+
 pub fn seed_default_if_missing(app_handle: &AppHandle) {
     let path = preferences_path(app_handle);
     if path.exists() {
@@ -631,5 +649,46 @@ mod tests {
         let json = r#"{"annotations.enabled": true}"#;
         let prefs: Preferences = serde_json::from_str(json).unwrap();
         assert!(annotations_enabled_from_prefs(&prefs));
+    }
+
+    #[test]
+    fn set_preference_writes_key_to_file() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("preferences.json");
+        fs::write(&path, "{}").unwrap();
+
+        set_preference_at_path(&path, "workbench.darkMode", serde_json::json!("dark")).unwrap();
+
+        let content = fs::read_to_string(&path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed["workbench.darkMode"], serde_json::json!("dark"));
+    }
+
+    #[test]
+    fn set_preference_preserves_existing_keys() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("preferences.json");
+        fs::write(&path, r#"{"workbench.darkMode": "light", "editor.folding.enabled": true}"#).unwrap();
+
+        set_preference_at_path(&path, "custom.newKey", serde_json::json!(42)).unwrap();
+
+        let content = fs::read_to_string(&path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed["workbench.darkMode"], serde_json::json!("light"));
+        assert_eq!(parsed["editor.folding.enabled"], serde_json::json!(true));
+        assert_eq!(parsed["custom.newKey"], serde_json::json!(42));
+    }
+
+    #[test]
+    fn set_preference_overwrites_existing_key() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("preferences.json");
+        fs::write(&path, r#"{"workbench.darkMode": "light"}"#).unwrap();
+
+        set_preference_at_path(&path, "workbench.darkMode", serde_json::json!("dark")).unwrap();
+
+        let content = fs::read_to_string(&path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed["workbench.darkMode"], serde_json::json!("dark"));
     }
 }
