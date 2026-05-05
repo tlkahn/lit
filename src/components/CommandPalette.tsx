@@ -1,6 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import * as registry from "../lib/paletteRegistry";
 import type { PaletteProvider, PaletteResult } from "../lib/paletteRegistry";
+import { annotationProvider } from "../lib/annotationProvider";
+import { fileProvider } from "../lib/fileProvider";
+import { tagProvider } from "../lib/tagProvider";
+import { contentProvider } from "../lib/contentProvider";
+import { commandProvider } from "../lib/commandProvider";
+import { initCoreCommands } from "../lib/commands/core";
+import { recordAccess, sortByFrecency } from "../lib/frecency";
 
 const omniContentHintProvider: PaletteProvider = {
   id: "__omni-content-hint__",
@@ -15,13 +22,6 @@ const omniContentHintProvider: PaletteProvider = {
     return false;
   },
 };
-import { annotationProvider } from "../lib/annotationProvider";
-import { fileProvider } from "../lib/fileProvider";
-import { tagProvider } from "../lib/tagProvider";
-import { contentProvider } from "../lib/contentProvider";
-import { commandProvider } from "../lib/commandProvider";
-import { initCoreCommands } from "../lib/commands/core";
-import { recordAccess, sortByFrecency } from "../lib/frecency";
 
 interface SectionedResults {
   section: string;
@@ -172,17 +172,19 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
           }
         }
         const hasRealResults = allSections.length > 0;
-        allSections.push({
-          section: "Content",
-          provider: omniContentHintProvider,
-          results: [{
-            id: "__omni-content-hint__",
-            title: `Search content for "${query}"…`,
-            icon: "",
+        if (!hasError || hasRealResults) {
+          allSections.push({
             section: "Content",
-            data: { query },
-          }],
-        });
+            provider: omniContentHintProvider,
+            results: [{
+              id: "__omni-content-hint__",
+              title: `Search content for "${query}"…`,
+              icon: "",
+              section: "Content",
+              data: { query },
+            }],
+          });
+        }
         setSections(allSections);
         setSearchError(hasError && !hasRealResults ? "Search failed" : null);
         setActiveIndex(0);
@@ -198,6 +200,9 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
 
   const allResults = sections.flatMap((s) => s.results);
   const totalItems = allResults.length;
+  const realResultCount = sections
+    .filter(s => s.provider.id !== "__omni-content-hint__")
+    .flatMap(s => s.results).length;
 
   useEffect(() => {
     if (totalItems === 0) return;
@@ -327,7 +332,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
             </div>
           )}
 
-          {hasSearched && totalItems === 0 && !searchError && (
+          {hasSearched && realResultCount === 0 && !searchError && (
             <div className="px-4 py-3 text-sm text-text-muted">No results</div>
           )}
 
@@ -340,10 +345,11 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
           {sections.map((section) => {
             const sectionElements = section.results.map((result) => {
               const i = resultIndexMap.get(result)!;
+              const isHint = result.id === "__omni-content-hint__";
               return (
                 <div
                   key={result.id}
-                  data-testid="command-palette-result"
+                  data-testid={isHint ? "command-palette-content-hint" : "command-palette-result"}
                   data-active={i === activeIndex ? "true" : "false"}
                   className={`cursor-pointer px-4 py-2 text-sm ${i === activeIndex ? "bg-bg-hover" : ""}`}
                   onClick={() => handleSelect(result)}
@@ -354,7 +360,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
                         {result.icon}
                       </span>
                     )}
-                    <span className="font-medium text-text-normal">
+                    <span className={isHint ? "text-text-muted italic" : "font-medium text-text-normal"}>
                       {result.title}
                     </span>
                     {result.shortcut && (
