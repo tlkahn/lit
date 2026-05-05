@@ -45,23 +45,25 @@ vi.mock("../ipc", () => ({
   getPreferencesPath: mockGetPreferencesPath,
 }));
 
-import { initCoreCommands } from "./core";
+import { initCoreCommands, _resetCoreCommands } from "./core";
 
 describe("initCoreCommands", () => {
   beforeEach(() => {
     _clear();
+    _resetCoreCommands();
     vi.clearAllMocks();
     mockWorkspaceState.workspacePath = "/tmp/vault";
     mockWorkspaceState.currentPagePath = "hello.md";
     mockPreferencesState.darkMode = "auto";
   });
 
-  it("registers exactly 8 commands with expected IDs", () => {
+  it("registers exactly 9 commands with expected IDs", () => {
     initCoreCommands();
     const commands = getAllCommands();
-    expect(commands).toHaveLength(8);
+    expect(commands).toHaveLength(9);
     const ids = commands.map((c) => c.id).sort();
     expect(ids).toEqual([
+      "core.annotation.insert",
       "core.focus.toggle",
       "core.page.copyPath",
       "core.page.delete",
@@ -142,11 +144,21 @@ describe("initCoreCommands", () => {
   it("core.page.copyPath writes current page path to clipboard", () => {
     initCoreCommands();
     const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.assign(navigator, { clipboard: { writeText } });
+    const original = navigator.clipboard;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      writable: true,
+      configurable: true,
+    });
     mockWorkspaceState.currentPagePath = "notes/hello.md";
     const cmd = getAllCommands().find((c) => c.id === "core.page.copyPath")!;
     cmd.action();
     expect(writeText).toHaveBeenCalledWith("notes/hello.md");
+    Object.defineProperty(navigator, "clipboard", {
+      value: original,
+      writable: true,
+      configurable: true,
+    });
   });
 
   it("core.page.new dispatches lit:new-page event", () => {
@@ -194,5 +206,32 @@ describe("initCoreCommands", () => {
     const cmd = getAllCommands().find((c) => c.id === "core.workspace.reload")!;
     cmd.action();
     expect(mockWorkspaceState.refreshPages).toHaveBeenCalledOnce();
+  });
+
+  it("calling initCoreCommands twice does not duplicate commands", () => {
+    initCoreCommands();
+    initCoreCommands();
+    const commands = getAllCommands();
+    expect(commands).toHaveLength(9);
+  });
+
+  it("registers insert-annotation command that dispatches lit:open-annotation-builder", () => {
+    initCoreCommands();
+    const cmd = getAllCommands().find((c) => c.id === "core.annotation.insert")!;
+    expect(cmd).toBeDefined();
+    expect(cmd.label).toBe("Insert Annotation");
+    const handler = vi.fn();
+    window.addEventListener("lit:open-annotation-builder", handler);
+    cmd.action();
+    expect(handler).toHaveBeenCalledOnce();
+    window.removeEventListener("lit:open-annotation-builder", handler);
+  });
+
+  it("commands have icons", () => {
+    initCoreCommands();
+    const commands = getAllCommands();
+    for (const cmd of commands) {
+      expect(cmd.icon).toBeDefined();
+    }
   });
 });
