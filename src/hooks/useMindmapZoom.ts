@@ -67,12 +67,9 @@ export function useMindmapZoom(contentBounds: ContentBounds | null, enabled: boo
     const fit = computeFitTransform(bounds, viewport);
     const t = zoomIdentity.translate(fit.x, fit.y).scale(fit.k);
 
-    if (initialFitRef.current) {
-      select(svg).call(zoomBehavior.transform, t);
-      initialFitRef.current = false;
-    } else {
-      select(svg).transition().duration(300).call(zoomBehavior.transform, t);
-    }
+    if (!initialFitRef.current) return;
+    select(svg).call(zoomBehavior.transform, t);
+    initialFitRef.current = false;
   }, [enabled, cbx, cby, cbw, cbh]);
 
   const fitContent = useCallback(() => {
