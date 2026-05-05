@@ -157,4 +157,19 @@ describe("fileProvider", () => {
       { notePath: "silk-road.md", line: 1, col: 0 },
     );
   });
+
+  it("filters out results with empty titles", async () => {
+    const resultsWithEmpty: GraphSearchResult[] = [
+      { id: "real.md", title: "Real Note", score: 1.0, excerpt: "" },
+      { id: "empty.md", title: "", score: 0.9, excerpt: "" },
+      { id: "blank.md", title: "   ", score: 0.8, excerpt: "" },
+    ];
+    mockInvoke((cmd) => {
+      if (cmd === "search_pages_by_title") return resultsWithEmpty;
+      return [];
+    });
+    const results = await fileProvider.search("test");
+    expect(results).toHaveLength(1);
+    expect(results[0]!.title).toBe("Real Note");
+  });
 });

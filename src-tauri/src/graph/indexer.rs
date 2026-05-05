@@ -36,6 +36,7 @@ pub fn parse_md_file(
     let title = fm_json
         .get("title")
         .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
         .map(String::from)
         .unwrap_or_else(|| title_from_relative_path(relative_path));
 
@@ -1206,6 +1207,14 @@ mod tests {
         write_md(dir.path(), "plain.md", "Just plain text.");
         let (_, _, body) = parse_md_file(dir.path(), "plain.md").unwrap();
         assert_eq!(body, "Just plain text.");
+    }
+
+    #[test]
+    fn parse_md_file_empty_frontmatter_title_falls_back_to_filename() {
+        let dir = create_workspace();
+        write_md(dir.path(), "agentic-design.md", "---\ntitle: \"\"\n---\nBody.");
+        let (node, _, _) = parse_md_file(dir.path(), "agentic-design.md").unwrap();
+        assert_eq!(node.title, "agentic-design");
     }
 
     #[test]
@@ -2926,6 +2935,30 @@ mod tests {
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.search_by_title("", 10).unwrap();
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn search_by_title_excludes_stubs_from_wikilinks() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "real.md",
+            "---\ntitle: Agentic Design Patterns\n---\nSee [[agentic-workflows]] for more.",
+        );
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let results = gi.search_by_title("agentic", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "real.md");
+    }
+
+    #[test]
+    fn search_by_title_file_with_empty_frontmatter_title_uses_filename() {
+        let dir = create_workspace();
+        write_md(dir.path(), "agentic-workflows.md", "---\ntitle: \"\"\n---\nBody.");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let results = gi.search_by_title("agentic", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "agentic-workflows");
     }
 
     #[test]

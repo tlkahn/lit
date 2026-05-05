@@ -500,12 +500,14 @@ impl Store {
         }
         let mut stmt = self.conn.prepare(
             "SELECT id, title FROM nodes
-             WHERE title LIKE '%' || ?1 || '%' COLLATE NOCASE
-                OR id LIKE '%' || ?1 || '%' COLLATE NOCASE
+             WHERE (title LIKE '%' || ?1 || '%' COLLATE NOCASE
+                OR id LIKE '%' || ?1 || '%' COLLATE NOCASE)
+               AND is_stub = 0
              UNION
              SELECT a.node_id, n.title FROM aliases a
              JOIN nodes n ON n.id = a.node_id
              WHERE a.alias LIKE '%' || ?1 || '%' COLLATE NOCASE
+               AND n.is_stub = 0
              LIMIT ?2"
         )?;
         let results = stmt
@@ -1914,6 +1916,17 @@ mod tests {
         let ids: Vec<&str> = results.iter().map(|(id, _)| id.as_str()).collect();
         let unique: std::collections::HashSet<&str> = ids.iter().copied().collect();
         assert_eq!(ids.len(), unique.len(), "results should be deduplicated");
+    }
+
+    #[test]
+    fn search_titles_excludes_stubs() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("agentic-design.md", "Agentic Design", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.upsert_stub("agentic-workflows").unwrap();
+        let results = store.search_titles("agentic", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "agentic-design.md");
     }
 
     #[test]

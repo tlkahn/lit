@@ -25,14 +25,16 @@ export const fileProvider: PaletteProvider = {
   async search(query: string): Promise<PaletteResult[]> {
     if (!query) return [];
     const results = await searchPagesByTitle(query);
-    return results.map((r) => ({
-      id: r.id,
-      title: r.title,
-      subtitle: r.excerpt || undefined,
-      icon: fileIcon(r.id),
-      section: "Files",
-      data: { path: r.id },
-    }));
+    return results
+      .filter((r) => r.title.trim().length > 0)
+      .map((r) => ({
+        id: r.id,
+        title: r.title,
+        subtitle: r.excerpt || undefined,
+        icon: fileIcon(r.id),
+        section: "Files",
+        data: { path: r.id },
+      }));
   },
 
   onSelect(result: PaletteResult): void {
