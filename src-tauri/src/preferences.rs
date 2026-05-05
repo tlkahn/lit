@@ -125,7 +125,7 @@ pub fn annotations_enabled(app_handle: &AppHandle) -> bool {
 }
 
 pub fn set_preference_at_path(
-    path: &PathBuf,
+    path: &std::path::Path,
     key: &str,
     value: serde_json::Value,
 ) -> Result<(), String> {
@@ -134,6 +134,9 @@ pub fn set_preference_at_path(
         serde_json::from_str(&content).map_err(|e| format!("invalid JSON: {e}"))?;
     obj[key] = value;
     let pretty = serde_json::to_string_pretty(&obj).map_err(|e| e.to_string())?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("create dir failed: {e}"))?;
+    }
     fs::write(path, pretty).map_err(|e| format!("write failed: {e}"))
 }
 
@@ -690,5 +693,18 @@ mod tests {
         let content = fs::read_to_string(&path).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(parsed["workbench.darkMode"], serde_json::json!("dark"));
+    }
+
+    #[test]
+    fn set_preference_creates_file_and_parent_dirs() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("nested").join("sub").join("preferences.json");
+        assert!(!path.exists());
+
+        set_preference_at_path(&path, "workbench.darkMode", serde_json::json!("auto")).unwrap();
+
+        let content = fs::read_to_string(&path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed["workbench.darkMode"], serde_json::json!("auto"));
     }
 }
