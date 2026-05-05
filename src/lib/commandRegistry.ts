@@ -9,6 +9,7 @@ export interface Command {
 }
 
 const commands = new Map<string, Command>();
+const groups = new Set<string>();
 
 export function registerCommand(cmd: Command): void {
   commands.set(cmd.id, cmd);
@@ -16,6 +17,12 @@ export function registerCommand(cmd: Command): void {
 
 export function registerCommands(cmds: Command[]): void {
   for (const cmd of cmds) commands.set(cmd.id, cmd);
+}
+
+export function registerOnce(group: string, cmds: Command[]): void {
+  if (groups.has(group)) return;
+  groups.add(group);
+  registerCommands(cmds);
 }
 
 export function unregisterCommand(id: string): void {
@@ -48,4 +55,5 @@ export function executeCommand(id: string): boolean {
 
 export function _clear(): void {
   commands.clear();
+  groups.clear();
 }

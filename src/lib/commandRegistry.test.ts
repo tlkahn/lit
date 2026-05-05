@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   registerCommand,
   registerCommands,
+  registerOnce,
   unregisterCommand,
   getAllCommands,
   getVisibleCommands,
@@ -104,5 +105,33 @@ describe("commandRegistry", () => {
     registerCommands([makeCommand({ id: "a" }), makeCommand({ id: "b" })]);
     _clear();
     expect(getAllCommands()).toEqual([]);
+  });
+
+  it("registerOnce registers commands on first call", () => {
+    const cmds = [makeCommand({ id: "a" }), makeCommand({ id: "b" })];
+    registerOnce("my-group", cmds);
+    expect(getAllCommands()).toEqual(cmds);
+  });
+
+  it("registerOnce skips registration on subsequent calls with same group", () => {
+    const first = [makeCommand({ id: "a", label: "First" })];
+    const second = [makeCommand({ id: "a", label: "Second" })];
+    registerOnce("my-group", first);
+    registerOnce("my-group", second);
+    expect(getAllCommands()).toHaveLength(1);
+    expect(getAllCommands()[0]!.label).toBe("First");
+  });
+
+  it("registerOnce allows different groups independently", () => {
+    registerOnce("group-a", [makeCommand({ id: "a" })]);
+    registerOnce("group-b", [makeCommand({ id: "b" })]);
+    expect(getAllCommands().map((c) => c.id)).toEqual(["a", "b"]);
+  });
+
+  it("_clear() resets registerOnce groups", () => {
+    registerOnce("my-group", [makeCommand({ id: "a", label: "First" })]);
+    _clear();
+    registerOnce("my-group", [makeCommand({ id: "a", label: "Second" })]);
+    expect(getAllCommands()[0]!.label).toBe("Second");
   });
 });

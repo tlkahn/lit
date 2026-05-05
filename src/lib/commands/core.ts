@@ -1,4 +1,4 @@
-import { registerCommands } from "../commandRegistry";
+import { registerOnce } from "../commandRegistry";
 import { useWorkspaceStore } from "../../stores/workspace";
 import { usePreferencesStore } from "../../stores/preferences";
 import { useFocusModeStore } from "../../stores/focusMode";
@@ -14,12 +14,8 @@ function hasPage(): boolean {
 
 const DARK_MODE_CYCLE: Array<"auto" | "dark" | "light"> = ["auto", "dark", "light"];
 
-let initialized = false;
-
 export function initCoreCommands(): void {
-  if (initialized) return;
-  initialized = true;
-  registerCommands([
+  registerOnce("core", [
     {
       id: "core.theme.toggle",
       label: "Toggle Dark Mode",
@@ -117,8 +113,4 @@ export function initCoreCommands(): void {
       },
     },
   ]);
-}
-
-export function _resetCoreCommands(): void {
-  initialized = false;
 }

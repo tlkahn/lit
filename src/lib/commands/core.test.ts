@@ -45,12 +45,11 @@ vi.mock("../ipc", () => ({
   getPreferencesPath: mockGetPreferencesPath,
 }));
 
-import { initCoreCommands, _resetCoreCommands } from "./core";
+import { initCoreCommands } from "./core";
 
 describe("initCoreCommands", () => {
   beforeEach(() => {
     _clear();
-    _resetCoreCommands();
     vi.clearAllMocks();
     mockWorkspaceState.workspacePath = "/tmp/vault";
     mockWorkspaceState.currentPagePath = "hello.md";
