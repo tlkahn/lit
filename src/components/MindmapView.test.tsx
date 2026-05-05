@@ -22,6 +22,15 @@ const defaultProps = () => ({
 });
 
 describe("MindmapView", () => {
+  it("SVG receives focus on mount", () => {
+    const tree = makeTree("# A\n## B");
+    const { container } = render(
+      <MindmapView tree={tree} {...defaultProps()} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    expect(svg).toBe(document.activeElement);
+  });
+
   it("renders SVG with correct number of node groups", () => {
     const tree = makeTree("# A\n## B\n## C");
     const { container } = render(<MindmapView tree={tree} {...defaultProps()} />);

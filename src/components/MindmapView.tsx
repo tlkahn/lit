@@ -183,6 +183,10 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
     zoomTransformRef: transformRef,
   });
 
+  useEffect(() => {
+    svgRef.current?.focus();
+  }, []);
+
   if (allNodes.length === 0) {
     return (
       <div
