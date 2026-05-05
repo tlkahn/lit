@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, vi, expectTypeOf } from "vitest";
 import {
   registerCommand,
   registerCommands,
@@ -179,5 +179,10 @@ describe("commandRegistry", () => {
     const ids = getVisibleCommands().map((c) => c.id);
     expect(ids).toContain("visible.cmd");
     expect(ids).not.toContain("hidden.cmd");
+  });
+
+  it("action rejects async functions", () => {
+    type ActionReturn = ReturnType<Command["action"]>;
+    expectTypeOf<Promise<void>>().not.toExtend<ActionReturn>();
   });
 });

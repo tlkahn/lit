@@ -4,7 +4,7 @@ export interface Command {
   keywords?: string[];
   shortcut?: string;
   icon?: string;
-  action: (...args: unknown[]) => boolean | void | Promise<void>;
+  action: (...args: unknown[]) => boolean | void;
   when?: () => boolean;
 }
 
