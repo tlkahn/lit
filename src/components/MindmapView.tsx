@@ -58,6 +58,7 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
     if (!pendingEditId) return;
     const node = findNode(tree, pendingEditId);
     if (!node) return;
+    deletedNewNodeRef.current = false;
     setEditingId(pendingEditId);
     setEditText(node.text);
     setIsNewNode(true);
@@ -259,6 +260,7 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
             e.preventDefault();
             const node = findNode(tree, selectedId);
             if (node) {
+              deletedNewNodeRef.current = false;
               setEditingId(node.id);
               setEditText(node.text);
               setIsNewNode(false);
@@ -329,6 +331,7 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
             e.preventDefault();
             const node = findNode(tree, selectedId);
             if (node) {
+              deletedNewNodeRef.current = false;
               setEditingId(node.id);
               setEditText(e.key);
               setIsNewNode(false);
@@ -519,8 +522,10 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 onNodeRename(editNode.data, editText);
+                deletedNewNodeRef.current = true;
                 setEditingId(null);
                 setIsNewNode(false);
+                svgRef.current?.focus();
               } else if (e.key === "Escape") {
                 if (isNewNode && onDeleteNode) {
                   deletedNewNodeRef.current = true;
@@ -528,15 +533,17 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
                 }
                 setEditingId(null);
                 setIsNewNode(false);
+                svgRef.current?.focus();
               }
             }}
             onBlur={() => {
-              if (isNewNode && onDeleteNode && !deletedNewNodeRef.current) {
+              if (deletedNewNodeRef.current) return;
+              if (isNewNode && onDeleteNode) {
                 onDeleteNode(editingId);
               }
-              deletedNewNodeRef.current = false;
               setEditingId(null);
               setIsNewNode(false);
+              svgRef.current?.focus();
             }}
             onFocus={(e) => { if (isNewNode) e.currentTarget.select(); }}
             autoFocus
@@ -563,6 +570,7 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
               data-mindmap-context-edit
               className="w-full text-start px-3 py-1.5 text-sm text-neutral-800 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-700"
               onClick={() => {
+                deletedNewNodeRef.current = false;
                 setEditingId(menuNode.id);
                 setEditText(menuNode.text);
                 setContextMenu(null);

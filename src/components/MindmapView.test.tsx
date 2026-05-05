@@ -1536,3 +1536,50 @@ describe("MindmapView type-to-rename", () => {
     expect(props.onNodeRename).toHaveBeenCalledWith(nodeB, "a");
   });
 });
+
+describe("MindmapView edit-dismiss refocus", () => {
+  it("SVG receives focus after Enter-confirm in edit mode", () => {
+    const tree = makeTree("# A\n## B");
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "F2" });
+    const input = container.querySelector("[data-mindmap-edit]") as HTMLInputElement;
+    expect(input).toBeTruthy();
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(document.activeElement).toBe(svg);
+  });
+
+  it("SVG receives focus after Escape in edit mode", () => {
+    const tree = makeTree("# A\n## B");
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "F2" });
+    const input = container.querySelector("[data-mindmap-edit]") as HTMLInputElement;
+    expect(input).toBeTruthy();
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(document.activeElement).toBe(svg);
+  });
+
+  it("SVG receives focus after blur-dismiss of edit input", () => {
+    const tree = makeTree("# A\n## B");
+    const nodeB = tree.children[0]!.children[0]!;
+    const props = defaultProps();
+    const { container } = render(
+      <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
+    );
+    const svg = container.querySelector("[data-mindmap-svg]")!;
+    fireEvent.keyDown(svg, { key: "F2" });
+    const input = container.querySelector("[data-mindmap-edit]") as HTMLInputElement;
+    expect(input).toBeTruthy();
+    fireEvent.blur(input);
+    expect(document.activeElement).toBe(svg);
+  });
+});
