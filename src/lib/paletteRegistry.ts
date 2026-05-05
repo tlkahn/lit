@@ -19,6 +19,7 @@ export interface PaletteProvider {
   prefix?: string;
   label: string;
   priority: number;
+  omniMode?: "include" | "exclude";
   filterOptions?: PaletteFilterOption[];
   search(query: string, filter?: string): Promise<PaletteResult[]>;
   onSelect(result: PaletteResult): void | false;
@@ -32,6 +33,12 @@ export function register(provider: PaletteProvider): void {
 
 export function getAll(): PaletteProvider[] {
   return [...providers.values()].sort((a, b) => a.priority - b.priority);
+}
+
+export function getForOmni(): PaletteProvider[] {
+  return [...providers.values()]
+    .filter((p) => p.omniMode !== "exclude")
+    .sort((a, b) => a.priority - b.priority);
 }
 
 export function getByPrefix(prefix: string): PaletteProvider | undefined {

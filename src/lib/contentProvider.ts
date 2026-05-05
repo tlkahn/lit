@@ -8,6 +8,7 @@ export const contentProvider: PaletteProvider = {
   prefix: "/",
   label: "Content",
   priority: 40,
+  omniMode: "exclude",
 
   async search(query: string): Promise<PaletteResult[]> {
     if (!query) return [];

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   register,
   getAll,
+  getForOmni,
   getByPrefix,
   _clear,
   type PaletteProvider,
@@ -62,5 +63,21 @@ describe("paletteRegistry", () => {
     register(makeProvider({ id: "y" }));
     _clear();
     expect(getAll()).toEqual([]);
+  });
+
+  it('getForOmni excludes providers with omniMode "exclude"', () => {
+    register(makeProvider({ id: "a", priority: 10, omniMode: "include" }));
+    register(makeProvider({ id: "b", priority: 20, omniMode: "exclude" }));
+    register(makeProvider({ id: "c", priority: 15 }));
+    const ids = getForOmni().map((p) => p.id);
+    expect(ids).toEqual(["a", "c"]);
+  });
+
+  it("getForOmni returns all providers sorted by priority when none excluded", () => {
+    register(makeProvider({ id: "a", priority: 30 }));
+    register(makeProvider({ id: "b", priority: 10, omniMode: "include" }));
+    register(makeProvider({ id: "c", priority: 20 }));
+    const ids = getForOmni().map((p) => p.id);
+    expect(ids).toEqual(["b", "c", "a"]);
   });
 });

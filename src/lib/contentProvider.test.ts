@@ -60,6 +60,10 @@ describe("contentProvider", () => {
     expect(contentProvider.priority).toBe(40);
   });
 
+  it('has omniMode "exclude"', () => {
+    expect(contentProvider.omniMode).toBe("exclude");
+  });
+
   it('search("") returns []', async () => {
     expect(await contentProvider.search("")).toEqual([]);
   });

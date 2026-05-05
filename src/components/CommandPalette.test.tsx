@@ -855,9 +855,9 @@ describe("CommandPalette", () => {
         target: { value: "reload" },
       });
       await advanceDebounce();
-      // Should have annotations section + commands section
+      // Should have annotations section + commands section + content hint
       const results = screen.getAllByTestId("command-palette-result");
-      expect(results.length).toBe(3); // 2 annotations + 1 command
+      expect(results.length).toBe(4); // 2 annotations + 1 command + 1 content hint
 
       // First item active
       expect(results[0]!.getAttribute("data-active")).toBe("true");
@@ -876,13 +876,96 @@ describe("CommandPalette", () => {
       expect(results[1]!.getAttribute("data-active")).toBe("false");
       expect(results[2]!.getAttribute("data-active")).toBe("true");
 
+      // ArrowDown → fourth item (content hint)
+      fireEvent.keyDown(screen.getByTestId("command-palette-input"), { key: "ArrowDown" });
+      expect(results[3]!.getAttribute("data-active")).toBe("true");
+
       // ArrowDown → wraps back to first
       fireEvent.keyDown(screen.getByTestId("command-palette-input"), { key: "ArrowDown" });
       expect(results[0]!.getAttribute("data-active")).toBe("true");
 
-      // ArrowUp from first → wraps to last (third item, second section)
+      // ArrowUp from first → wraps to last (content hint)
       fireEvent.keyDown(screen.getByTestId("command-palette-input"), { key: "ArrowUp" });
-      expect(results[2]!.getAttribute("data-active")).toBe("true");
+      expect(results[3]!.getAttribute("data-active")).toBe("true");
+    });
+  });
+
+  describe("lazy content search in omni mode", () => {
+    it("omni mode does not call content provider search (excluded via omniMode)", async () => {
+      let searchPagesCalled = false;
+      mockInvoke((cmd) => {
+        if (cmd === "search_pages") {
+          searchPagesCalled = true;
+          return [];
+        }
+        return [];
+      });
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "rust" },
+      });
+      await advanceDebounce();
+      expect(searchPagesCalled).toBe(false);
+    });
+
+    it('omni mode appends "Search content…" synthetic result after other results', async () => {
+      mockInvoke(() => []);
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "silk" },
+      });
+      await advanceDebounce();
+      const results = screen.getAllByTestId("command-palette-result");
+      const lastResult = results[results.length - 1]!;
+      expect(lastResult).toHaveTextContent('Search content for "silk"');
+    });
+
+    it('synthetic "Search content…" does not appear when query is empty', () => {
+      render(<CommandPalette open={true} onClose={onClose} />);
+      expect(screen.queryByText(/Search content for/)).not.toBeInTheDocument();
+    });
+
+    it('selecting "Search content…" sets input to "/<query>" and keeps palette open', async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "search_pages") return [
+          { id: "a.md", title: "Alpha", score: -1, excerpt: "silk content", first_match_line: 3 },
+        ];
+        return [];
+      });
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "silk" },
+      });
+      await advanceDebounce();
+      const results = screen.getAllByTestId("command-palette-result");
+      const hintResult = results[results.length - 1]!;
+      expect(hintResult).toHaveTextContent('Search content for "silk"');
+      fireEvent.click(hintResult);
+      expect(onClose).not.toHaveBeenCalled();
+      const input = screen.getByTestId("command-palette-input") as HTMLInputElement;
+      expect(input.value).toBe("/silk");
+      await advanceDebounce();
+      expect(screen.getByText("Alpha")).toBeInTheDocument();
+    });
+
+    it("/prefix content search still fires immediately (omniMode exclude does not affect prefix mode)", async () => {
+      let searchPagesCalled = false;
+      mockInvoke((cmd) => {
+        if (cmd === "search_pages") {
+          searchPagesCalled = true;
+          return [
+            { id: "a.md", title: "Rust Notes", score: -1, excerpt: "rust ownership", first_match_line: 1 },
+          ];
+        }
+        return [];
+      });
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "/rust" },
+      });
+      await advanceDebounce();
+      expect(searchPagesCalled).toBe(true);
+      expect(screen.getByText("Rust Notes")).toBeInTheDocument();
     });
   });
 

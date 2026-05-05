@@ -1,6 +1,20 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import * as registry from "../lib/paletteRegistry";
 import type { PaletteProvider, PaletteResult } from "../lib/paletteRegistry";
+
+const omniContentHintProvider: PaletteProvider = {
+  id: "__omni-content-hint__",
+  label: "Content",
+  priority: 999,
+  async search() { return []; },
+  onSelect(result: PaletteResult): false {
+    const data = result.data as { query: string };
+    window.dispatchEvent(
+      new CustomEvent("lit:palette-set-input", { detail: { value: `/${data.query}` } }),
+    );
+    return false;
+  },
+};
 import { annotationProvider } from "../lib/annotationProvider";
 import { fileProvider } from "../lib/fileProvider";
 import { tagProvider } from "../lib/tagProvider";
@@ -132,7 +146,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
       }
       debounceRef.current = setTimeout(async () => {
         const id = ++requestIdRef.current;
-        const allProviders = registry.getAll();
+        const allProviders = registry.getForOmni();
         const allSections: SectionedResults[] = [];
         let hasError = false;
         const settled = await Promise.all(
@@ -157,8 +171,20 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
             });
           }
         }
+        const hasRealResults = allSections.length > 0;
+        allSections.push({
+          section: "Content",
+          provider: omniContentHintProvider,
+          results: [{
+            id: "__omni-content-hint__",
+            title: `Search content for "${query}"…`,
+            icon: "",
+            section: "Content",
+            data: { query },
+          }],
+        });
         setSections(allSections);
-        setSearchError(hasError && allSections.length === 0 ? "Search failed" : null);
+        setSearchError(hasError && !hasRealResults ? "Search failed" : null);
         setActiveIndex(0);
         setHasSearched(true);
       }, 250);
