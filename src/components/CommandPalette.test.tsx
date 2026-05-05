@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import { CommandPalette, _resetRegistration } from "./CommandPalette";
 import { mockInvoke } from "../test/tauri-mock";
+import { _clear as _clearCommandRegistry } from "../lib/commandRegistry";
 import * as registry from "../lib/paletteRegistry";
 import type { PaletteResult } from "../lib/paletteRegistry";
 import type { AnnotationSearchResult, GraphSearchResult, TagSearchResult, TagPageResult } from "../lib/ipc";
@@ -125,6 +126,7 @@ describe("CommandPalette", () => {
     mockSelectPageAtLine.mockClear();
     mockSelectPage.mockClear();
     mockRecordJump.mockClear();
+    _clearCommandRegistry();
     _resetRegistration();
     vi.useFakeTimers();
   });
