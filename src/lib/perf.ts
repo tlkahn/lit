@@ -30,7 +30,8 @@ export function perfMeasure(name: string, startMark: string) {
 
 export interface PerfEntry {
   label: string;
-  ms: number;
+  value: number;
+  unit?: string;
   detail?: string;
 }
 
@@ -41,7 +42,10 @@ export function perfTable(groupLabel: string, entries: PerfEntry[]) {
   perfData.set(groupLabel, entries);
   console.table(
     Object.fromEntries(
-      entries.map((e) => [e.label, { ms: +e.ms.toFixed(2), ...(e.detail != null ? { detail: e.detail } : {}) }]),
+      entries.map((e) => {
+        const col = e.unit ?? "ms";
+        return [e.label, { [col]: +e.value.toFixed(2), ...(e.detail != null ? { detail: e.detail } : {}) }];
+      }),
     ),
   );
 }

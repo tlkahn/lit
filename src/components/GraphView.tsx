@@ -119,7 +119,7 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
         if (perf) {
           const ipcMs = performance.now() - t0;
           const payloadSize = JSON.stringify(subgraph).length + JSON.stringify(pagerank).length;
-          perfEntries.push({ label: "IPC fetch", ms: ipcMs, detail: `${(payloadSize / 1024).toFixed(1)} kB` });
+          perfEntries.push({ label: "IPC fetch", value: ipcMs, detail: `${(payloadSize / 1024).toFixed(1)} kB` });
         }
 
         if (cancelled) return;
@@ -135,7 +135,7 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
           seedId: mode === "local" ? (activePageId ?? undefined) : undefined,
         });
         if (perf) {
-          perfEntries.push({ label: "Graphology build", ms: performance.now() - t0, detail: `${graph.order} nodes, ${graph.size} edges` });
+          perfEntries.push({ label: "Graphology build", value: performance.now() - t0, detail: `${graph.order} nodes, ${graph.size} edges` });
         }
 
         if (!containerRef.current || cancelled) return;
@@ -175,7 +175,7 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
 
         if (perf) {
           sigma.on("afterRender", function onFirstRender() {
-            perfEntries.push({ label: "Sigma first paint", ms: performance.now() - sigmaT0 });
+            perfEntries.push({ label: "Sigma first paint", value: performance.now() - sigmaT0 });
             sigma.off("afterRender", onFirstRender);
           });
         }
@@ -254,9 +254,9 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
           t0 = perf ? performance.now() : 0;
           forceAtlas2.default.assign(graph, { iterations: 100, settings: inferSettings(graph) });
           if (perf) {
-            perfEntries.push({ label: "FA2 (sync)", ms: performance.now() - t0 });
-            perfEntries.push({ label: "Steady-state FPS", ms: 0, detail: "N/A (reduced motion)" });
-            perfEntries.push({ label: "JS heap", ms: 0, detail: "Use Safari Web Inspector > Timelines > JS Allocations" });
+            perfEntries.push({ label: "FA2 (sync)", value: performance.now() - t0 });
+            perfEntries.push({ label: "Steady-state FPS", value: 0, unit: "fps", detail: "N/A (reduced motion)" });
+            perfEntries.push({ label: "JS heap", value: 0, detail: "Use Safari Web Inspector > Timelines > JS Allocations" });
             perfTable("graph-init", perfEntries);
           }
         } else {
@@ -271,7 +271,7 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
           const stopLayout = () => {
             layout.stop();
             if (perf) {
-              perfEntries.push({ label: "FA2 convergence", ms: performance.now() - fa2T0 });
+              perfEntries.push({ label: "FA2 convergence", value: performance.now() - fa2T0 });
               const fpsCounter = new FpsCounter();
               perfFpsRef.current = fpsCounter;
               fpsCounter.start();
@@ -279,8 +279,8 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
                 perfFpsRef.current = null;
                 perfTimerRef.current = null;
                 const stats = fpsCounter.stop();
-                perfEntries.push({ label: "Steady-state FPS", ms: stats.avg, detail: `min=${stats.min.toFixed(0)} max=${stats.max.toFixed(0)} samples=${stats.samples}` });
-                perfEntries.push({ label: "JS heap", ms: 0, detail: "Use Safari Web Inspector > Timelines > JS Allocations" });
+                perfEntries.push({ label: "Steady-state FPS", value: stats.avg, unit: "fps", detail: `min=${stats.min.toFixed(0)} max=${stats.max.toFixed(0)} samples=${stats.samples}` });
+                perfEntries.push({ label: "JS heap", value: 0, detail: "Use Safari Web Inspector > Timelines > JS Allocations" });
                 perfTable("graph-init", perfEntries);
               }, 3000);
             }

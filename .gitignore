@@ -42,6 +42,9 @@ doc/
 # Lit graph index
 .lit/
 
+# Test artifacts
+test-vault-*/
+
 # Claude
 .claude
 
