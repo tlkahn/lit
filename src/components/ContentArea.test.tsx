@@ -1253,4 +1253,56 @@ describe("ContentArea menu://open-in-external-editor", () => {
       expect(screen.queryByTestId("graph-view-wrapper")).not.toBeInTheDocument();
     });
   });
+
+  it("dispatching lit:toggle-graph-view when in editor switches to graph", async () => {
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+    await waitFor(() => {
+      expect(screen.getByTestId("editor")).toBeInTheDocument();
+    });
+    act(() => {
+      window.dispatchEvent(new CustomEvent("lit:toggle-graph-view"));
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("graph-view-wrapper")).toBeInTheDocument();
+    });
+  });
+
+  it("dispatching lit:toggle-graph-view when already in graph switches back to editor", async () => {
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+    await waitFor(() => {
+      expect(screen.getByTestId("editor")).toBeInTheDocument();
+    });
+    act(() => {
+      window.dispatchEvent(new CustomEvent("lit:toggle-graph-view"));
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("graph-view-wrapper")).toBeInTheDocument();
+    });
+    act(() => {
+      window.dispatchEvent(new CustomEvent("lit:toggle-graph-view"));
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("graph-view-wrapper")).not.toBeInTheDocument();
+    });
+  });
+
+  it("lit:toggle-graph-view with detail.mode='local' passes initialMode to GraphView", async () => {
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+    await waitFor(() => {
+      expect(screen.getByTestId("editor")).toBeInTheDocument();
+    });
+    act(() => {
+      window.dispatchEvent(new CustomEvent("lit:toggle-graph-view", { detail: { mode: "local" } }));
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("graph-view-wrapper")).toBeInTheDocument();
+    });
+    // When launched with mode "local", Local button should be active
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Local" }).getAttribute("aria-pressed")).toBe("true");
+    });
+  });
 });

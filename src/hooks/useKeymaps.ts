@@ -52,6 +52,23 @@ function ensureCommandsRegistered() {
     window.dispatchEvent(new CustomEvent("lit:toggle-command-palette"));
   });
   registerCommand({
+    id: "app.showGraphView",
+    label: "Show Graph View",
+    keywords: ["graph", "network", "visualize"],
+    action: () => {
+      window.dispatchEvent(new CustomEvent("lit:toggle-graph-view"));
+    },
+  });
+  registerCommand({
+    id: "app.showLocalGraph",
+    label: "Show Local Graph",
+    keywords: ["graph", "local", "neighborhood"],
+    when: () => useWorkspaceStore.getState().currentPagePath != null,
+    action: () => {
+      window.dispatchEvent(new CustomEvent("lit:toggle-graph-view", { detail: { mode: "local" } }));
+    },
+  });
+  registerCommand({
     id: "app.insertAnnotation",
     label: "Insert Annotation",
     keywords: ["annotation", "annotate", "note"],

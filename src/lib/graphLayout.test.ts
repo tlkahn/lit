@@ -1,5 +1,5 @@
-import { describe, it, expect, afterEach } from "vitest";
-import { buildGraph, computeNodeSize, resolveThemeColors, MIN_SIZE, MAX_SIZE, SEED_COLOR } from "./graphLayout";
+import { describe, it, expect, afterEach, vi } from "vitest";
+import { buildGraph, computeNodeSize, resolveThemeColors, prefersReducedMotion, MIN_SIZE, MAX_SIZE, SEED_COLOR } from "./graphLayout";
 import type { SubgraphResult } from "./ipc";
 
 describe("graphLayout", () => {
@@ -151,6 +151,27 @@ describe("graphLayout", () => {
       const size = computeNodeSize(0.3, 1.0);
       expect(size).toBeGreaterThanOrEqual(MIN_SIZE);
       expect(size).toBeLessThanOrEqual(MAX_SIZE);
+    });
+  });
+
+  describe("prefersReducedMotion", () => {
+    it("returns true when matchMedia matches (prefers-reduced-motion: reduce)", () => {
+      vi.spyOn(window, "matchMedia").mockReturnValue({ matches: true } as MediaQueryList);
+      expect(prefersReducedMotion()).toBe(true);
+      vi.restoreAllMocks();
+    });
+
+    it("returns false when matchMedia does not match", () => {
+      vi.spyOn(window, "matchMedia").mockReturnValue({ matches: false } as MediaQueryList);
+      expect(prefersReducedMotion()).toBe(false);
+      vi.restoreAllMocks();
+    });
+
+    it("returns false when matchMedia is unavailable", () => {
+      const original = window.matchMedia;
+      Object.defineProperty(window, "matchMedia", { value: undefined, writable: true });
+      expect(prefersReducedMotion()).toBe(false);
+      Object.defineProperty(window, "matchMedia", { value: original, writable: true });
     });
   });
 

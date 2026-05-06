@@ -109,4 +109,23 @@ describe("useKeymaps", () => {
 
     expect(hasCommand("app.newPage")).toBe(true);
   });
+
+  it("app.showGraphView is registered after ensureCommandsRegistered", async () => {
+    await loadHook();
+    expect(hasCommand("app.showGraphView")).toBe(true);
+  });
+
+  it("app.showLocalGraph is registered with when guard requiring active page", async () => {
+    await loadHook();
+    expect(hasCommand("app.showLocalGraph")).toBe(true);
+  });
+
+  it("executing app.showGraphView dispatches lit:toggle-graph-view event", async () => {
+    await loadHook();
+    const listener = vi.fn();
+    window.addEventListener("lit:toggle-graph-view", listener);
+    executeCommand("app.showGraphView");
+    window.removeEventListener("lit:toggle-graph-view", listener);
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
 });

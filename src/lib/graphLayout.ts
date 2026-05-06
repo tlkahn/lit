@@ -1,6 +1,11 @@
 import Graph from "graphology";
 import type { SubgraphResult } from "./ipc";
 
+export function prefersReducedMotion(): boolean {
+  if (typeof window === "undefined" || !window.matchMedia) return false;
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
 const DEFAULT_ACCENT = "#0969da";
 const DEFAULT_STUB = "#818b98";
 

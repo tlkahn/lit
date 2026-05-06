@@ -35,6 +35,7 @@ vi.mock("graphology-layout-forceatlas2/worker", () => ({
 }));
 
 vi.mock("graphology-layout-forceatlas2", () => ({
+  default: { assign: vi.fn() },
   inferSettings: () => ({}),
 }));
 
@@ -532,6 +533,88 @@ describe("GraphView", () => {
     });
 
     expect(document.querySelector(".graph-tooltip")).toBeNull();
+  });
+
+  it("FA2 layout stops when convergence detected (before 5s timeout)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+
+    await waitFor(() => {
+      expect(mockLayoutStart).toHaveBeenCalled();
+    });
+
+    // Mock FA2 doesn't move nodes, so positions are stable frame-to-frame.
+    // With default requiredSamples=5 and 200ms polling, convergence at ~1000ms.
+    expect(mockLayoutStop).not.toHaveBeenCalled();
+    act(() => { vi.advanceTimersByTime(1200); });
+    expect(mockLayoutStop).toHaveBeenCalledTimes(1);
+
+    // The 5s timeout should NOT fire again (already stopped)
+    mockLayoutStop.mockClear();
+    act(() => { vi.advanceTimersByTime(4000); });
+    expect(mockLayoutStop).not.toHaveBeenCalled();
+
+    vi.useRealTimers();
+  });
+
+  it("convergence polling interval is cleaned up on unmount", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const GraphView = (await import("./GraphView")).default;
+    const { unmount } = render(<GraphView />);
+
+    await waitFor(() => {
+      expect(mockLayoutStart).toHaveBeenCalled();
+    });
+
+    unmount();
+    // Advance past convergence time — no errors or calls after unmount
+    act(() => { vi.advanceTimersByTime(2000); });
+    expect(mockLayoutStop).not.toHaveBeenCalled();
+
+    vi.useRealTimers();
+  });
+
+  it("5s timeout still fires if convergence never reached", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+
+    // Override checkConvergence to never converge
+    const convergenceMod = await import("../lib/graphConvergence");
+    const spy = vi.spyOn(convergenceMod, "checkConvergence").mockReturnValue({
+      converged: false,
+      displacement: 10,
+      state: { consecutiveLow: 0 },
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+
+    await waitFor(() => {
+      expect(mockLayoutStart).toHaveBeenCalled();
+    });
+
+    expect(mockLayoutStop).not.toHaveBeenCalled();
+    act(() => { vi.advanceTimersByTime(5000); });
+    expect(mockLayoutStop).toHaveBeenCalledTimes(1);
+
+    spy.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it("when reduced motion is preferred, FA2 worker is NOT started; synchronous layout used", async () => {
+    const graphLayoutMod = await import("../lib/graphLayout");
+    const spy = vi.spyOn(graphLayoutMod, "prefersReducedMotion").mockReturnValue(true);
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+    });
+
+    expect(mockLayoutStart).not.toHaveBeenCalled();
+
+    spy.mockRestore();
   });
 
   it("enterNode sets cursor to pointer, leaveNode resets to grab", async () => {

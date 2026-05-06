@@ -64,6 +64,7 @@ export function ContentArea() {
   const editorViewRef = useRef<EditorView | null>(null);
   const [body, setBody] = useState("");
   const [viewMode, setViewMode] = useState<"editor" | "mindmap" | "graph">("editor");
+  const [graphInitialMode, setGraphInitialMode] = useState<"full" | "local" | undefined>(undefined);
   const [mindmapSelectedId, setMindmapSelectedId] = useState<string | null>(null);
   const [showConflict, setShowConflict] = useState(false);
   useModalLock(showConflict);
@@ -436,6 +437,20 @@ export function ContentArea() {
   }, [viewMode, headingTree]);
 
   useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ mode?: "local" | "full" }>).detail;
+      setViewMode((prev) => {
+        if (prev === "graph") return "editor";
+        if (detail?.mode) setGraphInitialMode(detail.mode);
+        else setGraphInitialMode(undefined);
+        return "graph";
+      });
+    };
+    window.addEventListener("lit:toggle-graph-view", handler);
+    return () => window.removeEventListener("lit:toggle-graph-view", handler);
+  }, []);
+
+  useEffect(() => {
     let unlisten: (() => void) | undefined;
     listen("menu://open-in-external-editor", () => {
       const view = editorViewRef.current;
@@ -629,6 +644,7 @@ export function ContentArea() {
           <Suspense fallback={<div className="flex items-center justify-center h-full text-text-faint">Loading…</div>}>
             <LazyGraphView
               activePageId={currentPagePath}
+              initialMode={graphInitialMode}
               onNavigate={(pageId) => {
                 selectPage(pageId);
                 setViewMode("editor");

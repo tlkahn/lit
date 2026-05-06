@@ -1,22 +1,25 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { getFullSubgraph, getGraphSubgraph, getPagerank } from "../lib/ipc";
 import type { SubgraphResult } from "../lib/ipc";
-import { buildGraph, resolveThemeColors } from "../lib/graphLayout";
+import { buildGraph, resolveThemeColors, prefersReducedMotion } from "../lib/graphLayout";
+import { checkConvergence, type PositionMap, type ConvergenceState } from "../lib/graphConvergence";
 import { GraphToolbar } from "./GraphToolbar";
 import { GraphTooltip } from "./GraphTooltip";
 import "./GraphView.css";
 
 export interface GraphViewProps {
   activePageId?: string | null;
+  initialMode?: "full" | "local";
   onNavigate?: (pageId: string) => void;
 }
 
-export default function GraphView({ activePageId, onNavigate }: GraphViewProps) {
+export default function GraphView({ activePageId, initialMode, onNavigate }: GraphViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sigmaRef = useRef<unknown>(null);
   const graphRef = useRef<unknown>(null);
   const layoutRef = useRef<{ start: () => void; stop: () => void; kill: () => void } | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const convergenceIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const hoveredNodeRef = useRef<string | null>(null);
   const rafIdRef = useRef<number>(0);
   const pendingPosRef = useRef<{ x: number; y: number } | null>(null);
@@ -24,7 +27,7 @@ export default function GraphView({ activePageId, onNavigate }: GraphViewProps) 
   onNavigateRef.current = onNavigate;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [mode, setMode] = useState<"full" | "local">("full");
+  const [mode, setMode] = useState<"full" | "local">(initialMode ?? "full");
   const [depth, setDepth] = useState(2);
   const [tooltip, setTooltip] = useState({ visible: false, x: 0, y: 0, title: "", connections: 0 });
 
@@ -163,14 +166,47 @@ export default function GraphView({ activePageId, onNavigate }: GraphViewProps) 
           sigma.setSetting("edgeReducer", null);
         });
 
-        const layout = new FA2Layout(graph, { settings: inferSettings(graph) });
-        layout.start();
-        layoutRef.current = layout;
+        if (prefersReducedMotion()) {
+          const forceAtlas2 = await import("graphology-layout-forceatlas2");
+          forceAtlas2.default.assign(graph, { iterations: 100, settings: inferSettings(graph) });
+        } else {
+          const layout = new FA2Layout(graph, { settings: inferSettings(graph) });
+          layout.start();
+          layoutRef.current = layout;
 
-        timerRef.current = setTimeout(() => {
-          layout.stop();
-          sigma.getCamera().animatedReset();
-        }, 5000);
+          let convergenceState: ConvergenceState = { consecutiveLow: 0 };
+          let prevPositions: PositionMap = {};
+
+          const stopLayout = () => {
+            layout.stop();
+            sigma.getCamera().animatedReset();
+            if (convergenceIntervalRef.current) {
+              clearInterval(convergenceIntervalRef.current);
+              convergenceIntervalRef.current = null;
+            }
+            if (timerRef.current) {
+              clearTimeout(timerRef.current);
+              timerRef.current = null;
+            }
+          };
+
+          convergenceIntervalRef.current = setInterval(() => {
+            const currentPositions: PositionMap = {};
+            graph.forEachNode((node: string, attrs: Record<string, unknown>) => {
+              currentPositions[node] = { x: attrs.x as number, y: attrs.y as number };
+            });
+            const result = checkConvergence(prevPositions, currentPositions, convergenceState);
+            convergenceState = result.state;
+            prevPositions = currentPositions;
+            if (result.converged) {
+              stopLayout();
+            }
+          }, 200);
+
+          timerRef.current = setTimeout(() => {
+            stopLayout();
+          }, 5000);
+        }
 
         setLoading(false);
       } catch (e) {
@@ -188,6 +224,10 @@ export default function GraphView({ activePageId, onNavigate }: GraphViewProps) 
       cancelAnimationFrame(rafIdRef.current);
       rafIdRef.current = 0;
       pendingPosRef.current = null;
+      if (convergenceIntervalRef.current) {
+        clearInterval(convergenceIntervalRef.current);
+        convergenceIntervalRef.current = null;
+      }
       if (timerRef.current) {
         clearTimeout(timerRef.current);
         timerRef.current = null;
