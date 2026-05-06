@@ -3,6 +3,19 @@ import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { mockInvoke } from "../test/tauri-mock";
 import * as graphLayout from "../lib/graphLayout";
+import { setPerfEnabled } from "../lib/perf";
+
+const mockFpsStart = vi.fn();
+const mockFpsStop = vi.fn().mockReturnValue({ avg: 60, min: 55, max: 65, samples: 180, durationMs: 3000 });
+const mockFpsIsRunning = vi.fn().mockReturnValue(false);
+
+vi.mock("../lib/fpsCounter", () => ({
+  FpsCounter: class MockFpsCounter {
+    start = mockFpsStart;
+    stop = mockFpsStop;
+    isRunning = mockFpsIsRunning;
+  },
+}));
 
 const mockSigmaKill = vi.fn();
 const mockLayoutStart = vi.fn();
@@ -67,6 +80,7 @@ describe("GraphView", () => {
       return id;
     });
     vi.spyOn(window, "cancelAnimationFrame").mockImplementation((id: number) => { rafQueue.delete(id); });
+    setPerfEnabled(false);
     mockInvoke((cmd) => {
       switch (cmd) {
         case "get_graph_subgraph":
@@ -855,6 +869,41 @@ describe("GraphView", () => {
   });
 
   // --- Issue #2: Full theme reactivity (edge + label colors) ---
+
+  it("when perf is enabled, unmounting during FPS measurement stops the counter and cancels the timer", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    setPerfEnabled(true);
+
+    const convergenceMod = await import("../lib/graphConvergence");
+    const spy = vi.spyOn(convergenceMod, "checkConvergence").mockReturnValue({
+      converged: false,
+      displacement: 10,
+      state: { consecutiveLow: 0 },
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    const { unmount } = render(<GraphView />);
+
+    await waitFor(() => {
+      expect(mockLayoutStart).toHaveBeenCalled();
+    });
+
+    // Trigger stopLayout via 5s timeout → creates FpsCounter + 3s setTimeout
+    act(() => { vi.advanceTimersByTime(5000); });
+    expect(mockFpsStart).toHaveBeenCalled();
+
+    // Unmount before the 3s FPS timer fires — should stop the counter and cancel the timer
+    unmount();
+    expect(mockFpsStop).toHaveBeenCalledTimes(1);
+
+    // The leaked 3s setTimeout would fire here — but cleanup cancelled it
+    act(() => { vi.advanceTimersByTime(3000); });
+    expect(mockFpsStop).toHaveBeenCalledTimes(1);
+
+    spy.mockRestore();
+    setPerfEnabled(false);
+    vi.useRealTimers();
+  });
 
   it("theme change updates sigma defaultEdgeColor and labelColor settings", async () => {
     document.documentElement.style.setProperty("--text-faint", "#656c76");

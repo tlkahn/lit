@@ -26,6 +26,8 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
   const layoutRef = useRef<{ start: () => void; stop: () => void; kill: () => void } | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const convergenceIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const perfFpsRef = useRef<FpsCounter | null>(null);
+  const perfTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hoveredNodeRef = useRef<string | null>(null);
   const rafIdRef = useRef<number>(0);
   const pendingPosRef = useRef<{ x: number; y: number } | null>(null);
@@ -271,8 +273,11 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
             if (perf) {
               perfEntries.push({ label: "FA2 convergence", ms: performance.now() - fa2T0 });
               const fpsCounter = new FpsCounter();
+              perfFpsRef.current = fpsCounter;
               fpsCounter.start();
-              setTimeout(() => {
+              perfTimerRef.current = setTimeout(() => {
+                perfFpsRef.current = null;
+                perfTimerRef.current = null;
                 const stats = fpsCounter.stop();
                 perfEntries.push({ label: "Steady-state FPS", ms: stats.avg, detail: `min=${stats.min.toFixed(0)} max=${stats.max.toFixed(0)} samples=${stats.samples}` });
                 perfEntries.push({ label: "JS heap", ms: 0, detail: "Use Safari Web Inspector > Timelines > JS Allocations" });
@@ -332,6 +337,14 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
       if (timerRef.current) {
         clearTimeout(timerRef.current);
         timerRef.current = null;
+      }
+      if (perfTimerRef.current) {
+        clearTimeout(perfTimerRef.current);
+        perfTimerRef.current = null;
+      }
+      if (perfFpsRef.current) {
+        perfFpsRef.current.stop();
+        perfFpsRef.current = null;
       }
       if (layoutRef.current) {
         layoutRef.current.kill();
