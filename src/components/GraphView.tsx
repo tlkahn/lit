@@ -18,6 +18,8 @@ export default function GraphView({ activePageId, onNavigate }: GraphViewProps) 
   const layoutRef = useRef<{ start: () => void; stop: () => void; kill: () => void } | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hoveredNodeRef = useRef<string | null>(null);
+  const rafIdRef = useRef<number>(0);
+  const pendingPosRef = useRef<{ x: number; y: number } | null>(null);
   const onNavigateRef = useRef(onNavigate);
   onNavigateRef.current = onNavigate;
   const [loading, setLoading] = useState(true);
@@ -129,12 +131,25 @@ export default function GraphView({ activePageId, onNavigate }: GraphViewProps) 
         sigma.on("moveBody", ({ event }) => {
           if (hoveredNodeRef.current) {
             const mouseEvent = event as { x?: number; y?: number } | undefined;
-            setTooltip((t) => ({ ...t, x: (mouseEvent?.x ?? 0) + 10, y: (mouseEvent?.y ?? 0) + 10 }));
+            pendingPosRef.current = { x: (mouseEvent?.x ?? 0) + 10, y: (mouseEvent?.y ?? 0) + 10 };
+            if (!rafIdRef.current) {
+              rafIdRef.current = requestAnimationFrame(() => {
+                rafIdRef.current = 0;
+                const pos = pendingPosRef.current;
+                pendingPosRef.current = null;
+                if (pos) {
+                  setTooltip((t) => ({ ...t, ...pos }));
+                }
+              });
+            }
           }
         });
 
         sigma.on("leaveNode", () => {
           hoveredNodeRef.current = null;
+          cancelAnimationFrame(rafIdRef.current);
+          rafIdRef.current = 0;
+          pendingPosRef.current = null;
           sigma.setSetting("nodeReducer", null);
           sigma.setSetting("edgeReducer", null);
           if (containerRef.current) {
@@ -170,6 +185,9 @@ export default function GraphView({ activePageId, onNavigate }: GraphViewProps) 
 
     return () => {
       cancelled = true;
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = 0;
+      pendingPosRef.current = null;
       if (timerRef.current) {
         clearTimeout(timerRef.current);
         timerRef.current = null;

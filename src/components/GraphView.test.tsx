@@ -42,9 +42,25 @@ vi.mock("graphology-layout", () => ({
   random: { assign: vi.fn() },
 }));
 
+let rafQueue: Map<number, FrameRequestCallback> = new Map();
+let nextRafId = 1;
+const flushRAF = () => {
+  const cbs = [...rafQueue.values()];
+  rafQueue.clear();
+  cbs.forEach((cb) => cb(performance.now()));
+};
+
 describe("GraphView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    rafQueue = new Map();
+    nextRafId = 1;
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb: FrameRequestCallback) => {
+      const id = nextRafId++;
+      rafQueue.set(id, cb);
+      return id;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation((id: number) => { rafQueue.delete(id); });
     mockInvoke((cmd) => {
       switch (cmd) {
         case "get_graph_subgraph":
@@ -402,7 +418,10 @@ describe("GraphView", () => {
       (call) => call[0] === "moveBody",
     )?.[1];
     expect(moveBodyHandler).toBeDefined();
-    act(() => { moveBodyHandler!({ event: { x: 300, y: 400 } }); });
+    act(() => {
+      moveBodyHandler!({ event: { x: 300, y: 400 } });
+      flushRAF();
+    });
 
     const tooltip = document.querySelector(".graph-tooltip") as HTMLElement;
     expect(tooltip).toBeTruthy();
@@ -436,6 +455,58 @@ describe("GraphView", () => {
     render(<GraphView activePageId="a.md" />);
     const localBtn = screen.getByRole("button", { name: "Local" });
     expect(localBtn).not.toBeDisabled();
+  });
+
+  it("moveBody batches multiple events into one rAF update", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const enterNodeHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "enterNode",
+    )?.[1];
+    act(() => { enterNodeHandler!({ node: "a.md", event: { x: 0, y: 0 } }); });
+
+    const moveBodyHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "moveBody",
+    )?.[1];
+    act(() => {
+      moveBodyHandler!({ event: { x: 100, y: 100 } });
+      moveBodyHandler!({ event: { x: 200, y: 200 } });
+      moveBodyHandler!({ event: { x: 300, y: 400 } });
+      flushRAF();
+    });
+
+    const tooltip = document.querySelector(".graph-tooltip") as HTMLElement;
+    expect(tooltip).toBeTruthy();
+    expect(tooltip.style.left).toBe("310px");
+    expect(tooltip.style.top).toBe("410px");
+  });
+
+  it("rAF is cancelled on leaveNode", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const enterNodeHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "enterNode",
+    )?.[1];
+    act(() => { enterNodeHandler!({ node: "a.md", event: { x: 0, y: 0 } }); });
+
+    const moveBodyHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "moveBody",
+    )?.[1];
+    act(() => { moveBodyHandler!({ event: { x: 500, y: 500 } }); });
+
+    const leaveNodeHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "leaveNode",
+    )?.[1];
+    act(() => { leaveNodeHandler!(); });
+
+    act(() => { flushRAF(); });
+
+    const tooltip = document.querySelector(".graph-tooltip") as HTMLElement;
+    expect(tooltip).toBeNull();
   });
 
   it("enterNode sets cursor to pointer, leaveNode resets to grab", async () => {
