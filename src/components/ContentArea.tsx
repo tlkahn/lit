@@ -439,12 +439,8 @@ export function ContentArea() {
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<{ mode?: "local" | "full" }>).detail;
-      setViewMode((prev) => {
-        if (prev === "graph") return "editor";
-        if (detail?.mode) setGraphInitialMode(detail.mode);
-        else setGraphInitialMode(undefined);
-        return "graph";
-      });
+      setViewMode((prev) => (prev === "graph" ? "editor" : "graph"));
+      setGraphInitialMode(detail?.mode ?? undefined);
     };
     window.addEventListener("lit:toggle-graph-view", handler);
     return () => window.removeEventListener("lit:toggle-graph-view", handler);
@@ -526,7 +522,7 @@ export function ContentArea() {
               Mindmap
             </button>
             <button
-              onClick={() => setViewMode("graph")}
+              onClick={() => { setGraphInitialMode(undefined); setViewMode("graph"); }}
               aria-label="Graph"
               className={`rounded px-2 py-0.5 text-xs ${viewMode === "graph" ? "bg-interactive-accent text-white" : "text-text-faint hover:text-text-muted"}`}
             >
