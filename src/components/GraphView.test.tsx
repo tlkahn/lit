@@ -1142,6 +1142,77 @@ describe("GraphView", () => {
     spy.mockRestore();
   });
 
+  // --- Phase D: Keep Sigma/Graphology Alive ---
+
+  it("visible=false stops FA2 layout but keeps sigma/graphology alive", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    const { rerender } = render(<GraphView visible={true} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+    await waitFor(() => { expect(mockLayoutStart).toHaveBeenCalled(); });
+
+    mockLayoutStop.mockClear();
+    await act(async () => {
+      rerender(<GraphView visible={false} />);
+    });
+
+    expect(mockLayoutStop).toHaveBeenCalled();
+    expect(mockSigmaKill).not.toHaveBeenCalled();
+  });
+
+  it("visible=true after hidden calls sigma.refresh()", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    const { rerender } = render(<GraphView visible={true} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await act(async () => { rerender(<GraphView visible={false} />); });
+    mockSigmaRefresh.mockClear();
+    await act(async () => { rerender(<GraphView visible={true} />); });
+
+    expect(mockSigmaRefresh).toHaveBeenCalled();
+  });
+
+  it("full mode does NOT re-init when activePageId changes", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    const { rerender } = render(<GraphView activePageId="a.md" />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    (invoke as unknown as ReturnType<typeof vi.fn>).mockClear();
+    mockSigmaKill.mockClear();
+
+    await act(async () => {
+      rerender(<GraphView activePageId="b.md" />);
+    });
+
+    expect(mockSigmaKill).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalledWith("get_graph_subgraph", expect.anything());
+  });
+
+  it("local mode re-inits when seed changes while hidden, on becoming visible", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    const { rerender } = render(<GraphView visible={true} activePageId="a.md" initialMode="local" />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    (invoke as unknown as ReturnType<typeof vi.fn>).mockClear();
+    mockSigmaKill.mockClear();
+
+    // Hide and change seed
+    await act(async () => {
+      rerender(<GraphView visible={false} activePageId="b.md" initialMode="local" />);
+    });
+    // No re-init while hidden
+    expect(invoke).not.toHaveBeenCalledWith("get_graph_subgraph", expect.anything());
+
+    // Show again — should detect stale seed and re-init
+    await act(async () => {
+      rerender(<GraphView visible={true} activePageId="b.md" initialMode="local" />);
+    });
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: ["b.md"], depth: 2, directed: null });
+    });
+  });
+
   it("huge graph: clearing search query restores hide-all-edges reducer", async () => {
     const mockGraph = {
       order: 25000, size: 30000,

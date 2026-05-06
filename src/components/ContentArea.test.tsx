@@ -10,13 +10,16 @@ vi.mock("sigma", () => ({
   default: class MockSigma {
     kill = vi.fn();
     on = vi.fn();
+    refresh = vi.fn();
+    setSetting = vi.fn();
+    getCamera = () => ({ animatedReset: vi.fn() });
   },
 }));
 vi.mock("@sigma/node-border", () => ({
   createNodeBorderProgram: () => class {},
 }));
 vi.mock("graphology-layout-forceatlas2/worker", () => ({
-  default: class { start = vi.fn(); kill = vi.fn(); },
+  default: class { start = vi.fn(); stop = vi.fn(); kill = vi.fn(); },
 }));
 vi.mock("graphology-layout-forceatlas2", () => ({
   inferSettings: () => ({}),
@@ -1238,7 +1241,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
     });
   });
 
-  it("clicking Editor button from graph view restores editor", async () => {
+  it("clicking Editor button from graph view hides graph wrapper", async () => {
     useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
     render(<ContentArea />);
     await waitFor(() => {
@@ -1250,7 +1253,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
     });
     await userEvent.click(screen.getByRole("button", { name: "Editor" }));
     await waitFor(() => {
-      expect(screen.queryByTestId("graph-view-wrapper")).not.toBeInTheDocument();
+      expect(screen.getByTestId("graph-view-wrapper").style.display).toBe("none");
     });
   });
 
@@ -1268,7 +1271,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
     });
   });
 
-  it("dispatching lit:toggle-graph-view when already in graph switches back to editor", async () => {
+  it("dispatching lit:toggle-graph-view when already in graph hides graph wrapper", async () => {
     useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
     render(<ContentArea />);
     await waitFor(() => {
@@ -1284,7 +1287,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
       window.dispatchEvent(new CustomEvent("lit:toggle-graph-view"));
     });
     await waitFor(() => {
-      expect(screen.queryByTestId("graph-view-wrapper")).not.toBeInTheDocument();
+      expect(screen.getByTestId("graph-view-wrapper").style.display).toBe("none");
     });
   });
 
@@ -1306,7 +1309,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
     });
   });
 
-  it("toggling off graph clears initialMode so re-entering via button defaults to full", async () => {
+  it("toggling off graph and re-entering retains last mode (mount-once-then-hide)", async () => {
     useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
     render(<ContentArea />);
     await waitFor(() => {
@@ -1329,20 +1332,50 @@ describe("ContentArea menu://open-in-external-editor", () => {
       window.dispatchEvent(new CustomEvent("lit:toggle-graph-view"));
     });
     await waitFor(() => {
-      expect(screen.queryByTestId("graph-view-wrapper")).not.toBeInTheDocument();
+      expect(screen.getByTestId("graph-view-wrapper").style.display).toBe("none");
     });
 
-    // Re-enter via Graph button (no mode) — should default to "full"
+    // Re-enter via Graph button — graph is still alive, retains local mode
+    await userEvent.click(screen.getByRole("button", { name: "Graph" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("graph-view-wrapper").style.display).not.toBe("none");
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Local" }).getAttribute("aria-pressed")).toBe("true");
+    });
+  });
+
+  it("graph-view-wrapper stays in DOM after switching back to editor (mount-once-then-hide)", async () => {
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Graph" })).toBeInTheDocument();
+    });
     await userEvent.click(screen.getByRole("button", { name: "Graph" }));
     await waitFor(() => {
       expect(screen.getByTestId("graph-view-wrapper")).toBeInTheDocument();
     });
+
+    await userEvent.click(screen.getByRole("button", { name: "Editor" }));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Full" }).getAttribute("aria-pressed")).toBe("true");
+      expect(screen.getByTestId("editor")).toBeVisible();
     });
+
+    const wrapper = screen.getByTestId("graph-view-wrapper");
+    expect(wrapper).toBeInTheDocument();
+    expect(wrapper.style.display).toBe("none");
   });
 
-  it("Escape in graph view returns to editor (via onExit)", async () => {
+  it("graph-view-wrapper is NOT in DOM before first graph view switch", async () => {
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+    await waitFor(() => {
+      expect(screen.getByTestId("editor")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("graph-view-wrapper")).not.toBeInTheDocument();
+  });
+
+  it("Escape in graph view hides graph wrapper (via onExit)", async () => {
     useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
     render(<ContentArea />);
     await waitFor(() => {
@@ -1358,7 +1391,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
       graphView.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     });
     await waitFor(() => {
-      expect(screen.queryByTestId("graph-view-wrapper")).not.toBeInTheDocument();
+      expect(screen.getByTestId("graph-view-wrapper").style.display).toBe("none");
     });
   });
 });

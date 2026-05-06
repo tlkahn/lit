@@ -65,6 +65,7 @@ export function ContentArea() {
   const [body, setBody] = useState("");
   const [viewMode, setViewMode] = useState<"editor" | "mindmap" | "graph">("editor");
   const [graphInitialMode, setGraphInitialMode] = useState<"full" | "local" | undefined>(undefined);
+  const [graphEverOpened, setGraphEverOpened] = useState(false);
   const [mindmapSelectedId, setMindmapSelectedId] = useState<string | null>(null);
   const [showConflict, setShowConflict] = useState(false);
   useModalLock(showConflict);
@@ -407,6 +408,10 @@ export function ContentArea() {
   });
 
   useEffect(() => {
+    if (viewMode === "graph" && !graphEverOpened) setGraphEverOpened(true);
+  }, [viewMode, graphEverOpened]);
+
+  useEffect(() => {
     if (viewMode !== "editor") return;
     const view = editorViewRef.current;
     if (!view) return;
@@ -635,12 +640,13 @@ export function ContentArea() {
           </Suspense>
         </div>
       )}
-      {viewMode === "graph" && (
-        <div data-testid="graph-view-wrapper" className="flex-1 min-h-0">
+      {graphEverOpened && (
+        <div data-testid="graph-view-wrapper" className="flex-1 min-h-0" style={viewMode !== "graph" ? { display: "none" } : undefined}>
           <Suspense fallback={<div className="flex items-center justify-center h-full text-text-faint">Loading…</div>}>
             <LazyGraphView
               activePageId={currentPagePath}
               initialMode={graphInitialMode}
+              visible={viewMode === "graph"}
               onNavigate={(pageId) => {
                 selectPage(pageId);
                 setViewMode("editor");

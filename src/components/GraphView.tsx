@@ -16,11 +16,12 @@ import "./GraphView.css";
 export interface GraphViewProps {
   activePageId?: string | null;
   initialMode?: "full" | "local";
+  visible?: boolean;
   onNavigate?: (pageId: string) => void;
   onExit?: () => void;
 }
 
-export default function GraphView({ activePageId, initialMode, onNavigate, onExit }: GraphViewProps) {
+export default function GraphView({ activePageId, initialMode, visible = true, onNavigate, onExit }: GraphViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sigmaRef = useRef<unknown>(null);
   const graphRef = useRef<unknown>(null);
@@ -38,6 +39,10 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
   onNavigateRef.current = onNavigate;
   const onExitRef = useRef(onExit);
   onExitRef.current = onExit;
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
+  const lastRenderedSeedRef = useRef<string | null>(null);
+  const [reinitTrigger, setReinitTrigger] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<"full" | "local">(initialMode ?? "full");
@@ -112,6 +117,7 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
     let cancelled = false;
 
     async function init() {
+      if (!visibleRef.current) return;
       try {
         setLoading(true);
         setError(null);
@@ -344,6 +350,7 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
         }
 
         setGraphStats({ nodes: graph.order, edges: graph.size });
+        lastRenderedSeedRef.current = mode === "local" ? (activePageId ?? null) : null;
         setLoading(false);
       } catch (e) {
         if (!cancelled) {
@@ -386,7 +393,20 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
       }
       graphRef.current = null;
     };
-  }, [mode, depth, activePageId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, depth, mode === "local" ? activePageId : null, reinitTrigger]);
+
+  useEffect(() => {
+    if (!visible) {
+      layoutRef.current?.stop();
+    } else {
+      if (mode === "local" && activePageId !== lastRenderedSeedRef.current) {
+        setReinitTrigger((c) => c + 1);
+      } else {
+        (sigmaRef.current as { refresh: () => void } | null)?.refresh();
+      }
+    }
+  }, [visible, mode, activePageId]);
 
   const activeThemeId = useThemeStore((s) => s.activeThemeId);
 
