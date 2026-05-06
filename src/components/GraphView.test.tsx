@@ -509,6 +509,31 @@ describe("GraphView", () => {
     expect(tooltip).toBeNull();
   });
 
+  it("moveBody after leaveNode does not update tooltip", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const enterNodeHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "enterNode",
+    )?.[1];
+    const leaveNodeHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "leaveNode",
+    )?.[1];
+    const moveBodyHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "moveBody",
+    )?.[1];
+
+    act(() => { enterNodeHandler!({ node: "a.md", event: { x: 100, y: 200 } }); });
+    act(() => { leaveNodeHandler!(); });
+    act(() => {
+      moveBodyHandler!({ event: { x: 999, y: 999 } });
+      flushRAF();
+    });
+
+    expect(document.querySelector(".graph-tooltip")).toBeNull();
+  });
+
   it("enterNode sets cursor to pointer, leaveNode resets to grab", async () => {
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView />);
