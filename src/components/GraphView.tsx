@@ -190,14 +190,14 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
         sigmaRef.current = sigma;
         graphRef.current = graph;
 
-        if (tierSettings.defaultEdgesHidden) {
+        if (tierSettingsRef.current.defaultEdgesHidden) {
           sigma.setSetting("edgeReducer", (_e: string, attrs: Record<string, unknown>) => ({ ...attrs, hidden: true }));
         }
 
         const restoreDefaultReducers = () => {
           sigma.setSetting("nodeReducer", null);
           sigma.setSetting("edgeReducer",
-            tierSettings.defaultEdgesHidden
+            tierSettingsRef.current.defaultEdgesHidden
               ? (_e: string, attrs: Record<string, unknown>) => ({ ...attrs, hidden: true })
               : null
           );
