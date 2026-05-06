@@ -483,6 +483,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
           return;
         }
 
+        layoutRef.current?.stop();
         const { accentColor, stubColor } = resolveThemeColors();
         applyDiff(graph, diff, pagerank, accentColor, stubColor);
         setGraphStats({ nodes: graph.order, edges: graph.size });

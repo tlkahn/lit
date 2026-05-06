@@ -1581,4 +1581,54 @@ describe("GraphView", () => {
 
     resetListenMock();
   });
+
+  it("stops FA2 layout before applying diff from lit:graph-updated", async () => {
+    mockListen();
+    let initDone = false;
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          if (!initDone) {
+            return {
+              nodes: [
+                { id: "a.md", title: "A", is_stub: false },
+                { id: "b.md", title: "B", is_stub: false },
+              ],
+              edges: [["a.md", "b.md"]],
+            };
+          }
+          return {
+            nodes: [
+              { id: "a.md", title: "A", is_stub: false },
+              { id: "b.md", title: "B", is_stub: false },
+              { id: "c.md", title: "C", is_stub: false },
+            ],
+            edges: [["a.md", "b.md"], ["a.md", "c.md"]],
+          };
+        case "get_pagerank":
+          return { "a.md": 0.4, "b.md": 0.3, "c.md": 0.3 };
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    // Wait for FA2 convergence to stop the layout (interval fires every 200ms)
+    await waitFor(() => { expect(mockLayoutStop).toHaveBeenCalled(); }, { timeout: 3000 });
+    initDone = true;
+    mockLayoutStop.mockClear();
+
+    await act(async () => {
+      emitMockEvent("lit:graph-updated", {});
+    });
+
+    await waitFor(() => {
+      expect(mockLayoutStop).toHaveBeenCalled();
+    });
+
+    resetListenMock();
+  });
 });
