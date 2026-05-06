@@ -4,6 +4,8 @@ import type { SubgraphResult } from "../lib/ipc";
 import { buildGraph, resolveThemeColors, prefersReducedMotion } from "../lib/graphLayout";
 import { useThemeStore } from "../stores/theme";
 import { checkConvergence, type PositionMap, type ConvergenceState } from "../lib/graphConvergence";
+import { isPerfEnabled, perfTable, type PerfEntry } from "../lib/perf";
+import { FpsCounter } from "../lib/fpsCounter";
 import { GraphToolbar } from "./GraphToolbar";
 import { GraphTooltip } from "./GraphTooltip";
 import { GraphSearch, getMatchingNodes } from "./GraphSearch";
@@ -101,7 +103,10 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
       try {
         setLoading(true);
         setError(null);
+        const perf = isPerfEnabled();
+        const perfEntries: PerfEntry[] = [];
 
+        let t0 = perf ? performance.now() : 0;
         let subgraph: SubgraphResult;
         if (mode === "local" && activePageId) {
           subgraph = await getGraphSubgraph([activePageId], depth);
@@ -109,11 +114,17 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
           subgraph = await getFullSubgraph();
         }
         const pagerank = await getPagerank();
+        if (perf) {
+          const ipcMs = performance.now() - t0;
+          const payloadSize = JSON.stringify(subgraph).length + JSON.stringify(pagerank).length;
+          perfEntries.push({ label: "IPC fetch", ms: ipcMs, detail: `${(payloadSize / 1024).toFixed(1)} kB` });
+        }
 
         if (cancelled) return;
 
         const { accentColor, stubColor, dimColor } = resolveThemeColors();
         dimColorRef.current = dimColor;
+        t0 = perf ? performance.now() : 0;
         const graph = buildGraph({
           subgraph,
           pagerank,
@@ -121,6 +132,9 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
           stubColor,
           seedId: mode === "local" ? (activePageId ?? undefined) : undefined,
         });
+        if (perf) {
+          perfEntries.push({ label: "Graphology build", ms: performance.now() - t0, detail: `${graph.order} nodes, ${graph.size} edges` });
+        }
 
         if (!containerRef.current || cancelled) return;
 
@@ -147,6 +161,7 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
           borders: [{ size: { value: 0.3, mode: "relative" }, color: { attribute: "color" } }],
         });
 
+        const sigmaT0 = perf ? performance.now() : 0;
         const sigma = new Sigma(graph, containerRef.current, {
           nodeProgramClasses: { filled: filledProgram, hollow: hollowProgram, seed: seedProgram },
           hideEdgesOnMove: true,
@@ -155,6 +170,13 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
         });
         sigmaRef.current = sigma;
         graphRef.current = graph;
+
+        if (perf) {
+          sigma.on("afterRender", function onFirstRender() {
+            perfEntries.push({ label: "Sigma first paint", ms: performance.now() - sigmaT0 });
+            sigma.off("afterRender", onFirstRender);
+          });
+        }
 
         sigma.on("clickNode", ({ node }) => {
           onNavigateRef.current?.(node);
@@ -227,9 +249,17 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
 
         if (prefersReducedMotion()) {
           const forceAtlas2 = await import("graphology-layout-forceatlas2");
+          t0 = perf ? performance.now() : 0;
           forceAtlas2.default.assign(graph, { iterations: 100, settings: inferSettings(graph) });
+          if (perf) {
+            perfEntries.push({ label: "FA2 (sync)", ms: performance.now() - t0 });
+            perfEntries.push({ label: "Steady-state FPS", ms: 0, detail: "N/A (reduced motion)" });
+            perfEntries.push({ label: "JS heap", ms: 0, detail: "Use Safari Web Inspector > Timelines > JS Allocations" });
+            perfTable("graph-init", perfEntries);
+          }
         } else {
           const layout = new FA2Layout(graph, { settings: inferSettings(graph) });
+          const fa2T0 = perf ? performance.now() : 0;
           layout.start();
           layoutRef.current = layout;
 
@@ -238,6 +268,17 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
 
           const stopLayout = () => {
             layout.stop();
+            if (perf) {
+              perfEntries.push({ label: "FA2 convergence", ms: performance.now() - fa2T0 });
+              const fpsCounter = new FpsCounter();
+              fpsCounter.start();
+              setTimeout(() => {
+                const stats = fpsCounter.stop();
+                perfEntries.push({ label: "Steady-state FPS", ms: stats.avg, detail: `min=${stats.min.toFixed(0)} max=${stats.max.toFixed(0)} samples=${stats.samples}` });
+                perfEntries.push({ label: "JS heap", ms: 0, detail: "Use Safari Web Inspector > Timelines > JS Allocations" });
+                perfTable("graph-init", perfEntries);
+              }, 3000);
+            }
             sigma.getCamera().animatedReset();
             if (convergenceIntervalRef.current) {
               clearInterval(convergenceIntervalRef.current);
