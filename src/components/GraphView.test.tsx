@@ -388,6 +388,42 @@ describe("GraphView", () => {
     vi.useRealTimers();
   });
 
+  it("moveBody updates tooltip position while node is hovered", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const enterNodeHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "enterNode",
+    )?.[1];
+    act(() => { enterNodeHandler!({ node: "a.md", event: { x: 100, y: 200 } }); });
+
+    const moveBodyHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "moveBody",
+    )?.[1];
+    expect(moveBodyHandler).toBeDefined();
+    act(() => { moveBodyHandler!({ event: { x: 300, y: 400 } }); });
+
+    const tooltip = document.querySelector(".graph-tooltip") as HTMLElement;
+    expect(tooltip).toBeTruthy();
+    expect(tooltip.style.left).toBe("310px");
+    expect(tooltip.style.top).toBe("410px");
+  });
+
+  it("moveBody is ignored when no node is hovered", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const moveBodyHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "moveBody",
+    )?.[1];
+    expect(moveBodyHandler).toBeDefined();
+    act(() => { moveBodyHandler!({ event: { x: 300, y: 400 } }); });
+
+    expect(document.querySelector(".graph-tooltip")).toBeNull();
+  });
+
   it("enterNode sets cursor to pointer, leaveNode resets to grab", async () => {
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView />);

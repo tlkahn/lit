@@ -17,6 +17,7 @@ export default function GraphView({ activePageId, onNavigate }: GraphViewProps) 
   const graphRef = useRef<unknown>(null);
   const layoutRef = useRef<{ start: () => void; stop: () => void; kill: () => void } | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hoveredNodeRef = useRef<string | null>(null);
   const onNavigateRef = useRef(onNavigate);
   onNavigateRef.current = onNavigate;
   const [loading, setLoading] = useState(true);
@@ -96,6 +97,7 @@ export default function GraphView({ activePageId, onNavigate }: GraphViewProps) 
         });
 
         sigma.on("enterNode", ({ node, event }) => {
+          hoveredNodeRef.current = node;
           const neighbors = new Set(graph.neighbors(node));
           neighbors.add(node);
 
@@ -124,7 +126,15 @@ export default function GraphView({ activePageId, onNavigate }: GraphViewProps) 
           });
         });
 
+        sigma.on("moveBody", ({ event }) => {
+          if (hoveredNodeRef.current) {
+            const mouseEvent = event as { x?: number; y?: number } | undefined;
+            setTooltip((t) => ({ ...t, x: (mouseEvent?.x ?? 0) + 10, y: (mouseEvent?.y ?? 0) + 10 }));
+          }
+        });
+
         sigma.on("leaveNode", () => {
+          hoveredNodeRef.current = null;
           sigma.setSetting("nodeReducer", null);
           sigma.setSetting("edgeReducer", null);
           if (containerRef.current) {
