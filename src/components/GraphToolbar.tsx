@@ -1,0 +1,54 @@
+import "./GraphToolbar.css";
+
+export interface GraphToolbarProps {
+  mode: "full" | "local";
+  depth: number;
+  onModeChange: (mode: "full" | "local") => void;
+  onDepthChange: (depth: number) => void;
+  onResetZoom: () => void;
+}
+
+export function GraphToolbar({ mode, depth, onModeChange, onDepthChange, onResetZoom }: GraphToolbarProps) {
+  return (
+    <div className="graph-toolbar">
+      <div className="graph-toolbar-group">
+        <button
+          aria-pressed={mode === "full"}
+          className={`graph-toolbar-btn ${mode === "full" ? "active" : ""}`}
+          onClick={() => onModeChange("full")}
+        >
+          Full
+        </button>
+        <button
+          aria-pressed={mode === "local"}
+          className={`graph-toolbar-btn ${mode === "local" ? "active" : ""}`}
+          onClick={() => onModeChange("local")}
+        >
+          Local
+        </button>
+      </div>
+      {mode === "local" && (
+        <div className="graph-toolbar-group">
+          {[1, 2, 3].map((d) => (
+            <button
+              key={d}
+              aria-pressed={depth === d}
+              className={`graph-toolbar-btn ${depth === d ? "active" : ""}`}
+              onClick={() => onDepthChange(d)}
+            >
+              {d}
+            </button>
+          ))}
+        </div>
+      )}
+      <button
+        className="graph-toolbar-btn"
+        onClick={onResetZoom}
+        aria-label="Reset zoom"
+        title="Reset zoom"
+      >
+        ⌖
+      </button>
+    </div>
+  );
+}

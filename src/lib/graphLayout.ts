@@ -26,15 +26,18 @@ export function computeNodeSize(pr: number, maxPr: number): number {
   return MIN_SIZE + (MAX_SIZE - MIN_SIZE) * Math.log(1 + pr * SCALE_K) / Math.log(1 + maxPr * SCALE_K);
 }
 
+export const SEED_COLOR = "#f59e0b";
+
 export interface GraphBuildOptions {
   subgraph: SubgraphResult;
   pagerank: Record<string, number>;
   accentColor: string;
   stubColor: string;
+  seedId?: string;
 }
 
 export function buildGraph(options: GraphBuildOptions): Graph {
-  const { subgraph, pagerank, accentColor, stubColor } = options;
+  const { subgraph, pagerank, accentColor, stubColor, seedId } = options;
   const graph = new Graph();
 
   if (subgraph.nodes.length === 0) return graph;
@@ -44,11 +47,12 @@ export function buildGraph(options: GraphBuildOptions): Graph {
   for (const node of subgraph.nodes) {
     const pr = pagerank[node.id] ?? 0;
     const size = node.is_stub ? MIN_SIZE : computeNodeSize(pr, maxPr);
+    const isSeed = seedId != null && node.id === seedId;
     graph.addNode(node.id, {
       label: node.title,
-      color: node.is_stub ? stubColor : accentColor,
-      type: node.is_stub ? "hollow" : "filled",
-      size,
+      color: isSeed ? SEED_COLOR : node.is_stub ? stubColor : accentColor,
+      type: isSeed ? "seed" : node.is_stub ? "hollow" : "filled",
+      size: isSeed ? Math.max(size * 1.3, size + 4) : size,
       x: Math.random() * 100,
       y: Math.random() * 100,
     });

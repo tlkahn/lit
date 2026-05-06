@@ -628,7 +628,6 @@ export function ContentArea() {
         <div data-testid="graph-view-wrapper" className="flex-1 min-h-0">
           <Suspense fallback={<div className="flex items-center justify-center h-full text-text-faint">Loading…</div>}>
             <LazyGraphView
-              mode="full"
               activePageId={currentPagePath}
               onNavigate={(pageId) => {
                 selectPage(pageId);

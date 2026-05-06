@@ -1,24 +1,34 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { getFullSubgraph, getGraphSubgraph, getPagerank } from "../lib/ipc";
 import type { SubgraphResult } from "../lib/ipc";
 import { buildGraph, resolveThemeColors } from "../lib/graphLayout";
+import { GraphToolbar } from "./GraphToolbar";
+import { GraphTooltip } from "./GraphTooltip";
 import "./GraphView.css";
 
 export interface GraphViewProps {
-  mode: "full" | "local";
   activePageId?: string | null;
   onNavigate?: (pageId: string) => void;
 }
 
-export default function GraphView({ mode, activePageId, onNavigate }: GraphViewProps) {
+export default function GraphView({ activePageId, onNavigate }: GraphViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sigmaRef = useRef<unknown>(null);
+  const graphRef = useRef<unknown>(null);
   const layoutRef = useRef<{ start: () => void; stop: () => void; kill: () => void } | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onNavigateRef = useRef(onNavigate);
   onNavigateRef.current = onNavigate;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [mode, setMode] = useState<"full" | "local">("full");
+  const [depth, setDepth] = useState(2);
+  const [tooltip, setTooltip] = useState({ visible: false, x: 0, y: 0, title: "", inbound: 0, outbound: 0 });
+
+  const handleResetZoom = useCallback(() => {
+    const sigma = sigmaRef.current as { getCamera: () => { animatedReset: () => void } } | null;
+    sigma?.getCamera().animatedReset();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -30,7 +40,7 @@ export default function GraphView({ mode, activePageId, onNavigate }: GraphViewP
 
         let subgraph: SubgraphResult;
         if (mode === "local" && activePageId) {
-          subgraph = await getGraphSubgraph([activePageId], 2);
+          subgraph = await getGraphSubgraph([activePageId], depth);
         } else {
           subgraph = await getFullSubgraph();
         }
@@ -44,6 +54,7 @@ export default function GraphView({ mode, activePageId, onNavigate }: GraphViewP
           pagerank,
           accentColor,
           stubColor,
+          seedId: mode === "local" ? (activePageId ?? undefined) : undefined,
         });
 
         if (!containerRef.current || cancelled) return;
@@ -67,17 +78,65 @@ export default function GraphView({ mode, activePageId, onNavigate }: GraphViewP
             { size: { fill: true }, color: { transparent: true } },
           ],
         });
+        const seedProgram = createNodeBorderProgram({
+          borders: [{ size: { value: 0.3, mode: "relative" }, color: { attribute: "color" } }],
+        });
 
         const sigma = new Sigma(graph, containerRef.current, {
-          nodeProgramClasses: { filled: filledProgram, hollow: hollowProgram },
+          nodeProgramClasses: { filled: filledProgram, hollow: hollowProgram, seed: seedProgram },
           hideEdgesOnMove: true,
           labelRenderedSizeThreshold: 6,
           enableEdgeEvents: false,
         });
         sigmaRef.current = sigma;
+        graphRef.current = graph;
 
         sigma.on("clickNode", ({ node }) => {
           onNavigateRef.current?.(node);
+        });
+
+        sigma.on("enterNode", ({ node, event }) => {
+          const neighbors = new Set(graph.neighbors(node));
+          neighbors.add(node);
+
+          sigma.setSetting("nodeReducer", (_n: string, attrs: Record<string, unknown>) => {
+            if (neighbors.has(_n)) return attrs;
+            return { ...attrs, color: "#e0e0e0", label: null };
+          });
+          sigma.setSetting("edgeReducer", (_e: string, attrs: Record<string, unknown>) => {
+            const src = graph.source(_e);
+            const tgt = graph.target(_e);
+            if (neighbors.has(src) && neighbors.has(tgt)) return attrs;
+            return { ...attrs, hidden: true };
+          });
+
+          if (containerRef.current) {
+            containerRef.current.style.cursor = "pointer";
+          }
+
+          const mouseEvent = event as { x?: number; y?: number } | undefined;
+          setTooltip({
+            visible: true,
+            x: (mouseEvent?.x ?? 0) + 10,
+            y: (mouseEvent?.y ?? 0) + 10,
+            title: (graph.getNodeAttribute(node, "label") as string) || node,
+            inbound: graph.inDegree(node),
+            outbound: graph.outDegree(node),
+          });
+        });
+
+        sigma.on("leaveNode", () => {
+          sigma.setSetting("nodeReducer", null);
+          sigma.setSetting("edgeReducer", null);
+          if (containerRef.current) {
+            containerRef.current.style.cursor = "grab";
+          }
+          setTooltip((t) => ({ ...t, visible: false }));
+        });
+
+        sigma.on("clickStage", () => {
+          sigma.setSetting("nodeReducer", null);
+          sigma.setSetting("edgeReducer", null);
         });
 
         const layout = new FA2Layout(graph, { settings: inferSettings(graph) });
@@ -86,6 +145,7 @@ export default function GraphView({ mode, activePageId, onNavigate }: GraphViewP
 
         timerRef.current = setTimeout(() => {
           layout.stop();
+          sigma.getCamera().animatedReset();
         }, 5000);
 
         setLoading(false);
@@ -113,8 +173,9 @@ export default function GraphView({ mode, activePageId, onNavigate }: GraphViewP
         (sigmaRef.current as { kill: () => void }).kill();
         sigmaRef.current = null;
       }
+      graphRef.current = null;
     };
-  }, [mode, activePageId]);
+  }, [mode, depth, activePageId]);
 
   return (
     <div data-testid="graph-view" className="graph-view-container">
@@ -128,7 +189,15 @@ export default function GraphView({ mode, activePageId, onNavigate }: GraphViewP
           {error}
         </div>
       )}
-      <div ref={containerRef} data-testid="graph-canvas" style={{ position: "absolute", inset: 0 }} />
+      <GraphToolbar
+        mode={mode}
+        depth={depth}
+        onModeChange={setMode}
+        onDepthChange={setDepth}
+        onResetZoom={handleResetZoom}
+      />
+      <GraphTooltip {...tooltip} />
+      <div ref={containerRef} data-testid="graph-canvas" style={{ position: "absolute", inset: 0, cursor: "grab" }} />
     </div>
   );
 }

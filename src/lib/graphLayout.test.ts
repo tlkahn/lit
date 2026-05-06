@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { buildGraph, computeNodeSize, resolveThemeColors, MIN_SIZE, MAX_SIZE } from "./graphLayout";
+import { buildGraph, computeNodeSize, resolveThemeColors, MIN_SIZE, MAX_SIZE, SEED_COLOR } from "./graphLayout";
 import type { SubgraphResult } from "./ipc";
 
 describe("graphLayout", () => {
@@ -86,6 +86,43 @@ describe("graphLayout", () => {
       };
       const graph = buildGraph({ subgraph, ...defaults });
       expect(graph.size).toBe(0);
+    });
+
+    it("seed node gets distinct color and type", () => {
+      const subgraph: SubgraphResult = {
+        nodes: [
+          { id: "a.md", title: "A", is_stub: false },
+          { id: "b.md", title: "B", is_stub: false },
+        ],
+        edges: [],
+      };
+      const graph = buildGraph({ subgraph, pagerank: { "a.md": 0.5, "b.md": 0.5 }, accentColor: "#7c3aed", stubColor: "#999", seedId: "a.md" });
+      const seedAttrs = graph.getNodeAttributes("a.md");
+      expect(seedAttrs.color).toBe(SEED_COLOR);
+      expect(seedAttrs.type).toBe("seed");
+      const otherAttrs = graph.getNodeAttributes("b.md");
+      expect(otherAttrs.color).toBe("#7c3aed");
+      expect(otherAttrs.type).toBe("filled");
+    });
+
+    it("seed node is larger than the same node without seed", () => {
+      const subgraph: SubgraphResult = {
+        nodes: [{ id: "a.md", title: "A", is_stub: false }],
+        edges: [],
+      };
+      const withSeed = buildGraph({ subgraph, pagerank: { "a.md": 0.5 }, accentColor: "#7c3aed", stubColor: "#999", seedId: "a.md" });
+      const withoutSeed = buildGraph({ subgraph, pagerank: { "a.md": 0.5 }, accentColor: "#7c3aed", stubColor: "#999" });
+      expect(withSeed.getNodeAttributes("a.md").size).toBeGreaterThan(withoutSeed.getNodeAttributes("a.md").size);
+    });
+
+    it("no seedId means all nodes use normal attributes", () => {
+      const subgraph: SubgraphResult = {
+        nodes: [{ id: "a.md", title: "A", is_stub: false }],
+        edges: [],
+      };
+      const graph = buildGraph({ subgraph, pagerank: { "a.md": 0.5 }, accentColor: "#7c3aed", stubColor: "#999" });
+      expect(graph.getNodeAttributes("a.md").type).toBe("filled");
+      expect(graph.getNodeAttributes("a.md").color).toBe("#7c3aed");
     });
 
     it("duplicate directional edges produce one undirected edge", () => {
