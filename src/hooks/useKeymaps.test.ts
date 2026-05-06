@@ -21,6 +21,7 @@ describe("useKeymaps", () => {
           { key: "Mod-Shift-n", command: "app.newPage" },
           { key: "Mod-r", command: "app.gotoHeading" },
           { key: "Mod-Shift-e", command: "editor.openInExternalEditor", when: "editorFocus" },
+          { key: "Mod-Shift-g", command: "app.showGraphView" },
         ];
       }
       throw new Error(`Unknown command: ${cmd}`);
@@ -125,6 +126,24 @@ describe("useKeymaps", () => {
     const listener = vi.fn();
     window.addEventListener("lit:toggle-graph-view", listener);
     executeCommand("app.showGraphView");
+    window.removeEventListener("lit:toggle-graph-view", listener);
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("Mod-Shift-g keydown dispatches lit:toggle-graph-view", async () => {
+    const { result } = await loadHook();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const listener = vi.fn();
+    window.addEventListener("lit:toggle-graph-view", listener);
+
+    const event = new KeyboardEvent("keydown", {
+      key: "g",
+      metaKey: true,
+      shiftKey: true,
+    });
+    document.dispatchEvent(event);
+
     window.removeEventListener("lit:toggle-graph-view", listener);
     expect(listener).toHaveBeenCalledTimes(1);
   });

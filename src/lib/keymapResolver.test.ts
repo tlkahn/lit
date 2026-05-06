@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { registerHandler, _clear } from "./commandRegistry";
 import { resolveKeymaps } from "./keymapResolver";
+import defaultKeymaps from "../../keymaps/default.json";
 
 describe("resolveKeymaps", () => {
   beforeEach(() => {
@@ -58,5 +59,15 @@ describe("resolveKeymaps", () => {
     const result = resolveKeymaps([]);
     expect(result.editorBindings).toHaveLength(0);
     expect(result.appBindings).toHaveLength(0);
+  });
+});
+
+describe("keymaps/default.json", () => {
+  it("contains Mod-Shift-g binding for app.showGraphView", () => {
+    const entry = defaultKeymaps.find(
+      (b: { key: string; command: string }) =>
+        b.key === "Mod-Shift-g" && b.command === "app.showGraphView",
+    );
+    expect(entry).toBeDefined();
   });
 });
