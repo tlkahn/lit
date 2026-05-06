@@ -3,11 +3,10 @@ export interface GraphTooltipProps {
   x: number;
   y: number;
   title: string;
-  inbound: number;
-  outbound: number;
+  connections: number;
 }
 
-export function GraphTooltip({ visible, x, y, title, inbound, outbound }: GraphTooltipProps) {
+export function GraphTooltip({ visible, x, y, title, connections }: GraphTooltipProps) {
   if (!visible) return null;
 
   return (
@@ -31,7 +30,7 @@ export function GraphTooltip({ visible, x, y, title, inbound, outbound }: GraphT
     >
       <div style={{ fontWeight: 600, marginBottom: "2px" }}>{title}</div>
       <div style={{ color: "var(--text-faint, #999)" }}>
-        {inbound} in · {outbound} out
+        {connections} connections
       </div>
     </div>
   );

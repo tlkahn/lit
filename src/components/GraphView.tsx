@@ -23,7 +23,7 @@ export default function GraphView({ activePageId, onNavigate }: GraphViewProps) 
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<"full" | "local">("full");
   const [depth, setDepth] = useState(2);
-  const [tooltip, setTooltip] = useState({ visible: false, x: 0, y: 0, title: "", inbound: 0, outbound: 0 });
+  const [tooltip, setTooltip] = useState({ visible: false, x: 0, y: 0, title: "", connections: 0 });
 
   const handleResetZoom = useCallback(() => {
     const sigma = sigmaRef.current as { getCamera: () => { animatedReset: () => void } } | null;
@@ -120,8 +120,7 @@ export default function GraphView({ activePageId, onNavigate }: GraphViewProps) 
             x: (mouseEvent?.x ?? 0) + 10,
             y: (mouseEvent?.y ?? 0) + 10,
             title: (graph.getNodeAttribute(node, "label") as string) || node,
-            inbound: graph.inDegree(node),
-            outbound: graph.outDegree(node),
+            connections: graph.degree(node),
           });
         });
 
