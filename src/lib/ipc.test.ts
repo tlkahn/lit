@@ -46,6 +46,7 @@ import {
   getGraphNeighbors,
   getGraphPaths,
   getGraphSubgraph,
+  getFullSubgraph,
   ensureGraphReady,
   parseAnnotations,
   resolveAnnotationScope,
@@ -710,6 +711,15 @@ describe("ipc", () => {
     expect(result.edges).toHaveLength(1);
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: ["a.md", "b.md"], depth: 1, directed: null });
+  });
+
+  it("getFullSubgraph calls get_graph_subgraph with empty seeds", async () => {
+    const result = await getFullSubgraph();
+    expect(result.nodes).toHaveLength(2);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", {
+      seeds: [], depth: 0, directed: null,
+    });
   });
 
   it("getUnlinkedMentions returns mention entries", async () => {

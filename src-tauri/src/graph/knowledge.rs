@@ -158,6 +158,9 @@ impl KnowledgeGraph {
         depth: usize,
         directed: bool,
     ) -> Result<SubgraphResult, GraphError> {
+        if seeds.is_empty() {
+            return Ok(self.full_subgraph());
+        }
         let mut seed_indices = Vec::new();
         for &seed_id in seeds {
             let &idx = self
@@ -768,11 +771,12 @@ mod tests {
     }
 
     #[test]
-    fn subgraph_empty_seeds() {
+    fn subgraph_empty_seeds_returns_full_graph() {
         let (_, kg) = build_test_graph();
-        let result = kg.subgraph(&[], 1, true).unwrap();
-        assert!(result.nodes.is_empty());
-        assert!(result.edges.is_empty());
+        let result = kg.subgraph(&[], 1, false).unwrap();
+        let full = kg.full_subgraph();
+        assert_eq!(result.nodes.len(), full.nodes.len());
+        assert_eq!(result.edges.len(), full.edges.len());
     }
 
     #[test]

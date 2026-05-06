@@ -6,6 +6,25 @@ import { mockInvoke, mockListen, emitMockEvent, resetListenMock } from "../test/
 import { useWorkspaceStore } from "../stores/workspace";
 import * as commandRegistryModule from "../lib/commandRegistry";
 
+vi.mock("sigma", () => ({
+  default: class MockSigma {
+    kill = vi.fn();
+    on = vi.fn();
+  },
+}));
+vi.mock("@sigma/node-border", () => ({
+  createNodeBorderProgram: () => class {},
+}));
+vi.mock("graphology-layout-forceatlas2/worker", () => ({
+  default: class { start = vi.fn(); kill = vi.fn(); },
+}));
+vi.mock("graphology-layout-forceatlas2", () => ({
+  inferSettings: () => ({}),
+}));
+vi.mock("graphology-layout", () => ({
+  random: { assign: vi.fn() },
+}));
+
 import { globalJumpTracker } from "../editor/jumpTracker";
 
 const samplePage = {
@@ -71,6 +90,8 @@ beforeEach(() => {
     }
     if (cmd === "get_backlinks") return [];
     if (cmd === "get_keymaps") return [];
+    if (cmd === "get_graph_subgraph") return { nodes: [], edges: [] };
+    if (cmd === "get_pagerank") return {};
     throw new Error(`Unknown command: ${cmd}`);
   });
 });
@@ -1195,5 +1216,41 @@ describe("ContentArea menu://open-in-external-editor", () => {
 
     expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();
+  });
+
+  it("Graph toggle button exists", async () => {
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Graph" })).toBeInTheDocument();
+    });
+  });
+
+  it("clicking Graph button shows graph view", async () => {
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Graph" })).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Graph" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("graph-view-wrapper")).toBeInTheDocument();
+    });
+  });
+
+  it("clicking Editor button from graph view restores editor", async () => {
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Graph" })).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Graph" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("graph-view-wrapper")).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Editor" }));
+    await waitFor(() => {
+      expect(screen.queryByTestId("graph-view-wrapper")).not.toBeInTheDocument();
+    });
   });
 });

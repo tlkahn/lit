@@ -345,6 +345,10 @@ export async function getGraphSubgraph(
   return invoke<SubgraphResult>("get_graph_subgraph", { seeds, depth, directed: directed ?? null });
 }
 
+export async function getFullSubgraph(): Promise<SubgraphResult> {
+  return invoke<SubgraphResult>("get_graph_subgraph", { seeds: [], depth: 0, directed: null });
+}
+
 export interface ResolvedWikilink {
   target: string;
   node_id: string | null;

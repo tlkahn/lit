@@ -1,0 +1,110 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import { mockInvoke } from "../test/tauri-mock";
+
+const mockSigmaKill = vi.fn();
+const mockLayoutKill = vi.fn();
+const mockSigmaOn = vi.fn();
+
+vi.mock("sigma", () => ({
+  default: class MockSigma {
+    kill = mockSigmaKill;
+    on = mockSigmaOn;
+    constructor() {}
+  },
+}));
+
+vi.mock("@sigma/node-border", () => ({
+  createNodeBorderProgram: () => class MockProgram {},
+}));
+
+vi.mock("graphology-layout-forceatlas2/worker", () => ({
+  default: class MockFA2 {
+    start = vi.fn();
+    kill = mockLayoutKill;
+  },
+}));
+
+vi.mock("graphology-layout-forceatlas2", () => ({
+  inferSettings: () => ({}),
+}));
+
+vi.mock("graphology-layout", () => ({
+  random: { assign: vi.fn() },
+}));
+
+describe("GraphView", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [
+              { id: "a.md", title: "A", is_stub: false },
+              { id: "b.md", title: "B", is_stub: false },
+            ],
+            edges: [["a.md", "b.md"]],
+          };
+        case "get_pagerank":
+          return { "a.md": 0.4, "b.md": 0.6 };
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+  });
+
+  it("renders graph-view container", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView mode="full" />);
+    expect(screen.getByTestId("graph-view")).toBeTruthy();
+  });
+
+  it("full mode calls getFullSubgraph and getPagerank", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView mode="full" />);
+    const { invoke } = await import("@tauri-apps/api/core");
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: [], depth: 0, directed: null });
+      expect(invoke).toHaveBeenCalledWith("get_pagerank", { n: null });
+    });
+  });
+
+  it("local mode calls getGraphSubgraph with activePageId", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView mode="local" activePageId="a.md" />);
+    const { invoke } = await import("@tauri-apps/api/core");
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: ["a.md"], depth: 2, directed: null });
+    });
+  });
+
+  it("shows loading state while fetching", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView mode="full" />);
+    expect(screen.getByTestId("graph-loading")).toBeTruthy();
+  });
+
+  it("calls sigma.kill and layout.kill on unmount", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    const { unmount } = render(<GraphView mode="full" />);
+    await waitFor(() => {
+      expect(mockSigmaKill).not.toHaveBeenCalled();
+    });
+    unmount();
+    expect(mockSigmaKill).toHaveBeenCalled();
+    expect(mockLayoutKill).toHaveBeenCalled();
+  });
+
+  it("shows error state when IPC fails", async () => {
+    mockInvoke(() => {
+      throw new Error("IPC failure");
+    });
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView mode="full" />);
+    await waitFor(() => {
+      expect(screen.getByTestId("graph-error")).toBeTruthy();
+    });
+    expect(screen.getByTestId("graph-error").textContent).toBe("IPC failure");
+  });
+});

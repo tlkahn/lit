@@ -20,6 +20,7 @@ import { useKeymaps } from "../hooks/useKeymaps";
 import { useModalLock } from "../hooks/useModalLock";
 
 const LazyMindmapView = lazy(() => import("./MindmapView"));
+const LazyGraphView = lazy(() => import("./GraphView"));
 
 import { globalJumpTracker } from "../editor/jumpTracker";
 
@@ -62,7 +63,7 @@ export function ContentArea() {
   const { editorBindings } = useKeymaps();
   const editorViewRef = useRef<EditorView | null>(null);
   const [body, setBody] = useState("");
-  const [viewMode, setViewMode] = useState<"editor" | "mindmap">("editor");
+  const [viewMode, setViewMode] = useState<"editor" | "mindmap" | "graph">("editor");
   const [mindmapSelectedId, setMindmapSelectedId] = useState<string | null>(null);
   const [showConflict, setShowConflict] = useState(false);
   useModalLock(showConflict);
@@ -509,6 +510,13 @@ export function ContentArea() {
             >
               Mindmap
             </button>
+            <button
+              onClick={() => setViewMode("graph")}
+              aria-label="Graph"
+              className={`rounded px-2 py-0.5 text-xs ${viewMode === "graph" ? "bg-interactive-accent text-white" : "text-text-faint hover:text-text-muted"}`}
+            >
+              Graph
+            </button>
           </div>
         </div>
         {showFrontmatter && (
@@ -611,6 +619,20 @@ export function ContentArea() {
                 const { newBody, fallbackId } = resolveDeleteFallback(body, headingTree, nodeId);
                 handleChange(newBody);
                 setMindmapSelectedId(fallbackId);
+              }}
+            />
+          </Suspense>
+        </div>
+      )}
+      {viewMode === "graph" && (
+        <div data-testid="graph-view-wrapper" className="flex-1 min-h-0">
+          <Suspense fallback={<div className="flex items-center justify-center h-full text-text-faint">Loading…</div>}>
+            <LazyGraphView
+              mode="full"
+              activePageId={currentPagePath}
+              onNavigate={(pageId) => {
+                selectPage(pageId);
+                setViewMode("editor");
               }}
             />
           </Suspense>
