@@ -80,6 +80,18 @@ describe("GraphSearch", () => {
     render(<GraphSearch {...defaults} query="test" matchCount={3} />);
     expect(screen.getByTestId("graph-search-count").textContent).toBe("3 matches");
   });
+
+  it("input has placeholder text", () => {
+    render(<GraphSearch {...defaults} />);
+    const input = screen.getByTestId("graph-search-input");
+    expect(input).toHaveAttribute("placeholder", "Search nodes…");
+  });
+
+  it("input has aria-label for screen readers", () => {
+    render(<GraphSearch {...defaults} />);
+    const input = screen.getByTestId("graph-search-input");
+    expect(input).toHaveAttribute("aria-label", "Search graph nodes");
+  });
 });
 
 describe("getMatchingNodes", () => {

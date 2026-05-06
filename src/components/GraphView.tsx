@@ -27,6 +27,7 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
   const hoveredNodeRef = useRef<string | null>(null);
   const rafIdRef = useRef<number>(0);
   const pendingPosRef = useRef<{ x: number; y: number } | null>(null);
+  const dimColorRef = useRef("#d1d9e0");
   const onNavigateRef = useRef(onNavigate);
   onNavigateRef.current = onNavigate;
   const onExitRef = useRef(onExit);
@@ -62,7 +63,7 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
     const matchSet = new Set(matches);
     sigma.setSetting("nodeReducer", (_n: string, attrs: Record<string, unknown>) => {
       if (matchSet.has(_n)) return { ...attrs, highlighted: true };
-      return { ...attrs, color: "#e0e0e0", label: null };
+      return { ...attrs, color: dimColorRef.current, label: null };
     });
     sigma.setSetting("edgeReducer", (_e: string, attrs: Record<string, unknown>) => {
       const src = graph.source(_e);
@@ -109,7 +110,8 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
 
         if (cancelled) return;
 
-        const { accentColor, stubColor } = resolveThemeColors();
+        const { accentColor, stubColor, dimColor } = resolveThemeColors();
+        dimColorRef.current = dimColor;
         const graph = buildGraph({
           subgraph,
           pagerank,
@@ -163,7 +165,7 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
 
           sigma.setSetting("nodeReducer", (_n: string, attrs: Record<string, unknown>) => {
             if (neighbors.has(_n)) return attrs;
-            return { ...attrs, color: "#e0e0e0", label: null };
+            return { ...attrs, color: dimColorRef.current, label: null };
           });
           sigma.setSetting("edgeReducer", (_e: string, attrs: Record<string, unknown>) => {
             const src = graph.source(_e);
@@ -304,13 +306,16 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
 
   useEffect(() => {
     const graph = graphRef.current as import("graphology").default | null;
-    const sigma = sigmaRef.current as { refresh: () => void } | null;
+    const sigma = sigmaRef.current as { refresh: () => void; setSetting: (key: string, value: unknown) => void } | null;
     if (!graph || !sigma) return;
-    const { accentColor, stubColor } = resolveThemeColors();
+    const { accentColor, stubColor, dimColor, edgeColor, labelColor } = resolveThemeColors();
+    dimColorRef.current = dimColor;
     graph.forEachNode((node: string, attrs: Record<string, unknown>) => {
       if (attrs.type === "seed") return;
       graph.setNodeAttribute(node, "color", attrs.type === "hollow" ? stubColor : accentColor);
     });
+    sigma.setSetting("defaultEdgeColor", edgeColor);
+    sigma.setSetting("labelColor", { color: labelColor });
     sigma.refresh();
   }, [activeThemeId]);
 
@@ -335,7 +340,7 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
       tabIndex={-1}
       aria-label={
         graphStats
-          ? `Knowledge graph with ${graphStats.nodes} nodes and ${graphStats.edges} edges. Use mouse to explore, click a node to open it.`
+          ? `Knowledge graph with ${graphStats.nodes} node${graphStats.nodes === 1 ? '' : 's'} and ${graphStats.edges} edge${graphStats.edges === 1 ? '' : 's'}. Use mouse to explore, click a node to open it.`
           : "Knowledge graph loading"
       }
     >

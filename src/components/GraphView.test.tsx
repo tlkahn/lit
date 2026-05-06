@@ -780,7 +780,7 @@ describe("GraphView", () => {
 
     const container = screen.getByTestId("graph-view");
     expect(container.getAttribute("aria-label")).toBe(
-      "Knowledge graph with 2 nodes and 1 edges. Use mouse to explore, click a node to open it."
+      "Knowledge graph with 2 nodes and 1 edge. Use mouse to explore, click a node to open it."
     );
   });
 
@@ -790,5 +790,73 @@ describe("GraphView", () => {
 
     const container = screen.getByTestId("graph-view");
     expect(container.getAttribute("aria-label")).toBe("Knowledge graph loading");
+  });
+
+  // --- Issue #4: Theme-aware dim color ---
+
+  it("enterNode nodeReducer uses theme dim color for non-neighbors", async () => {
+    document.documentElement.style.setProperty("--background-modifier-border", "#3d444d");
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const enterNodeHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "enterNode",
+    )?.[1];
+    act(() => { enterNodeHandler!({ node: "a.md", event: { x: 0, y: 0 } }); });
+
+    const nodeReducerCall = mockSigmaSetSetting.mock.calls.find(
+      (call) => call[0] === "nodeReducer",
+    );
+    const reducer = nodeReducerCall![1] as (node: string, attrs: Record<string, unknown>) => Record<string, unknown>;
+    const dimmed = reducer("nonexistent-node", { color: "#000", label: "X" });
+    expect(dimmed.color).toBe("#3d444d");
+
+    document.documentElement.style.removeProperty("--background-modifier-border");
+  });
+
+  it("search nodeReducer uses theme dim color for non-matches", async () => {
+    document.documentElement.style.setProperty("--background-modifier-border", "#3d444d");
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await userEvent.click(screen.getByRole("button", { name: "Search graph" }));
+    mockSigmaSetSetting.mockClear();
+
+    const input = screen.getByTestId("graph-search-input");
+    await userEvent.type(input, "A");
+
+    const nodeReducerCall = mockSigmaSetSetting.mock.calls.find(
+      (call) => call[0] === "nodeReducer",
+    );
+    const reducer = nodeReducerCall![1] as (node: string, attrs: Record<string, unknown>) => Record<string, unknown>;
+    const dimmed = reducer("nonexistent-node", { color: "#000", label: "X" });
+    expect(dimmed.color).toBe("#3d444d");
+
+    document.documentElement.style.removeProperty("--background-modifier-border");
+  });
+
+  // --- Issue #2: Full theme reactivity (edge + label colors) ---
+
+  it("theme change updates sigma defaultEdgeColor and labelColor settings", async () => {
+    document.documentElement.style.setProperty("--text-faint", "#656c76");
+    document.documentElement.style.setProperty("--text-normal", "#f0f6fc");
+
+    const { useThemeStore } = await import("../stores/theme");
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+    mockSigmaSetSetting.mockClear();
+
+    await act(async () => {
+      useThemeStore.setState({ activeThemeId: "dark-theme" });
+    });
+
+    expect(mockSigmaSetSetting).toHaveBeenCalledWith("defaultEdgeColor", "#656c76");
+    expect(mockSigmaSetSetting).toHaveBeenCalledWith("labelColor", { color: "#f0f6fc" });
+
+    document.documentElement.style.removeProperty("--text-faint");
+    document.documentElement.style.removeProperty("--text-normal");
   });
 });

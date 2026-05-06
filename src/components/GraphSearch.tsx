@@ -51,6 +51,8 @@ export function GraphSearch({ visible, query, matchCount, firstMatchId, onQueryC
       <input
         ref={inputRef}
         data-testid="graph-search-input"
+        placeholder="Search nodes…"
+        aria-label="Search graph nodes"
         value={query}
         onChange={(e) => onQueryChange(e.target.value)}
         onKeyDown={handleKeyDown}

@@ -179,6 +179,8 @@ describe("graphLayout", () => {
     afterEach(() => {
       document.documentElement.style.removeProperty("--interactive-accent");
       document.documentElement.style.removeProperty("--text-faint");
+      document.documentElement.style.removeProperty("--background-modifier-border");
+      document.documentElement.style.removeProperty("--text-normal");
     });
 
     it("reads --interactive-accent and --text-faint from computed style", () => {
@@ -193,6 +195,35 @@ describe("graphLayout", () => {
       const colors = resolveThemeColors();
       expect(colors.accentColor).toBe("#0969da");
       expect(colors.stubColor).toBe("#818b98");
+    });
+
+    it("resolves dimColor from --background-modifier-border", () => {
+      document.documentElement.style.setProperty("--background-modifier-border", "#3d444d");
+      const colors = resolveThemeColors();
+      expect(colors.dimColor).toBe("#3d444d");
+    });
+
+    it("dimColor falls back to default when CSS var is unset", () => {
+      const colors = resolveThemeColors();
+      expect(colors.dimColor).toBe("#d1d9e0");
+    });
+
+    it("resolves edgeColor from --text-faint", () => {
+      document.documentElement.style.setProperty("--text-faint", "#656c76");
+      const colors = resolveThemeColors();
+      expect(colors.edgeColor).toBe("#656c76");
+    });
+
+    it("resolves labelColor from --text-normal", () => {
+      document.documentElement.style.setProperty("--text-normal", "#f0f6fc");
+      const colors = resolveThemeColors();
+      expect(colors.labelColor).toBe("#f0f6fc");
+    });
+
+    it("edgeColor and labelColor fall back to defaults when CSS vars are unset", () => {
+      const colors = resolveThemeColors();
+      expect(colors.edgeColor).toBe("#818b98");
+      expect(colors.labelColor).toBe("#1f2328");
     });
   });
 });
