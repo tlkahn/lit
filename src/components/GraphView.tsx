@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { getFullSubgraph, getGraphSubgraph, getPagerank } from "../lib/ipc";
 import type { SubgraphResult } from "../lib/ipc";
-import { buildGraph, resolveThemeColors, prefersReducedMotion } from "../lib/graphLayout";
+import { buildGraph, resolveThemeColors, prefersReducedMotion, getFA2Settings } from "../lib/graphLayout";
 import { useThemeStore } from "../stores/theme";
-import { checkConvergence, type PositionMap, type ConvergenceState } from "../lib/graphConvergence";
+import { checkConvergence, getConvergenceOptions, type PositionMap, type ConvergenceState } from "../lib/graphConvergence";
 import { isPerfEnabled, perfTable, type PerfEntry } from "../lib/perf";
 import { FpsCounter } from "../lib/fpsCounter";
 import { GraphToolbar } from "./GraphToolbar";
@@ -252,7 +252,7 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
         if (prefersReducedMotion()) {
           const forceAtlas2 = await import("graphology-layout-forceatlas2");
           t0 = perf ? performance.now() : 0;
-          forceAtlas2.default.assign(graph, { iterations: 100, settings: inferSettings(graph) });
+          forceAtlas2.default.assign(graph, { iterations: 100, settings: getFA2Settings(inferSettings(graph), graph.order) });
           if (perf) {
             perfEntries.push({ label: "FA2 (sync)", value: performance.now() - t0 });
             perfEntries.push({ label: "Steady-state FPS", value: 0, unit: "fps", detail: "N/A (reduced motion)" });
@@ -260,11 +260,13 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
             perfTable("graph-init", perfEntries);
           }
         } else {
-          const layout = new FA2Layout(graph, { settings: inferSettings(graph) });
+          const FA2_TIMEOUT_MS = 5000;
+          const layout = new FA2Layout(graph, { settings: getFA2Settings(inferSettings(graph), graph.order) });
           const fa2T0 = perf ? performance.now() : 0;
           layout.start();
           layoutRef.current = layout;
 
+          const convergenceOpts = getConvergenceOptions(graph.order);
           let convergenceState: ConvergenceState = { consecutiveLow: 0 };
           let prevPositions: PositionMap = {};
 
@@ -300,7 +302,7 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
             graph.forEachNode((node: string, attrs: Record<string, unknown>) => {
               currentPositions[node] = { x: attrs.x as number, y: attrs.y as number };
             });
-            const result = checkConvergence(prevPositions, currentPositions, convergenceState);
+            const result = checkConvergence(prevPositions, currentPositions, convergenceState, convergenceOpts);
             convergenceState = result.state;
             prevPositions = currentPositions;
             if (result.converged) {
@@ -310,7 +312,7 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
 
           timerRef.current = setTimeout(() => {
             stopLayout();
-          }, 5000);
+          }, FA2_TIMEOUT_MS);
         }
 
         setGraphStats({ nodes: graph.order, edges: graph.size });

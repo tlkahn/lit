@@ -15,8 +15,16 @@ export interface ConvergenceResult {
   state: ConvergenceState;
 }
 
-const DEFAULT_THRESHOLD = 0.5;
-const DEFAULT_REQUIRED_SAMPLES = 5;
+export const DEFAULT_THRESHOLD = 0.5;
+export const DEFAULT_REQUIRED_SAMPLES = 5;
+
+export function getConvergenceOptions(order: number): ConvergenceOptions {
+  const logFactor = 1 + Math.log(Math.max(order, 1));
+  return {
+    threshold: DEFAULT_THRESHOLD / Math.sqrt(logFactor),
+    requiredSamples: order > 2000 ? 3 : DEFAULT_REQUIRED_SAMPLES,
+  };
+}
 
 export function checkConvergence(
   prev: PositionMap,

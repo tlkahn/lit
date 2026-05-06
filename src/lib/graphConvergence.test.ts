@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { checkConvergence, type PositionMap, type ConvergenceState } from "./graphConvergence";
+import { checkConvergence, getConvergenceOptions, DEFAULT_REQUIRED_SAMPLES, type PositionMap, type ConvergenceState } from "./graphConvergence";
 
 describe("graphConvergence", () => {
   const initialState: ConvergenceState = { consecutiveLow: 0 };
@@ -55,5 +55,29 @@ describe("graphConvergence", () => {
     const result = checkConvergence({}, {}, initialState);
     expect(result.converged).toBe(true);
     expect(result.displacement).toBe(0);
+  });
+
+  describe("getConvergenceOptions", () => {
+    it("returns requiredSamples=5 for order <= 2000", () => {
+      expect(getConvergenceOptions(100).requiredSamples).toBe(DEFAULT_REQUIRED_SAMPLES);
+      expect(getConvergenceOptions(2000).requiredSamples).toBe(DEFAULT_REQUIRED_SAMPLES);
+    });
+
+    it("returns requiredSamples=3 for order > 2000", () => {
+      expect(getConvergenceOptions(2001).requiredSamples).toBe(3);
+      expect(getConvergenceOptions(20000).requiredSamples).toBe(3);
+    });
+
+    it("threshold decreases as order increases", () => {
+      const small = getConvergenceOptions(10);
+      const large = getConvergenceOptions(10000);
+      expect(small.threshold!).toBeGreaterThan(large.threshold!);
+    });
+
+    it("threshold always positive including edge case order=0", () => {
+      expect(getConvergenceOptions(0).threshold!).toBeGreaterThan(0);
+      expect(getConvergenceOptions(1).threshold!).toBeGreaterThan(0);
+      expect(getConvergenceOptions(20000).threshold!).toBeGreaterThan(0);
+    });
   });
 });
