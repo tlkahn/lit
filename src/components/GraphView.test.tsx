@@ -3,6 +3,7 @@ import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { mockInvoke } from "../test/tauri-mock";
 import * as graphLayout from "../lib/graphLayout";
+import * as qualityTiers from "../lib/qualityTiers";
 import { setPerfEnabled } from "../lib/perf";
 
 const mockFpsStart = vi.fn();
@@ -931,6 +932,16 @@ describe("GraphView", () => {
   });
 
   // --- Phase C: Adaptive Quality Tiers ---
+
+  it("tierSettingsRef default is derived from getTierSettings('medium'), not hardcoded", async () => {
+    const spy = vi.spyOn(qualityTiers, "getTierSettings");
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+
+    expect(spy).toHaveBeenCalledWith("medium");
+    spy.mockRestore();
+  });
 
   it("small graph: Sigma gets enableEdgeEvents=true and labelRenderedSizeThreshold=0", async () => {
     const GraphView = (await import("./GraphView")).default;

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { getFullSubgraph, getGraphSubgraph, getPagerank } from "../lib/ipc";
 import type { SubgraphResult } from "../lib/ipc";
 import { buildGraph, resolveThemeColors, prefersReducedMotion, getFA2Settings } from "../lib/graphLayout";
-import { getQualitySettings, type TierSettings } from "../lib/qualityTiers";
+import { getQualitySettings, getTierSettings, type TierSettings } from "../lib/qualityTiers";
 import { useThemeStore } from "../stores/theme";
 import { checkConvergence, getConvergenceOptions, type PositionMap, type ConvergenceState } from "../lib/graphConvergence";
 import { isPerfEnabled, perfTable, type PerfEntry } from "../lib/perf";
@@ -33,7 +33,7 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
   const rafIdRef = useRef<number>(0);
   const pendingPosRef = useRef<{ x: number; y: number } | null>(null);
   const dimColorRef = useRef("#d1d9e0");
-  const tierSettingsRef = useRef<TierSettings>({ tier: "medium", labelRenderedSizeThreshold: 6, enableEdgeEvents: false, hideEdgesOnMove: false, hideLabelsOnMove: false, defaultEdgesHidden: false });
+  const tierSettingsRef = useRef<TierSettings>(getTierSettings("medium"));
   const onNavigateRef = useRef(onNavigate);
   onNavigateRef.current = onNavigate;
   const onExitRef = useRef(onExit);
