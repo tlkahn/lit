@@ -4,6 +4,8 @@ import { mockInvoke } from "../test/tauri-mock";
 import * as graphLayout from "../lib/graphLayout";
 
 const mockSigmaKill = vi.fn();
+const mockLayoutStart = vi.fn();
+const mockLayoutStop = vi.fn();
 const mockLayoutKill = vi.fn();
 const mockSigmaOn = vi.fn();
 
@@ -21,7 +23,8 @@ vi.mock("@sigma/node-border", () => ({
 
 vi.mock("graphology-layout-forceatlas2/worker", () => ({
   default: class MockFA2 {
-    start = vi.fn();
+    start = mockLayoutStart;
+    stop = mockLayoutStop;
     kill = mockLayoutKill;
   },
 }));
@@ -199,5 +202,35 @@ describe("GraphView", () => {
     buildGraphSpy.mockRestore();
     document.documentElement.style.removeProperty("--interactive-accent");
     document.documentElement.style.removeProperty("--text-faint");
+  });
+
+  it("stops ForceAtlas2 layout after timeout", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView mode="full" />);
+
+    await waitFor(() => {
+      expect(mockLayoutStart).toHaveBeenCalled();
+    });
+
+    expect(mockLayoutStop).not.toHaveBeenCalled();
+    act(() => { vi.advanceTimersByTime(5000); });
+    expect(mockLayoutStop).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
+  it("does not call layout.stop() after unmount", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const GraphView = (await import("./GraphView")).default;
+    const { unmount } = render(<GraphView mode="full" />);
+
+    await waitFor(() => {
+      expect(mockLayoutStart).toHaveBeenCalled();
+    });
+
+    unmount();
+    act(() => { vi.advanceTimersByTime(5000); });
+    expect(mockLayoutStop).not.toHaveBeenCalled();
+    vi.useRealTimers();
   });
 });

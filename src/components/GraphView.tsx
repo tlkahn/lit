@@ -13,7 +13,8 @@ export interface GraphViewProps {
 export default function GraphView({ mode, activePageId, onNavigate }: GraphViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sigmaRef = useRef<unknown>(null);
-  const layoutRef = useRef<{ kill: () => void } | null>(null);
+  const layoutRef = useRef<{ start: () => void; stop: () => void; kill: () => void } | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onNavigateRef = useRef(onNavigate);
   onNavigateRef.current = onNavigate;
   const [loading, setLoading] = useState(true);
@@ -83,6 +84,10 @@ export default function GraphView({ mode, activePageId, onNavigate }: GraphViewP
         layout.start();
         layoutRef.current = layout;
 
+        timerRef.current = setTimeout(() => {
+          layout.stop();
+        }, 5000);
+
         setLoading(false);
       } catch (e) {
         if (!cancelled) {
@@ -96,6 +101,10 @@ export default function GraphView({ mode, activePageId, onNavigate }: GraphViewP
 
     return () => {
       cancelled = true;
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
       if (layoutRef.current) {
         layoutRef.current.kill();
         layoutRef.current = null;
