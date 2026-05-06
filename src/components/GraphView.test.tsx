@@ -11,13 +11,18 @@ const mockLayoutKill = vi.fn();
 const mockSigmaOn = vi.fn();
 const mockSigmaSetSetting = vi.fn();
 const mockCameraAnimatedReset = vi.fn();
+const mockCameraAnimate = vi.fn();
+const mockGetNodeDisplayData = vi.fn().mockReturnValue({ x: 0, y: 0 });
+const mockSigmaRefresh = vi.fn();
 
 vi.mock("sigma", () => ({
   default: class MockSigma {
     kill = mockSigmaKill;
     on = mockSigmaOn;
     setSetting = mockSigmaSetSetting;
-    getCamera = () => ({ animatedReset: mockCameraAnimatedReset });
+    getCamera = () => ({ animatedReset: mockCameraAnimatedReset, animate: mockCameraAnimate });
+    getNodeDisplayData = mockGetNodeDisplayData;
+    refresh = mockSigmaRefresh;
     constructor() {}
   },
 }));
@@ -636,5 +641,154 @@ describe("GraphView", () => {
     )?.[1];
     act(() => { leaveNodeHandler!(); });
     expect(canvas.style.cursor).toBe("grab");
+  });
+
+  // --- Phase 3 Slice 6: Search integration ---
+
+  it("Cmd+F on graph container opens search overlay", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const container = screen.getByTestId("graph-view");
+    await act(async () => {
+      container.dispatchEvent(new KeyboardEvent("keydown", { key: "f", metaKey: true, bubbles: true }));
+    });
+
+    expect(screen.getByTestId("graph-search")).toBeTruthy();
+  });
+
+  it("clicking toolbar search button opens search", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await userEvent.click(screen.getByRole("button", { name: "Search graph" }));
+    expect(screen.getByTestId("graph-search")).toBeTruthy();
+  });
+
+  it("search highlighting sets nodeReducer to dim non-matches", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await userEvent.click(screen.getByRole("button", { name: "Search graph" }));
+    mockSigmaSetSetting.mockClear();
+
+    const input = screen.getByTestId("graph-search-input");
+    await userEvent.type(input, "A");
+
+    expect(mockSigmaSetSetting).toHaveBeenCalledWith("nodeReducer", expect.any(Function));
+    expect(mockSigmaSetSetting).toHaveBeenCalledWith("edgeReducer", expect.any(Function));
+  });
+
+  it("closing search restores full visibility (clears reducers)", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await userEvent.click(screen.getByRole("button", { name: "Search graph" }));
+    const input = screen.getByTestId("graph-search-input");
+    await userEvent.type(input, "A");
+
+    mockSigmaSetSetting.mockClear();
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    // First Escape clears query
+    mockSigmaSetSetting.mockClear();
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    // Second Escape closes search
+
+    expect(mockSigmaSetSetting).toHaveBeenCalledWith("nodeReducer", null);
+    expect(mockSigmaSetSetting).toHaveBeenCalledWith("edgeReducer", null);
+  });
+
+  // --- Phase 3 Slice 7: Escape to exit ---
+
+  it("Escape on graph container (search closed) calls onExit", async () => {
+    const onExit = vi.fn();
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView onExit={onExit} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const container = screen.getByTestId("graph-view");
+    await act(async () => {
+      container.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    expect(onExit).toHaveBeenCalledTimes(1);
+  });
+
+  it("Escape when search is open does NOT call onExit", async () => {
+    const onExit = vi.fn();
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView onExit={onExit} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await userEvent.click(screen.getByRole("button", { name: "Search graph" }));
+    expect(screen.getByTestId("graph-search")).toBeTruthy();
+
+    const input = screen.getByTestId("graph-search-input");
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    expect(onExit).not.toHaveBeenCalled();
+  });
+
+  // --- Phase 3 Slice 8: Theme reactivity ---
+
+  it("when activeThemeId changes, sigma.refresh is called to update colors", async () => {
+    const { useThemeStore } = await import("../stores/theme");
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+    mockSigmaRefresh.mockClear();
+
+    await act(async () => {
+      useThemeStore.setState({ activeThemeId: "new-theme" });
+    });
+
+    expect(mockSigmaRefresh).toHaveBeenCalled();
+  });
+
+  it("theme change during loading state is a no-op (no crash)", async () => {
+    const { useThemeStore } = await import("../stores/theme");
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+
+    await act(async () => {
+      useThemeStore.setState({ activeThemeId: "test-theme" });
+    });
+
+    expect(screen.getByTestId("graph-view")).toBeTruthy();
+  });
+
+  // --- Phase 3 Slice 9: Accessibility aria-label ---
+
+  it("after loading, container has aria-label with node and edge counts", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+    });
+
+    const container = screen.getByTestId("graph-view");
+    expect(container.getAttribute("aria-label")).toBe(
+      "Knowledge graph with 2 nodes and 1 edges. Use mouse to explore, click a node to open it."
+    );
+  });
+
+  it("during loading, aria-label says 'Knowledge graph loading'", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+
+    const container = screen.getByTestId("graph-view");
+    expect(container.getAttribute("aria-label")).toBe("Knowledge graph loading");
   });
 });

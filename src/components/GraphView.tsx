@@ -2,18 +2,22 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { getFullSubgraph, getGraphSubgraph, getPagerank } from "../lib/ipc";
 import type { SubgraphResult } from "../lib/ipc";
 import { buildGraph, resolveThemeColors, prefersReducedMotion } from "../lib/graphLayout";
+import { useThemeStore } from "../stores/theme";
 import { checkConvergence, type PositionMap, type ConvergenceState } from "../lib/graphConvergence";
 import { GraphToolbar } from "./GraphToolbar";
 import { GraphTooltip } from "./GraphTooltip";
+import { GraphSearch, getMatchingNodes } from "./GraphSearch";
+import "./GraphSearch.css";
 import "./GraphView.css";
 
 export interface GraphViewProps {
   activePageId?: string | null;
   initialMode?: "full" | "local";
   onNavigate?: (pageId: string) => void;
+  onExit?: () => void;
 }
 
-export default function GraphView({ activePageId, initialMode, onNavigate }: GraphViewProps) {
+export default function GraphView({ activePageId, initialMode, onNavigate, onExit }: GraphViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sigmaRef = useRef<unknown>(null);
   const graphRef = useRef<unknown>(null);
@@ -25,15 +29,66 @@ export default function GraphView({ activePageId, initialMode, onNavigate }: Gra
   const pendingPosRef = useRef<{ x: number; y: number } | null>(null);
   const onNavigateRef = useRef(onNavigate);
   onNavigateRef.current = onNavigate;
+  const onExitRef = useRef(onExit);
+  onExitRef.current = onExit;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<"full" | "local">(initialMode ?? "full");
   const [depth, setDepth] = useState(2);
   const [tooltip, setTooltip] = useState({ visible: false, x: 0, y: 0, title: "", connections: 0 });
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchMatches, setSearchMatches] = useState<string[]>([]);
+  const [graphStats, setGraphStats] = useState<{ nodes: number; edges: number } | null>(null);
 
   const handleResetZoom = useCallback(() => {
     const sigma = sigmaRef.current as { getCamera: () => { animatedReset: () => void } } | null;
     sigma?.getCamera().animatedReset();
+  }, []);
+
+  const handleSearchQueryChange = useCallback((query: string) => {
+    setSearchQuery(query);
+    const graph = graphRef.current as import("graphology").default | null;
+    const sigma = sigmaRef.current as { setSetting: (key: string, value: unknown) => void; getCamera: () => { animate: (state: Record<string, number>) => void }; getNodeDisplayData: (node: string) => { x: number; y: number } | undefined } | null;
+    if (!graph || !sigma) return;
+    if (!query) {
+      setSearchMatches([]);
+      sigma.setSetting("nodeReducer", null);
+      sigma.setSetting("edgeReducer", null);
+      return;
+    }
+    const matches = getMatchingNodes(graph, query);
+    setSearchMatches(matches);
+    const matchSet = new Set(matches);
+    sigma.setSetting("nodeReducer", (_n: string, attrs: Record<string, unknown>) => {
+      if (matchSet.has(_n)) return { ...attrs, highlighted: true };
+      return { ...attrs, color: "#e0e0e0", label: null };
+    });
+    sigma.setSetting("edgeReducer", (_e: string, attrs: Record<string, unknown>) => {
+      const src = graph.source(_e);
+      const tgt = graph.target(_e);
+      if (matchSet.has(src) || matchSet.has(tgt)) return attrs;
+      return { ...attrs, hidden: true };
+    });
+    if (matches.length === 1) {
+      const pos = sigma.getNodeDisplayData(matches[0]!);
+      if (pos) sigma.getCamera().animate({ x: pos.x, y: pos.y, ratio: 0.5 });
+    }
+  }, []);
+
+  const handleSearchClose = useCallback(() => {
+    setSearchOpen(false);
+    setSearchQuery("");
+    setSearchMatches([]);
+    const sigma = sigmaRef.current as { setSetting: (key: string, value: unknown) => void } | null;
+    if (sigma) {
+      sigma.setSetting("nodeReducer", null);
+      sigma.setSetting("edgeReducer", null);
+    }
+  }, []);
+
+  const handleSearchNavigate = useCallback((nodeId: string) => {
+    onNavigateRef.current?.(nodeId);
   }, []);
 
   useEffect(() => {
@@ -208,6 +263,7 @@ export default function GraphView({ activePageId, initialMode, onNavigate }: Gra
           }, 5000);
         }
 
+        setGraphStats({ nodes: graph.order, edges: graph.size });
         setLoading(false);
       } catch (e) {
         if (!cancelled) {
@@ -244,8 +300,45 @@ export default function GraphView({ activePageId, initialMode, onNavigate }: Gra
     };
   }, [mode, depth, activePageId]);
 
+  const activeThemeId = useThemeStore((s) => s.activeThemeId);
+
+  useEffect(() => {
+    const graph = graphRef.current as import("graphology").default | null;
+    const sigma = sigmaRef.current as { refresh: () => void } | null;
+    if (!graph || !sigma) return;
+    const { accentColor, stubColor } = resolveThemeColors();
+    graph.forEachNode((node: string, attrs: Record<string, unknown>) => {
+      if (attrs.type === "seed") return;
+      graph.setNodeAttribute(node, "color", attrs.type === "hollow" ? stubColor : accentColor);
+    });
+    sigma.refresh();
+  }, [activeThemeId]);
+
+  const handleContainerKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "f") {
+      e.preventDefault();
+      setSearchOpen(true);
+    } else if (e.key === "Escape") {
+      setSearchOpen((open) => {
+        if (open) return open;
+        onExitRef.current?.();
+        return open;
+      });
+    }
+  }, []);
+
   return (
-    <div data-testid="graph-view" className="graph-view-container">
+    <div
+      data-testid="graph-view"
+      className="graph-view-container"
+      onKeyDown={handleContainerKeyDown}
+      tabIndex={-1}
+      aria-label={
+        graphStats
+          ? `Knowledge graph with ${graphStats.nodes} nodes and ${graphStats.edges} edges. Use mouse to explore, click a node to open it.`
+          : "Knowledge graph loading"
+      }
+    >
       {loading && (
         <div data-testid="graph-loading" className="graph-loading">
           Loading graph…
@@ -263,6 +356,16 @@ export default function GraphView({ activePageId, initialMode, onNavigate }: Gra
         onModeChange={setMode}
         onDepthChange={setDepth}
         onResetZoom={handleResetZoom}
+        onSearch={() => setSearchOpen(true)}
+      />
+      <GraphSearch
+        visible={searchOpen}
+        query={searchQuery}
+        matchCount={searchMatches.length}
+        firstMatchId={searchMatches[0]}
+        onQueryChange={handleSearchQueryChange}
+        onNavigate={handleSearchNavigate}
+        onClose={handleSearchClose}
       />
       <GraphTooltip {...tooltip} />
       <div ref={containerRef} data-testid="graph-canvas" style={{ position: "absolute", inset: 0, cursor: "grab" }} />

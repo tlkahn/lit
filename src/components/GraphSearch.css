@@ -1,0 +1,33 @@
+.graph-search {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--background-primary, #fff);
+  border: 1px solid var(--background-modifier-border, #ddd);
+  border-radius: 6px;
+  padding: 4px 8px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
+.graph-search input {
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-normal, #333);
+  font-size: 13px;
+  width: 180px;
+}
+
+.graph-search input::placeholder {
+  color: var(--text-faint, #999);
+}
+
+.graph-search span {
+  font-size: 11px;
+  color: var(--text-faint, #999);
+  white-space: nowrap;
+}

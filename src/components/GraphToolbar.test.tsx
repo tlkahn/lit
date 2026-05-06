@@ -101,4 +101,18 @@ describe("GraphToolbar", () => {
       expect(onResetZoom).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe("search button", () => {
+    it("renders a search button with aria-label 'Search graph'", () => {
+      render(<GraphToolbar {...defaults} onSearch={vi.fn()} />);
+      expect(screen.getByRole("button", { name: "Search graph" })).toBeTruthy();
+    });
+
+    it("clicking search button calls onSearch", async () => {
+      const onSearch = vi.fn();
+      render(<GraphToolbar {...defaults} onSearch={onSearch} />);
+      await userEvent.click(screen.getByRole("button", { name: "Search graph" }));
+      expect(onSearch).toHaveBeenCalledTimes(1);
+    });
+  });
 });

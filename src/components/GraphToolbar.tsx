@@ -7,9 +7,10 @@ export interface GraphToolbarProps {
   onModeChange: (mode: "full" | "local") => void;
   onDepthChange: (depth: number) => void;
   onResetZoom: () => void;
+  onSearch?: () => void;
 }
 
-export function GraphToolbar({ mode, depth, localDisabled, onModeChange, onDepthChange, onResetZoom }: GraphToolbarProps) {
+export function GraphToolbar({ mode, depth, localDisabled, onModeChange, onDepthChange, onResetZoom, onSearch }: GraphToolbarProps) {
   return (
     <div className="graph-toolbar">
       <div className="graph-toolbar-group">
@@ -51,6 +52,16 @@ export function GraphToolbar({ mode, depth, localDisabled, onModeChange, onDepth
       >
         ⌖
       </button>
+      {onSearch && (
+        <button
+          className="graph-toolbar-btn"
+          onClick={onSearch}
+          aria-label="Search graph"
+          title="Search graph"
+        >
+          ⌕
+        </button>
+      )}
     </div>
   );
 }

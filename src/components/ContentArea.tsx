@@ -649,6 +649,7 @@ export function ContentArea() {
                 selectPage(pageId);
                 setViewMode("editor");
               }}
+              onExit={() => setViewMode("editor")}
             />
           </Suspense>
         </div>

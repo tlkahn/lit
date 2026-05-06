@@ -1305,4 +1305,24 @@ describe("ContentArea menu://open-in-external-editor", () => {
       expect(screen.getByRole("button", { name: "Local" }).getAttribute("aria-pressed")).toBe("true");
     });
   });
+
+  it("Escape in graph view returns to editor (via onExit)", async () => {
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+    await waitFor(() => {
+      expect(screen.getByTestId("editor")).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Graph" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("graph-view-wrapper")).toBeInTheDocument();
+    });
+
+    const graphView = screen.getByTestId("graph-view");
+    await act(async () => {
+      graphView.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("graph-view-wrapper")).not.toBeInTheDocument();
+    });
+  });
 });
