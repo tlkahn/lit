@@ -38,6 +38,8 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
   const [depth, setDepth] = useState(2);
   const [tooltip, setTooltip] = useState({ visible: false, x: 0, y: 0, title: "", connections: 0 });
   const [searchOpen, setSearchOpen] = useState(false);
+  const searchOpenRef = useRef(false);
+  useEffect(() => { searchOpenRef.current = searchOpen; }, [searchOpen]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchMatches, setSearchMatches] = useState<string[]>([]);
   const [graphStats, setGraphStats] = useState<{ nodes: number; edges: number } | null>(null);
@@ -324,11 +326,9 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
       e.preventDefault();
       setSearchOpen(true);
     } else if (e.key === "Escape") {
-      setSearchOpen((open) => {
-        if (open) return open;
+      if (!searchOpenRef.current) {
         onExitRef.current?.();
-        return open;
-      });
+      }
     }
   }, []);
 

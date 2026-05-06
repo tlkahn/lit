@@ -739,6 +739,23 @@ describe("GraphView", () => {
     expect(onExit).not.toHaveBeenCalled();
   });
 
+  it("Escape dispatched directly on container while search is open does NOT call onExit", async () => {
+    const onExit = vi.fn();
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView onExit={onExit} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await userEvent.click(screen.getByRole("button", { name: "Search graph" }));
+    expect(screen.getByTestId("graph-search")).toBeTruthy();
+
+    const container = screen.getByTestId("graph-view");
+    await act(async () => {
+      container.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    expect(onExit).not.toHaveBeenCalled();
+  });
+
   // --- Phase 3 Slice 8: Theme reactivity ---
 
   it("when activeThemeId changes, sigma.refresh is called to update colors", async () => {
