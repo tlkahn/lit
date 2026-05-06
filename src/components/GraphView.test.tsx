@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { mockInvoke } from "../test/tauri-mock";
+import { mockInvoke, mockListen, emitMockEvent, resetListenMock } from "../test/tauri-mock";
 import * as graphLayout from "../lib/graphLayout";
 import * as qualityTiers from "../lib/qualityTiers";
 import { setPerfEnabled } from "../lib/perf";
@@ -1373,5 +1373,212 @@ describe("GraphView", () => {
     expect(reducer("e1", {})).toEqual({ hidden: true });
 
     spy.mockRestore();
+  });
+
+  // --- Phase D Remedy 2: Incremental Graph Diff ---
+
+  it("listens to lit:graph-updated and applies incremental diff (new node appears)", async () => {
+    mockListen();
+    let callCount = 0;
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          callCount++;
+          if (callCount <= 2) {
+            return {
+              nodes: [
+                { id: "a.md", title: "A", is_stub: false },
+                { id: "b.md", title: "B", is_stub: false },
+              ],
+              edges: [["a.md", "b.md"]],
+            };
+          }
+          return {
+            nodes: [
+              { id: "a.md", title: "A", is_stub: false },
+              { id: "b.md", title: "B", is_stub: false },
+              { id: "c.md", title: "C", is_stub: false },
+            ],
+            edges: [["a.md", "b.md"], ["a.md", "c.md"]],
+          };
+        case "get_pagerank":
+          return { "a.md": 0.4, "b.md": 0.3, "c.md": 0.3 };
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    (invoke as unknown as ReturnType<typeof vi.fn>).mockClear();
+
+    await act(async () => {
+      emitMockEvent("lit:graph-updated", {});
+    });
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: [], depth: 0, directed: null });
+    });
+
+    resetListenMock();
+  });
+
+  it("empty diff triggers no sigma refresh", async () => {
+    mockListen();
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [
+              { id: "a.md", title: "A", is_stub: false },
+              { id: "b.md", title: "B", is_stub: false },
+            ],
+            edges: [["a.md", "b.md"]],
+          };
+        case "get_pagerank":
+          return { "a.md": 0.4, "b.md": 0.6 };
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    mockSigmaRefresh.mockClear();
+
+    await act(async () => {
+      emitMockEvent("lit:graph-updated", {});
+    });
+
+    await act(async () => {});
+
+    expect(mockSigmaRefresh).not.toHaveBeenCalled();
+
+    resetListenMock();
+  });
+
+  it("diff applied while hidden defers sigma.refresh() until visible", async () => {
+    mockListen();
+    let callCount = 0;
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          callCount++;
+          if (callCount <= 2) {
+            return {
+              nodes: [
+                { id: "a.md", title: "A", is_stub: false },
+                { id: "b.md", title: "B", is_stub: false },
+              ],
+              edges: [["a.md", "b.md"]],
+            };
+          }
+          return {
+            nodes: [
+              { id: "a.md", title: "A", is_stub: false },
+              { id: "b.md", title: "B", is_stub: false },
+              { id: "d.md", title: "D", is_stub: false },
+            ],
+            edges: [["a.md", "b.md"], ["b.md", "d.md"]],
+          };
+        case "get_pagerank":
+          return { "a.md": 0.4, "b.md": 0.3, "d.md": 0.3 };
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    const { rerender } = render(<GraphView visible={true} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    // Hide the graph
+    await act(async () => { rerender(<GraphView visible={false} />); });
+    mockSigmaRefresh.mockClear();
+
+    // Emit event while hidden
+    await act(async () => {
+      emitMockEvent("lit:graph-updated", {});
+    });
+
+    await act(async () => {});
+
+    // sigma.refresh should NOT be called while hidden
+    expect(mockSigmaRefresh).not.toHaveBeenCalled();
+
+    // Show again — pending refresh should fire
+    await act(async () => { rerender(<GraphView visible={true} />); });
+    expect(mockSigmaRefresh).toHaveBeenCalled();
+
+    resetListenMock();
+  });
+
+  it("concurrent events: second event skipped while first is in-flight", async () => {
+    mockListen();
+    const resolveIpcHolder: { fn: ((v: unknown) => void) | null } = { fn: null };
+    let ipcCallCount = 0;
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          ipcCallCount++;
+          if (ipcCallCount <= 2) {
+            // Initial load — resolve immediately
+            return {
+              nodes: [
+                { id: "a.md", title: "A", is_stub: false },
+                { id: "b.md", title: "B", is_stub: false },
+              ],
+              edges: [["a.md", "b.md"]],
+            };
+          }
+          // Subsequent calls — hang until manually resolved
+          return new Promise((resolve) => { resolveIpcHolder.fn = resolve; });
+        case "get_pagerank":
+          if (ipcCallCount <= 2) return { "a.md": 0.4, "b.md": 0.6 };
+          return new Promise((resolve) => { resolve({ "a.md": 0.4, "b.md": 0.6 }); });
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    (invoke as unknown as ReturnType<typeof vi.fn>).mockClear();
+    ipcCallCount = 2;
+
+    // First event — starts IPC fetch
+    await act(async () => {
+      emitMockEvent("lit:graph-updated", {});
+    });
+
+    // Second event — should be skipped (first still in-flight)
+    await act(async () => {
+      emitMockEvent("lit:graph-updated", {});
+    });
+
+    // Only one IPC call should have been made
+    const subgraphCalls = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c: unknown[]) => c[0] === "get_graph_subgraph",
+    );
+    expect(subgraphCalls.length).toBe(1);
+
+    // Resolve to avoid dangling promise
+    resolveIpcHolder.fn?.({
+      nodes: [
+        { id: "a.md", title: "A", is_stub: false },
+        { id: "b.md", title: "B", is_stub: false },
+      ],
+      edges: [["a.md", "b.md"]],
+    });
+
+    resetListenMock();
   });
 });

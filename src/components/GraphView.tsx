@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { getFullSubgraph, getGraphSubgraph, getPagerank } from "../lib/ipc";
 import type { SubgraphResult } from "../lib/ipc";
+import { listen } from "@tauri-apps/api/event";
 import { buildGraph, resolveThemeColors, prefersReducedMotion, getFA2Settings } from "../lib/graphLayout";
 import { getQualitySettings, getTierSettings, type TierSettings } from "../lib/qualityTiers";
 import { useThemeStore } from "../stores/theme";
 import { useWorkspaceStore } from "../stores/workspace";
 import { getCacheKey, loadPositions, savePositions } from "../lib/graphPositionCache";
 import { checkConvergence, getConvergenceOptions, type PositionMap, type ConvergenceState } from "../lib/graphConvergence";
+import { computeDiff, applyDiff, isDiffEmpty } from "../lib/graphDiff";
 import { isPerfEnabled, perfTable, type PerfEntry } from "../lib/perf";
 import { FpsCounter } from "../lib/fpsCounter";
 import { GraphToolbar } from "./GraphToolbar";
@@ -45,11 +47,19 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
   const lastRenderedSeedRef = useRef<string | null>(null);
+  const pendingRefreshRef = useRef(false);
+  const diffInProgressRef = useRef(false);
+  const modeRef = useRef(initialMode ?? "full");
+  const depthRef = useRef(2);
+  const activePageIdRef = useRef(activePageId);
+  activePageIdRef.current = activePageId;
   const [reinitTrigger, setReinitTrigger] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<"full" | "local">(initialMode ?? "full");
+  modeRef.current = mode;
   const [depth, setDepth] = useState(2);
+  depthRef.current = depth;
   const [tooltip, setTooltip] = useState({ visible: false, x: 0, y: 0, title: "", connections: 0 });
   const [searchOpen, setSearchOpen] = useState(false);
   const searchOpenRef = useRef(false);
@@ -441,8 +451,54 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
       } else {
         (sigmaRef.current as { refresh: () => void } | null)?.refresh();
       }
+      if (pendingRefreshRef.current) {
+        (sigmaRef.current as { refresh: () => void } | null)?.refresh();
+        pendingRefreshRef.current = false;
+      }
     }
   }, [visible, mode, activePageId]);
+
+  useEffect(() => {
+    const unlisten = listen("lit:graph-updated", async () => {
+      const graph = graphRef.current as import("graphology").default | null;
+      const sigma = sigmaRef.current as { refresh: () => void } | null;
+      if (!graph || !sigma) return;
+      if (diffInProgressRef.current) return;
+      diffInProgressRef.current = true;
+
+      try {
+        let subgraph: SubgraphResult;
+        if (modeRef.current === "local" && activePageIdRef.current) {
+          subgraph = await getGraphSubgraph([activePageIdRef.current], depthRef.current);
+        } else {
+          subgraph = await getFullSubgraph();
+        }
+        const pagerank = await getPagerank();
+        const diff = computeDiff(graph, subgraph);
+
+        if (isDiffEmpty(diff)) return;
+
+        if (diff.isMajorChange) {
+          setReinitTrigger((c) => c + 1);
+          return;
+        }
+
+        const { accentColor, stubColor } = resolveThemeColors();
+        applyDiff(graph, diff, pagerank, accentColor, stubColor);
+        setGraphStats({ nodes: graph.order, edges: graph.size });
+
+        if (visibleRef.current) {
+          sigma.refresh();
+        } else {
+          pendingRefreshRef.current = true;
+        }
+      } finally {
+        diffInProgressRef.current = false;
+      }
+    });
+
+    return () => { unlisten.then((fn) => fn()); };
+  }, []);
 
   const activeThemeId = useThemeStore((s) => s.activeThemeId);
 
