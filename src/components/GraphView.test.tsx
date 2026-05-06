@@ -1213,6 +1213,134 @@ describe("GraphView", () => {
     });
   });
 
+  // --- Phase D: Layout Position Caching ---
+
+  it("saves positions to localStorage after FA2 convergence", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { useWorkspaceStore } = await import("../stores/workspace");
+    useWorkspaceStore.setState({ workspacePath: "/test/ws" });
+
+    const cacheKey = "lit-graph-pos:/test/ws:full";
+    expect(localStorage.getItem(cacheKey)).toBeNull();
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+
+    await waitFor(() => { expect(mockLayoutStart).toHaveBeenCalled(); });
+
+    // Trigger FA2 stop via timeout
+    act(() => { vi.advanceTimersByTime(5000); });
+    expect(mockLayoutStop).toHaveBeenCalled();
+
+    const stored = localStorage.getItem(cacheKey);
+    expect(stored).not.toBeNull();
+    const parsed = JSON.parse(stored!);
+    expect(parsed.positions).toBeDefined();
+    expect(parsed.timestamp).toBeDefined();
+
+    localStorage.removeItem(cacheKey);
+    useWorkspaceStore.setState({ workspacePath: null });
+    vi.useRealTimers();
+  });
+
+  it("new nodes get positions near neighbors when partial cache exists", async () => {
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [
+              { id: "a.md", title: "A", is_stub: false },
+              { id: "b.md", title: "B", is_stub: false },
+              { id: "c.md", title: "C", is_stub: false },
+            ],
+            edges: [["a.md", "b.md"], ["a.md", "c.md"]],
+          };
+        case "get_pagerank":
+          return { "a.md": 0.4, "b.md": 0.3, "c.md": 0.3 };
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const { useWorkspaceStore } = await import("../stores/workspace");
+    useWorkspaceStore.setState({ workspacePath: "/test/ws" });
+
+    const cacheKey = "lit-graph-pos:/test/ws:full";
+    const cacheData = {
+      positions: { "a.md": { x: 100, y: 200 }, "b.md": { x: 300, y: 400 } },
+      timestamp: Date.now(),
+    };
+    localStorage.setItem(cacheKey, JSON.stringify(cacheData));
+
+    const buildGraphSpy = vi.spyOn(graphLayout, "buildGraph");
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const graph = buildGraphSpy.mock.results[0]!.value as import("graphology").default;
+    const cx = graph.getNodeAttribute("c.md", "x") as number;
+    const cy = graph.getNodeAttribute("c.md", "y") as number;
+    // C links to A (100,200) — should be near A, not random over 0-100
+    const distToA = Math.sqrt((cx - 100) ** 2 + (cy - 200) ** 2);
+    expect(distToA).toBeLessThan(50);
+
+    buildGraphSpy.mockRestore();
+    localStorage.removeItem(cacheKey);
+    useWorkspaceStore.setState({ workspacePath: null });
+  });
+
+  it("skips FA2 entirely when all positions are cached", async () => {
+    const { useWorkspaceStore } = await import("../stores/workspace");
+    useWorkspaceStore.setState({ workspacePath: "/test/ws" });
+
+    const cacheKey = "lit-graph-pos:/test/ws:full";
+    const cacheData = {
+      positions: { "a.md": { x: 100, y: 200 }, "b.md": { x: 300, y: 400 } },
+      timestamp: Date.now(),
+    };
+    localStorage.setItem(cacheKey, JSON.stringify(cacheData));
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+    await waitFor(() => { expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument(); });
+
+    expect(mockLayoutStart).not.toHaveBeenCalled();
+
+    localStorage.removeItem(cacheKey);
+    useWorkspaceStore.setState({ workspacePath: null });
+  });
+
+  it("restores cached positions instead of randomizing", async () => {
+    const { useWorkspaceStore } = await import("../stores/workspace");
+    useWorkspaceStore.setState({ workspacePath: "/test/ws" });
+
+    const cacheKey = "lit-graph-pos:/test/ws:full";
+    const cacheData = {
+      positions: { "a.md": { x: 100, y: 200 }, "b.md": { x: 300, y: 400 } },
+      timestamp: Date.now(),
+    };
+    localStorage.setItem(cacheKey, JSON.stringify(cacheData));
+
+    const buildGraphSpy = vi.spyOn(graphLayout, "buildGraph");
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const graph = buildGraphSpy.mock.results[0]!.value as import("graphology").default;
+    expect(graph.getNodeAttribute("a.md", "x")).toBe(100);
+    expect(graph.getNodeAttribute("a.md", "y")).toBe(200);
+    expect(graph.getNodeAttribute("b.md", "x")).toBe(300);
+    expect(graph.getNodeAttribute("b.md", "y")).toBe(400);
+
+    buildGraphSpy.mockRestore();
+    localStorage.removeItem(cacheKey);
+    useWorkspaceStore.setState({ workspacePath: null });
+  });
+
   it("huge graph: clearing search query restores hide-all-edges reducer", async () => {
     const mockGraph = {
       order: 25000, size: 30000,

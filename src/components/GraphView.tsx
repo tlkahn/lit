@@ -4,6 +4,8 @@ import type { SubgraphResult } from "../lib/ipc";
 import { buildGraph, resolveThemeColors, prefersReducedMotion, getFA2Settings } from "../lib/graphLayout";
 import { getQualitySettings, getTierSettings, type TierSettings } from "../lib/qualityTiers";
 import { useThemeStore } from "../stores/theme";
+import { useWorkspaceStore } from "../stores/workspace";
+import { getCacheKey, loadPositions, savePositions } from "../lib/graphPositionCache";
 import { checkConvergence, getConvergenceOptions, type PositionMap, type ConvergenceState } from "../lib/graphConvergence";
 import { isPerfEnabled, perfTable, type PerfEntry } from "../lib/perf";
 import { FpsCounter } from "../lib/fpsCounter";
@@ -22,6 +24,7 @@ export interface GraphViewProps {
 }
 
 export default function GraphView({ activePageId, initialMode, visible = true, onNavigate, onExit }: GraphViewProps) {
+  const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const containerRef = useRef<HTMLDivElement>(null);
   const sigmaRef = useRef<unknown>(null);
   const graphRef = useRef<unknown>(null);
@@ -172,6 +175,36 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
 
         random.assign(graph);
 
+        const cacheKey = workspacePath ? getCacheKey(workspacePath, mode) : null;
+        const cachedPositions = cacheKey ? loadPositions(cacheKey) : null;
+        let allCached = false;
+        if (cachedPositions) {
+          const uncachedNodes: string[] = [];
+          graph.forEachNode((node: string) => {
+            const cached = cachedPositions[node];
+            if (cached) {
+              graph.setNodeAttribute(node, "x", cached.x);
+              graph.setNodeAttribute(node, "y", cached.y);
+            } else {
+              uncachedNodes.push(node);
+            }
+          });
+          for (const node of uncachedNodes) {
+            const neighbors = graph.neighbors(node);
+            const positioned = neighbors.filter((n) => cachedPositions[n]);
+            if (positioned.length > 0) {
+              let sx = 0, sy = 0;
+              for (const n of positioned) {
+                sx += cachedPositions[n]!.x;
+                sy += cachedPositions[n]!.y;
+              }
+              graph.setNodeAttribute(node, "x", sx / positioned.length + (Math.random() - 0.5) * 20);
+              graph.setNodeAttribute(node, "y", sy / positioned.length + (Math.random() - 0.5) * 20);
+            }
+          }
+          allCached = uncachedNodes.length === 0 && graph.order > 0;
+        }
+
         const filledProgram = createNodeBorderProgram({
           borders: [{ size: { value: 0.15, mode: "relative" }, color: { attribute: "color" } }],
         });
@@ -283,7 +316,9 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
           restoreDefaultReducers();
         });
 
-        if (prefersReducedMotion()) {
+        if (allCached) {
+          // All positions restored from cache — skip FA2 entirely
+        } else if (prefersReducedMotion()) {
           const forceAtlas2 = await import("graphology-layout-forceatlas2");
           t0 = perf ? performance.now() : 0;
           forceAtlas2.default.assign(graph, { iterations: 100, settings: getFA2Settings(inferSettings(graph), graph.order) });
@@ -306,6 +341,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
 
           const stopLayout = () => {
             layout.stop();
+            if (cacheKey) savePositions(cacheKey, graph);
             if (perf) {
               perfEntries.push({ label: "FA2 convergence", value: performance.now() - fa2T0 });
               const fpsCounter = new FpsCounter();
