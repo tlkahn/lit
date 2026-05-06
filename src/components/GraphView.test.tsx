@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, act } from "@testing-library/react";
 import { mockInvoke } from "../test/tauri-mock";
 
 const mockSigmaKill = vi.fn();
@@ -106,5 +106,46 @@ describe("GraphView", () => {
       expect(screen.getByTestId("graph-error")).toBeTruthy();
     });
     expect(screen.getByTestId("graph-error").textContent).toBe("IPC failure");
+  });
+
+  it("does not re-initialize sigma when onNavigate reference changes", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    const onNav1 = vi.fn();
+    const { rerender } = render(<GraphView mode="full" onNavigate={onNav1} />);
+    await waitFor(() => {
+      expect(mockSigmaOn).toHaveBeenCalled();
+    });
+    mockSigmaKill.mockClear();
+    mockSigmaOn.mockClear();
+
+    const onNav2 = vi.fn();
+    await act(async () => {
+      rerender(<GraphView mode="full" onNavigate={onNav2} />);
+    });
+
+    expect(mockSigmaKill).not.toHaveBeenCalled();
+  });
+
+  it("calls the latest onNavigate after rerender", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    const onNav1 = vi.fn();
+    const { rerender } = render(<GraphView mode="full" onNavigate={onNav1} />);
+    await waitFor(() => {
+      expect(mockSigmaOn).toHaveBeenCalled();
+    });
+
+    const onNav2 = vi.fn();
+    await act(async () => {
+      rerender(<GraphView mode="full" onNavigate={onNav2} />);
+    });
+
+    const clickNodeHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "clickNode",
+    )?.[1];
+    expect(clickNodeHandler).toBeDefined();
+    clickNodeHandler!({ node: "a.md" });
+
+    expect(onNav2).toHaveBeenCalledWith("a.md");
+    expect(onNav1).not.toHaveBeenCalled();
   });
 });

@@ -14,6 +14,8 @@ export default function GraphView({ mode, activePageId, onNavigate }: GraphViewP
   const containerRef = useRef<HTMLDivElement>(null);
   const sigmaRef = useRef<unknown>(null);
   const layoutRef = useRef<{ kill: () => void } | null>(null);
+  const onNavigateRef = useRef(onNavigate);
+  onNavigateRef.current = onNavigate;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -73,7 +75,7 @@ export default function GraphView({ mode, activePageId, onNavigate }: GraphViewP
         sigmaRef.current = sigma;
 
         sigma.on("clickNode", ({ node }) => {
-          onNavigate?.(node);
+          onNavigateRef.current?.(node);
         });
 
         const layout = new FA2Layout(graph, { settings: inferSettings(graph) });
@@ -102,7 +104,7 @@ export default function GraphView({ mode, activePageId, onNavigate }: GraphViewP
         sigmaRef.current = null;
       }
     };
-  }, [mode, activePageId, onNavigate]);
+  }, [mode, activePageId]);
 
   if (error) {
     return (
