@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, act } from "@testing-library/react";
 import { mockInvoke } from "../test/tauri-mock";
+import * as graphLayout from "../lib/graphLayout";
 
 const mockSigmaKill = vi.fn();
 const mockLayoutKill = vi.fn();
@@ -176,5 +177,27 @@ describe("GraphView", () => {
 
     expect(onNav2).toHaveBeenCalledWith("a.md");
     expect(onNav1).not.toHaveBeenCalled();
+  });
+
+  it("uses theme CSS variables for graph node colors", async () => {
+    document.documentElement.style.setProperty("--interactive-accent", "#ff0000");
+    document.documentElement.style.setProperty("--text-faint", "#00ff00");
+
+    const buildGraphSpy = vi.spyOn(graphLayout, "buildGraph");
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView mode="full" />);
+
+    await waitFor(() => {
+      expect(buildGraphSpy).toHaveBeenCalled();
+    });
+
+    const callArgs = buildGraphSpy.mock.calls[0]![0];
+    expect(callArgs.accentColor).toBe("#ff0000");
+    expect(callArgs.stubColor).toBe("#00ff00");
+
+    buildGraphSpy.mockRestore();
+    document.documentElement.style.removeProperty("--interactive-accent");
+    document.documentElement.style.removeProperty("--text-faint");
   });
 });

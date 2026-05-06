@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { buildGraph, computeNodeSize, MIN_SIZE, MAX_SIZE } from "./graphLayout";
+import { describe, it, expect, afterEach } from "vitest";
+import { buildGraph, computeNodeSize, resolveThemeColors, MIN_SIZE, MAX_SIZE } from "./graphLayout";
 import type { SubgraphResult } from "./ipc";
 
 describe("graphLayout", () => {
@@ -114,6 +114,27 @@ describe("graphLayout", () => {
       const size = computeNodeSize(0.3, 1.0);
       expect(size).toBeGreaterThanOrEqual(MIN_SIZE);
       expect(size).toBeLessThanOrEqual(MAX_SIZE);
+    });
+  });
+
+  describe("resolveThemeColors", () => {
+    afterEach(() => {
+      document.documentElement.style.removeProperty("--interactive-accent");
+      document.documentElement.style.removeProperty("--text-faint");
+    });
+
+    it("reads --interactive-accent and --text-faint from computed style", () => {
+      document.documentElement.style.setProperty("--interactive-accent", "#0969da");
+      document.documentElement.style.setProperty("--text-faint", "#818b98");
+      const colors = resolveThemeColors();
+      expect(colors.accentColor).toBe("#0969da");
+      expect(colors.stubColor).toBe("#818b98");
+    });
+
+    it("falls back to defaults when CSS vars are unset", () => {
+      const colors = resolveThemeColors();
+      expect(colors.accentColor).toBe("#0969da");
+      expect(colors.stubColor).toBe("#818b98");
     });
   });
 });

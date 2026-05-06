@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { getFullSubgraph, getGraphSubgraph, getPagerank } from "../lib/ipc";
 import type { SubgraphResult } from "../lib/ipc";
-import { buildGraph } from "../lib/graphLayout";
+import { buildGraph, resolveThemeColors } from "../lib/graphLayout";
 import "./GraphView.css";
 
 export interface GraphViewProps {
@@ -37,11 +37,12 @@ export default function GraphView({ mode, activePageId, onNavigate }: GraphViewP
 
         if (cancelled) return;
 
+        const { accentColor, stubColor } = resolveThemeColors();
         const graph = buildGraph({
           subgraph,
           pagerank,
-          accentColor: "#7c3aed",
-          stubColor: "#888",
+          accentColor,
+          stubColor,
         });
 
         if (!containerRef.current || cancelled) return;

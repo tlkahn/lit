@@ -1,6 +1,22 @@
 import Graph from "graphology";
 import type { SubgraphResult } from "./ipc";
 
+const DEFAULT_ACCENT = "#0969da";
+const DEFAULT_STUB = "#818b98";
+
+export function resolveThemeColors(): { accentColor: string; stubColor: string } {
+  if (typeof document === "undefined") {
+    return { accentColor: DEFAULT_ACCENT, stubColor: DEFAULT_STUB };
+  }
+  const style = getComputedStyle(document.documentElement);
+  const accent = style.getPropertyValue("--interactive-accent").trim();
+  const stub = style.getPropertyValue("--text-faint").trim();
+  return {
+    accentColor: accent || DEFAULT_ACCENT,
+    stubColor: stub || DEFAULT_STUB,
+  };
+}
+
 export const MIN_SIZE = 4;
 export const MAX_SIZE = 30;
 export const SCALE_K = 1000;
