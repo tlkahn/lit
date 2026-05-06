@@ -27,6 +27,7 @@ const mockCameraAnimatedReset = vi.fn();
 const mockCameraAnimate = vi.fn();
 const mockGetNodeDisplayData = vi.fn().mockReturnValue({ x: 0, y: 0 });
 const mockSigmaRefresh = vi.fn();
+let lastSigmaOptions: Record<string, unknown> = {};
 
 vi.mock("sigma", () => ({
   default: class MockSigma {
@@ -36,7 +37,9 @@ vi.mock("sigma", () => ({
     getCamera = () => ({ animatedReset: mockCameraAnimatedReset, animate: mockCameraAnimate });
     getNodeDisplayData = mockGetNodeDisplayData;
     refresh = mockSigmaRefresh;
-    constructor() {}
+    constructor(_graph: unknown, _container: unknown, options?: Record<string, unknown>) {
+      lastSigmaOptions = options ?? {};
+    }
   },
 }));
 
@@ -72,6 +75,7 @@ const flushRAF = () => {
 describe("GraphView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    lastSigmaOptions = {};
     rafQueue = new Map();
     nextRafId = 1;
     vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb: FrameRequestCallback) => {
@@ -924,5 +928,158 @@ describe("GraphView", () => {
 
     document.documentElement.style.removeProperty("--text-faint");
     document.documentElement.style.removeProperty("--text-normal");
+  });
+
+  // --- Phase C: Adaptive Quality Tiers ---
+
+  it("small graph: Sigma gets enableEdgeEvents=true and labelRenderedSizeThreshold=0", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    expect(lastSigmaOptions.enableEdgeEvents).toBe(true);
+    expect(lastSigmaOptions.labelRenderedSizeThreshold).toBe(0);
+    expect(lastSigmaOptions.hideEdgesOnMove).toBe(false);
+    expect(lastSigmaOptions.hideLabelsOnMove).toBe(false);
+  });
+
+  it("huge graph: default edgeReducer hides all edges", async () => {
+    const mockGraph = {
+      order: 25000, size: 30000,
+      neighbors: vi.fn().mockReturnValue([]),
+      source: vi.fn().mockReturnValue("a"),
+      target: vi.fn().mockReturnValue("b"),
+      getNodeAttribute: vi.fn().mockReturnValue("Node"),
+      degree: vi.fn().mockReturnValue(0),
+      forEachNode: vi.fn(),
+    };
+    const spy = vi.spyOn(graphLayout, "buildGraph").mockReturnValue(mockGraph as never);
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const edgeReducerCalls = mockSigmaSetSetting.mock.calls.filter(
+      (call) => call[0] === "edgeReducer" && typeof call[1] === "function",
+    );
+    expect(edgeReducerCalls.length).toBeGreaterThanOrEqual(1);
+    const reducer = edgeReducerCalls[0]![1] as (e: string, attrs: Record<string, unknown>) => Record<string, unknown>;
+    expect(reducer("some-edge", { color: "#000" })).toEqual({ color: "#000", hidden: true });
+
+    expect(lastSigmaOptions.hideEdgesOnMove).toBe(true);
+    expect(lastSigmaOptions.hideLabelsOnMove).toBe(true);
+
+    spy.mockRestore();
+  });
+
+  it("huge graph: leaveNode restores hide-all-edges reducer", async () => {
+    const mockGraph = {
+      order: 25000, size: 30000,
+      neighbors: vi.fn().mockReturnValue([]),
+      source: vi.fn().mockReturnValue("a"),
+      target: vi.fn().mockReturnValue("b"),
+      getNodeAttribute: vi.fn().mockReturnValue("Node"),
+      degree: vi.fn().mockReturnValue(0),
+      forEachNode: vi.fn(),
+    };
+    const spy = vi.spyOn(graphLayout, "buildGraph").mockReturnValue(mockGraph as never);
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const enterNodeHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "enterNode",
+    )?.[1];
+    act(() => { enterNodeHandler!({ node: "a.md", event: { x: 0, y: 0 } }); });
+
+    mockSigmaSetSetting.mockClear();
+    const leaveNodeHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "leaveNode",
+    )?.[1];
+    act(() => { leaveNodeHandler!(); });
+
+    const edgeReducerCall = mockSigmaSetSetting.mock.calls.find(
+      (call) => call[0] === "edgeReducer",
+    );
+    expect(edgeReducerCall).toBeDefined();
+    expect(typeof edgeReducerCall![1]).toBe("function");
+    const reducer = edgeReducerCall![1] as (e: string, attrs: Record<string, unknown>) => Record<string, unknown>;
+    expect(reducer("e1", { color: "#000" })).toEqual({ color: "#000", hidden: true });
+
+    spy.mockRestore();
+  });
+
+  it("huge graph: clickStage restores hide-all-edges reducer", async () => {
+    const mockGraph = {
+      order: 25000, size: 30000,
+      neighbors: vi.fn().mockReturnValue([]),
+      source: vi.fn().mockReturnValue("a"),
+      target: vi.fn().mockReturnValue("b"),
+      getNodeAttribute: vi.fn().mockReturnValue("Node"),
+      degree: vi.fn().mockReturnValue(0),
+      forEachNode: vi.fn(),
+    };
+    const spy = vi.spyOn(graphLayout, "buildGraph").mockReturnValue(mockGraph as never);
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    mockSigmaSetSetting.mockClear();
+    const clickStageHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "clickStage",
+    )?.[1];
+    act(() => { clickStageHandler!(); });
+
+    const edgeReducerCall = mockSigmaSetSetting.mock.calls.find(
+      (call) => call[0] === "edgeReducer",
+    );
+    expect(edgeReducerCall).toBeDefined();
+    expect(typeof edgeReducerCall![1]).toBe("function");
+    const reducer = edgeReducerCall![1] as (e: string, attrs: Record<string, unknown>) => Record<string, unknown>;
+    expect(reducer("e1", {})).toEqual({ hidden: true });
+
+    spy.mockRestore();
+  });
+
+  it("huge graph: search close restores hide-all-edges reducer", async () => {
+    const mockGraph = {
+      order: 25000, size: 30000,
+      neighbors: vi.fn().mockReturnValue([]),
+      source: vi.fn().mockReturnValue("a"),
+      target: vi.fn().mockReturnValue("b"),
+      getNodeAttribute: vi.fn().mockReturnValue("Node"),
+      degree: vi.fn().mockReturnValue(0),
+      forEachNode: vi.fn(),
+    };
+    const spy = vi.spyOn(graphLayout, "buildGraph").mockReturnValue(mockGraph as never);
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await userEvent.click(screen.getByRole("button", { name: "Search graph" }));
+    const input = screen.getByTestId("graph-search-input");
+    await userEvent.type(input, "A");
+
+    mockSigmaSetSetting.mockClear();
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    mockSigmaSetSetting.mockClear();
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    const edgeReducerCall = mockSigmaSetSetting.mock.calls.find(
+      (call) => call[0] === "edgeReducer",
+    );
+    expect(edgeReducerCall).toBeDefined();
+    expect(typeof edgeReducerCall![1]).toBe("function");
+    const reducer = edgeReducerCall![1] as (e: string, attrs: Record<string, unknown>) => Record<string, unknown>;
+    expect(reducer("e1", {})).toEqual({ hidden: true });
+
+    spy.mockRestore();
   });
 });

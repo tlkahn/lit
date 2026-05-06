@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { getFullSubgraph, getGraphSubgraph, getPagerank } from "../lib/ipc";
 import type { SubgraphResult } from "../lib/ipc";
 import { buildGraph, resolveThemeColors, prefersReducedMotion, getFA2Settings } from "../lib/graphLayout";
+import { getQualitySettings, type TierSettings } from "../lib/qualityTiers";
 import { useThemeStore } from "../stores/theme";
 import { checkConvergence, getConvergenceOptions, type PositionMap, type ConvergenceState } from "../lib/graphConvergence";
 import { isPerfEnabled, perfTable, type PerfEntry } from "../lib/perf";
@@ -32,6 +33,7 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
   const rafIdRef = useRef<number>(0);
   const pendingPosRef = useRef<{ x: number; y: number } | null>(null);
   const dimColorRef = useRef("#d1d9e0");
+  const tierSettingsRef = useRef<TierSettings>({ tier: "medium", labelRenderedSizeThreshold: 6, enableEdgeEvents: false, hideEdgesOnMove: false, hideLabelsOnMove: false, defaultEdgesHidden: false });
   const onNavigateRef = useRef(onNavigate);
   onNavigateRef.current = onNavigate;
   const onExitRef = useRef(onExit);
@@ -61,7 +63,11 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
     if (!query) {
       setSearchMatches([]);
       sigma.setSetting("nodeReducer", null);
-      sigma.setSetting("edgeReducer", null);
+      sigma.setSetting("edgeReducer",
+        tierSettingsRef.current.defaultEdgesHidden
+          ? (_e: string, attrs: Record<string, unknown>) => ({ ...attrs, hidden: true })
+          : null
+      );
       return;
     }
     const matches = getMatchingNodes(graph, query);
@@ -90,7 +96,11 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
     const sigma = sigmaRef.current as { setSetting: (key: string, value: unknown) => void } | null;
     if (sigma) {
       sigma.setSetting("nodeReducer", null);
-      sigma.setSetting("edgeReducer", null);
+      sigma.setSetting("edgeReducer",
+        tierSettingsRef.current.defaultEdgesHidden
+          ? (_e: string, attrs: Record<string, unknown>) => ({ ...attrs, hidden: true })
+          : null
+      );
     }
   }, []);
 
@@ -138,6 +148,12 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
           perfEntries.push({ label: "Graphology build", value: performance.now() - t0, detail: `${graph.order} nodes, ${graph.size} edges` });
         }
 
+        const tierSettings = getQualitySettings(graph.order);
+        tierSettingsRef.current = tierSettings;
+        if (perf) {
+          perfEntries.push({ label: "Quality tier", value: graph.order, detail: tierSettings.tier });
+        }
+
         if (!containerRef.current || cancelled) return;
 
         const { default: Sigma } = await import("sigma");
@@ -166,12 +182,26 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
         const sigmaT0 = perf ? performance.now() : 0;
         const sigma = new Sigma(graph, containerRef.current, {
           nodeProgramClasses: { filled: filledProgram, hollow: hollowProgram, seed: seedProgram },
-          hideEdgesOnMove: true,
-          labelRenderedSizeThreshold: 6,
-          enableEdgeEvents: false,
+          hideEdgesOnMove: tierSettings.hideEdgesOnMove,
+          hideLabelsOnMove: tierSettings.hideLabelsOnMove,
+          labelRenderedSizeThreshold: tierSettings.labelRenderedSizeThreshold,
+          enableEdgeEvents: tierSettings.enableEdgeEvents,
         });
         sigmaRef.current = sigma;
         graphRef.current = graph;
+
+        if (tierSettings.defaultEdgesHidden) {
+          sigma.setSetting("edgeReducer", (_e: string, attrs: Record<string, unknown>) => ({ ...attrs, hidden: true }));
+        }
+
+        const restoreDefaultReducers = () => {
+          sigma.setSetting("nodeReducer", null);
+          sigma.setSetting("edgeReducer",
+            tierSettings.defaultEdgesHidden
+              ? (_e: string, attrs: Record<string, unknown>) => ({ ...attrs, hidden: true })
+              : null
+          );
+        };
 
         if (perf) {
           sigma.on("afterRender", function onFirstRender() {
@@ -236,8 +266,7 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
           cancelAnimationFrame(rafIdRef.current);
           rafIdRef.current = 0;
           pendingPosRef.current = null;
-          sigma.setSetting("nodeReducer", null);
-          sigma.setSetting("edgeReducer", null);
+          restoreDefaultReducers();
           if (containerRef.current) {
             containerRef.current.style.cursor = "grab";
           }
@@ -245,8 +274,7 @@ export default function GraphView({ activePageId, initialMode, onNavigate, onExi
         });
 
         sigma.on("clickStage", () => {
-          sigma.setSetting("nodeReducer", null);
-          sigma.setSetting("edgeReducer", null);
+          restoreDefaultReducers();
         });
 
         if (prefersReducedMotion()) {
