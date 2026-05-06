@@ -108,6 +108,35 @@ describe("GraphView", () => {
     expect(screen.getByTestId("graph-error").textContent).toBe("IPC failure");
   });
 
+  it("canvas container fills parent via absolute positioning", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView mode="full" />);
+    const canvas = screen.getByTestId("graph-canvas");
+    expect(canvas.style.position).toBe("absolute");
+    expect(canvas.style.inset).toBe("0");
+  });
+
+  it("loading overlay and canvas container coexist as siblings", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView mode="full" />);
+    const graphView = screen.getByTestId("graph-view");
+    const loading = screen.getByTestId("graph-loading");
+    const canvas = screen.getByTestId("graph-canvas");
+    expect(loading.parentElement).toBe(graphView);
+    expect(canvas.parentElement).toBe(graphView);
+  });
+
+  it("error overlay is inside graph-view container (not replacing it)", async () => {
+    mockInvoke(() => { throw new Error("IPC failure"); });
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView mode="full" />);
+    await waitFor(() => {
+      expect(screen.getByTestId("graph-error")).toBeTruthy();
+    });
+    expect(screen.getByTestId("graph-view")).toBeTruthy();
+    expect(screen.getByTestId("graph-error").closest("[data-testid='graph-view']")).toBeTruthy();
+  });
+
   it("does not re-initialize sigma when onNavigate reference changes", async () => {
     const GraphView = (await import("./GraphView")).default;
     const onNav1 = vi.fn();

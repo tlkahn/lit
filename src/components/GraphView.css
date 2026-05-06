@@ -1,17 +1,18 @@
 .graph-view-container {
   width: 100%;
   height: 100%;
-  min-height: 0;
-  flex: 1;
   position: relative;
   background: var(--background-primary-alt, #fafafa);
 }
 
 .graph-loading,
 .graph-error {
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 100%;
   color: var(--text-faint, #999);
+  z-index: 1;
+  pointer-events: none;
 }

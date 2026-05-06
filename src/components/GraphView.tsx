@@ -106,14 +106,6 @@ export default function GraphView({ mode, activePageId, onNavigate }: GraphViewP
     };
   }, [mode, activePageId]);
 
-  if (error) {
-    return (
-      <div data-testid="graph-error" className="graph-error">
-        {error}
-      </div>
-    );
-  }
-
   return (
     <div data-testid="graph-view" className="graph-view-container">
       {loading && (
@@ -121,7 +113,12 @@ export default function GraphView({ mode, activePageId, onNavigate }: GraphViewP
           Loading graph…
         </div>
       )}
-      <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
+      {error && (
+        <div data-testid="graph-error" className="graph-error">
+          {error}
+        </div>
+      )}
+      <div ref={containerRef} data-testid="graph-canvas" style={{ position: "absolute", inset: 0 }} />
     </div>
   );
 }
