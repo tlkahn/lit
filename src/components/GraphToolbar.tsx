@@ -3,12 +3,13 @@ import "./GraphToolbar.css";
 export interface GraphToolbarProps {
   mode: "full" | "local";
   depth: number;
+  localDisabled?: boolean;
   onModeChange: (mode: "full" | "local") => void;
   onDepthChange: (depth: number) => void;
   onResetZoom: () => void;
 }
 
-export function GraphToolbar({ mode, depth, onModeChange, onDepthChange, onResetZoom }: GraphToolbarProps) {
+export function GraphToolbar({ mode, depth, localDisabled, onModeChange, onDepthChange, onResetZoom }: GraphToolbarProps) {
   return (
     <div className="graph-toolbar">
       <div className="graph-toolbar-group">
@@ -23,6 +24,7 @@ export function GraphToolbar({ mode, depth, onModeChange, onDepthChange, onReset
           aria-pressed={mode === "local"}
           className={`graph-toolbar-btn ${mode === "local" ? "active" : ""}`}
           onClick={() => onModeChange("local")}
+          disabled={localDisabled}
         >
           Local
         </button>

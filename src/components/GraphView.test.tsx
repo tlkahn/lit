@@ -424,6 +424,20 @@ describe("GraphView", () => {
     expect(document.querySelector(".graph-tooltip")).toBeNull();
   });
 
+  it("Local button is disabled when no activePageId", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    const localBtn = screen.getByRole("button", { name: "Local" });
+    expect(localBtn).toBeDisabled();
+  });
+
+  it("Local button is enabled when activePageId is provided", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView activePageId="a.md" />);
+    const localBtn = screen.getByRole("button", { name: "Local" });
+    expect(localBtn).not.toBeDisabled();
+  });
+
   it("enterNode sets cursor to pointer, leaveNode resets to grab", async () => {
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView />);
@@ -436,6 +450,7 @@ describe("GraphView", () => {
       (call) => call[0] === "enterNode",
     )?.[1];
     act(() => { enterNodeHandler!({ node: "a.md", event: { x: 0, y: 0 } }); });
+    expect(canvas.style.cursor).toBe("pointer");
 
     const leaveNodeHandler = mockSigmaOn.mock.calls.find(
       (call) => call[0] === "leaveNode",

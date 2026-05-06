@@ -40,6 +40,25 @@ describe("GraphToolbar", () => {
     });
   });
 
+  describe("localDisabled", () => {
+    it("Local button is disabled when localDisabled=true", () => {
+      render(<GraphToolbar {...defaults} localDisabled={true} />);
+      expect(screen.getByRole("button", { name: "Local" })).toBeDisabled();
+    });
+
+    it("clicking disabled Local button does not call onModeChange", async () => {
+      const onModeChange = vi.fn();
+      render(<GraphToolbar {...defaults} localDisabled={true} onModeChange={onModeChange} />);
+      await userEvent.click(screen.getByRole("button", { name: "Local" }));
+      expect(onModeChange).not.toHaveBeenCalled();
+    });
+
+    it("Local button is enabled when localDisabled=false", () => {
+      render(<GraphToolbar {...defaults} localDisabled={false} />);
+      expect(screen.getByRole("button", { name: "Local" })).not.toBeDisabled();
+    });
+  });
+
   describe("depth controls", () => {
     it("depth buttons are NOT rendered when mode=full", () => {
       render(<GraphToolbar {...defaults} mode="full" />);

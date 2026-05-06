@@ -1,3 +1,5 @@
+import "./GraphTooltip.css";
+
 export interface GraphTooltipProps {
   visible: boolean;
   x: number;
@@ -12,24 +14,10 @@ export function GraphTooltip({ visible, x, y, title, connections }: GraphTooltip
   return (
     <div
       className="graph-tooltip"
-      style={{
-        position: "absolute",
-        left: `${x}px`,
-        top: `${y}px`,
-        zIndex: 20,
-        pointerEvents: "none",
-        background: "var(--background-primary, #fff)",
-        border: "1px solid var(--background-modifier-border, #ddd)",
-        borderRadius: "4px",
-        padding: "6px 10px",
-        boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
-        fontSize: "12px",
-        maxWidth: "200px",
-        whiteSpace: "nowrap",
-      }}
+      style={{ left: `${x}px`, top: `${y}px` }}
     >
-      <div style={{ fontWeight: 600, marginBottom: "2px" }}>{title}</div>
-      <div style={{ color: "var(--text-faint, #999)" }}>
+      <div className="graph-tooltip-title">{title}</div>
+      <div className="graph-tooltip-meta">
         {connections} connections
       </div>
     </div>

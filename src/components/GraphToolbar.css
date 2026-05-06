@@ -35,6 +35,16 @@
   color: var(--text-normal, #333);
 }
 
+.graph-toolbar-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.graph-toolbar-btn:disabled:hover {
+  background: transparent;
+  color: var(--text-faint, #999);
+}
+
 .graph-toolbar-btn.active,
 .graph-toolbar-btn[aria-pressed="true"] {
   background: var(--interactive-accent, #7c3aed);

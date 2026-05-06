@@ -1,0 +1,22 @@
+.graph-tooltip {
+  position: absolute;
+  z-index: 20;
+  pointer-events: none;
+  background: var(--background-primary, #fff);
+  border: 1px solid var(--background-modifier-border, #ddd);
+  border-radius: 4px;
+  padding: 6px 10px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  font-size: 12px;
+  max-width: 200px;
+  white-space: nowrap;
+}
+
+.graph-tooltip-title {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.graph-tooltip-meta {
+  color: var(--text-faint, #999);
+}

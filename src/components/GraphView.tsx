@@ -201,6 +201,7 @@ export default function GraphView({ activePageId, onNavigate }: GraphViewProps) 
       <GraphToolbar
         mode={mode}
         depth={depth}
+        localDisabled={!activePageId}
         onModeChange={setMode}
         onDepthChange={setDepth}
         onResetZoom={handleResetZoom}
