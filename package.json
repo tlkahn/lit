@@ -13,7 +13,9 @@
     "test:watch": "bunx vitest",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "bench": "bunx vitest bench"
+    "bench": "bunx vitest bench",
+    "test:e2e": "bunx playwright test",
+    "test:e2e:headed": "bunx playwright test --headed"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.1",
@@ -47,6 +49,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9",
+    "@playwright/test": "^1.59.1",
     "@tailwindcss/vite": "^4",
     "@tauri-apps/cli": "^2",
     "@testing-library/jest-dom": "^6.6.3",

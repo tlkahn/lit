@@ -49,3 +49,7 @@ test-vault-*/
 
 # playwright-cli
 .playwright-cli
+
+# Playwright E2E
+test-results/
+playwright-report/
