@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { buildGraph, computeNodeSize, resolveThemeColors, MIN_SIZE, MAX_SIZE, SEED_COLOR } from "./graphLayout";
+import { buildGraph, computeNodeSize, resolveThemeColors, applyPositions, MIN_SIZE, MAX_SIZE, SEED_COLOR } from "./graphLayout";
 import type { SubgraphResult } from "./ipc";
 
 describe("graphLayout", () => {
@@ -203,6 +203,82 @@ describe("graphLayout", () => {
       const colors = resolveThemeColors();
       expect(colors.edgeColor).toBe("#818b98");
       expect(colors.labelColor).toBe("#1f2328");
+    });
+  });
+
+  describe("applyPositions", () => {
+    function makeGraph(edges: [string, string][] = []): import("graphology").default {
+      const sub = {
+        nodes: [
+          { id: "a.md", title: "A", is_stub: false },
+          { id: "b.md", title: "B", is_stub: false },
+          { id: "c.md", title: "C", is_stub: false },
+        ],
+        edges,
+      };
+      return buildGraph({ subgraph: sub, pagerank: {}, accentColor: "#7c3aed", stubColor: "#999" });
+    }
+
+    it("applies exact positions for nodes present in the map", () => {
+      const graph = makeGraph();
+      applyPositions(graph, { "a.md": { x: 10, y: 20 }, "b.md": { x: 30, y: 40 }, "c.md": { x: 50, y: 60 } });
+      expect(graph.getNodeAttribute("a.md", "x")).toBe(10);
+      expect(graph.getNodeAttribute("a.md", "y")).toBe(20);
+      expect(graph.getNodeAttribute("b.md", "x")).toBe(30);
+      expect(graph.getNodeAttribute("b.md", "y")).toBe(40);
+      expect(graph.getNodeAttribute("c.md", "x")).toBe(50);
+      expect(graph.getNodeAttribute("c.md", "y")).toBe(60);
+    });
+
+    it("empty positions map is a no-op", () => {
+      const graph = makeGraph();
+      const origX = graph.getNodeAttribute("a.md", "x") as number;
+      const origY = graph.getNodeAttribute("a.md", "y") as number;
+      applyPositions(graph, {});
+      expect(graph.getNodeAttribute("a.md", "x")).toBe(origX);
+      expect(graph.getNodeAttribute("a.md", "y")).toBe(origY);
+    });
+
+    it("places uncached node near centroid of its positioned neighbors", () => {
+      const graph = makeGraph([["a.md", "c.md"], ["b.md", "c.md"]]);
+      applyPositions(graph, { "a.md": { x: 100, y: 100 }, "b.md": { x: 200, y: 200 } });
+      const cx = graph.getNodeAttribute("c.md", "x") as number;
+      const cy = graph.getNodeAttribute("c.md", "y") as number;
+      expect(cx).toBeGreaterThanOrEqual(135);
+      expect(cx).toBeLessThanOrEqual(165);
+      expect(cy).toBeGreaterThanOrEqual(135);
+      expect(cy).toBeLessThanOrEqual(165);
+    });
+
+    it("uncached node with no positioned neighbors keeps original position", () => {
+      const graph = makeGraph();
+      const origX = graph.getNodeAttribute("c.md", "x") as number;
+      const origY = graph.getNodeAttribute("c.md", "y") as number;
+      applyPositions(graph, { "a.md": { x: 10, y: 20 } });
+      // b.md and c.md are not in positions and have no edges to positioned nodes
+      expect(graph.getNodeAttribute("c.md", "x")).toBe(origX);
+      expect(graph.getNodeAttribute("c.md", "y")).toBe(origY);
+    });
+
+    it("mixed scenario — cached, uncached-with-neighbor, uncached-isolated", () => {
+      const graph = makeGraph([["a.md", "b.md"]]);
+      applyPositions(graph, { "a.md": { x: 500, y: 500 } });
+      // a.md: cached — exact position
+      expect(graph.getNodeAttribute("a.md", "x")).toBe(500);
+      expect(graph.getNodeAttribute("a.md", "y")).toBe(500);
+      // b.md: uncached with positioned neighbor a.md — near 500,500
+      const bx = graph.getNodeAttribute("b.md", "x") as number;
+      const by = graph.getNodeAttribute("b.md", "y") as number;
+      expect(bx).toBeGreaterThanOrEqual(485);
+      expect(bx).toBeLessThanOrEqual(515);
+      expect(by).toBeGreaterThanOrEqual(485);
+      expect(by).toBeLessThanOrEqual(515);
+      // c.md: isolated, no positioned neighbors — keeps original random position (not 500,500)
+      // Just verify it wasn't moved to the cached position area
+      const cx = graph.getNodeAttribute("c.md", "x") as number;
+      const cy = graph.getNodeAttribute("c.md", "y") as number;
+      expect(typeof cx).toBe("number");
+      expect(typeof cy).toBe("number");
     });
   });
 

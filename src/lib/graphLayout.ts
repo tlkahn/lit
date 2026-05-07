@@ -74,3 +74,30 @@ export function buildGraph(options: GraphBuildOptions): Graph {
 
   return graph;
 }
+
+export function applyPositions(graph: Graph, positions: Record<string, { x: number; y: number }>): void {
+  const positionedNodes = new Set<string>();
+
+  graph.forEachNode((node: string) => {
+    const pos = positions[node];
+    if (pos) {
+      graph.setNodeAttribute(node, "x", pos.x);
+      graph.setNodeAttribute(node, "y", pos.y);
+      positionedNodes.add(node);
+    }
+  });
+
+  graph.forEachNode((node: string) => {
+    if (positionedNodes.has(node)) return;
+    const neighbors = graph.neighbors(node);
+    const positioned = neighbors.filter((n) => positionedNodes.has(n));
+    if (positioned.length === 0) return;
+    let sx = 0, sy = 0;
+    for (const n of positioned) {
+      sx += graph.getNodeAttribute(n, "x") as number;
+      sy += graph.getNodeAttribute(n, "y") as number;
+    }
+    graph.setNodeAttribute(node, "x", sx / positioned.length + (Math.random() - 0.5) * 20);
+    graph.setNodeAttribute(node, "y", sy / positioned.length + (Math.random() - 0.5) * 20);
+  });
+}

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { getFullSubgraph, getGraphSubgraph, getPagerank, getGraphPositions } from "../lib/ipc";
 import type { SubgraphResult } from "../lib/ipc";
 import { listen } from "@tauri-apps/api/event";
-import { buildGraph, resolveThemeColors } from "../lib/graphLayout";
+import { buildGraph, resolveThemeColors, applyPositions } from "../lib/graphLayout";
 import { getQualitySettings, getTierSettings, type TierSettings } from "../lib/qualityTiers";
 import { useThemeStore } from "../stores/theme";
 import { computeDiff, applyDiff, isDiffEmpty } from "../lib/graphDiff";
@@ -178,13 +178,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         }
 
         if (rustPositions && Object.keys(rustPositions).length > 0) {
-          graph.forEachNode((node: string) => {
-            const pos = rustPositions![node];
-            if (pos) {
-              graph.setNodeAttribute(node, "x", pos.x);
-              graph.setNodeAttribute(node, "y", pos.y);
-            }
-          });
+          applyPositions(graph, rustPositions);
         }
 
         const filledProgram = createNodeBorderProgram({
@@ -395,13 +389,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
       try {
         const positions = await getGraphPositions();
         if (positions && Object.keys(positions).length > 0) {
-          graph.forEachNode((node: string) => {
-            const pos = positions[node];
-            if (pos) {
-              graph.setNodeAttribute(node, "x", pos.x);
-              graph.setNodeAttribute(node, "y", pos.y);
-            }
-          });
+          applyPositions(graph, positions);
           sigma.refresh();
           sigma.getCamera().animatedReset();
         }

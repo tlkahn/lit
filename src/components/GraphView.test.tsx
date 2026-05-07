@@ -1301,6 +1301,97 @@ describe("GraphView", () => {
     resetListenMock();
   });
 
+  // --- Neighbor fallback for uncached nodes ---
+
+  it("uncached node positioned near its neighbor after init", async () => {
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [
+              { id: "a.md", title: "A", is_stub: false },
+              { id: "b.md", title: "B", is_stub: false },
+            ],
+            edges: [["a.md", "b.md"]],
+          };
+        case "get_pagerank":
+          return { "a.md": 0.4, "b.md": 0.6 };
+        case "get_graph_positions":
+          return { "a.md": { x: 500, y: 500 } };
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const buildGraphSpy = vi.spyOn(graphLayout, "buildGraph");
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const graph = buildGraphSpy.mock.results[0]!.value as import("graphology").default;
+    expect(graph.getNodeAttribute("a.md", "x")).toBe(500);
+    expect(graph.getNodeAttribute("a.md", "y")).toBe(500);
+    const bx = graph.getNodeAttribute("b.md", "x") as number;
+    const by = graph.getNodeAttribute("b.md", "y") as number;
+    expect(bx).toBeGreaterThanOrEqual(485);
+    expect(bx).toBeLessThanOrEqual(515);
+    expect(by).toBeGreaterThanOrEqual(485);
+    expect(by).toBeLessThanOrEqual(515);
+
+    buildGraphSpy.mockRestore();
+  });
+
+  it("lit:layout-ready applies positions with neighbor fallback for uncached nodes", async () => {
+    mockListen();
+    let posCallCount = 0;
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [
+              { id: "a.md", title: "A", is_stub: false },
+              { id: "b.md", title: "B", is_stub: false },
+            ],
+            edges: [["a.md", "b.md"]],
+          };
+        case "get_pagerank":
+          return { "a.md": 0.4, "b.md": 0.6 };
+        case "get_graph_positions":
+          posCallCount++;
+          if (posCallCount <= 1) return {};
+          return { "a.md": { x: 300, y: 300 } };
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const buildGraphSpy = vi.spyOn(graphLayout, "buildGraph");
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await act(async () => {
+      emitMockEvent("lit:layout-ready", {});
+    });
+
+    await waitFor(() => {
+      expect(mockSigmaRefresh).toHaveBeenCalled();
+    });
+
+    const graph = buildGraphSpy.mock.results[0]!.value as import("graphology").default;
+    expect(graph.getNodeAttribute("a.md", "x")).toBe(300);
+    expect(graph.getNodeAttribute("a.md", "y")).toBe(300);
+    const bx = graph.getNodeAttribute("b.md", "x") as number;
+    const by = graph.getNodeAttribute("b.md", "y") as number;
+    expect(bx).toBeGreaterThanOrEqual(285);
+    expect(bx).toBeLessThanOrEqual(315);
+    expect(by).toBeGreaterThanOrEqual(285);
+    expect(by).toBeLessThanOrEqual(315);
+
+    buildGraphSpy.mockRestore();
+    resetListenMock();
+  });
+
   it("concurrent events: second event skipped while first is in-flight", async () => {
     mockListen();
     const resolveIpcHolder: { fn: ((v: unknown) => void) | null } = { fn: null };
