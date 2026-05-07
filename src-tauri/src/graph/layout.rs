@@ -197,6 +197,58 @@ impl QuadNode {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct LayoutNode {
+    pub x: f64,
+    pub y: f64,
+    pub sx: f64,
+    pub sy: f64,
+    pub old_sx: f64,
+    pub old_sy: f64,
+    pub mass: f64,
+}
+
+impl Default for LayoutNode {
+    fn default() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            sx: 0.0,
+            sy: 0.0,
+            old_sx: 0.0,
+            old_sy: 0.0,
+            mass: 1.0,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct LayoutSettings {
+    pub theta: f64,
+    pub ka: f64,
+    pub kg: f64,
+    pub kr: f64,
+    pub speed: f64,
+    pub strong_gravity: bool,
+    pub iterations_cold: usize,
+    pub iterations_warm: usize,
+}
+
+impl Default for LayoutSettings {
+    fn default() -> Self {
+        Self {
+            theta: 0.5,
+            ka: 1.0,
+            kg: 1.0,
+            kr: 1.0,
+            speed: 0.01,
+            strong_gravity: false,
+            iterations_cold: 100,
+            iterations_warm: 50,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -370,5 +422,44 @@ mod tests {
         assert_eq!(bb.quadrant(75.0, 25.0), 1); // SE
         assert_eq!(bb.quadrant(25.0, 75.0), 2); // NW
         assert_eq!(bb.quadrant(75.0, 75.0), 3); // NE
+    }
+
+    #[test]
+    fn layout_node_default() {
+        let n = LayoutNode::default();
+        assert_eq!(n.x, 0.0);
+        assert_eq!(n.y, 0.0);
+        assert_eq!(n.sx, 0.0);
+        assert_eq!(n.sy, 0.0);
+        assert_eq!(n.old_sx, 0.0);
+        assert_eq!(n.old_sy, 0.0);
+        assert_eq!(n.mass, 1.0);
+    }
+
+    #[test]
+    fn layout_node_is_copy() {
+        fn assert_copy<T: Copy>(_: &T) {}
+        assert_copy(&LayoutNode::default());
+    }
+
+    #[test]
+    fn layout_settings_default() {
+        let s = LayoutSettings::default();
+        assert_eq!(s.theta, 0.5);
+        assert_eq!(s.ka, 1.0);
+        assert_eq!(s.kg, 1.0);
+        assert_eq!(s.kr, 1.0);
+        assert_eq!(s.speed, 0.01);
+        assert!(!s.strong_gravity);
+        assert_eq!(s.iterations_cold, 100);
+        assert_eq!(s.iterations_warm, 50);
+    }
+
+    #[test]
+    fn layout_settings_is_clone() {
+        let s = LayoutSettings::default();
+        let s2 = s.clone();
+        assert_eq!(s2.theta, s.theta);
+        assert_eq!(s2.iterations_cold, s.iterations_cold);
     }
 }
