@@ -336,6 +336,8 @@ describe("ipc", () => {
               { id: "b.md", title: "B", is_stub: false },
             ],
             edges: [["a.md", "b.md"]],
+            pagerank: { "a.md": 0.4, "b.md": 0.6 },
+            positions: {},
           };
         case "resolve_wikilink": {
           const a = args as Record<string, unknown> | undefined;
@@ -708,10 +710,12 @@ describe("ipc", () => {
     expect(result.tier).toBe("Unresolved");
   });
 
-  it("getGraphSubgraph returns subgraph", async () => {
+  it("getGraphSubgraph returns subgraph with pagerank and positions", async () => {
     const result = await getGraphSubgraph(["a.md", "b.md"], 1);
     expect(result.nodes).toHaveLength(2);
     expect(result.edges).toHaveLength(1);
+    expect(result.pagerank).toEqual({ "a.md": 0.4, "b.md": 0.6 });
+    expect(result.positions).toEqual({});
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: ["a.md", "b.md"], depth: 1, directed: null });
   });
@@ -719,6 +723,8 @@ describe("ipc", () => {
   it("getFullSubgraph calls get_graph_subgraph with empty seeds", async () => {
     const result = await getFullSubgraph();
     expect(result.nodes).toHaveLength(2);
+    expect(result.pagerank).toEqual({ "a.md": 0.4, "b.md": 0.6 });
+    expect(result.positions).toEqual({});
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", {
       seeds: [], depth: 0, directed: null,

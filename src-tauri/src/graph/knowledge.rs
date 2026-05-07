@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::error::GraphError;
 use super::store::Store;
+use super::types::Position;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct GraphNode {
@@ -18,6 +19,14 @@ pub struct GraphNode {
 pub struct SubgraphResult {
     pub nodes: Vec<GraphNode>,
     pub edges: Vec<(String, String)>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct SubgraphBundle {
+    #[serde(flatten)]
+    pub subgraph: SubgraphResult,
+    pub pagerank: HashMap<String, f64>,
+    pub positions: HashMap<String, Position>,
 }
 
 pub struct KnowledgeGraph {

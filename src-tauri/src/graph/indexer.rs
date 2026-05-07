@@ -8,7 +8,7 @@ use walkdir::WalkDir;
 use super::error::GraphError;
 use super::extract::{extract_first_paragraph, extract_headings, extract_sentence_context};
 use super::types::HeadingInfo;
-use super::knowledge::{GraphNode, KnowledgeGraph, SubgraphResult};
+use super::knowledge::{GraphNode, KnowledgeGraph, SubgraphBundle, SubgraphResult};
 use super::links::{extract_wikilinks, WikiLink};
 use super::resolve::StemLookup;
 use super::store::Store;
@@ -768,6 +768,22 @@ impl GraphIndex {
     pub fn full_subgraph(&self) -> SubgraphResult {
         let knowledge = self.knowledge.lock().unwrap();
         knowledge.full_subgraph()
+    }
+
+    pub fn subgraph_bundle(
+        &self,
+        seeds: &[&str],
+        depth: usize,
+        directed: bool,
+    ) -> Result<SubgraphBundle, GraphError> {
+        let subgraph = self.subgraph(seeds, depth, directed)?;
+        let pagerank = self.pagerank()?;
+        let positions = self.get_positions();
+        Ok(SubgraphBundle {
+            subgraph,
+            pagerank,
+            positions,
+        })
     }
 
     pub fn resolve_wikilink(&self, target: &str) -> Result<super::resolve::ResolvedLink, GraphError> {

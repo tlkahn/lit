@@ -283,6 +283,8 @@ export interface GraphNode {
 export interface SubgraphResult {
   nodes: GraphNode[];
   edges: [string, string][];
+  pagerank?: Record<string, number>;
+  positions?: Record<string, { x: number; y: number }>;
 }
 
 export interface GraphStats {

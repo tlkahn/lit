@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { getFullSubgraph, getGraphSubgraph, getPagerank, getGraphPositions } from "../lib/ipc";
+import { getFullSubgraph, getGraphSubgraph, getGraphPositions } from "../lib/ipc";
 import type { SubgraphResult } from "../lib/ipc";
 import { listen } from "@tauri-apps/api/event";
 import { buildGraph, resolveThemeColors, applyPositions } from "../lib/graphLayout";
@@ -134,10 +134,10 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         } else {
           subgraph = await getFullSubgraph();
         }
-        const pagerank = await getPagerank();
+        const pagerank = subgraph.pagerank ?? {};
         if (perf) {
           const ipcMs = performance.now() - t0;
-          const payloadSize = JSON.stringify(subgraph).length + JSON.stringify(pagerank).length;
+          const payloadSize = JSON.stringify(subgraph).length;
           perfEntries.push({ label: "IPC fetch", value: ipcMs, detail: `${(payloadSize / 1024).toFixed(1)} kB` });
         }
 
@@ -170,12 +170,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
 
         if (cancelled || !containerRef.current) return;
 
-        let rustPositions: Record<string, { x: number; y: number }> | null = null;
-        try {
-          rustPositions = await getGraphPositions();
-        } catch {
-          // Rust positions not available
-        }
+        const rustPositions = subgraph.positions ?? null;
 
         if (rustPositions && Object.keys(rustPositions).length > 0) {
           applyPositions(graph, rustPositions);
@@ -354,7 +349,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         } else {
           subgraph = await getFullSubgraph();
         }
-        const pagerank = await getPagerank();
+        const pagerank = subgraph.pagerank ?? {};
         const diff = computeDiff(graph, subgraph);
 
         if (isDiffEmpty(diff)) return;

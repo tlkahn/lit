@@ -65,9 +65,9 @@ describe("GraphView", () => {
               { id: "b.md", title: "B", is_stub: false },
             ],
             edges: [["a.md", "b.md"]],
+            pagerank: { "a.md": 0.4, "b.md": 0.6 },
+            positions: {},
           };
-        case "get_pagerank":
-          return { "a.md": 0.4, "b.md": 0.6 };
         case "get_graph_positions":
           return {};
         default:
@@ -82,14 +82,14 @@ describe("GraphView", () => {
     expect(screen.getByTestId("graph-view")).toBeTruthy();
   });
 
-  it("full mode (default) calls getFullSubgraph and getPagerank", async () => {
+  it("full mode (default) calls getFullSubgraph (single IPC call)", async () => {
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView />);
     const { invoke } = await import("@tauri-apps/api/core");
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: [], depth: 0, directed: null });
-      expect(invoke).toHaveBeenCalledWith("get_pagerank", { n: null });
     });
+    expect(invoke).not.toHaveBeenCalledWith("get_pagerank", expect.anything());
   });
 
   it("shows loading state while fetching", async () => {
@@ -221,9 +221,9 @@ describe("GraphView", () => {
     await waitFor(() => {
       expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
     });
-    // No FA2 worker — just Sigma and Rust positions
+    // No FA2 worker — positions come from bundled subgraph response
     const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("get_graph_positions");
+    expect(invoke).not.toHaveBeenCalledWith("get_graph_positions");
   });
 
   it("positions come from Rust IPC, not localStorage", async () => {
@@ -241,11 +241,9 @@ describe("GraphView", () => {
               { id: "b.md", title: "B", is_stub: false },
             ],
             edges: [["a.md", "b.md"]],
+            pagerank: { "a.md": 0.4, "b.md": 0.6 },
+            positions: { "a.md": { x: 42, y: 42 }, "b.md": { x: 42, y: 42 } },
           };
-        case "get_pagerank":
-          return { "a.md": 0.4, "b.md": 0.6 };
-        case "get_graph_positions":
-          return { "a.md": { x: 42, y: 42 }, "b.md": { x: 42, y: 42 } };
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -277,12 +275,11 @@ describe("GraphView", () => {
               { id: "b.md", title: "B", is_stub: false },
             ],
             edges: [["a.md", "b.md"]],
+            pagerank: { "a.md": 0.4, "b.md": 0.6 },
+            positions: {},
           };
-        case "get_pagerank":
-          return { "a.md": 0.4, "b.md": 0.6 };
         case "get_graph_positions":
           posCallCount++;
-          if (posCallCount <= 1) return {};
           return { "a.md": { x: 100, y: 200 }, "b.md": { x: 300, y: 400 } };
         default:
           throw new Error(`Unknown command: ${cmd}`);
@@ -304,7 +301,7 @@ describe("GraphView", () => {
       expect(mockSigmaRefresh).toHaveBeenCalled();
     });
     expect(mockCameraAnimatedReset).toHaveBeenCalled();
-    expect(posCallCount).toBe(2);
+    expect(posCallCount).toBe(1);
 
     resetListenMock();
   });
@@ -1168,6 +1165,8 @@ describe("GraphView", () => {
                 { id: "b.md", title: "B", is_stub: false },
               ],
               edges: [["a.md", "b.md"]],
+              pagerank: { "a.md": 0.4, "b.md": 0.6 },
+              positions: {},
             };
           }
           return {
@@ -1177,11 +1176,9 @@ describe("GraphView", () => {
               { id: "c.md", title: "C", is_stub: false },
             ],
             edges: [["a.md", "b.md"], ["a.md", "c.md"]],
+            pagerank: { "a.md": 0.4, "b.md": 0.3, "c.md": 0.3 },
+            positions: {},
           };
-        case "get_pagerank":
-          return { "a.md": 0.4, "b.md": 0.3, "c.md": 0.3 };
-        case "get_graph_positions":
-          return {};
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -1216,11 +1213,9 @@ describe("GraphView", () => {
               { id: "b.md", title: "B", is_stub: false },
             ],
             edges: [["a.md", "b.md"]],
+            pagerank: { "a.md": 0.4, "b.md": 0.6 },
+            positions: {},
           };
-        case "get_pagerank":
-          return { "a.md": 0.4, "b.md": 0.6 };
-        case "get_graph_positions":
-          return {};
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -1257,6 +1252,8 @@ describe("GraphView", () => {
                 { id: "b.md", title: "B", is_stub: false },
               ],
               edges: [["a.md", "b.md"]],
+              pagerank: { "a.md": 0.4, "b.md": 0.6 },
+              positions: {},
             };
           }
           return {
@@ -1266,11 +1263,9 @@ describe("GraphView", () => {
               { id: "d.md", title: "D", is_stub: false },
             ],
             edges: [["a.md", "b.md"], ["b.md", "d.md"]],
+            pagerank: { "a.md": 0.4, "b.md": 0.3, "d.md": 0.3 },
+            positions: {},
           };
-        case "get_pagerank":
-          return { "a.md": 0.4, "b.md": 0.3, "d.md": 0.3 };
-        case "get_graph_positions":
-          return {};
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -1313,11 +1308,9 @@ describe("GraphView", () => {
               { id: "b.md", title: "B", is_stub: false },
             ],
             edges: [["a.md", "b.md"]],
+            pagerank: { "a.md": 0.4, "b.md": 0.6 },
+            positions: { "a.md": { x: 500, y: 500 } },
           };
-        case "get_pagerank":
-          return { "a.md": 0.4, "b.md": 0.6 };
-        case "get_graph_positions":
-          return { "a.md": { x: 500, y: 500 } };
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -1343,7 +1336,6 @@ describe("GraphView", () => {
 
   it("lit:layout-ready applies positions with neighbor fallback for uncached nodes", async () => {
     mockListen();
-    let posCallCount = 0;
     mockInvoke((cmd) => {
       switch (cmd) {
         case "get_graph_subgraph":
@@ -1353,12 +1345,10 @@ describe("GraphView", () => {
               { id: "b.md", title: "B", is_stub: false },
             ],
             edges: [["a.md", "b.md"]],
+            pagerank: { "a.md": 0.4, "b.md": 0.6 },
+            positions: {},
           };
-        case "get_pagerank":
-          return { "a.md": 0.4, "b.md": 0.6 };
         case "get_graph_positions":
-          posCallCount++;
-          if (posCallCount <= 1) return {};
           return { "a.md": { x: 300, y: 300 } };
         default:
           throw new Error(`Unknown command: ${cmd}`);
@@ -1401,22 +1391,17 @@ describe("GraphView", () => {
         case "get_graph_subgraph":
           ipcCallCount++;
           if (ipcCallCount <= 2) {
-            // Initial load — resolve immediately
             return {
               nodes: [
                 { id: "a.md", title: "A", is_stub: false },
                 { id: "b.md", title: "B", is_stub: false },
               ],
               edges: [["a.md", "b.md"]],
+              pagerank: { "a.md": 0.4, "b.md": 0.6 },
+              positions: {},
             };
           }
-          // Subsequent calls — hang until manually resolved
           return new Promise((resolve) => { resolveIpcHolder.fn = resolve; });
-        case "get_pagerank":
-          if (ipcCallCount <= 2) return { "a.md": 0.4, "b.md": 0.6 };
-          return new Promise((resolve) => { resolve({ "a.md": 0.4, "b.md": 0.6 }); });
-        case "get_graph_positions":
-          return {};
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -1453,6 +1438,8 @@ describe("GraphView", () => {
         { id: "b.md", title: "B", is_stub: false },
       ],
       edges: [["a.md", "b.md"]],
+      pagerank: { "a.md": 0.4, "b.md": 0.6 },
+      positions: {},
     });
 
     resetListenMock();

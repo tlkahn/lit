@@ -364,7 +364,7 @@ pub fn get_graph_subgraph(
 ) -> Result<serde_json::Value, String> {
     with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
         let seed_refs: Vec<&str> = seeds.iter().map(|s| s.as_str()).collect();
-        let result = gi.subgraph(&seed_refs, depth, directed.unwrap_or(false))?;
+        let result = gi.subgraph_bundle(&seed_refs, depth, directed.unwrap_or(false))?;
         serde_json::to_value(result).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
     })
 }
@@ -696,6 +696,26 @@ mod tests {
         assert!(ids.contains("a.md"));
         assert!(ids.contains("b.md"));
         assert!(!ids.contains("c.md"));
+    }
+
+    #[test]
+    fn cmd_get_graph_subgraph_bundle_includes_pagerank_and_positions() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
+        std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let bundle = gi.subgraph_bundle(&[], 0, false).unwrap();
+        assert_eq!(bundle.subgraph.nodes.len(), 2);
+        assert!(bundle.pagerank.contains_key("a.md"));
+        assert!(bundle.pagerank.contains_key("b.md"));
+        let sum: f64 = bundle.pagerank.values().sum();
+        assert!((sum - 1.0).abs() < 1e-9);
+        // JSON shape has nodes, edges, pagerank, positions at top level
+        let json = serde_json::to_value(&bundle).unwrap();
+        assert!(json.get("nodes").is_some());
+        assert!(json.get("edges").is_some());
+        assert!(json.get("pagerank").is_some());
+        assert!(json.get("positions").is_some());
     }
 
     #[test]
