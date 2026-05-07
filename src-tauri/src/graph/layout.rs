@@ -1,4 +1,4 @@
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct BoundingBox {
     pub min_x: f64,
     pub max_x: f64,
@@ -40,6 +40,8 @@ impl BoundingBox {
     }
 }
 
+use smallvec::SmallVec;
+
 const EPSILON: f64 = 1e-4;
 const MAX_DEPTH: usize = 64;
 
@@ -73,7 +75,7 @@ impl QuadNode {
         }
 
         let mut node = self as *mut QuadNode;
-        let mut current_bb = bb.clone();
+        let mut current_bb = *bb;
         let mut depth = 0usize;
 
         unsafe {
@@ -161,7 +163,8 @@ impl QuadNode {
     pub fn repulsion_on(&self, bx: f64, by: f64, theta: f64, bb: &BoundingBox) -> (f64, f64) {
         let mut fx = 0.0;
         let mut fy = 0.0;
-        let mut stack: Vec<(&QuadNode, BoundingBox)> = vec![(self, bb.clone())];
+        let mut stack: SmallVec<[(&QuadNode, BoundingBox); 64]> = SmallVec::new();
+        stack.push((self, *bb));
 
         while let Some((node, node_bb)) = stack.pop() {
             if node.mass == 0.0 {
@@ -199,9 +202,34 @@ mod tests {
     use super::*;
 
     #[test]
+    fn bounding_box_is_copy() {
+        fn assert_copy<T: Copy>(_: &T) {}
+        let bb = BoundingBox::new(0.0, 100.0, 0.0, 50.0);
+        assert_copy(&bb);
+    }
+
+    #[test]
     fn bounding_box_width() {
         let bb = BoundingBox::new(0.0, 100.0, 0.0, 50.0);
         assert_eq!(bb.width(), 100.0);
+    }
+
+    #[test]
+    fn repulsion_on_deep_tree() {
+        let bb = BoundingBox::new(0.0, 1000.0, 0.0, 1000.0);
+        let mut tree = QuadNode::empty();
+        for i in 0..20 {
+            let x = 50.0 + (i as f64) * 45.0;
+            let y = 50.0 + (i as f64) * 45.0;
+            tree.insert(x, y, 1.0, &bb);
+        }
+
+        let (fx, fy) = tree.repulsion_on(500.0, 0.0, 0.5, &bb);
+        // Force should push query away from the cluster (which is along the diagonal)
+        // x-component near zero (cluster centered around x=500), y-component negative (away from cluster above)
+        assert!(fy < 0.0);
+        let mag = (fx * fx + fy * fy).sqrt();
+        assert!(mag > 0.0);
     }
 
     #[test]
