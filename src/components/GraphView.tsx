@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { getFullSubgraph, getGraphSubgraph, getPagerank } from "../lib/ipc";
+import { getFullSubgraph, getGraphSubgraph, getPagerank, getGraphPositions } from "../lib/ipc";
 import type { SubgraphResult } from "../lib/ipc";
 import { listen } from "@tauri-apps/api/event";
 import { buildGraph, resolveThemeColors, prefersReducedMotion, getFA2Settings } from "../lib/graphLayout";
@@ -185,34 +185,59 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
 
         random.assign(graph);
 
-        const cacheKey = workspacePath ? getCacheKey(workspacePath, mode) : null;
-        const cachedPositions = cacheKey ? loadPositions(cacheKey) : null;
+        let rustPositions: Record<string, { x: number; y: number }> | null = null;
+        try {
+          rustPositions = await getGraphPositions();
+        } catch {
+          // Rust positions not available — fall through to JS FA2
+        }
+
         let allCached = false;
-        if (cachedPositions) {
-          const uncachedNodes: string[] = [];
+        if (rustPositions && Object.keys(rustPositions).length > 0) {
+          let covered = 0;
+          const total = graph.order;
           graph.forEachNode((node: string) => {
-            const cached = cachedPositions[node];
-            if (cached) {
-              graph.setNodeAttribute(node, "x", cached.x);
-              graph.setNodeAttribute(node, "y", cached.y);
-            } else {
-              uncachedNodes.push(node);
+            const pos = rustPositions![node];
+            if (pos) {
+              graph.setNodeAttribute(node, "x", pos.x);
+              graph.setNodeAttribute(node, "y", pos.y);
+              covered++;
             }
           });
-          for (const node of uncachedNodes) {
-            const neighbors = graph.neighbors(node);
-            const positioned = neighbors.filter((n) => cachedPositions[n]);
-            if (positioned.length > 0) {
-              let sx = 0, sy = 0;
-              for (const n of positioned) {
-                sx += cachedPositions[n]!.x;
-                sy += cachedPositions[n]!.y;
-              }
-              graph.setNodeAttribute(node, "x", sx / positioned.length + (Math.random() - 0.5) * 20);
-              graph.setNodeAttribute(node, "y", sy / positioned.length + (Math.random() - 0.5) * 20);
-            }
+          if (total > 0 && covered / total >= 0.95) {
+            allCached = true;
           }
-          allCached = uncachedNodes.length === 0 && graph.order > 0;
+        }
+
+        const cacheKey = workspacePath ? getCacheKey(workspacePath, mode) : null;
+        if (!allCached) {
+          const cachedPositions = cacheKey ? loadPositions(cacheKey) : null;
+          if (cachedPositions) {
+            const uncachedNodes: string[] = [];
+            graph.forEachNode((node: string) => {
+              const cached = cachedPositions[node];
+              if (cached) {
+                graph.setNodeAttribute(node, "x", cached.x);
+                graph.setNodeAttribute(node, "y", cached.y);
+              } else {
+                uncachedNodes.push(node);
+              }
+            });
+            for (const node of uncachedNodes) {
+              const neighbors = graph.neighbors(node);
+              const positioned = neighbors.filter((n) => cachedPositions[n]);
+              if (positioned.length > 0) {
+                let sx = 0, sy = 0;
+                for (const n of positioned) {
+                  sx += cachedPositions[n]!.x;
+                  sy += cachedPositions[n]!.y;
+                }
+                graph.setNodeAttribute(node, "x", sx / positioned.length + (Math.random() - 0.5) * 20);
+                graph.setNodeAttribute(node, "y", sy / positioned.length + (Math.random() - 0.5) * 20);
+              }
+            }
+            allCached = uncachedNodes.length === 0 && graph.order > 0;
+          }
         }
 
         const filledProgram = createNodeBorderProgram({
@@ -498,6 +523,13 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
       }
     });
 
+    return () => { unlisten.then((fn) => fn()); };
+  }, []);
+
+  useEffect(() => {
+    const unlisten = listen("lit:layout-ready", () => {
+      console.log("Rust layout ready");
+    });
     return () => { unlisten.then((fn) => fn()); };
   }, []);
 

@@ -47,6 +47,7 @@ import {
   getGraphPaths,
   getGraphSubgraph,
   getFullSubgraph,
+  getGraphPositions,
   ensureGraphReady,
   parseAnnotations,
   resolveAnnotationScope,
@@ -299,6 +300,8 @@ describe("ipc", () => {
             { id: "a.md", title: "Alpha", first_paragraph: "First paragraph of Alpha" },
             { id: "b.md", title: "Beta", first_paragraph: "First paragraph of Beta" },
           ];
+        case "get_graph_positions":
+          return { "page-1": { x: 1.0, y: 2.0 }, "page-2": { x: 3.0, y: 4.0 } };
         case "ensure_graph_ready":
           return null;
         case "get_backlinks":
@@ -749,6 +752,12 @@ describe("ipc", () => {
 
   it("ensureGraphReady resolves on success", async () => {
     await expect(ensureGraphReady("/my/workspace")).resolves.toBeNull();
+  });
+
+  it("getGraphPositions returns position map", async () => {
+    const positions = await getGraphPositions();
+    expect(positions["page-1"]).toEqual({ x: 1.0, y: 2.0 });
+    expect(positions["page-2"]).toEqual({ x: 3.0, y: 4.0 });
   });
 
   it("pdfOpen calls pdf_open with path", async () => {

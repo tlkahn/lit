@@ -429,6 +429,10 @@ export async function listPagesByTag(tag: string, limit?: number): Promise<TagPa
   return invoke<TagPageResult[]>("list_pages_by_tag", { tag, limit: limit ?? null });
 }
 
+export async function getGraphPositions(): Promise<Record<string, { x: number; y: number }>> {
+  return invoke<Record<string, { x: number; y: number }>>("get_graph_positions");
+}
+
 export async function ensureGraphReady(path: string): Promise<void> {
   return invoke<void>("ensure_graph_ready", { path });
 }

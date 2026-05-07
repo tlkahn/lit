@@ -59,6 +59,10 @@ impl KnowledgeGraph {
         Ok(Self { graph, id_to_index })
     }
 
+    pub fn graph_clone(&self) -> DiGraph<GraphNode, ()> {
+        self.graph.clone()
+    }
+
     pub fn full_subgraph(&self) -> SubgraphResult {
         let nodes: Vec<GraphNode> = self.graph.node_weights().cloned().collect();
         let edges: Vec<(String, String)> = self
@@ -890,6 +894,14 @@ mod tests {
         let scores = kg.pagerank(0.85);
         assert!(scores.contains_key("F"));
         assert!(scores["F"] > 0.0);
+    }
+
+    #[test]
+    fn graph_clone_preserves_structure() {
+        let (_, kg) = build_test_graph();
+        let cloned = kg.graph_clone();
+        assert_eq!(cloned.node_count(), 6);
+        assert_eq!(cloned.edge_count(), 5);
     }
 
     #[test]

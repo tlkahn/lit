@@ -104,12 +104,18 @@ pub fn open_workspace(
                     graph_reg.indices.lock().unwrap().insert(graph_root.clone(), Arc::clone(&gi));
                     build_st.mark_ready(&graph_root);
                     let _ = handle.emit("lit:graph-updated", ());
+                    super::graph::spawn_layout(Arc::clone(&gi), handle.clone());
 
                     let handle2 = handle.clone();
                     let ann_enabled = crate::preferences::annotations_enabled(&handle2);
+                    let gi2 = Arc::clone(&gi);
+                    let handle3 = handle.clone();
                     tauri::async_runtime::spawn_blocking(move || {
                         match gi.sync_with_disk(ann_enabled) {
-                            Ok(true) => { let _ = handle2.emit("lit:graph-updated", ()); }
+                            Ok(true) => {
+                                let _ = handle2.emit("lit:graph-updated", ());
+                                super::graph::spawn_layout(gi2, handle3);
+                            }
                             Ok(false) => {}
                             Err(e) => tracing::error!(error = %e, "background graph sync failed"),
                         }
@@ -128,13 +134,15 @@ pub fn open_workspace(
             let ann_enabled = crate::preferences::annotations_enabled(&handle);
             match GraphIndex::build_with_progress(graph_root.clone(), &callback, ann_enabled) {
                 Ok(gi) => {
+                    let gi = Arc::new(gi);
                     graph_reg
                         .indices
                         .lock()
                         .unwrap()
-                        .insert(graph_root.clone(), Arc::new(gi));
+                        .insert(graph_root.clone(), Arc::clone(&gi));
                     build_st.mark_ready(&graph_root);
                     let _ = handle.emit("lit:graph-updated", ());
+                    super::graph::spawn_layout(gi, handle.clone());
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "failed to build graph index");

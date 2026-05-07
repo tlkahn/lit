@@ -149,12 +149,18 @@ pub fn run() {
                                 graph_reg.indices.lock().unwrap().insert(root.clone(), Arc::clone(&gi));
                                 build_state.mark_ready(&root);
                                 let _ = handle.emit("lit:graph-updated", ());
+                                commands::graph::spawn_layout(Arc::clone(&gi), handle.clone());
 
                                 let handle2 = handle.clone();
                                 let ann_enabled = crate::preferences::annotations_enabled(&handle2);
+                                let gi2 = Arc::clone(&gi);
+                                let handle3 = handle.clone();
                                 tauri::async_runtime::spawn_blocking(move || {
                                     match gi.sync_with_disk(ann_enabled) {
-                                        Ok(true) => { let _ = handle2.emit("lit:graph-updated", ()); }
+                                        Ok(true) => {
+                                            let _ = handle2.emit("lit:graph-updated", ());
+                                            commands::graph::spawn_layout(gi2, handle3);
+                                        }
                                         Ok(false) => {}
                                         Err(e) => tracing::error!(error = %e, "background graph sync failed"),
                                     }
@@ -172,9 +178,11 @@ pub fn run() {
                         let ann_enabled = crate::preferences::annotations_enabled(&handle);
                         match crate::graph::indexer::GraphIndex::build_with_progress(root.clone(), &callback, ann_enabled) {
                             Ok(gi) => {
-                                graph_reg.indices.lock().unwrap().insert(root.clone(), Arc::new(gi));
+                                let gi = Arc::new(gi);
+                                graph_reg.indices.lock().unwrap().insert(root.clone(), Arc::clone(&gi));
                                 build_state.mark_ready(&root);
                                 let _ = handle.emit("lit:graph-updated", ());
+                                commands::graph::spawn_layout(gi, handle.clone());
                             }
                             Err(e) => {
                                 tracing::error!(error = %e, "early graph indexing failed");
@@ -345,6 +353,7 @@ pub fn run() {
             commands::graph::search_tags,
             commands::graph::list_pages_by_tag,
             commands::graph::ensure_graph_ready,
+            commands::graph::get_graph_positions,
             commands::workspace::get_startup_context,
             commands::pdf_viewer::pdf_open,
             commands::pdf_viewer::pdf_render_page,

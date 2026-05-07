@@ -554,12 +554,16 @@ pub fn incremental_reindex(
 // ---------------------------------------------------------------------------
 
 use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
+use super::types::Position;
 
 pub struct GraphIndex {
     store: Mutex<Store>,
     reverse_stems: Mutex<ReverseStemIndex>,
     knowledge: Mutex<KnowledgeGraph>,
     workspace_root: std::path::PathBuf,
+    positions: Mutex<HashMap<String, Position>>,
+    layout_in_progress: AtomicBool,
 }
 
 impl GraphIndex {
@@ -579,12 +583,15 @@ impl GraphIndex {
             .collect();
         let reverse_stems = ReverseStemIndex::build_from_edges(&edges);
         let knowledge = KnowledgeGraph::from_store(&store)?;
+        let positions = store.load_positions().unwrap_or_default();
         info!("loaded graph from store (skipped disk diff)");
         Ok(Some(Self {
             store: Mutex::new(store),
             reverse_stems: Mutex::new(reverse_stems),
             knowledge: Mutex::new(knowledge),
             workspace_root,
+            positions: Mutex::new(positions),
+            layout_in_progress: AtomicBool::new(false),
         }))
     }
 
@@ -663,11 +670,14 @@ impl GraphIndex {
 
         on_progress(IndexProgress { phase: IndexPhase::Building, current: 0, total: 0 });
         let knowledge = KnowledgeGraph::from_store(&store)?;
+        let positions = store.load_positions().unwrap_or_default();
         Ok(Self {
             store: Mutex::new(store),
             reverse_stems: Mutex::new(reverse_stems),
             knowledge: Mutex::new(knowledge),
             workspace_root,
+            positions: Mutex::new(positions),
+            layout_in_progress: AtomicBool::new(false),
         })
     }
 
@@ -970,6 +980,35 @@ impl GraphIndex {
         pairs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         pairs.truncate(n);
         Ok(pairs)
+    }
+
+    pub fn get_positions(&self) -> HashMap<String, Position> {
+        self.positions.lock().unwrap().clone()
+    }
+
+    pub fn compute_layout_background(&self, settings: &super::layout::LayoutSettings) {
+        use std::sync::atomic::Ordering;
+        if self.layout_in_progress.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+            return;
+        }
+        let graph = self.knowledge.lock().unwrap().graph_clone();
+        let existing_tuples: HashMap<String, (f64, f64)> = {
+            let p = self.positions.lock().unwrap();
+            p.iter().map(|(k, v)| (k.clone(), (v.x, v.y))).collect()
+        };
+        let existing_ref = if existing_tuples.is_empty() { None } else { Some(&existing_tuples) };
+        let raw = super::layout::compute_layout(&graph, existing_ref, settings);
+        let result: HashMap<String, Position> = raw.into_iter()
+            .map(|(k, (x, y))| (k, Position { x, y }))
+            .collect();
+        {
+            let mut pos = self.positions.lock().unwrap();
+            *pos = result.clone();
+        }
+        if let Ok(store) = self.store.lock() {
+            let _ = store.save_positions(&result);
+        }
+        self.layout_in_progress.store(false, Ordering::SeqCst);
     }
 }
 
@@ -3240,5 +3279,43 @@ mod tests {
         assert_eq!(result.nodes_indexed, 1);
         let results = gi.search_annotations("note", None, 10).unwrap();
         assert!(results.is_empty());
+    }
+
+    // --- Layout positions ---
+
+    fn build_graph_with_nodes(dir: &TempDir) -> GraphIndex {
+        write_md(dir.path(), "alpha.md", "# Alpha\n\n[[beta]]");
+        write_md(dir.path(), "beta.md", "# Beta\n\n[[gamma]]");
+        write_md(dir.path(), "gamma.md", "# Gamma");
+        GraphIndex::build(dir.path().to_path_buf(), false).unwrap()
+    }
+
+    #[test]
+    fn get_positions_empty_initially() {
+        let dir = create_workspace();
+        let gi = build_graph_with_nodes(&dir);
+        let positions = gi.get_positions();
+        assert!(positions.is_empty());
+    }
+
+    #[test]
+    fn compute_layout_background_populates_positions() {
+        use crate::graph::layout::LayoutSettings;
+        let dir = create_workspace();
+        let gi = build_graph_with_nodes(&dir);
+        gi.compute_layout_background(&LayoutSettings::default());
+        let positions = gi.get_positions();
+        assert_eq!(positions.len(), 3);
+    }
+
+    #[test]
+    fn compute_layout_background_persists_to_store() {
+        use crate::graph::layout::LayoutSettings;
+        let dir = create_workspace();
+        let gi = build_graph_with_nodes(&dir);
+        gi.compute_layout_background(&LayoutSettings::default());
+        let gi2 = GraphIndex::load_from_store(dir.path().to_path_buf()).unwrap().unwrap();
+        let reloaded = gi2.get_positions();
+        assert_eq!(reloaded.len(), 3);
     }
 }

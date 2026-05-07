@@ -1,8 +1,9 @@
 use crate::graph::indexer::GraphIndex;
+use crate::graph::types::Position;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
-use tauri::State;
+use tauri::{Emitter, State};
 
 pub struct GraphRegistry {
     pub indices: Mutex<HashMap<PathBuf, Arc<GraphIndex>>>,
@@ -112,13 +113,37 @@ pub fn rebuild_graph_index(
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
     let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
-    with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+    let msg = with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
         let result = gi.full_rebuild(ann_enabled)?;
         Ok(format!(
             "Rebuilt: {} nodes, {} edges, {} stubs",
             result.nodes_indexed, result.edges_resolved, result.stubs_created
         ))
+    })?;
+    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+    let gi = graph_state.indices.lock().unwrap().get(&root).cloned();
+    if let Some(gi) = gi {
+        spawn_layout(gi, app_handle.clone());
+    }
+    Ok(msg)
+}
+
+#[tauri::command]
+pub fn get_graph_positions(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<GraphRegistry>>,
+) -> Result<HashMap<String, Position>, String> {
+    with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+        Ok(gi.get_positions())
     })
+}
+
+pub fn spawn_layout(gi: Arc<GraphIndex>, handle: tauri::AppHandle) {
+    tauri::async_runtime::spawn_blocking(move || {
+        gi.compute_layout_background(&crate::graph::layout::LayoutSettings::default());
+        let _ = handle.emit("lit:layout-ready", ());
+    });
 }
 
 #[tauri::command]

@@ -108,6 +108,12 @@ pub struct TagPageResult {
     pub first_paragraph: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct Position {
+    pub x: f64,
+    pub y: f64,
+}
+
 pub fn extract_aliases(fm: &serde_json::Value) -> Vec<String> {
     match fm.get("aliases") {
         Some(serde_json::Value::Array(arr)) => {
