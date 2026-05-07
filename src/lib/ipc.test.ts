@@ -33,6 +33,7 @@ import {
   getUnlinkedMentions,
   linkUnlinkedMention,
   rebuildGraphIndex,
+  resetGraphLayout,
   searchTags,
   listPagesByTag,
   resolveWikilink,
@@ -353,6 +354,8 @@ describe("ipc", () => {
           ];
         case "rebuild_graph_index":
           return "Rebuilt: 5 nodes, 3 edges, 1 stubs";
+        case "reset_graph_layout":
+          return undefined;
         case "get_pagerank": {
           const a = args as Record<string, unknown> | undefined;
           if (a?.n != null) {
@@ -600,6 +603,12 @@ describe("ipc", () => {
     expect(result).toBe("Rebuilt: 5 nodes, 3 edges, 1 stubs");
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("rebuild_graph_index");
+  });
+
+  it("resetGraphLayout calls correct command", async () => {
+    await resetGraphLayout();
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("reset_graph_layout");
   });
 
   it("getPagerank returns full scores map", async () => {

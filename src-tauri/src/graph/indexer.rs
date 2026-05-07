@@ -1002,6 +1002,13 @@ impl GraphIndex {
         self.positions.lock().unwrap().clone()
     }
 
+    pub fn clear_positions(&self) -> Result<(), GraphError> {
+        self.positions.lock().unwrap().clear();
+        self.store.lock().map_err(|e| {
+            GraphError::Other(e.to_string())
+        })?.clear_positions()
+    }
+
     pub fn compute_layout_background(&self, settings: &super::layout::LayoutSettings) {
         use std::sync::atomic::Ordering;
         if self.layout_in_progress.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
@@ -3338,6 +3345,21 @@ mod tests {
         let gi2 = GraphIndex::load_from_store(dir.path().to_path_buf()).unwrap().unwrap();
         let reloaded = gi2.get_positions();
         assert_eq!(reloaded.len(), 3);
+    }
+
+    #[test]
+    fn clear_positions_empties_memory_and_store() {
+        use crate::graph::layout::LayoutSettings;
+        let dir = create_workspace();
+        let gi = build_graph_with_nodes(&dir);
+        gi.compute_layout_background(&LayoutSettings::default());
+        assert_eq!(gi.get_positions().len(), 3);
+
+        gi.clear_positions().unwrap();
+        assert!(gi.get_positions().is_empty());
+
+        let gi2 = GraphIndex::load_from_store(dir.path().to_path_buf()).unwrap().unwrap();
+        assert!(gi2.get_positions().is_empty());
     }
 
     #[traced_test]

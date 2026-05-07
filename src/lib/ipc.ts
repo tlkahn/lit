@@ -374,6 +374,10 @@ export async function rebuildGraphIndex(): Promise<string> {
   return invoke<string>("rebuild_graph_index");
 }
 
+export async function resetGraphLayout(): Promise<void> {
+  return invoke<void>("reset_graph_layout");
+}
+
 export async function getPagerank(): Promise<Record<string, number>>;
 export async function getPagerank(n: number): Promise<[string, number][]>;
 export async function getPagerank(n?: number) {

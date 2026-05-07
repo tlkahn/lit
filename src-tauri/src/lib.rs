@@ -314,6 +314,7 @@ pub fn run() {
             commands::graph::list_pages_by_tag,
             commands::graph::ensure_graph_ready,
             commands::graph::get_graph_positions,
+            commands::graph::reset_graph_layout,
             commands::workspace::get_startup_context,
             commands::pdf_viewer::pdf_open,
             commands::pdf_viewer::pdf_render_page,

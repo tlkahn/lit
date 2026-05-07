@@ -214,6 +214,24 @@ pub(crate) fn initialize_graph_index(
     );
 }
 
+#[tauri::command]
+pub fn reset_graph_layout(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<GraphRegistry>>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+        gi.clear_positions()
+    })?;
+    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+    let gi = graph_state.indices.lock().unwrap().get(&root).cloned();
+    if let Some(gi) = gi {
+        spawn_layout(gi, app_handle);
+    }
+    Ok(())
+}
+
 pub fn spawn_layout(gi: Arc<GraphIndex>, handle: tauri::AppHandle) {
     tauri::async_runtime::spawn_blocking(move || {
         gi.compute_layout_background(&crate::graph::layout::LayoutSettings::default());
