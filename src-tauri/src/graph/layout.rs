@@ -1319,4 +1319,57 @@ mod tests {
         assert_eq!(nodes[0].sx, 0.0);
         assert_eq!(nodes[1].sx, 0.0);
     }
+
+    #[test]
+    fn compute_layout_deterministic_multi_node() {
+        let g = make_graph(
+            &["a", "b", "c", "d", "e", "f", "g", "h"],
+            &[(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7),
+              (0, 4), (2, 6), (1, 5)],
+        );
+        let s = LayoutSettings { iterations_cold: 100, ..Default::default() };
+        let r1 = compute_layout(&g, None, &s);
+        let r2 = compute_layout(&g, None, &s);
+        for id in ["a", "b", "c", "d", "e", "f", "g", "h"] {
+            assert_eq!(
+                r1[id], r2[id],
+                "node {id} positions differ: {:?} vs {:?}",
+                r1[id], r2[id]
+            );
+        }
+    }
+
+    #[test]
+    #[ignore] // run with: cargo test --release perf_10k -- --ignored
+    fn perf_10k_nodes_under_2s() {
+        let n = 10_000usize;
+        let ids: Vec<String> = (0..n).map(|i| format!("n{i}")).collect();
+        let id_refs: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+
+        let mut edges: Vec<(usize, usize)> = Vec::new();
+        for i in 0..n - 1 {
+            edges.push((i, i + 1));
+        }
+        for i in (0..n).step_by(10) {
+            let j = (i + 97) % n;
+            if i != j { edges.push((i, j)); }
+        }
+        for i in 1..n.min(50) {
+            edges.push((0, i));
+        }
+
+        let g = make_graph(&id_refs, &edges);
+        let s = LayoutSettings::default();
+
+        let start = std::time::Instant::now();
+        let result = compute_layout(&g, None, &s);
+        let elapsed = start.elapsed();
+
+        assert_eq!(result.len(), n);
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "10k-node layout took {:.2}s, expected < 2s",
+            elapsed.as_secs_f64()
+        );
+    }
 }
