@@ -1,11 +1,5 @@
 import Graph from "graphology";
-import type { ForceAtlas2Settings } from "graphology-layout-forceatlas2";
 import type { SubgraphResult } from "./ipc";
-
-export function prefersReducedMotion(): boolean {
-  if (typeof window === "undefined" || !window.matchMedia) return false;
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
 
 const DEFAULT_ACCENT = "#0969da";
 const DEFAULT_STUB = "#818b98";
@@ -30,15 +24,6 @@ export function resolveThemeColors(): { accentColor: string; stubColor: string; 
     edgeColor: edge || DEFAULT_EDGE,
     labelColor: label || DEFAULT_LABEL,
   };
-}
-
-export const BARNES_HUT_THRESHOLD = 1000;
-
-export function getFA2Settings(inferred: ForceAtlas2Settings, order: number): ForceAtlas2Settings {
-  if (order > BARNES_HUT_THRESHOLD) {
-    return { ...inferred, barnesHutOptimize: true };
-  }
-  return inferred;
 }
 
 export const MIN_SIZE = 4;

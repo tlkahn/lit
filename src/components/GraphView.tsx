@@ -2,15 +2,11 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { getFullSubgraph, getGraphSubgraph, getPagerank, getGraphPositions } from "../lib/ipc";
 import type { SubgraphResult } from "../lib/ipc";
 import { listen } from "@tauri-apps/api/event";
-import { buildGraph, resolveThemeColors, prefersReducedMotion, getFA2Settings } from "../lib/graphLayout";
+import { buildGraph, resolveThemeColors } from "../lib/graphLayout";
 import { getQualitySettings, getTierSettings, type TierSettings } from "../lib/qualityTiers";
 import { useThemeStore } from "../stores/theme";
-import { useWorkspaceStore } from "../stores/workspace";
-import { getCacheKey, loadPositions, savePositions } from "../lib/graphPositionCache";
-import { checkConvergence, getConvergenceOptions, type PositionMap, type ConvergenceState } from "../lib/graphConvergence";
 import { computeDiff, applyDiff, isDiffEmpty } from "../lib/graphDiff";
 import { isPerfEnabled, perfTable, type PerfEntry } from "../lib/perf";
-import { FpsCounter } from "../lib/fpsCounter";
 import { GraphToolbar } from "./GraphToolbar";
 import { GraphTooltip } from "./GraphTooltip";
 import { GraphSearch, getMatchingNodes } from "./GraphSearch";
@@ -26,15 +22,9 @@ export interface GraphViewProps {
 }
 
 export default function GraphView({ activePageId, initialMode, visible = true, onNavigate, onExit }: GraphViewProps) {
-  const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const containerRef = useRef<HTMLDivElement>(null);
   const sigmaRef = useRef<unknown>(null);
   const graphRef = useRef<unknown>(null);
-  const layoutRef = useRef<{ start: () => void; stop: () => void; kill: () => void } | null>(null);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const convergenceIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const perfFpsRef = useRef<FpsCounter | null>(null);
-  const perfTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hoveredNodeRef = useRef<string | null>(null);
   const rafIdRef = useRef<number>(0);
   const pendingPosRef = useRef<{ x: number; y: number } | null>(null);
@@ -177,67 +167,24 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
 
         const { default: Sigma } = await import("sigma");
         const { createNodeBorderProgram } = await import("@sigma/node-border");
-        const FA2Layout = (await import("graphology-layout-forceatlas2/worker")).default;
-        const { inferSettings } = await import("graphology-layout-forceatlas2");
-        const { random } = await import("graphology-layout");
 
         if (cancelled || !containerRef.current) return;
-
-        random.assign(graph);
 
         let rustPositions: Record<string, { x: number; y: number }> | null = null;
         try {
           rustPositions = await getGraphPositions();
         } catch {
-          // Rust positions not available — fall through to JS FA2
+          // Rust positions not available
         }
 
-        let allCached = false;
         if (rustPositions && Object.keys(rustPositions).length > 0) {
-          let covered = 0;
-          const total = graph.order;
           graph.forEachNode((node: string) => {
             const pos = rustPositions![node];
             if (pos) {
               graph.setNodeAttribute(node, "x", pos.x);
               graph.setNodeAttribute(node, "y", pos.y);
-              covered++;
             }
           });
-          if (total > 0 && covered / total >= 0.95) {
-            allCached = true;
-          }
-        }
-
-        const cacheKey = workspacePath ? getCacheKey(workspacePath, mode) : null;
-        if (!allCached) {
-          const cachedPositions = cacheKey ? loadPositions(cacheKey) : null;
-          if (cachedPositions) {
-            const uncachedNodes: string[] = [];
-            graph.forEachNode((node: string) => {
-              const cached = cachedPositions[node];
-              if (cached) {
-                graph.setNodeAttribute(node, "x", cached.x);
-                graph.setNodeAttribute(node, "y", cached.y);
-              } else {
-                uncachedNodes.push(node);
-              }
-            });
-            for (const node of uncachedNodes) {
-              const neighbors = graph.neighbors(node);
-              const positioned = neighbors.filter((n) => cachedPositions[n]);
-              if (positioned.length > 0) {
-                let sx = 0, sy = 0;
-                for (const n of positioned) {
-                  sx += cachedPositions[n]!.x;
-                  sy += cachedPositions[n]!.y;
-                }
-                graph.setNodeAttribute(node, "x", sx / positioned.length + (Math.random() - 0.5) * 20);
-                graph.setNodeAttribute(node, "y", sy / positioned.length + (Math.random() - 0.5) * 20);
-              }
-            }
-            allCached = uncachedNodes.length === 0 && graph.order > 0;
-          }
         }
 
         const filledProgram = createNodeBorderProgram({
@@ -351,73 +298,8 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
           restoreDefaultReducers();
         });
 
-        if (allCached) {
-          // All positions restored from cache — skip FA2 entirely
-        } else if (prefersReducedMotion()) {
-          const forceAtlas2 = await import("graphology-layout-forceatlas2");
-          t0 = perf ? performance.now() : 0;
-          forceAtlas2.default.assign(graph, { iterations: 100, settings: getFA2Settings(inferSettings(graph), graph.order) });
-          if (perf) {
-            perfEntries.push({ label: "FA2 (sync)", value: performance.now() - t0 });
-            perfEntries.push({ label: "Steady-state FPS", value: 0, unit: "fps", detail: "N/A (reduced motion)" });
-            perfEntries.push({ label: "JS heap", value: 0, detail: "Use Safari Web Inspector > Timelines > JS Allocations" });
-            perfTable("graph-init", perfEntries);
-          }
-        } else {
-          const FA2_TIMEOUT_MS = 5000;
-          const layout = new FA2Layout(graph, { settings: getFA2Settings(inferSettings(graph), graph.order) });
-          const fa2T0 = perf ? performance.now() : 0;
-          layout.start();
-          layoutRef.current = layout;
-
-          const convergenceOpts = getConvergenceOptions(graph.order);
-          let convergenceState: ConvergenceState = { consecutiveLow: 0 };
-          let prevPositions: PositionMap = {};
-
-          const stopLayout = () => {
-            layout.stop();
-            if (cacheKey) savePositions(cacheKey, graph);
-            if (perf) {
-              perfEntries.push({ label: "FA2 convergence", value: performance.now() - fa2T0 });
-              const fpsCounter = new FpsCounter();
-              perfFpsRef.current = fpsCounter;
-              fpsCounter.start();
-              perfTimerRef.current = setTimeout(() => {
-                perfFpsRef.current = null;
-                perfTimerRef.current = null;
-                const stats = fpsCounter.stop();
-                perfEntries.push({ label: "Steady-state FPS", value: stats.avg, unit: "fps", detail: `min=${stats.min.toFixed(0)} max=${stats.max.toFixed(0)} samples=${stats.samples}` });
-                perfEntries.push({ label: "JS heap", value: 0, detail: "Use Safari Web Inspector > Timelines > JS Allocations" });
-                perfTable("graph-init", perfEntries);
-              }, 3000);
-            }
-            sigma.getCamera().animatedReset();
-            if (convergenceIntervalRef.current) {
-              clearInterval(convergenceIntervalRef.current);
-              convergenceIntervalRef.current = null;
-            }
-            if (timerRef.current) {
-              clearTimeout(timerRef.current);
-              timerRef.current = null;
-            }
-          };
-
-          convergenceIntervalRef.current = setInterval(() => {
-            const currentPositions: PositionMap = {};
-            graph.forEachNode((node: string, attrs: Record<string, unknown>) => {
-              currentPositions[node] = { x: attrs.x as number, y: attrs.y as number };
-            });
-            const result = checkConvergence(prevPositions, currentPositions, convergenceState, convergenceOpts);
-            convergenceState = result.state;
-            prevPositions = currentPositions;
-            if (result.converged) {
-              stopLayout();
-            }
-          }, 200);
-
-          timerRef.current = setTimeout(() => {
-            stopLayout();
-          }, FA2_TIMEOUT_MS);
+        if (perf) {
+          perfTable("graph-init", perfEntries);
         }
 
         setGraphStats({ nodes: graph.order, edges: graph.size });
@@ -438,26 +320,6 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
       cancelAnimationFrame(rafIdRef.current);
       rafIdRef.current = 0;
       pendingPosRef.current = null;
-      if (convergenceIntervalRef.current) {
-        clearInterval(convergenceIntervalRef.current);
-        convergenceIntervalRef.current = null;
-      }
-      if (timerRef.current) {
-        clearTimeout(timerRef.current);
-        timerRef.current = null;
-      }
-      if (perfTimerRef.current) {
-        clearTimeout(perfTimerRef.current);
-        perfTimerRef.current = null;
-      }
-      if (perfFpsRef.current) {
-        perfFpsRef.current.stop();
-        perfFpsRef.current = null;
-      }
-      if (layoutRef.current) {
-        layoutRef.current.kill();
-        layoutRef.current = null;
-      }
       if (sigmaRef.current) {
         (sigmaRef.current as { kill: () => void }).kill();
         sigmaRef.current = null;
@@ -469,7 +331,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
 
   useEffect(() => {
     if (!visible) {
-      layoutRef.current?.stop();
+      // no-op when hidden; sigma stays alive
     } else {
       if (mode === "local" && activePageId !== lastRenderedSeedRef.current) {
         setReinitTrigger((c) => c + 1);
@@ -508,7 +370,6 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
           return;
         }
 
-        layoutRef.current?.stop();
         const { accentColor, stubColor } = resolveThemeColors();
         applyDiff(graph, diff, pagerank, accentColor, stubColor);
         setGraphStats({ nodes: graph.order, edges: graph.size });
@@ -527,8 +388,26 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   }, []);
 
   useEffect(() => {
-    const unlisten = listen("lit:layout-ready", () => {
-      console.log("Rust layout ready");
+    const unlisten = listen("lit:layout-ready", async () => {
+      const graph = graphRef.current as import("graphology").default | null;
+      const sigma = sigmaRef.current as { refresh: () => void; getCamera: () => { animatedReset: () => void } } | null;
+      if (!graph || !sigma) return;
+      try {
+        const positions = await getGraphPositions();
+        if (positions && Object.keys(positions).length > 0) {
+          graph.forEachNode((node: string) => {
+            const pos = positions[node];
+            if (pos) {
+              graph.setNodeAttribute(node, "x", pos.x);
+              graph.setNodeAttribute(node, "y", pos.y);
+            }
+          });
+          sigma.refresh();
+          sigma.getCamera().animatedReset();
+        }
+      } catch {
+        // Rust positions not available
+      }
     });
     return () => { unlisten.then((fn) => fn()); };
   }, []);

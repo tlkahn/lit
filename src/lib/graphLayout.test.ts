@@ -1,6 +1,5 @@
-import { describe, it, expect, afterEach, vi } from "vitest";
-import { buildGraph, computeNodeSize, resolveThemeColors, prefersReducedMotion, getFA2Settings, BARNES_HUT_THRESHOLD, MIN_SIZE, MAX_SIZE, SEED_COLOR } from "./graphLayout";
-import type { ForceAtlas2Settings } from "graphology-layout-forceatlas2";
+import { describe, it, expect, afterEach } from "vitest";
+import { buildGraph, computeNodeSize, resolveThemeColors, MIN_SIZE, MAX_SIZE, SEED_COLOR } from "./graphLayout";
 import type { SubgraphResult } from "./ipc";
 
 describe("graphLayout", () => {
@@ -155,27 +154,6 @@ describe("graphLayout", () => {
     });
   });
 
-  describe("prefersReducedMotion", () => {
-    it("returns true when matchMedia matches (prefers-reduced-motion: reduce)", () => {
-      vi.spyOn(window, "matchMedia").mockReturnValue({ matches: true } as MediaQueryList);
-      expect(prefersReducedMotion()).toBe(true);
-      vi.restoreAllMocks();
-    });
-
-    it("returns false when matchMedia does not match", () => {
-      vi.spyOn(window, "matchMedia").mockReturnValue({ matches: false } as MediaQueryList);
-      expect(prefersReducedMotion()).toBe(false);
-      vi.restoreAllMocks();
-    });
-
-    it("returns false when matchMedia is unavailable", () => {
-      const original = window.matchMedia;
-      Object.defineProperty(window, "matchMedia", { value: undefined, writable: true });
-      expect(prefersReducedMotion()).toBe(false);
-      Object.defineProperty(window, "matchMedia", { value: original, writable: true });
-    });
-  });
-
   describe("resolveThemeColors", () => {
     afterEach(() => {
       document.documentElement.style.removeProperty("--interactive-accent");
@@ -228,48 +206,4 @@ describe("graphLayout", () => {
     });
   });
 
-  describe("getFA2Settings", () => {
-    const baseSettings: ForceAtlas2Settings = {
-      linLogMode: false,
-      outboundAttractionDistribution: false,
-      adjustSizes: false,
-      edgeWeightInfluence: 1,
-      scalingRatio: 1,
-      strongGravityMode: false,
-      gravity: 1,
-      slowDown: 1,
-      barnesHutOptimize: false,
-      barnesHutTheta: 0.5,
-    };
-
-    it("returns inferred settings unchanged when order <= threshold", () => {
-      const result = getFA2Settings(baseSettings, BARNES_HUT_THRESHOLD);
-      expect(result).toEqual(baseSettings);
-    });
-
-    it("forces barnesHutOptimize: true when order > threshold", () => {
-      const result = getFA2Settings(baseSettings, BARNES_HUT_THRESHOLD + 1);
-      expect(result.barnesHutOptimize).toBe(true);
-    });
-
-    it("preserves barnesHutOptimize: true from inferred when order > 2000", () => {
-      const withBH = { ...baseSettings, barnesHutOptimize: true };
-      const result = getFA2Settings(withBH, 2500);
-      expect(result.barnesHutOptimize).toBe(true);
-    });
-
-    it("does not mutate input object", () => {
-      const input = { ...baseSettings };
-      getFA2Settings(input, 2000);
-      expect(input.barnesHutOptimize).toBe(false);
-    });
-
-    it("preserves all other inferred settings", () => {
-      const custom: ForceAtlas2Settings = { ...baseSettings, gravity: 5, scalingRatio: 10 };
-      const result = getFA2Settings(custom, BARNES_HUT_THRESHOLD + 1);
-      expect(result.gravity).toBe(5);
-      expect(result.scalingRatio).toBe(10);
-      expect(result.barnesHutOptimize).toBe(true);
-    });
-  });
 });

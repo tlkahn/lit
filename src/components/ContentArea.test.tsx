@@ -18,15 +18,6 @@ vi.mock("sigma", () => ({
 vi.mock("@sigma/node-border", () => ({
   createNodeBorderProgram: () => class {},
 }));
-vi.mock("graphology-layout-forceatlas2/worker", () => ({
-  default: class { start = vi.fn(); stop = vi.fn(); kill = vi.fn(); },
-}));
-vi.mock("graphology-layout-forceatlas2", () => ({
-  inferSettings: () => ({}),
-}));
-vi.mock("graphology-layout", () => ({
-  random: { assign: vi.fn() },
-}));
 
 import { globalJumpTracker } from "../editor/jumpTracker";
 
@@ -95,6 +86,7 @@ beforeEach(() => {
     if (cmd === "get_keymaps") return [];
     if (cmd === "get_graph_subgraph") return { nodes: [], edges: [] };
     if (cmd === "get_pagerank") return {};
+    if (cmd === "get_graph_positions") return {};
     throw new Error(`Unknown command: ${cmd}`);
   });
 });

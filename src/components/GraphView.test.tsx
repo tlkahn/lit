@@ -6,23 +6,9 @@ import * as graphLayout from "../lib/graphLayout";
 import * as qualityTiers from "../lib/qualityTiers";
 import { setPerfEnabled } from "../lib/perf";
 
-const mockFpsStart = vi.fn();
-const mockFpsStop = vi.fn().mockReturnValue({ avg: 60, min: 55, max: 65, samples: 180, durationMs: 3000 });
-const mockFpsIsRunning = vi.fn().mockReturnValue(false);
-
-vi.mock("../lib/fpsCounter", () => ({
-  FpsCounter: class MockFpsCounter {
-    start = mockFpsStart;
-    stop = mockFpsStop;
-    isRunning = mockFpsIsRunning;
-  },
-}));
-
 const mockSigmaKill = vi.fn();
-const mockLayoutStart = vi.fn();
-const mockLayoutStop = vi.fn();
-const mockLayoutKill = vi.fn();
 const mockSigmaOn = vi.fn();
+const mockSigmaOff = vi.fn();
 const mockSigmaSetSetting = vi.fn();
 const mockCameraAnimatedReset = vi.fn();
 const mockCameraAnimate = vi.fn();
@@ -34,6 +20,7 @@ vi.mock("sigma", () => ({
   default: class MockSigma {
     kill = mockSigmaKill;
     on = mockSigmaOn;
+    off = mockSigmaOff;
     setSetting = mockSigmaSetSetting;
     getCamera = () => ({ animatedReset: mockCameraAnimatedReset, animate: mockCameraAnimate });
     getNodeDisplayData = mockGetNodeDisplayData;
@@ -46,23 +33,6 @@ vi.mock("sigma", () => ({
 
 vi.mock("@sigma/node-border", () => ({
   createNodeBorderProgram: () => class MockProgram {},
-}));
-
-vi.mock("graphology-layout-forceatlas2/worker", () => ({
-  default: class MockFA2 {
-    start = mockLayoutStart;
-    stop = mockLayoutStop;
-    kill = mockLayoutKill;
-  },
-}));
-
-vi.mock("graphology-layout-forceatlas2", () => ({
-  default: { assign: vi.fn() },
-  inferSettings: () => ({}),
-}));
-
-vi.mock("graphology-layout", () => ({
-  random: { assign: vi.fn() },
 }));
 
 let rafQueue: Map<number, FrameRequestCallback> = new Map();
@@ -98,6 +68,8 @@ describe("GraphView", () => {
           };
         case "get_pagerank":
           return { "a.md": 0.4, "b.md": 0.6 };
+        case "get_graph_positions":
+          return {};
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -126,7 +98,7 @@ describe("GraphView", () => {
     expect(screen.getByTestId("graph-loading")).toBeTruthy();
   });
 
-  it("calls sigma.kill and layout.kill on unmount", async () => {
+  it("calls sigma.kill on unmount", async () => {
     const GraphView = (await import("./GraphView")).default;
     const { unmount } = render(<GraphView />);
     await waitFor(() => {
@@ -134,7 +106,6 @@ describe("GraphView", () => {
     });
     unmount();
     expect(mockSigmaKill).toHaveBeenCalled();
-    expect(mockLayoutKill).toHaveBeenCalled();
   });
 
   it("shows error state when IPC fails", async () => {
@@ -241,37 +212,104 @@ describe("GraphView", () => {
     document.documentElement.style.removeProperty("--text-faint");
   });
 
-  it("stops ForceAtlas2 layout after timeout", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+  it("no FA2 worker is started during init", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => {
+      expect(mockSigmaOn).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+    });
+    // No FA2 worker — just Sigma and Rust positions
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("get_graph_positions");
+  });
+
+  it("positions come from Rust IPC, not localStorage", async () => {
+    localStorage.setItem("lit-graph-pos:/test/ws:full", JSON.stringify({
+      positions: { "a.md": { x: 999, y: 999 }, "b.md": { x: 999, y: 999 } },
+      timestamp: Date.now(),
+    }));
+
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [
+              { id: "a.md", title: "A", is_stub: false },
+              { id: "b.md", title: "B", is_stub: false },
+            ],
+            edges: [["a.md", "b.md"]],
+          };
+        case "get_pagerank":
+          return { "a.md": 0.4, "b.md": 0.6 };
+        case "get_graph_positions":
+          return { "a.md": { x: 42, y: 42 }, "b.md": { x: 42, y: 42 } };
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const buildGraphSpy = vi.spyOn(graphLayout, "buildGraph");
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView />);
 
-    await waitFor(() => {
-      expect(mockLayoutStart).toHaveBeenCalled();
-    });
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
 
-    expect(mockLayoutStop).not.toHaveBeenCalled();
-    act(() => { vi.advanceTimersByTime(5000); });
-    expect(mockLayoutStop).toHaveBeenCalledTimes(1);
-    vi.useRealTimers();
+    const graph = buildGraphSpy.mock.results[0]!.value as import("graphology").default;
+    expect(graph.getNodeAttribute("a.md", "x")).toBe(42);
+    expect(graph.getNodeAttribute("a.md", "y")).toBe(42);
+
+    buildGraphSpy.mockRestore();
+    localStorage.removeItem("lit-graph-pos:/test/ws:full");
   });
 
-  it("does not call layout.stop() after unmount", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+  it("lit:layout-ready re-fetches Rust positions and refreshes sigma", async () => {
+    mockListen();
+    let posCallCount = 0;
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [
+              { id: "a.md", title: "A", is_stub: false },
+              { id: "b.md", title: "B", is_stub: false },
+            ],
+            edges: [["a.md", "b.md"]],
+          };
+        case "get_pagerank":
+          return { "a.md": 0.4, "b.md": 0.6 };
+        case "get_graph_positions":
+          posCallCount++;
+          if (posCallCount <= 1) return {};
+          return { "a.md": { x: 100, y: 200 }, "b.md": { x: 300, y: 400 } };
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
     const GraphView = (await import("./GraphView")).default;
-    const { unmount } = render(<GraphView />);
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
 
-    await waitFor(() => {
-      expect(mockLayoutStart).toHaveBeenCalled();
+    mockSigmaRefresh.mockClear();
+    mockCameraAnimatedReset.mockClear();
+
+    await act(async () => {
+      emitMockEvent("lit:layout-ready", {});
     });
 
-    unmount();
-    act(() => { vi.advanceTimersByTime(5000); });
-    expect(mockLayoutStop).not.toHaveBeenCalled();
-    vi.useRealTimers();
+    await waitFor(() => {
+      expect(mockSigmaRefresh).toHaveBeenCalled();
+    });
+    expect(mockCameraAnimatedReset).toHaveBeenCalled();
+    expect(posCallCount).toBe(2);
+
+    resetListenMock();
   });
 
-  // --- Phase 2 tests ---
+  // --- Toolbar & Mode tests ---
 
   it("renders GraphToolbar", async () => {
     const GraphView = (await import("./GraphView")).default;
@@ -416,19 +454,6 @@ describe("GraphView", () => {
     expect(mockCameraAnimatedReset).toHaveBeenCalled();
   });
 
-  it("camera resets after layout stops", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const GraphView = (await import("./GraphView")).default;
-    render(<GraphView />);
-
-    await waitFor(() => { expect(mockLayoutStart).toHaveBeenCalled(); });
-
-    act(() => { vi.advanceTimersByTime(5000); });
-    expect(mockLayoutStop).toHaveBeenCalledTimes(1);
-    expect(mockCameraAnimatedReset).toHaveBeenCalled();
-    vi.useRealTimers();
-  });
-
   it("moveBody updates tooltip position while node is hovered", async () => {
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView />);
@@ -559,88 +584,6 @@ describe("GraphView", () => {
     expect(document.querySelector(".graph-tooltip")).toBeNull();
   });
 
-  it("FA2 layout stops when convergence detected (before 5s timeout)", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const GraphView = (await import("./GraphView")).default;
-    render(<GraphView />);
-
-    await waitFor(() => {
-      expect(mockLayoutStart).toHaveBeenCalled();
-    });
-
-    // Mock FA2 doesn't move nodes, so positions are stable frame-to-frame.
-    // With default requiredSamples=5 and 200ms polling, convergence at ~1000ms.
-    expect(mockLayoutStop).not.toHaveBeenCalled();
-    act(() => { vi.advanceTimersByTime(1200); });
-    expect(mockLayoutStop).toHaveBeenCalledTimes(1);
-
-    // The 5s timeout should NOT fire again (already stopped)
-    mockLayoutStop.mockClear();
-    act(() => { vi.advanceTimersByTime(4000); });
-    expect(mockLayoutStop).not.toHaveBeenCalled();
-
-    vi.useRealTimers();
-  });
-
-  it("convergence polling interval is cleaned up on unmount", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const GraphView = (await import("./GraphView")).default;
-    const { unmount } = render(<GraphView />);
-
-    await waitFor(() => {
-      expect(mockLayoutStart).toHaveBeenCalled();
-    });
-
-    unmount();
-    // Advance past convergence time — no errors or calls after unmount
-    act(() => { vi.advanceTimersByTime(2000); });
-    expect(mockLayoutStop).not.toHaveBeenCalled();
-
-    vi.useRealTimers();
-  });
-
-  it("5s timeout still fires if convergence never reached", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-
-    // Override checkConvergence to never converge
-    const convergenceMod = await import("../lib/graphConvergence");
-    const spy = vi.spyOn(convergenceMod, "checkConvergence").mockReturnValue({
-      converged: false,
-      displacement: 10,
-      state: { consecutiveLow: 0 },
-    });
-
-    const GraphView = (await import("./GraphView")).default;
-    render(<GraphView />);
-
-    await waitFor(() => {
-      expect(mockLayoutStart).toHaveBeenCalled();
-    });
-
-    expect(mockLayoutStop).not.toHaveBeenCalled();
-    act(() => { vi.advanceTimersByTime(5000); });
-    expect(mockLayoutStop).toHaveBeenCalledTimes(1);
-
-    spy.mockRestore();
-    vi.useRealTimers();
-  });
-
-  it("when reduced motion is preferred, FA2 worker is NOT started; synchronous layout used", async () => {
-    const graphLayoutMod = await import("../lib/graphLayout");
-    const spy = vi.spyOn(graphLayoutMod, "prefersReducedMotion").mockReturnValue(true);
-
-    const GraphView = (await import("./GraphView")).default;
-    render(<GraphView />);
-
-    await waitFor(() => {
-      expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
-    });
-
-    expect(mockLayoutStart).not.toHaveBeenCalled();
-
-    spy.mockRestore();
-  });
-
   it("enterNode sets cursor to pointer, leaveNode resets to grab", async () => {
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView />);
@@ -662,7 +605,7 @@ describe("GraphView", () => {
     expect(canvas.style.cursor).toBe("grab");
   });
 
-  // --- Phase 3 Slice 6: Search integration ---
+  // --- Search integration ---
 
   it("Cmd+F on graph container opens search overlay", async () => {
     const GraphView = (await import("./GraphView")).default;
@@ -725,7 +668,7 @@ describe("GraphView", () => {
     expect(mockSigmaSetSetting).toHaveBeenCalledWith("edgeReducer", null);
   });
 
-  // --- Phase 3 Slice 7: Escape to exit ---
+  // --- Escape to exit ---
 
   it("Escape on graph container (search closed) calls onExit", async () => {
     const onExit = vi.fn();
@@ -775,7 +718,7 @@ describe("GraphView", () => {
     expect(onExit).not.toHaveBeenCalled();
   });
 
-  // --- Phase 3 Slice 8: Theme reactivity ---
+  // --- Theme reactivity ---
 
   it("when activeThemeId changes, sigma.refresh is called to update colors", async () => {
     const { useThemeStore } = await import("../stores/theme");
@@ -803,7 +746,7 @@ describe("GraphView", () => {
     expect(screen.getByTestId("graph-view")).toBeTruthy();
   });
 
-  // --- Phase 3 Slice 9: Accessibility aria-label ---
+  // --- Accessibility aria-label ---
 
   it("after loading, container has aria-label with node and edge counts", async () => {
     const GraphView = (await import("./GraphView")).default;
@@ -828,7 +771,7 @@ describe("GraphView", () => {
     expect(container.getAttribute("aria-label")).toBe("Knowledge graph loading");
   });
 
-  // --- Issue #4: Theme-aware dim color ---
+  // --- Theme-aware dim color ---
 
   it("enterNode nodeReducer uses theme dim color for non-neighbors", async () => {
     document.documentElement.style.setProperty("--background-modifier-border", "#3d444d");
@@ -873,42 +816,7 @@ describe("GraphView", () => {
     document.documentElement.style.removeProperty("--background-modifier-border");
   });
 
-  // --- Issue #2: Full theme reactivity (edge + label colors) ---
-
-  it("when perf is enabled, unmounting during FPS measurement stops the counter and cancels the timer", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    setPerfEnabled(true);
-
-    const convergenceMod = await import("../lib/graphConvergence");
-    const spy = vi.spyOn(convergenceMod, "checkConvergence").mockReturnValue({
-      converged: false,
-      displacement: 10,
-      state: { consecutiveLow: 0 },
-    });
-
-    const GraphView = (await import("./GraphView")).default;
-    const { unmount } = render(<GraphView />);
-
-    await waitFor(() => {
-      expect(mockLayoutStart).toHaveBeenCalled();
-    });
-
-    // Trigger stopLayout via 5s timeout → creates FpsCounter + 3s setTimeout
-    act(() => { vi.advanceTimersByTime(5000); });
-    expect(mockFpsStart).toHaveBeenCalled();
-
-    // Unmount before the 3s FPS timer fires — should stop the counter and cancel the timer
-    unmount();
-    expect(mockFpsStop).toHaveBeenCalledTimes(1);
-
-    // The leaked 3s setTimeout would fire here — but cleanup cancelled it
-    act(() => { vi.advanceTimersByTime(3000); });
-    expect(mockFpsStop).toHaveBeenCalledTimes(1);
-
-    spy.mockRestore();
-    setPerfEnabled(false);
-    vi.useRealTimers();
-  });
+  // --- Full theme reactivity (edge + label colors) ---
 
   it("theme change updates sigma defaultEdgeColor and labelColor settings", async () => {
     document.documentElement.style.setProperty("--text-faint", "#656c76");
@@ -931,7 +839,7 @@ describe("GraphView", () => {
     document.documentElement.style.removeProperty("--text-normal");
   });
 
-  // --- Phase C: Adaptive Quality Tiers ---
+  // --- Adaptive Quality Tiers ---
 
   it("tierSettingsRef default is derived from getTierSettings('medium'), not hardcoded", async () => {
     const spy = vi.spyOn(qualityTiers, "getTierSettings");
@@ -1142,20 +1050,17 @@ describe("GraphView", () => {
     spy.mockRestore();
   });
 
-  // --- Phase D: Keep Sigma/Graphology Alive ---
+  // --- Keep Sigma/Graphology Alive ---
 
-  it("visible=false stops FA2 layout but keeps sigma/graphology alive", async () => {
+  it("visible=false keeps sigma alive", async () => {
     const GraphView = (await import("./GraphView")).default;
     const { rerender } = render(<GraphView visible={true} />);
     await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
-    await waitFor(() => { expect(mockLayoutStart).toHaveBeenCalled(); });
 
-    mockLayoutStop.mockClear();
     await act(async () => {
       rerender(<GraphView visible={false} />);
     });
 
-    expect(mockLayoutStop).toHaveBeenCalled();
     expect(mockSigmaKill).not.toHaveBeenCalled();
   });
 
@@ -1213,134 +1118,6 @@ describe("GraphView", () => {
     });
   });
 
-  // --- Phase D: Layout Position Caching ---
-
-  it("saves positions to localStorage after FA2 convergence", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const { useWorkspaceStore } = await import("../stores/workspace");
-    useWorkspaceStore.setState({ workspacePath: "/test/ws" });
-
-    const cacheKey = "lit-graph-pos:/test/ws:full";
-    expect(localStorage.getItem(cacheKey)).toBeNull();
-
-    const GraphView = (await import("./GraphView")).default;
-    render(<GraphView />);
-
-    await waitFor(() => { expect(mockLayoutStart).toHaveBeenCalled(); });
-
-    // Trigger FA2 stop via timeout
-    act(() => { vi.advanceTimersByTime(5000); });
-    expect(mockLayoutStop).toHaveBeenCalled();
-
-    const stored = localStorage.getItem(cacheKey);
-    expect(stored).not.toBeNull();
-    const parsed = JSON.parse(stored!);
-    expect(parsed.positions).toBeDefined();
-    expect(parsed.timestamp).toBeDefined();
-
-    localStorage.removeItem(cacheKey);
-    useWorkspaceStore.setState({ workspacePath: null });
-    vi.useRealTimers();
-  });
-
-  it("new nodes get positions near neighbors when partial cache exists", async () => {
-    mockInvoke((cmd) => {
-      switch (cmd) {
-        case "get_graph_subgraph":
-          return {
-            nodes: [
-              { id: "a.md", title: "A", is_stub: false },
-              { id: "b.md", title: "B", is_stub: false },
-              { id: "c.md", title: "C", is_stub: false },
-            ],
-            edges: [["a.md", "b.md"], ["a.md", "c.md"]],
-          };
-        case "get_pagerank":
-          return { "a.md": 0.4, "b.md": 0.3, "c.md": 0.3 };
-        default:
-          throw new Error(`Unknown command: ${cmd}`);
-      }
-    });
-
-    const { useWorkspaceStore } = await import("../stores/workspace");
-    useWorkspaceStore.setState({ workspacePath: "/test/ws" });
-
-    const cacheKey = "lit-graph-pos:/test/ws:full";
-    const cacheData = {
-      positions: { "a.md": { x: 100, y: 200 }, "b.md": { x: 300, y: 400 } },
-      timestamp: Date.now(),
-    };
-    localStorage.setItem(cacheKey, JSON.stringify(cacheData));
-
-    const buildGraphSpy = vi.spyOn(graphLayout, "buildGraph");
-    const GraphView = (await import("./GraphView")).default;
-    render(<GraphView />);
-
-    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
-
-    const graph = buildGraphSpy.mock.results[0]!.value as import("graphology").default;
-    const cx = graph.getNodeAttribute("c.md", "x") as number;
-    const cy = graph.getNodeAttribute("c.md", "y") as number;
-    // C links to A (100,200) — should be near A, not random over 0-100
-    const distToA = Math.sqrt((cx - 100) ** 2 + (cy - 200) ** 2);
-    expect(distToA).toBeLessThan(50);
-
-    buildGraphSpy.mockRestore();
-    localStorage.removeItem(cacheKey);
-    useWorkspaceStore.setState({ workspacePath: null });
-  });
-
-  it("skips FA2 entirely when all positions are cached", async () => {
-    const { useWorkspaceStore } = await import("../stores/workspace");
-    useWorkspaceStore.setState({ workspacePath: "/test/ws" });
-
-    const cacheKey = "lit-graph-pos:/test/ws:full";
-    const cacheData = {
-      positions: { "a.md": { x: 100, y: 200 }, "b.md": { x: 300, y: 400 } },
-      timestamp: Date.now(),
-    };
-    localStorage.setItem(cacheKey, JSON.stringify(cacheData));
-
-    const GraphView = (await import("./GraphView")).default;
-    render(<GraphView />);
-
-    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
-    await waitFor(() => { expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument(); });
-
-    expect(mockLayoutStart).not.toHaveBeenCalled();
-
-    localStorage.removeItem(cacheKey);
-    useWorkspaceStore.setState({ workspacePath: null });
-  });
-
-  it("restores cached positions instead of randomizing", async () => {
-    const { useWorkspaceStore } = await import("../stores/workspace");
-    useWorkspaceStore.setState({ workspacePath: "/test/ws" });
-
-    const cacheKey = "lit-graph-pos:/test/ws:full";
-    const cacheData = {
-      positions: { "a.md": { x: 100, y: 200 }, "b.md": { x: 300, y: 400 } },
-      timestamp: Date.now(),
-    };
-    localStorage.setItem(cacheKey, JSON.stringify(cacheData));
-
-    const buildGraphSpy = vi.spyOn(graphLayout, "buildGraph");
-    const GraphView = (await import("./GraphView")).default;
-    render(<GraphView />);
-
-    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
-
-    const graph = buildGraphSpy.mock.results[0]!.value as import("graphology").default;
-    expect(graph.getNodeAttribute("a.md", "x")).toBe(100);
-    expect(graph.getNodeAttribute("a.md", "y")).toBe(200);
-    expect(graph.getNodeAttribute("b.md", "x")).toBe(300);
-    expect(graph.getNodeAttribute("b.md", "y")).toBe(400);
-
-    buildGraphSpy.mockRestore();
-    localStorage.removeItem(cacheKey);
-    useWorkspaceStore.setState({ workspacePath: null });
-  });
-
   it("huge graph: clearing search query restores hide-all-edges reducer", async () => {
     const mockGraph = {
       order: 25000, size: 30000,
@@ -1375,7 +1152,7 @@ describe("GraphView", () => {
     spy.mockRestore();
   });
 
-  // --- Phase D Remedy 2: Incremental Graph Diff ---
+  // --- Incremental Graph Diff ---
 
   it("listens to lit:graph-updated and applies incremental diff (new node appears)", async () => {
     mockListen();
@@ -1403,6 +1180,8 @@ describe("GraphView", () => {
           };
         case "get_pagerank":
           return { "a.md": 0.4, "b.md": 0.3, "c.md": 0.3 };
+        case "get_graph_positions":
+          return {};
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -1440,6 +1219,8 @@ describe("GraphView", () => {
           };
         case "get_pagerank":
           return { "a.md": 0.4, "b.md": 0.6 };
+        case "get_graph_positions":
+          return {};
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -1488,6 +1269,8 @@ describe("GraphView", () => {
           };
         case "get_pagerank":
           return { "a.md": 0.4, "b.md": 0.3, "d.md": 0.3 };
+        case "get_graph_positions":
+          return {};
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -1541,6 +1324,8 @@ describe("GraphView", () => {
         case "get_pagerank":
           if (ipcCallCount <= 2) return { "a.md": 0.4, "b.md": 0.6 };
           return new Promise((resolve) => { resolve({ "a.md": 0.4, "b.md": 0.6 }); });
+        case "get_graph_positions":
+          return {};
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -1577,56 +1362,6 @@ describe("GraphView", () => {
         { id: "b.md", title: "B", is_stub: false },
       ],
       edges: [["a.md", "b.md"]],
-    });
-
-    resetListenMock();
-  });
-
-  it("stops FA2 layout before applying diff from lit:graph-updated", async () => {
-    mockListen();
-    let initDone = false;
-    mockInvoke((cmd) => {
-      switch (cmd) {
-        case "get_graph_subgraph":
-          if (!initDone) {
-            return {
-              nodes: [
-                { id: "a.md", title: "A", is_stub: false },
-                { id: "b.md", title: "B", is_stub: false },
-              ],
-              edges: [["a.md", "b.md"]],
-            };
-          }
-          return {
-            nodes: [
-              { id: "a.md", title: "A", is_stub: false },
-              { id: "b.md", title: "B", is_stub: false },
-              { id: "c.md", title: "C", is_stub: false },
-            ],
-            edges: [["a.md", "b.md"], ["a.md", "c.md"]],
-          };
-        case "get_pagerank":
-          return { "a.md": 0.4, "b.md": 0.3, "c.md": 0.3 };
-        default:
-          throw new Error(`Unknown command: ${cmd}`);
-      }
-    });
-
-    const GraphView = (await import("./GraphView")).default;
-    render(<GraphView />);
-    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
-
-    // Wait for FA2 convergence to stop the layout (interval fires every 200ms)
-    await waitFor(() => { expect(mockLayoutStop).toHaveBeenCalled(); }, { timeout: 3000 });
-    initDone = true;
-    mockLayoutStop.mockClear();
-
-    await act(async () => {
-      emitMockEvent("lit:graph-updated", {});
-    });
-
-    await waitFor(() => {
-      expect(mockLayoutStop).toHaveBeenCalled();
     });
 
     resetListenMock();
