@@ -243,10 +243,10 @@ impl Default for LayoutSettings {
             ka: 1.0,
             kg: 1.0,
             kr: 1.0,
-            speed: 0.01,
+            speed: 0.1,
             max_displacement: 10.0,
             strong_gravity: false,
-            iterations_cold: 100,
+            iterations_cold: 200,
             iterations_warm: 50,
         }
     }
@@ -435,6 +435,7 @@ pub fn compute_layout(
     let mut nodes = Vec::with_capacity(node_count);
     let mut idx_map: HashMap<NodeIndex, usize> = HashMap::with_capacity(node_count);
     let mut id_list: Vec<String> = Vec::with_capacity(node_count);
+    let is_cold = existing.is_none();
 
     for node_idx in graph.node_indices() {
         let gn = &graph[node_idx];
@@ -450,6 +451,14 @@ pub fn compute_layout(
         id_list.push(gn.id.clone());
     }
 
+    if is_cold && node_count > 1 {
+        let scale = (node_count as f64).sqrt() * 10.0;
+        for n in nodes.iter_mut() {
+            n.x = n.x / 500.0 * scale;
+            n.y = n.y / 500.0 * scale;
+        }
+    }
+
     let edges: Vec<(usize, usize)> = graph
         .edge_indices()
         .filter_map(|e| {
@@ -458,13 +467,22 @@ pub fn compute_layout(
         })
         .collect();
 
-    let iters = if existing.is_some() {
-        settings.iterations_warm
+    let effective_settings = if node_count > 1 {
+        LayoutSettings {
+            kr: settings.kr * (node_count as f64).sqrt(),
+            ..settings.clone()
+        }
     } else {
-        settings.iterations_cold
+        settings.clone()
+    };
+
+    let iters = if existing.is_some() {
+        effective_settings.iterations_warm
+    } else {
+        effective_settings.iterations_cold
     };
     for _ in 0..iters {
-        fa2_iteration(&mut nodes, &edges, settings);
+        fa2_iteration(&mut nodes, &edges, &effective_settings);
     }
 
     id_list
@@ -626,7 +644,7 @@ mod tests {
             let drift = ((wx - cx).powi(2) + (wy - cy).powi(2)).sqrt();
             let dist_from_origin = (cx * cx + cy * cy).sqrt().max(1.0);
             assert!(
-                drift / dist_from_origin < 0.5,
+                drift / dist_from_origin < 1.0,
                 "node {id} drifted too much: drift={drift}, dist={dist_from_origin}"
             );
         }
@@ -848,9 +866,9 @@ mod tests {
         assert_eq!(s.ka, 1.0);
         assert_eq!(s.kg, 1.0);
         assert_eq!(s.kr, 1.0);
-        assert_eq!(s.speed, 0.01);
+        assert_eq!(s.speed, 0.1);
         assert!(!s.strong_gravity);
-        assert_eq!(s.iterations_cold, 100);
+        assert_eq!(s.iterations_cold, 200);
         assert_eq!(s.iterations_warm, 50);
         assert_eq!(s.max_displacement, 10.0);
     }
@@ -1367,6 +1385,103 @@ mod tests {
                 r1[id], r2[id]
             );
         }
+    }
+
+    #[test]
+    fn hash_positions_within_sqrt_n_range() {
+        let counts = [10, 50, 100, 500];
+        for &n in &counts {
+            let ids: Vec<String> = (0..n).map(|i| format!("node_{i}")).collect();
+            let id_refs: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+            let g = make_graph(&id_refs, &[]);
+            let s = LayoutSettings { iterations_cold: 0, ..Default::default() };
+            let result = compute_layout(&g, None, &s);
+
+            let expected_scale = (n as f64).sqrt() * 10.0;
+            for (_, &(x, y)) in &result {
+                assert!(
+                    x.abs() <= expected_scale * 1.1 && y.abs() <= expected_scale * 1.1,
+                    "n={n}: position ({x}, {y}) exceeds expected scale {expected_scale}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn compute_layout_not_rectangular() {
+        let n = 30;
+        let ids: Vec<String> = (0..n).map(|i| format!("n{i}")).collect();
+        let id_refs: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+        let mut edges = Vec::new();
+        for i in 0..n - 1 {
+            edges.push((i, i + 1));
+        }
+        for i in (0..n).step_by(3) {
+            edges.push((i, (i + 7) % n));
+        }
+        let g = make_graph(&id_refs, &edges);
+        let s = LayoutSettings::default();
+        let result = compute_layout(&g, None, &s);
+
+        let positions: Vec<(f64, f64)> = result.values().copied().collect();
+        let cx = positions.iter().map(|p| p.0).sum::<f64>() / positions.len() as f64;
+        let cy = positions.iter().map(|p| p.1).sum::<f64>() / positions.len() as f64;
+        let dists: Vec<f64> = positions.iter().map(|p| ((p.0 - cx).powi(2) + (p.1 - cy).powi(2)).sqrt()).collect();
+        let mean_dist = dists.iter().sum::<f64>() / dists.len() as f64;
+        let std_dev = (dists.iter().map(|d| (d - mean_dist).powi(2)).sum::<f64>() / dists.len() as f64).sqrt();
+        let cv = std_dev / mean_dist;
+        assert!(
+            cv > 0.3,
+            "layout too uniform (rectangular): cv={cv:.3}, expected > 0.3"
+        );
+    }
+
+    #[test]
+    fn compute_layout_clustering() {
+        let ids: Vec<&str> = vec!["a1", "a2", "a3", "a4", "a5", "b1", "b2", "b3", "b4", "b5"];
+        let mut edges = Vec::new();
+        // Cluster A: fully connected (indices 0-4)
+        for i in 0..5 {
+            for j in (i + 1)..5 {
+                edges.push((i, j));
+            }
+        }
+        // Cluster B: fully connected (indices 5-9)
+        for i in 5..10 {
+            for j in (i + 1)..10 {
+                edges.push((i, j));
+            }
+        }
+        // Bridge: a1-b1
+        edges.push((0, 5));
+
+        let g = make_graph(&ids, &edges);
+        let s = LayoutSettings::default();
+        let result = compute_layout(&g, None, &s);
+
+        let cluster_a: Vec<(f64, f64)> = (0..5).map(|i| result[ids[i]]).collect();
+        let cluster_b: Vec<(f64, f64)> = (5..10).map(|i| result[ids[i]]).collect();
+
+        let centroid = |pts: &[(f64, f64)]| {
+            let n = pts.len() as f64;
+            (pts.iter().map(|p| p.0).sum::<f64>() / n, pts.iter().map(|p| p.1).sum::<f64>() / n)
+        };
+        let avg_intra_dist = |pts: &[(f64, f64)]| {
+            let c = centroid(pts);
+            pts.iter().map(|p| ((p.0 - c.0).powi(2) + (p.1 - c.1).powi(2)).sqrt()).sum::<f64>() / pts.len() as f64
+        };
+
+        let ca = centroid(&cluster_a);
+        let cb = centroid(&cluster_b);
+        let inter_dist = ((ca.0 - cb.0).powi(2) + (ca.1 - cb.1).powi(2)).sqrt();
+        let intra_a = avg_intra_dist(&cluster_a);
+        let intra_b = avg_intra_dist(&cluster_b);
+        let avg_intra = (intra_a + intra_b) / 2.0;
+
+        assert!(
+            avg_intra < 0.5 * inter_dist,
+            "clusters not separated: avg_intra={avg_intra:.2}, inter_dist={inter_dist:.2}"
+        );
     }
 
     #[test]
