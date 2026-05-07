@@ -1,4 +1,5 @@
 pub mod error;
+pub mod layout;
 pub mod extract;
 pub mod indexer;
 pub mod knowledge;
