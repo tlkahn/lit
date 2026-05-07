@@ -41,6 +41,7 @@ enum PdfCommand {
         page_index: usize,
         dpi: u32,
     },
+    Shutdown,
 }
 
 pub fn create_pdf_temp_dir() -> Result<PathBuf, String> {
@@ -62,6 +63,7 @@ pub fn cleanup_pdf_temp_dir(dir: &std::path::Path) {
 
 pub struct PdfRenderThread {
     cmd_tx: mpsc::Sender<PdfCommand>,
+    handle: Option<thread::JoinHandle<()>>,
     temp_dir: PathBuf,
 }
 
@@ -73,7 +75,7 @@ impl PdfRenderThread {
         let temp_dir = create_pdf_temp_dir()?;
         let thread_temp_dir = temp_dir.clone();
 
-        thread::spawn(move || {
+        let handle = thread::spawn(move || {
             let pdfium = match lmpdf::Pdfium::open(&lib_path) {
                 Ok(p) => {
                     let _ = ready_tx.send(Ok(()));
@@ -181,6 +183,9 @@ impl PdfRenderThread {
                             }
                         }
                     }
+                    PdfCommand::Shutdown => {
+                        break;
+                    }
                 }
             }
         });
@@ -189,7 +194,11 @@ impl PdfRenderThread {
             .recv()
             .map_err(|_| "Render thread died during init".to_string())??;
 
-        Ok(Self { cmd_tx, temp_dir })
+        Ok(Self {
+            cmd_tx,
+            handle: Some(handle),
+            temp_dir,
+        })
     }
 
     pub fn open(&self, path: &str) -> Result<PdfInfo, String> {
@@ -232,6 +241,24 @@ impl PdfRenderThread {
     pub fn temp_dir(&self) -> &std::path::Path {
         &self.temp_dir
     }
+}
+
+impl Drop for PdfRenderThread {
+    fn drop(&mut self) {
+        let _ = self.cmd_tx.send(PdfCommand::Shutdown);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+        cleanup_pdf_temp_dir(&self.temp_dir);
+    }
+}
+
+#[cfg(test)]
+pub(crate) static PDFIUM_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+pub(crate) fn lock_pdfium() -> std::sync::MutexGuard<'static, ()> {
+    PDFIUM_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 pub fn find_libpdfium() -> Option<PathBuf> {
@@ -286,6 +313,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_open_returns_pdf_info() {
+        let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
         let info = thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
@@ -296,6 +324,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_render_page_writes_png_file() {
+        let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
         thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
@@ -315,6 +344,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_close_cleans_up_temp_dir() {
+        let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
         let temp_dir = thread.temp_dir().to_path_buf();
@@ -328,6 +358,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_close_succeeds() {
+        let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
         thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
@@ -337,6 +368,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_render_after_close_returns_error() {
+        let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
         thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
@@ -350,6 +382,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_open_invalid_path_returns_error() {
+        let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
         let result = thread.open("/nonexistent/fake.pdf");
@@ -359,6 +392,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_open_replaces_previous_document() {
+        let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
         let path = fixture_path("sample.pdf").to_str().unwrap().to_string();
@@ -370,6 +404,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_render_page_with_dpi() {
+        let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
         thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
@@ -389,6 +424,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_render_page_encodes_dpi_in_filename() {
+        let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
         thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
@@ -406,6 +442,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_render_page_returns_cached_without_rewrite() {
+        let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
         thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
@@ -427,6 +464,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_cache_invalidated_on_open() {
+        let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
         let pdf = fixture_path("sample.pdf").to_str().unwrap().to_string();
@@ -449,6 +487,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_prefetch_creates_png_without_blocking() {
+        let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
         thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
@@ -465,6 +504,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_prefetch_no_document_does_not_panic() {
+        let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
         let result = thread.prefetch(0, 144);
@@ -474,6 +514,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_prefetch_populates_cache_for_subsequent_render() {
+        let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
         thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
@@ -505,5 +546,69 @@ mod tests {
             height: 0,
         };
         let _: usize = rendered.page_index;
+    }
+
+    #[test]
+    fn test_shutdown_command_variant_exists() {
+        let _cmd = PdfCommand::Shutdown;
+    }
+
+    #[test]
+    #[ignore]
+    fn test_drop_joins_thread() {
+        let _guard = lock_pdfium();
+        let lib = require_pdfium();
+        let temp_dir;
+        {
+            let thread = PdfRenderThread::new(&lib).unwrap();
+            temp_dir = thread.temp_dir().to_path_buf();
+            thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+            assert!(temp_dir.exists());
+        }
+        assert!(!temp_dir.exists(), "temp dir should be cleaned up on drop");
+        let thread2 = PdfRenderThread::new(&lib).unwrap();
+        let info = thread2.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+        assert_eq!(info.page_count, 2);
+    }
+
+    #[test]
+    #[ignore]
+    fn test_close_then_reopen_works() {
+        let _guard = lock_pdfium();
+        let lib = require_pdfium();
+        let thread = PdfRenderThread::new(&lib).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+        thread.close().unwrap();
+        let info = thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+        assert_eq!(info.page_count, 2);
+    }
+
+    #[test]
+    #[ignore]
+    fn test_sequential_create_drop_does_not_crash() {
+        let _guard = lock_pdfium();
+        let lib = require_pdfium();
+        for _ in 0..5 {
+            let thread = PdfRenderThread::new(&lib).unwrap();
+            thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+            drop(thread);
+        }
+    }
+
+    #[test]
+    fn test_pdfium_lock_is_acquirable() {
+        let guard = lock_pdfium();
+        assert!(std::sync::Mutex::try_lock(&PDFIUM_TEST_LOCK).is_err());
+        drop(guard);
+    }
+
+    #[test]
+    fn test_pdfium_lock_recovers_from_poison() {
+        let handle = std::thread::spawn(|| {
+            let _guard = lock_pdfium();
+            panic!("intentional poison");
+        });
+        let _ = handle.join();
+        let _guard = lock_pdfium();
     }
 }

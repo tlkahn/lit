@@ -120,7 +120,7 @@ pub fn pdf_close(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pdf::find_libpdfium;
+    use crate::pdf::{find_libpdfium, lock_pdfium};
     use std::path::PathBuf;
 
     fn fixture_path(name: &str) -> PathBuf {
@@ -139,6 +139,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_open_creates_thread_and_returns_info() {
+        let _guard = lock_pdfium();
         let lib = require_pdfium();
         let state = PdfViewerState::new(&lib);
         let info = state
@@ -150,6 +151,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_render_returns_png_file() {
+        let _guard = lock_pdfium();
         let lib = require_pdfium();
         let state = PdfViewerState::new(&lib);
         state
@@ -163,6 +165,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_close_removes_thread_and_temp_dir() {
+        let _guard = lock_pdfium();
         let lib = require_pdfium();
         let state = PdfViewerState::new(&lib);
         state
@@ -180,6 +183,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_open_replaces_old_thread_and_cleans_temp_dir() {
+        let _guard = lock_pdfium();
         let lib = require_pdfium();
         let state = PdfViewerState::new(&lib);
         let pdf = fixture_path("sample.pdf").to_str().unwrap().to_string();
@@ -207,6 +211,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_prefetch_for_window_succeeds() {
+        let _guard = lock_pdfium();
         let lib = require_pdfium();
         let state = PdfViewerState::new(&lib);
         state
@@ -229,5 +234,21 @@ mod tests {
         let idx: usize = 0;
         let _ = state.render_for_window("x", idx, 72);
         let _ = state.prefetch_for_window("x", idx, 72);
+    }
+
+    #[test]
+    #[ignore]
+    fn test_open_for_window_drops_old_thread_cleanly() {
+        let _guard = lock_pdfium();
+        let lib = require_pdfium();
+        let state = PdfViewerState::new(&lib);
+        let pdf = fixture_path("sample.pdf").to_str().unwrap().to_string();
+        state.open_for_window("win", &pdf).unwrap();
+        let old_temp = state.temp_dir_for_window("win").unwrap();
+        assert!(old_temp.exists());
+        state.open_for_window("win", &pdf).unwrap();
+        assert!(!old_temp.exists(), "old temp dir should be cleaned up by Drop");
+        let new_temp = state.temp_dir_for_window("win").unwrap();
+        assert!(new_temp.exists());
     }
 }
