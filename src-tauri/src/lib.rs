@@ -15,7 +15,7 @@ use commands::graph::GraphRegistry;
 use commands::workspace::{PendingCols, PendingFiles, PendingLines, PendingWorkspaces, WorkspaceRegistry};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use tauri::{Emitter, Manager, WebviewWindowBuilder};
+use tauri::{Manager, WebviewWindowBuilder};
 use workspace::write_hash::WriteHashRegistry;
 use bib::cache::BibCache;
 
@@ -143,52 +143,12 @@ pub fn run() {
                     build_state.start_build(root.clone());
 
                     tauri::async_runtime::spawn_blocking(move || {
-                        match crate::graph::indexer::GraphIndex::load_from_store(root.clone()) {
-                            Ok(Some(gi)) => {
-                                let gi = Arc::new(gi);
-                                graph_reg.indices.lock().unwrap().insert(root.clone(), Arc::clone(&gi));
-                                build_state.mark_ready(&root);
-                                let _ = handle.emit("lit:graph-updated", ());
-                                commands::graph::spawn_layout(Arc::clone(&gi), handle.clone());
-
-                                let handle2 = handle.clone();
-                                let ann_enabled = crate::preferences::annotations_enabled(&handle2);
-                                let gi2 = Arc::clone(&gi);
-                                let handle3 = handle.clone();
-                                tauri::async_runtime::spawn_blocking(move || {
-                                    match gi.sync_with_disk(ann_enabled) {
-                                        Ok(true) => {
-                                            let _ = handle2.emit("lit:graph-updated", ());
-                                            commands::graph::spawn_layout(gi2, handle3);
-                                        }
-                                        Ok(false) => {}
-                                        Err(e) => tracing::error!(error = %e, "background graph sync failed"),
-                                    }
-                                });
-                                return;
-                            }
-                            Ok(None) => {}
-                            Err(e) => tracing::warn!(error = %e, "load_from_store failed, falling back to cold start"),
-                        }
-
-                        let emit_handle = handle.clone();
-                        let callback = move |p: crate::graph::progress::IndexProgress| {
-                            let _ = emit_handle.emit("lit:index-progress", &p);
-                        };
-                        let ann_enabled = crate::preferences::annotations_enabled(&handle);
-                        match crate::graph::indexer::GraphIndex::build_with_progress(root.clone(), &callback, ann_enabled) {
-                            Ok(gi) => {
-                                let gi = Arc::new(gi);
-                                graph_reg.indices.lock().unwrap().insert(root.clone(), Arc::clone(&gi));
-                                build_state.mark_ready(&root);
-                                let _ = handle.emit("lit:graph-updated", ());
-                                commands::graph::spawn_layout(gi, handle.clone());
-                            }
-                            Err(e) => {
-                                tracing::error!(error = %e, "early graph indexing failed");
-                                build_state.mark_failed(&root, e.to_string());
-                            }
-                        }
+                        commands::graph::initialize_graph_index(
+                            root,
+                            build_state,
+                            graph_reg,
+                            handle,
+                        );
                     });
                 }
             }

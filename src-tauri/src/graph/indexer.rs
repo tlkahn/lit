@@ -1005,8 +1005,12 @@ impl GraphIndex {
             let mut pos = self.positions.lock().unwrap();
             *pos = result.clone();
         }
-        if let Ok(store) = self.store.lock() {
-            let _ = store.save_positions(&result);
+        match self.store.lock() {
+            Ok(store) => match store.save_positions(&result) {
+                Ok(()) => tracing::debug!("layout positions saved"),
+                Err(e) => tracing::warn!(error = %e, "failed to save layout positions"),
+            },
+            Err(e) => tracing::warn!(error = %e, "failed to lock store for position save"),
         }
         self.layout_in_progress.store(false, Ordering::SeqCst);
     }
@@ -1142,6 +1146,7 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+    use tracing_test::traced_test;
 
     fn create_workspace() -> TempDir {
         tempfile::tempdir().unwrap()
@@ -3317,5 +3322,16 @@ mod tests {
         let gi2 = GraphIndex::load_from_store(dir.path().to_path_buf()).unwrap().unwrap();
         let reloaded = gi2.get_positions();
         assert_eq!(reloaded.len(), 3);
+    }
+
+    #[traced_test]
+    #[test]
+    fn compute_layout_background_logs_positions_saved() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "[[b]]");
+        write_md(dir.path(), "b.md", "target");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        gi.compute_layout_background(&crate::graph::layout::LayoutSettings::default());
+        assert!(logs_contain("layout positions saved"));
     }
 }

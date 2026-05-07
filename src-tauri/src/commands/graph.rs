@@ -139,6 +139,81 @@ pub fn get_graph_positions(
     })
 }
 
+pub(crate) fn load_or_build_graph_sync(
+    root: PathBuf,
+    build_state: &GraphBuildState,
+    graph_reg: &GraphRegistry,
+    annotations_enabled: bool,
+    on_progress: impl Fn(crate::graph::progress::IndexProgress),
+) -> Result<Arc<GraphIndex>, String> {
+    match GraphIndex::load_from_store(root.clone()) {
+        Ok(Some(gi)) => {
+            let gi = Arc::new(gi);
+            graph_reg.indices.lock().unwrap().insert(root.clone(), Arc::clone(&gi));
+            build_state.mark_ready(&root);
+            return Ok(gi);
+        }
+        Ok(None) => {}
+        Err(e) => tracing::warn!(error = %e, "load_from_store failed, falling back to cold start"),
+    }
+
+    match GraphIndex::build_with_progress(root.clone(), &on_progress, annotations_enabled) {
+        Ok(gi) => {
+            let gi = Arc::new(gi);
+            graph_reg.indices.lock().unwrap().insert(root.clone(), Arc::clone(&gi));
+            build_state.mark_ready(&root);
+            Ok(gi)
+        }
+        Err(e) => {
+            build_state.mark_failed(&root, e.to_string());
+            Err(e.to_string())
+        }
+    }
+}
+
+pub(crate) fn initialize_graph_index_with_callbacks(
+    root: PathBuf,
+    build_state: &GraphBuildState,
+    graph_reg: &GraphRegistry,
+    annotations_enabled: bool,
+    on_progress: impl Fn(crate::graph::progress::IndexProgress),
+    on_graph_updated: impl Fn(&Arc<GraphIndex>),
+    on_layout: impl FnOnce(Arc<GraphIndex>),
+) {
+    match load_or_build_graph_sync(root.clone(), build_state, graph_reg, annotations_enabled, on_progress) {
+        Ok(gi) => {
+            on_graph_updated(&gi);
+            match gi.sync_with_disk(annotations_enabled) {
+                Ok(true) => on_graph_updated(&gi),
+                Ok(false) => {}
+                Err(e) => tracing::error!(error = %e, "background graph sync failed"),
+            }
+            on_layout(gi);
+        }
+        Err(e) => tracing::error!(error = %e, "graph initialization failed"),
+    }
+}
+
+pub(crate) fn initialize_graph_index(
+    root: PathBuf,
+    build_state: Arc<GraphBuildState>,
+    graph_reg: Arc<GraphRegistry>,
+    handle: tauri::AppHandle,
+) {
+    let ann_enabled = crate::preferences::annotations_enabled(&handle);
+    let emit_handle = handle.clone();
+    let layout_handle = handle.clone();
+    initialize_graph_index_with_callbacks(
+        root,
+        &build_state,
+        &graph_reg,
+        ann_enabled,
+        move |p| { let _ = emit_handle.emit("lit:index-progress", &p); },
+        |_gi| { let _ = layout_handle.emit("lit:graph-updated", ()); },
+        |gi| spawn_layout(gi, handle),
+    );
+}
+
 pub fn spawn_layout(gi: Arc<GraphIndex>, handle: tauri::AppHandle) {
     tauri::async_runtime::spawn_blocking(move || {
         gi.compute_layout_background(&crate::graph::layout::LayoutSettings::default());
@@ -821,5 +896,94 @@ mod tests {
         state_clone.mark_ready(&path_clone);
 
         assert!(handle.join().unwrap());
+    }
+
+    #[test]
+    fn load_or_build_graph_sync_cold_build() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
+        std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
+        let build_state = GraphBuildState::new();
+        let graph_reg = GraphRegistry::new();
+        build_state.start_build(dir.path().to_path_buf());
+        let gi = load_or_build_graph_sync(
+            dir.path().to_path_buf(),
+            &build_state,
+            &graph_reg,
+            true,
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(gi.stats().unwrap().nodes, 2);
+    }
+
+    #[test]
+    fn load_or_build_graph_sync_warm_start() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
+        std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
+        // Cold build first to populate the store
+        let _gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        let build_state = GraphBuildState::new();
+        let graph_reg = GraphRegistry::new();
+        build_state.start_build(dir.path().to_path_buf());
+        let gi = load_or_build_graph_sync(
+            dir.path().to_path_buf(),
+            &build_state,
+            &graph_reg,
+            true,
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(gi.stats().unwrap().nodes, 2);
+    }
+
+    #[test]
+    fn load_or_build_graph_sync_marks_ready() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "content").unwrap();
+        let build_state = GraphBuildState::new();
+        let graph_reg = GraphRegistry::new();
+        build_state.start_build(dir.path().to_path_buf());
+        assert!(build_state.is_in_progress(&dir.path().to_path_buf()));
+        let _gi = load_or_build_graph_sync(
+            dir.path().to_path_buf(),
+            &build_state,
+            &graph_reg,
+            true,
+            |_| {},
+        )
+        .unwrap();
+        assert!(!build_state.is_in_progress(&dir.path().to_path_buf()));
+        let indices = graph_reg.indices.lock().unwrap();
+        assert!(indices.contains_key(&dir.path().to_path_buf()));
+    }
+
+    #[test]
+    fn init_graph_with_sync_calls_layout_once() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
+        std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
+        let build_state = Arc::new(GraphBuildState::new());
+        let graph_reg = Arc::new(GraphRegistry::new());
+        let layout_count = Arc::new(AtomicU32::new(0));
+        let lc = Arc::clone(&layout_count);
+
+        build_state.start_build(dir.path().to_path_buf());
+        initialize_graph_index_with_callbacks(
+            dir.path().to_path_buf(),
+            &build_state,
+            &graph_reg,
+            true,
+            |_| {},
+            |_| {},
+            move |_gi| {
+                lc.fetch_add(1, Ordering::SeqCst);
+            },
+        );
+        assert_eq!(layout_count.load(Ordering::SeqCst), 1);
     }
 }

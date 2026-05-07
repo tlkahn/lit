@@ -1,5 +1,4 @@
 use crate::commands::graph::GraphRegistry;
-use crate::graph::indexer::GraphIndex;
 use crate::workspace::page::PageMeta;
 use crate::workspace::scan::scan_pages;
 use crate::workspace::watcher::FileWatcher;
@@ -9,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
-use tauri::{Emitter, Manager, State, WebviewWindowBuilder};
+use tauri::{Manager, State, WebviewWindowBuilder};
 
 pub struct WorkspaceEntry {
     pub root: PathBuf,
@@ -98,57 +97,12 @@ pub fn open_workspace(
         build_st.start_build(graph_root.clone());
 
         tauri::async_runtime::spawn_blocking(move || {
-            match GraphIndex::load_from_store(graph_root.clone()) {
-                Ok(Some(gi)) => {
-                    let gi = Arc::new(gi);
-                    graph_reg.indices.lock().unwrap().insert(graph_root.clone(), Arc::clone(&gi));
-                    build_st.mark_ready(&graph_root);
-                    let _ = handle.emit("lit:graph-updated", ());
-                    super::graph::spawn_layout(Arc::clone(&gi), handle.clone());
-
-                    let handle2 = handle.clone();
-                    let ann_enabled = crate::preferences::annotations_enabled(&handle2);
-                    let gi2 = Arc::clone(&gi);
-                    let handle3 = handle.clone();
-                    tauri::async_runtime::spawn_blocking(move || {
-                        match gi.sync_with_disk(ann_enabled) {
-                            Ok(true) => {
-                                let _ = handle2.emit("lit:graph-updated", ());
-                                super::graph::spawn_layout(gi2, handle3);
-                            }
-                            Ok(false) => {}
-                            Err(e) => tracing::error!(error = %e, "background graph sync failed"),
-                        }
-                    });
-                    return;
-                }
-                Ok(None) => {}
-                Err(e) => tracing::warn!(error = %e, "load_from_store failed, falling back to cold start"),
-            }
-
-            let emit_handle = handle.clone();
-            let callback = move |p: crate::graph::progress::IndexProgress| {
-                let _ = emit_handle.emit("lit:index-progress", &p);
-            };
-
-            let ann_enabled = crate::preferences::annotations_enabled(&handle);
-            match GraphIndex::build_with_progress(graph_root.clone(), &callback, ann_enabled) {
-                Ok(gi) => {
-                    let gi = Arc::new(gi);
-                    graph_reg
-                        .indices
-                        .lock()
-                        .unwrap()
-                        .insert(graph_root.clone(), Arc::clone(&gi));
-                    build_st.mark_ready(&graph_root);
-                    let _ = handle.emit("lit:graph-updated", ());
-                    super::graph::spawn_layout(gi, handle.clone());
-                }
-                Err(e) => {
-                    tracing::error!(error = %e, "failed to build graph index");
-                    build_st.mark_failed(&graph_root, e.to_string());
-                }
-            }
+            super::graph::initialize_graph_index(
+                graph_root,
+                build_st,
+                graph_reg,
+                handle,
+            );
         });
     }
 
