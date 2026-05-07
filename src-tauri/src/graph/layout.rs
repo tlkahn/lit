@@ -249,6 +249,103 @@ impl Default for LayoutSettings {
     }
 }
 
+fn compute_bounding_box(nodes: &[LayoutNode]) -> BoundingBox {
+    let mut min_x = f64::INFINITY;
+    let mut max_x = f64::NEG_INFINITY;
+    let mut min_y = f64::INFINITY;
+    let mut max_y = f64::NEG_INFINITY;
+    for n in nodes {
+        if n.x < min_x { min_x = n.x; }
+        if n.x > max_x { max_x = n.x; }
+        if n.y < min_y { min_y = n.y; }
+        if n.y > max_y { max_y = n.y; }
+    }
+    BoundingBox { min_x, max_x, min_y, max_y }
+}
+
+pub fn fa2_iteration(
+    nodes: &mut [LayoutNode],
+    edges: &[(usize, usize)],
+    settings: &LayoutSettings,
+) -> (f64, f64) {
+    apply_attraction(nodes, edges, settings);
+    apply_repulsion(nodes, settings);
+    apply_gravity(nodes, settings);
+    apply_forces(nodes, settings)
+}
+
+pub fn apply_forces(nodes: &mut [LayoutNode], settings: &LayoutSettings) -> (f64, f64) {
+    let mut sum_swinging = 0.0;
+    let mut sum_traction = 0.0;
+    for n in nodes.iter_mut() {
+        let sw_x = n.sx - n.old_sx;
+        let sw_y = n.sy - n.old_sy;
+        let swinging = (sw_x * sw_x + sw_y * sw_y).sqrt();
+
+        let tr_x = n.sx + n.old_sx;
+        let tr_y = n.sy + n.old_sy;
+        let traction = (tr_x * tr_x + tr_y * tr_y).sqrt() * 0.5;
+
+        let factor = (1.0 + traction).ln() / (swinging.sqrt() + 1.0) * settings.speed;
+
+        n.x += n.sx * factor;
+        n.y += n.sy * factor;
+        n.old_sx = n.sx;
+        n.old_sy = n.sy;
+        n.sx = 0.0;
+        n.sy = 0.0;
+
+        sum_swinging += swinging;
+        sum_traction += traction;
+    }
+    (sum_swinging, sum_traction)
+}
+
+pub fn apply_gravity(nodes: &mut [LayoutNode], settings: &LayoutSettings) {
+    for n in nodes.iter_mut() {
+        let dist = (n.x * n.x + n.y * n.y).sqrt();
+        let coeff = (n.mass + 1.0) * settings.kg;
+        if settings.strong_gravity {
+            n.sx -= n.x * coeff;
+            n.sy -= n.y * coeff;
+        } else if dist > EPSILON {
+            n.sx -= n.x * coeff / dist;
+            n.sy -= n.y * coeff / dist;
+        }
+    }
+}
+
+pub fn apply_repulsion(nodes: &mut [LayoutNode], settings: &LayoutSettings) {
+    let bb = compute_bounding_box(nodes);
+    let mut tree = QuadNode::empty();
+    for n in nodes.iter() {
+        tree.insert(n.x, n.y, n.mass, &bb);
+    }
+    for n in nodes.iter_mut() {
+        let (fx, fy) = tree.repulsion_on(n.x, n.y, settings.theta, &bb);
+        let coeff = settings.kr * (n.mass + 1.0);
+        n.sx += fx * coeff;
+        n.sy += fy * coeff;
+    }
+}
+
+pub fn apply_attraction(
+    nodes: &mut [LayoutNode],
+    edges: &[(usize, usize)],
+    settings: &LayoutSettings,
+) {
+    for &(i, j) in edges {
+        let dx = nodes[j].x - nodes[i].x;
+        let dy = nodes[j].y - nodes[i].y;
+        let fx = dx * settings.ka;
+        let fy = dy * settings.ka;
+        nodes[i].sx += fx;
+        nodes[i].sy += fy;
+        nodes[j].sx -= fx;
+        nodes[j].sy -= fy;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -461,5 +558,190 @@ mod tests {
         let s2 = s.clone();
         assert_eq!(s2.theta, s.theta);
         assert_eq!(s2.iterations_cold, s.iterations_cold);
+    }
+
+    #[test]
+    fn apply_attraction_two_nodes() {
+        let mut nodes = vec![
+            LayoutNode { x: 0.0, y: 0.0, ..Default::default() },
+            LayoutNode { x: 10.0, y: 0.0, ..Default::default() },
+        ];
+        let edges = vec![(0usize, 1usize)];
+        let settings = LayoutSettings { ka: 2.0, ..Default::default() };
+
+        apply_attraction(&mut nodes, &edges, &settings);
+
+        // f = (pos_j - pos_i) * ka = (10-0)*2 = 20 applied to node 0's sx
+        // node 0: sx += 20, node 1: sx -= 20
+        assert!((nodes[0].sx - 20.0).abs() < 1e-10);
+        assert!((nodes[0].sy - 0.0).abs() < 1e-10);
+        assert!((nodes[1].sx - (-20.0)).abs() < 1e-10);
+        assert!((nodes[1].sy - 0.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn fa2_iteration_moves_nodes_apart() {
+        // Two connected nodes at same x, should repel and also attract
+        // After one iteration with balanced settings, positions should change
+        let mut nodes = vec![
+            LayoutNode { x: 0.0, y: 0.0, ..Default::default() },
+            LayoutNode { x: 1.0, y: 0.0, ..Default::default() },
+        ];
+        let edges = vec![(0usize, 1usize)];
+        let settings = LayoutSettings {
+            ka: 1.0,
+            kr: 10.0,
+            kg: 0.0,
+            speed: 1.0,
+            theta: 0.0,
+            ..Default::default()
+        };
+
+        let (sw, tr) = fa2_iteration(&mut nodes, &edges, &settings);
+
+        // Nodes should have moved (positions no longer at original)
+        assert!(nodes[0].x != 0.0 || nodes[0].y != 0.0);
+        assert!(nodes[1].x != 1.0 || nodes[1].y != 0.0);
+        // Swinging/traction should be finite positive
+        assert!(sw >= 0.0);
+        assert!(tr >= 0.0);
+        // sx/sy should be reset after apply_forces
+        assert_eq!(nodes[0].sx, 0.0);
+        assert_eq!(nodes[1].sx, 0.0);
+    }
+
+    #[test]
+    fn fa2_iteration_returns_metrics() {
+        // Single node at origin with no edges — gravity=0, no repulsion partner
+        // All forces are zero → no movement, metrics are zero
+        let mut nodes = vec![
+            LayoutNode { x: 5.0, y: 5.0, ..Default::default() },
+        ];
+        let edges: Vec<(usize, usize)> = vec![];
+        let settings = LayoutSettings { kg: 0.0, ..Default::default() };
+
+        let (sw, tr) = fa2_iteration(&mut nodes, &edges, &settings);
+
+        assert_eq!(sw, 0.0);
+        assert_eq!(tr, 0.0);
+        assert_eq!(nodes[0].x, 5.0);
+        assert_eq!(nodes[0].y, 5.0);
+    }
+
+    #[test]
+    fn apply_forces_single_node() {
+        // Node with sx=4, sy=3, old_sx=0, old_sy=0, speed=1.0
+        // swinging = sqrt((4-0)^2 + (3-0)^2) = 5
+        // traction = sqrt((4+0)^2 + (3+0)^2) / 2 = 5/2 = 2.5
+        // factor = ln(1+2.5) / (sqrt(5)+1) * 1.0 = ln(3.5) / (2.2360..+1)
+        //        = 1.25276... / 3.23606... = 0.38715...
+        // new x = 0 + 4 * factor = 1.5486...
+        // new y = 0 + 3 * factor = 1.1614...
+        // old_sx = 4, old_sy = 3, sx = 0, sy = 0 (reset)
+        // sum_swinging = 5.0, sum_traction = 2.5
+        let mut nodes = vec![
+            LayoutNode { x: 0.0, y: 0.0, sx: 4.0, sy: 3.0, old_sx: 0.0, old_sy: 0.0, mass: 1.0 },
+        ];
+        let settings = LayoutSettings { speed: 1.0, ..Default::default() };
+
+        let (sum_sw, sum_tr) = apply_forces(&mut nodes, &settings);
+
+        let expected_factor = (1.0 + 2.5_f64).ln() / (5.0_f64.sqrt() + 1.0);
+        assert!((nodes[0].x - 4.0 * expected_factor).abs() < 1e-10);
+        assert!((nodes[0].y - 3.0 * expected_factor).abs() < 1e-10);
+        assert_eq!(nodes[0].old_sx, 4.0);
+        assert_eq!(nodes[0].old_sy, 3.0);
+        assert_eq!(nodes[0].sx, 0.0);
+        assert_eq!(nodes[0].sy, 0.0);
+        assert!((sum_sw - 5.0).abs() < 1e-10);
+        assert!((sum_tr - 2.5).abs() < 1e-10);
+    }
+
+    #[test]
+    fn apply_gravity_standard() {
+        // Node at (3, 4), dist=5, mass=1
+        // sx -= x * (mass+1) * kg / dist = 3 * 2 * 1.0 / 5 = 1.2
+        // sy -= y * (mass+1) * kg / dist = 4 * 2 * 1.0 / 5 = 1.6
+        let mut nodes = vec![
+            LayoutNode { x: 3.0, y: 4.0, ..Default::default() },
+        ];
+        let settings = LayoutSettings { kg: 1.0, strong_gravity: false, ..Default::default() };
+
+        apply_gravity(&mut nodes, &settings);
+
+        assert!((nodes[0].sx - (-1.2)).abs() < 1e-10);
+        assert!((nodes[0].sy - (-1.6)).abs() < 1e-10);
+    }
+
+    #[test]
+    fn apply_gravity_strong() {
+        // Strong gravity: sx -= x * (mass+1) * kg (no /dist)
+        // Node at (3, 4), mass=1, kg=2
+        // sx -= 3 * 2 * 2 = -12
+        // sy -= 4 * 2 * 2 = -16
+        let mut nodes = vec![
+            LayoutNode { x: 3.0, y: 4.0, ..Default::default() },
+        ];
+        let settings = LayoutSettings { kg: 2.0, strong_gravity: true, ..Default::default() };
+
+        apply_gravity(&mut nodes, &settings);
+
+        assert!((nodes[0].sx - (-12.0)).abs() < 1e-10);
+        assert!((nodes[0].sy - (-16.0)).abs() < 1e-10);
+    }
+
+    #[test]
+    fn apply_gravity_at_origin() {
+        // Node at origin: dist=0, gravity should not divide by zero
+        let mut nodes = vec![
+            LayoutNode { x: 0.0, y: 0.0, ..Default::default() },
+        ];
+        let settings = LayoutSettings { kg: 5.0, strong_gravity: false, ..Default::default() };
+
+        apply_gravity(&mut nodes, &settings);
+
+        assert_eq!(nodes[0].sx, 0.0);
+        assert_eq!(nodes[0].sy, 0.0);
+    }
+
+    #[test]
+    fn apply_repulsion_two_nodes() {
+        // Two nodes at (0,0) and (3,4), distance=5, each mass=1
+        // repulsion_on returns unit_dir_away * other_mass
+        // For node 0 querying tree: node 1 is at (3,4), direction away from (3,4) toward (0,0) is (-3/5, -4/5)*1
+        // But tree contains BOTH nodes. For node 0:
+        //   - self at (0,0) is skipped (EPSILON)
+        //   - node 1 at (3,4): dir away = (0-3, 0-4)/5 = (-3/5, -4/5), * mass 1 = (-0.6, -0.8)
+        // repulsion force on node 0: kr * (mass+1) * (-0.6, -0.8) = 1 * 2 * (-0.6, -0.8) = (-1.2, -1.6)
+        // For node 1:
+        //   - node 0 at (0,0): dir away = (3-0, 4-0)/5 = (3/5, 4/5), * mass 1 = (0.6, 0.8)
+        //   - self skipped
+        // repulsion force on node 1: kr * (mass+1) * (0.6, 0.8) = 1 * 2 * (0.6, 0.8) = (1.2, 1.6)
+        let mut nodes = vec![
+            LayoutNode { x: 0.0, y: 0.0, ..Default::default() },
+            LayoutNode { x: 3.0, y: 4.0, ..Default::default() },
+        ];
+        let settings = LayoutSettings { kr: 1.0, theta: 0.0, ..Default::default() };
+
+        apply_repulsion(&mut nodes, &settings);
+
+        assert!((nodes[0].sx - (-1.2)).abs() < 1e-10);
+        assert!((nodes[0].sy - (-1.6)).abs() < 1e-10);
+        assert!((nodes[1].sx - 1.2).abs() < 1e-10);
+        assert!((nodes[1].sy - 1.6).abs() < 1e-10);
+    }
+
+    #[test]
+    fn compute_bounding_box_basic() {
+        let nodes = vec![
+            LayoutNode { x: -5.0, y: 3.0, ..Default::default() },
+            LayoutNode { x: 10.0, y: -7.0, ..Default::default() },
+            LayoutNode { x: 2.0, y: 15.0, ..Default::default() },
+        ];
+        let bb = compute_bounding_box(&nodes);
+        assert_eq!(bb.min_x, -5.0);
+        assert_eq!(bb.max_x, 10.0);
+        assert_eq!(bb.min_y, -7.0);
+        assert_eq!(bb.max_y, 15.0);
     }
 }
