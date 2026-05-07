@@ -230,6 +230,7 @@ pub struct LayoutSettings {
     pub kg: f64,
     pub kr: f64,
     pub speed: f64,
+    pub max_displacement: f64,
     pub strong_gravity: bool,
     pub iterations_cold: usize,
     pub iterations_warm: usize,
@@ -243,6 +244,7 @@ impl Default for LayoutSettings {
             kg: 1.0,
             kr: 1.0,
             speed: 0.01,
+            max_displacement: 10.0,
             strong_gravity: false,
             iterations_cold: 100,
             iterations_warm: 50,
@@ -289,7 +291,7 @@ pub fn fa2_iteration(
 }
 
 #[inline]
-fn forces_kernel(n: &mut LayoutNode, speed: f64) -> (f64, f64) {
+fn forces_kernel(n: &mut LayoutNode, speed: f64, max_displacement: f64) -> (f64, f64) {
     let sw_x = n.sx - n.old_sx;
     let sw_y = n.sy - n.old_sy;
     let swinging = (sw_x * sw_x + sw_y * sw_y).sqrt();
@@ -298,7 +300,12 @@ fn forces_kernel(n: &mut LayoutNode, speed: f64) -> (f64, f64) {
     let tr_y = n.sy + n.old_sy;
     let traction = (tr_x * tr_x + tr_y * tr_y).sqrt() * 0.5;
 
-    let factor = (1.0 + traction).ln() / (swinging.sqrt() + 1.0) * speed;
+    let mut factor = (1.0 + traction).ln() / (swinging.sqrt() + 1.0) * speed;
+
+    let mag = (n.sx * n.sx + n.sy * n.sy).sqrt();
+    if mag > EPSILON && mag * factor > max_displacement {
+        factor = max_displacement / mag;
+    }
 
     n.x += n.sx * factor;
     n.y += n.sy * factor;
@@ -312,16 +319,17 @@ fn forces_kernel(n: &mut LayoutNode, speed: f64) -> (f64, f64) {
 
 pub fn apply_forces(nodes: &mut [LayoutNode], settings: &LayoutSettings) -> (f64, f64) {
     let speed = settings.speed;
+    let max_disp = settings.max_displacement;
     if nodes.len() >= PAR_THRESHOLD {
         use rayon::prelude::*;
         nodes.par_iter_mut()
-            .map(|n| forces_kernel(n, speed))
+            .map(|n| forces_kernel(n, speed, max_disp))
             .reduce(|| (0.0, 0.0), |(a, b), (c, d)| (a + c, b + d))
     } else {
         let mut sum_swinging = 0.0;
         let mut sum_traction = 0.0;
         for n in nodes.iter_mut() {
-            let (sw, tr) = forces_kernel(n, speed);
+            let (sw, tr) = forces_kernel(n, speed, max_disp);
             sum_swinging += sw;
             sum_traction += tr;
         }
@@ -604,6 +612,7 @@ mod tests {
         assert!(!s.strong_gravity);
         assert_eq!(s.iterations_cold, 100);
         assert_eq!(s.iterations_warm, 50);
+        assert_eq!(s.max_displacement, 10.0);
     }
 
     #[test]
@@ -709,6 +718,47 @@ mod tests {
         assert_eq!(nodes[0].sy, 0.0);
         assert!((sum_sw - 5.0).abs() < 1e-10);
         assert!((sum_tr - 2.5).abs() < 1e-10);
+    }
+
+    #[test]
+    fn apply_forces_cap_preserves_direction() {
+        let mut nodes = vec![
+            LayoutNode { x: 0.0, y: 0.0, sx: 600.0, sy: 800.0, old_sx: 0.0, old_sy: 0.0, mass: 1.0 },
+        ];
+        let settings = LayoutSettings { speed: 1.0, max_displacement: 5.0, ..Default::default() };
+        apply_forces(&mut nodes, &settings);
+        // mag = 1000, cap at 5 → factor = 5/1000 = 0.005
+        // x = 600*0.005 = 3.0, y = 800*0.005 = 4.0
+        assert!((nodes[0].x - 3.0).abs() < 1e-10);
+        assert!((nodes[0].y - 4.0).abs() < 1e-10);
+        let disp = (nodes[0].x * nodes[0].x + nodes[0].y * nodes[0].y).sqrt();
+        assert!((disp - 5.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn apply_forces_no_cap_when_under_limit() {
+        let mut nodes = vec![
+            LayoutNode { x: 0.0, y: 0.0, sx: 1.0, sy: 0.0, old_sx: 0.0, old_sy: 0.0, mass: 1.0 },
+        ];
+        let settings = LayoutSettings { speed: 0.01, max_displacement: 10.0, ..Default::default() };
+        apply_forces(&mut nodes, &settings);
+        // traction = sqrt((1+0)^2+(0+0)^2)/2 = 0.5
+        // swinging = sqrt((1-0)^2+(0-0)^2) = 1.0
+        // factor = ln(1.5) / (sqrt(1)+1) * 0.01 = ln(1.5)/2 * 0.01
+        // displacement = 1.0 * factor << 10.0 → no cap
+        let expected_factor = (1.5_f64).ln() / 2.0 * 0.01;
+        assert!((nodes[0].x - expected_factor).abs() < 1e-10);
+    }
+
+    #[test]
+    fn apply_forces_caps_displacement() {
+        let mut nodes = vec![
+            LayoutNode { x: 0.0, y: 0.0, sx: 1000.0, sy: 0.0, old_sx: 0.0, old_sy: 0.0, mass: 1.0 },
+        ];
+        let settings = LayoutSettings { speed: 1.0, max_displacement: 5.0, ..Default::default() };
+        apply_forces(&mut nodes, &settings);
+        assert!((nodes[0].x - 5.0).abs() < 1e-10);
+        assert_eq!(nodes[0].y, 0.0);
     }
 
     #[test]
@@ -870,7 +920,7 @@ mod tests {
         let mut exp_sw = 0.0;
         let mut exp_tr = 0.0;
         for n in expected.iter_mut() {
-            let (sw, tr) = forces_kernel(n, settings.speed);
+            let (sw, tr) = forces_kernel(n, settings.speed, settings.max_displacement);
             exp_sw += sw;
             exp_tr += tr;
         }
