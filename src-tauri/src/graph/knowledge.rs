@@ -891,4 +891,81 @@ mod tests {
         assert!(scores.contains_key("F"));
         assert!(scores["F"] > 0.0);
     }
+
+    #[test]
+    fn profile_pipeline_at_scale() {
+        use std::time::Instant;
+
+        fn build_large_graph(node_count: usize, edge_density: usize) -> KnowledgeGraph {
+            let store = Store::open_memory().unwrap();
+            for i in 0..node_count {
+                let id = format!("page-{i}");
+                let title = format!("Page {i}");
+                if i < (node_count * 9 / 10) {
+                    store
+                        .upsert_node(
+                            &ParsedNode {
+                                id: id.clone(),
+                                title,
+                                tags: vec![],
+                                frontmatter: serde_json::json!({}),
+                                first_paragraph: String::new(),
+                            },
+                            1,
+                        )
+                        .unwrap();
+                } else {
+                    store.upsert_stub(&id).unwrap();
+                }
+            }
+            let mut rng_state: u32 = 42;
+            let target_edges = node_count * edge_density;
+            let mut added = 0;
+            while added < target_edges {
+                rng_state ^= rng_state << 13;
+                rng_state ^= rng_state >> 17;
+                rng_state ^= rng_state << 5;
+                let src = (rng_state as usize) % node_count;
+                rng_state ^= rng_state << 13;
+                rng_state ^= rng_state >> 17;
+                rng_state ^= rng_state << 5;
+                let tgt = (rng_state as usize) % node_count;
+                if src != tgt {
+                    let _ = store.insert_edge(
+                        &format!("page-{src}"),
+                        &format!("page-{tgt}"),
+                        "",
+                        "",
+                        0,
+                    );
+                    added += 1;
+                }
+            }
+            KnowledgeGraph::from_store(&store).unwrap()
+        }
+
+        for &n in &[500usize, 1_000, 5_000, 10_000] {
+            let kg = build_large_graph(n, 3);
+
+            let t0 = Instant::now();
+            let subgraph = kg.full_subgraph();
+            let subgraph_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+            let t0 = Instant::now();
+            let scores = kg.pagerank(0.85);
+            let pagerank_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+            let t0 = Instant::now();
+            let json_sub = serde_json::to_string(&subgraph).unwrap();
+            let json_pr = serde_json::to_string(&scores).unwrap();
+            let serialize_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+            let payload_kb = (json_sub.len() + json_pr.len()) as f64 / 1024.0;
+
+            eprintln!(
+                "[{n:>6} nodes] subgraph={subgraph_ms:.2}ms  pagerank={pagerank_ms:.2}ms  \
+                 serialize={serialize_ms:.2}ms  payload={payload_kb:.0}kB"
+            );
+        }
+    }
 }
