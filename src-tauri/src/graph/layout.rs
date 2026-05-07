@@ -44,6 +44,7 @@ use smallvec::SmallVec;
 
 const EPSILON: f64 = 1e-4;
 const MAX_DEPTH: usize = 64;
+const PAR_THRESHOLD: usize = 512;
 
 pub struct QuadNode {
     pub cx: f64,
@@ -287,45 +288,77 @@ pub fn fa2_iteration(
     apply_forces(nodes, settings)
 }
 
+#[inline]
+fn forces_kernel(n: &mut LayoutNode, speed: f64) -> (f64, f64) {
+    let sw_x = n.sx - n.old_sx;
+    let sw_y = n.sy - n.old_sy;
+    let swinging = (sw_x * sw_x + sw_y * sw_y).sqrt();
+
+    let tr_x = n.sx + n.old_sx;
+    let tr_y = n.sy + n.old_sy;
+    let traction = (tr_x * tr_x + tr_y * tr_y).sqrt() * 0.5;
+
+    let factor = (1.0 + traction).ln() / (swinging.sqrt() + 1.0) * speed;
+
+    n.x += n.sx * factor;
+    n.y += n.sy * factor;
+    n.old_sx = n.sx;
+    n.old_sy = n.sy;
+    n.sx = 0.0;
+    n.sy = 0.0;
+
+    (swinging, traction)
+}
+
 pub fn apply_forces(nodes: &mut [LayoutNode], settings: &LayoutSettings) -> (f64, f64) {
-    let mut sum_swinging = 0.0;
-    let mut sum_traction = 0.0;
-    for n in nodes.iter_mut() {
-        let sw_x = n.sx - n.old_sx;
-        let sw_y = n.sy - n.old_sy;
-        let swinging = (sw_x * sw_x + sw_y * sw_y).sqrt();
-
-        let tr_x = n.sx + n.old_sx;
-        let tr_y = n.sy + n.old_sy;
-        let traction = (tr_x * tr_x + tr_y * tr_y).sqrt() * 0.5;
-
-        let factor = (1.0 + traction).ln() / (swinging.sqrt() + 1.0) * settings.speed;
-
-        n.x += n.sx * factor;
-        n.y += n.sy * factor;
-        n.old_sx = n.sx;
-        n.old_sy = n.sy;
-        n.sx = 0.0;
-        n.sy = 0.0;
-
-        sum_swinging += swinging;
-        sum_traction += traction;
+    let speed = settings.speed;
+    if nodes.len() >= PAR_THRESHOLD {
+        use rayon::prelude::*;
+        nodes.par_iter_mut()
+            .map(|n| forces_kernel(n, speed))
+            .reduce(|| (0.0, 0.0), |(a, b), (c, d)| (a + c, b + d))
+    } else {
+        let mut sum_swinging = 0.0;
+        let mut sum_traction = 0.0;
+        for n in nodes.iter_mut() {
+            let (sw, tr) = forces_kernel(n, speed);
+            sum_swinging += sw;
+            sum_traction += tr;
+        }
+        (sum_swinging, sum_traction)
     }
-    (sum_swinging, sum_traction)
+}
+
+#[inline]
+fn gravity_kernel(n: &mut LayoutNode, kg: f64, strong: bool) {
+    let dist = (n.x * n.x + n.y * n.y).sqrt();
+    let coeff = (n.mass + 1.0) * kg;
+    if strong {
+        n.sx -= n.x * coeff;
+        n.sy -= n.y * coeff;
+    } else if dist > EPSILON {
+        n.sx -= n.x * coeff / dist;
+        n.sy -= n.y * coeff / dist;
+    }
 }
 
 pub fn apply_gravity(nodes: &mut [LayoutNode], settings: &LayoutSettings) {
-    for n in nodes.iter_mut() {
-        let dist = (n.x * n.x + n.y * n.y).sqrt();
-        let coeff = (n.mass + 1.0) * settings.kg;
-        if settings.strong_gravity {
-            n.sx -= n.x * coeff;
-            n.sy -= n.y * coeff;
-        } else if dist > EPSILON {
-            n.sx -= n.x * coeff / dist;
-            n.sy -= n.y * coeff / dist;
-        }
+    let kg = settings.kg;
+    let strong = settings.strong_gravity;
+    if nodes.len() >= PAR_THRESHOLD {
+        use rayon::prelude::*;
+        nodes.par_iter_mut().for_each(|n| gravity_kernel(n, kg, strong));
+    } else {
+        nodes.iter_mut().for_each(|n| gravity_kernel(n, kg, strong));
     }
+}
+
+#[inline]
+fn repulsion_kernel(n: &mut LayoutNode, tree: &QuadNode, theta: f64, kr: f64, bb: &BoundingBox) {
+    let (fx, fy) = tree.repulsion_on(n.x, n.y, theta, bb);
+    let coeff = kr * (n.mass + 1.0);
+    n.sx += fx * coeff;
+    n.sy += fy * coeff;
 }
 
 pub fn apply_repulsion(nodes: &mut [LayoutNode], settings: &LayoutSettings) {
@@ -334,11 +367,13 @@ pub fn apply_repulsion(nodes: &mut [LayoutNode], settings: &LayoutSettings) {
     for n in nodes.iter() {
         tree.insert(n.x, n.y, n.mass, &bb);
     }
-    for n in nodes.iter_mut() {
-        let (fx, fy) = tree.repulsion_on(n.x, n.y, settings.theta, &bb);
-        let coeff = settings.kr * (n.mass + 1.0);
-        n.sx += fx * coeff;
-        n.sy += fy * coeff;
+    let theta = settings.theta;
+    let kr = settings.kr;
+    if nodes.len() >= PAR_THRESHOLD {
+        use rayon::prelude::*;
+        nodes.par_iter_mut().for_each(|n| repulsion_kernel(n, &tree, theta, kr, &bb));
+    } else {
+        nodes.iter_mut().for_each(|n| repulsion_kernel(n, &tree, theta, kr, &bb));
     }
 }
 
@@ -368,6 +403,12 @@ mod tests {
         fn assert_copy<T: Copy>(_: &T) {}
         let bb = BoundingBox::new(0.0, 100.0, 0.0, 50.0);
         assert_copy(&bb);
+    }
+
+    #[test]
+    fn quad_node_is_sync() {
+        fn assert_sync<T: Sync>() {}
+        assert_sync::<QuadNode>();
     }
 
     #[test]
@@ -810,5 +851,86 @@ mod tests {
         assert!(bb.width() >= 1.0);
         assert_eq!(bb.min_y, 0.0);
         assert_eq!(bb.max_y, 10.0);
+    }
+
+    #[test]
+    fn apply_forces_parallel_path() {
+        let mut nodes: Vec<LayoutNode> = (0..600).map(|i| LayoutNode {
+            x: (i as f64) * 2.0,
+            y: (i as f64) * 1.5,
+            sx: ((i * 7 % 13) as f64) - 6.0,
+            sy: ((i * 11 % 17) as f64) - 8.0,
+            old_sx: ((i * 3 % 11) as f64) - 5.0,
+            old_sy: ((i * 5 % 7) as f64) - 3.0,
+            mass: 1.0,
+        }).collect();
+        let settings = LayoutSettings { speed: 0.5, ..Default::default() };
+
+        let mut expected = nodes.clone();
+        let mut exp_sw = 0.0;
+        let mut exp_tr = 0.0;
+        for n in expected.iter_mut() {
+            let (sw, tr) = forces_kernel(n, settings.speed);
+            exp_sw += sw;
+            exp_tr += tr;
+        }
+
+        let (sum_sw, sum_tr) = apply_forces(&mut nodes, &settings);
+
+        for (i, (a, e)) in nodes.iter().zip(expected.iter()).enumerate() {
+            assert!((a.x - e.x).abs() < 1e-14, "node {i} x mismatch");
+            assert!((a.y - e.y).abs() < 1e-14, "node {i} y mismatch");
+        }
+        assert!((sum_sw - exp_sw).abs() < 1e-10, "swinging mismatch");
+        assert!((sum_tr - exp_tr).abs() < 1e-10, "traction mismatch");
+    }
+
+    #[test]
+    fn apply_repulsion_parallel_path() {
+        let mut nodes: Vec<LayoutNode> = (0..600).map(|i| LayoutNode {
+            x: ((i % 25) as f64) * 10.0,
+            y: ((i / 25) as f64) * 10.0,
+            mass: 1.0,
+            ..Default::default()
+        }).collect();
+        let settings = LayoutSettings { kr: 1.0, theta: 0.5, ..Default::default() };
+
+        let mut expected = nodes.clone();
+        let bb = compute_bounding_box(&expected);
+        let mut tree = QuadNode::empty();
+        for n in expected.iter() { tree.insert(n.x, n.y, n.mass, &bb); }
+        for n in expected.iter_mut() {
+            repulsion_kernel(n, &tree, settings.theta, settings.kr, &bb);
+        }
+
+        apply_repulsion(&mut nodes, &settings);
+
+        for (i, (a, e)) in nodes.iter().zip(expected.iter()).enumerate() {
+            assert!((a.sx - e.sx).abs() < 1e-14, "node {i} sx mismatch");
+            assert!((a.sy - e.sy).abs() < 1e-14, "node {i} sy mismatch");
+        }
+    }
+
+    #[test]
+    fn apply_gravity_parallel_path() {
+        let mut nodes: Vec<LayoutNode> = (0..600).map(|i| LayoutNode {
+            x: (i as f64) * 0.5 - 150.0,
+            y: (i as f64) * 0.3 + 10.0,
+            mass: 1.0 + (i % 5) as f64,
+            ..Default::default()
+        }).collect();
+        let settings = LayoutSettings { kg: 2.5, strong_gravity: false, ..Default::default() };
+
+        let mut expected = nodes.clone();
+        for n in expected.iter_mut() {
+            gravity_kernel(n, settings.kg, settings.strong_gravity);
+        }
+
+        apply_gravity(&mut nodes, &settings);
+
+        for (i, (a, e)) in nodes.iter().zip(expected.iter()).enumerate() {
+            assert!((a.sx - e.sx).abs() < 1e-14, "node {i} sx mismatch");
+            assert!((a.sy - e.sy).abs() < 1e-14, "node {i} sy mismatch");
+        }
     }
 }
