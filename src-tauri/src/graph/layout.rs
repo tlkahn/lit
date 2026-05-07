@@ -390,7 +390,11 @@ pub fn apply_attraction(
     edges: &[(usize, usize)],
     settings: &LayoutSettings,
 ) {
+    let len = nodes.len();
     for &(i, j) in edges {
+        if i >= len || j >= len {
+            continue;
+        }
         let dx = nodes[j].x - nodes[i].x;
         let dy = nodes[j].y - nodes[i].y;
         let fx = dx * settings.ka;
@@ -982,5 +986,115 @@ mod tests {
             assert!((a.sx - e.sx).abs() < 1e-14, "node {i} sx mismatch");
             assert!((a.sy - e.sy).abs() < 1e-14, "node {i} sy mismatch");
         }
+    }
+
+    #[test]
+    fn fa2_iteration_converges() {
+        let mut nodes = vec![
+            LayoutNode { x: 0.0, y: 0.0, ..Default::default() },
+            LayoutNode { x: 100.0, y: 0.0, ..Default::default() },
+            LayoutNode { x: 50.0, y: 100.0, ..Default::default() },
+        ];
+        let edges = vec![(0, 1), (1, 2), (0, 2)];
+        let settings = LayoutSettings {
+            ka: 1.0, kr: 1.0, kg: 0.1, speed: 0.1, theta: 0.0,
+            ..Default::default()
+        };
+
+        let mut last_sw = f64::MAX;
+        let mut decreased_count = 0;
+        for _ in 0..50 {
+            let (sw, _) = fa2_iteration(&mut nodes, &edges, &settings);
+            if sw < last_sw { decreased_count += 1; }
+            last_sw = sw;
+        }
+        assert!(decreased_count > 30, "swinging did not converge: only {decreased_count}/50 decreases");
+    }
+
+    #[test]
+    fn fa2_iteration_empty_graph() {
+        let mut nodes: Vec<LayoutNode> = vec![];
+        let edges: Vec<(usize, usize)> = vec![];
+        let settings = LayoutSettings::default();
+        let (sw, tr) = fa2_iteration(&mut nodes, &edges, &settings);
+        assert_eq!(sw, 0.0);
+        assert_eq!(tr, 0.0);
+    }
+
+    #[test]
+    fn apply_repulsion_accumulates_with_preset_sx() {
+        let mut nodes = vec![
+            LayoutNode { x: 0.0, y: 0.0, sx: 100.0, sy: 50.0, ..Default::default() },
+            LayoutNode { x: 3.0, y: 4.0, ..Default::default() },
+        ];
+        let settings = LayoutSettings { kr: 1.0, theta: 0.0, ..Default::default() };
+        apply_repulsion(&mut nodes, &settings);
+
+        // Repulsion adds (-1.2, -1.6) to existing (100, 50)
+        assert!((nodes[0].sx - (100.0 - 1.2)).abs() < 1e-10);
+        assert!((nodes[0].sy - (50.0 - 1.6)).abs() < 1e-10);
+    }
+
+    #[test]
+    fn apply_repulsion_asymmetric_mass() {
+        let mut nodes = vec![
+            LayoutNode { x: 0.0, y: 0.0, mass: 1.0, ..Default::default() },
+            LayoutNode { x: 5.0, y: 0.0, mass: 4.0, ..Default::default() },
+        ];
+        let settings = LayoutSettings { kr: 1.0, theta: 0.0, ..Default::default() };
+        apply_repulsion(&mut nodes, &settings);
+
+        // Node A: dir_away = (0-5)/5 = -1, tree reports mass=4 for B → (-4,0)
+        // Force: kr*(1+1)*(-4,0) = (-8, 0)
+        assert!((nodes[0].sx - (-8.0)).abs() < 1e-10);
+        assert!(nodes[0].sy.abs() < 1e-10);
+        // Node B: dir_away = (5-0)/5 = 1, tree reports mass=1 for A → (1,0)
+        // Force: kr*(4+1)*(1,0) = (5, 0)
+        assert!((nodes[1].sx - 5.0).abs() < 1e-10);
+        assert!(nodes[1].sy.abs() < 1e-10);
+    }
+
+    #[test]
+    fn apply_attraction_multiple_edges_accumulate() {
+        let mut nodes = vec![
+            LayoutNode { x: 0.0, y: 0.0, ..Default::default() },
+            LayoutNode { x: 10.0, y: 0.0, ..Default::default() },
+            LayoutNode { x: 0.0, y: 10.0, ..Default::default() },
+        ];
+        let edges = vec![(0, 1), (0, 2), (1, 2)];
+        let settings = LayoutSettings { ka: 1.0, ..Default::default() };
+        apply_attraction(&mut nodes, &edges, &settings);
+
+        assert!((nodes[0].sx - 10.0).abs() < 1e-10);
+        assert!((nodes[0].sy - 10.0).abs() < 1e-10);
+        assert!((nodes[1].sx - (-20.0)).abs() < 1e-10);
+        assert!((nodes[1].sy - 10.0).abs() < 1e-10);
+        assert!((nodes[2].sx - 10.0).abs() < 1e-10);
+        assert!((nodes[2].sy - (-20.0)).abs() < 1e-10);
+    }
+
+    #[test]
+    fn apply_attraction_skips_self_loop() {
+        let mut nodes = vec![
+            LayoutNode { x: 3.0, y: 4.0, ..Default::default() },
+        ];
+        let edges = vec![(0, 0)];
+        let settings = LayoutSettings { ka: 5.0, ..Default::default() };
+        apply_attraction(&mut nodes, &edges, &settings);
+        assert_eq!(nodes[0].sx, 0.0);
+        assert_eq!(nodes[0].sy, 0.0);
+    }
+
+    #[test]
+    fn apply_attraction_skips_out_of_bounds_edge() {
+        let mut nodes = vec![
+            LayoutNode { x: 0.0, y: 0.0, ..Default::default() },
+            LayoutNode { x: 5.0, y: 0.0, ..Default::default() },
+        ];
+        let edges = vec![(0, 99)];
+        let settings = LayoutSettings::default();
+        apply_attraction(&mut nodes, &edges, &settings);
+        assert_eq!(nodes[0].sx, 0.0);
+        assert_eq!(nodes[1].sx, 0.0);
     }
 }
