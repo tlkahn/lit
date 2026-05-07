@@ -406,9 +406,231 @@ pub fn apply_attraction(
     }
 }
 
+use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use petgraph::graph::{DiGraph, NodeIndex};
+use petgraph::Direction;
+use super::knowledge::GraphNode;
+
+fn hash_position(id: &str) -> (f64, f64) {
+    let mut h = DefaultHasher::new();
+    id.hash(&mut h);
+    let bits = h.finish();
+    let x = ((bits & 0xFFFF_FFFF) as f64 / u32::MAX as f64) * 1000.0 - 500.0;
+    let y = ((bits >> 32) as f64 / u32::MAX as f64) * 1000.0 - 500.0;
+    (x, y)
+}
+
+pub fn compute_layout(
+    graph: &DiGraph<GraphNode, ()>,
+    existing: Option<&HashMap<String, (f64, f64)>>,
+    settings: &LayoutSettings,
+) -> HashMap<String, (f64, f64)> {
+    let node_count = graph.node_count();
+    if node_count == 0 {
+        return HashMap::new();
+    }
+
+    let mut nodes = Vec::with_capacity(node_count);
+    let mut idx_map: HashMap<NodeIndex, usize> = HashMap::with_capacity(node_count);
+    let mut id_list: Vec<String> = Vec::with_capacity(node_count);
+
+    for node_idx in graph.node_indices() {
+        let gn = &graph[node_idx];
+        let (x, y) = existing
+            .and_then(|m| m.get(&gn.id))
+            .copied()
+            .unwrap_or_else(|| hash_position(&gn.id));
+        let in_deg = graph.neighbors_directed(node_idx, Direction::Incoming).count();
+        let out_deg = graph.neighbors_directed(node_idx, Direction::Outgoing).count();
+        let mass = (in_deg + out_deg + 1) as f64;
+        nodes.push(LayoutNode { x, y, mass, ..Default::default() });
+        idx_map.insert(node_idx, id_list.len());
+        id_list.push(gn.id.clone());
+    }
+
+    let edges: Vec<(usize, usize)> = graph
+        .edge_indices()
+        .filter_map(|e| {
+            let (s, t) = graph.edge_endpoints(e)?;
+            Some((*idx_map.get(&s)?, *idx_map.get(&t)?))
+        })
+        .collect();
+
+    let iters = if existing.is_some() {
+        settings.iterations_warm
+    } else {
+        settings.iterations_cold
+    };
+    for _ in 0..iters {
+        fa2_iteration(&mut nodes, &edges, settings);
+    }
+
+    id_list
+        .into_iter()
+        .zip(nodes.iter())
+        .map(|(id, n)| (id, (n.x, n.y)))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn make_graph(ids: &[&str], edges: &[(usize, usize)]) -> DiGraph<GraphNode, ()> {
+        let mut g = DiGraph::new();
+        let indices: Vec<NodeIndex> = ids
+            .iter()
+            .map(|id| {
+                g.add_node(GraphNode {
+                    id: id.to_string(),
+                    title: id.to_string(),
+                    is_stub: false,
+                })
+            })
+            .collect();
+        for &(s, t) in edges {
+            g.add_edge(indices[s], indices[t], ());
+        }
+        g
+    }
+
+    #[test]
+    fn compute_layout_empty_graph() {
+        let g: DiGraph<GraphNode, ()> = DiGraph::new();
+        let result = compute_layout(&g, None, &LayoutSettings::default());
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn compute_layout_single_node_deterministic() {
+        let g = make_graph(&["alpha"], &[]);
+        let s = LayoutSettings { iterations_cold: 0, ..Default::default() };
+        let r1 = compute_layout(&g, None, &s);
+        let r2 = compute_layout(&g, None, &s);
+        assert_eq!(r1.len(), 1);
+        assert!(r1.contains_key("alpha"));
+        assert_eq!(r1["alpha"], r2["alpha"]);
+    }
+
+    #[test]
+    fn compute_layout_warm_passthrough() {
+        let g = make_graph(&["a", "b"], &[]);
+        let existing: HashMap<String, (f64, f64)> =
+            [("a".into(), (42.0, 99.0)), ("b".into(), (-10.0, 7.0))]
+                .into_iter()
+                .collect();
+        let s = LayoutSettings { iterations_warm: 0, ..Default::default() };
+        let result = compute_layout(&g, Some(&existing), &s);
+        assert_eq!(result["a"], (42.0, 99.0));
+        assert_eq!(result["b"], (-10.0, 7.0));
+    }
+
+    #[test]
+    fn compute_layout_cold_vs_warm_differ() {
+        let g = make_graph(&["x", "y"], &[(0, 1)]);
+        let init: HashMap<String, (f64, f64)> =
+            [("x".into(), (0.0, 0.0)), ("y".into(), (100.0, 0.0))]
+                .into_iter()
+                .collect();
+        let cold_s = LayoutSettings { iterations_cold: 10, ..Default::default() };
+        let warm_s = LayoutSettings { iterations_warm: 1, ..Default::default() };
+        let cold = compute_layout(&g, None, &cold_s);
+        let warm = compute_layout(&g, Some(&init), &warm_s);
+        assert_ne!(cold["x"], warm["x"]);
+    }
+
+    #[test]
+    fn compute_layout_degree_mass_star() {
+        let g = make_graph(&["hub", "a", "b", "c", "d"], &[(0, 1), (0, 2), (0, 3), (0, 4)]);
+        let s = LayoutSettings {
+            iterations_cold: 200,
+            strong_gravity: true,
+            kg: 1.0,
+            ..Default::default()
+        };
+        let result = compute_layout(&g, None, &s);
+        let hub_dist = (result["hub"].0.powi(2) + result["hub"].1.powi(2)).sqrt();
+        let leaf_dists: Vec<f64> = ["a", "b", "c", "d"]
+            .iter()
+            .map(|id| (result[*id].0.powi(2) + result[*id].1.powi(2)).sqrt())
+            .collect();
+        let avg_leaf = leaf_dists.iter().sum::<f64>() / 4.0;
+        assert!(
+            hub_dist < avg_leaf,
+            "hub should be closer to origin than average leaf: hub={hub_dist}, avg_leaf={avg_leaf}"
+        );
+    }
+
+    #[test]
+    fn compute_layout_edges_attract() {
+        let connected = make_graph(&["p", "q"], &[(0, 1)]);
+        let disconnected = make_graph(&["p", "q"], &[]);
+        let init: HashMap<String, (f64, f64)> =
+            [("p".into(), (-50.0, 0.0)), ("q".into(), (50.0, 0.0))]
+                .into_iter()
+                .collect();
+        let s = LayoutSettings {
+            iterations_warm: 100,
+            ka: 5.0,
+            kr: 1.0,
+            kg: 0.0,
+            ..Default::default()
+        };
+        let rc = compute_layout(&connected, Some(&init), &s);
+        let rd = compute_layout(&disconnected, Some(&init), &s);
+        let dist_c = ((rc["p"].0 - rc["q"].0).powi(2) + (rc["p"].1 - rc["q"].1).powi(2)).sqrt();
+        let dist_d = ((rd["p"].0 - rd["q"].0).powi(2) + (rd["p"].1 - rd["q"].1).powi(2)).sqrt();
+        assert!(
+            dist_c < dist_d,
+            "connected should be closer: {dist_c} vs {dist_d}"
+        );
+    }
+
+    #[test]
+    fn compute_layout_triangle_convergence() {
+        let g = make_graph(&["a", "b", "c"], &[(0, 1), (1, 2), (0, 2)]);
+        let s = LayoutSettings {
+            iterations_cold: 200,
+            ka: 1.0,
+            kr: 1.0,
+            kg: 0.1,
+            speed: 0.1,
+            ..Default::default()
+        };
+        let r = compute_layout(&g, None, &s);
+        let d01 = ((r["a"].0 - r["b"].0).powi(2) + (r["a"].1 - r["b"].1).powi(2)).sqrt();
+        let d12 = ((r["b"].0 - r["c"].0).powi(2) + (r["b"].1 - r["c"].1).powi(2)).sqrt();
+        let d02 = ((r["a"].0 - r["c"].0).powi(2) + (r["a"].1 - r["c"].1).powi(2)).sqrt();
+        let max_d = d01.max(d12).max(d02);
+        let min_d = d01.min(d12).min(d02);
+        assert!(
+            min_d > 0.0 && max_d / min_d < 1.5,
+            "triangle should be roughly equilateral: d01={d01}, d12={d12}, d02={d02}"
+        );
+    }
+
+    #[test]
+    fn compute_layout_incremental_stability() {
+        let g = make_graph(&["a", "b", "c"], &[(0, 1), (1, 2)]);
+        let cold_s = LayoutSettings { iterations_cold: 200, ..Default::default() };
+        let cold = compute_layout(&g, None, &cold_s);
+
+        let warm_s = LayoutSettings { iterations_warm: 10, ..Default::default() };
+        let warm = compute_layout(&g, Some(&cold), &warm_s);
+
+        for id in ["a", "b", "c"] {
+            let (cx, cy) = cold[id];
+            let (wx, wy) = warm[id];
+            let drift = ((wx - cx).powi(2) + (wy - cy).powi(2)).sqrt();
+            let dist_from_origin = (cx * cx + cy * cy).sqrt().max(1.0);
+            assert!(
+                drift / dist_from_origin < 0.5,
+                "node {id} drifted too much: drift={drift}, dist={dist_from_origin}"
+            );
+        }
+    }
 
     #[test]
     fn bounding_box_is_copy() {
