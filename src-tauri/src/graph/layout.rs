@@ -260,6 +260,19 @@ fn compute_bounding_box(nodes: &[LayoutNode]) -> BoundingBox {
         if n.y < min_y { min_y = n.y; }
         if n.y > max_y { max_y = n.y; }
     }
+    const MIN_BB_SIZE: f64 = 1.0;
+    let width = max_x - min_x;
+    if width < MIN_BB_SIZE {
+        let pad = (MIN_BB_SIZE - width) * 0.5;
+        min_x -= pad;
+        max_x += pad;
+    }
+    let height = max_y - min_y;
+    if height < MIN_BB_SIZE {
+        let pad = (MIN_BB_SIZE - height) * 0.5;
+        min_y -= pad;
+        max_y += pad;
+    }
     BoundingBox { min_x, max_x, min_y, max_y }
 }
 
@@ -743,5 +756,59 @@ mod tests {
         assert_eq!(bb.max_x, 10.0);
         assert_eq!(bb.min_y, -7.0);
         assert_eq!(bb.max_y, 15.0);
+    }
+
+    #[test]
+    fn apply_repulsion_collinear_nodes() {
+        let mut nodes = vec![
+            LayoutNode { x: 0.0, y: 0.0, ..Default::default() },
+            LayoutNode { x: 0.0, y: 5.0, ..Default::default() },
+            LayoutNode { x: 0.0, y: 10.0, ..Default::default() },
+        ];
+        let settings = LayoutSettings { kr: 1.0, theta: 0.0, ..Default::default() };
+        apply_repulsion(&mut nodes, &settings);
+
+        assert!(nodes[0].sy != 0.0);
+        assert!(nodes[2].sy != 0.0);
+        assert!(nodes[0].sy < 0.0);
+        assert!(nodes[2].sy > 0.0);
+    }
+
+    #[test]
+    fn compute_bounding_box_single_node_padded() {
+        let nodes = vec![
+            LayoutNode { x: 3.0, y: 4.0, ..Default::default() },
+        ];
+        let bb = compute_bounding_box(&nodes);
+        assert!(bb.width() >= 1.0);
+        assert!(bb.max_y - bb.min_y >= 1.0);
+        let cx = (bb.min_x + bb.max_x) * 0.5;
+        let cy = (bb.min_y + bb.max_y) * 0.5;
+        assert!((cx - 3.0).abs() < 1e-10);
+        assert!((cy - 4.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn compute_bounding_box_pads_zero_height() {
+        let nodes = vec![
+            LayoutNode { x: 0.0, y: 7.0, ..Default::default() },
+            LayoutNode { x: 10.0, y: 7.0, ..Default::default() },
+        ];
+        let bb = compute_bounding_box(&nodes);
+        assert!(bb.max_y - bb.min_y >= 1.0);
+        assert_eq!(bb.min_x, 0.0);
+        assert_eq!(bb.max_x, 10.0);
+    }
+
+    #[test]
+    fn compute_bounding_box_pads_zero_width() {
+        let nodes = vec![
+            LayoutNode { x: 5.0, y: 0.0, ..Default::default() },
+            LayoutNode { x: 5.0, y: 10.0, ..Default::default() },
+        ];
+        let bb = compute_bounding_box(&nodes);
+        assert!(bb.width() >= 1.0);
+        assert_eq!(bb.min_y, 0.0);
+        assert_eq!(bb.max_y, 10.0);
     }
 }
