@@ -183,8 +183,8 @@ impl QuadNode {
             let width = node_bb.width();
 
             if node.is_leaf() || (width / dist) < theta {
-                fx += (dx / dist) * node.mass;
-                fy += (dy / dist) * node.mass;
+                fx += dx * node.mass / (dist * dist);
+                fy += dy * node.mass / (dist * dist);
             } else {
                 for (i, child) in node.children.iter().enumerate() {
                     if let Some(c) = child {
@@ -718,9 +718,23 @@ mod tests {
 
         // Query from (3, 4), distance = 5
         let (fx, fy) = tree.repulsion_on(3.0, 4.0, 0.0, &bb);
-        // unit_direction_away * node_mass = (3/5, 4/5) * 4 = (2.4, 3.2)
-        assert!((fx - 2.4).abs() < 1e-10);
-        assert!((fy - 3.2).abs() < 1e-10);
+        // FA2 repulsion: direction * mass / dist² = (3,4) * 4 / 25 = (0.48, 0.64)
+        assert!((fx - 0.48).abs() < 1e-10);
+        assert!((fy - 0.64).abs() < 1e-10);
+    }
+
+    #[test]
+    fn repulsion_on_inverse_distance_scaling() {
+        let bb = BoundingBox::new(-100.0, 100.0, -100.0, 100.0);
+        let mut tree = QuadNode::empty();
+        tree.insert(0.0, 0.0, 1.0, &bb);
+
+        // FA2 repulsion ∝ 1/dist: force at dist=5 should be 2× force at dist=10
+        let (fx5, fy5) = tree.repulsion_on(3.0, 4.0, 0.0, &bb); // dist=5
+        let (fx10, fy10) = tree.repulsion_on(6.0, 8.0, 0.0, &bb); // dist=10
+        let mag5 = (fx5 * fx5 + fy5 * fy5).sqrt();
+        let mag10 = (fx10 * fx10 + fy10 * fy10).sqrt();
+        assert!((mag5 / mag10 - 2.0).abs() < 1e-10);
     }
 
     #[test]
@@ -1037,16 +1051,11 @@ mod tests {
     #[test]
     fn apply_repulsion_two_nodes() {
         // Two nodes at (0,0) and (3,4), distance=5, each mass=1
-        // repulsion_on returns unit_dir_away * other_mass
-        // For node 0 querying tree: node 1 is at (3,4), direction away from (3,4) toward (0,0) is (-3/5, -4/5)*1
-        // But tree contains BOTH nodes. For node 0:
-        //   - self at (0,0) is skipped (EPSILON)
-        //   - node 1 at (3,4): dir away = (0-3, 0-4)/5 = (-3/5, -4/5), * mass 1 = (-0.6, -0.8)
-        // repulsion force on node 0: kr * (mass+1) * (-0.6, -0.8) = 1 * 2 * (-0.6, -0.8) = (-1.2, -1.6)
-        // For node 1:
-        //   - node 0 at (0,0): dir away = (3-0, 4-0)/5 = (3/5, 4/5), * mass 1 = (0.6, 0.8)
-        //   - self skipped
-        // repulsion force on node 1: kr * (mass+1) * (0.6, 0.8) = 1 * 2 * (0.6, 0.8) = (1.2, 1.6)
+        // repulsion_on returns dir * mass / dist² (FA2 inverse-square)
+        // Node 0: dir=(0-3,0-4), repulsion = (-3,-4)*1/25 = (-0.12,-0.16)
+        //   Force: kr*(1+1)*(-0.12,-0.16) = (-0.24, -0.32)
+        // Node 1: dir=(3,4)*1/25 = (0.12,0.16)
+        //   Force: kr*(1+1)*(0.12,0.16) = (0.24, 0.32)
         let mut nodes = vec![
             LayoutNode { x: 0.0, y: 0.0, ..Default::default() },
             LayoutNode { x: 3.0, y: 4.0, ..Default::default() },
@@ -1055,10 +1064,10 @@ mod tests {
 
         apply_repulsion(&mut nodes, &settings);
 
-        assert!((nodes[0].sx - (-1.2)).abs() < 1e-10);
-        assert!((nodes[0].sy - (-1.6)).abs() < 1e-10);
-        assert!((nodes[1].sx - 1.2).abs() < 1e-10);
-        assert!((nodes[1].sy - 1.6).abs() < 1e-10);
+        assert!((nodes[0].sx - (-0.24)).abs() < 1e-10);
+        assert!((nodes[0].sy - (-0.32)).abs() < 1e-10);
+        assert!((nodes[1].sx - 0.24).abs() < 1e-10);
+        assert!((nodes[1].sy - 0.32).abs() < 1e-10);
     }
 
     #[test]
@@ -1252,9 +1261,9 @@ mod tests {
         let settings = LayoutSettings { kr: 1.0, theta: 0.0, ..Default::default() };
         apply_repulsion(&mut nodes, &settings);
 
-        // Repulsion adds (-1.2, -1.6) to existing (100, 50)
-        assert!((nodes[0].sx - (100.0 - 1.2)).abs() < 1e-10);
-        assert!((nodes[0].sy - (50.0 - 1.6)).abs() < 1e-10);
+        // Repulsion adds (-0.24, -0.32) to existing (100, 50)
+        assert!((nodes[0].sx - (100.0 - 0.24)).abs() < 1e-10);
+        assert!((nodes[0].sy - (50.0 - 0.32)).abs() < 1e-10);
     }
 
     #[test]
@@ -1266,14 +1275,35 @@ mod tests {
         let settings = LayoutSettings { kr: 1.0, theta: 0.0, ..Default::default() };
         apply_repulsion(&mut nodes, &settings);
 
-        // Node A: dir_away = (0-5)/5 = -1, tree reports mass=4 for B → (-4,0)
-        // Force: kr*(1+1)*(-4,0) = (-8, 0)
-        assert!((nodes[0].sx - (-8.0)).abs() < 1e-10);
+        // Node A: repulsion_on = (-5)*4/25 = -0.8. Force: kr*(1+1)*(-0.8) = -1.6
+        assert!((nodes[0].sx - (-1.6)).abs() < 1e-10);
         assert!(nodes[0].sy.abs() < 1e-10);
-        // Node B: dir_away = (5-0)/5 = 1, tree reports mass=1 for A → (1,0)
-        // Force: kr*(4+1)*(1,0) = (5, 0)
-        assert!((nodes[1].sx - 5.0).abs() < 1e-10);
+        // Node B: repulsion_on = 5*1/25 = 0.2. Force: kr*(4+1)*(0.2) = 1.0
+        assert!((nodes[1].sx - 1.0).abs() < 1e-10);
         assert!(nodes[1].sy.abs() < 1e-10);
+    }
+
+    #[test]
+    fn repulsion_force_decays_with_distance() {
+        // Close pair (dist=2) vs far pair (dist=20), one FA2 iteration with no attraction/gravity.
+        // Close pair should displace significantly more than far pair.
+        let mut close = vec![
+            LayoutNode { x: 0.0, y: 0.0, ..Default::default() },
+            LayoutNode { x: 2.0, y: 0.0, ..Default::default() },
+        ];
+        let mut far = vec![
+            LayoutNode { x: 0.0, y: 0.0, ..Default::default() },
+            LayoutNode { x: 20.0, y: 0.0, ..Default::default() },
+        ];
+        let edges: Vec<(usize, usize)> = vec![];
+        let settings = LayoutSettings { ka: 0.0, kg: 0.0, kr: 1.0, theta: 0.0, ..Default::default() };
+
+        fa2_iteration(&mut close, &edges, &settings);
+        fa2_iteration(&mut far, &edges, &settings);
+
+        let close_disp = (close[0].x - 0.0).abs() + (close[1].x - 2.0).abs();
+        let far_disp = (far[0].x - 0.0).abs() + (far[1].x - 20.0).abs();
+        assert!(close_disp > far_disp * 5.0, "close pair displacement {close_disp} should be >> far pair {far_disp}");
     }
 
     #[test]
