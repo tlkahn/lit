@@ -4,21 +4,40 @@ on:
   workflow_run:
     workflows: ["Build and Release"]
     types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish (e.g. v0.1.0)'
+        required: true
 
 jobs:
   mirror-release:
     runs-on: ubuntu-latest
-    if: github.event.workflow_run.conclusion == 'success'
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    permissions:
+      actions: read
+      contents: read
     steps:
       - name: Get release tag
         id: tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG=$(gh api repos/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }} --jq '.head_branch')
+          if [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG=$(gh api repos/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }} \
+              --jq '.head_branch // empty')
+          fi
+          if [ -z "$TAG" ]; then
+            echo "::error::Could not resolve release tag"
+            exit 1
+          fi
           if ! gh release view "$TAG" --repo "${{ github.repository }}" &>/dev/null; then
-            echo "::warning::head_branch '$TAG' is not a release tag, falling back to latest"
-            TAG=$(gh release list --repo "${{ github.repository }}" --limit 1 --json tagName -q '.[0].tagName')
+            echo "::error::head_branch '$TAG' is not a valid release tag"
+            exit 1
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
@@ -30,8 +49,23 @@ jobs:
           gh release download "${{ steps.tag.outputs.tag }}" \
             --repo "${{ github.repository }}" \
             --dir assets \
-            --pattern '*' \
-            --skip-existing || true
+            --pattern '*.dmg'
+
+      - name: Validate assets
+        run: |
+          DMG_COUNT=$(find assets -name '*.dmg' -type f | wc -l)
+          if [ "$DMG_COUNT" -eq 0 ]; then
+            echo "::error::No DMG files downloaded"
+            exit 1
+          fi
+          for f in assets/*.dmg; do
+            SIZE=$(stat -f%z "$f" 2>/dev/null || stat -c%s "$f" 2>/dev/null)
+            if [ "$SIZE" -lt 1048576 ]; then
+              echo "::error::$f is only ${SIZE} bytes — expected >1MB"
+              exit 1
+            fi
+            echo "OK: $f (${SIZE} bytes)"
+          done
 
       - name: Read release metadata
         id: meta
@@ -63,7 +97,14 @@ jobs:
             CREATE_ARGS+=(--prerelease)
           fi
 
-          gh release delete "$TAG" --repo tlkahn/lit-releases --yes 2>/dev/null || true
+          gh release delete "$TAG" --repo tlkahn/lit-releases --yes 2>&1 || {
+            RC=$?
+            # 1 = "release not found" which is fine; anything else is a real error
+            if gh release view "$TAG" --repo tlkahn/lit-releases &>/dev/null; then
+              echo "::error::Failed to delete existing release $TAG (exit $RC)"
+              exit 1
+            fi
+          }
 
           ASSET_FILES=$(find assets -type f 2>/dev/null)
           if [ -n "$ASSET_FILES" ]; then
