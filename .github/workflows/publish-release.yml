@@ -4,18 +4,11 @@ on:
   workflow_run:
     workflows: ["Build and Release"]
     types: [completed]
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Release tag to publish (e.g. v0.1.0)'
-        required: true
 
 jobs:
   mirror-release:
     runs-on: ubuntu-latest
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+    if: github.event.workflow_run.conclusion == 'success'
     permissions:
       actions: read
       contents: read
@@ -25,18 +18,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [ -n "${{ inputs.tag }}" ]; then
-            TAG="${{ inputs.tag }}"
-          else
-            TAG=$(gh api repos/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }} \
-              --jq '.head_branch // empty')
-          fi
+          TAG=$(gh api repos/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }} \
+            --jq '.head_branch // empty')
           if [ -z "$TAG" ]; then
-            echo "::error::Could not resolve release tag"
+            echo "::error::Could not extract tag from workflow run head_branch"
             exit 1
           fi
           if ! gh release view "$TAG" --repo "${{ github.repository }}" &>/dev/null; then
-            echo "::error::'$TAG' is not a valid release tag"
+            echo "::error::head_branch '$TAG' is not a valid release tag"
             exit 1
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
