@@ -4,6 +4,7 @@ import { getKeymaps } from "../lib/ipc";
 import { resolveKeymaps, type AppBinding } from "../lib/keymapResolver";
 import { registerCommand, registerHandler, hasCommand, executeCommand } from "../lib/commandRegistry";
 import { toggleBold, toggleItalic, insertLink, toggleComment } from "../editor/editorCommands";
+import { selectNextOccurrence } from "@codemirror/search";
 import { navigateBack, navigateForward } from "../editor/jumpHistory";
 import { openInExternalEditor } from "../lib/ipc";
 import { useWorkspaceStore } from "../stores/workspace";
@@ -30,6 +31,7 @@ function ensureCommandsRegistered() {
   });
   registerHandler("editor.navigateBack", (view) => navigateBack(view as EditorView));
   registerHandler("editor.navigateForward", (view) => navigateForward(view as EditorView));
+  registerHandler("editor.selectNextOccurrence", (view) => selectNextOccurrence(view as EditorView));
   registerHandler("app.gotoHeading", () => {
     window.dispatchEvent(new CustomEvent("lit:toggle-quick-switcher"));
   });

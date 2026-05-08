@@ -13,6 +13,7 @@ import {
   replaceAll,
   searchKeymap,
   SearchQuery,
+  selectNextOccurrence,
 } from "@codemirror/search";
 import { createExtensions } from "./extensions";
 import { livePreviewPlugin } from "./livePreview/plugin";
@@ -310,5 +311,25 @@ describe("search & replace", () => {
     expect(parent.querySelector(".cm-panels")).not.toBeNull();
     expect(parent.querySelector(".cm-search")).not.toBeNull();
     destroy();
+  });
+
+  it("selectNextOccurrence selects word at cursor", () => {
+    const { view, destroy } = createViewWithSearch("foo bar foo baz");
+    view.dispatch({ selection: { anchor: 1 } });
+    const handled = selectNextOccurrence(view);
+    expect(handled).toBe(true);
+    expect(view.state.selection.main.from).toBe(0);
+    expect(view.state.selection.main.to).toBe(3);
+    expect(view.state.doc.sliceString(
+      view.state.selection.main.from,
+      view.state.selection.main.to,
+    )).toBe("foo");
+    destroy();
+  });
+
+  it("selectNextOccurrence doesn't conflict with list commands", () => {
+    const listKeys = new Set(["Enter", "Tab", "Shift-Tab"]);
+    const hasConflict = searchKeymap.some((b) => b.key && listKeys.has(b.key));
+    expect(hasConflict).toBe(false);
   });
 });

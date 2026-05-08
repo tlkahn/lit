@@ -13,5 +13,6 @@
   { "key": "Mod-Shift-a", "command": "panel.toggleAnnotations" },
   { "key": "Mod-p", "command": "app.commandPalette" },
   { "key": "Mod-Shift-:", "command": "app.insertAnnotation" },
-  { "key": "Mod-Shift-g", "command": "app.showGraphView" }
+  { "key": "Mod-Shift-g", "command": "app.showGraphView" },
+  { "key": "Mod-d", "command": "editor.selectNextOccurrence", "when": "editorFocus" }
 ]

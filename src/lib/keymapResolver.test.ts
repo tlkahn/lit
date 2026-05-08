@@ -70,4 +70,12 @@ describe("keymaps/default.json", () => {
     );
     expect(entry).toBeDefined();
   });
+
+  it("contains Mod-d binding for editor.selectNextOccurrence", () => {
+    const entry = defaultKeymaps.find(
+      (b: { key: string; command: string }) =>
+        b.key === "Mod-d" && b.command === "editor.selectNextOccurrence",
+    );
+    expect(entry).toBeDefined();
+  });
 });
