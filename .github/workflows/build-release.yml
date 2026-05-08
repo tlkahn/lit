@@ -6,17 +6,7 @@ on:
 
 jobs:
   build-macos:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: aarch64-apple-darwin
-            arch: aarch64
-            runner: macos-latest
-          - target: x86_64-apple-darwin
-            arch: x86_64
-            runner: macos-13
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-latest
     permissions:
       contents: write
     steps:
@@ -28,7 +18,7 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-          key: ${{ matrix.target }}
+          key: aarch64-apple-darwin
       - name: Configure git for private deps
         run: git config --global url."https://${{ secrets.PUBLIC_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
       - run: bun install --frozen-lockfile
@@ -38,23 +28,23 @@ jobs:
         working-directory: src-tauri
         run: |
           mkdir -p binaries
-          touch binaries/lit-cli-${{ matrix.target }}
-          cargo build --release --bin lit-cli --target ${{ matrix.target }}
-          cp target/${{ matrix.target }}/release/lit-cli binaries/lit-cli-${{ matrix.target }}
+          touch binaries/lit-cli-aarch64-apple-darwin
+          cargo build --release --bin lit-cli --target aarch64-apple-darwin
+          cp target/aarch64-apple-darwin/release/lit-cli binaries/lit-cli-aarch64-apple-darwin
       - name: Build Tauri app
         run: >
           bun tauri build
-          --target ${{ matrix.target }}
+          --target aarch64-apple-darwin
           --config '{"build":{"beforeBuildCommand":"bun run build"}}'
       - name: Upload DMG to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ github.event.release.tag_name }}"
-          DMG=$(find src-tauri/target/${{ matrix.target }} -name '*.dmg' -type f | head -1)
+          DMG=$(find src-tauri/target/aarch64-apple-darwin -name '*.dmg' -type f | head -1)
           if [ -z "$DMG" ]; then
-            echo "::error::No DMG found for ${{ matrix.target }}"
+            echo "::error::No DMG found for aarch64-apple-darwin"
             exit 1
           fi
-          cp "$DMG" "Lit_${TAG}_${{ matrix.arch }}.dmg"
-          gh release upload "$TAG" "Lit_${TAG}_${{ matrix.arch }}.dmg" --clobber
+          cp "$DMG" "Lit_${TAG}_aarch64.dmg"
+          gh release upload "$TAG" "Lit_${TAG}_aarch64.dmg" --clobber
