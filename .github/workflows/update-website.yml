@@ -1,0 +1,110 @@
+name: Update Website Download Button
+
+on:
+  workflow_run:
+    workflows: ["Publish Release to Public Repo"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to update website for (e.g. v0.1.0)'
+        required: true
+
+jobs:
+  update-website:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Get release tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG=$(gh api repos/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }} \
+              --jq '.head_branch // empty')
+          fi
+          if [ -z "$TAG" ]; then
+            echo "::error::Could not resolve release tag"
+            exit 1
+          fi
+          if ! gh release view "$TAG" --repo "${{ github.repository }}" &>/dev/null; then
+            echo "::error::head_branch '$TAG' is not a valid release tag"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Verify DMG asset exists in public repo
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          if ! gh release view "$TAG" --repo tlkahn/lit-releases &>/dev/null; then
+            echo "::error::Release $TAG not found in tlkahn/lit-releases"
+            exit 1
+          fi
+          ASSETS=$(gh release view "$TAG" --repo tlkahn/lit-releases --json assets -q '.assets[].name')
+          if ! echo "$ASSETS" | grep -q "\.dmg$"; then
+            echo "::error::No DMG asset found in release $TAG"
+            exit 1
+          fi
+          echo "Assets found:"
+          echo "$ASSETS"
+
+      - name: Compute download values
+        id: values
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          VERSION="${TAG#v}"
+          DOWNLOAD_URL="https://github.com/tlkahn/lit-releases/releases/download/${TAG}/Lit_${TAG}_aarch64.dmg"
+          DOWNLOAD_LABEL="Download ${TAG} for Mac"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "download_url=$DOWNLOAD_URL" >> "$GITHUB_OUTPUT"
+          echo "download_label=$DOWNLOAD_LABEL" >> "$GITHUB_OUTPUT"
+
+      - name: Clone website repo
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
+        run: |
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/tlkahn/tlkahn.github.io.git" website
+
+      - name: Update content/_index.md
+        run: |
+          FILE="website/content/_index.md"
+          sed -i "s|^download_url:.*|download_url: \"${{ steps.values.outputs.download_url }}\"|" "$FILE"
+          sed -i "s|^download_label:.*|download_label: \"${{ steps.values.outputs.download_label }}\"|" "$FILE"
+
+      - name: Update hugo.toml
+        run: |
+          FILE="website/hugo.toml"
+          sed -i "s|^  downloadURL = .*|  downloadURL = '${{ steps.values.outputs.download_url }}'|" "$FILE"
+          sed -i "s|^  version = .*|  version = '${{ steps.values.outputs.version }}'|" "$FILE"
+
+      - name: Verify changes
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          VERSION="${{ steps.values.outputs.version }}"
+          grep -q "$TAG" website/content/_index.md || { echo "::error::Tag not found in _index.md"; exit 1; }
+          grep -q "$TAG" website/hugo.toml || { echo "::error::Tag not found in hugo.toml"; exit 1; }
+          grep -q "$VERSION" website/hugo.toml || { echo "::error::Version not found in hugo.toml"; exit 1; }
+          echo "Verified: tag $TAG and version $VERSION present in website files"
+
+      - name: Commit and push
+        run: |
+          cd website
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add content/_index.md hugo.toml
+          if git diff --cached --quiet; then
+            echo "No changes to commit — website already up to date"
+            exit 0
+          fi
+          git commit -m "Update download button to ${{ steps.tag.outputs.tag }}"
+          git push
