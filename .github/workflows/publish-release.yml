@@ -101,10 +101,3 @@ jobs:
           else
             gh release create "$TAG" "${CREATE_ARGS[@]}"
           fi
-
-          # Delete auto-generated source archives — only DMGs should be published
-          RELEASE_ID=$(gh api repos/tlkahn/lit-releases/releases/tags/"$TAG" --jq '.id')
-          gh api repos/tlkahn/lit-releases/releases/"$RELEASE_ID"/assets --jq '.[] | select(.name | test("\\.(zip|tar\\.gz)$")) | .id' | while read -r ASSET_ID; do
-            gh api --method DELETE repos/tlkahn/lit-releases/releases/assets/"$ASSET_ID"
-            echo "Deleted source archive asset $ASSET_ID"
-          done
