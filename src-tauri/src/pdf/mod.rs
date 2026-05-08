@@ -261,11 +261,18 @@ pub(crate) fn lock_pdfium() -> std::sync::MutexGuard<'static, ()> {
     PDFIUM_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-pub fn find_libpdfium() -> Option<PathBuf> {
+pub fn find_libpdfium(resource_dir: Option<&std::path::Path>) -> Option<PathBuf> {
     if let Ok(p) = std::env::var("PDFIUM_LIB_PATH") {
         let path = PathBuf::from(&p);
         if path.exists() {
             return Some(path);
+        }
+    }
+
+    if let Some(dir) = resource_dir {
+        let lib_path = dir.join("libpdfium.dylib");
+        if lib_path.exists() {
+            return Some(lib_path);
         }
     }
 
@@ -278,8 +285,8 @@ pub fn find_libpdfium() -> Option<PathBuf> {
     None
 }
 
-pub fn find_libpdfium_or_default() -> String {
-    find_libpdfium()
+pub fn find_libpdfium_or_default(resource_dir: Option<&std::path::Path>) -> String {
+    find_libpdfium(resource_dir)
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|| "libpdfium.dylib".to_string())
 }
@@ -297,7 +304,7 @@ mod tests {
     use super::*;
 
     fn require_pdfium() -> String {
-        find_libpdfium()
+        find_libpdfium(None)
             .map(|p| p.to_string_lossy().to_string())
             .expect("libpdfium not found — run scripts/fetch-pdfium.sh")
     }
@@ -600,6 +607,37 @@ mod tests {
         let guard = lock_pdfium();
         assert!(std::sync::Mutex::try_lock(&PDFIUM_TEST_LOCK).is_err());
         drop(guard);
+    }
+
+    #[test]
+    fn test_find_libpdfium_checks_resource_dir() {
+        let dir = std::env::temp_dir().join("lit-test-pdfium-res");
+        let _ = std::fs::create_dir_all(&dir);
+        let fake_lib = dir.join("libpdfium.dylib");
+        std::fs::write(&fake_lib, b"fake").unwrap();
+
+        let result = find_libpdfium(Some(dir.as_path()));
+        assert_eq!(result, Some(fake_lib));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_find_libpdfium_skips_missing_resource_dir_file() {
+        let dir = std::env::temp_dir().join("lit-test-pdfium-empty");
+        let _ = std::fs::create_dir_all(&dir);
+
+        let result = find_libpdfium(Some(dir.as_path()));
+        if let Some(ref p) = result {
+            assert!(!p.starts_with(&dir));
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_find_libpdfium_none_does_not_panic() {
+        let _result: Option<PathBuf> = find_libpdfium(None);
     }
 
     #[test]

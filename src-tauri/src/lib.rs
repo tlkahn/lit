@@ -106,8 +106,10 @@ pub fn run() {
         .manage(Arc::new(commands::graph::GraphBuildState::new()))
         .manage(Arc::new(seed::SeedState::new()))
         .manage(BibCache::new())
-        .manage(commands::pdf_viewer::PdfViewerState::new(&pdf::find_libpdfium_or_default()))
         .setup(move |app| {
+            let resource_dir = app.handle().path().resource_dir().ok();
+            let pdfium_path = pdf::find_libpdfium_or_default(resource_dir.as_deref());
+            app.manage(commands::pdf_viewer::PdfViewerState::new(&pdfium_path));
             let seed_state: Arc<seed::SeedState> =
                 app.state::<Arc<seed::SeedState>>().inner().clone();
             let seed_handle = app.handle().clone();

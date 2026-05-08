@@ -131,7 +131,7 @@ mod tests {
     }
 
     fn require_pdfium() -> String {
-        find_libpdfium()
+        find_libpdfium(None)
             .map(|p| p.to_string_lossy().to_string())
             .expect("libpdfium not found — run scripts/fetch-pdfium.sh")
     }
@@ -226,6 +226,23 @@ mod tests {
         let state = PdfViewerState::new("dummy");
         let result = state.prefetch_for_window("unknown", 0, 144);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_state_new_with_resource_dir_path() {
+        let dir = std::env::temp_dir().join("lit-test-pdf-state");
+        let _ = std::fs::create_dir_all(&dir);
+        let fake = dir.join("libpdfium.dylib");
+        std::fs::write(&fake, b"fake").unwrap();
+
+        let lib = crate::pdf::find_libpdfium_or_default(Some(dir.as_path()));
+        assert!(lib.contains("libpdfium.dylib"));
+        assert!(std::path::Path::new(&lib).exists());
+
+        let state = PdfViewerState::new(&lib);
+        assert!(state.temp_dir_for_window("x").is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

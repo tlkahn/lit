@@ -22,7 +22,8 @@
     "resources": {
       "../themes/lit-nordic/*": "bundled-themes/lit-nordic/",
       "../themes/leuvburn/*": "bundled-themes/leuvburn/",
-      "../keymaps/default.json": "bundled-keymaps/default.json"
+      "../keymaps/default.json": "bundled-keymaps/default.json",
+      "libs/libpdfium.dylib": "libpdfium.dylib"
     }
   },
   "app": {
