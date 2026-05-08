@@ -315,7 +315,6 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
       }
       graphRef.current = null;
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, depth, mode === "local" ? activePageId : null, reinitTrigger]);
 
   useEffect(() => {

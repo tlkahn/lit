@@ -1,0 +1,60 @@
+name: Build and Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            arch: aarch64
+            runner: macos-latest
+          - target: x86_64-apple-darwin
+            arch: x86_64
+            runner: macos-13
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.target }}
+      - name: Configure git for private deps
+        run: git config --global url."https://${{ secrets.PUBLIC_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+      - run: bun install --frozen-lockfile
+      - name: Fetch libpdfium
+        run: bash scripts/fetch-pdfium.sh
+      - name: Pre-build lit-cli
+        working-directory: src-tauri
+        run: |
+          mkdir -p binaries
+          touch binaries/lit-cli-${{ matrix.target }}
+          cargo build --release --bin lit-cli --target ${{ matrix.target }}
+          cp target/${{ matrix.target }}/release/lit-cli binaries/lit-cli-${{ matrix.target }}
+      - name: Build Tauri app
+        run: >
+          bun tauri build
+          --target ${{ matrix.target }}
+          --config '{"build":{"beforeBuildCommand":"bun run build"}}'
+      - name: Upload DMG to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          DMG=$(find src-tauri/target/${{ matrix.target }} -name '*.dmg' -type f | head -1)
+          if [ -z "$DMG" ]; then
+            echo "::error::No DMG found for ${{ matrix.target }}"
+            exit 1
+          fi
+          cp "$DMG" "Lit_${TAG}_${{ matrix.arch }}.dmg"
+          gh release upload "$TAG" "Lit_${TAG}_${{ matrix.arch }}.dmg" --clobber

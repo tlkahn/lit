@@ -1,0 +1,73 @@
+name: Publish Release to Public Repo
+
+on:
+  workflow_run:
+    workflows: ["Build and Release"]
+    types: [completed]
+
+jobs:
+  mirror-release:
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    steps:
+      - name: Get release tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG=$(gh api repos/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }} --jq '.head_branch')
+          if ! gh release view "$TAG" --repo "${{ github.repository }}" &>/dev/null; then
+            echo "::warning::head_branch '$TAG' is not a release tag, falling back to latest"
+            TAG=$(gh release list --repo "${{ github.repository }}" --limit 1 --json tagName -q '.[0].tagName')
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p assets
+          gh release download "${{ steps.tag.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --dir assets \
+            --pattern '*' \
+            --skip-existing || true
+
+      - name: Read release metadata
+        id: meta
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          NAME=$(gh release view "$TAG" --repo "${{ github.repository }}" --json name -q .name)
+          PRERELEASE=$(gh release view "$TAG" --repo "${{ github.repository }}" --json isPrerelease -q .isPrerelease)
+          gh release view "$TAG" --repo "${{ github.repository }}" --json body -q .body > /tmp/release-body.md
+          echo "release_name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+
+      - name: Create release in public repo
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          RELEASE_NAME="${{ steps.meta.outputs.release_name }}"
+          PRERELEASE="${{ steps.meta.outputs.prerelease }}"
+
+          CREATE_ARGS=(
+            --repo tlkahn/lit-releases
+            --title "${RELEASE_NAME:-$TAG}"
+            --notes-file /tmp/release-body.md
+          )
+
+          if [ "$PRERELEASE" = "true" ]; then
+            CREATE_ARGS+=(--prerelease)
+          fi
+
+          gh release delete "$TAG" --repo tlkahn/lit-releases --yes 2>/dev/null || true
+
+          ASSET_FILES=$(find assets -type f 2>/dev/null)
+          if [ -n "$ASSET_FILES" ]; then
+            gh release create "$TAG" "${CREATE_ARGS[@]}" assets/*
+          else
+            gh release create "$TAG" "${CREATE_ARGS[@]}"
+          fi
