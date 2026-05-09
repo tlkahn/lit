@@ -211,56 +211,8 @@ pub fn run() {
             Ok(())
         })
         .on_menu_event(|app, event| {
-            match event.id().as_ref() {
-                "open_workspace" => {
-                    let handle = app.clone();
-                    tauri::async_runtime::spawn(async move {
-                        use tauri_plugin_dialog::DialogExt;
-                        let dialog = handle.dialog().clone();
-                        dialog.file().pick_folder(move |folder| {
-                            if let Some(path) = folder {
-                                let p = path.to_string();
-                                let _ = commands::workspace::create_workspace_window(&handle, Some(p), None, None, None);
-                            }
-                        });
-                    });
-                }
-                "install_cli" => {
-                    let handle = app.clone();
-                    tauri::async_runtime::spawn(async move {
-                        use tauri_plugin_dialog::DialogExt;
-                        let result = commands::cli::install_cli(handle.clone());
-                        let dialog = handle.dialog();
-                        match result {
-                            Ok(()) => {
-                                dialog.message("Command line tool installed at /usr/local/bin/lit")
-                                    .title("Success")
-                                    .blocking_show();
-                            }
-                            Err(e) => {
-                                dialog.message(format!("Failed to install: {e}"))
-                                    .title("Error")
-                                    .blocking_show();
-                            }
-                        }
-                    });
-                }
-                "open_preferences" => {
-                    let handle = app.clone();
-                    tauri::async_runtime::spawn(async move {
-                        preferences::seed_default_if_missing(&handle);
-                        let path = preferences::preferences_path(&handle);
-                        if let Some(path_str) = path.to_str() {
-                            use tauri_plugin_opener::OpenerExt;
-                            let _ = handle.opener().open_path(path_str, None::<&str>);
-                        }
-                    });
-                }
-                "open_in_external_editor" => {
-                    use tauri::Emitter;
-                    let _ = app.emit("menu://open-in-external-editor", ());
-                }
-                _ => {}
+            if let Some(action) = menu::MenuAction::from_id(event.id().as_ref()) {
+                menu::execute_action(action, app);
             }
         })
         .invoke_handler(tauri::generate_handler![
