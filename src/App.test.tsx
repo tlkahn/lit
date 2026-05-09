@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor, act } from "@testing-library/react";
 import App from "./App";
 import { mockInvoke, mockListen, emitMockEvent } from "./test/tauri-mock";
 import { useWorkspaceStore } from "./stores/workspace";
 import { usePreferencesStore } from "./stores/preferences";
+import { useLicenseStore } from "./stores/license";
 import { SIDEBAR_WIDTH_PX } from "./components/Sidebar";
 
 const samplePages = [
@@ -38,6 +39,13 @@ describe("App", () => {
       loaded: true,
     });
 
+    useLicenseStore.setState({
+      state: "trial",
+      daysRemaining: 12,
+      loading: false,
+      error: null,
+    });
+
     mockInvoke((cmd) => {
       switch (cmd) {
         case "get_app_info":
@@ -66,6 +74,8 @@ describe("App", () => {
           return {};
         case "ensure_graph_ready":
           return null;
+        case "get_license_status":
+          return { state: "trial", days_remaining: 12 };
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -110,6 +120,8 @@ describe("App", () => {
           return [];
         case "ensure_graph_ready":
           return null;
+        case "get_license_status":
+          return { state: "trial", days_remaining: 12 };
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -235,6 +247,8 @@ describe("App", () => {
           return {};
         case "ensure_graph_ready":
           return null;
+        case "get_license_status":
+          return { state: "trial", days_remaining: 12 };
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -267,6 +281,8 @@ describe("App", () => {
           return [];
         case "ensure_graph_ready":
           return null;
+        case "get_license_status":
+          return { state: "trial", days_remaining: 12 };
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -305,6 +321,8 @@ describe("App", () => {
           return {};
         case "ensure_graph_ready":
           return null;
+        case "get_license_status":
+          return { state: "trial", days_remaining: 12 };
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -395,6 +413,8 @@ describe("App", () => {
           return {};
         case "ensure_graph_ready":
           return null;
+        case "get_license_status":
+          return { state: "trial", days_remaining: 12 };
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -436,6 +456,8 @@ describe("App", () => {
           return {};
         case "ensure_graph_ready":
           return null;
+        case "get_license_status":
+          return { state: "trial", days_remaining: 12 };
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -475,6 +497,8 @@ describe("App", () => {
           return {};
         case "ensure_graph_ready":
           return null;
+        case "get_license_status":
+          return { state: "trial", days_remaining: 12 };
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -516,6 +540,8 @@ describe("App", () => {
           return {};
         case "ensure_graph_ready":
           return null;
+        case "get_license_status":
+          return { state: "trial", days_remaining: 12 };
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -529,6 +555,53 @@ describe("App", () => {
       expect(useWorkspaceStore.getState().pendingCursorLine).toBe(15);
       expect(useWorkspaceStore.getState().pendingCursorCol).toBeNull();
       expect(useWorkspaceStore.getState().pendingCursorFileAbsolute).toBe(true);
+    });
+  });
+
+  it("App wraps content in LicenseGate and calls fetchStatus", async () => {
+    useLicenseStore.setState({ state: "trial", daysRemaining: 12, loading: false });
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+    const fetchStatus = vi.fn();
+    useLicenseStore.setState({ fetchStatus });
+    render(<App />);
+    expect(fetchStatus).toHaveBeenCalled();
+  });
+
+  it("menu://enter-license-key event opens LicenseEntryDialog", async () => {
+    mockListen();
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+    useLicenseStore.setState({ state: "trial", daysRemaining: 12, loading: false });
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    act(() => {
+      emitMockEvent("menu://enter-license-key", {});
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("license-entry-dialog")).toBeInTheDocument();
+    });
+  });
+
+  it("menu://buy-license event calls openUrl", async () => {
+    mockListen();
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+    useLicenseStore.setState({ state: "trial", daysRemaining: 12, loading: false });
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    const { openUrl } = await import("@tauri-apps/plugin-opener");
+
+    act(() => {
+      emitMockEvent("menu://buy-license", {});
+    });
+
+    await waitFor(() => {
+      expect(openUrl).toHaveBeenCalledWith("https://lit.solar/buy");
     });
   });
 });

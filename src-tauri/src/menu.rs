@@ -12,6 +12,10 @@ pub const MENU_ID_LICENSE_INFO: &str = "license_info";
 pub const MENU_ID_EXPORT_MARKDOWN: &str = "export_markdown";
 pub const MENU_ID_ABOUT: &str = "show_about";
 
+pub const EVENT_BUY_LICENSE: &str = "menu://buy-license";
+pub const EVENT_ENTER_LICENSE_KEY: &str = "menu://enter-license-key";
+pub const EVENT_LICENSE_INFO: &str = "menu://license-info";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MenuAction {
     OpenWorkspace,
@@ -152,8 +156,17 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
                     });
             });
         }
-        MenuAction::BuyLicense | MenuAction::EnterLicenseKey | MenuAction::LicenseInfo => {
-            // Stubs — wired in #86
+        MenuAction::BuyLicense => {
+            use tauri::Emitter;
+            let _ = app.emit(EVENT_BUY_LICENSE, ());
+        }
+        MenuAction::EnterLicenseKey => {
+            use tauri::Emitter;
+            let _ = app.emit(EVENT_ENTER_LICENSE_KEY, ());
+        }
+        MenuAction::LicenseInfo => {
+            use tauri::Emitter;
+            let _ = app.emit(EVENT_LICENSE_INFO, ());
         }
     }
 }
@@ -231,9 +244,9 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         "Help",
         true,
         &[
-            &MenuItem::with_id(app, MENU_ID_BUY_LICENSE, "Buy License", false, None::<&str>)?,
-            &MenuItem::with_id(app, MENU_ID_ENTER_LICENSE_KEY, "Enter License Key\u{2026}", false, None::<&str>)?,
-            &MenuItem::with_id(app, MENU_ID_LICENSE_INFO, "License\u{2026}", false, None::<&str>)?,
+            &MenuItem::with_id(app, MENU_ID_BUY_LICENSE, "Buy License", true, None::<&str>)?,
+            &MenuItem::with_id(app, MENU_ID_ENTER_LICENSE_KEY, "Enter License Key\u{2026}", true, None::<&str>)?,
+            &MenuItem::with_id(app, MENU_ID_LICENSE_INFO, "License\u{2026}", true, None::<&str>)?,
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, MENU_ID_ABOUT, "About Lit\u{2026}", true, None::<&str>)?,
         ],
@@ -297,6 +310,13 @@ mod tests {
     #[test]
     fn from_id_returns_none_for_unknown() {
         assert!(MenuAction::from_id("nonexistent").is_none());
+    }
+
+    #[test]
+    fn menu_event_name_constants_defined() {
+        assert_eq!(EVENT_BUY_LICENSE, "menu://buy-license");
+        assert_eq!(EVENT_ENTER_LICENSE_KEY, "menu://enter-license-key");
+        assert_eq!(EVENT_LICENSE_INFO, "menu://license-info");
     }
 
     #[test]

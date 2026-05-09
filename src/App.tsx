@@ -5,14 +5,20 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ContentErrorFallback } from "./components/ContentErrorFallback";
 import { WorkspaceChooser } from "./components/WorkspaceChooser";
 import { StatusBar } from "./components/StatusBar";
+import { LicenseGate } from "./components/LicenseGate";
+import { LicenseEntryDialog } from "./components/LicenseEntryDialog";
 import { useTheme } from "./hooks/useTheme";
+import { useLicenseTitle } from "./hooks/useLicenseTitle";
 import { useSidebarPosition } from "./hooks/useSidebarPosition";
 import { useFileWatcher } from "./hooks/useFileWatcher";
 import { useWorkspaceStore, getRecentWorkspaces } from "./stores/workspace";
 import { useThemeStore } from "./stores/theme";
 import { usePreferencesStore } from "./stores/preferences";
 import { useFocusModeStore } from "./stores/focusMode";
+import { useLicenseStore } from "./stores/license";
 import { getStartupContext } from "./lib/ipc";
+import { listen } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { HeadingQuickSwitcher } from "./components/HeadingQuickSwitcher";
 import { CommandPalette } from "./components/CommandPalette";
 import { AnnotationBuilderModal } from "./components/AnnotationBuilderModal";
@@ -37,6 +43,7 @@ declare global {
 
 function App() {
   useTheme();
+  useLicenseTitle();
   const { position } = useSidebarPosition();
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const openWorkspace = useWorkspaceStore((s) => s.openWorkspace);
@@ -107,6 +114,34 @@ function App() {
   const [editingRange, setEditingRange] = useState<{ from: number; to: number } | undefined>();
   const [selectionText, setSelectionText] = useState<string | undefined>();
 
+  const [licenseEntryOpen, setLicenseEntryOpen] = useState(false);
+
+  useEffect(() => {
+    let unlistenBuy: (() => void) | undefined;
+    let unlistenEnterKey: (() => void) | undefined;
+    let unlistenInfo: (() => void) | undefined;
+    let unlistenDeepLink: (() => void) | undefined;
+    listen("menu://buy-license", () => {
+      openUrl("https://lit.solar/buy");
+    }).then((fn) => { unlistenBuy = fn; });
+    listen("menu://enter-license-key", () => {
+      setLicenseEntryOpen(true);
+    }).then((fn) => { unlistenEnterKey = fn; });
+    listen("menu://license-info", () => {
+      setLicenseEntryOpen(true);
+    }).then((fn) => { unlistenInfo = fn; });
+    listen<string>("license://activate-key", async (event) => {
+      const ok = await useLicenseStore.getState().activate(event.payload);
+      if (!ok) setLicenseEntryOpen(true);
+    }).then((fn) => { unlistenDeepLink = fn; });
+    return () => {
+      unlistenBuy?.();
+      unlistenEnterKey?.();
+      unlistenInfo?.();
+      unlistenDeepLink?.();
+    };
+  }, []);
+
   const [exportVisible, setExportVisible] = useState(false);
   const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
   const [exportResult, setExportResult] = useState<ExportSummary | null>(null);
@@ -115,18 +150,16 @@ function App() {
   useEffect(() => {
     let unlistenProgress: (() => void) | undefined;
     let unlistenComplete: (() => void) | undefined;
-    import("@tauri-apps/api/event").then(({ listen }) => {
-      listen<ExportProgress>("lit:export-progress", (event) => {
-        setExportVisible(true);
-        setExportResult(null);
-        setExportProgress(event.payload);
-      }).then((fn) => { unlistenProgress = fn; });
-      listen<ExportSummary>("lit:export-complete", (event) => {
-        setExportResult(event.payload);
-        clearTimeout(exportTimerRef.current);
-        exportTimerRef.current = setTimeout(() => setExportVisible(false), 2000);
-      }).then((fn) => { unlistenComplete = fn; });
-    });
+    listen<ExportProgress>("lit:export-progress", (event) => {
+      setExportVisible(true);
+      setExportResult(null);
+      setExportProgress(event.payload);
+    }).then((fn) => { unlistenProgress = fn; });
+    listen<ExportSummary>("lit:export-complete", (event) => {
+      setExportResult(event.payload);
+      clearTimeout(exportTimerRef.current);
+      exportTimerRef.current = setTimeout(() => setExportVisible(false), 2000);
+    }).then((fn) => { unlistenComplete = fn; });
     return () => {
       unlistenProgress?.();
       unlistenComplete?.();
@@ -224,48 +257,51 @@ function App() {
   }
 
   return (
-    <div className={`flex h-screen flex-col bg-bg-primary${focusModeActive ? " focus-mode-zen" : ""}`}>
-      <div className={`flex min-h-0 flex-1 ${position === "right" ? "flex-row-reverse" : "flex-row"}`}>
-        <div
-          style={{
-            width: sidebarVisible ? `${SIDEBAR_WIDTH_PX}px` : "0px",
-            transition: "width 150ms ease-out",
-            overflow: "hidden",
-            flexShrink: 0,
-          }}
-        >
-          <Sidebar />
+    <LicenseGate>
+      <div className={`flex h-screen flex-col bg-bg-primary${focusModeActive ? " focus-mode-zen" : ""}`}>
+        <div className={`flex min-h-0 flex-1 ${position === "right" ? "flex-row-reverse" : "flex-row"}`}>
+          <div
+            style={{
+              width: sidebarVisible ? `${SIDEBAR_WIDTH_PX}px` : "0px",
+              transition: "width 150ms ease-out",
+              overflow: "hidden",
+              flexShrink: 0,
+            }}
+          >
+            <Sidebar />
+          </div>
+          <div className="flex min-h-0 flex-1 flex-col">
+            <ErrorBoundary fallback={ContentErrorFallback} resetKey={currentPagePath}>
+              <ContentArea />
+            </ErrorBoundary>
+          </div>
         </div>
-        <div className="flex min-h-0 flex-1 flex-col">
-          <ErrorBoundary fallback={ContentErrorFallback} resetKey={currentPagePath}>
-            <ContentArea />
-          </ErrorBoundary>
-        </div>
-      </div>
-      <StatusBar />
-      <HeadingQuickSwitcher
-        open={quickSwitcherOpen}
-        onClose={() => setQuickSwitcherOpen(false)}
-        onSelect={handleQuickSwitcherSelect}
-        headings={currentPageHeadings}
-      />
-      <CommandPalette
-        open={commandPaletteOpen}
-        onClose={() => setCommandPaletteOpen(false)}
-      />
-      <ExportDialog visible={exportVisible} progress={exportProgress} result={exportResult} />
-      {annotationBuilderOpen && (
-        <AnnotationBuilderModal
-          onClose={() => setAnnotationBuilderOpen(false)}
-          onInsert={handleAnnotationInsert}
-          onEditRaw={handleEditRaw}
-          mode={annotationBuilderMode}
-          originalRange={editingRange}
-          selectedText={selectionText}
-          initialFields={editingAnnotation ? annotationToFields(editingAnnotation) : undefined}
+        <StatusBar />
+        <HeadingQuickSwitcher
+          open={quickSwitcherOpen}
+          onClose={() => setQuickSwitcherOpen(false)}
+          onSelect={handleQuickSwitcherSelect}
+          headings={currentPageHeadings}
         />
-      )}
-    </div>
+        <CommandPalette
+          open={commandPaletteOpen}
+          onClose={() => setCommandPaletteOpen(false)}
+        />
+        <ExportDialog visible={exportVisible} progress={exportProgress} result={exportResult} />
+        {annotationBuilderOpen && (
+          <AnnotationBuilderModal
+            onClose={() => setAnnotationBuilderOpen(false)}
+            onInsert={handleAnnotationInsert}
+            onEditRaw={handleEditRaw}
+            mode={annotationBuilderMode}
+            originalRange={editingRange}
+            selectedText={selectionText}
+            initialFields={editingAnnotation ? annotationToFields(editingAnnotation) : undefined}
+          />
+        )}
+        <LicenseEntryDialog open={licenseEntryOpen} onClose={() => setLicenseEntryOpen(false)} />
+      </div>
+    </LicenseGate>
   );
 }
 
