@@ -80,6 +80,25 @@ export interface Clock {
   isOlderThan(ts: number, maxAgeSecs: number): boolean;
 }
 
+// --- Checkout ---
+export interface CheckoutParams {
+  priceId: string;
+  baseUrl: string;
+  customerEmail?: string;
+}
+
+export interface CheckoutResult {
+  url: string;
+  id: string;
+}
+
+// --- Webhook ---
+export type ParsedWebhookEvent =
+  | { type: "checkout.session.completed"; sessionId: string }
+  | { type: "charge.refunded"; chargeId: string }
+  | { type: "charge.dispute.created"; chargeId: string }
+  | { type: null };
+
 export interface HandlerDeps {
   db: DbOps;
   stripe: StripeOps;
