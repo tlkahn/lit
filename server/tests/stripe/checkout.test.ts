@@ -58,6 +58,17 @@ describe("createCheckoutSession", () => {
     expect(args).not.toHaveProperty("customer_email");
   });
 
+  it("includes customer_email even when it is an empty string", async () => {
+    await createCheckoutSession(stripe, {
+      ...baseParams,
+      customerEmail: "",
+    });
+
+    const args = mockCreate.mock.calls[0]![0];
+    expect(args).toHaveProperty("customer_email");
+    expect(args.customer_email).toBe("");
+  });
+
   it("returns url and id from the created session", async () => {
     mockCreate.mockResolvedValue({
       url: "https://checkout.stripe.com/c/pay/cs_live_abc",

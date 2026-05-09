@@ -11,7 +11,7 @@ export async function createCheckoutSession(
     automatic_tax: { enabled: true },
     success_url: `${params.baseUrl}/purchase/success?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${params.baseUrl}/purchase/cancel`,
-    ...(params.customerEmail && { customer_email: params.customerEmail }),
+    ...(params.customerEmail !== undefined && { customer_email: params.customerEmail }),
   });
   if (!session.url) {
     throw new Error("Stripe returned no checkout URL");

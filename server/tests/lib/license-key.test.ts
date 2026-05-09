@@ -70,7 +70,7 @@ describe("license-key", () => {
       expect(lines[1]).toBe("PAYLOAD.SIGNATURE");
       expect(lines[2]).toBe("-----END LICENSE KEY-----");
       // Exactly one dot separating payload from signature
-      const body = lines[1];
+      const body = lines[1]!;
       const parts = body.split(".");
       expect(parts).toHaveLength(2);
       expect(parts[0]).toBe("PAYLOAD");
