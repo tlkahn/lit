@@ -22,16 +22,15 @@ const ENDPOINT = "http://localhost:8000";
 let client: DynamoDBDocumentClient;
 let rawClient: DynamoDBClient;
 
-let counter = 0;
 function makeLicenseRecord(
   overrides?: Partial<LicenseRecord>,
 ): LicenseRecord {
-  counter++;
+  const id = crypto.randomUUID().slice(0, 8);
   return {
-    license_id: `LIT-2025-int${counter}`,
-    email_hash: `hash-${counter}`,
-    stripe_session_id: `cs_int_${counter}`,
-    stripe_charge_id: `ch_int_${counter}`,
+    license_id: `LIT-2025-int-${id}`,
+    email_hash: `hash-${id}`,
+    stripe_session_id: `cs_int_${id}`,
+    stripe_charge_id: `ch_int_${id}`,
     status: "active",
     license_key_pem: "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
     issued_at: 1700000000,
@@ -137,7 +136,7 @@ describe("DynamoDB integration", () => {
   });
 
   it("getByEmailHash returns matches", async () => {
-    const sharedHash = `shared-hash-${counter}`;
+    const sharedHash = `shared-hash-${crypto.randomUUID().slice(0, 8)}`;
     const r1 = makeLicenseRecord({ email_hash: sharedHash });
     const r2 = makeLicenseRecord({ email_hash: sharedHash });
     await createLicense(client, TABLE, r1);
