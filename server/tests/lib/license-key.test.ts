@@ -37,7 +37,7 @@ describe("license-key", () => {
   });
 
   describe("signPayload", () => {
-    const privateKey = ed25519.utils.randomPrivateKey();
+    const privateKey = ed25519.utils.randomSecretKey();
 
     it("returns 64-byte signature", () => {
       const payloadB64 = "dGVzdA==";
@@ -79,7 +79,7 @@ describe("license-key", () => {
   });
 
   describe("generateLicenseKey", () => {
-    const privateKey = ed25519.utils.randomPrivateKey();
+    const privateKey = ed25519.utils.randomSecretKey();
 
     it("returns complete valid PEM", () => {
       const pem = generateLicenseKey(payload, privateKey);
@@ -101,7 +101,7 @@ describe("license-key", () => {
     });
 
     it("cross-validation: sign + verify round-trip matches Rust convention", () => {
-      const privateKey2 = ed25519.utils.randomPrivateKey();
+      const privateKey2 = ed25519.utils.randomSecretKey();
       const publicKey = ed25519.getPublicKey(privateKey2);
 
       const pem = generateLicenseKey(payload, privateKey2);
@@ -110,7 +110,7 @@ describe("license-key", () => {
       expect(lines[2]).toBe("-----END LICENSE KEY-----");
 
       const body = lines[1]!;
-      const dotIdx = body.lastIndexOf(".");
+      const dotIdx = body.indexOf(".");
       const payloadB64 = body.slice(0, dotIdx);
       const sigB64 = body.slice(dotIdx + 1);
 
