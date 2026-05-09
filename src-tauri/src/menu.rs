@@ -127,20 +127,25 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
                                 let state: tauri::State<crate::commands::workspace::WorkspaceRegistry> = handle.state();
                                 let root = match crate::commands::workspace::get_workspace_root(&state, window.label()) {
                                     Ok(r) => r,
-                                    Err(_) => return,
+                                    Err(e) => {
+                                        handle.dialog().message(format!("Export failed: {e}")).title("Export Error").blocking_show();
+                                        return;
+                                    }
                                 };
                                 let dest_path = std::path::PathBuf::from(&dest_str);
+                                let dialog_handle = handle.clone();
                                 std::thread::spawn(move || {
                                     use tauri::Emitter;
-                                    let entries = match crate::export::collect_export_files(&root) {
-                                        Ok(e) => e,
-                                        Err(_) => return,
-                                    };
-                                    let _ = crate::export::write_zip(&entries, &dest_path, |current, total| {
-                                        #[derive(Clone, serde::Serialize)]
-                                        struct P { current: usize, total: usize }
-                                        let _ = window.emit("lit:export-progress", P { current, total });
-                                    });
+                                    match crate::export::run_export(&root, &dest_path, |current, total| {
+                                        let _ = window.emit("lit:export-progress", crate::export::ExportProgress { current, total });
+                                    }) {
+                                        Ok(summary) => {
+                                            let _ = window.emit("lit:export-complete", summary);
+                                        }
+                                        Err(e) => {
+                                            dialog_handle.dialog().message(format!("Export failed: {e}")).title("Export Error").blocking_show();
+                                        }
+                                    }
                                 });
                             }
                         }

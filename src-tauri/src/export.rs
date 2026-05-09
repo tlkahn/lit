@@ -1,31 +1,36 @@
+use crate::workspace::normalize::normalize_to_nfc;
 use regex::Regex;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
 
+static FENCED_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?ms)^```.*?^```[\t ]*($|\z)").unwrap());
+static INLINE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"`[^`]+`").unwrap());
+static MD_IMAGE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"!\[.*?\]\((.+?)\)").unwrap());
+static OBS_EMBED_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"!\[\[(.+?)\]\]").unwrap());
+
 fn strip_code(content: &str) -> String {
-    let fenced = Regex::new(r"(?ms)^```.*?^```").unwrap();
-    let stripped = fenced.replace_all(content, "");
-    let inline = Regex::new(r"`[^`]+`").unwrap();
-    inline.replace_all(&stripped, "").to_string()
+    let stripped = FENCED_RE.replace_all(content, "");
+    INLINE_RE.replace_all(&stripped, "").to_string()
 }
 
 pub fn extract_asset_references(content: &str) -> Vec<String> {
     let cleaned = strip_code(content);
 
-    let md_re = Regex::new(r"!\[.*?\]\((.+?)\)").unwrap();
-    let obs_re = Regex::new(r"!\[\[(.+?)\]\]").unwrap();
-
-    let mut refs: Vec<String> = md_re
+    let mut refs: Vec<String> = MD_IMAGE_RE
         .captures_iter(&cleaned)
         .map(|c| c[1].to_string())
         .filter(|p| !p.starts_with("http://") && !p.starts_with("https://"))
         .collect();
 
-    refs.extend(obs_re.captures_iter(&cleaned).map(|c| c[1].to_string()));
+    refs.extend(OBS_EMBED_RE.captures_iter(&cleaned).map(|c| c[1].to_string()));
 
     let mut seen = HashSet::new();
     refs.retain(|r| seen.insert(r.clone()));
@@ -69,7 +74,7 @@ pub fn collect_export_files(root: &Path) -> Result<Vec<ExportEntry>, String> {
         }
         let relative = path.strip_prefix(root).map_err(|e| e.to_string())?;
         entries.push(ExportEntry {
-            relative_path: relative.to_string_lossy().to_string(),
+            relative_path: normalize_to_nfc(&relative.to_string_lossy()),
             absolute_path: path.to_path_buf(),
         });
         if is_md {
@@ -77,19 +82,25 @@ pub fn collect_export_files(root: &Path) -> Result<Vec<ExportEntry>, String> {
         }
     }
 
+    let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+
     for md_path in &md_files {
         let content = std::fs::read_to_string(md_path).unwrap_or_default();
         let refs = extract_asset_references(&content);
         let md_dir = md_path.parent().unwrap_or(root);
         for asset_ref in refs {
             let asset_path = md_dir.join(&asset_ref);
-            if asset_path.exists() {
-                let relative = asset_path
-                    .strip_prefix(root)
-                    .map_err(|e| e.to_string())?;
+            let canonical = match asset_path.canonicalize() {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            if !canonical.starts_with(&canonical_root) {
+                continue;
+            }
+            if let Ok(relative) = canonical.strip_prefix(&canonical_root) {
                 entries.push(ExportEntry {
-                    relative_path: relative.to_string_lossy().to_string(),
-                    absolute_path: asset_path,
+                    relative_path: normalize_to_nfc(&relative.to_string_lossy()),
+                    absolute_path: canonical,
                 });
             }
         }
@@ -98,6 +109,12 @@ pub fn collect_export_files(root: &Path) -> Result<Vec<ExportEntry>, String> {
     entries.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
     entries.dedup_by(|a, b| a.relative_path == b.relative_path);
     Ok(entries)
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ExportProgress {
+    pub current: usize,
+    pub total: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -129,6 +146,14 @@ where
         exported_count: total,
         destination: dest.to_string_lossy().to_string(),
     })
+}
+
+pub fn run_export<F>(root: &Path, dest: &Path, on_progress: F) -> Result<ExportSummary, String>
+where
+    F: Fn(usize, usize),
+{
+    let entries = collect_export_files(root)?;
+    write_zip(&entries, dest, on_progress)
 }
 
 #[cfg(test)]
@@ -312,6 +337,70 @@ mod tests {
 
         let calls = calls.into_inner().unwrap();
         assert_eq!(calls, vec![(1, 3), (2, 3), (3, 3)]);
+    }
+
+    #[test]
+    fn run_export_produces_valid_zip() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("note.md"), "hello").unwrap();
+        let dest = dir.path().join("export.zip");
+
+        let summary = run_export(dir.path(), &dest, |_, _| {}).unwrap();
+        assert_eq!(summary.exported_count, 1);
+        assert_eq!(summary.destination, dest.to_string_lossy());
+    }
+
+    #[test]
+    fn collect_export_files_skips_path_traversal() {
+        let outer = tempfile::tempdir().unwrap();
+        let workspace = outer.path().join("workspace");
+        std::fs::create_dir(&workspace).unwrap();
+        // File outside workspace that a traversal ref can reach
+        std::fs::write(outer.path().join("secret.txt"), "top secret").unwrap();
+        std::fs::write(workspace.join("good.md"), "![img](logo.png)").unwrap();
+        std::fs::write(workspace.join("logo.png"), b"png").unwrap();
+        std::fs::write(workspace.join("bad.md"), "![x](../secret.txt)").unwrap();
+
+        let entries = collect_export_files(&workspace).unwrap();
+        let paths: Vec<&str> = entries.iter().map(|e| e.relative_path.as_str()).collect();
+        assert!(paths.contains(&"good.md"));
+        assert!(paths.contains(&"logo.png"));
+        assert!(paths.contains(&"bad.md"));
+        assert!(!paths.iter().any(|p| p.contains("secret")));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn collect_export_files_nfc_normalizes_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let nfd_name = "caf\u{0065}\u{0301}.md"; // e + combining accent (NFD)
+        std::fs::write(dir.path().join(nfd_name), "hello").unwrap();
+
+        let entries = collect_export_files(dir.path()).unwrap();
+        let expected_nfc = "caf\u{00e9}.md"; // precomposed (NFC)
+        assert!(entries.iter().any(|e| e.relative_path == expected_nfc));
+    }
+
+    #[test]
+    fn extract_asset_references_is_reentrant() {
+        let r1 = extract_asset_references("![a](img1.png)");
+        let r2 = extract_asset_references("![b](img2.png)");
+        assert_eq!(r1, vec!["img1.png"]);
+        assert_eq!(r2, vec!["img2.png"]);
+    }
+
+    #[test]
+    fn strip_code_fenced_block_at_eof_without_trailing_newline() {
+        let input = "before\n```\ncode\n```";
+        let result = strip_code(input);
+        assert!(!result.contains("code"));
+    }
+
+    #[test]
+    fn strip_code_fenced_block_at_eof_trailing_whitespace() {
+        let input = "before\n```\ncode\n```  ";
+        let result = strip_code(input);
+        assert!(!result.contains("code"));
     }
 
     #[test]

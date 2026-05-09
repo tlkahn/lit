@@ -113,23 +113,25 @@ function App() {
   const exportTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
+    let unlistenProgress: (() => void) | undefined;
+    let unlistenComplete: (() => void) | undefined;
     import("@tauri-apps/api/event").then(({ listen }) => {
       listen<ExportProgress>("lit:export-progress", (event) => {
         setExportVisible(true);
         setExportResult(null);
         setExportProgress(event.payload);
-        if (event.payload.current === event.payload.total) {
-          setExportResult({
-            exported_count: event.payload.total,
-            destination: "",
-          });
-          clearTimeout(exportTimerRef.current);
-          exportTimerRef.current = setTimeout(() => setExportVisible(false), 2000);
-        }
-      }).then((fn) => { unlisten = fn; });
+      }).then((fn) => { unlistenProgress = fn; });
+      listen<ExportSummary>("lit:export-complete", (event) => {
+        setExportResult(event.payload);
+        clearTimeout(exportTimerRef.current);
+        exportTimerRef.current = setTimeout(() => setExportVisible(false), 2000);
+      }).then((fn) => { unlistenComplete = fn; });
     });
-    return () => { unlisten?.(); clearTimeout(exportTimerRef.current); };
+    return () => {
+      unlistenProgress?.();
+      unlistenComplete?.();
+      clearTimeout(exportTimerRef.current);
+    };
   }, []);
 
   useModalLock(quickSwitcherOpen);
