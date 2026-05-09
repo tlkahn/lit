@@ -14,7 +14,7 @@ export function signPayload(
   payloadB64: string,
   privateKey: Uint8Array,
 ): Uint8Array {
-  return ed25519.sign(Buffer.from(payloadB64, "utf-8"), privateKey);
+  return ed25519.sign(new TextEncoder().encode(payloadB64), privateKey);
 }
 
 const BEGIN_MARKER = "-----BEGIN LICENSE KEY-----";

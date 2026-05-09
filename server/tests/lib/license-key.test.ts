@@ -50,7 +50,7 @@ describe("license-key", () => {
       const payloadB64 = "dGVzdA==";
       const sig = signPayload(payloadB64, privateKey);
       const publicKey = ed25519.getPublicKey(privateKey);
-      const msg = Buffer.from(payloadB64, "utf-8");
+      const msg = new TextEncoder().encode(payloadB64);
       expect(ed25519.verify(sig, msg, publicKey)).toBe(true);
     });
   });
@@ -115,9 +115,9 @@ describe("license-key", () => {
       const sigB64 = body.slice(dotIdx + 1);
 
       // Rust verifies: ed25519.verify(sig, payload_b64_as_utf8_bytes, pubkey)
-      const sig = Buffer.from(sigB64, "base64");
+      const sig = new Uint8Array(Buffer.from(sigB64, "base64"));
       expect(sig.length).toBe(64);
-      const msg = Buffer.from(payloadB64, "utf-8");
+      const msg = new TextEncoder().encode(payloadB64);
       expect(ed25519.verify(sig, msg, publicKey)).toBe(true);
 
       // Payload decodes to valid JSON with correct fields
