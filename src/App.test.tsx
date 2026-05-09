@@ -4,6 +4,7 @@ import App from "./App";
 import { mockInvoke, mockListen, emitMockEvent } from "./test/tauri-mock";
 import { useWorkspaceStore } from "./stores/workspace";
 import { usePreferencesStore } from "./stores/preferences";
+import { SIDEBAR_WIDTH_PX } from "./components/Sidebar";
 
 const samplePages = [
   {
@@ -158,14 +159,14 @@ describe("App", () => {
     expect(wrapper.style.overflow).toBe("hidden");
   });
 
-  it("sidebar wrapper has width 240px when sidebarVisible is true", () => {
+  it("sidebar wrapper has width matching SIDEBAR_WIDTH_PX when sidebarVisible is true", () => {
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
     usePreferencesStore.setState({ sidebarVisible: true });
 
     render(<App />);
     const aside = document.querySelector("aside")!;
     const wrapper = aside.parentElement!;
-    expect(wrapper.style.width).toBe("240px");
+    expect(wrapper.style.width).toBe(`${SIDEBAR_WIDTH_PX}px`);
   });
 
   it("sidebar wrapper has transition style for animation", () => {

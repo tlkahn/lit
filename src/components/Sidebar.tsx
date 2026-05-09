@@ -202,6 +202,8 @@ const PageItem = memo(function PageItem({
   );
 });
 
+export const SIDEBAR_WIDTH_PX = 240;
+
 export function Sidebar() {
   const pages = useWorkspaceStore((s) => s.pages);
   const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
@@ -255,7 +257,7 @@ export function Sidebar() {
 
   const handleAsideContextMenu = useCallback((e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
-    if (target.closest("[data-page-item]") || target.closest("[data-index]")) return;
+    if (target.closest("[data-index]") || target.closest("input, textarea, select")) return;
     e.preventDefault();
     setSidebarMenu({ x: e.clientX, y: e.clientY });
   }, []);
@@ -279,7 +281,7 @@ export function Sidebar() {
   }, [sidebarMenu]);
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col border-e border-border bg-bg-secondary" onContextMenu={handleAsideContextMenu}>
+    <aside className="flex shrink-0 flex-col border-e border-border bg-bg-secondary" style={{ width: SIDEBAR_WIDTH_PX }} onContextMenu={handleAsideContextMenu}>
       <div className="flex items-center border-b border-border">
         <button
           onClick={() => setTab("files")}

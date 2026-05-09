@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { Sidebar } from "./components/Sidebar";
+import { Sidebar, SIDEBAR_WIDTH_PX } from "./components/Sidebar";
 import { ContentArea } from "./components/ContentArea";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ContentErrorFallback } from "./components/ContentErrorFallback";
@@ -200,7 +200,7 @@ function App() {
       <div className={`flex min-h-0 flex-1 ${position === "right" ? "flex-row-reverse" : "flex-row"}`}>
         <div
           style={{
-            width: sidebarVisible ? "240px" : "0px",
+            width: sidebarVisible ? `${SIDEBAR_WIDTH_PX}px` : "0px",
             transition: "width 150ms ease-out",
             overflow: "hidden",
             flexShrink: 0,

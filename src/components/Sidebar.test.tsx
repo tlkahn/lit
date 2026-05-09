@@ -3,7 +3,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { mockInvoke } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
-import { Sidebar } from "./Sidebar";
+import { Sidebar, SIDEBAR_WIDTH_PX } from "./Sidebar";
 
 let invokedCommands: { cmd: string; args: unknown }[] = [];
 
@@ -284,6 +284,18 @@ describe("Sidebar PDF icon", () => {
   });
 });
 
+describe("Sidebar width constant", () => {
+  it("aside element has width set to SIDEBAR_WIDTH_PX", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha", "Alpha.md")],
+    });
+    render(<Sidebar />);
+
+    const aside = document.querySelector("aside")!;
+    expect(aside.style.width).toBe(`${SIDEBAR_WIDTH_PX}px`);
+  });
+});
+
 describe("Sidebar virtualization", () => {
   it("renders page items via virtualized list", () => {
     useWorkspaceStore.setState({
@@ -542,6 +554,18 @@ describe("context menu theme-aware colors", () => {
 });
 
 describe("Sidebar background context menu", () => {
+  it("right-clicking search input does not show sidebar background menu", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha", "Alpha.md")],
+    });
+    render(<Sidebar />);
+
+    const searchInput = screen.getByLabelText("Search pages");
+    fireEvent.contextMenu(searchInput, { clientX: 100, clientY: 50 });
+
+    expect(screen.queryByTestId("sidebar-bg-menu")).not.toBeInTheDocument();
+  });
+
   it("right-clicking sidebar background shows Hide Sidebar menu", () => {
     useWorkspaceStore.setState({
       pages: [makePage("Alpha", "Alpha.md")],
