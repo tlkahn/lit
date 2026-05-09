@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useLicenseStore } from "../stores/license";
 import { TrialBanner } from "./TrialBanner";
 import { LicenseEntryDialog } from "./LicenseEntryDialog";
+import { SpinnerSvg } from "./SpinnerSvg";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 interface LicenseGateProps {
@@ -19,7 +20,11 @@ export function LicenseGate({ children }: LicenseGateProps) {
   }, [fetchStatus]);
 
   if (state === "unknown" && loading) {
-    return <div data-testid="license-loading" className="flex h-screen items-center justify-center text-text-muted" />;
+    return (
+      <div data-testid="license-loading" className="flex h-screen items-center justify-center text-text-muted">
+        <SpinnerSvg className="h-6 w-6 text-text-faint" />
+      </div>
+    );
   }
 
   if (state === "expired") {
@@ -31,7 +36,7 @@ export function LicenseGate({ children }: LicenseGateProps) {
         >
           <p className="text-lg font-medium text-text-normal">Your 14-day trial has ended</p>
           <p className="max-w-sm text-center text-sm text-text-muted">
-            Purchase a license to continue using Lit, or export your data.
+            Lit is a one-time purchase of $29.
           </p>
           <div className="flex gap-3">
             <button

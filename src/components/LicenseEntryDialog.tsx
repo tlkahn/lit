@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useLicenseStore } from "../stores/license";
 
 interface LicenseEntryDialogProps {
@@ -8,6 +8,7 @@ interface LicenseEntryDialogProps {
 
 export function LicenseEntryDialog({ open, onClose }: LicenseEntryDialogProps) {
   const [key, setKey] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const activate = useLicenseStore((s) => s.activate);
   const error = useLicenseStore((s) => s.error);
   const clearError = useLicenseStore((s) => s.clearError);
@@ -19,6 +20,16 @@ export function LicenseEntryDialog({ open, onClose }: LicenseEntryDialogProps) {
     [onClose],
   );
 
+  const prevOpenRef = useRef(open);
+  useEffect(() => {
+    if (open && !prevOpenRef.current) {
+      setKey("");
+      setSubmitting(false);
+      clearError();
+    }
+    prevOpenRef.current = open;
+  }, [open, clearError]);
+
   useEffect(() => {
     if (!open) return;
     document.addEventListener("keydown", handleKeyDown);
@@ -28,8 +39,13 @@ export function LicenseEntryDialog({ open, onClose }: LicenseEntryDialogProps) {
   if (!open) return null;
 
   const handleActivate = async () => {
-    const ok = await activate(key.trim());
-    if (ok) onClose();
+    setSubmitting(true);
+    try {
+      const ok = await activate(key.trim());
+      if (ok) onClose();
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handleChange = (value: string) => {
@@ -67,7 +83,7 @@ export function LicenseEntryDialog({ open, onClose }: LicenseEntryDialogProps) {
           <button
             className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
             onClick={handleActivate}
-            disabled={key.trim().length === 0}
+            disabled={key.trim().length === 0 || submitting}
             data-testid="license-entry-activate"
           >
             Activate

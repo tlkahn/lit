@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { pdfOpen, pdfRenderPage, pdfPrefetch, pdfClose } from "../lib/ipc";
 import type { PdfInfo, RenderedPage } from "../lib/ipc";
+import { SpinnerSvg } from "./SpinnerSvg";
 
 const BASE_DPI = 144;
 const MAX_CACHE = 5;
@@ -30,15 +31,6 @@ function cacheGet(cache: Map<string, RenderedPage>, key: string): RenderedPage |
     cache.set(key, val);
   }
   return val;
-}
-
-function SpinnerSvg({ className }: { className: string }) {
-  return (
-    <svg className={`animate-spin ${className}`} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-    </svg>
-  );
 }
 
 interface PdfViewerProps {

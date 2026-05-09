@@ -133,7 +133,7 @@ pub fn run() {
                 let dl_handle = app.handle().clone();
                 app.deep_link().on_open_url(move |event| {
                     for url in event.urls() {
-                        if let Ok(key) = license::parse_activate_url(url.as_str()) {
+                        if let Some(key) = license::process_deep_link_url(url.as_str()) {
                             let _ = dl_handle.emit("license://activate-key", key);
                         }
                     }

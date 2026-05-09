@@ -90,6 +90,16 @@ pub fn dev_mode_override() -> Option<DevOverride> {
     None
 }
 
+pub fn process_deep_link_url(url: &str) -> Option<String> {
+    match parse_activate_url(url) {
+        Ok(key) => Some(key),
+        Err(e) => {
+            tracing::warn!("invalid deep-link URL {url:?}: {e}");
+            None
+        }
+    }
+}
+
 pub fn parse_activate_url(url: &str) -> Result<String, LicenseError> {
     let url = url::Url::parse(url)
         .map_err(|e| LicenseError::InvalidKeyFormat(format!("invalid URL: {e}")))?;
@@ -333,6 +343,16 @@ mod tests {
     }
 
     // --- parse_activate_url ---
+
+    #[test]
+    fn process_deep_link_url_valid() {
+        assert_eq!(process_deep_link_url("lit://activate?key=abc123"), Some("abc123".into()));
+    }
+
+    #[test]
+    fn process_deep_link_url_invalid_returns_none() {
+        assert_eq!(process_deep_link_url("http://bad?key=abc"), None);
+    }
 
     #[test]
     fn parse_activate_url_valid() {

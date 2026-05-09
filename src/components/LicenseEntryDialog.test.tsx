@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, fireEvent, waitFor } from "@testing-library/react";
+import { render, fireEvent, waitFor, act } from "@testing-library/react";
 import { LicenseEntryDialog } from "./LicenseEntryDialog";
 import { useLicenseStore } from "../stores/license";
 
@@ -101,5 +101,41 @@ describe("LicenseEntryDialog", () => {
     render(<LicenseEntryDialog open={true} onClose={onClose} />);
     fireEvent.keyDown(document, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears textarea when dialog reopens", () => {
+    const { container, rerender } = render(<LicenseEntryDialog open={true} onClose={vi.fn()} />);
+    const textarea = container.querySelector("[data-testid='license-entry-input']") as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "some-key" } });
+    expect(textarea.value).toBe("some-key");
+
+    rerender(<LicenseEntryDialog open={false} onClose={vi.fn()} />);
+    rerender(<LicenseEntryDialog open={true} onClose={vi.fn()} />);
+
+    const reopened = container.querySelector("[data-testid='license-entry-input']") as HTMLTextAreaElement;
+    expect(reopened.value).toBe("");
+  });
+
+  it("Activate button disabled while submitting", async () => {
+    let resolveActivate!: (value: boolean) => void;
+    const activate = vi.fn(() => new Promise<boolean>((r) => { resolveActivate = r; }));
+    useLicenseStore.setState({ activate });
+    const { container } = render(<LicenseEntryDialog open={true} onClose={vi.fn()} />);
+    const textarea = container.querySelector("[data-testid='license-entry-input']")!;
+    fireEvent.change(textarea, { target: { value: "KEY" } });
+    const btn = container.querySelector("[data-testid='license-entry-activate']") as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+
+    fireEvent.click(btn);
+    await waitFor(() => {
+      expect(btn.disabled).toBe(true);
+    });
+
+    await act(async () => {
+      resolveActivate(true);
+    });
+    await waitFor(() => {
+      expect(btn.disabled).toBe(false);
+    });
   });
 });

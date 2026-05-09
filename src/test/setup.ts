@@ -79,6 +79,14 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
   openPath: vi.fn(() => Promise.resolve()),
 }));
 
+vi.mock("@tauri-apps/api/menu", () => ({
+  Menu: {
+    default: vi.fn(() => Promise.resolve({
+      get: vi.fn(() => Promise.resolve({ setEnabled: vi.fn(() => Promise.resolve()) })),
+    })),
+  },
+}));
+
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: vi.fn(() => ({
     setTheme: vi.fn(() => Promise.resolve()),

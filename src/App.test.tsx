@@ -624,6 +624,24 @@ describe("App", () => {
     expect(activate).toHaveBeenCalledWith("PEM-KEY-DATA");
   });
 
+  it("menu://license-info event opens LicenseInfoDialog", async () => {
+    mockListen();
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+    useLicenseStore.setState({ state: "licensed", licensedTo: "Alice", loading: false });
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    act(() => {
+      emitMockEvent("menu://license-info", {});
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("license-info-dialog")).toBeInTheDocument();
+    });
+  });
+
   it("license://activate-key shows entry dialog on failure", async () => {
     mockListen();
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });

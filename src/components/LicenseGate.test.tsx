@@ -112,4 +112,25 @@ describe("LicenseGate", () => {
     expect(queryByTestId("child")).toBeTruthy();
     expect(queryByTestId("trial-banner")).toBeTruthy();
   });
+
+  it("loading screen shows a spinner", () => {
+    const { queryByTestId } = render(
+      <LicenseGate><div data-testid="child" /></LicenseGate>,
+    );
+    const loading = queryByTestId("license-loading")!;
+    expect(loading).toBeTruthy();
+    const svg = loading.querySelector("svg");
+    expect(svg).toBeTruthy();
+    expect(svg!.classList.contains("animate-spin")).toBe(true);
+  });
+
+  it("expired overlay shows price", () => {
+    useLicenseStore.setState({ state: "expired", daysRemaining: 0, loading: false });
+    const { queryByTestId } = render(
+      <LicenseGate><div data-testid="child" /></LicenseGate>,
+    );
+    const overlay = queryByTestId("license-expired-overlay")!;
+    expect(overlay).toBeTruthy();
+    expect(overlay.textContent).toContain("$29");
+  });
 });

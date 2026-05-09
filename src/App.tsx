@@ -7,10 +7,12 @@ import { WorkspaceChooser } from "./components/WorkspaceChooser";
 import { StatusBar } from "./components/StatusBar";
 import { LicenseGate } from "./components/LicenseGate";
 import { LicenseEntryDialog } from "./components/LicenseEntryDialog";
+import { LicenseInfoDialog } from "./components/LicenseInfoDialog";
 import { useTheme } from "./hooks/useTheme";
 import { useLicenseTitle } from "./hooks/useLicenseTitle";
 import { useSidebarPosition } from "./hooks/useSidebarPosition";
 import { useFileWatcher } from "./hooks/useFileWatcher";
+import { useMenuLicenseSync } from "./hooks/useMenuLicenseSync";
 import { useWorkspaceStore, getRecentWorkspaces } from "./stores/workspace";
 import { useThemeStore } from "./stores/theme";
 import { usePreferencesStore } from "./stores/preferences";
@@ -115,30 +117,47 @@ function App() {
   const [selectionText, setSelectionText] = useState<string | undefined>();
 
   const [licenseEntryOpen, setLicenseEntryOpen] = useState(false);
+  const [licenseInfoOpen, setLicenseInfoOpen] = useState(false);
+  const licensedTo = useLicenseStore((s) => s.licensedTo);
+
+  useMenuLicenseSync();
 
   useEffect(() => {
-    let unlistenBuy: (() => void) | undefined;
-    let unlistenEnterKey: (() => void) | undefined;
-    let unlistenInfo: (() => void) | undefined;
-    let unlistenDeepLink: (() => void) | undefined;
-    listen("menu://buy-license", () => {
-      openUrl("https://lit.solar/buy");
-    }).then((fn) => { unlistenBuy = fn; });
-    listen("menu://enter-license-key", () => {
-      setLicenseEntryOpen(true);
-    }).then((fn) => { unlistenEnterKey = fn; });
-    listen("menu://license-info", () => {
-      setLicenseEntryOpen(true);
-    }).then((fn) => { unlistenInfo = fn; });
-    listen<string>("license://activate-key", async (event) => {
-      const ok = await useLicenseStore.getState().activate(event.payload);
-      if (!ok) setLicenseEntryOpen(true);
-    }).then((fn) => { unlistenDeepLink = fn; });
+    let cancelled = false;
+    const unlisteners: (() => void)[] = [];
+
+    const setup = async () => {
+      const unBuy = await listen("menu://buy-license", () => {
+        openUrl("https://lit.solar/buy");
+      });
+      if (cancelled) { unBuy(); return; }
+      unlisteners.push(unBuy);
+
+      const unEnterKey = await listen("menu://enter-license-key", () => {
+        setLicenseEntryOpen(true);
+      });
+      if (cancelled) { unEnterKey(); return; }
+      unlisteners.push(unEnterKey);
+
+      const unInfo = await listen("menu://license-info", () => {
+        setLicenseInfoOpen(true);
+      });
+      if (cancelled) { unInfo(); return; }
+      unlisteners.push(unInfo);
+
+      const unDeepLink = await listen<string>("license://activate-key", async (event) => {
+        const ok = await useLicenseStore.getState().activate(event.payload);
+        if (!ok) setLicenseEntryOpen(true);
+      });
+      if (cancelled) { unDeepLink(); return; }
+      unlisteners.push(unDeepLink);
+    };
+
+    setup();
+
     return () => {
-      unlistenBuy?.();
-      unlistenEnterKey?.();
-      unlistenInfo?.();
-      unlistenDeepLink?.();
+      cancelled = true;
+      for (const u of unlisteners) u();
     };
   }, []);
 
@@ -300,6 +319,7 @@ function App() {
           />
         )}
         <LicenseEntryDialog open={licenseEntryOpen} onClose={() => setLicenseEntryOpen(false)} />
+        <LicenseInfoDialog open={licenseInfoOpen} licensedTo={licensedTo} onClose={() => setLicenseInfoOpen(false)} />
       </div>
     </LicenseGate>
   );
