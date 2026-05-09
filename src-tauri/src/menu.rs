@@ -116,8 +116,6 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
 
 pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let app_menu = Submenu::new(app, "Lit", true)?;
-    app_menu.append(&PredefinedMenuItem::about(app, Some("About Lit"), None)?)?;
-    app_menu.append(&PredefinedMenuItem::separator(app)?)?;
     app_menu.append(&MenuItem::with_id(app, MENU_ID_INSTALL_CLI, "Install Command Line Tool\u{2026}", true, None::<&str>)?)?;
     app_menu.append(&PredefinedMenuItem::separator(app)?)?;
     app_menu.append(&MenuItem::with_id(app, MENU_ID_OPEN_PREFERENCES, "Settings\u{2026}", true, Some("cmdOrCtrl+,"))?)?;
