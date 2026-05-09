@@ -44,6 +44,7 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 base64 = "0.22"
 url = "2"
+tauri-plugin-deep-link = "2"
 
 [[bin]]
 name = "lit-cli"

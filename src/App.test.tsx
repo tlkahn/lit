@@ -604,4 +604,44 @@ describe("App", () => {
       expect(openUrl).toHaveBeenCalledWith("https://lit.solar/buy");
     });
   });
+
+  it("license://activate-key event triggers activation", async () => {
+    mockListen();
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+    useLicenseStore.setState({ state: "trial", daysRemaining: 12, loading: false });
+
+    const activate = vi.fn().mockResolvedValue(true);
+    useLicenseStore.setState({ activate });
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    await act(async () => {
+      emitMockEvent("license://activate-key", "PEM-KEY-DATA");
+    });
+
+    expect(activate).toHaveBeenCalledWith("PEM-KEY-DATA");
+  });
+
+  it("license://activate-key shows entry dialog on failure", async () => {
+    mockListen();
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+    useLicenseStore.setState({ state: "trial", daysRemaining: 12, loading: false });
+
+    const activate = vi.fn().mockResolvedValue(false);
+    useLicenseStore.setState({ activate });
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    await act(async () => {
+      emitMockEvent("license://activate-key", "BAD-KEY");
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("license-entry-dialog")).toBeInTheDocument();
+    });
+  });
 });

@@ -34,5 +34,12 @@
         "enable": true
       }
     }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["lit"]
+      }
+    }
   }
 }

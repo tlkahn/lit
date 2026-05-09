@@ -94,6 +94,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_deep_link::init())
         .manage(WorkspaceRegistry {
             workspaces: Mutex::new(HashMap::new()),
         })
@@ -125,6 +126,19 @@ pub fn run() {
                 trial_signing_key,
                 license_verifying_key,
             });
+
+            {
+                use tauri::Emitter;
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let dl_handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    for url in event.urls() {
+                        if let Ok(key) = license::parse_activate_url(url.as_str()) {
+                            let _ = dl_handle.emit("license://activate-key", key);
+                        }
+                    }
+                });
+            }
 
             let resource_dir = app.handle().path().resource_dir().ok();
             let pdfium_path = pdf::find_libpdfium_or_default(resource_dir.as_deref());

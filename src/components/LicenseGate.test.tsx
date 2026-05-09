@@ -29,7 +29,7 @@ describe("LicenseGate", () => {
   });
 
   it("shows loading indicator while state is 'unknown'", () => {
-    const { container, queryByTestId } = render(
+    const { queryByTestId } = render(
       <LicenseGate><div data-testid="child" /></LicenseGate>,
     );
     expect(queryByTestId("child")).toBeNull();
