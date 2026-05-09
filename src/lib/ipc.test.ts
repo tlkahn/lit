@@ -55,6 +55,9 @@ import {
   searchAnnotations,
   listAnnotations,
   exportData,
+  getLicenseStatus,
+  activateLicense,
+  checkOnlineValidation,
 } from "./ipc";
 
 const sampleMeta = {
@@ -294,6 +297,12 @@ describe("ipc", () => {
         }
         case "export_data":
           return { exported_count: 42, destination: (args as Record<string, unknown>)?.destination ?? "" };
+        case "get_license_status":
+          return { state: "trial", days_remaining: 12 };
+        case "activate_license":
+          return { state: "licensed", licensed_to: "Test User" };
+        case "check_online_validation":
+          return "skipped";
         case "search_tags":
           return [
             { tag: "rust", count: 5 },
@@ -957,6 +966,29 @@ describe("ipc", () => {
     expect(summary.destination).toBe("/tmp/out.zip");
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("export_data", { destination: "/tmp/out.zip" });
+  });
+
+  it("getLicenseStatus calls get_license_status", async () => {
+    const status = await getLicenseStatus();
+    expect(status.state).toBe("trial");
+    expect(status.days_remaining).toBe(12);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("get_license_status");
+  });
+
+  it("activateLicense passes key arg correctly", async () => {
+    const status = await activateLicense("LICENSE-KEY-123");
+    expect(status.state).toBe("licensed");
+    expect(status.licensed_to).toBe("Test User");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("activate_license", { key: "LICENSE-KEY-123" });
+  });
+
+  it("checkOnlineValidation returns result", async () => {
+    const result = await checkOnlineValidation();
+    expect(result).toBe("skipped");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("check_online_validation");
   });
 
 });

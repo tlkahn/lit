@@ -1,0 +1,214 @@
+use std::path::PathBuf;
+
+use ed25519_dalek::{SigningKey, VerifyingKey};
+use serde::Serialize;
+use tauri::State;
+
+use crate::license;
+
+pub struct LicenseManager {
+    pub data_dir: PathBuf,
+    pub trial_signing_key: SigningKey,
+    pub license_verifying_key: VerifyingKey,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LicenseStatusResponse {
+    pub state: String,
+    pub days_remaining: Option<u64>,
+    pub licensed_to: Option<String>,
+}
+
+impl LicenseStatusResponse {
+    fn from_status(status: &license::LicenseStatus) -> Self {
+        match status {
+            license::LicenseStatus::Trial(license::trial::TrialState::Active { days_left }) => {
+                Self {
+                    state: "trial".into(),
+                    days_remaining: Some(*days_left),
+                    licensed_to: None,
+                }
+            }
+            license::LicenseStatus::Trial(license::trial::TrialState::ExpiringSoon {
+                days_left,
+            }) => Self {
+                state: "expiring_soon".into(),
+                days_remaining: Some(*days_left),
+                licensed_to: None,
+            },
+            license::LicenseStatus::Trial(license::trial::TrialState::Expired) => Self {
+                state: "expired".into(),
+                days_remaining: Some(0),
+                licensed_to: None,
+            },
+            license::LicenseStatus::Licensed(payload) => Self {
+                state: "licensed".into(),
+                days_remaining: None,
+                licensed_to: Some(payload.name.clone()),
+            },
+            license::LicenseStatus::Expired => Self {
+                state: "expired".into(),
+                days_remaining: Some(0),
+                licensed_to: None,
+            },
+        }
+    }
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+#[tauri::command]
+pub fn get_license_status(
+    state: State<'_, LicenseManager>,
+) -> Result<LicenseStatusResponse, String> {
+    #[cfg(debug_assertions)]
+    if let Some(ov) = license::dev_mode_override() {
+        return Ok(match ov {
+            license::DevOverride::TrialShort => LicenseStatusResponse {
+                state: "trial".into(),
+                days_remaining: Some(0),
+                licensed_to: None,
+            },
+            license::DevOverride::TrialExpired => LicenseStatusResponse {
+                state: "expired".into(),
+                days_remaining: Some(0),
+                licensed_to: None,
+            },
+            license::DevOverride::Licensed => LicenseStatusResponse {
+                state: "licensed".into(),
+                days_remaining: None,
+                licensed_to: Some("Dev Mode".into()),
+            },
+        });
+    }
+
+    let status = license::get_status(
+        &state.data_dir,
+        &state.trial_signing_key,
+        &state.license_verifying_key,
+        now_secs(),
+    );
+    Ok(LicenseStatusResponse::from_status(&status))
+}
+
+#[tauri::command]
+pub fn activate_license(
+    key: String,
+    state: State<'_, LicenseManager>,
+) -> Result<LicenseStatusResponse, String> {
+    license::key::verify_license_key(&key, &state.license_verifying_key)
+        .map_err(|e| e.to_string())?;
+    license::storage::write_license_key(&state.data_dir, &key).map_err(|e| e.to_string())?;
+    let status = license::get_status(
+        &state.data_dir,
+        &state.trial_signing_key,
+        &state.license_verifying_key,
+        now_secs(),
+    );
+    Ok(LicenseStatusResponse::from_status(&status))
+}
+
+#[tauri::command]
+pub fn check_online_validation() -> Result<String, String> {
+    Ok("skipped".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn license_status_response_trial_json() {
+        let resp = LicenseStatusResponse {
+            state: "trial".into(),
+            days_remaining: Some(10),
+            licensed_to: None,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"state\":\"trial\""));
+        assert!(json.contains("\"days_remaining\":10"));
+        assert!(json.contains("\"licensed_to\":null"));
+    }
+
+    #[test]
+    fn license_status_response_licensed_json() {
+        let resp = LicenseStatusResponse {
+            state: "licensed".into(),
+            days_remaining: None,
+            licensed_to: Some("User".into()),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"state\":\"licensed\""));
+        assert!(json.contains("\"licensed_to\":\"User\""));
+    }
+
+    #[test]
+    fn license_status_response_expired_json() {
+        let resp = LicenseStatusResponse {
+            state: "expired".into(),
+            days_remaining: Some(0),
+            licensed_to: None,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"state\":\"expired\""));
+    }
+
+    #[test]
+    fn check_online_validation_returns_skipped() {
+        assert_eq!(check_online_validation().unwrap(), "skipped");
+    }
+
+    #[test]
+    fn license_manager_construction() {
+        let sk = SigningKey::from_bytes(license::TRIAL_SIGNING_KEY_BYTES);
+        let vk = VerifyingKey::from_bytes(license::LICENSE_VERIFYING_KEY_BYTES).unwrap();
+        let mgr = LicenseManager {
+            data_dir: PathBuf::from("/tmp"),
+            trial_signing_key: sk,
+            license_verifying_key: vk,
+        };
+        assert_eq!(
+            mgr.trial_signing_key.verifying_key().to_bytes().len(),
+            32
+        );
+    }
+
+    #[test]
+    fn from_status_active_trial() {
+        let status =
+            license::LicenseStatus::Trial(license::trial::TrialState::Active { days_left: 7 });
+        let resp = LicenseStatusResponse::from_status(&status);
+        assert_eq!(resp.state, "trial");
+        assert_eq!(resp.days_remaining, Some(7));
+    }
+
+    #[test]
+    fn from_status_expiring_soon() {
+        let status = license::LicenseStatus::Trial(license::trial::TrialState::ExpiringSoon {
+            days_left: 2,
+        });
+        let resp = LicenseStatusResponse::from_status(&status);
+        assert_eq!(resp.state, "expiring_soon");
+        assert_eq!(resp.days_remaining, Some(2));
+    }
+
+    #[test]
+    fn from_status_licensed() {
+        let payload = license::key::LicensePayload {
+            license_id: "lic-1".into(),
+            name: "User".into(),
+            email: "u@e.com".into(),
+            issued_at: 100,
+            license_type: "personal".into(),
+        };
+        let status = license::LicenseStatus::Licensed(payload);
+        let resp = LicenseStatusResponse::from_status(&status);
+        assert_eq!(resp.state, "licensed");
+        assert_eq!(resp.licensed_to, Some("User".into()));
+    }
+}

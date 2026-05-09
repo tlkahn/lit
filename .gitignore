@@ -37,6 +37,7 @@ src-tauri/Frameworks/
 
 # Documentation (separate repo)
 doc/
+spec/
 
 # Lit graph index
 .lit/

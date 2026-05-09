@@ -499,6 +499,26 @@ export async function exportData(destination: string): Promise<ExportSummary> {
   return invoke<ExportSummary>("export_data", { destination });
 }
 
+// License
+
+export interface LicenseStatusResponse {
+  state: "trial" | "expiring_soon" | "expired" | "licensed";
+  days_remaining?: number;
+  licensed_to?: string;
+}
+
+export async function getLicenseStatus(): Promise<LicenseStatusResponse> {
+  return invoke<LicenseStatusResponse>("get_license_status");
+}
+
+export async function activateLicense(key: string): Promise<LicenseStatusResponse> {
+  return invoke<LicenseStatusResponse>("activate_license", { key });
+}
+
+export async function checkOnlineValidation(): Promise<string> {
+  return invoke<string>("check_online_validation");
+}
+
 // Annotation DSL
 
 export type AnnotationType =

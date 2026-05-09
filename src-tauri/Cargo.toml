@@ -41,6 +41,9 @@ lmpdf = { git = "https://github.com/tlkahn/lmpdf.git", features = ["image"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 sentenza = { git = "https://github.com/tlkahn/sentenza.git", rev = "2d9d6b6" }
 zip = { version = "2", default-features = false, features = ["deflate"] }
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+base64 = "0.22"
+url = "2"
 
 [[bin]]
 name = "lit-cli"
@@ -50,3 +53,4 @@ path = "src/bin/lit-cli.rs"
 serde_json = "1"
 tempfile = "3"
 tracing-test = { version = "0.2", features = ["no-env-filter"] }
+rand = "0.8"

@@ -6,6 +6,7 @@ mod commands;
 pub mod export;
 pub mod external_editor;
 pub mod graph;
+pub mod license;
 mod menu;
 pub mod preferences;
 pub mod seed;
@@ -13,7 +14,9 @@ pub mod socket;
 pub mod workspace;
 
 use commands::graph::GraphRegistry;
+use commands::license::LicenseManager;
 use commands::workspace::{PendingCols, PendingFiles, PendingLines, PendingWorkspaces, WorkspaceRegistry};
+use ed25519_dalek::{SigningKey, VerifyingKey};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, WebviewWindowBuilder};
@@ -108,6 +111,21 @@ pub fn run() {
         .manage(Arc::new(seed::SeedState::new()))
         .manage(BibCache::new())
         .setup(move |app| {
+            let data_dir = app
+                .path()
+                .app_data_dir()
+                .expect("failed to resolve app data dir");
+            let trial_signing_key =
+                SigningKey::from_bytes(license::TRIAL_SIGNING_KEY_BYTES);
+            let license_verifying_key =
+                VerifyingKey::from_bytes(license::LICENSE_VERIFYING_KEY_BYTES)
+                    .expect("invalid embedded license verifying key");
+            app.manage(LicenseManager {
+                data_dir,
+                trial_signing_key,
+                license_verifying_key,
+            });
+
             let resource_dir = app.handle().path().resource_dir().ok();
             let pdfium_path = pdf::find_libpdfium_or_default(resource_dir.as_deref());
             app.manage(commands::pdf_viewer::PdfViewerState::new(&pdfium_path));
@@ -280,6 +298,9 @@ pub fn run() {
             commands::annotation::search_annotations,
             commands::annotation::list_annotations,
             commands::export::export_data,
+            commands::license::get_license_status,
+            commands::license::activate_license,
+            commands::license::check_online_validation,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
