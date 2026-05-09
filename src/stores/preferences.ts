@@ -10,6 +10,7 @@ export type AnnotationDisplayMode = "pill" | "footnote";
 export interface PreferencesState {
   darkMode: DarkModePref;
   colorTheme: string | null;
+  sidebarVisible: boolean;
   sidebarLocation: "left" | "right";
   foldingEnabled: boolean;
   foldingShowControls: FoldingShowControls;
@@ -51,6 +52,7 @@ function mapPreferences(prefs: Preferences) {
   return {
     darkMode: applyDarkMode(prefs["workbench.darkMode"]),
     colorTheme: prefs["workbench.colorTheme"] ?? null,
+    sidebarVisible: (prefs["workbench.sideBar.visible"] as boolean) ?? true,
     sidebarLocation: applySidebarLocation(prefs["workbench.sideBar.location"] ?? "left"),
     foldingEnabled: prefs["editor.folding.enabled"] ?? true,
     foldingShowControls: applyFoldingShowControls(prefs["editor.folding.showFoldingControls"] ?? "mouseover"),
@@ -69,6 +71,7 @@ function mapPreferences(prefs: Preferences) {
 export const usePreferencesStore = create<PreferencesState>((set) => ({
   darkMode: "auto",
   colorTheme: null,
+  sidebarVisible: true,
   sidebarLocation: "left",
   foldingEnabled: true,
   foldingShowControls: "mouseover",

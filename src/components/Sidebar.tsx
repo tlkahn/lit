@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useWorkspaceStore } from "../stores/workspace";
 import { getNextUntitledName } from "../lib/naming";
-import { openInExternalEditor } from "../lib/ipc";
+import { openInExternalEditor, setPreference } from "../lib/ipc";
 import { localeFilter } from "../lib/localeSearch";
 import { useSidebarTab } from "../hooks/useSidebarTab";
 import { useFlatTree, type FolderNode } from "../hooks/useFlatTree";
@@ -250,8 +250,36 @@ export function Sidebar() {
     }
   }, [deletePageAction]);
 
+  const [sidebarMenu, setSidebarMenu] = useState<{ x: number; y: number } | null>(null);
+  const sidebarMenuRef = useRef<HTMLDivElement>(null);
+
+  const handleAsideContextMenu = useCallback((e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.closest("[data-page-item]") || target.closest("[data-index]")) return;
+    e.preventDefault();
+    setSidebarMenu({ x: e.clientX, y: e.clientY });
+  }, []);
+
+  useEffect(() => {
+    if (!sidebarMenu) return;
+    const handleClick = (e: MouseEvent) => {
+      if (sidebarMenuRef.current && !sidebarMenuRef.current.contains(e.target as Node)) {
+        setSidebarMenu(null);
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSidebarMenu(null);
+    };
+    document.addEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [sidebarMenu]);
+
   return (
-    <aside className="flex w-60 shrink-0 flex-col border-e border-border bg-bg-secondary">
+    <aside className="flex w-60 shrink-0 flex-col border-e border-border bg-bg-secondary" onContextMenu={handleAsideContextMenu}>
       <div className="flex items-center border-b border-border">
         <button
           onClick={() => setTab("files")}
@@ -352,6 +380,25 @@ export function Sidebar() {
           + New Page
         </button>
       </div>
+      {sidebarMenu && createPortal(
+        <div
+          ref={sidebarMenuRef}
+          data-testid="sidebar-bg-menu"
+          className="z-50 min-w-[160px] select-none rounded-lg border border-border/40 bg-bg-primary/80 p-1 shadow-xl shadow-black/20 backdrop-blur-xl backdrop-saturate-150 dark:border-border/10 dark:bg-bg-primary/70"
+          style={{ position: "fixed", left: `${sidebarMenu.x}px`, top: `${sidebarMenu.y}px` }}
+        >
+          <button
+            onClick={() => {
+              setSidebarMenu(null);
+              setPreference("workbench.sideBar.visible", false).catch(console.error);
+            }}
+            className="block w-full rounded-md px-3 py-1 text-start text-[13px] text-text-normal hover:bg-interactive-accent hover:text-text-on-accent"
+          >
+            Hide Sidebar
+          </button>
+        </div>,
+        document.body,
+      )}
     </aside>
   );
 }

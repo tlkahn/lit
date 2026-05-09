@@ -47,6 +47,7 @@ function App() {
   const loadPreferences = usePreferencesStore((s) => s.loadPreferences);
   const colorTheme = usePreferencesStore((s) => s.colorTheme);
   const syncFromPreferences = useThemeStore((s) => s.syncFromPreferences);
+  const sidebarVisible = usePreferencesStore((s) => s.sidebarVisible);
   const focusModeActive = useFocusModeStore((s) => s.active);
   const toggleFocusMode = useFocusModeStore((s) => s.toggleFocusMode);
 
@@ -197,7 +198,16 @@ function App() {
   return (
     <div className={`flex h-screen flex-col bg-bg-primary${focusModeActive ? " focus-mode-zen" : ""}`}>
       <div className={`flex min-h-0 flex-1 ${position === "right" ? "flex-row-reverse" : "flex-row"}`}>
-        <Sidebar />
+        <div
+          style={{
+            width: sidebarVisible ? "240px" : "0px",
+            transition: "width 150ms ease-out",
+            overflow: "hidden",
+            flexShrink: 0,
+          }}
+        >
+          <Sidebar />
+        </div>
         <div className="flex min-h-0 flex-1 flex-col">
           <ErrorBoundary fallback={ContentErrorFallback} resetKey={currentPagePath}>
             <ContentArea />

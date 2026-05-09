@@ -34,6 +34,9 @@ beforeEach(() => {
     if (cmd === "open_in_external_editor") {
       return null;
     }
+    if (cmd === "set_preference") {
+      return undefined;
+    }
     throw new Error(`Unknown command: ${cmd}`);
   });
 });
@@ -535,6 +538,51 @@ describe("context menu theme-aware colors", () => {
     expect(sep).toBeTruthy();
     expect(sep!.className).toContain("dark:border-border/10");
     expect(sep!.className).not.toContain("dark:border-white/10");
+  });
+});
+
+describe("Sidebar background context menu", () => {
+  it("right-clicking sidebar background shows Hide Sidebar menu", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha", "Alpha.md")],
+    });
+    render(<Sidebar />);
+
+    const aside = document.querySelector("aside")!;
+    fireEvent.contextMenu(aside, { clientX: 100, clientY: 300 });
+
+    expect(screen.getByTestId("sidebar-bg-menu")).toBeInTheDocument();
+    expect(screen.getByText("Hide Sidebar")).toBeInTheDocument();
+  });
+
+  it("clicking Hide Sidebar calls setPreference", async () => {
+    useWorkspaceStore.setState({
+      pages: [],
+    });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    const aside = document.querySelector("aside")!;
+    fireEvent.contextMenu(aside, { clientX: 100, clientY: 300 });
+
+    await user.click(screen.getByText("Hide Sidebar"));
+
+    const call = invokedCommands.find((c) => c.cmd === "set_preference");
+    expect(call).toBeTruthy();
+    expect(call!.args).toEqual({ key: "workbench.sideBar.visible", value: false });
+  });
+
+  it("does not show sidebar background menu when right-clicking a page item", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha", "Alpha.md")],
+    });
+    render(<Sidebar />);
+
+    const pageButton = screen.getByText("Alpha");
+    fireEvent.contextMenu(pageButton, { clientX: 100, clientY: 200 });
+
+    expect(screen.queryByTestId("sidebar-bg-menu")).not.toBeInTheDocument();
+    expect(screen.getByTestId("context-menu")).toBeInTheDocument();
   });
 });
 

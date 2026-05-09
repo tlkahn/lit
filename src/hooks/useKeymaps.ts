@@ -6,8 +6,9 @@ import { registerCommand, registerHandler, hasCommand, executeCommand } from "..
 import { toggleBold, toggleItalic, insertLink, toggleComment } from "../editor/editorCommands";
 import { selectNextOccurrence } from "@codemirror/search";
 import { navigateBack, navigateForward } from "../editor/jumpHistory";
-import { openInExternalEditor } from "../lib/ipc";
+import { openInExternalEditor, setPreference } from "../lib/ipc";
 import { useWorkspaceStore } from "../stores/workspace";
+import { usePreferencesStore } from "../stores/preferences";
 import { useFocusModeStore } from "../stores/focusMode";
 import { getCurrentEditorView } from "../lib/editorViewRef";
 import { annotationDataField, findAnnotationAtCursor } from "../editor/livePreview/annotationState";
@@ -42,6 +43,15 @@ function ensureCommandsRegistered() {
     icon: "\u{1F9D8}",
     action: () => {
       useFocusModeStore.getState().toggleFocusMode();
+    },
+  });
+  registerCommand({
+    id: "workbench.toggleSideBar",
+    label: "Toggle Sidebar",
+    keywords: ["sidebar", "side", "panel", "hide", "show"],
+    action: () => {
+      const current = usePreferencesStore.getState().sidebarVisible;
+      setPreference("workbench.sideBar.visible", !current).catch(console.error);
     },
   });
   registerHandler("panel.toggleBottom", () => {

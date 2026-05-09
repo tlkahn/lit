@@ -7,6 +7,7 @@ describe("PreferencesStore", () => {
     usePreferencesStore.setState({
       darkMode: "auto",
       colorTheme: null,
+      sidebarVisible: true,
       sidebarLocation: "left",
       crossrefEnabled: true,
       crossrefLiveRendering: true,
@@ -625,5 +626,71 @@ describe("PreferencesStore", () => {
     });
 
     expect(usePreferencesStore.getState().experimentalUnlinkedReferences).toBe(false);
+  });
+
+  it("defaults sidebarVisible to true", () => {
+    const state = usePreferencesStore.getState();
+    expect(state.sidebarVisible).toBe(true);
+  });
+
+  it("maps workbench.sideBar.visible: false from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "workbench.sideBar.visible": false,
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().sidebarVisible).toBe(false);
+  });
+
+  it("defaults sidebarVisible to true when key missing from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().sidebarVisible).toBe(true);
+  });
+
+  it("updates sidebarVisible on preferences://changed event", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().sidebarVisible).toBe(true);
+
+    emitMockEvent("preferences://changed", {
+      "workbench.colorTheme": null,
+      "workbench.darkMode": "auto",
+      "workbench.sideBar.location": "left",
+      "workbench.sideBar.visible": false,
+    });
+
+    expect(usePreferencesStore.getState().sidebarVisible).toBe(false);
   });
 });

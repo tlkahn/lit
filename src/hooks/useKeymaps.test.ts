@@ -7,6 +7,7 @@ import {
   executeCommand,
   _clear,
 } from "../lib/commandRegistry";
+import { usePreferencesStore } from "../stores/preferences";
 
 describe("useKeymaps", () => {
   beforeEach(() => {
@@ -146,5 +147,30 @@ describe("useKeymaps", () => {
 
     window.removeEventListener("lit:toggle-graph-view", listener);
     expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("workbench.toggleSideBar is registered after ensureCommandsRegistered", async () => {
+    await loadHook();
+    expect(hasCommand("workbench.toggleSideBar")).toBe(true);
+  });
+
+  it("executing workbench.toggleSideBar calls setPreference to toggle sidebarVisible", async () => {
+    usePreferencesStore.setState({ sidebarVisible: true });
+    await loadHook();
+
+    let capturedArgs: { cmd: string; args: unknown } | undefined;
+    mockInvoke((cmd, args) => {
+      if (cmd === "set_preference") {
+        capturedArgs = { cmd, args };
+        return undefined;
+      }
+      if (cmd === "get_keymaps") return [];
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    executeCommand("workbench.toggleSideBar");
+
+    expect(capturedArgs).toBeTruthy();
+    expect(capturedArgs!.args).toEqual({ key: "workbench.sideBar.visible", value: false });
   });
 });

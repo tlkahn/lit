@@ -32,6 +32,7 @@ describe("App", () => {
     usePreferencesStore.setState({
       darkMode: "light",
       colorTheme: null,
+      sidebarVisible: true,
       sidebarLocation: "left",
       loaded: true,
     });
@@ -132,7 +133,7 @@ describe("App", () => {
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
 
     render(<App />);
-    const container = screen.getByText("Files").closest("aside")!.parentElement!;
+    const container = screen.getByText("Files").closest("aside")!.parentElement!.parentElement!;
     expect(container.className).toContain("flex-row");
     expect(container.className).not.toContain("flex-row-reverse");
   });
@@ -142,8 +143,38 @@ describe("App", () => {
     usePreferencesStore.setState({ sidebarLocation: "right" });
 
     render(<App />);
-    const container = screen.getByText("Files").closest("aside")!.parentElement!;
+    const container = screen.getByText("Files").closest("aside")!.parentElement!.parentElement!;
     expect(container.className).toContain("flex-row-reverse");
+  });
+
+  it("sidebar wrapper has width 0px and overflow hidden when sidebarVisible is false", () => {
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+    usePreferencesStore.setState({ sidebarVisible: false });
+
+    render(<App />);
+    const aside = document.querySelector("aside")!;
+    const wrapper = aside.parentElement!;
+    expect(wrapper.style.width).toBe("0px");
+    expect(wrapper.style.overflow).toBe("hidden");
+  });
+
+  it("sidebar wrapper has width 240px when sidebarVisible is true", () => {
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+    usePreferencesStore.setState({ sidebarVisible: true });
+
+    render(<App />);
+    const aside = document.querySelector("aside")!;
+    const wrapper = aside.parentElement!;
+    expect(wrapper.style.width).toBe("240px");
+  });
+
+  it("sidebar wrapper has transition style for animation", () => {
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+
+    render(<App />);
+    const aside = document.querySelector("aside")!;
+    const wrapper = aside.parentElement!;
+    expect(wrapper.style.transition).toBe("width 150ms ease-out");
   });
 
   it("quick switcher not visible by default", () => {
