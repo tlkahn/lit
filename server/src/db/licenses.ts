@@ -6,7 +6,7 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import type { DbOps, LicenseRecord } from "../types.js";
-import { IdempotencyError } from "./errors.js";
+import { IdempotencyError, LicenseNotFoundError } from "./errors.js";
 
 export async function createLicense(
   client: DynamoDBDocumentClient,
@@ -102,21 +102,29 @@ export async function revokeLicense(
   reason: string,
 ): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
-  await client.send(
-    new UpdateCommand({
-      TableName: table,
-      Key: { license_id: licenseId },
-      UpdateExpression:
-        "SET #status = :s, revoked_at = :ra, revoked_reason = :rr, updated_at = :ua",
-      ExpressionAttributeNames: { "#status": "status" },
-      ExpressionAttributeValues: {
-        ":s": "revoked",
-        ":ra": now,
-        ":rr": reason,
-        ":ua": now,
-      },
-    }),
-  );
+  try {
+    await client.send(
+      new UpdateCommand({
+        TableName: table,
+        Key: { license_id: licenseId },
+        UpdateExpression:
+          "SET #status = :s, revoked_at = :ra, revoked_reason = :rr, updated_at = :ua",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: {
+          ":s": "revoked",
+          ":ra": now,
+          ":rr": reason,
+          ":ua": now,
+        },
+        ConditionExpression: "attribute_exists(license_id)",
+      }),
+    );
+  } catch (err: unknown) {
+    if (err instanceof Error && err.name === "ConditionalCheckFailedException") {
+      throw new LicenseNotFoundError();
+    }
+    throw err;
+  }
 }
 
 export function createDbOps(

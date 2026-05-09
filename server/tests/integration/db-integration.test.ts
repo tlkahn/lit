@@ -6,7 +6,7 @@ import {
 } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import type { LicenseRecord } from "../../src/types.js";
-import { IdempotencyError } from "../../src/db/errors.js";
+import { IdempotencyError, LicenseNotFoundError } from "../../src/db/errors.js";
 import {
   createLicense,
   getBySessionId,
@@ -147,6 +147,12 @@ describe("DynamoDB integration", () => {
     expect(results).toHaveLength(2);
     const ids = results.map((r) => r.license_id).sort();
     expect(ids).toEqual([r1.license_id, r2.license_id].sort());
+  });
+
+  it("revoking non-existent license throws LicenseNotFoundError", async () => {
+    await expect(
+      revokeLicense(client, TABLE, "nonexistent-id", "test"),
+    ).rejects.toThrow(LicenseNotFoundError);
   });
 
   it("revoke then get shows revoked status", async () => {

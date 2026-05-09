@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import type { LicenseRecord } from "../../src/types.js";
-import { IdempotencyError } from "../../src/db/errors.js";
+import { IdempotencyError, LicenseNotFoundError } from "../../src/db/errors.js";
 import {
   createLicense,
   getBySessionId,
@@ -206,6 +206,17 @@ describe("revokeLicense", () => {
       ":rr": "refunded",
       ":ua": expect.any(Number),
     });
+    expect(input.ConditionExpression).toBe("attribute_exists(license_id)");
+  });
+
+  it("throws LicenseNotFoundError on ConditionalCheckFailedException", async () => {
+    const err = new Error("conditional");
+    err.name = "ConditionalCheckFailedException";
+    mockSend.mockRejectedValue(err);
+
+    await expect(
+      revokeLicense(client, TABLE, "nonexistent-id", "test"),
+    ).rejects.toThrow(LicenseNotFoundError);
   });
 });
 
