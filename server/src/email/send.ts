@@ -1,4 +1,5 @@
 import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
+import type { EmailOps } from "../types.js";
 import {
   licenseEmailHtml,
   licenseEmailText,
@@ -19,10 +20,10 @@ async function sendEmail(
       Source: from,
       Destination: { ToAddresses: [to] },
       Message: {
-        Subject: { Data: subject },
+        Subject: { Data: subject, Charset: "UTF-8" },
         Body: {
-          Html: { Data: html },
-          Text: { Data: text },
+          Html: { Data: html, Charset: "UTF-8" },
+          Text: { Data: text, Charset: "UTF-8" },
         },
       },
     }),
@@ -61,4 +62,13 @@ export async function sendRecoveryEmail(
     recoveryEmailHtml(name, pem),
     recoveryEmailText(name, pem),
   );
+}
+
+export function createEmailOps(ses: SESClient, from: string): EmailOps {
+  return {
+    sendLicenseEmail: (to, name, pem) =>
+      sendLicenseEmail(ses, from, to, name, pem),
+    sendRecoveryEmail: (to, name, pem) =>
+      sendRecoveryEmail(ses, from, to, name, pem),
+  };
 }

@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
-import { sendLicenseEmail, sendRecoveryEmail } from "../../src/email/send.js";
+import {
+  sendLicenseEmail,
+  sendRecoveryEmail,
+  createEmailOps,
+} from "../../src/email/send.js";
+import type { EmailOps } from "../../src/types.js";
 
 const mockSend = vi.fn();
 const ses = { send: mockSend } as unknown as SESClient;
@@ -38,6 +43,15 @@ describe("sendLicenseEmail", () => {
     expect(body?.Text?.Data).toBeTruthy();
     expect(body?.Text?.Data).not.toMatch(/<pre>|<html>/);
   });
+
+  it("sets UTF-8 Charset on Subject, Html, and Text fields", async () => {
+    await sendLicenseEmail(ses, from, to, "Alice", pem);
+    const cmd = mockSend.mock.calls[0]![0] as SendEmailCommand;
+    const msg = cmd.input.Message!;
+    expect(msg.Subject?.Charset).toBe("UTF-8");
+    expect(msg.Body?.Html?.Charset).toBe("UTF-8");
+    expect(msg.Body?.Text?.Charset).toBe("UTF-8");
+  });
 });
 
 describe("sendRecoveryEmail", () => {
@@ -52,5 +66,46 @@ describe("sendRecoveryEmail", () => {
 
     expect(recoverySubject.toLowerCase()).toContain("recover");
     expect(recoverySubject).not.toBe(licenseSubject);
+  });
+
+  it("sets UTF-8 Charset on all content fields", async () => {
+    await sendRecoveryEmail(ses, from, to, "Bob", pem);
+    const cmd = mockSend.mock.calls[0]![0] as SendEmailCommand;
+    const msg = cmd.input.Message!;
+    expect(msg.Subject?.Charset).toBe("UTF-8");
+    expect(msg.Body?.Html?.Charset).toBe("UTF-8");
+    expect(msg.Body?.Text?.Charset).toBe("UTF-8");
+  });
+});
+
+describe("createEmailOps", () => {
+  it("returns an object satisfying the EmailOps interface", () => {
+    const ops: EmailOps = createEmailOps(ses, from);
+    expect(typeof ops.sendLicenseEmail).toBe("function");
+    expect(typeof ops.sendRecoveryEmail).toBe("function");
+  });
+
+  it("sendLicenseEmail delegates to SES with closed-over ses and from", async () => {
+    const ops = createEmailOps(ses, from);
+    await ops.sendLicenseEmail(to, "Alice", pem);
+    expect(mockSend).toHaveBeenCalledOnce();
+    const cmd = mockSend.mock.calls[0]![0] as SendEmailCommand;
+    expect(cmd.input.Source).toBe(from);
+    expect(cmd.input.Destination?.ToAddresses).toEqual([to]);
+  });
+
+  it("sendRecoveryEmail delegates to SES with closed-over ses and from", async () => {
+    const ops = createEmailOps(ses, from);
+    await ops.sendRecoveryEmail(to, "Bob", pem);
+    expect(mockSend).toHaveBeenCalledOnce();
+    const cmd = mockSend.mock.calls[0]![0] as SendEmailCommand;
+    expect(cmd.input.Source).toBe(from);
+    expect(cmd.input.Message?.Subject?.Data).toContain("recover");
+  });
+
+  it("adapter methods accept 3 arguments (to, name, pem)", () => {
+    const ops = createEmailOps(ses, from);
+    expect(ops.sendLicenseEmail.length).toBe(3);
+    expect(ops.sendRecoveryEmail.length).toBe(3);
   });
 });
