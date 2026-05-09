@@ -54,6 +54,7 @@ import {
   resolveAnnotationScope,
   searchAnnotations,
   listAnnotations,
+  exportData,
 } from "./ipc";
 
 const sampleMeta = {
@@ -291,6 +292,8 @@ describe("ipc", () => {
             },
           ];
         }
+        case "export_data":
+          return { exported_count: 42, destination: (args as Record<string, unknown>)?.destination ?? "" };
         case "search_tags":
           return [
             { tag: "rust", count: 5 },
@@ -946,6 +949,14 @@ describe("ipc", () => {
       annotationType: null,
       limit: null,
     });
+  });
+
+  it("exportData calls export_data with destination", async () => {
+    const summary = await exportData("/tmp/out.zip");
+    expect(summary.exported_count).toBe(42);
+    expect(summary.destination).toBe("/tmp/out.zip");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("export_data", { destination: "/tmp/out.zip" });
   });
 
 });

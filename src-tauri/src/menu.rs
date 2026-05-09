@@ -1,5 +1,5 @@
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tauri::Wry;
 
 pub const MENU_ID_OPEN_WORKSPACE: &str = "open_workspace";
@@ -9,6 +9,7 @@ pub const MENU_ID_OPEN_IN_EXTERNAL_EDITOR: &str = "open_in_external_editor";
 pub const MENU_ID_BUY_LICENSE: &str = "buy_license";
 pub const MENU_ID_ENTER_LICENSE_KEY: &str = "enter_license_key";
 pub const MENU_ID_LICENSE_INFO: &str = "license_info";
+pub const MENU_ID_EXPORT_MARKDOWN: &str = "export_markdown";
 pub const MENU_ID_ABOUT: &str = "show_about";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,6 +20,7 @@ pub(crate) enum MenuAction {
     OpenInExternalEditor,
     BuyLicense,
     EnterLicenseKey,
+    ExportMarkdown,
     LicenseInfo,
     ShowAbout,
 }
@@ -33,6 +35,7 @@ impl MenuAction {
             MENU_ID_BUY_LICENSE => Some(Self::BuyLicense),
             MENU_ID_ENTER_LICENSE_KEY => Some(Self::EnterLicenseKey),
             MENU_ID_LICENSE_INFO => Some(Self::LicenseInfo),
+            MENU_ID_EXPORT_MARKDOWN => Some(Self::ExportMarkdown),
             MENU_ID_ABOUT => Some(Self::ShowAbout),
             _ => None,
         }
@@ -108,6 +111,42 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
                     .blocking_show();
             });
         }
+        MenuAction::ExportMarkdown => {
+            let handle = app.clone();
+            tauri::async_runtime::spawn(async move {
+                use tauri_plugin_dialog::DialogExt;
+                let dialog = handle.dialog().clone();
+                dialog
+                    .file()
+                    .set_file_name("export.zip")
+                    .add_filter("ZIP Archive", &["zip"])
+                    .save_file(move |path| {
+                        if let Some(dest) = path {
+                            let dest_str = dest.to_string();
+                            if let Some(window) = handle.webview_windows().values().next().cloned() {
+                                let state: tauri::State<crate::commands::workspace::WorkspaceRegistry> = handle.state();
+                                let root = match crate::commands::workspace::get_workspace_root(&state, window.label()) {
+                                    Ok(r) => r,
+                                    Err(_) => return,
+                                };
+                                let dest_path = std::path::PathBuf::from(&dest_str);
+                                std::thread::spawn(move || {
+                                    use tauri::Emitter;
+                                    let entries = match crate::export::collect_export_files(&root) {
+                                        Ok(e) => e,
+                                        Err(_) => return,
+                                    };
+                                    let _ = crate::export::write_zip(&entries, &dest_path, |current, total| {
+                                        #[derive(Clone, serde::Serialize)]
+                                        struct P { current: usize, total: usize }
+                                        let _ = window.emit("lit:export-progress", P { current, total });
+                                    });
+                                });
+                            }
+                        }
+                    });
+            });
+        }
         MenuAction::BuyLicense | MenuAction::EnterLicenseKey | MenuAction::LicenseInfo => {
             // Stubs — wired in #86
         }
@@ -131,12 +170,23 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     }
     app_menu.append(&PredefinedMenuItem::quit(app, Some("Quit Lit"))?)?;
 
+    let export_submenu = Submenu::with_items(
+        app,
+        "Export",
+        true,
+        &[
+            &MenuItem::with_id(app, MENU_ID_EXPORT_MARKDOWN, "Export as Markdown Archive\u{2026}", true, Some("cmdOrCtrl+shift+s"))?,
+        ],
+    )?;
+
     let file_menu = Submenu::with_items(
         app,
         "File",
         true,
         &[
             &MenuItem::with_id(app, MENU_ID_OPEN_WORKSPACE, "Open Another Workspace", true, None::<&str>)?,
+            &PredefinedMenuItem::separator(app)?,
+            &export_submenu,
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, MENU_ID_OPEN_IN_EXTERNAL_EDITOR, "Open in External Editor", true, Some("cmdOrCtrl+shift+e"))?,
             &PredefinedMenuItem::separator(app)?,
@@ -214,6 +264,7 @@ mod tests {
             MENU_ID_INSTALL_CLI,
             MENU_ID_OPEN_PREFERENCES,
             MENU_ID_OPEN_IN_EXTERNAL_EDITOR,
+            MENU_ID_EXPORT_MARKDOWN,
             MENU_ID_BUY_LICENSE,
             MENU_ID_ENTER_LICENSE_KEY,
             MENU_ID_LICENSE_INFO,
@@ -231,6 +282,7 @@ mod tests {
         assert_eq!(MenuAction::from_id(MENU_ID_INSTALL_CLI), Some(MenuAction::InstallCli));
         assert_eq!(MenuAction::from_id(MENU_ID_OPEN_PREFERENCES), Some(MenuAction::OpenPreferences));
         assert_eq!(MenuAction::from_id(MENU_ID_OPEN_IN_EXTERNAL_EDITOR), Some(MenuAction::OpenInExternalEditor));
+        assert_eq!(MenuAction::from_id(MENU_ID_EXPORT_MARKDOWN), Some(MenuAction::ExportMarkdown));
         assert_eq!(MenuAction::from_id(MENU_ID_BUY_LICENSE), Some(MenuAction::BuyLicense));
         assert_eq!(MenuAction::from_id(MENU_ID_ENTER_LICENSE_KEY), Some(MenuAction::EnterLicenseKey));
         assert_eq!(MenuAction::from_id(MENU_ID_LICENSE_INFO), Some(MenuAction::LicenseInfo));
@@ -240,5 +292,14 @@ mod tests {
     #[test]
     fn from_id_returns_none_for_unknown() {
         assert!(MenuAction::from_id("nonexistent").is_none());
+    }
+
+    #[test]
+    fn export_markdown_menu_action() {
+        assert_eq!(MENU_ID_EXPORT_MARKDOWN, "export_markdown");
+        assert_eq!(
+            MenuAction::from_id("export_markdown"),
+            Some(MenuAction::ExportMarkdown)
+        );
     }
 }

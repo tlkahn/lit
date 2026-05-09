@@ -483,6 +483,22 @@ export async function openInExternalEditor(
   return invoke<void>("open_in_external_editor", { relativePath, line, col });
 }
 
+// Export
+
+export interface ExportSummary {
+  exported_count: number;
+  destination: string;
+}
+
+export interface ExportProgress {
+  current: number;
+  total: number;
+}
+
+export async function exportData(destination: string): Promise<ExportSummary> {
+  return invoke<ExportSummary>("export_data", { destination });
+}
+
 // Annotation DSL
 
 export type AnnotationType =

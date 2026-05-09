@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Sidebar, SIDEBAR_WIDTH_PX } from "./components/Sidebar";
 import { ContentArea } from "./components/ContentArea";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -16,10 +16,11 @@ import { getStartupContext } from "./lib/ipc";
 import { HeadingQuickSwitcher } from "./components/HeadingQuickSwitcher";
 import { CommandPalette } from "./components/CommandPalette";
 import { AnnotationBuilderModal } from "./components/AnnotationBuilderModal";
+import { ExportDialog } from "./components/ExportDialog";
 import { useModalLock } from "./hooks/useModalLock";
 import { getCurrentEditorView } from "./lib/editorViewRef";
 import { annotationToFields, getEditCursorOffset, type AnnotationBuilderEventDetail, type EditRawInfo } from "./lib/annotationDsl";
-import type { Annotation } from "./lib/ipc";
+import type { Annotation, ExportProgress, ExportSummary } from "./lib/ipc";
 
 interface LitCliArgs {
   workspace: string | null;
@@ -105,6 +106,31 @@ function App() {
   const [editingAnnotation, setEditingAnnotation] = useState<Annotation | undefined>();
   const [editingRange, setEditingRange] = useState<{ from: number; to: number } | undefined>();
   const [selectionText, setSelectionText] = useState<string | undefined>();
+
+  const [exportVisible, setExportVisible] = useState(false);
+  const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
+  const [exportResult, setExportResult] = useState<ExportSummary | null>(null);
+  const exportTimerRef = useRef<ReturnType<typeof setTimeout>>();
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    import("@tauri-apps/api/event").then(({ listen }) => {
+      listen<ExportProgress>("lit:export-progress", (event) => {
+        setExportVisible(true);
+        setExportResult(null);
+        setExportProgress(event.payload);
+        if (event.payload.current === event.payload.total) {
+          setExportResult({
+            exported_count: event.payload.total,
+            destination: "",
+          });
+          clearTimeout(exportTimerRef.current);
+          exportTimerRef.current = setTimeout(() => setExportVisible(false), 2000);
+        }
+      }).then((fn) => { unlisten = fn; });
+    });
+    return () => { unlisten?.(); clearTimeout(exportTimerRef.current); };
+  }, []);
 
   useModalLock(quickSwitcherOpen);
   useModalLock(commandPaletteOpen);
@@ -225,6 +251,7 @@ function App() {
         open={commandPaletteOpen}
         onClose={() => setCommandPaletteOpen(false)}
       />
+      <ExportDialog visible={exportVisible} progress={exportProgress} result={exportResult} />
       {annotationBuilderOpen && (
         <AnnotationBuilderModal
           onClose={() => setAnnotationBuilderOpen(false)}

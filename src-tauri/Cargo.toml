@@ -40,6 +40,7 @@ tokio = { version = "1", features = ["net", "io-util", "rt", "macros", "time"] }
 lmpdf = { git = "https://github.com/tlkahn/lmpdf.git", features = ["image"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 sentenza = { git = "https://github.com/tlkahn/sentenza.git", rev = "2d9d6b6" }
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [[bin]]
 name = "lit-cli"

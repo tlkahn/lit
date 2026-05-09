@@ -2,6 +2,7 @@ pub mod annotation;
 pub mod app_info;
 pub mod cli;
 pub mod crossref;
+pub mod export;
 pub mod external_editor;
 pub mod graph;
 pub mod keymap;

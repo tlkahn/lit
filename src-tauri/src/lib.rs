@@ -3,6 +3,7 @@ pub mod bib;
 pub mod pdf;
 pub mod cli;
 mod commands;
+pub mod export;
 pub mod external_editor;
 pub mod graph;
 mod menu;
@@ -278,6 +279,7 @@ pub fn run() {
             commands::annotation::resolve_annotation_scope,
             commands::annotation::search_annotations,
             commands::annotation::list_annotations,
+            commands::export::export_data,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
