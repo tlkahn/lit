@@ -1,5 +1,6 @@
 export function recoverPageHtml(): string {
-  return `<html><body>
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Recover License — Lit</title></head><body>
 <h1>Recover Your License</h1>
 <form action="/api/recover" method="POST">
 <label for="email">Email address:</label>
@@ -10,7 +11,8 @@ export function recoverPageHtml(): string {
 }
 
 export function recoverResultPageHtml(): string {
-  return `<html><body>
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Recovery Submitted — Lit</title></head><body>
 <h1>Recovery Submitted</h1>
 <p>If an account exists for that address, please check your email for your license key.</p>
 </body></html>`;

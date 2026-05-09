@@ -137,6 +137,36 @@ describe("handleSuccessPage", () => {
     expect(result.statusCode).toBe(404);
   });
 
+  it("returns 500 with error page when Stripe throws", async () => {
+    const deps = makeDeps({
+      stripe: {
+        sessions: {
+          retrieve: vi.fn().mockRejectedValue(new Error("Stripe API error")),
+        },
+      },
+    });
+
+    const result = await handleSuccessPage(deps, makeEvent("cs_test_123"));
+
+    expect(result.statusCode).toBe(500);
+    expect(result.headers?.["Content-Type"]).toBe("text/html");
+    expect(result.body.toLowerCase()).toContain("something went wrong");
+  });
+
+  it("returns 500 with error page when DB throws", async () => {
+    const deps = makeDeps({
+      db: {
+        ...makeDeps().db,
+        getBySessionId: vi.fn().mockRejectedValue(new Error("DynamoDB timeout")),
+      },
+    });
+
+    const result = await handleSuccessPage(deps, makeEvent("cs_test_123"));
+
+    expect(result.statusCode).toBe(500);
+    expect(result.body.toLowerCase()).toContain("something went wrong");
+  });
+
   it("falls back to 'Customer' when name is missing", async () => {
     const deps = makeDeps({
       stripe: {

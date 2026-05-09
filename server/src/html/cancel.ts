@@ -1,5 +1,6 @@
 export function cancelPageHtml(): string {
-  return `<html><body>
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Purchase Cancelled — Lit</title></head><body>
 <h1>Purchase Cancelled</h1>
 <p>Your purchase has been cancelled. No charges were made.</p>
 <p>If you'd like to try again, visit <a href="https://lit.solar">lit.solar</a>.</p>

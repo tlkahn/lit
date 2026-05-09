@@ -37,6 +37,19 @@ describe("successPageHtml", () => {
     expect(html).not.toContain("<script>");
     expect(html).toContain("&lt;script&gt;");
   });
+
+  it("has proper HTML document structure", () => {
+    const html = successPageHtml(pem, "Alice");
+    expect(html).toContain("<!DOCTYPE html>");
+    expect(html).toContain('<meta charset="utf-8">');
+    expect(html).toContain("<title>License Key — Lit</title>");
+  });
+
+  it("escapes HTML characters in PEM inside <pre>", () => {
+    const html = successPageHtml("fake<pem>&stuff", "Alice");
+    expect(html).toContain("<pre>fake&lt;pem&gt;&amp;stuff</pre>");
+    expect(html).not.toContain("<pre>fake<pem>");
+  });
 });
 
 describe("gonePageHtml", () => {
@@ -48,5 +61,12 @@ describe("gonePageHtml", () => {
   it("mentions email", () => {
     const html = gonePageHtml();
     expect(html.toLowerCase()).toContain("email");
+  });
+
+  it("has proper HTML document structure", () => {
+    const html = gonePageHtml();
+    expect(html).toContain("<!DOCTYPE html>");
+    expect(html).toContain('<meta charset="utf-8">');
+    expect(html).toContain("<title>Link Expired — Lit</title>");
   });
 });
