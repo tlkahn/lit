@@ -516,7 +516,7 @@ export async function activateLicense(key: string): Promise<LicenseStatusRespons
 }
 
 export interface OnlineValidationResult {
-  action: string;
+  action: "valid" | "revoked" | "skipped";
   reason?: string;
 }
 

@@ -30,19 +30,18 @@ export const useLicenseStore = create<LicenseStore>((set) => ({
       loading: false,
     });
 
-    try {
-      const online = await checkOnlineValidation();
-      if (online.action === "revoked") {
-        const updated = await getLicenseStatus();
-        set({
-          state: updated.state,
-          daysRemaining: updated.days_remaining ?? null,
-          licensedTo: updated.licensed_to ?? null,
-        });
-      }
-    } catch {
-      // non-fatal
-    }
+    checkOnlineValidation()
+      .then(async (online) => {
+        if (online.action === "revoked") {
+          const updated = await getLicenseStatus();
+          set({
+            state: updated.state,
+            daysRemaining: updated.days_remaining ?? null,
+            licensedTo: updated.licensed_to ?? null,
+          });
+        }
+      })
+      .catch(() => {});
   },
 
   activate: async (key: string) => {

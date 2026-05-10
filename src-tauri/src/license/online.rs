@@ -69,6 +69,7 @@ pub async fn perform_online_validation(
 ) -> OnlineValidationResult {
     match client.get_validation(license_id).await {
         Ok(resp) if resp.status == "revoked" => {
+            tracing::info!(license_id, reason = ?resp.reason, "license revoked by server");
             let _ = storage::remove_license_key(dir);
             let _ = write_last_checked(dir, now);
             OnlineValidationResult {
@@ -77,16 +78,20 @@ pub async fn perform_online_validation(
             }
         }
         Ok(_) => {
+            tracing::debug!(license_id, "license valid");
             let _ = write_last_checked(dir, now);
             OnlineValidationResult {
                 action: "valid".into(),
                 reason: None,
             }
         }
-        Err(_) => OnlineValidationResult {
-            action: "skipped".into(),
-            reason: Some("network_error".into()),
-        },
+        Err(e) => {
+            tracing::debug!(error = %e, "online validation skipped: network error");
+            OnlineValidationResult {
+                action: "skipped".into(),
+                reason: Some("network_error".into()),
+            }
+        }
     }
 }
 
@@ -97,6 +102,7 @@ pub async fn check_validation_if_due(
     client: &impl HttpClient,
 ) -> OnlineValidationResult {
     if !should_check_today(dir, now) {
+        tracing::debug!("online validation not due");
         return OnlineValidationResult {
             action: "skipped".into(),
             reason: Some("not_due".into()),
@@ -106,26 +112,29 @@ pub async fn check_validation_if_due(
     let pem = match storage::read_license_key(dir) {
         Ok(Some(pem)) => pem,
         Ok(None) => {
+            tracing::debug!("online validation skipped: no license file");
             return OnlineValidationResult {
                 action: "skipped".into(),
                 reason: Some("no_license".into()),
-            }
+            };
         }
         Err(_) => {
+            tracing::debug!("online validation skipped: no license file");
             return OnlineValidationResult {
                 action: "skipped".into(),
                 reason: Some("no_license".into()),
-            }
+            };
         }
     };
 
     let payload = match key::verify_license_key(&pem, verifying_key) {
         Ok(p) => p,
         Err(_) => {
+            tracing::debug!("online validation skipped: corrupt license key");
             return OnlineValidationResult {
                 action: "skipped".into(),
                 reason: Some("corrupt_key".into()),
-            }
+            };
         }
     };
 
@@ -357,6 +366,7 @@ mod tests {
 
     // --- A5: Happy path (valid) ---
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn perform_validation_valid() {
         let dir = tempfile::tempdir().unwrap();
@@ -365,10 +375,12 @@ mod tests {
         let result = perform_online_validation(dir.path(), "lic-1", now, &client).await;
         assert_eq!(result.action, "valid");
         assert_eq!(read_last_checked(dir.path()), Some(now));
+        assert!(logs_contain("license valid"));
     }
 
     // --- A6: Revocation ---
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn perform_validation_revoked_deletes_license() {
         let dir = tempfile::tempdir().unwrap();
@@ -380,10 +392,12 @@ mod tests {
         assert_eq!(result.reason, Some("refund".into()));
         assert!(storage::read_license_key(dir.path()).unwrap().is_none());
         assert_eq!(read_last_checked(dir.path()), Some(now));
+        assert!(logs_contain("license revoked"));
     }
 
     // --- A7: Network error ---
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn perform_validation_network_error_skips() {
         let dir = tempfile::tempdir().unwrap();
@@ -394,10 +408,12 @@ mod tests {
         assert_eq!(result.action, "skipped");
         assert_eq!(read_last_checked(dir.path()), None);
         assert!(storage::read_license_key(dir.path()).unwrap().is_some());
+        assert!(logs_contain("online validation skipped"));
     }
 
     // --- A8: Orchestrator ---
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     async fn orchestrator_skips_when_not_due() {
         let dir = tempfile::tempdir().unwrap();
@@ -409,6 +425,7 @@ mod tests {
         let result = check_validation_if_due(dir.path(), &vk, now, &client).await;
         assert_eq!(result.action, "skipped");
         assert_eq!(result.reason, Some("not_due".into()));
+        assert!(logs_contain("online validation not due"));
     }
 
     #[tokio::test]
