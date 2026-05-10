@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { APIGatewayProxyEvent } from "aws-lambda";
-import { handleRefundPage } from "../../src/handlers/refund-page.js";
+import { handleRefundPage, handler } from "../../src/handlers/refund-page.js";
 
 function makeEvent(): APIGatewayProxyEvent {
   return {
@@ -32,5 +32,9 @@ describe("handleRefundPage", () => {
     const result = await handleRefundPage(makeEvent());
 
     expect(result.headers?.["Content-Type"]).toBe("text/html");
+  });
+
+  it("exports handler for Lambda runtime", () => {
+    expect(handler).toBe(handleRefundPage);
   });
 });

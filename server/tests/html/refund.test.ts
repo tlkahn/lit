@@ -30,4 +30,9 @@ describe("refundPageHtml", () => {
     const html = refundPageHtml();
     expect(html).toContain("Lit Solar Software LLC");
   });
+
+  it("links to privacy policy", () => {
+    const html = refundPageHtml();
+    expect(html).toContain('href="/privacy"');
+  });
 });

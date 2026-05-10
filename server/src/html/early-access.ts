@@ -8,6 +8,8 @@ export function earlyAccessFormHtml(): string {
 <input id="email" name="email" type="email" required />
 <button type="submit">Claim License</button>
 </form>
+<hr>
+<p><a href="/privacy">Privacy Policy</a> · <a href="/refund">Refund Policy</a></p>
 </body></html>`;
 }
 

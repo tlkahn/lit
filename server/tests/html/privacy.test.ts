@@ -40,4 +40,9 @@ describe("privacyPageHtml", () => {
     expect(html).toContain("Stripe");
     expect(html).toContain("AWS");
   });
+
+  it("links to refund policy", () => {
+    const html = privacyPageHtml();
+    expect(html).toContain('href="/refund"');
+  });
 });

@@ -26,5 +26,7 @@ export function refundPageHtml(): string {
 
 <h2>Contact</h2>
 <p><a href="mailto:privacy@lit.solar">privacy@lit.solar</a></p>
+<hr>
+<p><a href="/privacy">Privacy Policy</a></p>
 </body></html>`;
 }

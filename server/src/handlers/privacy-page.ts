@@ -10,3 +10,5 @@ export async function handlePrivacyPage(
     body: privacyPageHtml(),
   };
 }
+
+export const handler = handlePrivacyPage;

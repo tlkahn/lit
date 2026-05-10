@@ -9,6 +9,8 @@ export function successPageHtml(pem: string, name: string): string {
 <p><a href="lit://activate?key=${encodeURIComponent(pem)}">Open in Lit</a></p>
 <p>You can also copy the key above and paste it into the app.</p>
 <p>A copy has also been emailed to you.</p>
+<hr>
+<p><a href="/privacy">Privacy Policy</a> · <a href="/refund">Refund Policy</a></p>
 </body></html>`;
 }
 

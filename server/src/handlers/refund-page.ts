@@ -10,3 +10,5 @@ export async function handleRefundPage(
     body: refundPageHtml(),
   };
 }
+
+export const handler = handleRefundPage;

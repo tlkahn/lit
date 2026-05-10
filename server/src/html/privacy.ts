@@ -2,7 +2,7 @@ export function privacyPageHtml(): string {
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Privacy Policy — Lit</title></head><body>
 <h1>Privacy Policy</h1>
-<p><strong>Effective date:</strong> May 10, 2026</p>
+<p><strong>Last updated:</strong> May 2026</p>
 <p><strong>Operator:</strong> Lit Solar Software LLC, Delaware, USA</p>
 
 <h2>What We Collect</h2>
@@ -52,5 +52,7 @@ export function privacyPageHtml(): string {
 
 <h2>Contact</h2>
 <p>For privacy inquiries or deletion requests: <a href="mailto:privacy@lit.solar">privacy@lit.solar</a></p>
+<hr>
+<p><a href="/refund">Refund Policy</a></p>
 </body></html>`;
 }

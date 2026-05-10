@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { APIGatewayProxyEvent } from "aws-lambda";
-import { handlePrivacyPage } from "../../src/handlers/privacy-page.js";
+import { handlePrivacyPage, handler } from "../../src/handlers/privacy-page.js";
 
 function makeEvent(): APIGatewayProxyEvent {
   return {
@@ -32,5 +32,9 @@ describe("handlePrivacyPage", () => {
     const result = await handlePrivacyPage(makeEvent());
 
     expect(result.headers?.["Content-Type"]).toBe("text/html");
+  });
+
+  it("exports handler for Lambda runtime", () => {
+    expect(handler).toBe(handlePrivacyPage);
   });
 });
