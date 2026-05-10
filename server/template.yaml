@@ -284,6 +284,68 @@ Resources:
         EntryPoints:
           - recover-page.ts
 
+  EarlyAccessPageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: early-access-page.handler
+      CodeUri: src/handlers/
+      MemorySize: 256
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref LicensesTable
+        - SESCrudPolicy:
+            IdentityName: "*"
+        - SSMParameterReadPolicy:
+            ParameterName: "lit/*"
+      Environment:
+        Variables:
+          STRIPE_PRICE_ID: !Ref StripePriceId
+          SES_FROM_EMAIL: !Ref SesFromEmail
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /early-access
+            Method: GET
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2022
+        EntryPoints:
+          - early-access-page.ts
+
+  EarlyAccessFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: early-access.handler
+      CodeUri: src/handlers/
+      MemorySize: 256
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref LicensesTable
+        - SESCrudPolicy:
+            IdentityName: "*"
+        - SSMParameterReadPolicy:
+            ParameterName: "lit/*"
+      Environment:
+        Variables:
+          STRIPE_PRICE_ID: !Ref StripePriceId
+          SES_FROM_EMAIL: !Ref SesFromEmail
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /api/early-access
+            Method: POST
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2022
+        EntryPoints:
+          - early-access.ts
+
 Outputs:
   ApiUrl:
     Description: API Gateway endpoint URL

@@ -20,6 +20,7 @@ function makeDeps(overrides: Partial<HandlerDeps> = {}): HandlerDeps {
     email: {
       sendLicenseEmail: vi.fn(),
       sendRecoveryEmail: vi.fn().mockResolvedValue(undefined),
+      sendEarlyAdopterEmail: vi.fn(),
     },
     config: {
       tableName: "test-table",
@@ -29,6 +30,7 @@ function makeDeps(overrides: Partial<HandlerDeps> = {}): HandlerDeps {
       baseUrl: "https://example.com",
       sesFromEmail: "noreply@example.com",
       stripePriceId: "price_test",
+      earlyAccessDeadline: 2000000000,
     },
     clock: {
       nowEpochSeconds: vi.fn().mockReturnValue(1000),

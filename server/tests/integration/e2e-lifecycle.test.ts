@@ -101,6 +101,7 @@ beforeAll(async () => {
       baseUrl: "https://test.lit.solar",
       sesFromEmail: "noreply@lit.solar",
       stripePriceId: "price_fake_123",
+      earlyAccessDeadline: 2000000000,
     },
     clock: clockFake,
     generateLicenseKey,

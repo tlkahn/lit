@@ -5,6 +5,8 @@ import {
   licenseEmailText,
   recoveryEmailHtml,
   recoveryEmailText,
+  earlyAdopterEmailHtml,
+  earlyAdopterEmailText,
 } from "../../src/email/templates.js";
 
 const pem = `-----BEGIN PUBLIC KEY-----
@@ -77,5 +79,34 @@ describe("recoveryEmailText", () => {
     expect(text).toContain(pem);
     expect(text).toContain("Hello,");
     expect(text).not.toMatch(/<pre>|<html>|<\/?\w+>/);
+  });
+});
+
+describe("earlyAdopterEmailHtml", () => {
+  it("contains the PEM in a <pre> block", () => {
+    const html = earlyAdopterEmailHtml(pem);
+    expect(html).toContain(`<pre>${pem}</pre>`);
+  });
+
+  it("mentions early adopter", () => {
+    const html = earlyAdopterEmailHtml(pem);
+    expect(html.toLowerCase()).toContain("early");
+  });
+});
+
+describe("earlyAdopterEmailText", () => {
+  it("contains the PEM", () => {
+    const text = earlyAdopterEmailText(pem);
+    expect(text).toContain(pem);
+  });
+
+  it("has no HTML tags", () => {
+    const text = earlyAdopterEmailText(pem);
+    expect(text).not.toMatch(/<pre>|<html>|<\/?\w+>/);
+  });
+
+  it("mentions early adopter", () => {
+    const text = earlyAdopterEmailText(pem);
+    expect(text.toLowerCase()).toContain("early");
   });
 });

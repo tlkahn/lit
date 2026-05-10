@@ -146,6 +146,18 @@ describe("template.yaml", () => {
         method: "GET",
         memory: 128,
       },
+      {
+        name: "EarlyAccessPageFunction",
+        path: "/early-access",
+        method: "GET",
+        memory: 256,
+      },
+      {
+        name: "EarlyAccessFunction",
+        path: "/api/early-access",
+        method: "POST",
+        memory: 256,
+      },
     ];
 
     it.each(specs)(
@@ -176,8 +188,8 @@ describe("template.yaml", () => {
   });
 
   describe("cross-cutting", () => {
-    it("has exactly 8 Serverless::Function resources", () => {
-      expect(resourcesOfType("AWS::Serverless::Function")).toHaveLength(8);
+    it("has exactly 10 Serverless::Function resources", () => {
+      expect(resourcesOfType("AWS::Serverless::Function")).toHaveLength(10);
     });
 
     it("all functions use nodejs22.x runtime via Globals", () => {

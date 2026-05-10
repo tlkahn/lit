@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { APIGatewayProxyEvent } from "aws-lambda";
 import type { HandlerDeps } from "../../src/types.js";
-import { handleValidate } from "../../src/handlers/validate.js";
+import { handleEarlyAccessPage } from "../../src/handlers/early-access-page.js";
 
 function makeDeps(overrides: Partial<HandlerDeps> = {}): HandlerDeps {
   return {
@@ -9,7 +9,7 @@ function makeDeps(overrides: Partial<HandlerDeps> = {}): HandlerDeps {
       createLicense: vi.fn(),
       getBySessionId: vi.fn(),
       getByChargeId: vi.fn(),
-      getByLicenseId: vi.fn().mockResolvedValue(null),
+      getByLicenseId: vi.fn(),
       getByEmailHash: vi.fn(),
       revokeLicense: vi.fn(),
     },
@@ -43,16 +43,16 @@ function makeDeps(overrides: Partial<HandlerDeps> = {}): HandlerDeps {
   };
 }
 
-function makeEvent(licenseId?: string): APIGatewayProxyEvent {
+function makeEvent(): APIGatewayProxyEvent {
   return {
-    queryStringParameters: licenseId ? { license_id: licenseId } : null,
     body: null,
     headers: {},
     multiValueHeaders: {},
     httpMethod: "GET",
     isBase64Encoded: false,
-    path: "/api/validate",
+    path: "/early-access",
     pathParameters: null,
+    queryStringParameters: null,
     multiValueQueryStringParameters: null,
     stageVariables: null,
     requestContext: {} as APIGatewayProxyEvent["requestContext"],
@@ -60,56 +60,34 @@ function makeEvent(licenseId?: string): APIGatewayProxyEvent {
   };
 }
 
-describe("handleValidate", () => {
-  it("returns 400 when license_id param missing", async () => {
+describe("handleEarlyAccessPage", () => {
+  it("returns 200 with form HTML when before deadline", async () => {
     const deps = makeDeps();
-    const result = await handleValidate(deps, makeEvent());
+    const result = await handleEarlyAccessPage(deps, makeEvent());
 
-    expect(result.statusCode).toBe(400);
-    expect(result.body).toContain("license_id");
+    expect(result.statusCode).toBe(200);
+    expect(result.body).toContain("<form");
+    expect(result.body).toContain("Early Access");
   });
 
-  it("returns { status: 'valid' } for active license", async () => {
+  it("returns 200 with closed HTML when past deadline", async () => {
     const deps = makeDeps({
-      db: {
-        ...makeDeps().db,
-        getByLicenseId: vi.fn().mockResolvedValue({
-          license_id: "LIT-2025-ABCD1234",
-          status: "active",
-        }),
+      clock: {
+        nowEpochSeconds: vi.fn().mockReturnValue(2000000001),
+        isOlderThan: vi.fn(),
       },
     });
 
-    const result = await handleValidate(deps, makeEvent("LIT-2025-ABCD1234"));
+    const result = await handleEarlyAccessPage(deps, makeEvent());
 
     expect(result.statusCode).toBe(200);
-    expect(JSON.parse(result.body)).toEqual({ status: "valid" });
+    expect(result.body.toLowerCase()).toMatch(/closed|ended/);
   });
 
-  it("returns { status: 'revoked', reason: 'refund' } for revoked license", async () => {
-    const deps = makeDeps({
-      db: {
-        ...makeDeps().db,
-        getByLicenseId: vi.fn().mockResolvedValue({
-          license_id: "LIT-2025-ABCD1234",
-          status: "revoked",
-          revoked_reason: "refund",
-        }),
-      },
-    });
-
-    const result = await handleValidate(deps, makeEvent("LIT-2025-ABCD1234"));
-
-    expect(result.statusCode).toBe(200);
-    expect(JSON.parse(result.body)).toEqual({ status: "revoked", reason: "refund" });
-  });
-
-  it("returns { status: 'valid' } for nonexistent ID (prevent enumeration)", async () => {
+  it("returns Content-Type text/html header", async () => {
     const deps = makeDeps();
+    const result = await handleEarlyAccessPage(deps, makeEvent());
 
-    const result = await handleValidate(deps, makeEvent("LIT-2025-UNKNOWN"));
-
-    expect(result.statusCode).toBe(200);
-    expect(JSON.parse(result.body)).toEqual({ status: "valid" });
+    expect(result.headers?.["Content-Type"]).toBe("text/html");
   });
 });

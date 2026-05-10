@@ -342,6 +342,31 @@ mod tests {
         std::env::remove_var("LIT_LICENSE_DEV");
     }
 
+    #[test]
+    fn get_status_early_adopter_license_returns_licensed() {
+        let dir = tempfile::tempdir().unwrap();
+        let (trial_sk, _) = test_keys();
+        let lic_sk = SigningKey::generate(&mut OsRng);
+        let lic_vk = lic_sk.verifying_key();
+        let payload = LicensePayload {
+            license_id: "lic-ea-001".into(),
+            name: "Customer".into(),
+            email: "early@example.com".into(),
+            issued_at: 100,
+            license_type: "early_adopter".into(),
+        };
+        let pem = build_test_pem(&payload, &lic_sk);
+        storage::write_license_key(dir.path(), &pem).unwrap();
+        let now = 200;
+        match get_status(dir.path(), &trial_sk, &lic_vk, now) {
+            LicenseStatus::Licensed(p) => {
+                assert_eq!(p.license_id, "lic-ea-001");
+                assert_eq!(p.license_type, "early_adopter");
+            }
+            other => panic!("expected Licensed, got {:?}", other),
+        }
+    }
+
     // --- parse_activate_url ---
 
     #[test]

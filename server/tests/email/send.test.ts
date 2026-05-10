@@ -3,6 +3,7 @@ import type { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
 import {
   sendLicenseEmail,
   sendRecoveryEmail,
+  sendEarlyAdopterEmail,
   createEmailOps,
 } from "../../src/email/send.js";
 import type { EmailOps } from "../../src/types.js";
@@ -78,6 +79,29 @@ describe("sendRecoveryEmail", () => {
   });
 });
 
+describe("sendEarlyAdopterEmail", () => {
+  it("calls SES with correct params and early-adopter subject", async () => {
+    await sendEarlyAdopterEmail(ses, from, to, pem);
+
+    expect(mockSend).toHaveBeenCalledOnce();
+    const cmd = mockSend.mock.calls[0]![0] as SendEmailCommand;
+    const input = cmd.input;
+    expect(input.Source).toBe(from);
+    expect(input.Destination?.ToAddresses).toEqual([to]);
+    expect(input.Message?.Subject?.Data?.toLowerCase()).toContain("early");
+    expect(input.Message?.Body?.Html?.Data).toContain(`<pre>${pem}</pre>`);
+  });
+
+  it("sets UTF-8 Charset on all content fields", async () => {
+    await sendEarlyAdopterEmail(ses, from, to, pem);
+    const cmd = mockSend.mock.calls[0]![0] as SendEmailCommand;
+    const msg = cmd.input.Message!;
+    expect(msg.Subject?.Charset).toBe("UTF-8");
+    expect(msg.Body?.Html?.Charset).toBe("UTF-8");
+    expect(msg.Body?.Text?.Charset).toBe("UTF-8");
+  });
+});
+
 describe("createEmailOps", () => {
   it("returns an object satisfying the EmailOps interface", () => {
     const ops: EmailOps = createEmailOps(ses, from);
@@ -107,5 +131,19 @@ describe("createEmailOps", () => {
     const ops = createEmailOps(ses, from);
     expect(ops.sendLicenseEmail.length).toBe(3);
     expect(ops.sendRecoveryEmail.length).toBe(2);
+  });
+
+  it("sendEarlyAdopterEmail delegates to SES with closed-over ses and from", async () => {
+    const ops = createEmailOps(ses, from);
+    await ops.sendEarlyAdopterEmail(to, pem);
+    expect(mockSend).toHaveBeenCalledOnce();
+    const cmd = mockSend.mock.calls[0]![0] as SendEmailCommand;
+    expect(cmd.input.Source).toBe(from);
+    expect(cmd.input.Message?.Subject?.Data?.toLowerCase()).toContain("early");
+  });
+
+  it("sendEarlyAdopterEmail adapter accepts 2 args", () => {
+    const ops = createEmailOps(ses, from);
+    expect(ops.sendEarlyAdopterEmail.length).toBe(2);
   });
 });

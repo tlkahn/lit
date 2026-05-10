@@ -5,6 +5,8 @@ import {
   licenseEmailText,
   recoveryEmailHtml,
   recoveryEmailText,
+  earlyAdopterEmailHtml,
+  earlyAdopterEmailText,
 } from "./templates.js";
 
 async function sendEmail(
@@ -63,11 +65,29 @@ export async function sendRecoveryEmail(
   );
 }
 
+export async function sendEarlyAdopterEmail(
+  ses: SESClient,
+  from: string,
+  to: string,
+  pem: string,
+): Promise<void> {
+  await sendEmail(
+    ses,
+    from,
+    to,
+    "Your early-adopter license key",
+    earlyAdopterEmailHtml(pem),
+    earlyAdopterEmailText(pem),
+  );
+}
+
 export function createEmailOps(ses: SESClient, from: string): EmailOps {
   return {
     sendLicenseEmail: (to, name, pem) =>
       sendLicenseEmail(ses, from, to, name, pem),
     sendRecoveryEmail: (to, pem) =>
       sendRecoveryEmail(ses, from, to, pem),
+    sendEarlyAdopterEmail: (to, pem) =>
+      sendEarlyAdopterEmail(ses, from, to, pem),
   };
 }

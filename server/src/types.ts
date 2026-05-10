@@ -65,6 +65,10 @@ export interface EmailOps {
     to: string,
     pem: string,
   ): Promise<void>;
+  sendEarlyAdopterEmail(
+    to: string,
+    pem: string,
+  ): Promise<void>;
 }
 
 export interface Config {
@@ -75,6 +79,7 @@ export interface Config {
   baseUrl: string;
   sesFromEmail: string;
   stripePriceId: string;
+  earlyAccessDeadline: number;
 }
 
 export interface Clock {

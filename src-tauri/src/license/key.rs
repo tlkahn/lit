@@ -227,4 +227,20 @@ mod tests {
         assert!(json.contains(r#""type":"personal""#));
         assert!(!json.contains("license_type"));
     }
+
+    #[test]
+    fn verify_license_key_early_adopter_type() {
+        let sk = SigningKey::generate(&mut OsRng);
+        let vk = sk.verifying_key();
+        let payload = LicensePayload {
+            license_id: "lic-ea-001".into(),
+            name: "Customer".into(),
+            email: "early@example.com".into(),
+            issued_at: 1700000000,
+            license_type: "early_adopter".into(),
+        };
+        let pem = build_test_pem(&payload, &sk);
+        let result = verify_license_key(&pem, &vk).unwrap();
+        assert_eq!(result.license_type, "early_adopter");
+    }
 }

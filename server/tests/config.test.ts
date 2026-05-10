@@ -9,6 +9,7 @@ const defaultSsmParams: Record<string, string> = {
   "/lit/private-key": PRIVATE_KEY_B64,
   "/lit/stripe-secret-key": "sk_test_123",
   "/lit/webhook-secret": "whsec_test_456",
+  "/lit/early-access-deadline": "2000000000",
 };
 
 const defaultEnvVars: Record<string, string> = {
@@ -67,6 +68,7 @@ describe("loadConfig", () => {
         "/lit/private-key",
         "/lit/stripe-secret-key",
         "/lit/webhook-secret",
+        "/lit/early-access-deadline",
       ],
       WithDecryption: true,
     });
@@ -106,6 +108,19 @@ describe("loadConfig", () => {
     await expect(loadConfig(ssm as unknown as SSMClient)).rejects.toThrow(/TABLE_NAME/);
   });
 
+  it("returns earlyAccessDeadline as number from SSM", async () => {
+    const ssm = makeSsmClient();
+    const config = await loadConfig(ssm as unknown as SSMClient);
+    expect(config.earlyAccessDeadline).toBe(2000000000);
+  });
+
+  it("rejects when /lit/early-access-deadline SSM param missing", async () => {
+    const partial = { ...defaultSsmParams };
+    delete partial["/lit/early-access-deadline"];
+    const ssm = makeSsmClient(partial);
+    await expect(loadConfig(ssm as unknown as SSMClient)).rejects.toThrow(/early-access-deadline/);
+  });
+
   it("rejects when an SSM parameter is missing", async () => {
     const partial = { ...defaultSsmParams };
     delete partial["/lit/stripe-secret-key"];
@@ -127,6 +142,7 @@ describe("loadConfig", () => {
           { Name: "/lit/private-key", Value: undefined },
           { Name: "/lit/stripe-secret-key", Value: "sk_test_123" },
           { Name: "/lit/webhook-secret", Value: "whsec_test_456" },
+          { Name: "/lit/early-access-deadline", Value: "2000000000" },
         ],
       }),
     };

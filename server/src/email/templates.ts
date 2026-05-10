@@ -38,3 +38,19 @@ Here is your recovered license key:
 
 ${pem}`;
 }
+
+export function earlyAdopterEmailHtml(pem: string): string {
+  return `<html><body>
+<p>Hello,</p>
+<p>Thank you for being an early adopter! Here is your license key:</p>
+<pre>${pem}</pre>
+</body></html>`;
+}
+
+export function earlyAdopterEmailText(pem: string): string {
+  return `Hello,
+
+Thank you for being an early adopter! Here is your license key:
+
+${pem}`;
+}

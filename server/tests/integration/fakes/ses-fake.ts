@@ -1,7 +1,7 @@
 import type { EmailOps } from "../../../src/types.js";
 
 interface SentEmail {
-  type: "license" | "recovery";
+  type: "license" | "recovery" | "early_adopter";
   to: string;
   name?: string;
   pem: string;
@@ -27,6 +27,11 @@ export function createSesFake(): EmailOps & {
 
     sendRecoveryEmail(to: string, pem: string): Promise<void> {
       sentEmails.push({ type: "recovery", to, pem });
+      return Promise.resolve();
+    },
+
+    sendEarlyAdopterEmail(to: string, pem: string): Promise<void> {
+      sentEmails.push({ type: "early_adopter", to, pem });
       return Promise.resolve();
     },
   };

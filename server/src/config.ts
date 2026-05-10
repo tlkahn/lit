@@ -28,6 +28,7 @@ export async function loadConfig(ssm: SSMClient): Promise<Config> {
         "/lit/private-key",
         "/lit/stripe-secret-key",
         "/lit/webhook-secret",
+        "/lit/early-access-deadline",
       ],
       WithDecryption: true,
     }),
@@ -48,6 +49,7 @@ export async function loadConfig(ssm: SSMClient): Promise<Config> {
   const privateKeyB64 = requireParam("/lit/private-key");
   const stripeSecretKey = requireParam("/lit/stripe-secret-key");
   const webhookSecret = requireParam("/lit/webhook-secret");
+  const earlyAccessDeadline = parseInt(requireParam("/lit/early-access-deadline"), 10);
 
   const privateKey = new Uint8Array(Buffer.from(privateKeyB64, "base64"));
 
@@ -59,6 +61,7 @@ export async function loadConfig(ssm: SSMClient): Promise<Config> {
     baseUrl,
     sesFromEmail,
     stripePriceId,
+    earlyAccessDeadline,
   };
 
   return cached;
