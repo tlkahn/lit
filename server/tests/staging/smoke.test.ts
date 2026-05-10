@@ -198,25 +198,13 @@ describe("I.2.6 — Recovery", () => {
 // ── I.2.7 — Session Expiry (410) ──────────────────────────────────
 
 describe("I.2.7 — Session Expiry", () => {
-  const skipMsg = "Set EXPIRED_SESSION_ID in .env.staging after first successful smoke run";
-
-  it("cycle 1: expired session returns 410 on /api/license", async () => {
-    if (!EXPIRED_SESSION_ID) {
-      console.log(`TODO: ${skipMsg}`);
-      return;
-    }
-
-    const response = await fetch(`${BASE_URL}/api/license?session_id=${EXPIRED_SESSION_ID}`);
+  it.skipIf(!EXPIRED_SESSION_ID)("cycle 1: expired session returns 410 on /api/license", async () => {
+    const response = await fetch(`${BASE_URL}/api/license?session_id=${EXPIRED_SESSION_ID!}`);
     expect(response.status).toBe(410);
   });
 
-  it("cycle 2: expired session returns 410 HTML on /purchase/success", async () => {
-    if (!EXPIRED_SESSION_ID) {
-      console.log(`TODO: ${skipMsg}`);
-      return;
-    }
-
-    const response = await fetch(`${BASE_URL}/purchase/success?session_id=${EXPIRED_SESSION_ID}`);
+  it.skipIf(!EXPIRED_SESSION_ID)("cycle 2: expired session returns 410 HTML on /purchase/success", async () => {
+    const response = await fetch(`${BASE_URL}/purchase/success?session_id=${EXPIRED_SESSION_ID!}`);
     expect(response.status).toBe(410);
     expect(response.headers.get("content-type")).toContain("text/html");
   });

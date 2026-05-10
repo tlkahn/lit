@@ -40,9 +40,25 @@ export async function createAndCompleteCheckout(
     throw new Error("No PaymentIntent found on session");
   }
 
-  await stripe.paymentIntents.confirm(piId, {
-    payment_method: "pm_card_visa",
-  });
+  const pi = await stripe.paymentIntents.retrieve(piId);
+  if (pi.status === "succeeded") {
+    return { sessionId, paymentIntentId: piId };
+  }
+  if (pi.status !== "requires_payment_method" && pi.status !== "requires_confirmation") {
+    throw new Error(
+      `PaymentIntent ${piId} is in unexpected status "${pi.status}" — cannot confirm`,
+    );
+  }
+
+  try {
+    await stripe.paymentIntents.confirm(piId, {
+      payment_method: "pm_card_visa",
+    });
+  } catch (err) {
+    throw new Error(
+      `Failed to confirm PaymentIntent ${piId} (status was "${pi.status}"): ${err instanceof Error ? err.message : err}`,
+    );
+  }
 
   return { sessionId, paymentIntentId: piId };
 }

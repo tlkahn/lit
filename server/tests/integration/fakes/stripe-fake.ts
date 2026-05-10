@@ -23,26 +23,27 @@ export function createStripeFake(): StripeOps & {
   setSession(session: StripeSession): void;
   reset(): void;
 } {
-  let session: StripeSession | null = null;
+  const sessionStore = new Map<string, StripeSession>();
   const calls: CallRecord[] = [];
 
   return {
     calls,
 
     setSession(s: StripeSession) {
-      session = s;
+      sessionStore.set(s.id, s);
     },
 
     reset() {
-      session = null;
+      sessionStore.clear();
       calls.length = 0;
     },
 
     sessions: {
       retrieve(sessionId: string) {
         calls.push({ method: "sessions.retrieve", args: [sessionId], timestamp: Date.now() });
-        if (!session) throw new Error(`StripeFake: no session configured (requested ${sessionId})`);
-        return Promise.resolve(session);
+        const s = sessionStore.get(sessionId);
+        if (!s) throw new Error(`StripeFake: no session configured (requested ${sessionId})`);
+        return Promise.resolve(s);
       },
     },
 

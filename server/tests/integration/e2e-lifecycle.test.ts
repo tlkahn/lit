@@ -1,8 +1,19 @@
+/*
+ * Sequential e2e lifecycle tests — MUST run in declaration order.
+ * Later describe blocks depend on DB state created by earlier ones:
+ *   I.1.1 creates cs_test_happy, I.1.2 creates cs_test_idempotent,
+ *   I.1.3 reuses cs_test_happy + creates cs_test_webhook_new,
+ *   I.1.4 creates cs_test_refund, I.1.5 creates cs_test_dispute,
+ *   I.1.6 creates cs_test_recover, I.1.7 reuses cs_test_expiry.
+ * Do NOT add .concurrent or sequence.shuffle to this file.
+ */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { QueryCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import type { APIGatewayProxyEvent } from "aws-lambda";
-import type { HandlerDeps } from "../../src/types.js";
+import type Stripe from "stripe";
+import type { HandlerDeps, ParsedWebhookEvent } from "../../src/types.js";
 import { createTestDocClient, createTestTable, deleteTestTable } from "./helpers/dynamo-table.js";
 import { createStripeFake } from "./fakes/stripe-fake.js";
 import { createSesFake } from "./fakes/ses-fake.js";
@@ -19,7 +30,7 @@ import { handleValidate } from "../../src/handlers/validate.js";
 import { handleWebhook } from "../../src/handlers/webhook.js";
 import { handleRecover } from "../../src/handlers/recover.js";
 import { handleSuccessPage } from "../../src/handlers/success-page.js";
-import type { ParsedWebhookEvent } from "../../src/types.js";
+import { parseWebhookEvent } from "../../src/stripe/webhook.js";
 
 const TABLE = `e2e-lifecycle-${Date.now()}`;
 
@@ -30,21 +41,24 @@ let sesFake: ReturnType<typeof createSesFake>;
 let clockFake: ReturnType<typeof createClockFake>;
 let deps: HandlerDeps;
 
-function fakeVerify() {
-  return {} as never;
-}
-
-function makeParseFn(parsed: ParsedWebhookEvent) {
-  return () => parsed;
+function buildFakeStripeEvent(parsed: ParsedWebhookEvent): Stripe.Event {
+  if (parsed.type === "checkout.session.completed")
+    return { type: "checkout.session.completed", data: { object: { id: parsed.sessionId } } } as unknown as Stripe.Event;
+  if (parsed.type === "charge.refunded")
+    return { type: "charge.refunded", data: { object: { id: parsed.chargeId } } } as unknown as Stripe.Event;
+  if (parsed.type === "charge.dispute.created")
+    return { type: "charge.dispute.created", data: { object: { charge: parsed.chargeId } } } as unknown as Stripe.Event;
+  return { type: "unknown", data: { object: {} } } as unknown as Stripe.Event;
 }
 
 function makeWebhookEvent(parsed: ParsedWebhookEvent) {
+  const stripeEvent = buildFakeStripeEvent(parsed);
   const event = makeEvent({
     httpMethod: "POST",
     headers: { "stripe-signature": "sig_fake" },
     body: "{}",
   });
-  return { event, verify: fakeVerify, parse: makeParseFn(parsed) };
+  return { event, verify: () => stripeEvent, parse: parseWebhookEvent };
 }
 
 function makeEvent(overrides: Partial<APIGatewayProxyEvent> = {}): APIGatewayProxyEvent {
@@ -227,12 +241,14 @@ describe("I.1.2 — Idempotency", () => {
   });
 
   it("cycle 2: only one DB record exists for the session", async () => {
-    const record = await getBySessionId(docClient, TABLE, SESSION_ID);
-    expect(record).not.toBeNull();
-
-    const byId = await getByLicenseId(docClient, TABLE, record!.license_id);
-    expect(byId).not.toBeNull();
-    expect(byId!.stripe_session_id).toBe(SESSION_ID);
+    const result = await docClient.send(new QueryCommand({
+      TableName: TABLE,
+      IndexName: "stripe_session_id-index",
+      KeyConditionExpression: "stripe_session_id = :sid",
+      ExpressionAttributeValues: { ":sid": SESSION_ID },
+      Select: "COUNT",
+    }));
+    expect(result.Count).toBe(1);
   });
 
   it("cycle 3: email was sent only once", () => {
@@ -528,6 +544,7 @@ describe("I.1.7 — Session Expiry", () => {
 
 describe("I.1.8 — Edge Cases", () => {
   it("cycle 1: charge.refunded for unknown charge ID is a graceful no-op", async () => {
+    const before = await docClient.send(new ScanCommand({ TableName: TABLE }));
     const { event, verify, parse } = makeWebhookEvent({
       type: "charge.refunded",
       chargeId: "ch_nonexistent_xyz",
@@ -535,6 +552,11 @@ describe("I.1.8 — Edge Cases", () => {
 
     const result = await handleWebhook(deps, event, verify, parse);
     expect(result.statusCode).toBe(200);
+
+    const after = await docClient.send(new ScanCommand({ TableName: TABLE }));
+    const sortById = (items: Record<string, unknown>[]) =>
+      [...items].sort((a, b) => String(a.license_id).localeCompare(String(b.license_id)));
+    expect(sortById(after.Items as Record<string, unknown>[] ?? [])).toEqual(sortById(before.Items as Record<string, unknown>[] ?? []));
   });
 
   it("cycle 2: handleCheckout with invalid JSON returns 400", async () => {
@@ -569,5 +591,16 @@ describe("I.1.8 — Edge Cases", () => {
     const result = await handleValidate(deps, event);
     expect(result.statusCode).toBe(200);
     expect(JSON.parse(result.body)).toEqual({ status: "valid" });
+  });
+});
+
+// ── Stripe Fake Correctness ───────────────────────────────────────
+
+describe("Stripe fake correctness", () => {
+  it("retrieve returns session matching requested ID, not last-set", async () => {
+    stripeFake.setSession({ id: "cs_fake_A", payment_status: "paid", customer_email: "a@test.com", created: 1700000000 });
+    stripeFake.setSession({ id: "cs_fake_B", payment_status: "paid", customer_email: "b@test.com", created: 1700000000 });
+    const retrieved = await stripeFake.sessions.retrieve("cs_fake_A");
+    expect(retrieved.id).toBe("cs_fake_A");
   });
 });
