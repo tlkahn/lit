@@ -14,9 +14,6 @@ pub enum LicenseError {
     #[error("license key verification failed")]
     KeyVerificationFailed,
 
-    #[error("network error: {0}")]
-    Network(String),
-
     #[error("storage error: {0}")]
     Storage(String),
 
@@ -71,12 +68,6 @@ mod tests {
     fn key_verification_failed_display() {
         let err = LicenseError::KeyVerificationFailed;
         assert_eq!(err.to_string(), "license key verification failed");
-    }
-
-    #[test]
-    fn network_display() {
-        let err = LicenseError::Network("timeout".into());
-        assert_eq!(err.to_string(), "network error: timeout");
     }
 
     #[test]

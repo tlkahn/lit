@@ -61,6 +61,24 @@ pub fn should_check_today(dir: &Path, now: u64) -> bool {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LicenseIdResult {
+    Found(String),
+    NoLicense,
+    CorruptKey,
+}
+
+pub fn resolve_license_id(dir: &Path, verifying_key: &VerifyingKey) -> LicenseIdResult {
+    let pem = match storage::read_license_key(dir) {
+        Ok(Some(pem)) => pem,
+        _ => return LicenseIdResult::NoLicense,
+    };
+    match key::verify_license_key(&pem, verifying_key) {
+        Ok(payload) => LicenseIdResult::Found(payload.license_id),
+        Err(_) => LicenseIdResult::CorruptKey,
+    }
+}
+
 pub async fn perform_online_validation(
     dir: &Path,
     license_id: &str,
@@ -109,27 +127,16 @@ pub async fn check_validation_if_due(
         };
     }
 
-    let pem = match storage::read_license_key(dir) {
-        Ok(Some(pem)) => pem,
-        Ok(None) => {
+    let license_id = match resolve_license_id(dir, verifying_key) {
+        LicenseIdResult::Found(id) => id,
+        LicenseIdResult::NoLicense => {
             tracing::debug!("online validation skipped: no license file");
             return OnlineValidationResult {
                 action: "skipped".into(),
                 reason: Some("no_license".into()),
             };
         }
-        Err(_) => {
-            tracing::debug!("online validation skipped: no license file");
-            return OnlineValidationResult {
-                action: "skipped".into(),
-                reason: Some("no_license".into()),
-            };
-        }
-    };
-
-    let payload = match key::verify_license_key(&pem, verifying_key) {
-        Ok(p) => p,
-        Err(_) => {
+        LicenseIdResult::CorruptKey => {
             tracing::debug!("online validation skipped: corrupt license key");
             return OnlineValidationResult {
                 action: "skipped".into(),
@@ -138,7 +145,7 @@ pub async fn check_validation_if_due(
         }
     };
 
-    perform_online_validation(dir, &payload.license_id, now, client).await
+    perform_online_validation(dir, &license_id, now, client).await
 }
 
 fn get_base_url() -> String {
@@ -482,5 +489,44 @@ mod tests {
     fn reqwest_client_implements_trait() {
         let client = ReqwestHttpClient::new();
         assert_is_http_client(&client);
+    }
+
+    // --- A10: resolve_license_id ---
+
+    #[test]
+    fn resolve_license_id_valid_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let sk = SigningKey::generate(&mut OsRng);
+        let vk = sk.verifying_key();
+        let payload = key::LicensePayload {
+            license_id: "lic-test-1".into(),
+            name: "Test".into(),
+            email: "t@e.com".into(),
+            issued_at: 100,
+            license_type: "personal".into(),
+        };
+        let pem = build_test_pem(&payload, &sk);
+        storage::write_license_key(dir.path(), &pem).unwrap();
+        assert_eq!(
+            resolve_license_id(dir.path(), &vk),
+            LicenseIdResult::Found("lic-test-1".into())
+        );
+    }
+
+    #[test]
+    fn resolve_license_id_no_license_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let sk = SigningKey::generate(&mut OsRng);
+        let vk = sk.verifying_key();
+        assert_eq!(resolve_license_id(dir.path(), &vk), LicenseIdResult::NoLicense);
+    }
+
+    #[test]
+    fn resolve_license_id_corrupt_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let sk = SigningKey::generate(&mut OsRng);
+        let vk = sk.verifying_key();
+        storage::write_license_key(dir.path(), "garbage").unwrap();
+        assert_eq!(resolve_license_id(dir.path(), &vk), LicenseIdResult::CorruptKey);
     }
 }

@@ -118,15 +118,32 @@ pub async fn check_online_validation(
     state: State<'_, LicenseManager>,
 ) -> Result<OnlineValidationResult, String> {
     let now = now_secs();
-    let client = ReqwestHttpClient::new();
-    let result = online::check_validation_if_due(
+    if !online::should_check_today(&state.data_dir, now) {
+        return Ok(OnlineValidationResult {
+            action: "skipped".into(),
+            reason: Some("not_due".into()),
+        });
+    }
+    let license_id = match online::resolve_license_id(
         &state.data_dir,
         &state.license_verifying_key,
-        now,
-        &client,
-    )
-    .await;
-    Ok(result)
+    ) {
+        online::LicenseIdResult::Found(id) => id,
+        online::LicenseIdResult::NoLicense => {
+            return Ok(OnlineValidationResult {
+                action: "skipped".into(),
+                reason: Some("no_license".into()),
+            });
+        }
+        online::LicenseIdResult::CorruptKey => {
+            return Ok(OnlineValidationResult {
+                action: "skipped".into(),
+                reason: Some("corrupt_key".into()),
+            });
+        }
+    };
+    let client = ReqwestHttpClient::new();
+    Ok(online::perform_online_validation(&state.data_dir, &license_id, now, &client).await)
 }
 
 #[cfg(test)]
