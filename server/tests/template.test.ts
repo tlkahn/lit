@@ -158,6 +158,18 @@ describe("template.yaml", () => {
         method: "POST",
         memory: 256,
       },
+      {
+        name: "PrivacyPageFunction",
+        path: "/privacy",
+        method: "GET",
+        memory: 128,
+      },
+      {
+        name: "RefundPageFunction",
+        path: "/refund",
+        method: "GET",
+        memory: 128,
+      },
     ];
 
     it.each(specs)(
@@ -188,8 +200,8 @@ describe("template.yaml", () => {
   });
 
   describe("cross-cutting", () => {
-    it("has exactly 10 Serverless::Function resources", () => {
-      expect(resourcesOfType("AWS::Serverless::Function")).toHaveLength(10);
+    it("has exactly 12 Serverless::Function resources", () => {
+      expect(resourcesOfType("AWS::Serverless::Function")).toHaveLength(12);
     });
 
     it("all functions use nodejs22.x runtime via Globals", () => {
@@ -228,7 +240,7 @@ describe("template.yaml", () => {
     });
 
     it("static functions have no Policies", () => {
-      for (const name of ["CancelPageFunction", "RecoverPageFunction"]) {
+      for (const name of ["CancelPageFunction", "RecoverPageFunction", "PrivacyPageFunction", "RefundPageFunction"]) {
         expect(template.Resources[name].Properties.Policies).toBeUndefined();
       }
     });

@@ -311,6 +311,46 @@ Resources:
         EntryPoints:
           - early-access-page.ts
 
+  PrivacyPageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: privacy-page.handler
+      CodeUri: src/handlers/
+      MemorySize: 128
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /privacy
+            Method: GET
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2022
+        EntryPoints:
+          - privacy-page.ts
+
+  RefundPageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: refund-page.handler
+      CodeUri: src/handlers/
+      MemorySize: 128
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /refund
+            Method: GET
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2022
+        EntryPoints:
+          - refund-page.ts
+
   EarlyAccessFunction:
     Type: AWS::Serverless::Function
     Properties:
