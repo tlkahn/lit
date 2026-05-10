@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import type { SSMClient } from "@aws-sdk/client-ssm";
 import { loadConfig, resetConfigCache } from "../src/config.js";
 
 const PRIVATE_KEY_SEED = new Uint8Array(32).fill(0x42);
@@ -45,7 +46,7 @@ describe("loadConfig", () => {
 
   it("returns Config with all fields from SSM + env vars", async () => {
     const ssm = makeSsmClient();
-    const config = await loadConfig(ssm as any);
+    const config = await loadConfig(ssm as unknown as SSMClient);
 
     expect(config.tableName).toBe("test-licenses");
     expect(config.stripePriceId).toBe("price_test_789");
@@ -57,7 +58,7 @@ describe("loadConfig", () => {
 
   it("calls SSM with correct param names and WithDecryption", async () => {
     const ssm = makeSsmClient();
-    await loadConfig(ssm as any);
+    await loadConfig(ssm as unknown as SSMClient);
 
     expect(ssm.send).toHaveBeenCalledOnce();
     const command = ssm.send.mock.calls[0]![0];
@@ -73,7 +74,7 @@ describe("loadConfig", () => {
 
   it("decodes privateKey as Uint8Array matching seed bytes", async () => {
     const ssm = makeSsmClient();
-    const config = await loadConfig(ssm as any);
+    const config = await loadConfig(ssm as unknown as SSMClient);
 
     expect(config.privateKey).toBeInstanceOf(Uint8Array);
     expect(config.privateKey.length).toBe(32);
@@ -82,8 +83,8 @@ describe("loadConfig", () => {
 
   it("caches result — second call does not hit SSM again", async () => {
     const ssm = makeSsmClient();
-    const first = await loadConfig(ssm as any);
-    const second = await loadConfig(ssm as any);
+    const first = await loadConfig(ssm as unknown as SSMClient);
+    const second = await loadConfig(ssm as unknown as SSMClient);
 
     expect(ssm.send).toHaveBeenCalledOnce();
     expect(second).toBe(first);
@@ -91,9 +92,9 @@ describe("loadConfig", () => {
 
   it("resetConfigCache forces next call to hit SSM", async () => {
     const ssm = makeSsmClient();
-    await loadConfig(ssm as any);
+    await loadConfig(ssm as unknown as SSMClient);
     resetConfigCache();
-    await loadConfig(ssm as any);
+    await loadConfig(ssm as unknown as SSMClient);
 
     expect(ssm.send).toHaveBeenCalledTimes(2);
   });
@@ -102,7 +103,7 @@ describe("loadConfig", () => {
     delete process.env.TABLE_NAME;
     const ssm = makeSsmClient();
 
-    await expect(loadConfig(ssm as any)).rejects.toThrow(/TABLE_NAME/);
+    await expect(loadConfig(ssm as unknown as SSMClient)).rejects.toThrow(/TABLE_NAME/);
   });
 
   it("rejects when an SSM parameter is missing", async () => {
@@ -110,13 +111,13 @@ describe("loadConfig", () => {
     delete partial["/lit/stripe-secret-key"];
     const ssm = makeSsmClient(partial);
 
-    await expect(loadConfig(ssm as any)).rejects.toThrow(/stripe-secret-key/);
+    await expect(loadConfig(ssm as unknown as SSMClient)).rejects.toThrow(/stripe-secret-key/);
   });
 
   it("rejects when env var is empty string", async () => {
     process.env.TABLE_NAME = "";
     const ssm = makeSsmClient();
-    await expect(loadConfig(ssm as any)).rejects.toThrow(/TABLE_NAME/);
+    await expect(loadConfig(ssm as unknown as SSMClient)).rejects.toThrow(/TABLE_NAME/);
   });
 
   it("rejects when SSM param has undefined Value", async () => {
@@ -129,7 +130,7 @@ describe("loadConfig", () => {
         ],
       }),
     };
-    await expect(loadConfig(ssm as any)).rejects.toThrow(/private-key/);
+    await expect(loadConfig(ssm as unknown as SSMClient)).rejects.toThrow(/private-key/);
   });
 
   it("propagates SSM client errors", async () => {
@@ -137,7 +138,7 @@ describe("loadConfig", () => {
       send: vi.fn().mockRejectedValue(new Error("SSM unavailable")),
     };
 
-    await expect(loadConfig(ssm as any)).rejects.toThrow("SSM unavailable");
+    await expect(loadConfig(ssm as unknown as SSMClient)).rejects.toThrow("SSM unavailable");
   });
 
   it("does not cache failed loads — retry succeeds after failure", async () => {
@@ -152,8 +153,8 @@ describe("loadConfig", () => {
         .mockResolvedValueOnce({ Parameters: params }),
     };
 
-    await expect(loadConfig(ssm as any)).rejects.toThrow("transient");
-    const config = await loadConfig(ssm as any);
+    await expect(loadConfig(ssm as unknown as SSMClient)).rejects.toThrow("transient");
+    const config = await loadConfig(ssm as unknown as SSMClient);
     expect(config.tableName).toBe("test-licenses");
     expect(ssm.send).toHaveBeenCalledTimes(2);
   });

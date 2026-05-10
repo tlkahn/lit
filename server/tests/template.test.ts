@@ -11,14 +11,31 @@ const cfnTags = [
   },
 ];
 
+interface CfnResource {
+  Type: string;
+  Properties: Record<string, unknown>;
+  Metadata?: Record<string, unknown>;
+}
+
+interface GsiDefinition {
+  IndexName: string;
+  KeySchema: Array<{ AttributeName: string; KeyType: string }>;
+  Projection: { ProjectionType: string };
+}
+
+interface SamApiEvent {
+  Type: string;
+  Properties: { Path: string; Method: string };
+}
+
 const templatePath = new URL("../template.yaml", import.meta.url).pathname;
 const template = parse(readFileSync(templatePath, "utf-8"), {
   customTags: cfnTags,
 });
 
-function resourcesOfType(type: string): [string, any][] {
-  return Object.entries(template.Resources).filter(
-    ([, r]: [string, any]) => r.Type === type,
+function resourcesOfType(type: string): [string, CfnResource][] {
+  return (Object.entries(template.Resources) as [string, CfnResource][]).filter(
+    ([, r]) => r.Type === type,
   );
 }
 
@@ -55,7 +72,7 @@ describe("template.yaml", () => {
       "email_hash-index",
       "stripe_charge_id-index",
     ])("has %s GSI with HASH key and ALL projection", (name) => {
-      const gsi = gsis.find((g: any) => g.IndexName === name);
+      const gsi = gsis.find((g: GsiDefinition) => g.IndexName === name);
       expect(gsi).toBeDefined();
       expect(gsi.KeySchema[0].KeyType).toBe("HASH");
       expect(gsi.Projection.ProjectionType).toBe("ALL");
@@ -140,9 +157,9 @@ describe("template.yaml", () => {
         expect(fn.Properties.MemorySize).toBe(memory);
 
         const events = fn.Properties.Events;
-        const apiEvent = Object.values(events).find(
-          (e: any) => e.Type === "Api",
-        ) as any;
+        const apiEvent = (Object.values(events) as SamApiEvent[]).find(
+          (e) => e.Type === "Api",
+        )!
         expect(apiEvent).toBeDefined();
         expect(apiEvent.Properties.Path).toBe(path);
         expect(apiEvent.Properties.Method).toBe(method);
@@ -172,7 +189,7 @@ describe("template.yaml", () => {
 
     it("all DynamoDBCrudPolicy scoped to LicensesTable", () => {
       for (const [, fn] of resourcesOfType("AWS::Serverless::Function")) {
-        for (const policy of fn.Properties.Policies ?? []) {
+        for (const policy of (fn.Properties.Policies ?? []) as Record<string, Record<string, unknown>>[]) {
           if (policy.DynamoDBCrudPolicy) {
             expect(policy.DynamoDBCrudPolicy.TableName).toEqual({
               Ref: "LicensesTable",
@@ -184,7 +201,7 @@ describe("template.yaml", () => {
 
     it("all SSMParameterReadPolicy scoped to lit/*", () => {
       for (const [, fn] of resourcesOfType("AWS::Serverless::Function")) {
-        for (const policy of fn.Properties.Policies ?? []) {
+        for (const policy of (fn.Properties.Policies ?? []) as Record<string, Record<string, unknown>>[]) {
           if (policy.SSMParameterReadPolicy) {
             expect(policy.SSMParameterReadPolicy.ParameterName).toBe("lit/*");
           }
