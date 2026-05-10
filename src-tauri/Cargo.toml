@@ -45,6 +45,7 @@ ed25519-dalek = { version = "2", features = ["rand_core"] }
 base64 = "0.22"
 url = "2"
 tauri-plugin-deep-link = "2"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 
 [[bin]]
 name = "lit-cli"

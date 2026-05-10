@@ -1,6 +1,7 @@
 pub mod error;
 pub mod key;
 pub mod keygen;
+pub mod online;
 pub mod storage;
 pub mod trial;
 

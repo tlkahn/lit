@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { getLicenseStatus, activateLicense } from "../lib/ipc";
+import { getLicenseStatus, activateLicense, checkOnlineValidation } from "../lib/ipc";
 
 export type LicenseState = "unknown" | "trial" | "expiring_soon" | "expired" | "licensed";
 
@@ -29,6 +29,20 @@ export const useLicenseStore = create<LicenseStore>((set) => ({
       licensedTo: res.licensed_to ?? null,
       loading: false,
     });
+
+    try {
+      const online = await checkOnlineValidation();
+      if (online.action === "revoked") {
+        const updated = await getLicenseStatus();
+        set({
+          state: updated.state,
+          daysRemaining: updated.days_remaining ?? null,
+          licensedTo: updated.licensed_to ?? null,
+        });
+      }
+    } catch {
+      // non-fatal
+    }
   },
 
   activate: async (key: string) => {

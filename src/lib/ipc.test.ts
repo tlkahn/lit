@@ -302,7 +302,7 @@ describe("ipc", () => {
         case "activate_license":
           return { state: "licensed", licensed_to: "Test User" };
         case "check_online_validation":
-          return "skipped";
+          return { action: "skipped", reason: "not_due" };
         case "search_tags":
           return [
             { tag: "rust", count: 5 },
@@ -984,9 +984,10 @@ describe("ipc", () => {
     expect(invoke).toHaveBeenCalledWith("activate_license", { key: "LICENSE-KEY-123" });
   });
 
-  it("checkOnlineValidation returns result", async () => {
+  it("checkOnlineValidation returns structured result", async () => {
     const result = await checkOnlineValidation();
-    expect(result).toBe("skipped");
+    expect(result.action).toBe("skipped");
+    expect(result.reason).toBe("not_due");
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("check_online_validation");
   });

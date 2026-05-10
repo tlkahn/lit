@@ -515,8 +515,13 @@ export async function activateLicense(key: string): Promise<LicenseStatusRespons
   return invoke<LicenseStatusResponse>("activate_license", { key });
 }
 
-export async function checkOnlineValidation(): Promise<string> {
-  return invoke<string>("check_online_validation");
+export interface OnlineValidationResult {
+  action: string;
+  reason?: string;
+}
+
+export async function checkOnlineValidation(): Promise<OnlineValidationResult> {
+  return invoke<OnlineValidationResult>("check_online_validation");
 }
 
 // Annotation DSL

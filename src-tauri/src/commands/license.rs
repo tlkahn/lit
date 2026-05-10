@@ -4,7 +4,7 @@ use ed25519_dalek::{SigningKey, VerifyingKey};
 use serde::Serialize;
 use tauri::State;
 
-use crate::license;
+use crate::license::{self, online::{self, OnlineValidationResult, ReqwestHttpClient}};
 
 pub struct LicenseManager {
     pub data_dir: PathBuf,
@@ -114,8 +114,19 @@ pub fn activate_license(
 }
 
 #[tauri::command]
-pub fn check_online_validation() -> Result<String, String> {
-    Ok("skipped".into())
+pub async fn check_online_validation(
+    state: State<'_, LicenseManager>,
+) -> Result<OnlineValidationResult, String> {
+    let now = now_secs();
+    let client = ReqwestHttpClient::new();
+    let result = online::check_validation_if_due(
+        &state.data_dir,
+        &state.license_verifying_key,
+        now,
+        &client,
+    )
+    .await;
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -159,8 +170,14 @@ mod tests {
     }
 
     #[test]
-    fn check_online_validation_returns_skipped() {
-        assert_eq!(check_online_validation().unwrap(), "skipped");
+    fn online_validation_result_serializes() {
+        let result = OnlineValidationResult {
+            action: "skipped".into(),
+            reason: Some("not_due".into()),
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"action\":\"skipped\""));
+        assert!(json.contains("\"reason\":\"not_due\""));
     }
 
     #[test]
