@@ -1,0 +1,285 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Lit licensing server
+
+Parameters:
+  BaseUrl:
+    Type: String
+  StripePriceId:
+    Type: String
+  SesFromEmail:
+    Type: String
+    Default: "noreply@lit.solar"
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Timeout: 10
+    Environment:
+      Variables:
+        TABLE_NAME: !Ref LicensesTable
+        BASE_URL: !Ref BaseUrl
+
+Resources:
+  LicensesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: license_id
+          AttributeType: S
+        - AttributeName: stripe_session_id
+          AttributeType: S
+        - AttributeName: email_hash
+          AttributeType: S
+        - AttributeName: stripe_charge_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: license_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: stripe_session_id-index
+          KeySchema:
+            - AttributeName: stripe_session_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: email_hash-index
+          KeySchema:
+            - AttributeName: email_hash
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: stripe_charge_id-index
+          KeySchema:
+            - AttributeName: stripe_charge_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  CheckoutFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: checkout.handler
+      CodeUri: src/handlers/
+      MemorySize: 256
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref LicensesTable
+        - SESCrudPolicy:
+            IdentityName: "*"
+        - SSMParameterReadPolicy:
+            ParameterName: "lit/*"
+      Environment:
+        Variables:
+          STRIPE_PRICE_ID: !Ref StripePriceId
+          SES_FROM_EMAIL: !Ref SesFromEmail
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /api/checkout
+            Method: POST
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2022
+        EntryPoints:
+          - checkout.ts
+
+  WebhookFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: webhook.handler
+      CodeUri: src/handlers/
+      MemorySize: 256
+      Timeout: 30
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref LicensesTable
+        - SESCrudPolicy:
+            IdentityName: "*"
+        - SSMParameterReadPolicy:
+            ParameterName: "lit/*"
+      Environment:
+        Variables:
+          STRIPE_PRICE_ID: !Ref StripePriceId
+          SES_FROM_EMAIL: !Ref SesFromEmail
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /api/webhook
+            Method: POST
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2022
+        EntryPoints:
+          - webhook.ts
+
+  LicenseFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: license.handler
+      CodeUri: src/handlers/
+      MemorySize: 256
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref LicensesTable
+        - SESCrudPolicy:
+            IdentityName: "*"
+        - SSMParameterReadPolicy:
+            ParameterName: "lit/*"
+      Environment:
+        Variables:
+          STRIPE_PRICE_ID: !Ref StripePriceId
+          SES_FROM_EMAIL: !Ref SesFromEmail
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /api/license
+            Method: GET
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2022
+        EntryPoints:
+          - license.ts
+
+  ValidateFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: validate.handler
+      CodeUri: src/handlers/
+      MemorySize: 256
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref LicensesTable
+        - SESCrudPolicy:
+            IdentityName: "*"
+        - SSMParameterReadPolicy:
+            ParameterName: "lit/*"
+      Environment:
+        Variables:
+          STRIPE_PRICE_ID: !Ref StripePriceId
+          SES_FROM_EMAIL: !Ref SesFromEmail
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /api/validate
+            Method: GET
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2022
+        EntryPoints:
+          - validate.ts
+
+  RecoverFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: recover.handler
+      CodeUri: src/handlers/
+      MemorySize: 256
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref LicensesTable
+        - SESCrudPolicy:
+            IdentityName: "*"
+        - SSMParameterReadPolicy:
+            ParameterName: "lit/*"
+      Environment:
+        Variables:
+          STRIPE_PRICE_ID: !Ref StripePriceId
+          SES_FROM_EMAIL: !Ref SesFromEmail
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /api/recover
+            Method: POST
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2022
+        EntryPoints:
+          - recover.ts
+
+  SuccessPageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: success-page.handler
+      CodeUri: src/handlers/
+      MemorySize: 256
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref LicensesTable
+        - SESCrudPolicy:
+            IdentityName: "*"
+        - SSMParameterReadPolicy:
+            ParameterName: "lit/*"
+      Environment:
+        Variables:
+          STRIPE_PRICE_ID: !Ref StripePriceId
+          SES_FROM_EMAIL: !Ref SesFromEmail
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /purchase/success
+            Method: GET
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2022
+        EntryPoints:
+          - success-page.ts
+
+  CancelPageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: cancel-page.handler
+      CodeUri: src/handlers/
+      MemorySize: 128
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /purchase/cancel
+            Method: GET
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2022
+        EntryPoints:
+          - cancel-page.ts
+
+  RecoverPageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: recover-page.handler
+      CodeUri: src/handlers/
+      MemorySize: 128
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /recover
+            Method: GET
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2022
+        EntryPoints:
+          - recover-page.ts
