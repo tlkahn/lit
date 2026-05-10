@@ -1,12 +1,9 @@
 import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
-import type { HandlerDeps, CheckoutParams, CheckoutResult } from "../types.js";
-
-type CreateCheckoutSession = (params: CheckoutParams) => Promise<CheckoutResult>;
+import type { HandlerDeps } from "../types.js";
 
 export async function handleCheckout(
   deps: HandlerDeps,
   event: APIGatewayProxyEvent,
-  createCheckoutSession: CreateCheckoutSession,
 ): Promise<APIGatewayProxyResult> {
   let parsed: Record<string, unknown>;
   try {
@@ -18,7 +15,7 @@ export async function handleCheckout(
   try {
     const email = parsed.email as string | undefined;
 
-    const { url } = await createCheckoutSession({
+    const { url } = await deps.stripe.checkout.create({
       priceId: deps.config.stripePriceId,
       baseUrl: deps.config.baseUrl,
       ...(email && { customerEmail: email }),

@@ -51,7 +51,6 @@ export async function sendRecoveryEmail(
   ses: SESClient,
   from: string,
   to: string,
-  name: string,
   pem: string,
 ): Promise<void> {
   await sendEmail(
@@ -59,8 +58,8 @@ export async function sendRecoveryEmail(
     from,
     to,
     "Your recovered license key",
-    recoveryEmailHtml(name, pem),
-    recoveryEmailText(name, pem),
+    recoveryEmailHtml(pem),
+    recoveryEmailText(pem),
   );
 }
 
@@ -68,7 +67,7 @@ export function createEmailOps(ses: SESClient, from: string): EmailOps {
   return {
     sendLicenseEmail: (to, name, pem) =>
       sendLicenseEmail(ses, from, to, name, pem),
-    sendRecoveryEmail: (to, name, pem) =>
-      sendRecoveryEmail(ses, from, to, name, pem),
+    sendRecoveryEmail: (to, pem) =>
+      sendRecoveryEmail(ses, from, to, pem),
   };
 }

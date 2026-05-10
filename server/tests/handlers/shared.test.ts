@@ -15,6 +15,7 @@ function makeDeps(overrides: Partial<HandlerDeps> = {}): HandlerDeps {
     },
     stripe: {
       sessions: { retrieve: vi.fn() },
+      checkout: { create: vi.fn() },
     },
     email: {
       sendLicenseEmail: vi.fn().mockResolvedValue(undefined),
@@ -166,5 +167,39 @@ describe("generateAndStoreLicense", () => {
     expect(deps.db.createLicense).toHaveBeenCalledWith(
       expect.objectContaining({ email_hash: "abc123hash" }),
     );
+  });
+
+  it("on IdempotencyError, throws descriptive error when getBySessionId returns null", async () => {
+    const deps = makeDeps({
+      db: {
+        ...makeDeps().db,
+        createLicense: vi.fn().mockRejectedValue(new IdempotencyError()),
+        getBySessionId: vi.fn().mockResolvedValue(null),
+      },
+    });
+    await expect(generateAndStoreLicense(session, deps)).rejects.toThrow(/eventual consistency/i);
+  });
+
+  it("uses session-scoped sentinel for email hash when email is missing", async () => {
+    const deps = makeDeps();
+    const noEmailSession = {
+      ...session,
+      customer_email: null,
+      customer_details: { name: "Alice", email: null },
+    };
+    await generateAndStoreLicense(noEmailSession, deps);
+    expect(deps.computeEmailHash).toHaveBeenCalledWith(`no-email:${noEmailSession.id}`);
+  });
+
+  it("two email-less sessions produce different email hash inputs", async () => {
+    const deps1 = makeDeps();
+    const deps2 = makeDeps();
+    const sess1 = { ...session, id: "cs_aaa", customer_email: null, customer_details: { name: "A", email: null } };
+    const sess2 = { ...session, id: "cs_bbb", customer_email: null, customer_details: { name: "B", email: null } };
+    await generateAndStoreLicense(sess1, deps1);
+    await generateAndStoreLicense(sess2, deps2);
+    const arg1 = (deps1.computeEmailHash as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    const arg2 = (deps2.computeEmailHash as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(arg1).not.toBe(arg2);
   });
 });

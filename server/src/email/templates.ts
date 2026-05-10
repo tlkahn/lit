@@ -15,9 +15,9 @@ export function licenseEmailHtml(name: string, pem: string): string {
 </body></html>`;
 }
 
-export function recoveryEmailHtml(name: string, pem: string): string {
+export function recoveryEmailHtml(pem: string): string {
   return `<html><body>
-<p>Hello ${escapeHtml(name)},</p>
+<p>Hello,</p>
 <p>Here is your recovered license key:</p>
 <pre>${pem}</pre>
 </body></html>`;
@@ -31,8 +31,8 @@ Here is your license key:
 ${pem}`;
 }
 
-export function recoveryEmailText(name: string, pem: string): string {
-  return `Hello ${name},
+export function recoveryEmailText(pem: string): string {
+  return `Hello,
 
 Here is your recovered license key:
 

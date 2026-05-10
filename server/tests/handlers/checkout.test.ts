@@ -15,6 +15,12 @@ function makeDeps(overrides: Partial<HandlerDeps> = {}): HandlerDeps {
     },
     stripe: {
       sessions: { retrieve: vi.fn() },
+      checkout: {
+        create: vi.fn().mockResolvedValue({
+          url: "https://checkout.stripe.com/pay/cs_test_abc",
+          id: "cs_test_abc",
+        }),
+      },
     },
     email: {
       sendLicenseEmail: vi.fn(),
@@ -59,48 +65,43 @@ function makeEvent(body?: string): APIGatewayProxyEvent {
 
 describe("handleCheckout", () => {
   it("returns 303 redirect to Stripe checkout URL", async () => {
-    const createCheckoutSession = vi.fn().mockResolvedValue({
-      url: "https://checkout.stripe.com/pay/cs_test_abc",
-      id: "cs_test_abc",
-    });
     const deps = makeDeps();
 
-    const result = await handleCheckout(deps, makeEvent(), createCheckoutSession);
+    const result = await handleCheckout(deps, makeEvent());
 
     expect(result.statusCode).toBe(303);
     expect(result.headers?.Location).toBe("https://checkout.stripe.com/pay/cs_test_abc");
   });
 
   it("returns 500 on Stripe failure", async () => {
-    const createCheckoutSession = vi.fn().mockRejectedValue(new Error("Stripe down"));
-    const deps = makeDeps();
+    const deps = makeDeps({
+      stripe: {
+        sessions: { retrieve: vi.fn() },
+        checkout: { create: vi.fn().mockRejectedValue(new Error("Stripe down")) },
+      },
+    });
 
-    const result = await handleCheckout(deps, makeEvent(), createCheckoutSession);
+    const result = await handleCheckout(deps, makeEvent());
 
     expect(result.statusCode).toBe(500);
   });
 
   it("returns 400 on invalid JSON body", async () => {
-    const createCheckoutSession = vi.fn();
     const deps = makeDeps();
 
-    const result = await handleCheckout(deps, makeEvent("not json{"), createCheckoutSession);
+    const result = await handleCheckout(deps, makeEvent("not json{"));
 
     expect(result.statusCode).toBe(400);
-    expect(createCheckoutSession).not.toHaveBeenCalled();
+    expect(deps.stripe.checkout.create).not.toHaveBeenCalled();
   });
 
-  it("passes email from body to createCheckoutSession", async () => {
-    const createCheckoutSession = vi.fn().mockResolvedValue({
-      url: "https://checkout.stripe.com/pay/cs_test_abc",
-      id: "cs_test_abc",
-    });
+  it("passes email from body to checkout.create", async () => {
     const deps = makeDeps();
     const body = JSON.stringify({ email: "alice@example.com" });
 
-    await handleCheckout(deps, makeEvent(body), createCheckoutSession);
+    await handleCheckout(deps, makeEvent(body));
 
-    expect(createCheckoutSession).toHaveBeenCalledWith(
+    expect(deps.stripe.checkout.create).toHaveBeenCalledWith(
       expect.objectContaining({ customerEmail: "alice@example.com" }),
     );
   });

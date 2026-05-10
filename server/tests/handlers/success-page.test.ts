@@ -36,6 +36,7 @@ function makeDeps(overrides: Partial<HandlerDeps> = {}): HandlerDeps {
           created: 1000,
         }),
       },
+      checkout: { create: vi.fn() },
     },
     email: {
       sendLicenseEmail: vi.fn(),
@@ -143,6 +144,7 @@ describe("handleSuccessPage", () => {
         sessions: {
           retrieve: vi.fn().mockRejectedValue(new Error("Stripe API error")),
         },
+        checkout: { create: vi.fn() },
       },
     });
 
@@ -179,6 +181,7 @@ describe("handleSuccessPage", () => {
             created: 1000,
           }),
         },
+        checkout: { create: vi.fn() },
       },
     });
 

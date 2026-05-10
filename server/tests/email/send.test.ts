@@ -57,7 +57,7 @@ describe("sendLicenseEmail", () => {
 describe("sendRecoveryEmail", () => {
   it("uses a recovery-specific subject line", async () => {
     await sendLicenseEmail(ses, from, to, "Alice", pem);
-    await sendRecoveryEmail(ses, from, to, "Bob", pem);
+    await sendRecoveryEmail(ses, from, to, pem);
 
     const licenseCmd = mockSend.mock.calls[0]![0] as SendEmailCommand;
     const recoveryCmd = mockSend.mock.calls[1]![0] as SendEmailCommand;
@@ -69,7 +69,7 @@ describe("sendRecoveryEmail", () => {
   });
 
   it("sets UTF-8 Charset on all content fields", async () => {
-    await sendRecoveryEmail(ses, from, to, "Bob", pem);
+    await sendRecoveryEmail(ses, from, to, pem);
     const cmd = mockSend.mock.calls[0]![0] as SendEmailCommand;
     const msg = cmd.input.Message!;
     expect(msg.Subject?.Charset).toBe("UTF-8");
@@ -96,16 +96,16 @@ describe("createEmailOps", () => {
 
   it("sendRecoveryEmail delegates to SES with closed-over ses and from", async () => {
     const ops = createEmailOps(ses, from);
-    await ops.sendRecoveryEmail(to, "Bob", pem);
+    await ops.sendRecoveryEmail(to, pem);
     expect(mockSend).toHaveBeenCalledOnce();
     const cmd = mockSend.mock.calls[0]![0] as SendEmailCommand;
     expect(cmd.input.Source).toBe(from);
     expect(cmd.input.Message?.Subject?.Data).toContain("recover");
   });
 
-  it("adapter methods accept 3 arguments (to, name, pem)", () => {
+  it("sendLicenseEmail adapter accepts 3 args, sendRecoveryEmail accepts 2", () => {
     const ops = createEmailOps(ses, from);
     expect(ops.sendLicenseEmail.length).toBe(3);
-    expect(ops.sendRecoveryEmail.length).toBe(3);
+    expect(ops.sendRecoveryEmail.length).toBe(2);
   });
 });

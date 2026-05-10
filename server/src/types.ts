@@ -50,6 +50,9 @@ export interface StripeOps {
         | null;
     }>;
   };
+  checkout: {
+    create(params: CheckoutParams): Promise<CheckoutResult>;
+  };
 }
 
 export interface EmailOps {
@@ -60,7 +63,6 @@ export interface EmailOps {
   ): Promise<void>;
   sendRecoveryEmail(
     to: string,
-    name: string,
     pem: string,
   ): Promise<void>;
 }

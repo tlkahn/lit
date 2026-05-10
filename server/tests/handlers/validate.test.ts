@@ -15,6 +15,7 @@ function makeDeps(overrides: Partial<HandlerDeps> = {}): HandlerDeps {
     },
     stripe: {
       sessions: { retrieve: vi.fn() },
+      checkout: { create: vi.fn() },
     },
     email: {
       sendLicenseEmail: vi.fn(),

@@ -22,7 +22,7 @@ export async function handleRecover(
 
   const active = records.find((r) => r.status === "active");
   if (active) {
-    await deps.email.sendRecoveryEmail(email, "Customer", active.license_key_pem);
+    await deps.email.sendRecoveryEmail(email, active.license_key_pem);
   }
 
   return { statusCode: 200, body: JSON.stringify({ message: "If a license exists, a recovery email has been sent." }) };

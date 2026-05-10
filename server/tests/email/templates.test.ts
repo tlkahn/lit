@@ -53,15 +53,14 @@ describe("licenseEmailText", () => {
 
 describe("recoveryEmailHtml", () => {
   it("returns recovery HTML containing the PEM in a <pre> block", () => {
-    const html = recoveryEmailHtml("Bob", pem);
+    const html = recoveryEmailHtml(pem);
     expect(html).toContain(`<pre>${pem}</pre>`);
-    expect(html).toContain("Bob");
   });
 
-  it("escapes HTML metacharacters in the name", () => {
-    const html = recoveryEmailHtml('<script>alert("xss")</script>', pem);
-    expect(html).not.toContain("<script>");
-    expect(html).toContain("&lt;script&gt;");
+  it("uses a generic greeting without a name", () => {
+    const html = recoveryEmailHtml(pem);
+    expect(html).toContain("Hello,");
+    expect(html).not.toContain("Customer");
   });
 });
 
@@ -74,9 +73,9 @@ describe("licenseEmailText", () => {
 
 describe("recoveryEmailText", () => {
   it("returns recovery plain text with PEM", () => {
-    const text = recoveryEmailText("Bob", pem);
+    const text = recoveryEmailText(pem);
     expect(text).toContain(pem);
-    expect(text).toContain("Bob");
+    expect(text).toContain("Hello,");
     expect(text).not.toMatch(/<pre>|<html>|<\/?\w+>/);
   });
 });

@@ -15,6 +15,7 @@ function makeDeps(overrides: Partial<HandlerDeps> = {}): HandlerDeps {
     },
     stripe: {
       sessions: { retrieve: vi.fn() },
+      checkout: { create: vi.fn() },
     },
     email: {
       sendLicenseEmail: vi.fn(),
@@ -83,7 +84,6 @@ describe("handleRecover", () => {
 
     expect(deps.email.sendRecoveryEmail).toHaveBeenCalledWith(
       "alice@example.com",
-      "Customer",
       "-----BEGIN LICENSE KEY-----\nfake\n-----END LICENSE KEY-----",
     );
   });

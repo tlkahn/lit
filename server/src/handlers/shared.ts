@@ -43,7 +43,7 @@ export async function generateAndStoreLicense(
 
   const record: LicenseRecord = {
     license_id: licenseId,
-    email_hash: deps.computeEmailHash(email),
+    email_hash: deps.computeEmailHash(email || `no-email:${session.id}`),
     stripe_session_id: session.id,
     stripe_charge_id: chargeId,
     status: "active",
@@ -58,7 +58,12 @@ export async function generateAndStoreLicense(
   } catch (err) {
     if (err instanceof IdempotencyError) {
       const existing = await deps.db.getBySessionId(session.id);
-      return { licenseRecord: existing!, pem: existing!.license_key_pem };
+      if (!existing) {
+        throw new Error(
+          `License for session ${session.id} not found after IdempotencyError — likely DynamoDB GSI eventual consistency`,
+        );
+      }
+      return { licenseRecord: existing, pem: existing.license_key_pem };
     }
     throw err;
   }

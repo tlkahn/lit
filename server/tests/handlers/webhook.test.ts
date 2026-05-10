@@ -33,6 +33,7 @@ function makeDeps(overrides: Partial<HandlerDeps> = {}): HandlerDeps {
           payment_intent: { id: "pi_123", latest_charge: "ch_456" },
         }),
       },
+      checkout: { create: vi.fn() },
     },
     email: {
       sendLicenseEmail: vi.fn().mockResolvedValue(undefined),
@@ -211,6 +212,7 @@ describe("handleWebhook", () => {
         sessions: {
           retrieve: vi.fn().mockRejectedValue(new Error("DB explosion")),
         },
+        checkout: { create: vi.fn() },
       },
     });
     const fns = makeFns({

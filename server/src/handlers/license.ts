@@ -11,27 +11,31 @@ export async function handleLicense(
     return { statusCode: 400, body: "Missing session_id parameter" };
   }
 
-  const session = await deps.stripe.sessions.retrieve(sessionId);
+  try {
+    const session = await deps.stripe.sessions.retrieve(sessionId);
 
-  if (deps.clock.isOlderThan(session.created, 3600)) {
-    return { statusCode: 410, body: "Session expired" };
-  }
+    if (deps.clock.isOlderThan(session.created, 3600)) {
+      return { statusCode: 410, body: "Session expired" };
+    }
 
-  if (session.payment_status !== "paid") {
-    return { statusCode: 402, body: "Payment not completed" };
-  }
+    if (session.payment_status !== "paid") {
+      return { statusCode: 402, body: "Payment not completed" };
+    }
 
-  const existing = await deps.db.getBySessionId(sessionId);
-  if (existing) {
+    const existing = await deps.db.getBySessionId(sessionId);
+    if (existing) {
+      return {
+        statusCode: 200,
+        body: JSON.stringify({ license_key_pem: existing.license_key_pem }),
+      };
+    }
+
+    const { pem } = await generateAndStoreLicense(session, deps);
     return {
       statusCode: 200,
-      body: JSON.stringify({ license_key_pem: existing.license_key_pem }),
+      body: JSON.stringify({ license_key_pem: pem }),
     };
+  } catch {
+    return { statusCode: 500, body: "Internal server error" };
   }
-
-  const { pem } = await generateAndStoreLicense(session, deps);
-  return {
-    statusCode: 200,
-    body: JSON.stringify({ license_key_pem: pem }),
-  };
 }

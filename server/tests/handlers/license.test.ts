@@ -38,6 +38,7 @@ function makeDeps(overrides: Partial<HandlerDeps> = {}): HandlerDeps {
           payment_intent: { id: "pi_123", latest_charge: "ch_456" },
         }),
       },
+      checkout: { create: vi.fn() },
     },
     email: {
       sendLicenseEmail: vi.fn().mockResolvedValue(undefined),
@@ -159,6 +160,30 @@ describe("handleLicense", () => {
     expect(deps.clock.isOlderThan).toHaveBeenCalledWith(900, 3600);
   });
 
+  it("returns 500 when Stripe sessions.retrieve throws", async () => {
+    const deps = makeDeps({
+      stripe: {
+        sessions: { retrieve: vi.fn().mockRejectedValue(new Error("Stripe API error")) },
+        checkout: { create: vi.fn() },
+      },
+    });
+    const result = await handleLicense(deps, makeEvent("cs_test_123"));
+    expect(result.statusCode).toBe(500);
+    expect(result.body).toContain("Internal server error");
+  });
+
+  it("returns 500 when license generation throws non-IdempotencyError", async () => {
+    const deps = makeDeps({
+      db: {
+        ...makeDeps().db,
+        createLicense: vi.fn().mockRejectedValue(new Error("DynamoDB timeout")),
+      },
+    });
+    const result = await handleLicense(deps, makeEvent("cs_test_123"));
+    expect(result.statusCode).toBe(500);
+    expect(result.body).toContain("Internal server error");
+  });
+
   it("returns 402 when payment not paid", async () => {
     const deps = makeDeps({
       stripe: {
@@ -170,6 +195,7 @@ describe("handleLicense", () => {
             created: 900,
           }),
         },
+        checkout: { create: vi.fn() },
       },
     });
 
