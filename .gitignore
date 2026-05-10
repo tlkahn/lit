@@ -27,6 +27,7 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+.env.staging
 
 # Tauri
 src-tauri/target/

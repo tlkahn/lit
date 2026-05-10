@@ -7,6 +7,7 @@
     "test": "bunx vitest run",
     "test:watch": "bunx vitest",
     "test:integration": "bunx vitest run --config vitest.integration.config.ts",
+    "test:staging": "bunx vitest run --config vitest.staging.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -19,6 +20,7 @@
   },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.149",
+    "dotenv": "^17.4.2",
     "esbuild": "^0.25.0",
     "typescript": "^5.7.3",
     "vitest": "^3",
