@@ -283,3 +283,14 @@ Resources:
         Target: es2022
         EntryPoints:
           - recover-page.ts
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"
+  LicensesTableName:
+    Description: DynamoDB table name
+    Value: !Ref LicensesTable
+  LicensesTableArn:
+    Description: DynamoDB table ARN
+    Value: !GetAtt LicensesTable.Arn

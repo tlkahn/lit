@@ -9,7 +9,8 @@ export function resetConfigCache(): void {
 
 function requireEnv(name: string): string {
   const value = process.env[name];
-  if (!value) throw new Error(`Missing required environment variable: ${name}`);
+  if (value === undefined || value === "")
+    throw new Error(`Missing required environment variable: ${name}`);
   return value;
 }
 
@@ -32,9 +33,10 @@ export async function loadConfig(ssm: SSMClient): Promise<Config> {
     }),
   );
 
-  const params = new Map(
-    result.Parameters?.map((p) => [p.Name!, p.Value!]) ?? [],
-  );
+  const params = new Map<string, string>();
+  for (const p of result.Parameters ?? []) {
+    if (p.Name != null && p.Value != null) params.set(p.Name, p.Value);
+  }
 
   function requireParam(name: string): string {
     const value = params.get(name);
@@ -47,9 +49,7 @@ export async function loadConfig(ssm: SSMClient): Promise<Config> {
   const stripeSecretKey = requireParam("/lit/stripe-secret-key");
   const webhookSecret = requireParam("/lit/webhook-secret");
 
-  const privateKey = Uint8Array.from(atob(privateKeyB64), (c) =>
-    c.charCodeAt(0),
-  );
+  const privateKey = new Uint8Array(Buffer.from(privateKeyB64, "base64"));
 
   cached = {
     tableName,

@@ -113,6 +113,25 @@ describe("loadConfig", () => {
     await expect(loadConfig(ssm as any)).rejects.toThrow(/stripe-secret-key/);
   });
 
+  it("rejects when env var is empty string", async () => {
+    process.env.TABLE_NAME = "";
+    const ssm = makeSsmClient();
+    await expect(loadConfig(ssm as any)).rejects.toThrow(/TABLE_NAME/);
+  });
+
+  it("rejects when SSM param has undefined Value", async () => {
+    const ssm = {
+      send: vi.fn().mockResolvedValue({
+        Parameters: [
+          { Name: "/lit/private-key", Value: undefined },
+          { Name: "/lit/stripe-secret-key", Value: "sk_test_123" },
+          { Name: "/lit/webhook-secret", Value: "whsec_test_456" },
+        ],
+      }),
+    };
+    await expect(loadConfig(ssm as any)).rejects.toThrow(/private-key/);
+  });
+
   it("propagates SSM client errors", async () => {
     const ssm = {
       send: vi.fn().mockRejectedValue(new Error("SSM unavailable")),

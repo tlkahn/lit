@@ -197,5 +197,31 @@ describe("template.yaml", () => {
       expect(vars.TABLE_NAME).toBeDefined();
       expect(vars.BASE_URL).toBeDefined();
     });
+
+    it("static functions have no Policies", () => {
+      for (const name of ["CancelPageFunction", "RecoverPageFunction"]) {
+        expect(template.Resources[name].Properties.Policies).toBeUndefined();
+      }
+    });
+  });
+
+  describe("Outputs", () => {
+    it("exports ApiUrl", () => {
+      expect(template.Outputs.ApiUrl).toBeDefined();
+    });
+
+    it("exports LicensesTableName", () => {
+      expect(template.Outputs.LicensesTableName).toBeDefined();
+      expect(template.Outputs.LicensesTableName.Value).toEqual({
+        Ref: "LicensesTable",
+      });
+    });
+
+    it("exports LicensesTableArn", () => {
+      expect(template.Outputs.LicensesTableArn).toBeDefined();
+      expect(template.Outputs.LicensesTableArn.Value).toEqual({
+        "Fn::GetAtt": ["LicensesTable", "Arn"],
+      });
+    });
   });
 });
