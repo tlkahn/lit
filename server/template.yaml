@@ -291,10 +291,6 @@ Resources:
       CodeUri: src/handlers/
       MemorySize: 256
       Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref LicensesTable
-        - SESCrudPolicy:
-            IdentityName: "*"
         - SSMParameterReadPolicy:
             ParameterName: "lit/*"
       Environment:

@@ -82,6 +82,12 @@ describe("handleEarlyAccess — validation + deadline", () => {
     expect(result.statusCode).toBe(400);
   });
 
+  it("returns 400 when email has no @", async () => {
+    const deps = makeDeps();
+    const result = await handleEarlyAccess(deps, makeEvent("email=notanemail"));
+    expect(result.statusCode).toBe(400);
+  });
+
   it("returns 410 with closed HTML when past deadline", async () => {
     const deps = makeDeps({
       clock: {
@@ -285,5 +291,28 @@ describe("handleEarlyAccess — IdempotencyError", () => {
     const result = await handleEarlyAccess(deps, makeEvent("email=alice%40example.com"));
 
     expect(result.statusCode).toBe(200);
+  });
+
+  it("propagates non-IdempotencyError from createLicense", async () => {
+    const deps = makeDeps({
+      db: {
+        ...makeDeps().db,
+        createLicense: vi.fn().mockRejectedValue(new Error("DynamoDB timeout")),
+      },
+    });
+
+    await expect(
+      handleEarlyAccess(deps, makeEvent("email=alice%40example.com")),
+    ).rejects.toThrow("DynamoDB timeout");
+  });
+});
+
+describe("handleEarlyAccess — response identity", () => {
+  it("consecutive calls return distinct response objects", async () => {
+    const deps = makeDeps();
+    const result1 = await handleEarlyAccess(deps, makeEvent("email=alice%40example.com"));
+    const result2 = await handleEarlyAccess(deps, makeEvent("email=bob%40example.com"));
+
+    expect(result1).not.toBe(result2);
   });
 });

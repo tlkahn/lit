@@ -3,12 +3,6 @@ import type { HandlerDeps } from "../types.js";
 import { IdempotencyError } from "../db/errors.js";
 import { earlyAccessConfirmationHtml, earlyAccessClosedHtml } from "../html/early-access.js";
 
-const confirmationResponse: APIGatewayProxyResult = {
-  statusCode: 200,
-  headers: { "Content-Type": "text/html" },
-  body: earlyAccessConfirmationHtml(),
-};
-
 export async function handleEarlyAccess(
   deps: HandlerDeps,
   event: APIGatewayProxyEvent,
@@ -21,6 +15,9 @@ export async function handleEarlyAccess(
   const email = params.get("email");
   if (!email) {
     return { statusCode: 400, body: "Missing email" };
+  }
+  if (!email.includes("@")) {
+    return { statusCode: 400, body: "Invalid email" };
   }
 
   const now = deps.clock.nowEpochSeconds();
@@ -38,7 +35,7 @@ export async function handleEarlyAccess(
   const active = records.find((r) => r.status === "active");
   if (active) {
     await deps.email.sendEarlyAdopterEmail(email, active.license_key_pem);
-    return confirmationResponse;
+    return { statusCode: 200, headers: { "Content-Type": "text/html" }, body: earlyAccessConfirmationHtml() };
   }
 
   const licenseId = deps.generateLicenseId();
@@ -72,10 +69,10 @@ export async function handleEarlyAccess(
       if (existing) {
         await deps.email.sendEarlyAdopterEmail(email, existing.license_key_pem);
       }
-      return confirmationResponse;
+      return { statusCode: 200, headers: { "Content-Type": "text/html" }, body: earlyAccessConfirmationHtml() };
     }
     throw err;
   }
 
-  return confirmationResponse;
+  return { statusCode: 200, headers: { "Content-Type": "text/html" }, body: earlyAccessConfirmationHtml() };
 }

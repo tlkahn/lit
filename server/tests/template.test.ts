@@ -232,6 +232,12 @@ describe("template.yaml", () => {
         expect(template.Resources[name].Properties.Policies).toBeUndefined();
       }
     });
+
+    it("EarlyAccessPageFunction has only SSMParameterReadPolicy", () => {
+      const policies = template.Resources.EarlyAccessPageFunction.Properties.Policies;
+      expect(policies).toHaveLength(1);
+      expect(policies[0]).toHaveProperty("SSMParameterReadPolicy");
+    });
   });
 
   describe("Outputs", () => {
