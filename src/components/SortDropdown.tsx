@@ -70,7 +70,7 @@ export function SortDropdown({ sortConfig, onSelectKey }: SortDropdownProps) {
           isDefault ? "text-text-faint" : "text-interactive-accent"
         }`}
       >
-        <span className="nerd-font" aria-hidden="true">{''}</span>
+        <span className="nerd-font" aria-hidden="true">{sortConfig.direction === 'asc' ? '' : ''}</span>
       </button>
       {open && createPortal(
         <div

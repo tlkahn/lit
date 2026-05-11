@@ -101,6 +101,20 @@ describe("SortDropdown", () => {
     expect(menu.style.position).toBe("fixed");
   });
 
+  it("sort button shows up-arrow icon when direction is asc", () => {
+    renderDropdown({ key: "title", direction: "asc" });
+    const btn = screen.getByRole("button", { name: "Sort files" });
+    const icon = btn.querySelector(".nerd-font")!;
+    expect(icon.textContent).toBe("");
+  });
+
+  it("sort button shows down-arrow icon when direction is desc", () => {
+    renderDropdown({ key: "title", direction: "desc" });
+    const btn = screen.getByRole("button", { name: "Sort files" });
+    const icon = btn.querySelector(".nerd-font")!;
+    expect(icon.textContent).toBe("");
+  });
+
   it("sort icon has accent when non-default sort is active", () => {
     const { rerender } = render(
       <SortDropdown sortConfig={{ key: "title", direction: "asc" }} onSelectKey={() => {}} />,
