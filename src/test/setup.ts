@@ -58,6 +58,11 @@ if (typeof Element.prototype.scrollTo !== "function") {
   Element.prototype.scrollTo = function () {};
 }
 
+if (!Range.prototype.getClientRects) {
+  Range.prototype.getClientRects = () =>
+    ({ length: 0, item: () => null, [Symbol.iterator]: function* () {} }) as DOMRectList;
+}
+
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
   convertFileSrc: vi.fn((path: string) => `asset://localhost/${path}`),

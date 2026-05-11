@@ -13,11 +13,6 @@ vi.mock("../lib/ipc", () => ({
   resolveAnnotationScope: vi.fn(async () => null),
 }));
 
-if (!Range.prototype.getClientRects) {
-  Range.prototype.getClientRects = () =>
-    ({ length: 0, item: () => null, [Symbol.iterator]: function* () {} }) as DOMRectList;
-}
-
 function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
   return {
     form: "compact",
