@@ -1,6 +1,7 @@
 import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
 import type { HandlerDeps } from "../types.js";
 import { earlyAccessFormHtml, earlyAccessClosedHtml } from "../html/early-access.js";
+import { createDeps } from "../deps.js";
 
 export async function handleEarlyAccessPage(
   deps: HandlerDeps,
@@ -17,3 +18,8 @@ export async function handleEarlyAccessPage(
     body: html,
   };
 }
+
+export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
+  const deps = await createDeps();
+  return handleEarlyAccessPage(deps, event);
+};

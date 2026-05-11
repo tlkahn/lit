@@ -1,6 +1,7 @@
 import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
 import type { HandlerDeps } from "../types.js";
 import { generateAndStoreLicense } from "./shared.js";
+import { createDeps } from "../deps.js";
 
 export async function handleLicense(
   deps: HandlerDeps,
@@ -39,3 +40,8 @@ export async function handleLicense(
     return { statusCode: 500, body: "Internal server error" };
   }
 }
+
+export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
+  const deps = await createDeps();
+  return handleLicense(deps, event);
+};

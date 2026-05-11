@@ -2,6 +2,7 @@ import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
 import type { HandlerDeps, ParsedWebhookEvent } from "../types.js";
 import type Stripe from "stripe";
 import { generateAndStoreLicense } from "./shared.js";
+import { createDeps, getStripeClient } from "../deps.js";
 
 type VerifyFn = (payload: string, sig: string, secret: string) => Stripe.Event;
 type ParseFn = (event: Stripe.Event) => ParsedWebhookEvent;
@@ -46,3 +47,14 @@ export async function handleWebhook(
 
   return { statusCode: 200, body: "" };
 }
+
+export const handler = async (
+  event: APIGatewayProxyEvent,
+): Promise<APIGatewayProxyResult> => {
+  const { verifyWebhookEvent, parseWebhookEvent } = await import("../stripe/webhook.js");
+  const deps = await createDeps();
+  const stripe = getStripeClient();
+  const verify: VerifyFn = (payload, sig, secret) =>
+    verifyWebhookEvent(stripe, payload, sig, secret);
+  return handleWebhook(deps, event, verify, parseWebhookEvent);
+};

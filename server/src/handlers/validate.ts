@@ -1,5 +1,6 @@
 import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
 import type { HandlerDeps } from "../types.js";
+import { createDeps } from "../deps.js";
 
 export async function handleValidate(
   deps: HandlerDeps,
@@ -24,3 +25,8 @@ export async function handleValidate(
     body: JSON.stringify({ status: "valid" }),
   };
 }
+
+export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
+  const deps = await createDeps();
+  return handleValidate(deps, event);
+};

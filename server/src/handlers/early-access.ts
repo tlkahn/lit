@@ -2,6 +2,7 @@ import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
 import type { HandlerDeps } from "../types.js";
 import { IdempotencyError } from "../db/errors.js";
 import { earlyAccessConfirmationHtml, earlyAccessClosedHtml } from "../html/early-access.js";
+import { createDeps } from "../deps.js";
 
 export async function handleEarlyAccess(
   deps: HandlerDeps,
@@ -76,3 +77,8 @@ export async function handleEarlyAccess(
 
   return { statusCode: 200, headers: { "Content-Type": "text/html" }, body: earlyAccessConfirmationHtml() };
 }
+
+export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
+  const deps = await createDeps();
+  return handleEarlyAccess(deps, event);
+};

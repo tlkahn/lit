@@ -2,6 +2,7 @@ import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
 import type { HandlerDeps } from "../types.js";
 import { successPageHtml, gonePageHtml } from "../html/success.js";
 import { errorPageHtml } from "../html/error.js";
+import { createDeps } from "../deps.js";
 
 export async function handleSuccessPage(
   deps: HandlerDeps,
@@ -43,3 +44,8 @@ export async function handleSuccessPage(
     };
   }
 }
+
+export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
+  const deps = await createDeps();
+  return handleSuccessPage(deps, event);
+};

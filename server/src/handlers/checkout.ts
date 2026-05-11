@@ -1,5 +1,6 @@
 import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
 import type { HandlerDeps } from "../types.js";
+import { createDeps } from "../deps.js";
 
 export async function handleCheckout(
   deps: HandlerDeps,
@@ -30,3 +31,8 @@ export async function handleCheckout(
     return { statusCode: 500, body: "Internal server error" };
   }
 }
+
+export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
+  const deps = await createDeps();
+  return handleCheckout(deps, event);
+};

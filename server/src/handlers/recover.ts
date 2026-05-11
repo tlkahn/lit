@@ -1,5 +1,6 @@
 import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
 import type { HandlerDeps } from "../types.js";
+import { createDeps } from "../deps.js";
 
 export async function handleRecover(
   deps: HandlerDeps,
@@ -27,3 +28,8 @@ export async function handleRecover(
 
   return { statusCode: 200, body: JSON.stringify({ message: "If a license exists, a recovery email has been sent." }) };
 }
+
+export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
+  const deps = await createDeps();
+  return handleRecover(deps, event);
+};
