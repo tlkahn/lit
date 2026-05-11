@@ -285,7 +285,7 @@ export function Sidebar() {
   }, [sidebarMenu]);
 
   return (
-    <aside className="flex shrink-0 flex-col border-e border-border bg-bg-secondary" style={{ width: SIDEBAR_WIDTH_PX }} onContextMenu={handleAsideContextMenu}>
+    <aside className="flex h-full shrink-0 flex-col border-e border-border bg-bg-secondary" style={{ width: SIDEBAR_WIDTH_PX }} onContextMenu={handleAsideContextMenu}>
       <div className="flex items-center border-b border-border">
         <button
           onClick={() => setTab("files")}

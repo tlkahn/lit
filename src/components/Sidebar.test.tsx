@@ -296,6 +296,30 @@ describe("Sidebar width constant", () => {
   });
 });
 
+describe("Sidebar scroll layout", () => {
+  it("aside element has h-full to constrain scroll container height", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha", "Alpha.md")],
+    });
+    render(<Sidebar />);
+
+    const aside = document.querySelector("aside")!;
+    expect(aside.className).toContain("h-full");
+  });
+
+  it("scroll container has required layout classes for constrained overflow", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha", "Alpha.md")],
+    });
+    render(<Sidebar />);
+
+    const scrollContainer = screen.getByTestId("sidebar-file-list");
+    expect(scrollContainer.className).toContain("overflow-y-auto");
+    expect(scrollContainer.className).toContain("overscroll-contain");
+    expect(scrollContainer.className).toContain("flex-1");
+  });
+});
+
 describe("Sidebar virtualization", () => {
   it("renders page items via virtualized list", () => {
     useWorkspaceStore.setState({
