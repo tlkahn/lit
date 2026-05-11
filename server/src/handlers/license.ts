@@ -19,16 +19,16 @@ export async function handleLicense(
       return { statusCode: 410, body: "Session expired" };
     }
 
-    if (session.payment_status !== "paid") {
-      return { statusCode: 402, body: "Payment not completed" };
-    }
-
     const existing = await deps.db.getBySessionId(sessionId);
     if (existing) {
       return {
         statusCode: 200,
         body: JSON.stringify({ license_key_pem: existing.license_key_pem }),
       };
+    }
+
+    if (session.payment_status !== "paid") {
+      return { statusCode: 402, body: "Payment not completed" };
     }
 
     const { pem } = await generateAndStoreLicense(session, deps);

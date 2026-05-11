@@ -101,7 +101,7 @@ export interface CheckoutResult {
 
 // --- Webhook ---
 export type ParsedWebhookEvent =
-  | { type: "checkout.session.completed"; sessionId: string }
+  | { type: "checkout.session.completed"; sessionId: string; session?: { id: string; payment_status: string; customer_email: string | null; customer_details?: { name?: string | null; email?: string | null }; created: number; payment_intent?: string | { id: string; latest_charge?: string | { id: string } | null } | null; } }
   | { type: "charge.refunded"; chargeId: string }
   | { type: "charge.dispute.created"; chargeId: string }
   | { type: null };

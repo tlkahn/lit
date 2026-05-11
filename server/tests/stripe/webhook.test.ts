@@ -66,10 +66,8 @@ describe("parseWebhookEvent", () => {
 
     const result = parseWebhookEvent(event);
 
-    expect(result).toEqual({
-      type: "checkout.session.completed",
-      sessionId: "cs_test_session_123",
-    });
+    expect(result.type).toBe("checkout.session.completed");
+    expect((result as { sessionId: string }).sessionId).toBe("cs_test_session_123");
   });
 
   it("returns chargeId for charge.refunded", () => {
@@ -110,6 +108,32 @@ describe("parseWebhookEvent", () => {
     expect(result).toEqual({
       type: "charge.dispute.created",
       chargeId: "ch_expanded_obj",
+    });
+  });
+
+  it("checkout.session.completed extracts session data from event", () => {
+    const event = makeStripeEvent("checkout.session.completed", {
+      id: "cs_test_full_session",
+      payment_status: "paid",
+      customer_email: "full@example.com",
+      customer_details: { name: "Full User", email: "full@example.com" },
+      created: 1700000000,
+      payment_intent: { id: "pi_abc", latest_charge: "ch_xyz" },
+    });
+
+    const result = parseWebhookEvent(event);
+
+    expect(result).toEqual({
+      type: "checkout.session.completed",
+      sessionId: "cs_test_full_session",
+      session: {
+        id: "cs_test_full_session",
+        payment_status: "paid",
+        customer_email: "full@example.com",
+        customer_details: { name: "Full User", email: "full@example.com" },
+        created: 1700000000,
+        payment_intent: { id: "pi_abc", latest_charge: "ch_xyz" },
+      },
     });
   });
 

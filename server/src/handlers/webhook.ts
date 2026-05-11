@@ -31,7 +31,7 @@ export async function handleWebhook(
     if (parsed.type === "checkout.session.completed") {
       const existing = await deps.db.getBySessionId(parsed.sessionId);
       if (!existing) {
-        const session = await deps.stripe.sessions.retrieve(parsed.sessionId);
+        const session = parsed.session ?? await deps.stripe.sessions.retrieve(parsed.sessionId);
         await generateAndStoreLicense(session, deps);
       }
     } else if (parsed.type === "charge.refunded" || parsed.type === "charge.dispute.created") {

@@ -42,8 +42,10 @@ let clockFake: ReturnType<typeof createClockFake>;
 let deps: HandlerDeps;
 
 function buildFakeStripeEvent(parsed: ParsedWebhookEvent): Stripe.Event {
-  if (parsed.type === "checkout.session.completed")
-    return { type: "checkout.session.completed", data: { object: { id: parsed.sessionId } } } as unknown as Stripe.Event;
+  if (parsed.type === "checkout.session.completed") {
+    const obj = parsed.session ?? { id: parsed.sessionId };
+    return { type: "checkout.session.completed", data: { object: obj } } as unknown as Stripe.Event;
+  }
   if (parsed.type === "charge.refunded")
     return { type: "charge.refunded", data: { object: { id: parsed.chargeId } } } as unknown as Stripe.Event;
   if (parsed.type === "charge.dispute.created")

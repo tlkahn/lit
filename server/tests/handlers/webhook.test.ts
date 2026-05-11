@@ -226,6 +226,37 @@ describe("handleWebhook", () => {
     expect(result.statusCode).toBe(200);
   });
 
+  it("checkout.session.completed uses session from parsed event, skips sessions.retrieve", async () => {
+    const deps = makeDeps({
+      stripe: {
+        sessions: {
+          retrieve: vi.fn().mockRejectedValue(new Error("should not be called")),
+        },
+        checkout: { create: vi.fn() },
+      },
+    });
+    const fns = makeFns({
+      parse: vi.fn().mockReturnValue({
+        type: "checkout.session.completed",
+        sessionId: "cs_test_from_event",
+        session: {
+          id: "cs_test_from_event",
+          payment_status: "paid",
+          customer_email: "event@example.com",
+          customer_details: { name: "Event User", email: "event@example.com" },
+          created: 900,
+          payment_intent: { id: "pi_evt", latest_charge: "ch_evt" },
+        },
+      }),
+    });
+
+    const result = await handleWebhook(deps, makeEvent('{}', "sig_ok"), fns.verify, fns.parse);
+
+    expect(result.statusCode).toBe(200);
+    expect(deps.db.createLicense).toHaveBeenCalled();
+    expect(deps.stripe.sessions.retrieve).not.toHaveBeenCalled();
+  });
+
   it("returns 400 on invalid signature", async () => {
     const deps = makeDeps();
     const fns = makeFns({

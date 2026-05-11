@@ -5,18 +5,20 @@ import Stripe from "stripe";
 
 const BASE_URL = process.env.STAGING_BASE_URL!;
 const STRIPE_KEY = process.env.STRIPE_TEST_SECRET_KEY!;
+const WEBHOOK_SECRET = process.env.STRIPE_TEST_WEBHOOK_SECRET!;
 const EXPIRED_SESSION_ID = process.env.EXPIRED_SESSION_ID;
 const TEST_EMAIL = `smoke-${Date.now()}@lit.solar`;
 
 let sessionId: string;
 let paymentIntentId: string;
+let chargeId: string;
 let licensePem: string;
 let licenseId: string;
 
 beforeAll(() => {
-  if (!BASE_URL || !STRIPE_KEY) {
+  if (!BASE_URL || !STRIPE_KEY || !WEBHOOK_SECRET) {
     throw new Error(
-      "Missing STAGING_BASE_URL or STRIPE_TEST_SECRET_KEY — copy .env.staging.example to .env.staging",
+      "Missing STAGING_BASE_URL, STRIPE_TEST_SECRET_KEY, or STRIPE_TEST_WEBHOOK_SECRET — copy .env.staging.example to .env.staging",
     );
   }
 });
@@ -52,11 +54,13 @@ describe("I.2.1 — Checkout Redirect", () => {
 
 describe("I.2.2 — Purchase + License", () => {
   it("cycle 1: programmatic checkout returns sessionId", async () => {
-    const result = await createAndCompleteCheckout(STRIPE_KEY, BASE_URL, TEST_EMAIL);
+    const result = await createAndCompleteCheckout(STRIPE_KEY, WEBHOOK_SECRET, BASE_URL, TEST_EMAIL);
     sessionId = result.sessionId;
     paymentIntentId = result.paymentIntentId;
+    chargeId = result.chargeId;
 
     expect(sessionId).toMatch(/^cs_test_/);
+    expect(chargeId).toMatch(/^ch_/);
   });
 
   it("cycle 2: GET /api/license returns 200 with license_key_pem", async () => {
@@ -217,5 +221,6 @@ afterAll(() => {
   console.log(`    session_id: ${sessionId}`);
   console.log(`    license_id: ${licenseId}`);
   console.log(`    payment_intent: ${paymentIntentId}`);
+  console.log(`    charge_id: ${chargeId}`);
   console.log(`    email: ${TEST_EMAIL}\n`);
 });

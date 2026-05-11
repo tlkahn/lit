@@ -12,11 +12,21 @@ export function verifyWebhookEvent(
 
 export function parseWebhookEvent(event: Stripe.Event): ParsedWebhookEvent {
   switch (event.type) {
-    case "checkout.session.completed":
+    case "checkout.session.completed": {
+      const obj = event.data.object as unknown as Record<string, unknown>;
       return {
         type: "checkout.session.completed",
-        sessionId: (event.data.object as { id: string }).id,
+        sessionId: obj.id as string,
+        session: {
+          id: obj.id as string,
+          payment_status: obj.payment_status as string,
+          customer_email: (obj.customer_email as string | null) ?? null,
+          customer_details: obj.customer_details as { name?: string | null; email?: string | null } | undefined,
+          created: obj.created as number,
+          payment_intent: obj.payment_intent as string | { id: string; latest_charge?: string | { id: string } | null } | null | undefined,
+        },
       };
+    }
     case "charge.refunded":
       return {
         type: "charge.refunded",

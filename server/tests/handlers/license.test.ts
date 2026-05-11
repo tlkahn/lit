@@ -186,6 +186,33 @@ describe("handleLicense", () => {
     expect(result.body).toContain("Internal server error");
   });
 
+  it("returns 200 with existing license even when session payment_status is unpaid", async () => {
+    const deps = makeDeps({
+      stripe: {
+        sessions: {
+          retrieve: vi.fn().mockResolvedValue({
+            id: "cs_test_123",
+            payment_status: "unpaid",
+            customer_email: "alice@example.com",
+            created: 900,
+          }),
+        },
+        checkout: { create: vi.fn() },
+      },
+      db: {
+        ...makeDeps().db,
+        getBySessionId: vi.fn().mockResolvedValue(activeRecord),
+      },
+    });
+
+    const result = await handleLicense(deps, makeEvent("cs_test_123"));
+
+    expect(result.statusCode).toBe(200);
+    const body = JSON.parse(result.body);
+    expect(body.license_key_pem).toBe(fakePem);
+    expect(deps.generateLicenseKey).not.toHaveBeenCalled();
+  });
+
   it("returns 402 when payment not paid", async () => {
     const deps = makeDeps({
       stripe: {

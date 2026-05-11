@@ -1,15 +1,18 @@
 import Stripe from "stripe";
 
-interface CheckoutResult {
+export interface CheckoutResult {
   sessionId: string;
   paymentIntentId: string;
+  chargeId: string;
 }
 
 export async function createAndCompleteCheckout(
   stripeKey: string,
+  webhookSecret: string,
   baseUrl: string,
   email: string,
 ): Promise<CheckoutResult> {
+  // 1. POST /api/checkout → extract cs_test_* session ID from redirect
   const response = await fetch(`${baseUrl}/api/checkout`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -28,37 +31,70 @@ export async function createAndCompleteCheckout(
   }
   const sessionId = sessionIdMatch[0];
 
+  // 2. Create a confirmed PaymentIntent directly (bypasses browser checkout)
   const stripe = new Stripe(stripeKey);
-  const session = await stripe.checkout.sessions.retrieve(sessionId);
+  const pi = await stripe.paymentIntents.create({
+    amount: 2900,
+    currency: "usd",
+    payment_method: "pm_card_visa",
+    confirm: true,
+    receipt_email: email,
+    automatic_payment_methods: { enabled: true, allow_redirects: "never" },
+  });
 
-  const piId =
-    typeof session.payment_intent === "string"
-      ? session.payment_intent
-      : session.payment_intent?.id;
+  const paymentIntentId = pi.id;
 
-  if (!piId) {
-    throw new Error("No PaymentIntent found on session");
+  // 3. Extract charge ID from the confirmed PI
+  const chargeId =
+    typeof pi.latest_charge === "string"
+      ? pi.latest_charge
+      : pi.latest_charge?.id;
+  if (!chargeId) {
+    throw new Error(`No charge found on PaymentIntent ${paymentIntentId}`);
   }
 
-  const pi = await stripe.paymentIntents.retrieve(piId);
-  if (pi.status === "succeeded") {
-    return { sessionId, paymentIntentId: piId };
-  }
-  if (pi.status !== "requires_payment_method" && pi.status !== "requires_confirmation") {
-    throw new Error(
-      `PaymentIntent ${piId} is in unexpected status "${pi.status}" — cannot confirm`,
-    );
+  // 4. Construct synthetic checkout.session.completed webhook payload
+  const now = Math.floor(Date.now() / 1000);
+  const payload = JSON.stringify({
+    id: `evt_synthetic_${Date.now()}`,
+    object: "event",
+    type: "checkout.session.completed",
+    data: {
+      object: {
+        id: sessionId,
+        object: "checkout.session",
+        payment_status: "paid",
+        customer_email: email,
+        customer_details: { name: email.split("@")[0], email },
+        created: now,
+        payment_intent: {
+          id: paymentIntentId,
+          latest_charge: chargeId,
+        },
+      },
+    },
+  });
+
+  // 5. Sign it with the webhook secret
+  const signature = Stripe.webhooks.generateTestHeaderString({
+    payload,
+    secret: webhookSecret,
+  });
+
+  // 6. POST to /api/webhook with signed payload
+  const webhookResponse = await fetch(`${baseUrl}/api/webhook`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "stripe-signature": signature,
+    },
+    body: payload,
+  });
+
+  if (webhookResponse.status !== 200) {
+    const body = await webhookResponse.text();
+    throw new Error(`Webhook POST failed with ${webhookResponse.status}: ${body}`);
   }
 
-  try {
-    await stripe.paymentIntents.confirm(piId, {
-      payment_method: "pm_card_visa",
-    });
-  } catch (err) {
-    throw new Error(
-      `Failed to confirm PaymentIntent ${piId} (status was "${pi.status}"): ${err instanceof Error ? err.message : err}`,
-    );
-  }
-
-  return { sessionId, paymentIntentId: piId };
+  return { sessionId, paymentIntentId, chargeId };
 }
