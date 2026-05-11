@@ -78,6 +78,29 @@ describe("SortDropdown", () => {
     expect(screen.queryByText("File name")).not.toBeInTheDocument();
   });
 
+  it("sort button icon uses nerd-font class", () => {
+    renderDropdown();
+    const btn = screen.getByRole("button", { name: "Sort files" });
+    const icon = btn.querySelector(".nerd-font");
+    expect(icon).toBeTruthy();
+  });
+
+  it("dropdown renders via portal to document.body", async () => {
+    const user = userEvent.setup();
+    renderDropdown();
+    await user.click(screen.getByRole("button", { name: "Sort files" }));
+    const menu = screen.getByTestId("sort-dropdown-menu");
+    expect(menu.parentElement).toBe(document.body);
+  });
+
+  it("dropdown uses fixed positioning", async () => {
+    const user = userEvent.setup();
+    renderDropdown();
+    await user.click(screen.getByRole("button", { name: "Sort files" }));
+    const menu = screen.getByTestId("sort-dropdown-menu");
+    expect(menu.style.position).toBe("fixed");
+  });
+
   it("sort icon has accent when non-default sort is active", () => {
     const { rerender } = render(
       <SortDropdown sortConfig={{ key: "title", direction: "asc" }} onSelectKey={() => {}} />,
