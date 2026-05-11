@@ -257,6 +257,33 @@ describe("handleWebhook", () => {
     expect(deps.stripe.sessions.retrieve).not.toHaveBeenCalled();
   });
 
+  it("accepts PascalCase Stripe-Signature header from API Gateway", async () => {
+    const deps = makeDeps();
+    const fns = makeFns();
+    const event = makeEvent('{"type":"test"}');
+    delete event.headers["stripe-signature"];
+    event.headers["Stripe-Signature"] = "sig_pascal";
+
+    await handleWebhook(deps, event, fns.verify, fns.parse);
+
+    expect(fns.verify).toHaveBeenCalledWith('{"type":"test"}', "sig_pascal", "whsec_test");
+  });
+
+  it("decodes base64-encoded body before signature verification", async () => {
+    const deps = makeDeps();
+    const fns = makeFns();
+    const rawBody = '{"type":"checkout.session.completed"}';
+    const b64Body = Buffer.from(rawBody).toString("base64");
+    const event: APIGatewayProxyEvent = {
+      ...makeEvent(b64Body, "sig_b64"),
+      isBase64Encoded: true,
+    };
+
+    await handleWebhook(deps, event, fns.verify, fns.parse);
+
+    expect(fns.verify).toHaveBeenCalledWith(rawBody, "sig_b64", "whsec_test");
+  });
+
   it("returns 400 on invalid signature", async () => {
     const deps = makeDeps();
     const fns = makeFns({

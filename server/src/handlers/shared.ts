@@ -45,7 +45,7 @@ export async function generateAndStoreLicense(
     license_id: licenseId,
     email_hash: deps.computeEmailHash(email || `no-email:${session.id}`),
     stripe_session_id: session.id,
-    stripe_charge_id: chargeId,
+    ...(chargeId ? { stripe_charge_id: chargeId } : {}),
     status: "active",
     license_key_pem: pem,
     issued_at: now,

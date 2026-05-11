@@ -10,6 +10,10 @@ Parameters:
   SesFromEmail:
     Type: String
     Default: "noreply@lit.solar"
+  LogLevel:
+    Type: String
+    Default: ""
+    AllowedValues: ["", "debug"]
 
 Globals:
   Function:
@@ -19,6 +23,7 @@ Globals:
       Variables:
         TABLE_NAME: !Ref LicensesTable
         BASE_URL: !Ref BaseUrl
+        LOG_LEVEL: !Ref LogLevel
 
 Resources:
   LicensesTable:

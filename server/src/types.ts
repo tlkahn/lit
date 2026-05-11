@@ -12,7 +12,7 @@ export interface LicenseRecord {
   license_id: string;
   email_hash: string;
   stripe_session_id: string;
-  stripe_charge_id: string;
+  stripe_charge_id?: string;
   status: LicenseStatus;
   revoked_at?: number;
   revoked_reason?: string;

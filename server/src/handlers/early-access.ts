@@ -54,7 +54,6 @@ export async function handleEarlyAccess(
     license_id: licenseId,
     email_hash: emailHash,
     stripe_session_id: sessionId,
-    stripe_charge_id: "",
     status: "active" as const,
     license_key_pem: pem,
     issued_at: now,

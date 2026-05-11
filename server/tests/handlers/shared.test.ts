@@ -111,6 +111,24 @@ describe("generateAndStoreLicense", () => {
     );
   });
 
+  it("omits stripe_charge_id when payment_intent is a string (no expanded charge)", async () => {
+    const deps = makeDeps();
+    const sess = { ...session, payment_intent: "pi_string_only" };
+    await generateAndStoreLicense(sess, deps);
+
+    const record = (deps.db.createLicense as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(record).not.toHaveProperty("stripe_charge_id");
+  });
+
+  it("omits stripe_charge_id when payment_intent is null", async () => {
+    const deps = makeDeps();
+    const sess = { ...session, payment_intent: null };
+    await generateAndStoreLicense(sess, deps);
+
+    const record = (deps.db.createLicense as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(record).not.toHaveProperty("stripe_charge_id");
+  });
+
   it("sends license email via SES", async () => {
     const deps = makeDeps();
     await generateAndStoreLicense(session, deps);

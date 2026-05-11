@@ -128,9 +128,10 @@ describe("handleEarlyAccess — new license (happy path)", () => {
     expect(deps.db.createLicense).toHaveBeenCalledWith(
       expect.objectContaining({
         stripe_session_id: "early-access:hashed_email",
-        stripe_charge_id: "",
       }),
     );
+    const record = (deps.db.createLicense as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(record).not.toHaveProperty("stripe_charge_id");
   });
 
   it("sends early-adopter email", async () => {
