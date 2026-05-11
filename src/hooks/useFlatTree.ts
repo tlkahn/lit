@@ -23,7 +23,10 @@ export type FlatRow =
       page: PageMeta;
     };
 
-export function useFlatTree(root: FolderNode) {
+export function useFlatTree(
+  root: FolderNode,
+  pageComparator?: (a: PageMeta, b: PageMeta) => number,
+) {
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
 
   const toggleCollapse = useCallback((folderPath: string) => {
@@ -70,7 +73,10 @@ export function useFlatTree(root: FolderNode) {
         walk(child, childDepth, folderPath);
       }
 
-      for (const page of node.pages) {
+      const sortedPages = pageComparator
+        ? [...node.pages].sort(pageComparator)
+        : node.pages;
+      for (const page of sortedPages) {
         result.push({
           type: "page",
           key: page.relative_path,
@@ -82,7 +88,7 @@ export function useFlatTree(root: FolderNode) {
 
     walk(root, 0, "");
     return result;
-  }, [root, collapsed]);
+  }, [root, collapsed, pageComparator]);
 
   return { rows, toggleCollapse };
 }

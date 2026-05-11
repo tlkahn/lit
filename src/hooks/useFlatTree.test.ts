@@ -179,6 +179,72 @@ describe("useFlatTree", () => {
     expect(folderRows).toEqual([]);
   });
 
+  it("without comparator, pages remain in insertion order", () => {
+    const root = makeRoot([
+      { title: "Banana", relative_path: "banana.md" },
+      { title: "Apple", relative_path: "apple.md" },
+    ]);
+    const { result } = renderHook(() => useFlatTree(root));
+    const titles = result.current.rows.map((r) =>
+      r.type === "page" ? r.page.title : r.key,
+    );
+    expect(titles).toEqual(["Banana", "Apple"]);
+  });
+
+  it("with comparator, sorts pages within root folder", () => {
+    const root = makeRoot([
+      { title: "Banana", relative_path: "banana.md" },
+      { title: "Apple", relative_path: "apple.md" },
+    ]);
+    const cmp = (a: { title: string }, b: { title: string }) =>
+      a.title.localeCompare(b.title);
+    const { result } = renderHook(() => useFlatTree(root, cmp));
+    const titles = result.current.rows.map((r) =>
+      r.type === "page" ? r.page.title : r.key,
+    );
+    expect(titles).toEqual(["Apple", "Banana"]);
+  });
+
+  it("with comparator, sorts pages within nested folders independently", () => {
+    const root = makeRoot(
+      [
+        { title: "Z-root", relative_path: "z-root.md" },
+        { title: "A-root", relative_path: "a-root.md" },
+      ],
+      new Map([
+        [
+          "docs",
+          makeFolder("docs", [
+            { title: "Z-doc", relative_path: "docs/z-doc.md" },
+            { title: "A-doc", relative_path: "docs/a-doc.md" },
+          ]),
+        ],
+      ]),
+    );
+    const cmp = (a: { title: string }, b: { title: string }) =>
+      a.title.localeCompare(b.title);
+    const { result } = renderHook(() => useFlatTree(root, cmp));
+    const titles = result.current.rows
+      .filter((r) => r.type === "page")
+      .map((r) => (r as Extract<typeof r, { type: "page" }>).page.title);
+    expect(titles).toEqual(["A-doc", "Z-doc", "A-root", "Z-root"]);
+  });
+
+  it("folders remain alphabetically sorted regardless of comparator", () => {
+    const root = makeRoot(
+      [],
+      new Map([
+        ["zebra", makeFolder("zebra")],
+        ["alpha", makeFolder("alpha")],
+      ]),
+    );
+    const cmp = (a: { title: string }, b: { title: string }) =>
+      b.title.localeCompare(a.title);
+    const { result } = renderHook(() => useFlatTree(root, cmp));
+    const keys = result.current.rows.map((r) => r.key);
+    expect(keys).toEqual(["folder:alpha", "folder:zebra"]);
+  });
+
   it("depth increments only for named folders", () => {
     const root = makeRoot(
       [],

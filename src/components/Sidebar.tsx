@@ -7,7 +7,9 @@ import { openInExternalEditor, setPreference } from "../lib/ipc";
 import { localeFilter } from "../lib/localeSearch";
 import { useSidebarTab } from "../hooks/useSidebarTab";
 import { useFlatTree, type FolderNode } from "../hooks/useFlatTree";
+import { useSidebarSort } from "../hooks/useSidebarSort";
 import { Outline } from "./Outline";
+import { SortDropdown } from "./SortDropdown";
 import type { PageMeta } from "../lib/ipc";
 
 function buildTree(pages: PageMeta[]): FolderNode {
@@ -205,6 +207,7 @@ const PageItem = memo(function PageItem({
 export const SIDEBAR_WIDTH_PX = 240;
 
 export function Sidebar() {
+  const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const pages = useWorkspaceStore((s) => s.pages);
   const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
   const selectPage = useWorkspaceStore((s) => s.selectPage);
@@ -222,8 +225,9 @@ export function Sidebar() {
     [pages, deferredSearch],
   );
 
+  const { sortConfig, selectSortKey, comparator } = useSidebarSort(workspacePath ?? "");
   const tree = useMemo(() => buildTree(filtered), [filtered]);
-  const { rows, toggleCollapse } = useFlatTree(tree);
+  const { rows, toggleCollapse } = useFlatTree(tree, comparator);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
@@ -306,15 +310,16 @@ export function Sidebar() {
       </div>
       {tab === "files" ? (
         <>
-          <div className="p-2">
+          <div className="flex items-center gap-1 p-2">
             <input
               type="text"
               placeholder="Search..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full rounded border border-border bg-bg-primary px-2 py-1 text-sm text-text-normal"
+              className="min-w-0 flex-1 rounded border border-border bg-bg-primary px-2 py-1 text-sm text-text-normal"
               aria-label="Search pages"
             />
+            <SortDropdown sortConfig={sortConfig} onSelectKey={selectSortKey} />
           </div>
           <div
             ref={scrollRef}

@@ -610,6 +610,102 @@ describe("Sidebar background context menu", () => {
   });
 });
 
+describe("Sidebar sorting", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("sort button is visible in sidebar header", () => {
+    render(<Sidebar />);
+    expect(screen.getByRole("button", { name: "Sort files" })).toBeInTheDocument();
+  });
+
+  it("pages sorted by title A-Z by default", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Zebra"), makePage("Apple"), makePage("Mango")],
+    });
+    render(<Sidebar />);
+    const list = screen.getByTestId("sidebar-file-list");
+    const items = Array.from(list.querySelectorAll("[data-index]"));
+    const titles = items.map((el) => el.textContent);
+    expect(titles).toEqual(["Apple", "Mango", "Zebra"]);
+  });
+
+  it("sorting applies to search-filtered results", async () => {
+    useWorkspaceStore.setState({
+      pages: [
+        makePage("Zebra Note"),
+        makePage("Apple Note"),
+        makePage("Other"),
+      ],
+    });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.type(screen.getByLabelText("Search pages"), "Note");
+    const list = screen.getByTestId("sidebar-file-list");
+    const items = Array.from(list.querySelectorAll("[data-index]"));
+    const titles = items.map((el) => el.textContent);
+    expect(titles).toEqual(["Apple Note", "Zebra Note"]);
+  });
+
+  it("folders remain alphabetical when sorting by modified time", async () => {
+    useWorkspaceStore.setState({
+      pages: [
+        { ...makePage("Inside", "zebra-folder/inside.md"), modified_at: 1000 },
+        { ...makePage("Doc", "alpha-folder/doc.md"), modified_at: 2000 },
+      ],
+    });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByRole("button", { name: "Sort files" }));
+    await user.click(screen.getByText("Modified time"));
+
+    const list = screen.getByTestId("sidebar-file-list");
+    const items = Array.from(list.querySelectorAll("[data-index]"));
+    const texts = items.map((el) => el.textContent?.replace("▾", "").trim());
+    expect(texts.indexOf("alpha-folder")).toBeLessThan(texts.indexOf("zebra-folder"));
+  });
+
+  it("sort preference persists across remounts via localStorage", async () => {
+    useWorkspaceStore.setState({
+      pages: [
+        { ...makePage("Old"), modified_at: 1000 },
+        { ...makePage("New"), modified_at: 2000 },
+      ],
+    });
+    const user = userEvent.setup();
+
+    const { unmount } = render(<Sidebar />);
+    await user.click(screen.getByRole("button", { name: "Sort files" }));
+    await user.click(screen.getByText("Modified time"));
+    unmount();
+
+    render(<Sidebar />);
+    const list = screen.getByTestId("sidebar-file-list");
+    const items = Array.from(list.querySelectorAll("[data-index]"));
+    const titles = items.map((el) => el.textContent);
+    expect(titles).toEqual(["New", "Old"]);
+  });
+
+  it("re-clicking active sort criterion toggles direction", async () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Apple"), makePage("Zebra")],
+    });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByRole("button", { name: "Sort files" }));
+    await user.click(screen.getByText("File name"));
+
+    const list = screen.getByTestId("sidebar-file-list");
+    const items = Array.from(list.querySelectorAll("[data-index]"));
+    const titles = items.map((el) => el.textContent);
+    expect(titles).toEqual(["Zebra", "Apple"]);
+  });
+});
+
 describe("context menu dismissal", () => {
   it("Escape closes the menu", () => {
     useWorkspaceStore.setState({
