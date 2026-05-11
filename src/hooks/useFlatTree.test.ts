@@ -67,7 +67,7 @@ describe("useFlatTree", () => {
     ]);
   });
 
-  it("single folder with pages → folder-header row + page rows", () => {
+  it("single folder with pages → folder starts collapsed", () => {
     const root = makeRoot(
       [],
       new Map([
@@ -87,18 +87,12 @@ describe("useFlatTree", () => {
         depth: 0,
         folderName: "docs",
         folderPath: "docs",
-        isCollapsed: false,
-      },
-      {
-        type: "page",
-        key: "docs/readme.md",
-        depth: 1,
-        page: expect.objectContaining({ title: "Readme", relative_path: "docs/readme.md" }),
+        isCollapsed: true,
       },
     ]);
   });
 
-  it("collapsed folder → children hidden from output", () => {
+  it("expanded folder → children visible in output", () => {
     const root = makeRoot(
       [],
       new Map([
@@ -121,7 +115,13 @@ describe("useFlatTree", () => {
         depth: 0,
         folderName: "docs",
         folderPath: "docs",
-        isCollapsed: true,
+        isCollapsed: false,
+      },
+      {
+        type: "page",
+        key: "docs/readme.md",
+        depth: 1,
+        page: expect.objectContaining({ title: "Readme", relative_path: "docs/readme.md" }),
       },
     ]);
   });
@@ -148,6 +148,10 @@ describe("useFlatTree", () => {
       ]),
     );
     const { result } = renderHook(() => useFlatTree(root));
+
+    act(() => result.current.toggleCollapse("docs"));
+    act(() => result.current.toggleCollapse("docs/api"));
+
     const depths = result.current.rows.map((r) => [r.key, r.depth]);
     expect(depths).toEqual([
       ["folder:docs", 0],
@@ -224,6 +228,9 @@ describe("useFlatTree", () => {
     const cmp = (a: { title: string }, b: { title: string }) =>
       a.title.localeCompare(b.title);
     const { result } = renderHook(() => useFlatTree(root, cmp));
+
+    act(() => result.current.toggleCollapse("docs"));
+
     const titles = result.current.rows
       .filter((r) => r.type === "page")
       .map((r) => (r as Extract<typeof r, { type: "page" }>).page.title);
@@ -258,6 +265,8 @@ describe("useFlatTree", () => {
       ]),
     );
     const { result } = renderHook(() => useFlatTree(root));
+
+    act(() => result.current.toggleCollapse("docs"));
 
     const docRow = result.current.rows.find((r) => r.key === "docs/doc.md");
     expect(docRow?.depth).toBe(1);

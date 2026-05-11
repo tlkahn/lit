@@ -382,13 +382,13 @@ describe("Sidebar virtualization", () => {
     const user = userEvent.setup();
     render(<Sidebar />);
 
-    expect(screen.getByText("Inside Doc")).toBeInTheDocument();
+    expect(screen.queryByText("Inside Doc")).not.toBeInTheDocument();
     expect(screen.getByText("docs")).toBeInTheDocument();
+    expect(screen.getByText("Outside")).toBeInTheDocument();
 
     await user.click(screen.getByText("docs"));
 
-    expect(screen.queryByText("Inside Doc")).not.toBeInTheDocument();
-    expect(screen.getByText("Outside")).toBeInTheDocument();
+    expect(screen.getByText("Inside Doc")).toBeInTheDocument();
   });
 
   it("context menu still works on virtualized page items", async () => {
@@ -688,7 +688,7 @@ describe("Sidebar sorting", () => {
 
     const list = screen.getByTestId("sidebar-file-list");
     const items = Array.from(list.querySelectorAll("[data-index]"));
-    const texts = items.map((el) => el.textContent?.replace("▾", "").trim());
+    const texts = items.map((el) => el.textContent?.replace(/[▾▸]/, "").trim());
     expect(texts.indexOf("alpha-folder")).toBeLessThan(texts.indexOf("zebra-folder"));
   });
 

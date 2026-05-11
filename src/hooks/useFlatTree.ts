@@ -27,10 +27,10 @@ export function useFlatTree(
   root: FolderNode,
   pageComparator?: (a: PageMeta, b: PageMeta) => number,
 ) {
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 
   const toggleCollapse = useCallback((folderPath: string) => {
-    setCollapsed((prev) => {
+    setExpanded((prev) => {
       const next = new Set(prev);
       if (next.has(folderPath)) {
         next.delete(folderPath);
@@ -53,7 +53,7 @@ export function useFlatTree(
         : pathPrefix;
 
       if (node.name) {
-        const isCollapsed = collapsed.has(folderPath);
+        const isCollapsed = !expanded.has(folderPath);
         result.push({
           type: "folder",
           key: `folder:${folderPath}`,
@@ -88,7 +88,7 @@ export function useFlatTree(
 
     walk(root, 0, "");
     return result;
-  }, [root, collapsed, pageComparator]);
+  }, [root, expanded, pageComparator]);
 
   return { rows, toggleCollapse };
 }
