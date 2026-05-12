@@ -118,7 +118,9 @@ function App() {
 
   const [licenseEntryOpen, setLicenseEntryOpen] = useState(false);
   const [licenseInfoOpen, setLicenseInfoOpen] = useState(false);
+  const licenseState = useLicenseStore((s) => s.state);
   const licensedTo = useLicenseStore((s) => s.licensedTo);
+  const daysRemaining = useLicenseStore((s) => s.daysRemaining);
 
   useMenuLicenseSync();
 
@@ -319,7 +321,7 @@ function App() {
           />
         )}
         <LicenseEntryDialog open={licenseEntryOpen} onClose={() => setLicenseEntryOpen(false)} />
-        <LicenseInfoDialog open={licenseInfoOpen} licensedTo={licensedTo} onClose={() => setLicenseInfoOpen(false)} />
+        <LicenseInfoDialog open={licenseInfoOpen} licenseState={licenseState} licensedTo={licensedTo} daysRemaining={daysRemaining} onClose={() => setLicenseInfoOpen(false)} />
       </div>
     </LicenseGate>
   );

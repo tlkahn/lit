@@ -315,6 +315,7 @@ pub fn run() {
             commands::license::get_license_status,
             commands::license::activate_license,
             commands::license::check_online_validation,
+            commands::license::sync_license_menu,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

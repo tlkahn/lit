@@ -58,6 +58,7 @@ import {
   getLicenseStatus,
   activateLicense,
   checkOnlineValidation,
+  syncLicenseMenu,
 } from "./ipc";
 
 const sampleMeta = {
@@ -303,6 +304,8 @@ describe("ipc", () => {
           return { state: "licensed", licensed_to: "Test User" };
         case "check_online_validation":
           return { action: "skipped", reason: "not_due" };
+        case "sync_license_menu":
+          return undefined;
         case "search_tags":
           return [
             { tag: "rust", count: 5 },
@@ -990,6 +993,12 @@ describe("ipc", () => {
     expect(result.reason).toBe("not_due");
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("check_online_validation");
+  });
+
+  it("syncLicenseMenu calls sync_license_menu with licenseState", async () => {
+    await syncLicenseMenu("trial");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("sync_license_menu", { licenseState: "trial" });
   });
 
 });

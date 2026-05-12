@@ -524,6 +524,10 @@ export async function checkOnlineValidation(): Promise<OnlineValidationResult> {
   return invoke<OnlineValidationResult>("check_online_validation");
 }
 
+export async function syncLicenseMenu(licenseState: string): Promise<void> {
+  return invoke<void>("sync_license_menu", { licenseState });
+}
+
 // Annotation DSL
 
 export type AnnotationType =

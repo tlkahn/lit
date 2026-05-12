@@ -2,9 +2,11 @@ use std::path::PathBuf;
 
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use serde::Serialize;
-use tauri::State;
+use tauri::menu::MenuItemKind;
+use tauri::{AppHandle, State, Wry};
 
 use crate::license::{self, online::{self, OnlineValidationResult, ReqwestHttpClient}};
+use crate::menu::{MENU_ID_BUY_LICENSE, MENU_ID_ENTER_LICENSE_KEY, MENU_ID_LICENSE_INFO};
 
 pub struct LicenseManager {
     pub data_dir: PathBuf,
@@ -153,6 +155,32 @@ pub async fn check_online_validation(
     };
     let client = ReqwestHttpClient::new();
     Ok(online::perform_online_validation(&state.data_dir, &license_id, now, &client).await)
+}
+
+fn set_item_enabled(menu: &tauri::menu::Menu<Wry>, id: &str, enabled: bool) -> Result<(), String> {
+    for item in menu.items().map_err(|e| e.to_string())? {
+        if let MenuItemKind::Submenu(sub) = &item {
+            if let Some(MenuItemKind::MenuItem(mi)) = sub.get(id) {
+                return mi.set_enabled(enabled).map_err(|e| e.to_string());
+            }
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn sync_license_menu(app: AppHandle, license_state: String) -> Result<(), String> {
+    let menu = app.menu().ok_or("no app menu")?;
+
+    let buy_enabled = matches!(license_state.as_str(), "trial" | "expiring_soon" | "expired");
+    let enter_enabled = license_state != "licensed";
+    let info_enabled = license_state == "licensed";
+
+    set_item_enabled(&menu, MENU_ID_BUY_LICENSE, buy_enabled)?;
+    set_item_enabled(&menu, MENU_ID_ENTER_LICENSE_KEY, enter_enabled)?;
+    set_item_enabled(&menu, MENU_ID_LICENSE_INFO, info_enabled)?;
+
+    Ok(())
 }
 
 #[cfg(test)]
