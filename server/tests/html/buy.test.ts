@@ -45,4 +45,36 @@ describe("buyPageHtml", () => {
     expect(html).toContain('href="/privacy"');
     expect(html).toContain('href="/refund"');
   });
+
+  it("buy button has id attribute", () => {
+    const html = buyPageHtml();
+    expect(html).toContain('id="buy-btn"');
+  });
+
+  it("hides buy button when Turnstile is enabled", () => {
+    const html = buyPageHtml("0x_test");
+    expect(html).toContain('style="display:none"');
+  });
+
+  it("shows buy button when Turnstile is not enabled", () => {
+    const html = buyPageHtml();
+    expect(html).not.toContain('style="display:none"');
+  });
+
+  it("Turnstile widget has data-callback for onTurnstileSuccess", () => {
+    const html = buyPageHtml("0x_test");
+    expect(html).toContain('data-callback="onTurnstileSuccess"');
+  });
+
+  it("includes onTurnstileSuccess script when Turnstile is enabled", () => {
+    const html = buyPageHtml("0x_test");
+    expect(html).toContain("onTurnstileSuccess");
+    expect(html).toContain('document.getElementById("buy-btn")');
+    expect(html).toContain('.style.display=""');
+  });
+
+  it("omits onTurnstileSuccess script when Turnstile is not enabled", () => {
+    const html = buyPageHtml();
+    expect(html).not.toContain("onTurnstileSuccess");
+  });
 });
