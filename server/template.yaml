@@ -28,6 +28,10 @@ Parameters:
     Type: String
     Default: "/lit/"
     Description: SSM parameter path prefix (e.g. /lit/ or /lit/production/)
+  TurnstileSiteKey:
+    Type: String
+    Default: ""
+    Description: Cloudflare Turnstile site key for bot protection on buy page
 
 Conditions:
   HasCustomDomain: !Equals [!Ref EnableCustomDomain, "true"]
@@ -374,6 +378,29 @@ Resources:
         EntryPoints:
           - refund-page.ts
 
+  BuyPageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: buy-page.handler
+      CodeUri: src/handlers/
+      MemorySize: 128
+      Environment:
+        Variables:
+          TURNSTILE_SITE_KEY: !Ref TurnstileSiteKey
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /buy
+            Method: GET
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2022
+        EntryPoints:
+          - buy-page.ts
+
   EarlyAccessFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -529,6 +556,14 @@ Resources:
               - GET
               - HEAD
           - PathPattern: /refund
+            TargetOriginId: ApiGatewayOrigin
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods:
+              - GET
+              - HEAD
+          - PathPattern: /buy
             TargetOriginId: ApiGatewayOrigin
             CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
             OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac

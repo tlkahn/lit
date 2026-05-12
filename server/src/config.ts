@@ -28,6 +28,7 @@ export async function loadConfig(ssm: SSMClient): Promise<Config> {
     `${ssmPrefix}stripe-secret-key`,
     `${ssmPrefix}webhook-secret`,
     `${ssmPrefix}early-access-deadline`,
+    `${ssmPrefix}turnstile-secret`,
   ];
 
   const result = await ssm.send(
@@ -53,6 +54,7 @@ export async function loadConfig(ssm: SSMClient): Promise<Config> {
   const stripeSecretKey = requireParam(`${ssmPrefix}stripe-secret-key`);
   const webhookSecret = requireParam(`${ssmPrefix}webhook-secret`);
   const earlyAccessDeadline = parseInt(requireParam(`${ssmPrefix}early-access-deadline`), 10);
+  const turnstileSecret = params.get(`${ssmPrefix}turnstile-secret`) || undefined;
 
   const privateKey = new Uint8Array(Buffer.from(privateKeyB64, "base64"));
 
@@ -65,6 +67,7 @@ export async function loadConfig(ssm: SSMClient): Promise<Config> {
     sesFromEmail,
     stripePriceId,
     earlyAccessDeadline,
+    turnstileSecret,
   };
 
   return cached;

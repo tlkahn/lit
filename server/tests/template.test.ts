@@ -96,6 +96,7 @@ describe("template.yaml", () => {
       ["HostedZoneId", "String"],
       ["EnableCustomDomain", "String"],
       ["SsmPrefix", "String"],
+      ["TurnstileSiteKey", "String"],
     ])("has %s parameter of type %s", (name, type) => {
       expect(template.Parameters[name]).toBeDefined();
       expect(template.Parameters[name].Type).toBe(type);
@@ -128,6 +129,10 @@ describe("template.yaml", () => {
 
     it("SsmPrefix defaults to /lit/", () => {
       expect(template.Parameters.SsmPrefix.Default).toBe("/lit/");
+    });
+
+    it("TurnstileSiteKey defaults to empty string", () => {
+      expect(template.Parameters.TurnstileSiteKey.Default).toBe("");
     });
   });
 
@@ -308,6 +313,7 @@ describe("template.yaml", () => {
       "/recover",
       "/privacy",
       "/refund",
+      "/buy",
     ])("%s targets ApiGatewayOrigin with GET/HEAD only", (path) => {
       const behaviors =
         template.Resources.CloudFrontDistribution.Properties.DistributionConfig
@@ -421,6 +427,12 @@ describe("template.yaml", () => {
         method: "GET",
         memory: 128,
       },
+      {
+        name: "BuyPageFunction",
+        path: "/buy",
+        method: "GET",
+        memory: 128,
+      },
     ];
 
     it.each(specs)(
@@ -451,8 +463,8 @@ describe("template.yaml", () => {
   });
 
   describe("cross-cutting", () => {
-    it("has exactly 12 Serverless::Function resources", () => {
-      expect(resourcesOfType("AWS::Serverless::Function")).toHaveLength(12);
+    it("has exactly 13 Serverless::Function resources", () => {
+      expect(resourcesOfType("AWS::Serverless::Function")).toHaveLength(13);
     });
 
     it("all functions use nodejs22.x runtime via Globals", () => {
@@ -492,9 +504,14 @@ describe("template.yaml", () => {
     });
 
     it("static functions have no Policies", () => {
-      for (const name of ["CancelPageFunction", "RecoverPageFunction", "PrivacyPageFunction", "RefundPageFunction"]) {
+      for (const name of ["CancelPageFunction", "RecoverPageFunction", "PrivacyPageFunction", "RefundPageFunction", "BuyPageFunction"]) {
         expect(template.Resources[name].Properties.Policies).toBeUndefined();
       }
+    });
+
+    it("BuyPageFunction has TURNSTILE_SITE_KEY environment variable", () => {
+      const vars = template.Resources.BuyPageFunction.Properties.Environment.Variables;
+      expect(vars.TURNSTILE_SITE_KEY).toBeDefined();
     });
 
     it("EarlyAccessPageFunction has only SSMParameterReadPolicy", () => {

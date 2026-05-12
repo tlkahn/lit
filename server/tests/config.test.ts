@@ -70,9 +70,23 @@ describe("loadConfig", () => {
         "/lit/stripe-secret-key",
         "/lit/webhook-secret",
         "/lit/early-access-deadline",
+        "/lit/turnstile-secret",
       ],
       WithDecryption: true,
     });
+  });
+
+  it("returns turnstileSecret from SSM when present", async () => {
+    const params = { ...defaultSsmParams, "/lit/turnstile-secret": "tsec_test" };
+    const ssm = makeSsmClient(params);
+    const config = await loadConfig(ssm as unknown as SSMClient);
+    expect(config.turnstileSecret).toBe("tsec_test");
+  });
+
+  it("returns undefined turnstileSecret when SSM param is absent", async () => {
+    const ssm = makeSsmClient();
+    const config = await loadConfig(ssm as unknown as SSMClient);
+    expect(config.turnstileSecret).toBeUndefined();
   });
 
   it("decodes privateKey as Uint8Array matching seed bytes", async () => {
@@ -193,6 +207,7 @@ describe("loadConfig", () => {
       "/lit/production/stripe-secret-key",
       "/lit/production/webhook-secret",
       "/lit/production/early-access-deadline",
+      "/lit/production/turnstile-secret",
     ]);
     expect(config.stripeSecretKey).toBe("sk_live_456");
     expect(config.webhookSecret).toBe("whsec_live_789");
@@ -209,6 +224,7 @@ describe("loadConfig", () => {
       "/lit/stripe-secret-key",
       "/lit/webhook-secret",
       "/lit/early-access-deadline",
+      "/lit/turnstile-secret",
     ]);
   });
 });

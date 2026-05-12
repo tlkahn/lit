@@ -80,6 +80,7 @@ export interface Config {
   sesFromEmail: string;
   stripePriceId: string;
   earlyAccessDeadline: number;
+  turnstileSecret?: string;
 }
 
 export interface Clock {
