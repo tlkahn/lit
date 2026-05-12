@@ -29,9 +29,9 @@ describe("pageHtml", () => {
   it("includes inline CSS with design tokens", () => {
     const html = pageHtml("T", "<p>x</p>");
     expect(html).toContain("<style>");
-    expect(html).toContain("--color-accent: #0071E3");
-    expect(html).toContain("--content-width: 720px");
-    expect(html).toContain("--color-text: #1D1D1F");
+    expect(html).toContain("--color-accent:#0071E3");
+    expect(html).toContain("--content-width:720px");
+    expect(html).toContain("--color-text:#1D1D1F");
   });
 
   it("wraps body content in a .container div", () => {
@@ -61,5 +61,24 @@ describe("pageHtml", () => {
     const html = pageHtml("T", "<p>x</p>");
     expect(html).toContain("@media");
     expect(html).toContain("600px");
+  });
+
+  it("sets lang attribute on html element", () => {
+    const html = pageHtml("T", "<p>x</p>");
+    expect(html).toContain('<html lang="en">');
+  });
+
+  it("escapes HTML-special characters in title", () => {
+    const html = pageHtml("A <b> & C", "<p>x</p>");
+    expect(html).toContain("<title>A &lt;b&gt; &amp; C</title>");
+    expect(html).not.toContain("<title>A <b> & C</title>");
+  });
+
+  it("minifies inline CSS (no consecutive whitespace)", () => {
+    const html = pageHtml("T", "<p>x</p>");
+    const styleMatch = html.match(/<style>([\s\S]*?)<\/style>/);
+    expect(styleMatch).toBeTruthy();
+    const css = styleMatch![1];
+    expect(css).not.toMatch(/\s{2,}/);
   });
 });

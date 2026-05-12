@@ -16,8 +16,7 @@ export function buyPageHtml(turnstileSiteKey?: string): string {
   return pageHtml("Buy Lit", `\
 <h1>Lit</h1>
 <p>Local-first notetaker and knowledge graph manager.</p>
-<form action="/api/checkout" method="POST">
-${turnstileWidget}
+<form action="/api/checkout" method="POST">${turnstileWidget ? "\n" + turnstileWidget : ""}
 <button id="buy-btn"${buttonStyle} type="submit">Buy — $29</button>
 </form>
 <p class="footer"><a href="/privacy">Privacy Policy</a> · <a href="/refund">Refund Policy</a></p>`, headExtra);

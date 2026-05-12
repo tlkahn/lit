@@ -1,4 +1,15 @@
-const CSS = `
+import { escapeHtml } from "../email/templates.js";
+
+function minifyCss(raw: string): string {
+  return raw
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\s+/g, " ")
+    .replace(/\s*([{}:;,])\s*/g, "$1")
+    .replace(/;}/g, "}")
+    .trim();
+}
+
+const CSS = minifyCss(`
 :root {
   --color-bg: #FFFFFF;
   --color-text: #1D1D1F;
@@ -56,9 +67,8 @@ input[type="email"] {
   border: 1px solid var(--color-rule);
   border-radius: 0;
   margin: 8px 0 16px;
-  outline: none;
 }
-input[type="email"]:focus { border-color: var(--color-accent); }
+input[type="email"]:focus { outline: none; border-color: var(--color-accent); box-shadow: 0 0 0 3px rgba(0,113,227,0.2); }
 pre {
   background: #F5F5F7;
   padding: 16px 20px;
@@ -83,7 +93,7 @@ label { display: block; font-size: 16px; font-weight: 600; }
   .container { padding: 40px 20px; }
   h1 { font-size: 28px; }
   h2 { font-size: 20px; }
-}`;
+}`);
 
 export function pageHtml(
   title: string,
@@ -91,7 +101,7 @@ export function pageHtml(
   headExtra?: string,
 ): string {
   return `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
