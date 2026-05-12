@@ -1,6 +1,7 @@
+import { pageHtml } from "./layout.js";
+
 export function refundPageHtml(): string {
-  return `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Refund Policy — Lit</title></head><body>
+  return pageHtml("Refund Policy — Lit", `\
 <h1>Refund Policy</h1>
 <p><strong>Operator:</strong> Lit Solar Software LLC, Delaware, USA</p>
 
@@ -27,6 +28,5 @@ export function refundPageHtml(): string {
 <h2>Contact</h2>
 <p><a href="mailto:privacy@lit.solar">privacy@lit.solar</a></p>
 <hr>
-<p><a href="/privacy">Privacy Policy</a></p>
-</body></html>`;
+<p class="footer"><a href="/privacy">Privacy Policy</a></p>`);
 }

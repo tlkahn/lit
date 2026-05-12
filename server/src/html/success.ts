@@ -1,23 +1,20 @@
 import { escapeHtml } from "../email/templates.js";
+import { pageHtml } from "./layout.js";
 
 export function successPageHtml(pem: string, name: string): string {
-  return `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>License Key — Lit</title></head><body>
+  return pageHtml("License Key — Lit", `\
 <h1>Thank you, ${escapeHtml(name)}!</h1>
 <p>Here is your license key:</p>
 <pre>${escapeHtml(pem)}</pre>
-<p><a href="lit://activate?key=${encodeURIComponent(pem)}">Open in Lit</a></p>
+<p><a class="cta" href="lit://activate?key=${encodeURIComponent(pem)}">Open in Lit</a></p>
 <p>You can also copy the key above and paste it into the app.</p>
 <p>A copy has also been emailed to you.</p>
 <hr>
-<p><a href="/privacy">Privacy Policy</a> · <a href="/refund">Refund Policy</a></p>
-</body></html>`;
+<p class="footer"><a href="/privacy">Privacy Policy</a> · <a href="/refund">Refund Policy</a></p>`);
 }
 
 export function gonePageHtml(): string {
-  return `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Link Expired — Lit</title></head><body>
+  return pageHtml("Link Expired — Lit", `\
 <h1>Link Expired</h1>
-<p>This link has expired. Please check your email for a copy of your license key.</p>
-</body></html>`;
+<p>This link has expired. Please check your email for a copy of your license key.</p>`);
 }

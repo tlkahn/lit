@@ -1,6 +1,7 @@
+import { pageHtml } from "./layout.js";
+
 export function earlyAccessFormHtml(): string {
-  return `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Early Access — Lit</title></head><body>
+  return pageHtml("Early Access — Lit", `\
 <h1>Early Access</h1>
 <p>Claim your free license as an early adopter.</p>
 <form action="/api/early-access" method="POST">
@@ -9,22 +10,17 @@ export function earlyAccessFormHtml(): string {
 <button type="submit">Claim License</button>
 </form>
 <hr>
-<p><a href="/privacy">Privacy Policy</a> · <a href="/refund">Refund Policy</a></p>
-</body></html>`;
+<p class="footer"><a href="/privacy">Privacy Policy</a> · <a href="/refund">Refund Policy</a></p>`);
 }
 
 export function earlyAccessConfirmationHtml(): string {
-  return `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Early Access — Lit</title></head><body>
+  return pageHtml("Early Access — Lit", `\
 <h1>Thank You</h1>
-<p>If you are eligible, please check your email for your license key.</p>
-</body></html>`;
+<p>If you are eligible, please check your email for your license key.</p>`);
 }
 
 export function earlyAccessClosedHtml(): string {
-  return `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Early Access Closed — Lit</title></head><body>
+  return pageHtml("Early Access Closed — Lit", `\
 <h1>Early Access Closed</h1>
-<p>The early-access period has ended. Please visit our website to purchase a license.</p>
-</body></html>`;
+<p>The early-access period has ended. Please visit our website to purchase a license.</p>`);
 }
