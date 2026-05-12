@@ -7,6 +7,13 @@ BUNDLE_DIR="src-tauri/target/release/bundle/macos"
 
 cd "$(dirname "$0")/.."
 
+if [ -z "${LIT_TRIAL_SIGNING_KEY_B64:-}" ] || [ -z "${LIT_LICENSE_VERIFYING_KEY_B64:-}" ]; then
+    echo "ERROR: Release builds require LIT_TRIAL_SIGNING_KEY_B64 and LIT_LICENSE_VERIFYING_KEY_B64 env vars."
+    echo "  Export base64-encoded 32-byte keys before running this script."
+    echo "  Example: export LIT_TRIAL_SIGNING_KEY_B64=\$(base64 < keys/dev_trial_signing.bin)"
+    exit 1
+fi
+
 echo "==> Installing dependencies"
 bun install
 

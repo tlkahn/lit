@@ -21,6 +21,14 @@ pub const TRIAL_SIGNING_KEY_BYTES: &[u8; 32] =
 pub const LICENSE_VERIFYING_KEY_BYTES: &[u8; 32] =
     include_bytes!("../../keys/dev_license_verifying.bin");
 
+#[cfg(not(debug_assertions))]
+pub const TRIAL_SIGNING_KEY_BYTES: &[u8; 32] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/prod_trial_signing.bin"));
+
+#[cfg(not(debug_assertions))]
+pub const LICENSE_VERIFYING_KEY_BYTES: &[u8; 32] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/prod_license_verifying.bin"));
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind")]
 pub enum LicenseStatus {
@@ -405,5 +413,44 @@ mod tests {
     #[test]
     fn parse_activate_url_empty_key() {
         assert!(parse_activate_url("lit://activate?key=").is_err());
+    }
+
+    // --- decode_key_b64 ---
+
+    fn decode_key_b64(b64: &str) -> Result<[u8; 32], String> {
+        use base64::Engine;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .map_err(|e| format!("invalid base64: {e}"))?;
+        let arr: [u8; 32] = bytes
+            .try_into()
+            .map_err(|v: Vec<u8>| format!("expected 32 bytes, got {}", v.len()))?;
+        Ok(arr)
+    }
+
+    #[test]
+    fn decode_key_b64_valid_round_trip() {
+        use base64::Engine;
+        let key: [u8; 32] = [
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+            24, 25, 26, 27, 28, 29, 30, 31, 32,
+        ];
+        let b64 = base64::engine::general_purpose::STANDARD.encode(key);
+        assert_eq!(decode_key_b64(&b64).unwrap(), key);
+    }
+
+    #[test]
+    fn decode_key_b64_invalid_base64() {
+        let err = decode_key_b64("not!valid!b64").unwrap_err();
+        assert!(err.contains("invalid base64"), "got: {err}");
+    }
+
+    #[test]
+    fn decode_key_b64_wrong_length() {
+        use base64::Engine;
+        let short: [u8; 16] = [0; 16];
+        let b64 = base64::engine::general_purpose::STANDARD.encode(short);
+        let err = decode_key_b64(&b64).unwrap_err();
+        assert!(err.contains("32 bytes"), "got: {err}");
     }
 }

@@ -26,12 +26,18 @@ jobs:
         run: bash scripts/fetch-pdfium.sh
       - name: Pre-build lit-cli
         working-directory: src-tauri
+        env:
+          LIT_TRIAL_SIGNING_KEY_B64: ${{ secrets.LIT_TRIAL_SIGNING_KEY_B64 }}
+          LIT_LICENSE_VERIFYING_KEY_B64: ${{ secrets.LIT_LICENSE_VERIFYING_KEY_B64 }}
         run: |
           mkdir -p binaries
           touch binaries/lit-cli-aarch64-apple-darwin
           cargo build --release --bin lit-cli --target aarch64-apple-darwin
           cp target/aarch64-apple-darwin/release/lit-cli binaries/lit-cli-aarch64-apple-darwin
       - name: Build Tauri app
+        env:
+          LIT_TRIAL_SIGNING_KEY_B64: ${{ secrets.LIT_TRIAL_SIGNING_KEY_B64 }}
+          LIT_LICENSE_VERIFYING_KEY_B64: ${{ secrets.LIT_LICENSE_VERIFYING_KEY_B64 }}
         run: >
           bun tauri build
           --target aarch64-apple-darwin
