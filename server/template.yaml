@@ -24,6 +24,10 @@ Parameters:
     Type: String
     Default: "false"
     AllowedValues: ["true", "false"]
+  SsmPrefix:
+    Type: String
+    Default: "/lit/"
+    Description: SSM parameter path prefix (e.g. /lit/ or /lit/production/)
 
 Conditions:
   HasCustomDomain: !Equals [!Ref EnableCustomDomain, "true"]
@@ -37,6 +41,7 @@ Globals:
         TABLE_NAME: !Ref LicensesTable
         BASE_URL: !Ref BaseUrl
         LOG_LEVEL: !Ref LogLevel
+        SSM_PREFIX: !Ref SsmPrefix
 
 Resources:
   LicensesTable:

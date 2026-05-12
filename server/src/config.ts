@@ -21,15 +21,18 @@ export async function loadConfig(ssm: SSMClient): Promise<Config> {
   const stripePriceId = requireEnv("STRIPE_PRICE_ID");
   const baseUrl = requireEnv("BASE_URL");
   const sesFromEmail = requireEnv("SES_FROM_EMAIL");
+  const ssmPrefix = process.env.SSM_PREFIX || "/lit/";
+
+  const paramNames = [
+    `${ssmPrefix}private-key`,
+    `${ssmPrefix}stripe-secret-key`,
+    `${ssmPrefix}webhook-secret`,
+    `${ssmPrefix}early-access-deadline`,
+  ];
 
   const result = await ssm.send(
     new GetParametersCommand({
-      Names: [
-        "/lit/private-key",
-        "/lit/stripe-secret-key",
-        "/lit/webhook-secret",
-        "/lit/early-access-deadline",
-      ],
+      Names: paramNames,
       WithDecryption: true,
     }),
   );
@@ -46,10 +49,10 @@ export async function loadConfig(ssm: SSMClient): Promise<Config> {
     return value;
   }
 
-  const privateKeyB64 = requireParam("/lit/private-key");
-  const stripeSecretKey = requireParam("/lit/stripe-secret-key");
-  const webhookSecret = requireParam("/lit/webhook-secret");
-  const earlyAccessDeadline = parseInt(requireParam("/lit/early-access-deadline"), 10);
+  const privateKeyB64 = requireParam(`${ssmPrefix}private-key`);
+  const stripeSecretKey = requireParam(`${ssmPrefix}stripe-secret-key`);
+  const webhookSecret = requireParam(`${ssmPrefix}webhook-secret`);
+  const earlyAccessDeadline = parseInt(requireParam(`${ssmPrefix}early-access-deadline`), 10);
 
   const privateKey = new Uint8Array(Buffer.from(privateKeyB64, "base64"));
 

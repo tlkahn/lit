@@ -95,6 +95,7 @@ describe("template.yaml", () => {
       ["DomainName", "String"],
       ["HostedZoneId", "String"],
       ["EnableCustomDomain", "String"],
+      ["SsmPrefix", "String"],
     ])("has %s parameter of type %s", (name, type) => {
       expect(template.Parameters[name]).toBeDefined();
       expect(template.Parameters[name].Type).toBe(type);
@@ -123,6 +124,10 @@ describe("template.yaml", () => {
         "true",
         "false",
       ]);
+    });
+
+    it("SsmPrefix defaults to /lit/", () => {
+      expect(template.Parameters.SsmPrefix.Default).toBe("/lit/");
     });
   });
 
@@ -479,10 +484,11 @@ describe("template.yaml", () => {
       }
     });
 
-    it("all functions have TABLE_NAME and BASE_URL env vars", () => {
+    it("all functions have TABLE_NAME, BASE_URL, and SSM_PREFIX env vars", () => {
       const vars = template.Globals.Function.Environment.Variables;
       expect(vars.TABLE_NAME).toBeDefined();
       expect(vars.BASE_URL).toBeDefined();
+      expect(vars.SSM_PREFIX).toBeDefined();
     });
 
     it("static functions have no Policies", () => {

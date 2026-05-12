@@ -17,6 +17,7 @@ const defaultEnvVars: Record<string, string> = {
   STRIPE_PRICE_ID: "price_test_789",
   BASE_URL: "https://example.com",
   SES_FROM_EMAIL: "noreply@test.com",
+  SSM_PREFIX: "/lit/",
 };
 
 function makeSsmClient(params: Record<string, string> = defaultSsmParams) {
@@ -173,5 +174,41 @@ describe("loadConfig", () => {
     const config = await loadConfig(ssm as unknown as SSMClient);
     expect(config.tableName).toBe("test-licenses");
     expect(ssm.send).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses SSM_PREFIX env var for parameter names", async () => {
+    process.env.SSM_PREFIX = "/lit/production/";
+    const prodParams: Record<string, string> = {
+      "/lit/production/private-key": PRIVATE_KEY_B64,
+      "/lit/production/stripe-secret-key": "sk_live_456",
+      "/lit/production/webhook-secret": "whsec_live_789",
+      "/lit/production/early-access-deadline": "2000000000",
+    };
+    const ssm = makeSsmClient(prodParams);
+    const config = await loadConfig(ssm as unknown as SSMClient);
+
+    const command = ssm.send.mock.calls[0]![0];
+    expect(command.input.Names).toEqual([
+      "/lit/production/private-key",
+      "/lit/production/stripe-secret-key",
+      "/lit/production/webhook-secret",
+      "/lit/production/early-access-deadline",
+    ]);
+    expect(config.stripeSecretKey).toBe("sk_live_456");
+    expect(config.webhookSecret).toBe("whsec_live_789");
+  });
+
+  it("defaults SSM_PREFIX to /lit/ when env var is not set", async () => {
+    delete process.env.SSM_PREFIX;
+    const ssm = makeSsmClient();
+    await loadConfig(ssm as unknown as SSMClient);
+
+    const command = ssm.send.mock.calls[0]![0];
+    expect(command.input.Names).toEqual([
+      "/lit/private-key",
+      "/lit/stripe-secret-key",
+      "/lit/webhook-secret",
+      "/lit/early-access-deadline",
+    ]);
   });
 });
