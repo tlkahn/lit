@@ -77,4 +77,14 @@ describe("buyPageHtml", () => {
     const html = buyPageHtml();
     expect(html).not.toContain("onTurnstileSuccess");
   });
+
+  it("Turnstile widget div has id attribute", () => {
+    const html = buyPageHtml("0x_test");
+    expect(html).toContain('id="turnstile-widget"');
+  });
+
+  it("onTurnstileSuccess hides the Turnstile widget", () => {
+    const html = buyPageHtml("0x_test");
+    expect(html).toContain('document.getElementById("turnstile-widget")');
+  });
 });

@@ -3,8 +3,8 @@ import { escapeHtml } from "../email/templates.js";
 export function buyPageHtml(turnstileSiteKey?: string): string {
   const turnstileSnippet = turnstileSiteKey
     ? `<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
-<div class="cf-turnstile" data-sitekey="${escapeHtml(turnstileSiteKey)}" data-callback="onTurnstileSuccess"></div>
-<script>function onTurnstileSuccess(){document.getElementById("buy-btn").style.display=""}</script>`
+<div id="turnstile-widget" class="cf-turnstile" data-sitekey="${escapeHtml(turnstileSiteKey)}" data-callback="onTurnstileSuccess"></div>
+<script>function onTurnstileSuccess(){document.getElementById("buy-btn").style.display="";document.getElementById("turnstile-widget").style.display="none"}</script>`
     : "";
 
   const buttonStyle = turnstileSiteKey ? ' style="display:none"' : "";
