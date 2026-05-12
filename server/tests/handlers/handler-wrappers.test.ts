@@ -38,6 +38,7 @@ const mockDeps = vi.hoisted(() => ({
     sesFromEmail: "noreply@example.com",
     stripePriceId: "price_test",
     earlyAccessDeadline: 2000000000,
+    turnstileSecret: undefined,
   },
   clock: {
     nowEpochSeconds: vi.fn().mockReturnValue(1000),

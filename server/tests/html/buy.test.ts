@@ -34,6 +34,12 @@ describe("buyPageHtml", () => {
     expect(html).not.toContain("challenges.cloudflare.com");
   });
 
+  it("escapes HTML-special characters in siteKey", () => {
+    const html = buyPageHtml('"><script>alert(1)</script>');
+    expect(html).not.toContain("<script>alert(1)</script>");
+    expect(html).toContain("&quot;&gt;&lt;script&gt;");
+  });
+
   it("links to privacy and refund pages", () => {
     const html = buyPageHtml();
     expect(html).toContain('href="/privacy"');

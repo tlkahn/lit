@@ -1,7 +1,9 @@
+import { escapeHtml } from "../email/templates.js";
+
 export function buyPageHtml(turnstileSiteKey?: string): string {
   const turnstileSnippet = turnstileSiteKey
     ? `<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
-<div class="cf-turnstile" data-sitekey="${turnstileSiteKey}"></div>`
+<div class="cf-turnstile" data-sitekey="${escapeHtml(turnstileSiteKey)}"></div>`
     : "";
 
   return `<!DOCTYPE html>
