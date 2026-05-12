@@ -79,6 +79,7 @@ pub fn get_status(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DevOverride {
+    Trial,
     TrialShort,
     TrialExpired,
     Licensed,
@@ -87,6 +88,7 @@ pub enum DevOverride {
 #[cfg(debug_assertions)]
 pub fn dev_mode_override() -> Option<DevOverride> {
     match std::env::var("LIT_LICENSE_DEV").ok()?.as_str() {
+        "trial" => Some(DevOverride::Trial),
         "trial_short" => Some(DevOverride::TrialShort),
         "trial_expired" => Some(DevOverride::TrialExpired),
         "licensed" => Some(DevOverride::Licensed),
@@ -317,6 +319,14 @@ mod tests {
         let _lock = ENV_MUTEX.lock().unwrap();
         std::env::remove_var("LIT_LICENSE_DEV");
         assert_eq!(dev_mode_override(), None);
+    }
+
+    #[test]
+    fn dev_override_trial() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+        std::env::set_var("LIT_LICENSE_DEV", "trial");
+        assert_eq!(dev_mode_override(), Some(DevOverride::Trial));
+        std::env::remove_var("LIT_LICENSE_DEV");
     }
 
     #[test]

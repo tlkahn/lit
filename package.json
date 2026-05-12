@@ -9,6 +9,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev; stty sane && printf '\\e[0m'",
+    "tauri:dev:trial": "LIT_LICENSE_DEV=trial tauri dev; stty sane && printf '\\e[0m'",
+    "tauri:dev:expired": "LIT_LICENSE_DEV=trial_expired tauri dev; stty sane && printf '\\e[0m'",
     "test": "bunx vitest run",
     "test:watch": "bunx vitest",
     "lint": "eslint .",

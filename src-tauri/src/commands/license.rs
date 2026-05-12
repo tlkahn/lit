@@ -20,6 +20,31 @@ pub struct LicenseStatusResponse {
 }
 
 impl LicenseStatusResponse {
+    fn from_dev_override(ov: license::DevOverride) -> Self {
+        match ov {
+            license::DevOverride::Trial => Self {
+                state: "trial".into(),
+                days_remaining: Some(license::trial::TRIAL_DURATION_SECS / 86400),
+                licensed_to: None,
+            },
+            license::DevOverride::TrialShort => Self {
+                state: "trial".into(),
+                days_remaining: Some(0),
+                licensed_to: None,
+            },
+            license::DevOverride::TrialExpired => Self {
+                state: "expired".into(),
+                days_remaining: Some(0),
+                licensed_to: None,
+            },
+            license::DevOverride::Licensed => Self {
+                state: "licensed".into(),
+                days_remaining: None,
+                licensed_to: Some("Dev Mode".into()),
+            },
+        }
+    }
+
     fn from_status(status: &license::LicenseStatus) -> Self {
         match status {
             license::LicenseStatus::Trial(license::trial::TrialState::Active { days_left }) => {
@@ -68,23 +93,7 @@ pub fn get_license_status(
 ) -> Result<LicenseStatusResponse, String> {
     #[cfg(debug_assertions)]
     if let Some(ov) = license::dev_mode_override() {
-        return Ok(match ov {
-            license::DevOverride::TrialShort => LicenseStatusResponse {
-                state: "trial".into(),
-                days_remaining: Some(0),
-                licensed_to: None,
-            },
-            license::DevOverride::TrialExpired => LicenseStatusResponse {
-                state: "expired".into(),
-                days_remaining: Some(0),
-                licensed_to: None,
-            },
-            license::DevOverride::Licensed => LicenseStatusResponse {
-                state: "licensed".into(),
-                days_remaining: None,
-                licensed_to: Some("Dev Mode".into()),
-            },
-        });
+        return Ok(LicenseStatusResponse::from_dev_override(ov));
     }
 
     let status = license::get_status(
@@ -210,6 +219,38 @@ mod tests {
             mgr.trial_signing_key.verifying_key().to_bytes().len(),
             32
         );
+    }
+
+    #[test]
+    fn dev_override_trial_response() {
+        let resp = LicenseStatusResponse::from_dev_override(license::DevOverride::Trial);
+        assert_eq!(resp.state, "trial");
+        assert_eq!(resp.days_remaining, Some(14));
+        assert_eq!(resp.licensed_to, None);
+    }
+
+    #[test]
+    fn dev_override_trial_short_response() {
+        let resp = LicenseStatusResponse::from_dev_override(license::DevOverride::TrialShort);
+        assert_eq!(resp.state, "trial");
+        assert_eq!(resp.days_remaining, Some(0));
+        assert_eq!(resp.licensed_to, None);
+    }
+
+    #[test]
+    fn dev_override_trial_expired_response() {
+        let resp = LicenseStatusResponse::from_dev_override(license::DevOverride::TrialExpired);
+        assert_eq!(resp.state, "expired");
+        assert_eq!(resp.days_remaining, Some(0));
+        assert_eq!(resp.licensed_to, None);
+    }
+
+    #[test]
+    fn dev_override_licensed_response() {
+        let resp = LicenseStatusResponse::from_dev_override(license::DevOverride::Licensed);
+        assert_eq!(resp.state, "licensed");
+        assert_eq!(resp.days_remaining, None);
+        assert_eq!(resp.licensed_to, Some("Dev Mode".into()));
     }
 
     #[test]
