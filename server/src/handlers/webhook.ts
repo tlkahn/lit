@@ -29,7 +29,7 @@ export async function handleWebhook(
   try {
     stripeEvent = verify(body, signature, deps.config.webhookSecret);
   } catch (err) {
-    if (verbose) console.error("Signature verification failed:", err);
+    console.error(JSON.stringify({ event: "webhook_signature_error", error: String(err) }));
     return { statusCode: 400, body: "Invalid signature" };
   }
 
@@ -54,7 +54,7 @@ export async function handleWebhook(
       }
     }
   } catch (err) {
-    console.error("Webhook processing error:", err);
+    console.error(JSON.stringify({ event: "webhook_error", type: parsed.type, error: String(err) }));
   }
 
   return { statusCode: 200, body: "" };

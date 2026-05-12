@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import type { APIGatewayProxyEvent } from "aws-lambda";
 import type { HandlerDeps, ParsedWebhookEvent } from "../../src/types.js";
 import { handleWebhook } from "../../src/handlers/webhook.js";
@@ -90,6 +90,55 @@ function makeFns(overrides: Partial<WebhookFns> = {}): WebhookFns {
 }
 
 describe("handleWebhook", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("logs structured JSON on signature verification failure", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const deps = makeDeps();
+    const fns = makeFns({
+      verify: vi.fn().mockImplementation(() => {
+        throw new Error("sig check failed");
+      }),
+    });
+
+    await handleWebhook(deps, makeEvent('{}', "bad_sig"), fns.verify, fns.parse);
+
+    expect(errorSpy).toHaveBeenCalledOnce();
+    const logged = JSON.parse(errorSpy.mock.calls[0]![0] as string);
+    expect(logged).toEqual({
+      event: "webhook_signature_error",
+      error: "Error: sig check failed",
+    });
+  });
+
+  it("logs structured JSON on processing error", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const deps = makeDeps({
+      stripe: {
+        sessions: {
+          retrieve: vi.fn().mockRejectedValue(new Error("DB explosion")),
+        },
+        checkout: { create: vi.fn() },
+      },
+    });
+    const fns = makeFns({
+      parse: vi.fn().mockReturnValue({ type: "checkout.session.completed", sessionId: "cs_test_123" }),
+    });
+
+    const result = await handleWebhook(deps, makeEvent('{}', "sig_ok"), fns.verify, fns.parse);
+
+    expect(result.statusCode).toBe(200);
+    expect(errorSpy).toHaveBeenCalledOnce();
+    const logged = JSON.parse(errorSpy.mock.calls[0]![0] as string);
+    expect(logged).toEqual({
+      event: "webhook_error",
+      type: "checkout.session.completed",
+      error: "Error: DB explosion",
+    });
+  });
+
   it("returns 400 when stripe-signature header missing", async () => {
     const deps = makeDeps();
     const fns = makeFns();
