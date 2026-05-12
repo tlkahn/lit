@@ -115,6 +115,10 @@ describe("template.yaml", () => {
       expect(template.Parameters.EnableCustomDomain.Default).toBe("false");
     });
 
+    it("HostedZoneId defaults to empty string", () => {
+      expect(template.Parameters.HostedZoneId.Default).toBe("");
+    });
+
     it("EnableCustomDomain allows only true/false", () => {
       expect(template.Parameters.EnableCustomDomain.AllowedValues).toEqual([
         "true",

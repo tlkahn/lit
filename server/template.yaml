@@ -19,6 +19,7 @@ Parameters:
     Default: "lit.solar"
   HostedZoneId:
     Type: String
+    Default: ""
   EnableCustomDomain:
     Type: String
     Default: "false"
