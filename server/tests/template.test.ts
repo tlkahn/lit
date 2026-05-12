@@ -16,7 +16,6 @@ const cfnTags = [
       "Fn::Equals": seq.toJSON(),
     }),
   },
-  { tag: "!Condition", resolve: (str: string) => ({ Condition: str }) },
 ];
 
 interface CfnResource {
@@ -142,6 +141,17 @@ describe("template.yaml", () => {
       expect(bucket.Type).toBe("AWS::S3::Bucket");
       expect(bucket.Condition).toBe("HasCustomDomain");
     });
+
+    it("blocks all public access", () => {
+      const config =
+        template.Resources.WebsiteBucket.Properties.PublicAccessBlockConfiguration;
+      expect(config).toEqual({
+        BlockPublicAcls: true,
+        BlockPublicPolicy: true,
+        IgnorePublicAcls: true,
+        RestrictPublicBuckets: true,
+      });
+    });
   });
 
   describe("WebsiteBucketPolicy", () => {
@@ -158,6 +168,16 @@ describe("template.yaml", () => {
           .Statement[0];
       expect(statement.Principal.Service).toBe("cloudfront.amazonaws.com");
       expect(statement.Action).toBe("s3:GetObject");
+    });
+
+    it("SourceArn is scoped to CloudFrontDistribution", () => {
+      const statement =
+        template.Resources.WebsiteBucketPolicy.Properties.PolicyDocument
+          .Statement[0];
+      expect(statement.Condition.StringEquals["AWS:SourceArn"]).toEqual({
+        "Fn::Sub":
+          "arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}",
+      });
     });
   });
 
@@ -184,6 +204,12 @@ describe("template.yaml", () => {
       expect(
         cert.Properties.DomainValidationOptions[0].HostedZoneId,
       ).toEqual({ Ref: "HostedZoneId" });
+    });
+
+    it("DomainName references the DomainName parameter", () => {
+      expect(template.Resources.Certificate.Properties.DomainName).toEqual({
+        Ref: "DomainName",
+      });
     });
   });
 
@@ -229,6 +255,21 @@ describe("template.yaml", () => {
         template.Resources.CloudFrontDistribution.Properties.DistributionConfig;
       expect(config.Aliases).toEqual([{ Ref: "DomainName" }]);
       expect(config.ViewerCertificate.SslSupportMethod).toBe("sni-only");
+    });
+
+    it("ViewerCertificate references the Certificate resource", () => {
+      const cert =
+        template.Resources.CloudFrontDistribution.Properties.DistributionConfig
+          .ViewerCertificate;
+      expect(cert.AcmCertificateArn).toEqual({ Ref: "Certificate" });
+    });
+
+    it("S3Origin uses CloudFrontOAC for access control", () => {
+      const s3Origin = template.Resources.CloudFrontDistribution.Properties
+        .DistributionConfig.Origins.find(
+          (o: { Id: string }) => o.Id === "S3Origin",
+        );
+      expect(s3Origin.OriginAccessControlId).toEqual({ Ref: "CloudFrontOAC" });
     });
 
     it("DefaultRootObject is index.html", () => {
@@ -286,6 +327,9 @@ describe("template.yaml", () => {
         expect(record.Properties.AliasTarget.HostedZoneId).toBe(
           "Z2FDTNDATAQYW2",
         );
+        expect(record.Properties.AliasTarget.DNSName).toEqual({
+          "Fn::GetAtt": ["CloudFrontDistribution", "DomainName"],
+        });
       },
     );
 

@@ -403,6 +403,12 @@ Resources:
   WebsiteBucket:
     Type: AWS::S3::Bucket
     Condition: HasCustomDomain
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
 
   WebsiteBucketPolicy:
     Type: AWS::S3::BucketPolicy
