@@ -9,6 +9,14 @@ const cfnTags = [
     tag: "!GetAtt",
     resolve: (str: string) => ({ "Fn::GetAtt": str.split(".") }),
   },
+  {
+    tag: "!Equals",
+    collection: "seq" as const,
+    resolve: (seq: { toJSON: () => unknown[] }) => ({
+      "Fn::Equals": seq.toJSON(),
+    }),
+  },
+  { tag: "!Condition", resolve: (str: string) => ({ Condition: str }) },
 ];
 
 interface CfnResource {
@@ -29,8 +37,9 @@ interface SamApiEvent {
 }
 
 const templatePath = new URL("../template.yaml", import.meta.url).pathname;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const template = parse(readFileSync(templatePath, "utf-8"), {
-  customTags: cfnTags,
+  customTags: cfnTags as any,
 });
 
 function resourcesOfType(type: string): [string, CfnResource][] {
@@ -84,6 +93,9 @@ describe("template.yaml", () => {
       ["BaseUrl", "String"],
       ["StripePriceId", "String"],
       ["SesFromEmail", "String"],
+      ["DomainName", "String"],
+      ["HostedZoneId", "String"],
+      ["EnableCustomDomain", "String"],
     ])("has %s parameter of type %s", (name, type) => {
       expect(template.Parameters[name]).toBeDefined();
       expect(template.Parameters[name].Type).toBe(type);
@@ -93,6 +105,192 @@ describe("template.yaml", () => {
       expect(template.Parameters.SesFromEmail.Default).toBe(
         "noreply@lit.solar",
       );
+    });
+
+    it("DomainName defaults to lit.solar", () => {
+      expect(template.Parameters.DomainName.Default).toBe("lit.solar");
+    });
+
+    it("EnableCustomDomain defaults to false", () => {
+      expect(template.Parameters.EnableCustomDomain.Default).toBe("false");
+    });
+
+    it("EnableCustomDomain allows only true/false", () => {
+      expect(template.Parameters.EnableCustomDomain.AllowedValues).toEqual([
+        "true",
+        "false",
+      ]);
+    });
+  });
+
+  describe("Conditions", () => {
+    it("HasCustomDomain equals Fn::Equals with EnableCustomDomain ref", () => {
+      expect(template.Conditions.HasCustomDomain).toEqual({
+        "Fn::Equals": [{ Ref: "EnableCustomDomain" }, "true"],
+      });
+    });
+  });
+
+  describe("WebsiteBucket", () => {
+    it("is AWS::S3::Bucket with HasCustomDomain condition", () => {
+      const bucket = template.Resources.WebsiteBucket;
+      expect(bucket).toBeDefined();
+      expect(bucket.Type).toBe("AWS::S3::Bucket");
+      expect(bucket.Condition).toBe("HasCustomDomain");
+    });
+  });
+
+  describe("WebsiteBucketPolicy", () => {
+    it("is AWS::S3::BucketPolicy with HasCustomDomain condition", () => {
+      const policy = template.Resources.WebsiteBucketPolicy;
+      expect(policy).toBeDefined();
+      expect(policy.Type).toBe("AWS::S3::BucketPolicy");
+      expect(policy.Condition).toBe("HasCustomDomain");
+    });
+
+    it("allows cloudfront.amazonaws.com s3:GetObject", () => {
+      const statement =
+        template.Resources.WebsiteBucketPolicy.Properties.PolicyDocument
+          .Statement[0];
+      expect(statement.Principal.Service).toBe("cloudfront.amazonaws.com");
+      expect(statement.Action).toBe("s3:GetObject");
+    });
+  });
+
+  describe("CloudFrontOAC", () => {
+    it("is OriginAccessControl with s3 origin, always signing, sigv4", () => {
+      const oac = template.Resources.CloudFrontOAC;
+      expect(oac).toBeDefined();
+      expect(oac.Type).toBe("AWS::CloudFront::OriginAccessControl");
+      expect(oac.Condition).toBe("HasCustomDomain");
+      const config = oac.Properties.OriginAccessControlConfig;
+      expect(config.OriginAccessControlOriginType).toBe("s3");
+      expect(config.SigningBehavior).toBe("always");
+      expect(config.SigningProtocol).toBe("sigv4");
+    });
+  });
+
+  describe("Certificate", () => {
+    it("is ACM Certificate with DNS validation and HostedZoneId ref", () => {
+      const cert = template.Resources.Certificate;
+      expect(cert).toBeDefined();
+      expect(cert.Type).toBe("AWS::CertificateManager::Certificate");
+      expect(cert.Condition).toBe("HasCustomDomain");
+      expect(cert.Properties.ValidationMethod).toBe("DNS");
+      expect(
+        cert.Properties.DomainValidationOptions[0].HostedZoneId,
+      ).toEqual({ Ref: "HostedZoneId" });
+    });
+  });
+
+  describe("CloudFrontDistribution", () => {
+    it("is Distribution with HasCustomDomain condition", () => {
+      const dist = template.Resources.CloudFrontDistribution;
+      expect(dist).toBeDefined();
+      expect(dist.Type).toBe("AWS::CloudFront::Distribution");
+      expect(dist.Condition).toBe("HasCustomDomain");
+    });
+
+    it("has S3Origin and ApiGatewayOrigin", () => {
+      const origins =
+        template.Resources.CloudFrontDistribution.Properties.DistributionConfig
+          .Origins;
+      expect(origins).toHaveLength(2);
+      const s3 = origins.find(
+        (o: { Id: string }) => o.Id === "S3Origin",
+      );
+      const api = origins.find(
+        (o: { Id: string }) => o.Id === "ApiGatewayOrigin",
+      );
+      expect(s3).toBeDefined();
+      expect(api).toBeDefined();
+      expect(api.OriginPath).toBe("/Prod");
+      expect(api.CustomOriginConfig.OriginProtocolPolicy).toBe("https-only");
+    });
+
+    it("DefaultCacheBehavior targets S3Origin with CachingOptimized", () => {
+      const dcb =
+        template.Resources.CloudFrontDistribution.Properties.DistributionConfig
+          .DefaultCacheBehavior;
+      expect(dcb.TargetOriginId).toBe("S3Origin");
+      expect(dcb.CachePolicyId).toBe(
+        "658327ea-f89d-4fab-a63d-7e88639e58f6",
+      );
+      expect(dcb.ViewerProtocolPolicy).toBe("redirect-to-https");
+      expect(dcb.AllowedMethods).toEqual(["GET", "HEAD"]);
+    });
+
+    it("has Aliases and sni-only ViewerCertificate", () => {
+      const config =
+        template.Resources.CloudFrontDistribution.Properties.DistributionConfig;
+      expect(config.Aliases).toEqual([{ Ref: "DomainName" }]);
+      expect(config.ViewerCertificate.SslSupportMethod).toBe("sni-only");
+    });
+
+    it("DefaultRootObject is index.html", () => {
+      expect(
+        template.Resources.CloudFrontDistribution.Properties.DistributionConfig
+          .DefaultRootObject,
+      ).toBe("index.html");
+    });
+
+    it("/api/* targets ApiGatewayOrigin with all 7 HTTP methods", () => {
+      const behaviors =
+        template.Resources.CloudFrontDistribution.Properties.DistributionConfig
+          .CacheBehaviors;
+      const apiBehavior = behaviors.find(
+        (b: { PathPattern: string }) => b.PathPattern === "/api/*",
+      );
+      expect(apiBehavior).toBeDefined();
+      expect(apiBehavior.TargetOriginId).toBe("ApiGatewayOrigin");
+      expect(apiBehavior.CachePolicyId).toBe(
+        "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+      );
+      expect(apiBehavior.OriginRequestPolicyId).toBe(
+        "b689b0a8-53d0-40ab-baf2-68738e2966ac",
+      );
+      expect(apiBehavior.AllowedMethods).toHaveLength(7);
+    });
+
+    it.each([
+      "/purchase/*",
+      "/early-access",
+      "/recover",
+      "/privacy",
+      "/refund",
+    ])("%s targets ApiGatewayOrigin with GET/HEAD only", (path) => {
+      const behaviors =
+        template.Resources.CloudFrontDistribution.Properties.DistributionConfig
+          .CacheBehaviors;
+      const behavior = behaviors.find(
+        (b: { PathPattern: string }) => b.PathPattern === path,
+      );
+      expect(behavior).toBeDefined();
+      expect(behavior.TargetOriginId).toBe("ApiGatewayOrigin");
+      expect(behavior.AllowedMethods).toEqual(["GET", "HEAD"]);
+    });
+  });
+
+  describe("DNS Records", () => {
+    it.each(["DnsRecordA", "DnsRecordAAAA"])(
+      "%s is conditioned alias record pointing to CloudFront",
+      (name) => {
+        const record = template.Resources[name];
+        expect(record).toBeDefined();
+        expect(record.Type).toBe("AWS::Route53::RecordSet");
+        expect(record.Condition).toBe("HasCustomDomain");
+        expect(record.Properties.AliasTarget.HostedZoneId).toBe(
+          "Z2FDTNDATAQYW2",
+        );
+      },
+    );
+
+    it("DnsRecordA is type A", () => {
+      expect(template.Resources.DnsRecordA.Properties.Type).toBe("A");
+    });
+
+    it("DnsRecordAAAA is type AAAA", () => {
+      expect(template.Resources.DnsRecordAAAA.Properties.Type).toBe("AAAA");
     });
   });
 
@@ -250,6 +448,13 @@ describe("template.yaml", () => {
       expect(policies).toHaveLength(1);
       expect(policies[0]).toHaveProperty("SSMParameterReadPolicy");
     });
+
+    it("exactly 7 resources have Condition: HasCustomDomain", () => {
+      const conditioned = Object.entries(template.Resources).filter(
+        ([, r]) => (r as CfnResource & { Condition?: string }).Condition === "HasCustomDomain",
+      );
+      expect(conditioned).toHaveLength(7);
+    });
   });
 
   describe("Outputs", () => {
@@ -270,5 +475,13 @@ describe("template.yaml", () => {
         "Fn::GetAtt": ["LicensesTable", "Arn"],
       });
     });
+
+    it.each(["CloudFrontDomainName", "WebsiteBucketName"])(
+      "%s output exists with HasCustomDomain condition",
+      (name) => {
+        expect(template.Outputs[name]).toBeDefined();
+        expect(template.Outputs[name].Condition).toBe("HasCustomDomain");
+      },
+    );
   });
 });
