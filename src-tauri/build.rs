@@ -3,6 +3,9 @@ use std::{env, fs, path::Path};
 fn main() {
     tauri_build::build();
 
+    println!("cargo:rerun-if-env-changed=LIT_TRIAL_SIGNING_KEY_B64");
+    println!("cargo:rerun-if-env-changed=LIT_LICENSE_VERIFYING_KEY_B64");
+
     let profile = env::var("PROFILE").unwrap();
     if profile != "debug" {
         embed_prod_key("LIT_TRIAL_SIGNING_KEY_B64", "prod_trial_signing.bin");
@@ -14,8 +17,6 @@ fn main() {
 }
 
 fn embed_prod_key(env_var: &str, filename: &str) {
-    println!("cargo:rerun-if-env-changed={env_var}");
-
     let b64 = env::var(env_var)
         .unwrap_or_else(|_| panic!("{env_var} must be set for release builds"));
 
