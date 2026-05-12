@@ -127,12 +127,19 @@ describe("DynamoDB integration", () => {
     const record = makeLicenseRecord();
     await createLicense(client, TABLE, record);
 
-    const fetched = await getByChargeId(
-      client,
-      TABLE,
-      record.stripe_charge_id,
-    );
+    const chargeId = record.stripe_charge_id;
+    if (chargeId === undefined) throw new Error("test setup: stripe_charge_id required");
+    const fetched = await getByChargeId(client, TABLE, chargeId);
     expect(fetched).toEqual(record);
+  });
+
+  it("record without stripe_charge_id is not found by getByChargeId", async () => {
+    const record = makeLicenseRecord({ stripe_charge_id: undefined });
+    await createLicense(client, TABLE, record);
+
+    const fetched = await getByLicenseId(client, TABLE, record.license_id);
+    expect(fetched).toBeDefined();
+    expect(fetched!.stripe_charge_id).toBeUndefined();
   });
 
   it("getByEmailHash returns matches", async () => {

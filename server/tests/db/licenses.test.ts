@@ -135,6 +135,18 @@ describe("getByChargeId", () => {
   });
 });
 
+describe("makeLicenseRecord optional fields", () => {
+  it("stripe_charge_id is present by default", () => {
+    const record = makeLicenseRecord();
+    expect(record.stripe_charge_id).toBe("ch_test_yyy");
+  });
+
+  it("stripe_charge_id can be explicitly set to undefined", () => {
+    const record = makeLicenseRecord({ stripe_charge_id: undefined });
+    expect(record.stripe_charge_id).toBeUndefined();
+  });
+});
+
 describe("getByLicenseId", () => {
   it("sends GetCommand with license_id key", async () => {
     mockSend.mockResolvedValue({ Item: makeLicenseRecord() });
