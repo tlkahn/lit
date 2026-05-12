@@ -24,7 +24,7 @@ impl LicenseStatusResponse {
         match ov {
             license::DevOverride::Trial => Self {
                 state: "trial".into(),
-                days_remaining: Some(license::trial::TRIAL_DURATION_SECS / 86400),
+                days_remaining: Some(license::trial::TRIAL_DURATION_SECS.div_ceil(86400)),
                 licensed_to: None,
             },
             license::DevOverride::TrialShort => Self {

@@ -42,7 +42,7 @@ pub fn compute_trial_state(start_ts: u64, now: u64, duration_secs: u64) -> Trial
         return TrialState::Expired;
     }
     let remaining = duration_secs - elapsed;
-    let days_left = remaining / 86400;
+    let days_left = remaining.div_ceil(86400);
     if remaining <= EXPIRING_SOON_THRESHOLD_SECS {
         TrialState::ExpiringSoon { days_left }
     } else {
@@ -180,6 +180,28 @@ mod tests {
         assert_eq!(
             compute_trial_state(start, start, TRIAL_DURATION_SECS),
             TrialState::Active { days_left: 14 }
+        );
+    }
+
+    #[test]
+    fn partial_day_rounds_up() {
+        // 1 second into a 14-day trial: 13 days + 86399 seconds remain → 14 days
+        let start = 0;
+        let now = 1;
+        assert_eq!(
+            compute_trial_state(start, now, TRIAL_DURATION_SECS),
+            TrialState::Active { days_left: 14 },
+        );
+    }
+
+    #[test]
+    fn partial_day_half_day_remaining() {
+        // 12 hours left → 1 day, not 0
+        let start = 0;
+        let now = TRIAL_DURATION_SECS - 43200;
+        assert_eq!(
+            compute_trial_state(start, now, TRIAL_DURATION_SECS),
+            TrialState::ExpiringSoon { days_left: 1 },
         );
     }
 
