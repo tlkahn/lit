@@ -8,6 +8,7 @@
     "test:watch": "bunx vitest",
     "test:integration": "bunx vitest run --config vitest.integration.config.ts",
     "test:staging": "bunx vitest run --config vitest.staging.config.ts",
+    "test:production": "bunx vitest run --config vitest.production.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
