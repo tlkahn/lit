@@ -20,7 +20,7 @@ git clone --depth 1 "$WEBSITE_REPO" "$WEBSITE_DIR"
 if [ -n "$TAG" ]; then
   echo "==> Updating download button for $TAG"
   VERSION="${TAG#v}"
-  URL="https://github.com/tlkahn/lit-releases/releases/download/${TAG}/Lit_${TAG}_aarch64.dmg"
+  URL="https://lit.solar/releases/Lit_${TAG}_aarch64.dmg"
   LABEL="Download ${TAG} for Mac"
 
   sed -i '' "s|^download_url:.*|download_url: \"$URL\"|"       "$WEBSITE_DIR/content/_index.md"
@@ -48,7 +48,7 @@ BUCKET=$(aws cloudformation describe-stacks \
   --query "Stacks[0].Outputs[?OutputKey=='WebsiteBucketName'].OutputValue" \
   --output text)
 echo "==> Syncing to s3://$BUCKET"
-aws s3 sync "$WEBSITE_DIR/public/" "s3://$BUCKET" --delete --region "$AWS_REGION"
+aws s3 sync "$WEBSITE_DIR/public/" "s3://$BUCKET" --delete --exclude "releases/*" --region "$AWS_REGION"
 
 DIST_ID=$(aws cloudfront list-distributions \
   --region "$AWS_REGION" \

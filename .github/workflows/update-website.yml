@@ -2,7 +2,7 @@ name: Update Website Download Button
 
 on:
   workflow_run:
-    workflows: ["Publish Release to Public Repo"]
+    workflows: ["Build and Release"]
     types: [completed]
   workflow_dispatch:
     inputs:
@@ -41,29 +41,39 @@ jobs:
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
-      - name: Verify DMG asset exists in public repo
-        env:
-          GH_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Get S3 bucket name
+        id: bucket
+        run: |
+          BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name lit-production \
+            --query "Stacks[0].Outputs[?OutputKey=='WebsiteBucketName'].OutputValue" \
+            --output text)
+          echo "name=$BUCKET" >> "$GITHUB_OUTPUT"
+
+      - name: Verify DMG exists in S3
         run: |
           TAG="${{ steps.tag.outputs.tag }}"
-          if ! gh release view "$TAG" --repo tlkahn/lit-releases &>/dev/null; then
-            echo "::error::Release $TAG not found in tlkahn/lit-releases"
+          aws s3api head-object \
+            --bucket "${{ steps.bucket.outputs.name }}" \
+            --key "releases/Lit_${TAG}_aarch64.dmg" || {
+            echo "::error::DMG not found in S3 at releases/Lit_${TAG}_aarch64.dmg"
             exit 1
-          fi
-          ASSETS=$(gh release view "$TAG" --repo tlkahn/lit-releases --json assets -q '.assets[].name')
-          if ! echo "$ASSETS" | grep -q "\.dmg$"; then
-            echo "::error::No DMG asset found in release $TAG"
-            exit 1
-          fi
-          echo "Assets found:"
-          echo "$ASSETS"
+          }
+          echo "DMG verified in S3: releases/Lit_${TAG}_aarch64.dmg"
 
       - name: Compute download values
         id: values
         run: |
           TAG="${{ steps.tag.outputs.tag }}"
           VERSION="${TAG#v}"
-          DOWNLOAD_URL="https://github.com/tlkahn/lit-releases/releases/download/${TAG}/Lit_${TAG}_aarch64.dmg"
+          DOWNLOAD_URL="https://lit.solar/releases/Lit_${TAG}_aarch64.dmg"
           DOWNLOAD_LABEL="Download ${TAG} for Mac"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "download_url=$DOWNLOAD_URL" >> "$GITHUB_OUTPUT"
@@ -119,24 +129,8 @@ jobs:
         run: hugo --minify
         working-directory: website
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
-
-      - name: Get S3 bucket name
-        id: bucket
-        run: |
-          BUCKET=$(aws cloudformation describe-stacks \
-            --stack-name lit-production \
-            --query "Stacks[0].Outputs[?OutputKey=='WebsiteBucketName'].OutputValue" \
-            --output text)
-          echo "name=$BUCKET" >> "$GITHUB_OUTPUT"
-
       - name: Sync to S3
-        run: aws s3 sync website/public/ s3://${{ steps.bucket.outputs.name }} --delete
+        run: aws s3 sync website/public/ s3://${{ steps.bucket.outputs.name }} --delete --exclude "releases/*"
 
       - name: Invalidate CloudFront
         run: |

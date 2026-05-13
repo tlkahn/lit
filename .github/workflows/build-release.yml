@@ -43,10 +43,26 @@ jobs:
           bun tauri build
           --target aarch64-apple-darwin
           --config '{"build":{"beforeBuildCommand":"bun run build"}}'
-      - name: Upload DMG to release
+      - name: Configure AWS credentials
         if: github.event_name == 'release'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Get S3 bucket name
+        if: github.event_name == 'release'
+        id: bucket
+        run: |
+          BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name lit-production \
+            --query "Stacks[0].Outputs[?OutputKey=='WebsiteBucketName'].OutputValue" \
+            --output text)
+          echo "name=$BUCKET" >> "$GITHUB_OUTPUT"
+
+      - name: Upload DMG to S3
+        if: github.event_name == 'release'
         run: |
           TAG="${{ github.event.release.tag_name }}"
           DMG=$(find src-tauri/target/aarch64-apple-darwin -name '*.dmg' -type f | head -1)
@@ -55,4 +71,4 @@ jobs:
             exit 1
           fi
           cp "$DMG" "Lit_${TAG}_aarch64.dmg"
-          gh release upload "$TAG" "Lit_${TAG}_aarch64.dmg" --clobber
+          aws s3 cp "Lit_${TAG}_aarch64.dmg" "s3://${{ steps.bucket.outputs.name }}/releases/Lit_${TAG}_aarch64.dmg"
