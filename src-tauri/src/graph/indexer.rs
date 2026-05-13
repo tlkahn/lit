@@ -846,6 +846,7 @@ impl GraphIndex {
         };
 
         let page_id_owned = page_id.to_string();
+        let noop_registry = crate::workspace::write_hash::WriteHashRegistry::new();
 
         let results: Vec<UnlinkedMention> = all_paths
             .par_iter()
@@ -857,7 +858,6 @@ impl GraphIndex {
                 None => false,
             })
             .flat_map_iter(|source_id| {
-                let noop_registry = crate::workspace::write_hash::WriteHashRegistry::new();
                 let page = match crate::workspace::ops::read_page(&self.workspace_root, source_id, &noop_registry) {
                     Ok(p) => p,
                     Err(_) => return Vec::new(),
