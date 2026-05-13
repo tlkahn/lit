@@ -36,8 +36,8 @@ interface SamApiEvent {
 }
 
 const templatePath = new URL("../template.yaml", import.meta.url).pathname;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const template = parse(readFileSync(templatePath, "utf-8"), {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   customTags: cfnTags as any,
 });
 
