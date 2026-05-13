@@ -1415,3 +1415,128 @@ describe("ContentArea menu://open-in-external-editor", () => {
     });
   });
 });
+
+describe("ContentArea external-reload cursor preservation", () => {
+  it("auto-reload preserves cursor position when buffer is clean", async () => {
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor").textContent).toContain("Some content");
+    });
+
+    const { getCurrentEditorView } = await import("../lib/editorViewRef");
+    const { EditorSelection } = await import("@codemirror/state");
+    const view = getCurrentEditorView()!;
+    expect(view).not.toBeNull();
+
+    act(() => {
+      view.dispatch({ selection: EditorSelection.cursor(10) });
+    });
+    expect(view.state.selection.main.head).toBe(10);
+
+    act(() => {
+      useWorkspaceStore.getState().triggerReload();
+    });
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().viewStates["Hello.md"]?.cursor).toBe(10);
+    });
+
+    await waitFor(() => {
+      const v = getCurrentEditorView()!;
+      expect(v.state.selection.main.head).toBe(10);
+    });
+  });
+
+  it("auto-reload clamps cursor when reloaded content is shorter", async () => {
+    let readCount = 0;
+    mockInvoke((cmd) => {
+      if (cmd === "read_page") {
+        readCount++;
+        if (readCount > 1) {
+          return {
+            body: "# Hi",
+            raw_yaml: "",
+            meta: { title: "Hi", frontmatter: {}, relative_path: "Hello.md", created_at: 1000, modified_at: 2000, file_type: "markdown" as const },
+          };
+        }
+        return samplePage;
+      }
+      if (cmd === "write_page") return null;
+      if (cmd === "parse_raw_yaml") return {};
+      if (cmd === "get_backlinks") return [];
+      if (cmd === "get_keymaps") return [];
+      if (cmd === "get_graph_subgraph") return { nodes: [], edges: [] };
+      if (cmd === "get_pagerank") return {};
+      if (cmd === "get_graph_positions") return {};
+      if (cmd === "acknowledge_file_hash") return null;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor").textContent).toContain("Some content");
+    });
+
+    const { getCurrentEditorView } = await import("../lib/editorViewRef");
+    const { EditorSelection } = await import("@codemirror/state");
+    const view = getCurrentEditorView()!;
+
+    act(() => {
+      view.dispatch({ selection: EditorSelection.cursor(19) });
+    });
+
+    act(() => {
+      useWorkspaceStore.getState().triggerReload();
+    });
+
+    await waitFor(() => {
+      const v = getCurrentEditorView()!;
+      expect(v.state.selection.main.head).toBeLessThanOrEqual(4);
+    });
+  });
+
+  it("Conflict dialog Reload preserves cursor position", async () => {
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor").textContent).toContain("Some content");
+    });
+
+    const { getCurrentEditorView } = await import("../lib/editorViewRef");
+    const { EditorSelection } = await import("@codemirror/state");
+    const view = getCurrentEditorView()!;
+
+    act(() => {
+      view.dispatch({ selection: EditorSelection.cursor(10) });
+    });
+
+    act(() => {
+      useWorkspaceStore.getState().setDirty(true);
+    });
+    act(() => {
+      useWorkspaceStore.getState().triggerReload();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("conflict-dialog")).toBeInTheDocument();
+    });
+
+    act(() => {
+      screen.getByTestId("conflict-reload").click();
+    });
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().viewStates["Hello.md"]?.cursor).toBe(10);
+    });
+
+    await waitFor(() => {
+      const v = getCurrentEditorView()!;
+      expect(v.state.selection.main.head).toBe(10);
+    });
+  });
+});

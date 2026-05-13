@@ -169,6 +169,10 @@ export function ContentArea() {
     if (isDirty) {
       setShowConflict(true);
     } else {
+      const view = editorViewRef.current;
+      if (view) {
+        saveViewState(currentPagePath, view.scrollDOM.scrollTop, view.state.selection.main.head);
+      }
       loadPage(currentPagePath);
     }
   }, [reloadTrigger, currentPagePath, isDirty, loadPage]);
@@ -668,6 +672,10 @@ export function ContentArea() {
         onReload={() => {
           setShowConflict(false);
           if (currentPagePath) {
+            const view = editorViewRef.current;
+            if (view) {
+              saveViewState(currentPagePath, view.scrollDOM.scrollTop, view.state.selection.main.head);
+            }
             loadPage(currentPagePath);
             setDirty(false);
           }
