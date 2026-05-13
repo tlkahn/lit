@@ -40,7 +40,7 @@ export function privacyPageHtml(): string {
 <li>Your license will no longer pass online validation checks.</li>
 <li>This action is irreversible — you will need to purchase a new license afterward.</li>
 </ul>
-<p>To request deletion, email <a href="mailto:privacy@lit.solar">privacy@lit.solar</a> from the email address associated with your license.</p>
+<p>To request deletion, email <a href="mailto:support@lit.solar">support@lit.solar</a> from the email address associated with your license.</p>
 
 <h2>Third Parties</h2>
 <ul>
@@ -52,7 +52,7 @@ export function privacyPageHtml(): string {
 <p>We may update this policy. Changes will be posted at this URL. Continued use of Lit after changes constitutes acceptance.</p>
 
 <h2>Contact</h2>
-<p>For privacy inquiries or deletion requests: <a href="mailto:privacy@lit.solar">privacy@lit.solar</a></p>
+<p>For privacy inquiries or deletion requests: <a href="mailto:support@lit.solar">support@lit.solar</a></p>
 <hr>
 <p class="footer"><a href="/refund">Refund Policy</a></p>`);
 }

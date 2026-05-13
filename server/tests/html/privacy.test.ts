@@ -31,7 +31,7 @@ describe("privacyPageHtml", () => {
 
   it("explains how to request deletion", () => {
     const html = privacyPageHtml();
-    expect(html).toContain("privacy@lit.solar");
+    expect(html).toContain("support@lit.solar");
     expect(html).toContain("deletion");
   });
 

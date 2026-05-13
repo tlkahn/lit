@@ -25,7 +25,7 @@ describe("handlePrivacyPage", () => {
 
     expect(result.statusCode).toBe(200);
     expect(result.body).toContain("Privacy Policy");
-    expect(result.body).toContain("privacy@lit.solar");
+    expect(result.body).toContain("support@lit.solar");
   });
 
   it("returns Content-Type text/html header", async () => {

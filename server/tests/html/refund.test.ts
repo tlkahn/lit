@@ -17,7 +17,7 @@ describe("refundPageHtml", () => {
 
   it("explains how to request a refund", () => {
     const html = refundPageHtml();
-    expect(html).toContain("privacy@lit.solar");
+    expect(html).toContain("support@lit.solar");
   });
 
   it("explains what happens after revocation", () => {

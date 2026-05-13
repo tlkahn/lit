@@ -9,7 +9,7 @@ export function refundPageHtml(): string {
 <p>If you are not satisfied with Lit, you may request a full refund within 14 days of purchase. No questions asked.</p>
 
 <h2>How to Request a Refund</h2>
-<p>Email <a href="mailto:privacy@lit.solar">privacy@lit.solar</a> from the email address you used to purchase, with the subject line "Refund request". Include your license ID if you have it (not required).</p>
+<p>Email <a href="mailto:support@lit.solar">support@lit.solar</a> from the email address you used to purchase, with the subject line "Refund request". Include your license ID if you have it (not required).</p>
 <p>Refunds are typically processed within 3–5 business days. The refund will appear on the original payment method used at checkout.</p>
 
 <h2>What Happens After a Refund</h2>
@@ -26,7 +26,7 @@ export function refundPageHtml(): string {
 <p>Refund requests made after the 14-day window are handled on a case-by-case basis. Contact us and we will do our best to help.</p>
 
 <h2>Contact</h2>
-<p><a href="mailto:privacy@lit.solar">privacy@lit.solar</a></p>
+<p><a href="mailto:support@lit.solar">support@lit.solar</a></p>
 <hr>
 <p class="footer"><a href="/privacy">Privacy Policy</a></p>`);
 }
