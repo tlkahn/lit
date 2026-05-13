@@ -444,7 +444,7 @@ describe("ContentArea conflict handling", () => {
     expect(screen.queryByTestId("conflict-dialog")).not.toBeInTheDocument();
   });
 
-  it("shows conflict dialog when reloadTrigger increments and buffer is dirty", async () => {
+  it("silently acknowledges external change when buffer is dirty", async () => {
     useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
     render(<ContentArea />);
 
@@ -458,122 +458,13 @@ describe("ContentArea conflict handling", () => {
 
     act(() => {
       useWorkspaceStore.getState().triggerReload();
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("conflict-dialog")).toBeInTheDocument();
-    });
-  });
-
-  it("Keep Mine dismisses dialog, keeps local content", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
-    render(<ContentArea />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("editor").textContent).toContain("Some content");
-    });
-
-    act(() => {
-      useWorkspaceStore.getState().setDirty(true);
-    });
-    act(() => {
-      useWorkspaceStore.getState().triggerReload();
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("conflict-dialog")).toBeInTheDocument();
-    });
-
-    act(() => {
-      screen.getByTestId("conflict-keep-mine").click();
-    });
-
-    expect(screen.queryByTestId("conflict-dialog")).not.toBeInTheDocument();
-    expect(screen.getByTestId("editor").textContent).toContain("Some content");
-  });
-
-  it("Keep Mine calls acknowledge_file_hash to prevent re-trigger", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
-    render(<ContentArea />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("editor").textContent).toContain("Some content");
-    });
-
-    act(() => {
-      useWorkspaceStore.getState().setDirty(true);
-    });
-    act(() => {
-      useWorkspaceStore.getState().triggerReload();
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("conflict-dialog")).toBeInTheDocument();
-    });
-
-    act(() => {
-      screen.getByTestId("conflict-keep-mine").click();
     });
 
     const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("acknowledge_file_hash", { relativePath: "Hello.md" });
-  });
-
-  it("Reload dismisses dialog, loads disk content, clears dirty", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
-    render(<ContentArea />);
-
     await waitFor(() => {
-      expect(screen.getByTestId("editor").textContent).toContain("Some content");
+      expect(invoke).toHaveBeenCalledWith("acknowledge_file_hash", { relativePath: "Hello.md" });
     });
-
-    act(() => {
-      useWorkspaceStore.getState().setDirty(true);
-    });
-    act(() => {
-      useWorkspaceStore.getState().triggerReload();
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("conflict-dialog")).toBeInTheDocument();
-    });
-
-    act(() => {
-      screen.getByTestId("conflict-reload").click();
-    });
-
     expect(screen.queryByTestId("conflict-dialog")).not.toBeInTheDocument();
-    await waitFor(() => {
-      expect(useWorkspaceStore.getState().isDirty).toBe(false);
-    });
-  });
-
-  it("page switch dismisses conflict dialog", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
-    render(<ContentArea />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("editor").textContent).toContain("Some content");
-    });
-
-    act(() => {
-      useWorkspaceStore.getState().setDirty(true);
-    });
-    act(() => {
-      useWorkspaceStore.getState().triggerReload();
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("conflict-dialog")).toBeInTheDocument();
-    });
-
-    act(() => {
-      useWorkspaceStore.getState().selectPage("Other.md");
-    });
-
-    await waitFor(() => {
-      expect(screen.queryByTestId("conflict-dialog")).not.toBeInTheDocument();
-    });
   });
 });
 
@@ -1499,44 +1390,4 @@ describe("ContentArea external-reload cursor preservation", () => {
     });
   });
 
-  it("Conflict dialog Reload preserves cursor position", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
-    render(<ContentArea />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("editor").textContent).toContain("Some content");
-    });
-
-    const { getCurrentEditorView } = await import("../lib/editorViewRef");
-    const { EditorSelection } = await import("@codemirror/state");
-    const view = getCurrentEditorView()!;
-
-    act(() => {
-      view.dispatch({ selection: EditorSelection.cursor(10) });
-    });
-
-    act(() => {
-      useWorkspaceStore.getState().setDirty(true);
-    });
-    act(() => {
-      useWorkspaceStore.getState().triggerReload();
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("conflict-dialog")).toBeInTheDocument();
-    });
-
-    act(() => {
-      screen.getByTestId("conflict-reload").click();
-    });
-
-    await waitFor(() => {
-      expect(useWorkspaceStore.getState().viewStates["Hello.md"]?.cursor).toBe(10);
-    });
-
-    await waitFor(() => {
-      const v = getCurrentEditorView()!;
-      expect(v.state.selection.main.head).toBe(10);
-    });
-  });
 });

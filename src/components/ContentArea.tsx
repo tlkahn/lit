@@ -13,11 +13,9 @@ import { extractHeadings, type Heading } from "../lib/headings";
 import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
 import { PdfViewer } from "./PdfViewer";
 import { BottomPanel } from "./BottomPanel";
-import { ConflictDialog } from "./ConflictDialog";
 import { buildHeadingTree, applyRename, applyMove, insertChild, insertSibling, insertDangling, resolveDeleteFallback, findNode } from "../lib/headingTree";
 import { YamlHighlighter } from "./YamlHighlighter";
 import { useKeymaps } from "../hooks/useKeymaps";
-import { useModalLock } from "../hooks/useModalLock";
 
 const LazyMindmapView = lazy(() => import("./MindmapView"));
 const LazyGraphView = lazy(() => import("./GraphView"));
@@ -67,8 +65,6 @@ export function ContentArea() {
   const [graphInitialMode, setGraphInitialMode] = useState<"full" | "local" | undefined>(undefined);
   const [graphEverOpened, setGraphEverOpened] = useState(false);
   const [mindmapSelectedId, setMindmapSelectedId] = useState<string | null>(null);
-  const [showConflict, setShowConflict] = useState(false);
-  useModalLock(showConflict);
   const [title, setTitle] = useState("");
   const [editingTitle, setEditingTitle] = useState("");
   const [frontmatter, setFrontmatter] = useState<Record<string, unknown>>({});
@@ -149,7 +145,6 @@ export function ContentArea() {
     setEditingYaml(false);
     setYamlDraft("");
     setYamlError(null);
-    setShowConflict(false);
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       if (headingDebounceRef.current) clearTimeout(headingDebounceRef.current);
@@ -167,7 +162,7 @@ export function ContentArea() {
   useEffect(() => {
     if (reloadTrigger === 0 || !currentPagePath) return;
     if (isDirty) {
-      setShowConflict(true);
+      acknowledgeFileHash(currentPagePath);
     } else {
       const view = editorViewRef.current;
       if (view) {
@@ -661,26 +656,6 @@ export function ContentArea() {
         </div>
       )}
       <BottomPanel pageId={currentPagePath} />
-      <ConflictDialog
-        open={showConflict}
-        onKeepMine={() => {
-          setShowConflict(false);
-          if (currentPagePath) {
-            acknowledgeFileHash(currentPagePath);
-          }
-        }}
-        onReload={() => {
-          setShowConflict(false);
-          if (currentPagePath) {
-            const view = editorViewRef.current;
-            if (view) {
-              saveViewState(currentPagePath, view.scrollDOM.scrollTop, view.state.selection.main.head);
-            }
-            loadPage(currentPagePath);
-            setDirty(false);
-          }
-        }}
-      />
     </main>
   );
 }
