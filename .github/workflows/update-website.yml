@@ -60,13 +60,13 @@ jobs:
       - name: Verify DMG exists in S3
         run: |
           TAG="${{ steps.tag.outputs.tag }}"
-          aws s3api head-object \
-            --bucket "${{ steps.bucket.outputs.name }}" \
-            --key "releases/Lit_${TAG}_aarch64.dmg" || {
-            echo "::error::DMG not found in S3 at releases/Lit_${TAG}_aarch64.dmg"
+          URL="https://lit.solar/releases/Lit_${TAG}_aarch64.dmg"
+          STATUS=$(curl -sI "$URL" -o /dev/null -w "%{http_code}")
+          if [ "$STATUS" != "200" ]; then
+            echo "::error::DMG not accessible at $URL (HTTP $STATUS)"
             exit 1
-          }
-          echo "DMG verified in S3: releases/Lit_${TAG}_aarch64.dmg"
+          fi
+          echo "DMG verified: $URL (HTTP $STATUS)"
 
       - name: Compute download values
         id: values
