@@ -10,6 +10,7 @@ import {
   createPage,
   renamePage,
   deletePage,
+  acknowledgeFileHash,
   parseRawYaml,
   openWorkspaceWindow,
   getStartupContext,
@@ -91,6 +92,8 @@ describe("ipc", () => {
         case "rename_page":
           return "New.md";
         case "delete_page":
+          return null;
+        case "acknowledge_file_hash":
           return null;
         case "parse_raw_yaml":
           return { title: "Hello" };
@@ -457,6 +460,12 @@ describe("ipc", () => {
     await deletePage("Doomed.md");
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("delete_page", { relativePath: "Doomed.md" });
+  });
+
+  it("acknowledgeFileHash calls with relativePath", async () => {
+    await acknowledgeFileHash("Hello.md");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("acknowledge_file_hash", { relativePath: "Hello.md" });
   });
 
   it("openWorkspaceWindow calls with path", async () => {

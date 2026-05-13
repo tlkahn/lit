@@ -5,7 +5,7 @@ import { EditorView } from "@codemirror/view";
 import { EditorSelection } from "@codemirror/state";
 import { listen } from "@tauri-apps/api/event";
 import { useWorkspaceStore } from "../stores/workspace";
-import { readPage, writePage, parseRawYaml, resolveWikilink, createPage as ipcCreatePage } from "../lib/ipc";
+import { readPage, writePage, parseRawYaml, resolveWikilink, createPage as ipcCreatePage, acknowledgeFileHash } from "../lib/ipc";
 import { executeCommand } from "../lib/commandRegistry";
 import { navigateWikilink } from "../lib/wikilinkNavigation";
 import { setCurrentEditorView } from "../lib/editorViewRef";
@@ -659,7 +659,12 @@ export function ContentArea() {
       <BottomPanel pageId={currentPagePath} />
       <ConflictDialog
         open={showConflict}
-        onKeepMine={() => setShowConflict(false)}
+        onKeepMine={() => {
+          setShowConflict(false);
+          if (currentPagePath) {
+            acknowledgeFileHash(currentPagePath);
+          }
+        }}
         onReload={() => {
           setShowConflict(false);
           if (currentPagePath) {

@@ -20,11 +20,11 @@ impl WriteHashRegistry {
         self.hashes.lock().unwrap().insert(path.to_path_buf(), hash);
     }
 
-    pub fn check_and_clear(&self, path: &std::path::Path, content: &str) -> bool {
+    pub fn check(&self, path: &std::path::Path, content: &str) -> bool {
         let hash = compute_hash(content);
-        let mut map = self.hashes.lock().unwrap();
-        match map.remove(path) {
-            Some(recorded) => recorded == hash,
+        let map = self.hashes.lock().unwrap();
+        match map.get(path) {
+            Some(&recorded) => recorded == hash,
             None => false,
         }
     }
@@ -46,7 +46,7 @@ mod tests {
         let registry = WriteHashRegistry::new();
         let path = Path::new("test.md");
         registry.record(path, "hello world");
-        assert!(registry.check_and_clear(path, "hello world"));
+        assert!(registry.check(path, "hello world"));
     }
 
     #[test]
@@ -54,22 +54,22 @@ mod tests {
         let registry = WriteHashRegistry::new();
         let path = Path::new("test.md");
         registry.record(path, "hello world");
-        assert!(!registry.check_and_clear(path, "different content"));
+        assert!(!registry.check(path, "different content"));
     }
 
     #[test]
     fn check_no_record() {
         let registry = WriteHashRegistry::new();
         let path = Path::new("unknown.md");
-        assert!(!registry.check_and_clear(path, "anything"));
+        assert!(!registry.check(path, "anything"));
     }
 
     #[test]
-    fn check_clears_entry() {
+    fn check_without_clearing_matching_hash() {
         let registry = WriteHashRegistry::new();
         let path = Path::new("test.md");
         registry.record(path, "hello world");
-        assert!(registry.check_and_clear(path, "hello world"));
-        assert!(!registry.check_and_clear(path, "hello world"));
+        assert!(registry.check(path, "hello world"));
+        assert!(registry.check(path, "hello world"));
     }
 }

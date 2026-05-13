@@ -799,7 +799,8 @@ impl GraphIndex {
         let node_id = resolved.node_id.ok_or_else(|| GraphError::NodeNotFound {
             id: target.to_string(),
         })?;
-        let page = crate::workspace::ops::read_page(&self.workspace_root, &node_id)
+        let noop_registry = crate::workspace::write_hash::WriteHashRegistry::new();
+        let page = crate::workspace::ops::read_page(&self.workspace_root, &node_id, &noop_registry)
             .map_err(|e| GraphError::Other(e.to_string()))?;
         Ok(extract_headings(&page.body))
     }
@@ -856,7 +857,8 @@ impl GraphIndex {
                 None => false,
             })
             .flat_map_iter(|source_id| {
-                let page = match crate::workspace::ops::read_page(&self.workspace_root, source_id) {
+                let noop_registry = crate::workspace::write_hash::WriteHashRegistry::new();
+                let page = match crate::workspace::ops::read_page(&self.workspace_root, source_id, &noop_registry) {
                     Ok(p) => p,
                     Err(_) => return Vec::new(),
                 };

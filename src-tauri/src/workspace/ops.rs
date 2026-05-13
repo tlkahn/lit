@@ -8,12 +8,13 @@ use std::fs;
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
-pub fn read_page(root: &Path, relative_path: &str) -> Result<PageContent, WorkspaceError> {
+pub fn read_page(root: &Path, relative_path: &str, registry: &WriteHashRegistry) -> Result<PageContent, WorkspaceError> {
     let full_path = root.join(relative_path);
     if !full_path.exists() {
         return Err(WorkspaceError::PageNotFound(relative_path.to_string()));
     }
     let raw = fs::read_to_string(&full_path)?;
+    registry.record(&full_path, &raw);
     let parsed = parse_frontmatter(&raw);
 
     let file_name = full_path
@@ -139,6 +140,16 @@ pub fn rename_page(
     Ok(normalize_to_nfc(&new_relative))
 }
 
+pub fn acknowledge_file_hash(root: &Path, relative_path: &str, registry: &WriteHashRegistry) -> Result<(), WorkspaceError> {
+    let full_path = root.join(relative_path);
+    if !full_path.exists() {
+        return Err(WorkspaceError::PageNotFound(relative_path.to_string()));
+    }
+    let raw = fs::read_to_string(&full_path)?;
+    registry.record(&full_path, &raw);
+    Ok(())
+}
+
 pub fn delete_page(root: &Path, relative_path: &str) -> Result<(), WorkspaceError> {
     let full_path = root.join(relative_path);
     if !full_path.exists() {
@@ -157,13 +168,14 @@ mod tests {
     #[test]
     fn read_page_with_frontmatter() {
         let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
         fs::write(
             dir.path().join("test.md"),
             "---\ntitle: Hello\n---\n# Content\n",
         )
         .unwrap();
 
-        let page = read_page(dir.path(), "test.md").unwrap();
+        let page = read_page(dir.path(), "test.md", &registry).unwrap();
         assert_eq!(page.meta.title, "test");
         assert_eq!(page.body, "# Content\n");
         assert!(page.meta.frontmatter.contains_key("title"));
@@ -172,9 +184,10 @@ mod tests {
     #[test]
     fn read_page_without_frontmatter() {
         let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
         fs::write(dir.path().join("plain.md"), "# Just markdown\n").unwrap();
 
-        let page = read_page(dir.path(), "plain.md").unwrap();
+        let page = read_page(dir.path(), "plain.md", &registry).unwrap();
         assert!(page.meta.frontmatter.is_empty());
         assert_eq!(page.body, "# Just markdown\n");
     }
@@ -182,8 +195,22 @@ mod tests {
     #[test]
     fn read_nonexistent_page() {
         let dir = TempDir::new().unwrap();
-        let result = read_page(dir.path(), "nope.md");
+        let registry = WriteHashRegistry::new();
+        let result = read_page(dir.path(), "nope.md", &registry);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn read_page_records_hash() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        let content = "---\ntitle: Hello\n---\n# Content\n";
+        fs::write(dir.path().join("test.md"), content).unwrap();
+
+        read_page(dir.path(), "test.md", &registry).unwrap();
+
+        let full_path = dir.path().join("test.md");
+        assert!(registry.check(&full_path, content));
     }
 
     #[test]
@@ -230,7 +257,7 @@ mod tests {
 
         let expected_content = serialize_frontmatter(&fm, body);
         let full_path = dir.path().join("hashed.md");
-        assert!(registry.check_and_clear(&full_path, &expected_content));
+        assert!(registry.check(&full_path, &expected_content));
     }
 
     #[test]
@@ -307,14 +334,36 @@ mod tests {
     }
 
     #[test]
+    fn acknowledge_records_current_disk_hash() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        let content = "# Acknowledged\n";
+        fs::write(dir.path().join("ack.md"), content).unwrap();
+
+        acknowledge_file_hash(dir.path(), "ack.md", &registry).unwrap();
+
+        let full_path = dir.path().join("ack.md");
+        assert!(registry.check(&full_path, content));
+    }
+
+    #[test]
+    fn acknowledge_nonexistent_file_errors() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        let result = acknowledge_file_hash(dir.path(), "missing.md", &registry);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn create_and_read_page_with_emoji_title() {
         let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
         let meta = create_page(dir.path(), "🚀 Launch", None).unwrap();
         assert_eq!(meta.title, "🚀 Launch");
         assert_eq!(meta.relative_path, "🚀 Launch.md");
         assert!(dir.path().join("🚀 Launch.md").exists());
 
-        let page = read_page(dir.path(), "🚀 Launch.md").unwrap();
+        let page = read_page(dir.path(), "🚀 Launch.md", &registry).unwrap();
         assert_eq!(page.meta.title, "🚀 Launch");
     }
 }

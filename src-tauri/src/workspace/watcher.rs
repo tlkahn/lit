@@ -151,7 +151,7 @@ pub fn is_external_change(path: &Path, registry: &WriteHashRegistry) -> bool {
         Ok(c) => c,
         Err(_) => return true,
     };
-    !registry.check_and_clear(path, &content)
+    !registry.check(path, &content)
 }
 
 fn is_relevant_file(path: &Path, _root: &Path) -> bool {
@@ -281,14 +281,14 @@ mod tests {
     }
 
     #[test]
-    fn hash_consumed_after_check() {
+    fn hash_retained_after_check() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("test.md");
         std::fs::write(&path, "hello").unwrap();
         let registry = WriteHashRegistry::new();
         registry.record(&path, "hello");
         assert!(!is_external_change(&path, &registry));
-        assert!(is_external_change(&path, &registry));
+        assert!(!is_external_change(&path, &registry));
     }
 
     #[test]

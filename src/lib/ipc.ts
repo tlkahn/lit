@@ -64,6 +64,10 @@ export async function deletePage(relativePath: string): Promise<void> {
   return invoke<void>("delete_page", { relativePath });
 }
 
+export async function acknowledgeFileHash(relativePath: string): Promise<void> {
+  return invoke<void>("acknowledge_file_hash", { relativePath });
+}
+
 export async function parseRawYaml(rawYaml: string): Promise<Record<string, unknown>> {
   return invoke<Record<string, unknown>>("parse_raw_yaml", { rawYaml });
 }

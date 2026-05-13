@@ -87,6 +87,7 @@ beforeEach(() => {
     if (cmd === "get_graph_subgraph") return { nodes: [], edges: [] };
     if (cmd === "get_pagerank") return {};
     if (cmd === "get_graph_positions") return {};
+    if (cmd === "acknowledge_file_hash") return null;
     throw new Error(`Unknown command: ${cmd}`);
   });
 });
@@ -489,6 +490,33 @@ describe("ContentArea conflict handling", () => {
 
     expect(screen.queryByTestId("conflict-dialog")).not.toBeInTheDocument();
     expect(screen.getByTestId("editor").textContent).toContain("Some content");
+  });
+
+  it("Keep Mine calls acknowledge_file_hash to prevent re-trigger", async () => {
+    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor").textContent).toContain("Some content");
+    });
+
+    act(() => {
+      useWorkspaceStore.getState().setDirty(true);
+    });
+    act(() => {
+      useWorkspaceStore.getState().triggerReload();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("conflict-dialog")).toBeInTheDocument();
+    });
+
+    act(() => {
+      screen.getByTestId("conflict-keep-mine").click();
+    });
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("acknowledge_file_hash", { relativePath: "Hello.md" });
   });
 
   it("Reload dismisses dialog, loads disk content, clears dirty", async () => {

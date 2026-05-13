@@ -454,7 +454,7 @@ pub fn link_unlinked_mention(
     let root =
         crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
 
-    let page = crate::workspace::ops::read_page(&root, &source_id)
+    let page = crate::workspace::ops::read_page(&root, &source_id, &registry)
         .map_err(|e| e.to_string())?;
 
     let new_body =
@@ -826,13 +826,12 @@ mod tests {
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
 
         // Read the source page, replace, and write back
-        let page = crate::workspace::ops::read_page(dir.path(), "other.md").unwrap();
+        let registry = crate::workspace::write_hash::WriteHashRegistry::new();
+        let page = crate::workspace::ops::read_page(dir.path(), "other.md", &registry).unwrap();
         let new_body =
             crate::graph::extract::replace_mention_with_wikilink(&page.body, 1, "Alice")
                 .unwrap();
         assert_eq!(new_body, "I met [[Alice]] yesterday.");
-
-        let registry = crate::workspace::write_hash::WriteHashRegistry::new();
         let fm: indexmap::IndexMap<String, serde_yaml::Value> = indexmap::IndexMap::new();
         crate::workspace::ops::write_page(dir.path(), "other.md", &new_body, &fm, &registry)
             .unwrap();

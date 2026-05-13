@@ -263,6 +263,7 @@ pub fn run() {
             commands::page::create_page,
             commands::page::rename_page,
             commands::page::delete_page,
+            commands::page::acknowledge_file_hash,
             commands::page::parse_raw_yaml,
             commands::theme::list_themes,
             commands::theme::read_theme_css,
