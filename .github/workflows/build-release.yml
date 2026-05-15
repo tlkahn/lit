@@ -53,6 +53,13 @@ jobs:
           CERT_ID=$(echo "$CERT_INFO" | grep "Developer ID Application" | awk -F'"' '{print $2}')
           echo "APPLE_SIGNING_IDENTITY=$CERT_ID" >> $GITHUB_ENV
           rm certificate.p12
+      - name: Sign libpdfium.dylib
+        run: |
+          codesign --sign "${{ env.APPLE_SIGNING_IDENTITY }}" \
+            --timestamp \
+            --force \
+            --options runtime \
+            src-tauri/libs/libpdfium.dylib
       - name: Build Tauri app
         env:
           LIT_TRIAL_SIGNING_KEY_B64: ${{ secrets.LIT_TRIAL_SIGNING_KEY_B64 }}
