@@ -108,6 +108,144 @@ describe("buildDecorations — headings", () => {
   });
 });
 
+describe("buildDecorations — inline elements inside headings", () => {
+  it("renders link inside heading", () => {
+    const doc = "## [Click](https://example.com)\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.find((d) => d.class === "cm-preview-h2")).toBeDefined();
+    expect(decos.find((d) => d.class === "cm-preview-link")).toBeDefined();
+    expect(decos.some((d) => d.type === "replace" && d.from === 0 && d.to === 3)).toBe(true);
+    view.destroy();
+  });
+
+  it("renders wikilink inside heading", () => {
+    const doc = "## [[Page Name]]\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.find((d) => d.class === "cm-preview-h2")).toBeDefined();
+    const wl = decos.find((d) => d.class === "cm-preview-wikilink");
+    expect(wl).toBeDefined();
+    expect(decos.some((d) => d.type === "replace" && d.from === 3 && d.to === 5)).toBe(true);
+    expect(decos.some((d) => d.type === "replace" && d.from === 14 && d.to === 16)).toBe(true);
+    view.destroy();
+  });
+
+  it("renders aliased wikilink inside heading", () => {
+    const doc = "## [[Page|Display]]\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.find((d) => d.class === "cm-preview-h2")).toBeDefined();
+    const wl = decos.find((d) => d.class === "cm-preview-wikilink");
+    expect(wl).toBeDefined();
+    expect(wl!.from).toBe(10);
+    expect(wl!.to).toBe(17);
+    view.destroy();
+  });
+
+  it("renders italic inside heading", () => {
+    const doc = "## *italic text*\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.find((d) => d.class === "cm-preview-h2")).toBeDefined();
+    expect(decos.find((d) => d.class === "cm-preview-italic")).toBeDefined();
+    expect(decos.some((d) => d.type === "replace" && d.from === 3 && d.to === 4)).toBe(true);
+    expect(decos.some((d) => d.type === "replace" && d.from === 15 && d.to === 16)).toBe(true);
+    view.destroy();
+  });
+
+  it("renders bold inside heading", () => {
+    const doc = "## **bold text**\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.find((d) => d.class === "cm-preview-h2")).toBeDefined();
+    expect(decos.find((d) => d.class === "cm-preview-bold")).toBeDefined();
+    view.destroy();
+  });
+
+  it("renders inline code inside heading", () => {
+    const doc = "## `code`\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.find((d) => d.class === "cm-preview-h2")).toBeDefined();
+    expect(decos.find((d) => d.class === "cm-preview-code-inline")).toBeDefined();
+    view.destroy();
+  });
+
+  it("renders inline math inside heading as widget", () => {
+    const doc = "## $E=mc^2$\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.type === "replace" && d.from === 0 && d.to === 3)).toBe(true);
+    const math = decos.find((d) => d.widget && d.from === 3);
+    expect(math).toBeDefined();
+    view.destroy();
+  });
+
+  it("renders image inside heading as widget", () => {
+    const doc = "## ![alt](img.png)\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.type === "replace" && d.from === 0 && d.to === 3)).toBe(true);
+    const img = decos.find((d) => d.widget && d.from === 3);
+    expect(img).toBeDefined();
+    view.destroy();
+  });
+
+  it("renders inline comment inside heading", () => {
+    const doc = "## Title %%hidden%%\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.find((d) => d.class === "cm-preview-h2")).toBeDefined();
+    expect(decos.find((d) => d.class === "cm-preview-comment")).toBeDefined();
+    view.destroy();
+  });
+
+  it("shows raw syntax when cursor is on heading line with inline elements", () => {
+    const doc = "## [Click](https://example.com)\n\nother";
+    const view = makeView(doc, 5);
+    const decos = collectDecos(view);
+    const headingOrInline = decos.filter(
+      (d) => d.class?.startsWith("cm-preview-") || (d.type === "replace" && d.to <= 31),
+    );
+    expect(headingOrInline).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("renders multiple inline elements inside heading", () => {
+    const doc = "## **bold** and `code` here\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.find((d) => d.class === "cm-preview-h2")).toBeDefined();
+    expect(decos.find((d) => d.class === "cm-preview-bold")).toBeDefined();
+    expect(decos.find((d) => d.class === "cm-preview-code-inline")).toBeDefined();
+    view.destroy();
+  });
+
+  it("renders nested link inside italic inside heading", () => {
+    const doc = "## *[text](url)*\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.find((d) => d.class === "cm-preview-h2")).toBeDefined();
+    expect(decos.find((d) => d.class === "cm-preview-italic")).toBeDefined();
+    expect(decos.find((d) => d.class === "cm-preview-link")).toBeDefined();
+    view.destroy();
+  });
+
+  it("renders inline elements across all heading levels", () => {
+    const doc = "# [[Page]]\n\n### `code`\n\n###### *italic*\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.find((d) => d.class === "cm-preview-h1")).toBeDefined();
+    expect(decos.find((d) => d.class === "cm-preview-wikilink")).toBeDefined();
+    expect(decos.find((d) => d.class === "cm-preview-h3")).toBeDefined();
+    expect(decos.find((d) => d.class === "cm-preview-code-inline")).toBeDefined();
+    expect(decos.find((d) => d.class === "cm-preview-h6")).toBeDefined();
+    expect(decos.find((d) => d.class === "cm-preview-italic")).toBeDefined();
+    view.destroy();
+  });
+});
+
 describe("buildDecorations — bold and italic", () => {
   it("hides ** markers and applies bold class", () => {
     const doc = "**bold** text\n\nother";

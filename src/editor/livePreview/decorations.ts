@@ -119,6 +119,32 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
   return { decorations: result, cursorSensitiveLines };
 }
 
+function processInlineChildren(
+  state: EditorState,
+  node: ReturnType<typeof syntaxTree>["topNode"],
+  decos: { from: number; to: number; deco: Decoration }[],
+) {
+  for (let child = node.firstChild; child; child = child.nextSibling) {
+    if (child.name === "Emphasis") {
+      addEmphasisDecos(state, child.from, child.to, "cm-preview-italic", child, decos);
+    } else if (child.name === "StrongEmphasis") {
+      addEmphasisDecos(state, child.from, child.to, "cm-preview-bold", child, decos);
+    } else if (child.name === "WikiLink") {
+      addWikilinkDecos(state, child.from, child.to, child, decos);
+    } else if (child.name === "Link") {
+      addLinkDecos(state, child.from, child.to, child, decos);
+    } else if (child.name === "InlineCode") {
+      addInlineCodeDecos(state, child.from, child.to, child, decos);
+    } else if (child.name === "InlineMath") {
+      addInlineMathDecos(state, child.from, child.to, child, decos);
+    } else if (child.name === "Image") {
+      addImageDecos(state, child.from, child.to, child, decos);
+    } else if (child.name === "InlineComment") {
+      addInlineCommentDecos(state, child.from, child.to, decos);
+    }
+  }
+}
+
 function addHeadingDecos(
   state: EditorState,
   from: number,
@@ -143,6 +169,8 @@ function addHeadingDecos(
   if (contentFrom < to) {
     decos.push({ from: contentFrom, to, deco: Decoration.mark({ class: cls }) });
   }
+
+  processInlineChildren(state, node, decos);
 }
 
 function addEmphasisDecos(
@@ -171,25 +199,7 @@ function addEmphasisDecos(
     decos.push({ from: contentFrom, to: contentTo, deco: Decoration.mark({ class: cls }) });
   }
 
-  for (let child = node.firstChild; child; child = child.nextSibling) {
-    if (child.name === "Emphasis") {
-      addEmphasisDecos(state, child.from, child.to, "cm-preview-italic", child, decos);
-    } else if (child.name === "StrongEmphasis") {
-      addEmphasisDecos(state, child.from, child.to, "cm-preview-bold", child, decos);
-    } else if (child.name === "WikiLink") {
-      addWikilinkDecos(state, child.from, child.to, child, decos);
-    } else if (child.name === "Link") {
-      addLinkDecos(state, child.from, child.to, child, decos);
-    } else if (child.name === "InlineCode") {
-      addInlineCodeDecos(state, child.from, child.to, child, decos);
-    } else if (child.name === "InlineMath") {
-      addInlineMathDecos(state, child.from, child.to, child, decos);
-    } else if (child.name === "Image") {
-      addImageDecos(state, child.from, child.to, child, decos);
-    } else if (child.name === "InlineComment") {
-      addInlineCommentDecos(state, child.from, child.to, decos);
-    }
-  }
+  processInlineChildren(state, node, decos);
 }
 
 function addImageDecos(
