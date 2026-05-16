@@ -478,6 +478,27 @@ Resources:
         - DomainName: !Ref DomainName
           HostedZoneId: !Ref HostedZoneId
 
+  SubdirectoryIndexFunction:
+    Type: AWS::CloudFront::Function
+    Condition: HasCustomDomain
+    Properties:
+      Name: !Sub "${AWS::StackName}-subdir-index"
+      AutoPublish: true
+      FunctionConfig:
+        Comment: "Rewrite /path/ to /path/index.html for S3"
+        Runtime: cloudfront-js-2.0
+      FunctionCode: |
+        function handler(event) {
+          var request = event.request;
+          var uri = request.uri;
+          if (uri.endsWith('/')) {
+            request.uri += 'index.html';
+          } else if (!uri.includes('.')) {
+            request.uri += '/index.html';
+          }
+          return request;
+        }
+
   CloudFrontDistribution:
     Type: AWS::CloudFront::Distribution
     Condition: HasCustomDomain
@@ -506,6 +527,9 @@ Resources:
           TargetOriginId: S3Origin
           CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
           ViewerProtocolPolicy: redirect-to-https
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt SubdirectoryIndexFunction.FunctionARN
           AllowedMethods:
             - GET
             - HEAD

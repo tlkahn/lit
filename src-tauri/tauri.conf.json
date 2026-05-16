@@ -7,11 +7,11 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "bun run dev",
-    "beforeBuildCommand": "bun run build && bash scripts/stage-cli.sh"
+    "beforeBuildCommand": "bun run build && bash scripts/stage-cli.sh && bash scripts/stage-llm.sh"
   },
   "bundle": {
     "active": true,
-    "externalBin": ["binaries/lit-cli"],
+    "externalBin": ["binaries/lit-cli", "binaries/llm"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

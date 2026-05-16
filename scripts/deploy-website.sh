@@ -1,7 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR/.."
 
 AWS_REGION="us-east-1"
 STACK_NAME="lit-production"
@@ -17,12 +18,22 @@ echo "==> Cloning website repo"
 rm -rf "$WEBSITE_DIR"
 git clone --depth 1 "$WEBSITE_REPO" "$WEBSITE_DIR"
 
-echo "==> Copying release notes"
-mkdir -p "$WEBSITE_DIR/content/releases"
-if ls release-notes/*.md 1>/dev/null 2>&1; then
-  cp release-notes/*.md "$WEBSITE_DIR/content/releases/"
-  NOTES_COPIED=$(ls release-notes/*.md | wc -l | tr -d ' ')
-  echo "    Copied $NOTES_COPIED notes"
+if [ -n "$TAG" ]; then
+  if ! command -v llm >/dev/null 2>&1; then
+    echo "==> Building llm CLI from submodule"
+    (cd llm-rs && cargo build --release -p llm-cli)
+    export PATH="$PWD/llm-rs/target/release:$PATH"
+  fi
+  echo "==> Generating release notes for $TAG"
+  bash "$SCRIPT_DIR/generate-release-notes.sh" --force "$TAG" || echo "    (generation failed, will use existing notes if any)"
+fi
+
+echo "==> Converting release notes to Hugo data"
+rm -rf "$WEBSITE_DIR/content/releases"
+bash "$SCRIPT_DIR/convert-release-notes.sh" "$WEBSITE_DIR/data/releases"
+if ls "$WEBSITE_DIR/data/releases/"*.yaml 1>/dev/null 2>&1; then
+  NOTES_COPIED=$(ls "$WEBSITE_DIR/data/releases/"*.yaml | wc -l | tr -d ' ')
+  echo "    Converted $NOTES_COPIED notes"
 else
   NOTES_COPIED=0
   echo "    No release notes found"
@@ -41,7 +52,8 @@ if [ -n "$TAG" ]; then
 
   echo "==> Pushing content update to website repo"
   (cd "$WEBSITE_DIR" &&
-    git add content/_index.md hugo.toml content/releases/ &&
+    git add content/_index.md hugo.toml data/releases/
+    git rm -r --cached content/releases/ 2>/dev/null || true
     if ! git diff --cached --quiet; then
       git commit -m "Update download button and release notes for $TAG"
       git push
@@ -51,7 +63,8 @@ if [ -n "$TAG" ]; then
 elif [ "$NOTES_COPIED" -gt 0 ]; then
   echo "==> Pushing release notes to website repo"
   (cd "$WEBSITE_DIR" &&
-    git add content/releases/ &&
+    git add data/releases/
+    git rm -r --cached content/releases/ 2>/dev/null || true
     if ! git diff --cached --quiet; then
       git commit -m "Update release notes"
       git push
@@ -69,7 +82,7 @@ BUCKET=$(aws cloudformation describe-stacks \
   --query "Stacks[0].Outputs[?OutputKey=='WebsiteBucketName'].OutputValue" \
   --output text)
 echo "==> Syncing to s3://$BUCKET"
-aws s3 sync "$WEBSITE_DIR/public/" "s3://$BUCKET" --delete --exclude "releases/*" --region "$AWS_REGION"
+aws s3 sync "$WEBSITE_DIR/public/" "s3://$BUCKET" --delete --exclude "releases/*.dmg" --region "$AWS_REGION"
 
 DIST_ID=$(aws cloudfront list-distributions \
   --region "$AWS_REGION" \

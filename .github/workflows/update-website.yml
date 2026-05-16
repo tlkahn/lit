@@ -22,6 +22,9 @@ jobs:
     steps:
       - name: Checkout lit repo
         uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
 
       - name: Get release tag
         id: tag
@@ -82,20 +85,45 @@ jobs:
           echo "download_url=$DOWNLOAD_URL" >> "$GITHUB_OUTPUT"
           echo "download_label=$DOWNLOAD_LABEL" >> "$GITHUB_OUTPUT"
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache llm-rs build
+        uses: actions/cache@v4
+        with:
+          path: llm-rs/target
+          key: llm-rs-${{ runner.os }}-${{ hashFiles('llm-rs/Cargo.lock') }}
+
+      - name: Build llm CLI
+        run: |
+          cd llm-rs
+          cargo build --release -p llm-cli
+          echo "$PWD/target/release" >> "$GITHUB_PATH"
+
+      - name: Generate release notes
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LLM_DEFAULT_MODEL: gpt-4o-mini
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          bash scripts/generate-release-notes.sh --force "$TAG"
+
       - name: Clone website repo
         env:
           GH_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
         run: |
           git clone "https://x-access-token:${GH_TOKEN}@github.com/tlkahn/tlkahn.github.io.git" website
 
-      - name: Copy release notes to website
+      - name: Convert and copy release notes to website
         run: |
-          mkdir -p website/content/releases
-          if ls release-notes/*.md 1>/dev/null 2>&1; then
-            cp release-notes/*.md website/content/releases/
-            echo "Copied $(ls release-notes/*.md | wc -l | tr -d ' ') release notes"
+          # Remove legacy content section that conflicts with content/releases.md page
+          rm -rf website/content/releases
+          bash scripts/convert-release-notes.sh website/data/releases
+          if ls website/data/releases/*.yaml 1>/dev/null 2>&1; then
+            echo "Release data files:"
+            ls website/data/releases/
           else
-            echo "No release notes to copy"
+            echo "No release notes converted"
           fi
 
       - name: Update content/_index.md
@@ -124,7 +152,8 @@ jobs:
           cd website
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add content/_index.md hugo.toml content/releases/
+          git add content/_index.md hugo.toml data/releases/
+          git rm -r --cached content/releases/ 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "No changes to commit — website already up to date"
             exit 0
@@ -151,7 +180,7 @@ jobs:
           echo "Verified: /releases/ page exists in build output"
 
       - name: Sync to S3
-        run: aws s3 sync website/public/ s3://${{ steps.bucket.outputs.name }} --delete --exclude "releases/*"
+        run: aws s3 sync website/public/ s3://${{ steps.bucket.outputs.name }} --delete --exclude "releases/*.dmg"
 
       - name: Invalidate CloudFront
         run: |
