@@ -101,7 +101,10 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
-    if (open) searchInputRef.current?.focus();
+    if (open) {
+      setSearchQuery("");
+      searchInputRef.current?.focus();
+    }
   }, [open]);
 
   const [localTextValues, setLocalTextValues] = useState<Record<string, string>>(() => {
