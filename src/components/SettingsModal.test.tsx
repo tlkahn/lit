@@ -3,6 +3,7 @@ import { render, fireEvent, act } from "@testing-library/react";
 import { SettingsModal } from "./SettingsModal";
 import { mockInvoke } from "../test/tauri-mock";
 import { usePreferencesStore } from "../stores/preferences";
+import { CATEGORIES } from "../lib/settingsRegistry";
 
 const defaults = {
   darkMode: "auto" as const,
@@ -32,6 +33,7 @@ beforeEach(() => {
     return undefined;
   });
   usePreferencesStore.setState(defaults);
+  Element.prototype.scrollIntoView = vi.fn();
 });
 
 describe("SettingsModal", () => {
@@ -517,6 +519,83 @@ describe("SettingsModal", () => {
     Object.defineProperty(tabEvent, "preventDefault", { value: () => {} });
     dialog.dispatchEvent(tabEvent);
     expect(document.activeElement).toBe(first);
+  });
+
+  // --- Category sidebar ---
+
+  it("renders settings-sidebar when open", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    expect(container.querySelector("[data-testid='settings-sidebar']")).toBeTruthy();
+  });
+
+  it("sidebar contains buttons matching CATEGORIES", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
+    const buttons = Array.from(sidebar.querySelectorAll("button"));
+    expect(buttons.map((b) => b.textContent)).toEqual([...CATEGORIES]);
+  });
+
+  it("clicking Editor updates aria-selected on sidebar buttons", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
+    const buttons = Array.from(sidebar.querySelectorAll("button"));
+    const editorBtn = buttons.find((b) => b.textContent === "Editor")!;
+    fireEvent.click(editorBtn);
+    expect(editorBtn.getAttribute("aria-selected")).toBe("true");
+    const appearanceBtn = buttons.find((b) => b.textContent === "Appearance")!;
+    expect(appearanceBtn.getAttribute("aria-selected")).toBe("false");
+  });
+
+  it("clicking Editor calls scrollIntoView on its section", () => {
+    const scrollIntoViewMock = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoViewMock;
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
+    const editorBtn = Array.from(sidebar.querySelectorAll("button")).find((b) => b.textContent === "Editor")!;
+    fireEvent.click(editorBtn);
+    expect(scrollIntoViewMock).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
+  });
+
+  it("first category has aria-selected=true by default", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
+    const buttons = sidebar.querySelectorAll("button");
+    expect(buttons[0]!.getAttribute("aria-selected")).toBe("true");
+    for (let i = 1; i < buttons.length; i++) {
+      expect(buttons[i]!.getAttribute("aria-selected")).toBe("false");
+    }
+  });
+
+  // --- Registry-driven rendering safety net ---
+
+  it("all 15 control data-testid values exist", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const expectedIds = [
+      "settings-darkMode-auto",
+      "settings-colorTheme",
+      "settings-sidebarVisible",
+      "settings-sidebarLocation-left",
+      "settings-foldingEnabled",
+      "settings-foldingShowControls-mouseover",
+      "settings-mediaThumbnails",
+      "settings-crossrefEnabled",
+      "settings-crossrefLiveRendering",
+      "settings-crossrefEnableCiteproc",
+      "settings-annotationEnabled",
+      "settings-annotationScopeHighlight",
+      "settings-annotationDefaultLang",
+      "settings-annotationDisplayMode-pill",
+      "settings-experimentalUnlinkedReferences",
+    ];
+    for (const id of expectedIds) {
+      expect(container.querySelector(`[data-testid='${id}']`), `missing ${id}`).toBeTruthy();
+    }
+  });
+
+  it("all 5 h3 headings render with correct text", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
+    expect(headings).toEqual(["Appearance", "Editor", "Cross-references", "Annotations", "Experimental"]);
   });
 
   // --- Reactivity ---
