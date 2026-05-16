@@ -851,10 +851,13 @@ describe("SettingsModal", () => {
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
     fireEvent.change(search, { target: { value: "dark" } });
 
-    const darkModeControl = container.querySelector("[data-testid='settings-darkMode-auto']")!;
-    const section = darkModeControl.closest("section")!;
-    const marks = section.querySelectorAll("mark");
+    const darkModeButton = container.querySelector("[data-testid='settings-darkMode-auto']")!;
+    const controlRoot = darkModeButton.parentElement!.parentElement!;
+    const labelSpan = controlRoot.querySelector("span.text-sm")!;
+    const marks = Array.from(labelSpan.querySelectorAll("mark"));
     expect(marks.length).toBeGreaterThan(0);
+    const highlightedText = marks.map((m) => m.textContent).join("");
+    expect(highlightedText.toLowerCase()).toBe("dark");
   });
 
   it("no <mark> elements in labels when not searching", () => {
