@@ -8,6 +8,7 @@ import { getThemeExtension } from "../editor/theme";
 interface SettingsJsonEditorProps {
   initialJson: string;
   onSave: (json: string) => void;
+  error?: string | null;
 }
 
 function detectTheme(): "light" | "dark" {
@@ -19,6 +20,7 @@ function detectTheme(): "light" | "dark" {
 export function SettingsJsonEditor({
   initialJson,
   onSave,
+  error: externalError,
 }: SettingsJsonEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -83,8 +85,8 @@ export function SettingsJsonEditor({
       <button data-testid="settings-json-save" onClick={doSave}>
         Save
       </button>
-      {error && (
-        <div data-testid="settings-json-error">{error}</div>
+      {(error || externalError) && (
+        <div data-testid="settings-json-error">{error || externalError}</div>
       )}
     </div>
   );

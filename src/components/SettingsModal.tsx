@@ -2,12 +2,13 @@ import { useEffect, useCallback, useRef, useState, useMemo } from "react";
 import { flushSync } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
 import { usePreferencesStore, type PreferencesState } from "../stores/preferences";
-import { setPreference } from "../lib/ipc";
+import { setPreference, getPreferencesRaw, setPreferencesRaw } from "../lib/ipc";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { SegmentedControl } from "./SegmentedControl";
 import { ToggleSwitch } from "./ToggleSwitch";
 import { SettingsTextInput } from "./SettingsTextInput";
 import { HighlightedText } from "./HighlightedText";
+import { SettingsJsonEditor } from "./SettingsJsonEditor";
 import { CATEGORIES, SETTINGS_REGISTRY, STORE_FIELDS, filterSettings, type Category, type SettingEntry, type FilteredSetting, type PreferenceField } from "../lib/settingsRegistry";
 
 interface SettingsModalProps {
@@ -90,6 +91,9 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
 
   const [activeCategory, setActiveCategory] = useState<Category>(CATEGORIES[0]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [jsonMode, setJsonMode] = useState(false);
+  const [rawJson, setRawJson] = useState("");
+  const [jsonError, setJsonError] = useState<string | null>(null);
 
   const filteredResults = useMemo(
     () => filterSettings(SETTINGS_REGISTRY, searchQuery),
@@ -115,6 +119,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   useEffect(() => {
     if (open) {
       setSearchQuery("");
+      setJsonMode(false);
       searchInputRef.current?.focus();
     }
   }, [open]);
@@ -161,6 +166,25 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [open, handleKeyDown]);
 
+  const handleToggleJsonMode = useCallback(async () => {
+    if (!jsonMode) {
+      const raw = await getPreferencesRaw();
+      setRawJson(raw);
+      setJsonError(null);
+      setJsonMode(true);
+    } else {
+      setJsonMode(false);
+    }
+  }, [jsonMode]);
+
+  const handleJsonSave = useCallback(async (json: string) => {
+    try {
+      await setPreferencesRaw(json);
+    } catch (e) {
+      setJsonError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
   if (!open) return null;
 
   return (
@@ -175,103 +199,122 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
         data-testid="settings-modal-dialog"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="order-2 px-5 pb-2">
-          <input
-            ref={searchInputRef}
-            data-testid="settings-search"
-            type="text"
-            placeholder="Search settings…"
-            className="w-full rounded border border-border bg-bg-secondary px-3 py-1.5 text-sm text-text-normal placeholder:text-text-muted outline-none focus:border-accent"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape" && searchQuery !== "") {
-                e.preventDefault();
-                e.stopPropagation();
-                setSearchQuery("");
-              }
-            }}
-          />
-        </div>
+        {!jsonMode && (
+          <div className="order-2 px-5 pb-2">
+            <input
+              ref={searchInputRef}
+              data-testid="settings-search"
+              type="text"
+              placeholder="Search settings…"
+              className="w-full rounded border border-border bg-bg-secondary px-3 py-1.5 text-sm text-text-normal placeholder:text-text-muted outline-none focus:border-accent"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape" && searchQuery !== "") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setSearchQuery("");
+                }
+              }}
+            />
+          </div>
+        )}
 
         <div className="order-1 flex items-center justify-between px-5 pt-5 pb-3">
           <h2 className="text-base font-semibold text-text-normal">Settings</h2>
-          <button
-            className="rounded p-1 text-text-muted hover:bg-bg-secondary"
-            onClick={onClose}
-            data-testid="settings-modal-close"
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M4 4l8 8M12 4l-8 8" />
-            </svg>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              className="rounded px-2 py-1 text-sm text-text-muted hover:bg-bg-secondary"
+              onClick={handleToggleJsonMode}
+              data-testid="settings-edit-json-btn"
+            >
+              {jsonMode ? "Form View" : "Edit JSON"}
+            </button>
+            <button
+              className="rounded p-1 text-text-muted hover:bg-bg-secondary"
+              onClick={onClose}
+              data-testid="settings-modal-close"
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M4 4l8 8M12 4l-8 8" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         <div data-testid="settings-modal-content" className="order-3 flex-1 overflow-y-auto flex flex-row">
-          <nav
-            data-testid="settings-sidebar"
-            role="tablist"
-            aria-orientation="vertical"
-            className="flex flex-col gap-1 px-3 pb-5 shrink-0 w-40"
-            onKeyDown={(e) => {
-              if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
-              e.preventDefault();
-              const step = e.key === "ArrowDown" ? 1 : -1;
-              const len = CATEGORIES.length;
-              let idx = CATEGORIES.indexOf(activeCategory);
-              for (let i = 0; i < len - 1; i++) {
-                idx = (idx + step + len) % len;
-                if (!matchedCategories || matchedCategories.has(CATEGORIES[idx]!)) break;
-              }
-              const nextCat = CATEGORIES[idx]!;
-              setActiveCategory(nextCat);
-              const buttons = (e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>("button");
-              buttons[idx]?.focus();
-              const section = document.getElementById(`settings-section-${nextCat}`);
-              section?.scrollIntoView({ behavior: "smooth", block: "start" });
-            }}
-          >
-            {CATEGORIES.map((cat) => {
-              const hasMatches = matchedCategories ? matchedCategories.has(cat) : undefined;
-              return (
-                <button
-                  key={cat}
-                  role="tab"
-                  aria-selected={cat === activeCategory}
-                  {...(hasMatches !== undefined && { "data-has-matches": String(hasMatches) })}
-                  className={`text-left px-2 py-1 rounded text-sm ${cat === activeCategory ? "bg-bg-secondary text-text-normal" : "text-text-muted hover:bg-bg-secondary"} ${hasMatches === false ? "opacity-40" : ""}`}
-                  onClick={() => {
-                    if (searchQuery !== "" && matchedCategories && !matchedCategories.has(cat)) {
-                      flushSync(() => setSearchQuery(""));
-                    }
-                    setActiveCategory(cat);
-                    const section = document.getElementById(`settings-section-${cat}`);
-                    section?.scrollIntoView({ behavior: "smooth", block: "start" });
-                  }}
-                >
-                  {cat}
-                </button>
-              );
-            })}
-          </nav>
-          <div className="flex-1 overflow-y-auto px-5 pb-5">
-            {filteredResults.length === 0 && searchQuery !== "" ? (
-              <div data-testid="settings-no-results" className="py-8 text-center text-sm text-text-muted">
-                No matching settings
+          {jsonMode ? (
+            <div className="flex-1 px-5 pb-5">
+              <SettingsJsonEditor initialJson={rawJson} onSave={handleJsonSave} error={jsonError} />
+            </div>
+          ) : (
+            <>
+              <nav
+                data-testid="settings-sidebar"
+                role="tablist"
+                aria-orientation="vertical"
+                className="flex flex-col gap-1 px-3 pb-5 shrink-0 w-40"
+                onKeyDown={(e) => {
+                  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+                  e.preventDefault();
+                  const step = e.key === "ArrowDown" ? 1 : -1;
+                  const len = CATEGORIES.length;
+                  let idx = CATEGORIES.indexOf(activeCategory);
+                  for (let i = 0; i < len - 1; i++) {
+                    idx = (idx + step + len) % len;
+                    if (!matchedCategories || matchedCategories.has(CATEGORIES[idx]!)) break;
+                  }
+                  const nextCat = CATEGORIES[idx]!;
+                  setActiveCategory(nextCat);
+                  const buttons = (e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>("button");
+                  buttons[idx]?.focus();
+                  const section = document.getElementById(`settings-section-${nextCat}`);
+                  section?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}
+              >
+                {CATEGORIES.map((cat) => {
+                  const hasMatches = matchedCategories ? matchedCategories.has(cat) : undefined;
+                  return (
+                    <button
+                      key={cat}
+                      role="tab"
+                      aria-selected={cat === activeCategory}
+                      {...(hasMatches !== undefined && { "data-has-matches": String(hasMatches) })}
+                      className={`text-left px-2 py-1 rounded text-sm ${cat === activeCategory ? "bg-bg-secondary text-text-normal" : "text-text-muted hover:bg-bg-secondary"} ${hasMatches === false ? "opacity-40" : ""}`}
+                      onClick={() => {
+                        if (searchQuery !== "" && matchedCategories && !matchedCategories.has(cat)) {
+                          flushSync(() => setSearchQuery(""));
+                        }
+                        setActiveCategory(cat);
+                        const section = document.getElementById(`settings-section-${cat}`);
+                        section?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      }}
+                    >
+                      {cat}
+                    </button>
+                  );
+                })}
+              </nav>
+              <div className="flex-1 overflow-y-auto px-5 pb-5">
+                {filteredResults.length === 0 && searchQuery !== "" ? (
+                  <div data-testid="settings-no-results" className="py-8 text-center text-sm text-text-muted">
+                    No matching settings
+                  </div>
+                ) : (
+                  Array.from(filteredGroups)
+                    .filter(([, results]) => results.length > 0)
+                    .map(([cat, results], i) => (
+                      <section key={cat} id={`settings-section-${cat}`} className={i > 0 ? "mt-5" : undefined}>
+                        <h3 className="text-sm font-medium text-text-muted mb-3">{cat}</h3>
+                        <div className="space-y-3">
+                          {results.map(({ entry, indices }) => renderControl(entry, prefs, localTextValues, setLocalTextValues, indices))}
+                        </div>
+                      </section>
+                    ))
+                )}
               </div>
-            ) : (
-              Array.from(filteredGroups)
-                .filter(([, results]) => results.length > 0)
-                .map(([cat, results], i) => (
-                  <section key={cat} id={`settings-section-${cat}`} className={i > 0 ? "mt-5" : undefined}>
-                    <h3 className="text-sm font-medium text-text-muted mb-3">{cat}</h3>
-                    <div className="space-y-3">
-                      {results.map(({ entry, indices }) => renderControl(entry, prefs, localTextValues, setLocalTextValues, indices))}
-                    </div>
-                  </section>
-                ))
-            )}
-          </div>
+            </>
+          )}
         </div>
       </div>
     </div>

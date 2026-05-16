@@ -1036,4 +1036,154 @@ describe("SettingsModal", () => {
     expect(sidebar.getAttribute("role")).toBe("tablist");
     expect(sidebar.getAttribute("aria-orientation")).toBe("vertical");
   });
+
+  // --- Cycle 9: "Edit JSON" toggle button ---
+
+  it("renders 'Edit JSON' button with data-testid='settings-edit-json-btn'", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const btn = container.querySelector("[data-testid='settings-edit-json-btn']");
+    expect(btn).toBeTruthy();
+    expect(btn!.tagName).toBe("BUTTON");
+  });
+
+  it("button text is 'Edit JSON' by default", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const btn = container.querySelector("[data-testid='settings-edit-json-btn']")!;
+    expect(btn.textContent).toBe("Edit JSON");
+  });
+
+  it("form view is visible and JSON editor is absent by default", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    expect(container.querySelector("[data-testid='settings-sidebar']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='settings-search']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='settings-json-editor']")).toBeNull();
+  });
+
+  // --- Cycle 10: Toggle between form and JSON editor views ---
+
+  it("clicking 'Edit JSON' hides form and shows JSON editor", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences_raw") return "{}";
+      return undefined;
+    });
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const btn = container.querySelector("[data-testid='settings-edit-json-btn']")!;
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    expect(container.querySelector("[data-testid='settings-sidebar']")).toBeNull();
+    expect(container.querySelector("[data-testid='settings-json-editor']")).toBeTruthy();
+  });
+
+  it("button text changes to 'Form View' in JSON mode", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences_raw") return "{}";
+      return undefined;
+    });
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const btn = container.querySelector("[data-testid='settings-edit-json-btn']")!;
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    expect(btn.textContent).toBe("Form View");
+  });
+
+  it("clicking 'Form View' switches back to form", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences_raw") return "{}";
+      return undefined;
+    });
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const btn = container.querySelector("[data-testid='settings-edit-json-btn']")!;
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    expect(container.querySelector("[data-testid='settings-sidebar']")).toBeNull();
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    expect(container.querySelector("[data-testid='settings-sidebar']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='settings-search']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='settings-json-editor']")).toBeNull();
+  });
+
+  it("search bar is hidden in JSON mode", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences_raw") return "{}";
+      return undefined;
+    });
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const btn = container.querySelector("[data-testid='settings-edit-json-btn']")!;
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    expect(container.querySelector("[data-testid='settings-search']")).toBeNull();
+  });
+
+  // --- Cycle 11: JSON save triggers IPC + error handling ---
+
+  it("saving valid JSON calls set_preferences_raw IPC", async () => {
+    const ipcCalls: { cmd: string; args: Record<string, unknown> }[] = [];
+    mockInvoke((cmd, args) => {
+      ipcCalls.push({ cmd, args: args ?? {} });
+      if (cmd === "get_preferences_raw") return '{"foo": 1}';
+      return undefined;
+    });
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const btn = container.querySelector("[data-testid='settings-edit-json-btn']")!;
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    const saveBtn = container.querySelector("[data-testid='settings-json-save']")!;
+    await act(async () => {
+      fireEvent.click(saveBtn);
+    });
+    await vi.waitFor(() => {
+      expect(ipcCalls).toContainEqual({
+        cmd: "set_preferences_raw",
+        args: { json: '{"foo": 1}' },
+      });
+    });
+  });
+
+  it("IPC error from set_preferences_raw surfaces in JSON editor error display", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences_raw") return '{"foo": 1}';
+      if (cmd === "set_preferences_raw") throw new Error("disk full");
+      return undefined;
+    });
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const btn = container.querySelector("[data-testid='settings-edit-json-btn']")!;
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    const saveBtn = container.querySelector("[data-testid='settings-json-save']")!;
+    await act(async () => {
+      fireEvent.click(saveBtn);
+    });
+    await vi.waitFor(() => {
+      expect(container.querySelector("[data-testid='settings-json-error']")).toBeTruthy();
+    });
+  });
+
+  // --- Cycle 12: Form view refreshes after JSON edits ---
+
+  it("re-opening modal resets to form view", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences_raw") return "{}";
+      return undefined;
+    });
+    const { container, rerender } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const btn = container.querySelector("[data-testid='settings-edit-json-btn']")!;
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    expect(container.querySelector("[data-testid='settings-json-editor']")).toBeTruthy();
+
+    rerender(<SettingsModal open={false} onClose={vi.fn()} />);
+    rerender(<SettingsModal open={true} onClose={vi.fn()} />);
+
+    expect(container.querySelector("[data-testid='settings-json-editor']")).toBeNull();
+    expect(container.querySelector("[data-testid='settings-sidebar']")).toBeTruthy();
+  });
 });
