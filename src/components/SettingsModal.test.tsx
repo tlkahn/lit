@@ -612,6 +612,27 @@ describe("SettingsModal", () => {
     expect(headings).toEqual(["Appearance", "Editor", "Cross-references", "Annotations", "Experimental"]);
   });
 
+  // --- Search input ---
+
+  it("settings-search input exists when modal is open", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const input = container.querySelector("[data-testid='settings-search']");
+    expect(input).toBeTruthy();
+    expect(input!.tagName).toBe("INPUT");
+  });
+
+  it("search input has placeholder 'Search settings…'", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const input = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    expect(input.placeholder).toBe("Search settings…");
+  });
+
+  it("search input auto-focuses when modal opens", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const input = container.querySelector("[data-testid='settings-search']")!;
+    expect(document.activeElement).toBe(input);
+  });
+
   // --- Reactivity ---
 
   it("reflects external store changes", () => {

@@ -94,9 +94,15 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   })));
 
   const dialogRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   useFocusTrap(dialogRef, open);
 
   const [activeCategory, setActiveCategory] = useState<Category>(CATEGORIES[0]);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  useEffect(() => {
+    if (open) searchInputRef.current?.focus();
+  }, [open]);
 
   const [localTextValues, setLocalTextValues] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
@@ -161,6 +167,18 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               <path d="M4 4l8 8M12 4l-8 8" />
             </svg>
           </button>
+        </div>
+
+        <div className="px-5 pb-2">
+          <input
+            ref={searchInputRef}
+            data-testid="settings-search"
+            type="text"
+            placeholder="Search settings…"
+            className="w-full rounded border border-border bg-bg-secondary px-3 py-1.5 text-sm text-text-normal placeholder:text-text-muted outline-none focus:border-accent"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
         </div>
 
         <div data-testid="settings-modal-content" className="flex-1 overflow-y-auto flex flex-row">
