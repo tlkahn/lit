@@ -567,6 +567,12 @@ describe("App", () => {
     expect(fetchStatus).toHaveBeenCalled();
   });
 
+  it("settings modal not visible by default", () => {
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+    render(<App />);
+    expect(screen.queryByTestId("settings-modal-backdrop")).not.toBeInTheDocument();
+  });
+
   it("menu://enter-license-key event opens LicenseEntryDialog", async () => {
     mockListen();
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });

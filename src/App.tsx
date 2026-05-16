@@ -199,6 +199,7 @@ function App() {
   useModalLock(quickSwitcherOpen);
   useModalLock(commandPaletteOpen);
   useModalLock(annotationBuilderOpen);
+  useModalLock(settingsOpen);
 
   useEffect(() => {
     const handler = () => setQuickSwitcherOpen((prev) => !prev);
