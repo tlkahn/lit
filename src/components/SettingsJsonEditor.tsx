@@ -30,13 +30,13 @@ export function SettingsJsonEditor({
     const view = viewRef.current;
     if (!view) return;
     const doc = view.state.doc.toString();
+    setError(null);
     try {
       JSON.parse(doc);
     } catch (e) {
       setError((e as SyntaxError).message);
       return;
     }
-    setError(null);
     onSaveRef.current(doc);
   }, []);
 

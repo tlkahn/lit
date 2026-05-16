@@ -1,9 +1,20 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { EditorView } from "@codemirror/view";
+
+vi.mock("@codemirror/lint", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@codemirror/lint")>();
+  return { ...original, linter: vi.fn(original.linter) };
+});
+
+import { linter } from "@codemirror/lint";
 import { SettingsJsonEditor } from "./SettingsJsonEditor";
 
 describe("SettingsJsonEditor", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("renders container with data-testid='settings-json-editor'", () => {
     render(<SettingsJsonEditor initialJson="{}" onSave={vi.fn()} />);
     expect(screen.getByTestId("settings-json-editor")).toBeInTheDocument();
@@ -99,32 +110,8 @@ describe("SettingsJsonEditor", () => {
     expect(onSave).toHaveBeenCalledTimes(1);
   });
 
-  it("includes jsonParseLinter in CM6 extensions", async () => {
-    const { linter } = await import("@codemirror/lint");
-    const { jsonParseLinter } = await import("@codemirror/lang-json");
-
+  it("includes jsonParseLinter in CM6 extensions", () => {
     render(<SettingsJsonEditor initialJson="{}" onSave={vi.fn()} />);
-    const container = screen.getByTestId("settings-json-editor");
-    const cmEditor = container.querySelector(".cm-editor")!;
-    const view = EditorView.findFromDOM(cmEditor as HTMLElement)!;
-
-    // Build a baseline state without the linter extension to compare field counts
-    const { EditorState } = await import("@codemirror/state");
-    const { json: jsonLang } = await import("@codemirror/lang-json");
-    const baseline = EditorState.create({
-      doc: "{}",
-      extensions: [jsonLang()],
-    });
-    const withLinter = EditorState.create({
-      doc: "{}",
-      extensions: [jsonLang(), linter(jsonParseLinter())],
-    });
-    const linterFieldCount =
-      (withLinter as any).values.length - (baseline as any).values.length;
-
-    // The editor's state should have at least as many fields as baseline + linter
-    expect((view.state as any).values.length).toBeGreaterThanOrEqual(
-      (baseline as any).values.length + linterFieldCount,
-    );
+    expect(linter).toHaveBeenCalled();
   });
 });
