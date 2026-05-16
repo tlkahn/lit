@@ -13,7 +13,6 @@ const mockPreferencesState = vi.hoisted(() => ({
 }));
 
 const mockSetPreference = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
-const mockGetPreferencesPath = vi.hoisted(() => vi.fn().mockResolvedValue("/tmp/prefs.json"));
 
 vi.mock("../../stores/workspace", () => ({
   useWorkspaceStore: Object.assign(
@@ -31,7 +30,6 @@ vi.mock("../../stores/preferences", () => ({
 
 vi.mock("../ipc", () => ({
   setPreference: mockSetPreference,
-  getPreferencesPath: mockGetPreferencesPath,
 }));
 
 import { initCoreCommands } from "./core";
@@ -171,14 +169,14 @@ describe("initCoreCommands", () => {
     window.removeEventListener("lit:delete-page", handler);
   });
 
-  it("core.settings.open calls getPreferencesPath then selectPageAtLine", async () => {
+  it("core.settings.open dispatches lit:open-settings event", () => {
     initCoreCommands();
+    const handler = vi.fn();
+    window.addEventListener("lit:open-settings", handler);
     const cmd = getAllCommands().find((c) => c.id === "core.settings.open")!;
     cmd.action();
-    await vi.waitFor(() => {
-      expect(mockGetPreferencesPath).toHaveBeenCalledOnce();
-      expect(mockWorkspaceState.selectPageAtLine).toHaveBeenCalledWith("/tmp/prefs.json", 1, undefined, true);
-    });
+    expect(handler).toHaveBeenCalledOnce();
+    window.removeEventListener("lit:open-settings", handler);
   });
 
   it("core.workspace.reload calls refreshPages", () => {

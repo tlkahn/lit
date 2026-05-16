@@ -214,6 +214,12 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const handler = () => setSettingsOpen(true);
+    window.addEventListener("lit:open-settings", handler);
+    return () => window.removeEventListener("lit:open-settings", handler);
+  }, []);
+
+  useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<AnnotationBuilderEventDetail>).detail;
       if (detail?.mode === "edit" && detail.annotation) {

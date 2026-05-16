@@ -648,6 +648,17 @@ describe("App", () => {
     });
   });
 
+  it("lit:open-settings event opens SettingsModal", () => {
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+    render(<App />);
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent("lit:open-settings"));
+    });
+
+    expect(screen.getByTestId("settings-modal-backdrop")).toBeInTheDocument();
+  });
+
   it("menu://open-preferences event opens SettingsModal", async () => {
     mockListen();
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });

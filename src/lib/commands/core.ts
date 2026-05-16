@@ -1,7 +1,7 @@
 import { registerOnce } from "../commandRegistry";
 import { useWorkspaceStore } from "../../stores/workspace";
 import { usePreferencesStore } from "../../stores/preferences";
-import { setPreference, getPreferencesPath } from "../ipc";
+import { setPreference } from "../ipc";
 
 function hasWorkspace(): boolean {
   return useWorkspaceStore.getState().workspacePath !== null;
@@ -29,16 +29,12 @@ export function initCoreCommands(): void {
     },
     {
       id: "core.settings.open",
-      label: "Open Preferences File",
+      label: "Open Settings",
       keywords: ["settings", "preferences", "config"],
       icon: "⚙️",
       when: hasWorkspace,
       action: () => {
-        getPreferencesPath()
-          .then((path) => {
-            useWorkspaceStore.getState().selectPageAtLine(path, 1, undefined, true);
-          })
-          .catch(console.error);
+        window.dispatchEvent(new CustomEvent("lit:open-settings"));
       },
     },
     {
