@@ -561,13 +561,15 @@ describe("SettingsModal", () => {
   });
 
   it("clicking Editor calls scrollIntoView on its section", () => {
-    const scrollIntoViewMock = vi.fn();
-    Element.prototype.scrollIntoView = scrollIntoViewMock;
+    let scrolledEl: Element | null = null;
+    Element.prototype.scrollIntoView = vi.fn(function (this: Element) {
+      scrolledEl = this;
+    });
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
     const editorBtn = Array.from(sidebar.querySelectorAll("button")).find((b) => b.textContent === "Editor")!;
     fireEvent.click(editorBtn);
-    expect(scrollIntoViewMock).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
+    expect((scrolledEl as HTMLElement | null)?.id).toBe("settings-section-Editor");
   });
 
   it("first category has aria-selected=true by default", () => {
@@ -779,15 +781,19 @@ describe("SettingsModal", () => {
   // Cycle 6.4 — Sidebar click clears search when category has no matches
 
   it("clicking non-matching category clears search and scrolls", () => {
-    const scrollIntoViewMock = vi.fn();
-    Element.prototype.scrollIntoView = scrollIntoViewMock;
+    let scrolledEl: Element | null = null;
+    Element.prototype.scrollIntoView = vi.fn(function (this: Element) {
+      scrolledEl = this;
+    });
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
     fireEvent.change(search, { target: { value: "fold" } });
 
     const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
     const appearanceBtn = Array.from(sidebar.querySelectorAll("button")).find((b) => b.textContent === "Appearance")!;
-    fireEvent.click(appearanceBtn);
+    act(() => {
+      fireEvent.click(appearanceBtn);
+    });
 
     expect(search.value).toBe("");
 
@@ -812,6 +818,27 @@ describe("SettingsModal", () => {
       expect(container.querySelector(`[data-testid='${id}']`), `missing ${id}`).toBeTruthy();
     }
 
-    expect(scrollIntoViewMock).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
+    expect((scrolledEl as HTMLElement | null)?.id).toBe("settings-section-Appearance");
+  });
+
+  it("clicking matching category while searching preserves search and scrolls", () => {
+    let scrolledEl: Element | null = null;
+    Element.prototype.scrollIntoView = vi.fn(function (this: Element) {
+      scrolledEl = this;
+    });
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "fold" } });
+
+    const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
+    const editorBtn = Array.from(sidebar.querySelectorAll("button")).find((b) => b.textContent === "Editor")!;
+    fireEvent.click(editorBtn);
+
+    expect(search.value).toBe("fold");
+    expect((scrolledEl as HTMLElement | null)?.id).toBe("settings-section-Editor");
+
+    expect(container.querySelector("[data-testid='settings-foldingEnabled']")).toBeTruthy();
+    expect(container.querySelector("[data-testid^='settings-foldingShowControls']")).toBeTruthy();
+    expect(container.querySelector("[data-testid^='settings-darkMode']")).toBeNull();
   });
 });
