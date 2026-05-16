@@ -1168,6 +1168,31 @@ describe("SettingsModal", () => {
 
   // --- Cycle 12: Form view refreshes after JSON edits ---
 
+  it("switching from JSON back to form reflects changes made in JSON", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences_raw") return '{}';
+      if (cmd === "set_preferences_raw") return undefined;
+      return undefined;
+    });
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const btn = container.querySelector("[data-testid='settings-edit-json-btn']")!;
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    expect(container.querySelector("[data-testid='settings-json-editor']")).toBeTruthy();
+
+    act(() => {
+      usePreferencesStore.setState({ darkMode: "dark" });
+    });
+
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    expect(container.querySelector("[data-testid='settings-sidebar']")).toBeTruthy();
+    const darkBtn = container.querySelector("[data-testid='settings-darkMode-dark']")!;
+    expect(darkBtn.getAttribute("aria-pressed")).toBe("true");
+  });
+
   it("re-opening modal resets to form view", async () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences_raw") return "{}";

@@ -168,10 +168,14 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
 
   const handleToggleJsonMode = useCallback(async () => {
     if (!jsonMode) {
-      const raw = await getPreferencesRaw();
-      setRawJson(raw);
-      setJsonError(null);
-      setJsonMode(true);
+      try {
+        const raw = await getPreferencesRaw();
+        setRawJson(raw);
+        setJsonError(null);
+        setJsonMode(true);
+      } catch (e) {
+        setJsonError(e instanceof Error ? e.message : String(e));
+      }
     } else {
       setJsonMode(false);
     }
@@ -180,6 +184,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const handleJsonSave = useCallback(async (json: string) => {
     try {
       await setPreferencesRaw(json);
+      setJsonError(null);
     } catch (e) {
       setJsonError(e instanceof Error ? e.message : String(e));
     }
