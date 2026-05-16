@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { EditorView, keymap } from "@codemirror/view";
+import { EditorView } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
 import { json, jsonParseLinter } from "@codemirror/lang-json";
 import { linter } from "@codemirror/lint";
@@ -52,15 +52,6 @@ export function SettingsJsonEditor({
           linter(jsonParseLinter()),
           getThemeExtension(detectTheme()),
           EditorView.editable.of(true),
-          keymap.of([
-            {
-              key: "Mod-s",
-              run: () => {
-                doSave();
-                return true;
-              },
-            },
-          ]),
         ],
       }),
       parent,

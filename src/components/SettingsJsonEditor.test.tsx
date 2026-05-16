@@ -90,6 +90,15 @@ describe("SettingsJsonEditor", () => {
     expect(onSave).toHaveBeenCalledWith('{"valid":true}');
   });
 
+  it("Cmd+S from inside cm-content calls onSave exactly once", () => {
+    const onSave = vi.fn();
+    render(<SettingsJsonEditor initialJson='{"d":4}' onSave={onSave} />);
+    const container = screen.getByTestId("settings-json-editor");
+    const cmContent = container.querySelector(".cm-content")!;
+    fireEvent.keyDown(cmContent, { key: "s", metaKey: true, bubbles: true });
+    expect(onSave).toHaveBeenCalledTimes(1);
+  });
+
   it("includes jsonParseLinter in CM6 extensions", async () => {
     const { linter } = await import("@codemirror/lint");
     const { jsonParseLinter } = await import("@codemirror/lang-json");
