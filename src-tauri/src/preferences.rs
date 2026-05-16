@@ -745,8 +745,8 @@ mod tests {
 
     #[test]
     fn read_preferences_raw_missing_file_returns_default() {
-        let path = PathBuf::from("/tmp/lit-test-raw-missing.json");
-        let _ = fs::remove_file(&path);
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("nonexistent.json");
 
         let result = read_preferences_raw_from_path(&path);
         let expected = serde_json::to_string_pretty(&Preferences::default()).unwrap();
