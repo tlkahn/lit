@@ -22,6 +22,8 @@ jobs:
     steps:
       - name: Checkout lit repo
         uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Get release tag
         id: tag
@@ -81,6 +83,29 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "download_url=$DOWNLOAD_URL" >> "$GITHUB_OUTPUT"
           echo "download_label=$DOWNLOAD_LABEL" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache llm-rs build
+        uses: actions/cache@v4
+        with:
+          path: llm-rs/target
+          key: llm-rs-${{ runner.os }}-${{ hashFiles('llm-rs/Cargo.lock') }}
+
+      - name: Build llm CLI
+        run: |
+          cd llm-rs
+          cargo build --release -p llm-cli
+          echo "$PWD/target/release" >> "$GITHUB_PATH"
+
+      - name: Generate release notes
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LLM_DEFAULT_MODEL: gpt-4o-mini
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          bash scripts/generate-release-notes.sh --force "$TAG"
 
       - name: Clone website repo
         env:

@@ -1,7 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR/.."
 
 AWS_REGION="us-east-1"
 STACK_NAME="lit-production"
@@ -16,6 +17,16 @@ trap cleanup EXIT
 echo "==> Cloning website repo"
 rm -rf "$WEBSITE_DIR"
 git clone --depth 1 "$WEBSITE_REPO" "$WEBSITE_DIR"
+
+if [ -n "$TAG" ]; then
+  if ! command -v llm >/dev/null 2>&1; then
+    echo "==> Building llm CLI from submodule"
+    (cd llm-rs && cargo build --release -p llm-cli)
+    export PATH="$PWD/llm-rs/target/release:$PATH"
+  fi
+  echo "==> Generating release notes for $TAG"
+  bash "$SCRIPT_DIR/generate-release-notes.sh" --force "$TAG" || echo "    (generation failed, will use existing notes if any)"
+fi
 
 echo "==> Copying release notes"
 mkdir -p "$WEBSITE_DIR/content/releases"
