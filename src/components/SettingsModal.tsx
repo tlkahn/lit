@@ -63,13 +63,16 @@ function renderControl(
           onChange={(v) => setLocalTextValues((prev) => ({ ...prev, [entry.storeField]: v }))}
           onCommit={() => {
             const raw = localTextValues[entry.storeField] ?? "";
-            const val = entry.nullable && raw.trim() === "" ? null : raw.trim() || raw;
+            // nullable: empty → null; all text fields trim on commit
+            const val = entry.nullable && raw.trim() === "" ? null : raw.trim();
             setPref(entry.storeField as keyof PreferencesState, entry.jsonKey, val as never);
           }}
         />
       );
   }
 }
+
+const textEntries = SETTINGS_REGISTRY.filter((e) => e.controlType === "text");
 
 export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const prefs = usePreferencesStore(useShallow((s) => ({
@@ -95,7 +98,6 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
 
   const [activeCategory, setActiveCategory] = useState<Category>(CATEGORIES[0]);
 
-  const textEntries = SETTINGS_REGISTRY.filter((e) => e.controlType === "text");
   const [localTextValues, setLocalTextValues] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
     for (const e of textEntries) {
@@ -104,6 +106,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     }
     return init;
   });
+
+  const textSyncKey = textEntries.map((e) => prefs[e.storeField]).join("\0");
 
   useEffect(() => {
     setLocalTextValues((prev) => {
@@ -117,7 +121,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
       }
       return changed ? next : prev;
     });
-  }, [prefs.colorTheme, prefs.annotationDefaultLang]);
+  }, [textSyncKey]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {

@@ -437,6 +437,20 @@ describe("SettingsModal", () => {
         });
       });
     });
+
+    it("trims whitespace-only input to empty string on blur", async () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const input = container.querySelector("[data-testid='settings-annotationDefaultLang']") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "  " } });
+      fireEvent.blur(input);
+      expect(usePreferencesStore.getState().annotationDefaultLang).toBe("");
+      await vi.waitFor(() => {
+        expect(invokeCalls).toContainEqual({
+          cmd: "set_preference",
+          args: { key: "annotations.defaultLang", value: "" },
+        });
+      });
+    });
   });
 
   // --- annotationDisplayMode (SegmentedControl) ---
