@@ -5,7 +5,6 @@ const mockWorkspaceState = vi.hoisted(() => ({
   workspacePath: "/tmp/vault" as string | null,
   currentPagePath: "hello.md" as string | null,
   refreshPages: vi.fn(),
-  selectPageAtLine: vi.fn(),
 }));
 
 const mockPreferencesState = vi.hoisted(() => ({
