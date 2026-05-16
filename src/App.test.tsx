@@ -642,6 +642,24 @@ describe("App", () => {
     });
   });
 
+  it("menu://open-preferences event opens SettingsModal", async () => {
+    mockListen();
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+    useLicenseStore.setState({ state: "trial", daysRemaining: 12, loading: false });
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    act(() => {
+      emitMockEvent("menu://open-preferences", {});
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("settings-modal-backdrop")).toBeInTheDocument();
+    });
+  });
+
   it("license://activate-key shows entry dialog on failure", async () => {
     mockListen();
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });

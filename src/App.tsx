@@ -25,6 +25,7 @@ import { HeadingQuickSwitcher } from "./components/HeadingQuickSwitcher";
 import { CommandPalette } from "./components/CommandPalette";
 import { AnnotationBuilderModal } from "./components/AnnotationBuilderModal";
 import { ExportDialog } from "./components/ExportDialog";
+import { SettingsModal } from "./components/SettingsModal";
 import { useModalLock } from "./hooks/useModalLock";
 import { getCurrentEditorView } from "./lib/editorViewRef";
 import { annotationToFields, getEditCursorOffset, type AnnotationBuilderEventDetail, type EditRawInfo } from "./lib/annotationDsl";
@@ -116,6 +117,7 @@ function App() {
   const [editingRange, setEditingRange] = useState<{ from: number; to: number } | undefined>();
   const [selectionText, setSelectionText] = useState<string | undefined>();
 
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [licenseEntryOpen, setLicenseEntryOpen] = useState(false);
   const [licenseInfoOpen, setLicenseInfoOpen] = useState(false);
   const licenseState = useLicenseStore((s) => s.state);
@@ -146,6 +148,12 @@ function App() {
       });
       if (cancelled) { unInfo(); return; }
       unlisteners.push(unInfo);
+
+      const unPrefs = await listen("menu://open-preferences", () => {
+        setSettingsOpen(true);
+      });
+      if (cancelled) { unPrefs(); return; }
+      unlisteners.push(unPrefs);
 
       const unDeepLink = await listen<string>("license://activate-key", async (event) => {
         const ok = await useLicenseStore.getState().activate(event.payload);
@@ -320,6 +328,7 @@ function App() {
             initialFields={editingAnnotation ? annotationToFields(editingAnnotation) : undefined}
           />
         )}
+        <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
         <LicenseEntryDialog open={licenseEntryOpen} onClose={() => setLicenseEntryOpen(false)} />
         <LicenseInfoDialog open={licenseInfoOpen} licenseState={licenseState} licensedTo={licensedTo} daysRemaining={daysRemaining} onClose={() => setLicenseInfoOpen(false)} />
       </div>
