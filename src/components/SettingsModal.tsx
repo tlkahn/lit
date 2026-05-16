@@ -7,6 +7,7 @@ import { useFocusTrap } from "../hooks/useFocusTrap";
 import { SegmentedControl } from "./SegmentedControl";
 import { ToggleSwitch } from "./ToggleSwitch";
 import { SettingsTextInput } from "./SettingsTextInput";
+import { HighlightedText } from "./HighlightedText";
 import { CATEGORIES, SETTINGS_REGISTRY, filterSettings, type Category, type SettingEntry, type FilteredSetting } from "../lib/settingsRegistry";
 
 interface SettingsModalProps {
@@ -31,13 +32,18 @@ function renderControl(
   prefs: Record<string, unknown>,
   localTextValues: Record<string, string>,
   setLocalTextValues: React.Dispatch<React.SetStateAction<Record<string, string>>>,
+  matchIndices: number[],
 ) {
+  const label = matchIndices.length > 0
+    ? <HighlightedText text={entry.label} indices={matchIndices} />
+    : entry.label;
+
   switch (entry.controlType) {
     case "toggle":
       return (
         <ToggleSwitch
           key={entry.storeField}
-          label={entry.label}
+          label={label}
           testId={entry.testId}
           checked={prefs[entry.storeField] as boolean}
           onChange={(v) => setPref(entry.storeField as keyof PreferencesState, entry.jsonKey, v as never)}
@@ -47,7 +53,7 @@ function renderControl(
       return (
         <SegmentedControl
           key={entry.storeField}
-          label={entry.label}
+          label={label}
           testId={entry.testId}
           value={prefs[entry.storeField] as string}
           options={entry.options!}
@@ -58,7 +64,7 @@ function renderControl(
       return (
         <SettingsTextInput
           key={entry.storeField}
-          label={entry.label}
+          label={label}
           testId={entry.testId}
           value={localTextValues[entry.storeField] ?? ""}
           onChange={(v) => setLocalTextValues((prev) => ({ ...prev, [entry.storeField]: v }))}
@@ -243,7 +249,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   <section key={cat} id={`settings-section-${cat}`} className={i > 0 ? "mt-5" : undefined}>
                     <h3 className="text-sm font-medium text-text-muted mb-3">{cat}</h3>
                     <div className="space-y-3">
-                      {results.map(({ entry }) => renderControl(entry, prefs, localTextValues, setLocalTextValues))}
+                      {results.map(({ entry, indices }) => renderControl(entry, prefs, localTextValues, setLocalTextValues, indices))}
                     </div>
                   </section>
                 ))

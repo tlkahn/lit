@@ -841,4 +841,26 @@ describe("SettingsModal", () => {
     expect(container.querySelector("[data-testid^='settings-foldingShowControls']")).toBeTruthy();
     expect(container.querySelector("[data-testid^='settings-darkMode']")).toBeNull();
   });
+
+  // --- Phase 7: Highlighted Match Text in Labels ---
+
+  // Cycle 7.1 — Matched characters highlighted during search
+
+  it("searching 'dark' highlights matched characters in Dark Mode label", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "dark" } });
+
+    const darkModeControl = container.querySelector("[data-testid='settings-darkMode-auto']")!;
+    const section = darkModeControl.closest("section")!;
+    const marks = section.querySelectorAll("mark");
+    expect(marks.length).toBeGreaterThan(0);
+  });
+
+  it("no <mark> elements in labels when not searching", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const content = container.querySelector("[data-testid='settings-modal-content']")!;
+    const marks = content.querySelectorAll("mark");
+    expect(marks.length).toBe(0);
+  });
 });
