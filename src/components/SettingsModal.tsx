@@ -8,22 +8,18 @@ import { SegmentedControl } from "./SegmentedControl";
 import { ToggleSwitch } from "./ToggleSwitch";
 import { SettingsTextInput } from "./SettingsTextInput";
 import { HighlightedText } from "./HighlightedText";
-import { CATEGORIES, SETTINGS_REGISTRY, filterSettings, type Category, type SettingEntry, type FilteredSetting } from "../lib/settingsRegistry";
+import { CATEGORIES, SETTINGS_REGISTRY, STORE_FIELDS, filterSettings, type Category, type SettingEntry, type FilteredSetting, type PreferenceField } from "../lib/settingsRegistry";
 
 interface SettingsModalProps {
   open: boolean;
   onClose: () => void;
 }
 
-function setPref<K extends keyof PreferencesState>(
-  storeField: K,
-  jsonKey: string,
-  value: PreferencesState[K],
-) {
+function setRegistryPref(storeField: PreferenceField, jsonKey: string, value: unknown) {
   const prev = usePreferencesStore.getState()[storeField];
-  usePreferencesStore.setState({ [storeField]: value });
+  usePreferencesStore.setState({ [storeField]: value } as Partial<PreferencesState>);
   setPreference(jsonKey, value).catch(() => {
-    usePreferencesStore.setState({ [storeField]: prev });
+    usePreferencesStore.setState({ [storeField]: prev } as Partial<PreferencesState>);
   });
 }
 
@@ -46,7 +42,7 @@ function renderControl(
           label={label}
           testId={entry.testId}
           checked={prefs[entry.storeField] as boolean}
-          onChange={(v) => setPref(entry.storeField as keyof PreferencesState, entry.jsonKey, v as never)}
+          onChange={(v) => setRegistryPref(entry.storeField, entry.jsonKey, v)}
         />
       );
     case "segmented":
@@ -57,7 +53,7 @@ function renderControl(
           testId={entry.testId}
           value={prefs[entry.storeField] as string}
           options={entry.options!}
-          onChange={(v) => setPref(entry.storeField as keyof PreferencesState, entry.jsonKey, v as never)}
+          onChange={(v) => setRegistryPref(entry.storeField, entry.jsonKey, v)}
         />
       );
     case "text":
@@ -72,7 +68,7 @@ function renderControl(
             const raw = localTextValues[entry.storeField] ?? "";
             // nullable: empty → null; all text fields trim on commit
             const val = entry.nullable && raw.trim() === "" ? null : raw.trim();
-            setPref(entry.storeField as keyof PreferencesState, entry.jsonKey, val as never);
+            setRegistryPref(entry.storeField, entry.jsonKey, val);
           }}
         />
       );
@@ -82,23 +78,11 @@ function renderControl(
 const textEntries = SETTINGS_REGISTRY.filter((e) => e.controlType === "text");
 
 export function SettingsModal({ open, onClose }: SettingsModalProps) {
-  const prefs = usePreferencesStore(useShallow((s) => ({
-    darkMode: s.darkMode,
-    colorTheme: s.colorTheme,
-    sidebarVisible: s.sidebarVisible,
-    sidebarLocation: s.sidebarLocation,
-    foldingEnabled: s.foldingEnabled,
-    foldingShowControls: s.foldingShowControls,
-    mediaThumbnails: s.mediaThumbnails,
-    crossrefEnabled: s.crossrefEnabled,
-    crossrefLiveRendering: s.crossrefLiveRendering,
-    crossrefEnableCiteproc: s.crossrefEnableCiteproc,
-    annotationEnabled: s.annotationEnabled,
-    annotationScopeHighlight: s.annotationScopeHighlight,
-    annotationDefaultLang: s.annotationDefaultLang,
-    annotationDisplayMode: s.annotationDisplayMode,
-    experimentalUnlinkedReferences: s.experimentalUnlinkedReferences,
-  })));
+  const prefs = usePreferencesStore(useShallow((s) => {
+    const obj: Record<string, unknown> = {};
+    for (const f of STORE_FIELDS) obj[f] = s[f];
+    return obj;
+  }));
 
   const dialogRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);

@@ -12,7 +12,7 @@ export const CATEGORIES = [
 export type Category = (typeof CATEGORIES)[number];
 
 type ControlType = "toggle" | "segmented" | "text";
-type PreferenceField = Exclude<keyof PreferencesState, "loaded" | "loadPreferences">;
+export type PreferenceField = Exclude<keyof PreferencesState, "loaded" | "loadPreferences">;
 
 export interface SettingEntry {
   category: Category;
@@ -171,6 +171,8 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
     testId: "settings-experimentalUnlinkedReferences",
   },
 ];
+
+export const STORE_FIELDS: PreferenceField[] = SETTINGS_REGISTRY.map(e => e.storeField);
 
 export interface FilteredSetting {
   entry: SettingEntry;
