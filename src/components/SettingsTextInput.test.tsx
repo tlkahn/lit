@@ -39,6 +39,17 @@ describe("SettingsTextInput", () => {
     expect(onCommit).toHaveBeenCalled();
   });
 
+  it("does not throw when onCommit is omitted", () => {
+    const { container } = render(
+      <SettingsTextInput value="en" onChange={vi.fn()} testId="txt" />,
+    );
+    const input = container.querySelector("[data-testid='txt']")!;
+    expect(() => {
+      fireEvent.blur(input);
+      fireEvent.keyDown(input, { key: "Enter" });
+    }).not.toThrow();
+  });
+
   it("calls onCommit on Enter", () => {
     const onCommit = vi.fn();
     const { container } = render(
