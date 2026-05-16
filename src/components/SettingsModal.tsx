@@ -1,4 +1,5 @@
-import { useEffect, useCallback, useRef, useState } from "react";
+import { useEffect, useCallback, useRef, useState, useMemo } from "react";
+import { flushSync } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
 import { usePreferencesStore, type PreferencesState } from "../stores/preferences";
 import { setPreference } from "../lib/ipc";
@@ -6,7 +7,7 @@ import { useFocusTrap } from "../hooks/useFocusTrap";
 import { SegmentedControl } from "./SegmentedControl";
 import { ToggleSwitch } from "./ToggleSwitch";
 import { SettingsTextInput } from "./SettingsTextInput";
-import { CATEGORIES, SETTINGS_REGISTRY, groupByCategory, type Category, type SettingEntry } from "../lib/settingsRegistry";
+import { CATEGORIES, SETTINGS_REGISTRY, filterSettings, type Category, type SettingEntry, type FilteredSetting } from "../lib/settingsRegistry";
 
 interface SettingsModalProps {
   open: boolean;
@@ -100,6 +101,27 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [activeCategory, setActiveCategory] = useState<Category>(CATEGORIES[0]);
   const [searchQuery, setSearchQuery] = useState("");
 
+  const filteredResults = useMemo(
+    () => filterSettings(SETTINGS_REGISTRY, searchQuery),
+    [searchQuery],
+  );
+
+  const filteredGroups = useMemo(() => {
+    const groups = new Map<Category, FilteredSetting[]>();
+    for (const cat of CATEGORIES) groups.set(cat, []);
+    for (const result of filteredResults) groups.get(result.entry.category)!.push(result);
+    return groups;
+  }, [filteredResults]);
+
+  const matchedCategories = useMemo(() => {
+    if (searchQuery === "") return null;
+    const matched = new Set<Category>();
+    for (const [cat, results] of filteredGroups) {
+      if (results.length > 0) matched.add(cat);
+    }
+    return matched;
+  }, [searchQuery, filteredGroups]);
+
   useEffect(() => {
     if (open) {
       setSearchQuery("");
@@ -186,31 +208,46 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
 
         <div data-testid="settings-modal-content" className="flex-1 overflow-y-auto flex flex-row">
           <nav data-testid="settings-sidebar" className="flex flex-col gap-1 px-3 pb-5 shrink-0 w-40">
-            {CATEGORIES.map((cat) => (
-              <button
-                key={cat}
-                role="tab"
-                aria-selected={cat === activeCategory}
-                className={`text-left px-2 py-1 rounded text-sm ${cat === activeCategory ? "bg-bg-secondary text-text-normal" : "text-text-muted hover:bg-bg-secondary"}`}
-                onClick={() => {
-                  setActiveCategory(cat);
-                  const section = document.getElementById(`settings-section-${cat}`);
-                  section?.scrollIntoView({ behavior: "smooth", block: "start" });
-                }}
-              >
-                {cat}
-              </button>
-            ))}
+            {CATEGORIES.map((cat) => {
+              const hasMatches = matchedCategories ? matchedCategories.has(cat) : undefined;
+              return (
+                <button
+                  key={cat}
+                  role="tab"
+                  aria-selected={cat === activeCategory}
+                  {...(hasMatches !== undefined && { "data-has-matches": String(hasMatches) })}
+                  className={`text-left px-2 py-1 rounded text-sm ${cat === activeCategory ? "bg-bg-secondary text-text-normal" : "text-text-muted hover:bg-bg-secondary"} ${hasMatches === false ? "opacity-40" : ""}`}
+                  onClick={() => {
+                    if (searchQuery !== "" && matchedCategories && !matchedCategories.has(cat)) {
+                      flushSync(() => setSearchQuery(""));
+                    }
+                    setActiveCategory(cat);
+                    const section = document.getElementById(`settings-section-${cat}`);
+                    section?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }}
+                >
+                  {cat}
+                </button>
+              );
+            })}
           </nav>
           <div className="flex-1 overflow-y-auto px-5 pb-5">
-            {Array.from(groupByCategory(SETTINGS_REGISTRY)).map(([cat, entries], i) => (
-              <section key={cat} id={`settings-section-${cat}`} className={i > 0 ? "mt-5" : undefined}>
-                <h3 className="text-sm font-medium text-text-muted mb-3">{cat}</h3>
-                <div className="space-y-3">
-                  {entries.map((entry) => renderControl(entry, prefs, localTextValues, setLocalTextValues))}
-                </div>
-              </section>
-            ))}
+            {filteredResults.length === 0 && searchQuery !== "" ? (
+              <div data-testid="settings-no-results" className="py-8 text-center text-sm text-text-muted">
+                No matching settings
+              </div>
+            ) : (
+              Array.from(filteredGroups)
+                .filter(([, results]) => results.length > 0)
+                .map(([cat, results], i) => (
+                  <section key={cat} id={`settings-section-${cat}`} className={i > 0 ? "mt-5" : undefined}>
+                    <h3 className="text-sm font-medium text-text-muted mb-3">{cat}</h3>
+                    <div className="space-y-3">
+                      {results.map(({ entry }) => renderControl(entry, prefs, localTextValues, setLocalTextValues))}
+                    </div>
+                  </section>
+                ))
+            )}
           </div>
         </div>
       </div>

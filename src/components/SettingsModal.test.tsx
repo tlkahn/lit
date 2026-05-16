@@ -658,4 +658,160 @@ describe("SettingsModal", () => {
 
     expect(input.value).toBe("nord");
   });
+
+  // --- Phase 6: Search Filtering ---
+
+  // Cycle 6.1 — Typing filters settings to matches only
+
+  it("typing 'fold' shows only folding controls", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "fold" } });
+
+    expect(container.querySelector("[data-testid='settings-foldingEnabled']")).toBeTruthy();
+    expect(container.querySelector("[data-testid^='settings-foldingShowControls']")).toBeTruthy();
+
+    expect(container.querySelector("[data-testid^='settings-darkMode']")).toBeNull();
+    expect(container.querySelector("[data-testid='settings-sidebarVisible']")).toBeNull();
+    expect(container.querySelector("[data-testid='settings-colorTheme']")).toBeNull();
+    expect(container.querySelector("[data-testid='settings-mediaThumbnails']")).toBeNull();
+    expect(container.querySelector("[data-testid='settings-crossrefEnabled']")).toBeNull();
+    expect(container.querySelector("[data-testid='settings-annotationEnabled']")).toBeNull();
+    expect(container.querySelector("[data-testid='settings-experimentalUnlinkedReferences']")).toBeNull();
+  });
+
+  it("typing 'xyzzy' shows no-results message", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "xyzzy" } });
+
+    expect(container.querySelector("[data-testid='settings-no-results']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='settings-no-results']")!.textContent).toContain("No matching settings");
+  });
+
+  it("empty search shows all 15 controls", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "fold" } });
+    fireEvent.change(search, { target: { value: "" } });
+
+    const expectedIds = [
+      "settings-darkMode-auto",
+      "settings-colorTheme",
+      "settings-sidebarVisible",
+      "settings-sidebarLocation-left",
+      "settings-foldingEnabled",
+      "settings-foldingShowControls-mouseover",
+      "settings-mediaThumbnails",
+      "settings-crossrefEnabled",
+      "settings-crossrefLiveRendering",
+      "settings-crossrefEnableCiteproc",
+      "settings-annotationEnabled",
+      "settings-annotationScopeHighlight",
+      "settings-annotationDefaultLang",
+      "settings-annotationDisplayMode-pill",
+      "settings-experimentalUnlinkedReferences",
+    ];
+    for (const id of expectedIds) {
+      expect(container.querySelector(`[data-testid='${id}']`), `missing ${id}`).toBeTruthy();
+    }
+  });
+
+  // Cycle 6.2 — Category headings hide when section is empty
+
+  it("searching 'fold' shows only Editor heading", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "fold" } });
+
+    const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
+    expect(headings).toEqual(["Editor"]);
+  });
+
+  it("searching 'enabled' shows Cross-references and Annotations headings", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "enabled" } });
+
+    const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
+    expect(headings).toEqual(["Cross-references", "Annotations"]);
+  });
+
+  it("clearing search restores all 5 headings", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "fold" } });
+    fireEvent.change(search, { target: { value: "" } });
+
+    const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
+    expect(headings).toEqual(["Appearance", "Editor", "Cross-references", "Annotations", "Experimental"]);
+  });
+
+  // Cycle 6.3 — Sidebar highlights categories with matches
+
+  it("searching 'fold' marks Editor sidebar button with data-has-matches=true", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "fold" } });
+
+    const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
+    const buttons = Array.from(sidebar.querySelectorAll("button"));
+    const editorBtn = buttons.find((b) => b.textContent === "Editor")!;
+    const appearanceBtn = buttons.find((b) => b.textContent === "Appearance")!;
+
+    expect(editorBtn.getAttribute("data-has-matches")).toBe("true");
+    expect(appearanceBtn.getAttribute("data-has-matches")).toBe("false");
+  });
+
+  it("clearing search removes data-has-matches attributes", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "fold" } });
+    fireEvent.change(search, { target: { value: "" } });
+
+    const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
+    const buttons = Array.from(sidebar.querySelectorAll("button"));
+    for (const btn of buttons) {
+      expect(btn.hasAttribute("data-has-matches")).toBe(false);
+    }
+  });
+
+  // Cycle 6.4 — Sidebar click clears search when category has no matches
+
+  it("clicking non-matching category clears search and scrolls", () => {
+    const scrollIntoViewMock = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoViewMock;
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "fold" } });
+
+    const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
+    const appearanceBtn = Array.from(sidebar.querySelectorAll("button")).find((b) => b.textContent === "Appearance")!;
+    fireEvent.click(appearanceBtn);
+
+    expect(search.value).toBe("");
+
+    const expectedIds = [
+      "settings-darkMode-auto",
+      "settings-colorTheme",
+      "settings-sidebarVisible",
+      "settings-sidebarLocation-left",
+      "settings-foldingEnabled",
+      "settings-foldingShowControls-mouseover",
+      "settings-mediaThumbnails",
+      "settings-crossrefEnabled",
+      "settings-crossrefLiveRendering",
+      "settings-crossrefEnableCiteproc",
+      "settings-annotationEnabled",
+      "settings-annotationScopeHighlight",
+      "settings-annotationDefaultLang",
+      "settings-annotationDisplayMode-pill",
+      "settings-experimentalUnlinkedReferences",
+    ];
+    for (const id of expectedIds) {
+      expect(container.querySelector(`[data-testid='${id}']`), `missing ${id}`).toBeTruthy();
+    }
+
+    expect(scrollIntoViewMock).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
+  });
 });
