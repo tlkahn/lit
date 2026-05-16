@@ -1,7 +1,8 @@
-import { useEffect, useRef } from "react";
-import { EditorView } from "@codemirror/view";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { EditorView, keymap } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
-import { json } from "@codemirror/lang-json";
+import { json, jsonParseLinter } from "@codemirror/lang-json";
+import { linter } from "@codemirror/lint";
 import { getThemeExtension } from "../editor/theme";
 
 interface SettingsJsonEditorProps {
@@ -15,8 +16,29 @@ function detectTheme(): "light" | "dark" {
     : "light";
 }
 
-export function SettingsJsonEditor({ initialJson }: SettingsJsonEditorProps) {
+export function SettingsJsonEditor({
+  initialJson,
+  onSave,
+}: SettingsJsonEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<EditorView | null>(null);
+  const onSaveRef = useRef(onSave);
+  onSaveRef.current = onSave;
+  const [error, setError] = useState<string | null>(null);
+
+  const doSave = useCallback(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    const doc = view.state.doc.toString();
+    try {
+      JSON.parse(doc);
+    } catch (e) {
+      setError((e as SyntaxError).message);
+      return;
+    }
+    setError(null);
+    onSaveRef.current(doc);
+  }, []);
 
   useEffect(() => {
     const parent = containerRef.current;
@@ -27,15 +49,52 @@ export function SettingsJsonEditor({ initialJson }: SettingsJsonEditorProps) {
         doc: initialJson,
         extensions: [
           json(),
+          linter(jsonParseLinter()),
           getThemeExtension(detectTheme()),
           EditorView.editable.of(true),
+          keymap.of([
+            {
+              key: "Mod-s",
+              run: () => {
+                doSave();
+                return true;
+              },
+            },
+          ]),
         ],
       }),
       parent,
     });
+    viewRef.current = view;
 
-    return () => view.destroy();
+    return () => {
+      view.destroy();
+      viewRef.current = null;
+    };
   }, [initialJson]);
 
-  return <div ref={containerRef} data-testid="settings-json-editor" />;
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "s" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        doSave();
+      }
+    };
+    container.addEventListener("keydown", handler);
+    return () => container.removeEventListener("keydown", handler);
+  }, [doSave]);
+
+  return (
+    <div>
+      <div ref={containerRef} data-testid="settings-json-editor" />
+      <button data-testid="settings-json-save" onClick={doSave}>
+        Save
+      </button>
+      {error && (
+        <div data-testid="settings-json-error">{error}</div>
+      )}
+    </div>
+  );
 }
