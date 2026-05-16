@@ -898,7 +898,6 @@ describe("SettingsModal", () => {
   it("Cmd+F focuses the search input", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
-    // Focus something else first
     const closeBtn = container.querySelector("[data-testid='settings-modal-close']") as HTMLElement;
     closeBtn.focus();
     expect(document.activeElement).toBe(closeBtn);
@@ -907,9 +906,20 @@ describe("SettingsModal", () => {
     expect(document.activeElement).toBe(search);
   });
 
+  it("Ctrl+F focuses the search input", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    const closeBtn = container.querySelector("[data-testid='settings-modal-close']") as HTMLElement;
+    closeBtn.focus();
+    expect(document.activeElement).toBe(closeBtn);
+
+    fireEvent.keyDown(document, { key: "f", ctrlKey: true });
+    expect(document.activeElement).toBe(search);
+  });
+
   // Cycle 8.3 — Arrow keys navigate sidebar
 
-  it("ArrowDown on focused sidebar button selects next category", () => {
+  it("ArrowDown on focused sidebar button selects next category and focuses it", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
     const buttons = Array.from(sidebar.querySelectorAll("button"));
@@ -918,9 +928,26 @@ describe("SettingsModal", () => {
     fireEvent.keyDown(sidebar, { key: "ArrowDown" });
     expect(buttons[1]!.getAttribute("aria-selected")).toBe("true");
     expect(buttons[0]!.getAttribute("aria-selected")).toBe("false");
+    expect(document.activeElement).toBe(buttons[1]);
   });
 
-  it("ArrowUp from first category wraps to last", () => {
+  it("ArrowDown from last category wraps to first", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
+    const buttons = Array.from(sidebar.querySelectorAll("button"));
+
+    // Select last category first
+    const lastBtn = buttons[buttons.length - 1]!;
+    fireEvent.click(lastBtn);
+    lastBtn.focus();
+
+    fireEvent.keyDown(sidebar, { key: "ArrowDown" });
+    expect(buttons[0]!.getAttribute("aria-selected")).toBe("true");
+    expect(lastBtn.getAttribute("aria-selected")).toBe("false");
+    expect(document.activeElement).toBe(buttons[0]);
+  });
+
+  it("ArrowUp from first category wraps to last and focuses it", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
     const buttons = Array.from(sidebar.querySelectorAll("button"));
@@ -930,6 +957,62 @@ describe("SettingsModal", () => {
     const last = buttons[buttons.length - 1]!;
     expect(last.getAttribute("aria-selected")).toBe("true");
     expect(buttons[0]!.getAttribute("aria-selected")).toBe("false");
+    expect(document.activeElement).toBe(last);
+  });
+
+  it("arrow navigation calls scrollIntoView on the target section", () => {
+    let scrolledEl: Element | null = null;
+    Element.prototype.scrollIntoView = vi.fn(function (this: Element) {
+      scrolledEl = this;
+    });
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
+    const buttons = Array.from(sidebar.querySelectorAll("button"));
+    buttons[0]!.focus();
+
+    fireEvent.keyDown(sidebar, { key: "ArrowDown" });
+    expect((scrolledEl as HTMLElement | null)?.id).toBe("settings-section-Editor");
+  });
+
+  it("arrow navigation skips categories with no matches during search", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    // "mode" matches Appearance (Dark Mode) and Annotations (Display Mode) — not adjacent
+    fireEvent.change(search, { target: { value: "mode" } });
+
+    const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
+    const buttons = Array.from(sidebar.querySelectorAll("button"));
+    const appearanceBtn = buttons.find((b) => b.textContent === "Appearance")!;
+
+    fireEvent.click(appearanceBtn);
+    appearanceBtn.focus();
+
+    // ArrowDown should skip Editor and Cross-references, land on Annotations
+    fireEvent.keyDown(sidebar, { key: "ArrowDown" });
+    const annotationsBtn = buttons.find((b) => b.textContent === "Annotations")!;
+    expect(annotationsBtn.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(annotationsBtn);
+  });
+
+  it("arrow navigation wraps through matching categories during search", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    // "mode" matches Appearance (Dark Mode) and Annotations (Display Mode)
+    fireEvent.change(search, { target: { value: "mode" } });
+
+    const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
+    const buttons = Array.from(sidebar.querySelectorAll("button"));
+    const annotationsBtn = buttons.find((b) => b.textContent === "Annotations")!;
+
+    // Start at Annotations (last matching category)
+    fireEvent.click(annotationsBtn);
+    annotationsBtn.focus();
+
+    // ArrowDown should wrap past Experimental to Appearance (first match)
+    fireEvent.keyDown(sidebar, { key: "ArrowDown" });
+    const appearanceBtn = buttons.find((b) => b.textContent === "Appearance")!;
+    expect(appearanceBtn.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(appearanceBtn);
   });
 
   it("sidebar nav has role=tablist and aria-orientation=vertical", () => {

@@ -215,8 +215,9 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             onChange={(e) => setSearchQuery(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Escape" && searchQuery !== "") {
-                setSearchQuery("");
+                e.preventDefault();
                 e.stopPropagation();
+                setSearchQuery("");
               }
             }}
           />
@@ -231,14 +232,17 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             onKeyDown={(e) => {
               if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
               e.preventDefault();
-              const idx = CATEGORIES.indexOf(activeCategory);
-              const next = e.key === "ArrowDown"
-                ? (idx + 1) % CATEGORIES.length
-                : (idx - 1 + CATEGORIES.length) % CATEGORIES.length;
-              const nextCat = CATEGORIES[next]!;
+              const step = e.key === "ArrowDown" ? 1 : -1;
+              const len = CATEGORIES.length;
+              let idx = CATEGORIES.indexOf(activeCategory);
+              for (let i = 0; i < len - 1; i++) {
+                idx = (idx + step + len) % len;
+                if (!matchedCategories || matchedCategories.has(CATEGORIES[idx]!)) break;
+              }
+              const nextCat = CATEGORIES[idx]!;
               setActiveCategory(nextCat);
               const buttons = (e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>("button");
-              buttons[next]?.focus();
+              buttons[idx]?.focus();
               const section = document.getElementById(`settings-section-${nextCat}`);
               section?.scrollIntoView({ behavior: "smooth", block: "start" });
             }}
