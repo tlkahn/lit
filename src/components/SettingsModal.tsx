@@ -163,6 +163,10 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
+      if (e.key === "f" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
     },
     [onClose],
   );
@@ -209,11 +213,36 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             className="w-full rounded border border-border bg-bg-secondary px-3 py-1.5 text-sm text-text-normal placeholder:text-text-muted outline-none focus:border-accent"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape" && searchQuery !== "") {
+                setSearchQuery("");
+                e.stopPropagation();
+              }
+            }}
           />
         </div>
 
         <div data-testid="settings-modal-content" className="flex-1 overflow-y-auto flex flex-row">
-          <nav data-testid="settings-sidebar" className="flex flex-col gap-1 px-3 pb-5 shrink-0 w-40">
+          <nav
+            data-testid="settings-sidebar"
+            role="tablist"
+            aria-orientation="vertical"
+            className="flex flex-col gap-1 px-3 pb-5 shrink-0 w-40"
+            onKeyDown={(e) => {
+              if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+              e.preventDefault();
+              const idx = CATEGORIES.indexOf(activeCategory);
+              const next = e.key === "ArrowDown"
+                ? (idx + 1) % CATEGORIES.length
+                : (idx - 1 + CATEGORIES.length) % CATEGORIES.length;
+              const nextCat = CATEGORIES[next]!;
+              setActiveCategory(nextCat);
+              const buttons = (e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>("button");
+              buttons[next]?.focus();
+              const section = document.getElementById(`settings-section-${nextCat}`);
+              section?.scrollIntoView({ behavior: "smooth", block: "start" });
+            }}
+          >
             {CATEGORIES.map((cat) => {
               const hasMatches = matchedCategories ? matchedCategories.has(cat) : undefined;
               return (

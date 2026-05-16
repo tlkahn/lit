@@ -866,4 +866,76 @@ describe("SettingsModal", () => {
     const marks = content.querySelectorAll("mark");
     expect(marks.length).toBe(0);
   });
+
+  // --- Phase 8: Keyboard Accessibility ---
+
+  // Cycle 8.1 — Escape in search clears query first
+
+  it("Escape with non-empty search clears query, modal stays open", () => {
+    const onClose = vi.fn();
+    const { container } = render(<SettingsModal open={true} onClose={onClose} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "fold" } });
+    expect(search.value).toBe("fold");
+
+    fireEvent.keyDown(search, { key: "Escape" });
+    expect(search.value).toBe("");
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("Escape with empty search calls onClose", () => {
+    const onClose = vi.fn();
+    const { container } = render(<SettingsModal open={true} onClose={onClose} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    expect(search.value).toBe("");
+
+    fireEvent.keyDown(search, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  // Cycle 8.2 — Cmd/Ctrl+F focuses search input
+
+  it("Cmd+F focuses the search input", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    // Focus something else first
+    const closeBtn = container.querySelector("[data-testid='settings-modal-close']") as HTMLElement;
+    closeBtn.focus();
+    expect(document.activeElement).toBe(closeBtn);
+
+    fireEvent.keyDown(document, { key: "f", metaKey: true });
+    expect(document.activeElement).toBe(search);
+  });
+
+  // Cycle 8.3 — Arrow keys navigate sidebar
+
+  it("ArrowDown on focused sidebar button selects next category", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
+    const buttons = Array.from(sidebar.querySelectorAll("button"));
+    buttons[0]!.focus();
+
+    fireEvent.keyDown(sidebar, { key: "ArrowDown" });
+    expect(buttons[1]!.getAttribute("aria-selected")).toBe("true");
+    expect(buttons[0]!.getAttribute("aria-selected")).toBe("false");
+  });
+
+  it("ArrowUp from first category wraps to last", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
+    const buttons = Array.from(sidebar.querySelectorAll("button"));
+    buttons[0]!.focus();
+
+    fireEvent.keyDown(sidebar, { key: "ArrowUp" });
+    const last = buttons[buttons.length - 1]!;
+    expect(last.getAttribute("aria-selected")).toBe("true");
+    expect(buttons[0]!.getAttribute("aria-selected")).toBe("false");
+  });
+
+  it("sidebar nav has role=tablist and aria-orientation=vertical", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
+    expect(sidebar.getAttribute("role")).toBe("tablist");
+    expect(sidebar.getAttribute("aria-orientation")).toBe("vertical");
+  });
 });
