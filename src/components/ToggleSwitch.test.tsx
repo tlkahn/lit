@@ -36,4 +36,11 @@ describe("ToggleSwitch", () => {
     );
     expect(container.textContent).toContain("Dark Mode");
   });
+
+  it("renders JSX element as label", () => {
+    const { container } = render(
+      <ToggleSwitch checked={false} onChange={vi.fn()} testId="ts" label={<em>Highlighted</em>} />,
+    );
+    expect(container.querySelector("em")?.textContent).toBe("Highlighted");
+  });
 });

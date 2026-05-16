@@ -30,6 +30,13 @@ describe("SettingsTextInput", () => {
     expect(container.textContent).toContain("Language");
   });
 
+  it("renders JSX element as label", () => {
+    const { container } = render(
+      <SettingsTextInput value="en" onChange={vi.fn()} testId="txt" label={<em>Highlighted</em>} />,
+    );
+    expect(container.querySelector("em")?.textContent).toBe("Highlighted");
+  });
+
   it("calls onCommit on blur", () => {
     const onCommit = vi.fn();
     const { container } = render(

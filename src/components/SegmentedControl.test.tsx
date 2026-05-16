@@ -39,4 +39,11 @@ describe("SegmentedControl", () => {
     );
     expect(container.textContent).toContain("Pick one");
   });
+
+  it("renders JSX element as label", () => {
+    const { container } = render(
+      <SegmentedControl options={options} value="a" onChange={vi.fn()} testId="seg" label={<em>Highlighted</em>} />,
+    );
+    expect(container.querySelector("em")?.textContent).toBe("Highlighted");
+  });
 });
