@@ -13,6 +13,7 @@ pub const MENU_ID_EXPORT_MARKDOWN: &str = "export_markdown";
 pub const MENU_ID_ABOUT: &str = "show_about";
 
 pub const EVENT_OPEN_PREFERENCES: &str = "menu://open-preferences";
+pub const EVENT_OPEN_IN_EXTERNAL_EDITOR: &str = "menu://open-in-external-editor";
 pub const EVENT_BUY_LICENSE: &str = "menu://buy-license";
 pub const EVENT_ENTER_LICENSE_KEY: &str = "menu://enter-license-key";
 pub const EVENT_LICENSE_INFO: &str = "menu://license-info";
@@ -96,7 +97,7 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
         }
         MenuAction::OpenInExternalEditor => {
             use tauri::Emitter;
-            let _ = app.emit("menu://open-in-external-editor", ());
+            let _ = app.emit(EVENT_OPEN_IN_EXTERNAL_EDITOR, ());
         }
         MenuAction::ShowAbout => {
             let handle = app.clone();
@@ -309,6 +310,7 @@ mod tests {
     #[test]
     fn menu_event_name_constants_defined() {
         assert_eq!(EVENT_OPEN_PREFERENCES, "menu://open-preferences");
+        assert_eq!(EVENT_OPEN_IN_EXTERNAL_EDITOR, "menu://open-in-external-editor");
         assert_eq!(EVENT_BUY_LICENSE, "menu://buy-license");
         assert_eq!(EVENT_ENTER_LICENSE_KEY, "menu://enter-license-key");
         assert_eq!(EVENT_LICENSE_INFO, "menu://license-info");
