@@ -75,6 +75,24 @@ describe("SettingsModal", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  // --- Backdrop click ---
+
+  it("clicking backdrop calls onClose", () => {
+    const onClose = vi.fn();
+    const { container } = render(<SettingsModal open={true} onClose={onClose} />);
+    const backdrop = container.querySelector("[data-testid='settings-modal-backdrop']")!;
+    fireEvent.click(backdrop);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("clicking dialog does not call onClose", () => {
+    const onClose = vi.fn();
+    const { container } = render(<SettingsModal open={true} onClose={onClose} />);
+    const dialog = container.querySelector("[data-testid='settings-modal-dialog']")!;
+    fireEvent.click(dialog);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   // --- Structural tests ---
 
   it("renders all five section headings", () => {
@@ -463,6 +481,42 @@ describe("SettingsModal", () => {
         });
       });
     });
+  });
+
+  // --- IPC error rollback ---
+
+  it("reverts store when setPreference IPC rejects", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "set_preference") throw new Error("disk full");
+    });
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const toggle = container.querySelector("[data-testid='settings-foldingEnabled']")!;
+    expect(usePreferencesStore.getState().foldingEnabled).toBe(true);
+    fireEvent.click(toggle);
+    expect(usePreferencesStore.getState().foldingEnabled).toBe(false);
+    await vi.waitFor(() => {
+      expect(usePreferencesStore.getState().foldingEnabled).toBe(true);
+    });
+  });
+
+  // --- Focus trap ---
+
+  it("traps focus within the modal", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const dialog = container.querySelector("[data-testid='settings-modal-dialog']")!;
+    const focusable = dialog.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+    );
+    const first = focusable[0]!;
+    const last = focusable[focusable.length - 1]!;
+
+    last.focus();
+    expect(document.activeElement).toBe(last);
+
+    const tabEvent = new KeyboardEvent("keydown", { key: "Tab", bubbles: true });
+    Object.defineProperty(tabEvent, "preventDefault", { value: () => {} });
+    dialog.dispatchEvent(tabEvent);
+    expect(document.activeElement).toBe(first);
   });
 
   // --- Reactivity ---

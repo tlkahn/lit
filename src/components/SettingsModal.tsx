@@ -1,6 +1,8 @@
-import { useEffect, useCallback, useState } from "react";
+import { useEffect, useCallback, useRef, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { usePreferencesStore, type PreferencesState } from "../stores/preferences";
 import { setPreference } from "../lib/ipc";
+import { useFocusTrap } from "../hooks/useFocusTrap";
 import { SegmentedControl } from "./SegmentedControl";
 import { ToggleSwitch } from "./ToggleSwitch";
 import { SettingsTextInput } from "./SettingsTextInput";
@@ -15,37 +17,45 @@ function setPref<K extends keyof PreferencesState>(
   jsonKey: string,
   value: PreferencesState[K],
 ) {
+  const prev = usePreferencesStore.getState()[storeField];
   usePreferencesStore.setState({ [storeField]: value });
-  setPreference(jsonKey, value).catch(console.error);
+  setPreference(jsonKey, value).catch(() => {
+    usePreferencesStore.setState({ [storeField]: prev });
+  });
 }
 
 export function SettingsModal({ open, onClose }: SettingsModalProps) {
-  const darkMode = usePreferencesStore((s) => s.darkMode);
-  const colorTheme = usePreferencesStore((s) => s.colorTheme);
-  const sidebarVisible = usePreferencesStore((s) => s.sidebarVisible);
-  const sidebarLocation = usePreferencesStore((s) => s.sidebarLocation);
-  const foldingEnabled = usePreferencesStore((s) => s.foldingEnabled);
-  const foldingShowControls = usePreferencesStore((s) => s.foldingShowControls);
-  const mediaThumbnails = usePreferencesStore((s) => s.mediaThumbnails);
-  const crossrefEnabled = usePreferencesStore((s) => s.crossrefEnabled);
-  const crossrefLiveRendering = usePreferencesStore((s) => s.crossrefLiveRendering);
-  const crossrefEnableCiteproc = usePreferencesStore((s) => s.crossrefEnableCiteproc);
-  const annotationEnabled = usePreferencesStore((s) => s.annotationEnabled);
-  const annotationScopeHighlight = usePreferencesStore((s) => s.annotationScopeHighlight);
-  const annotationDefaultLang = usePreferencesStore((s) => s.annotationDefaultLang);
-  const annotationDisplayMode = usePreferencesStore((s) => s.annotationDisplayMode);
-  const experimentalUnlinkedReferences = usePreferencesStore((s) => s.experimentalUnlinkedReferences);
+  const prefs = usePreferencesStore(useShallow((s) => ({
+    darkMode: s.darkMode,
+    colorTheme: s.colorTheme,
+    sidebarVisible: s.sidebarVisible,
+    sidebarLocation: s.sidebarLocation,
+    foldingEnabled: s.foldingEnabled,
+    foldingShowControls: s.foldingShowControls,
+    mediaThumbnails: s.mediaThumbnails,
+    crossrefEnabled: s.crossrefEnabled,
+    crossrefLiveRendering: s.crossrefLiveRendering,
+    crossrefEnableCiteproc: s.crossrefEnableCiteproc,
+    annotationEnabled: s.annotationEnabled,
+    annotationScopeHighlight: s.annotationScopeHighlight,
+    annotationDefaultLang: s.annotationDefaultLang,
+    annotationDisplayMode: s.annotationDisplayMode,
+    experimentalUnlinkedReferences: s.experimentalUnlinkedReferences,
+  })));
 
-  const [localColorTheme, setLocalColorTheme] = useState(colorTheme ?? "");
-  const [localAnnotationLang, setLocalAnnotationLang] = useState(annotationDefaultLang);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef, open);
+
+  const [localColorTheme, setLocalColorTheme] = useState(prefs.colorTheme ?? "");
+  const [localAnnotationLang, setLocalAnnotationLang] = useState(prefs.annotationDefaultLang);
 
   useEffect(() => {
-    setLocalColorTheme(colorTheme ?? "");
-  }, [colorTheme]);
+    setLocalColorTheme(prefs.colorTheme ?? "");
+  }, [prefs.colorTheme]);
 
   useEffect(() => {
-    setLocalAnnotationLang(annotationDefaultLang);
-  }, [annotationDefaultLang]);
+    setLocalAnnotationLang(prefs.annotationDefaultLang);
+  }, [prefs.annotationDefaultLang]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -66,10 +76,13 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
       data-testid="settings-modal-backdrop"
+      onClick={onClose}
     >
       <div
+        ref={dialogRef}
         className="rounded-lg bg-bg-primary w-[32rem] max-h-[80vh] flex flex-col"
         data-testid="settings-modal-dialog"
+        onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 pt-5 pb-3">
           <h2 className="text-base font-semibold text-text-normal">Settings</h2>
@@ -91,7 +104,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               <SegmentedControl
                 label="Dark Mode"
                 testId="settings-darkMode"
-                value={darkMode}
+                value={prefs.darkMode}
                 options={[
                   { value: "auto", label: "Auto" },
                   { value: "dark", label: "Dark" },
@@ -112,13 +125,13 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               <ToggleSwitch
                 label="Sidebar Visible"
                 testId="settings-sidebarVisible"
-                checked={sidebarVisible}
+                checked={prefs.sidebarVisible}
                 onChange={(v) => setPref("sidebarVisible", "workbench.sideBar.visible", v)}
               />
               <SegmentedControl
                 label="Sidebar Location"
                 testId="settings-sidebarLocation"
-                value={sidebarLocation}
+                value={prefs.sidebarLocation}
                 options={[
                   { value: "left", label: "Left" },
                   { value: "right", label: "Right" },
@@ -134,13 +147,13 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               <ToggleSwitch
                 label="Folding"
                 testId="settings-foldingEnabled"
-                checked={foldingEnabled}
+                checked={prefs.foldingEnabled}
                 onChange={(v) => setPref("foldingEnabled", "editor.folding.enabled", v)}
               />
               <SegmentedControl
                 label="Folding Controls"
                 testId="settings-foldingShowControls"
-                value={foldingShowControls}
+                value={prefs.foldingShowControls}
                 options={[
                   { value: "mouseover", label: "Mouseover" },
                   { value: "always", label: "Always" },
@@ -151,7 +164,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               <ToggleSwitch
                 label="Media Thumbnails"
                 testId="settings-mediaThumbnails"
-                checked={mediaThumbnails}
+                checked={prefs.mediaThumbnails}
                 onChange={(v) => setPref("mediaThumbnails", "editor.mediaThumbnails", v)}
               />
             </div>
@@ -163,19 +176,19 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               <ToggleSwitch
                 label="Enabled"
                 testId="settings-crossrefEnabled"
-                checked={crossrefEnabled}
+                checked={prefs.crossrefEnabled}
                 onChange={(v) => setPref("crossrefEnabled", "crossref.enabled", v)}
               />
               <ToggleSwitch
                 label="Live Rendering"
                 testId="settings-crossrefLiveRendering"
-                checked={crossrefLiveRendering}
+                checked={prefs.crossrefLiveRendering}
                 onChange={(v) => setPref("crossrefLiveRendering", "crossref.liveRendering", v)}
               />
               <ToggleSwitch
                 label="Enable Citeproc"
                 testId="settings-crossrefEnableCiteproc"
-                checked={crossrefEnableCiteproc}
+                checked={prefs.crossrefEnableCiteproc}
                 onChange={(v) => setPref("crossrefEnableCiteproc", "crossref.enableCiteproc", v)}
               />
             </div>
@@ -187,13 +200,13 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               <ToggleSwitch
                 label="Enabled"
                 testId="settings-annotationEnabled"
-                checked={annotationEnabled}
+                checked={prefs.annotationEnabled}
                 onChange={(v) => setPref("annotationEnabled", "annotations.enabled", v)}
               />
               <ToggleSwitch
                 label="Scope Highlight"
                 testId="settings-annotationScopeHighlight"
-                checked={annotationScopeHighlight}
+                checked={prefs.annotationScopeHighlight}
                 onChange={(v) => setPref("annotationScopeHighlight", "annotations.scopeHighlight", v)}
               />
               <SettingsTextInput
@@ -208,7 +221,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               <SegmentedControl
                 label="Display Mode"
                 testId="settings-annotationDisplayMode"
-                value={annotationDisplayMode}
+                value={prefs.annotationDisplayMode}
                 options={[
                   { value: "pill", label: "Pill" },
                   { value: "footnote", label: "Footnote" },
@@ -224,7 +237,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               <ToggleSwitch
                 label="Unlinked References"
                 testId="settings-experimentalUnlinkedReferences"
-                checked={experimentalUnlinkedReferences}
+                checked={prefs.experimentalUnlinkedReferences}
                 onChange={(v) => setPref("experimentalUnlinkedReferences", "experimental.unlinkedReferences", v)}
               />
             </div>
