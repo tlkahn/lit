@@ -36,6 +36,15 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
 });
 
+function mockScrollIntoView() {
+  let target: Element | null = null;
+  Element.prototype.scrollIntoView = vi.fn(function (this: Element) {
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
+    target = this;
+  });
+  return () => target;
+}
+
 describe("SettingsModal", () => {
   // --- Existing shell tests ---
 
@@ -508,11 +517,11 @@ describe("SettingsModal", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const toggle = container.querySelector("[data-testid='settings-foldingEnabled']")!;
     expect(usePreferencesStore.getState().foldingEnabled).toBe(true);
-    fireEvent.click(toggle);
-    expect(usePreferencesStore.getState().foldingEnabled).toBe(false);
-    await vi.waitFor(() => {
-      expect(usePreferencesStore.getState().foldingEnabled).toBe(true);
+    await act(async () => {
+      fireEvent.click(toggle);
+      expect(usePreferencesStore.getState().foldingEnabled).toBe(false);
     });
+    expect(usePreferencesStore.getState().foldingEnabled).toBe(true);
   });
 
   // --- Focus trap ---
@@ -533,6 +542,24 @@ describe("SettingsModal", () => {
     Object.defineProperty(tabEvent, "preventDefault", { value: () => {} });
     dialog.dispatchEvent(tabEvent);
     expect(document.activeElement).toBe(first);
+  });
+
+  it("Tab from last focusable wraps to the search input", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const dialog = container.querySelector("[data-testid='settings-modal-dialog']")!;
+    const searchInput = container.querySelector("[data-testid='settings-search']")!;
+    const focusable = dialog.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+    );
+    const last = focusable[focusable.length - 1]!;
+
+    last.focus();
+    expect(document.activeElement).toBe(last);
+
+    const tabEvent = new KeyboardEvent("keydown", { key: "Tab", bubbles: true });
+    Object.defineProperty(tabEvent, "preventDefault", { value: () => {} });
+    dialog.dispatchEvent(tabEvent);
+    expect(document.activeElement).toBe(searchInput);
   });
 
   // --- Category sidebar ---
@@ -561,15 +588,12 @@ describe("SettingsModal", () => {
   });
 
   it("clicking Editor calls scrollIntoView on its section", () => {
-    let scrolledEl: Element | null = null;
-    Element.prototype.scrollIntoView = vi.fn(function (this: Element) {
-      scrolledEl = this;
-    });
+    const getScrollTarget = mockScrollIntoView();
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
     const editorBtn = Array.from(sidebar.querySelectorAll("button")).find((b) => b.textContent === "Editor")!;
     fireEvent.click(editorBtn);
-    expect((scrolledEl as HTMLElement | null)?.id).toBe("settings-section-Editor");
+    expect((getScrollTarget() as HTMLElement)?.id).toBe("settings-section-Editor");
   });
 
   it("first category has aria-selected=true by default", () => {
@@ -781,10 +805,7 @@ describe("SettingsModal", () => {
   // Cycle 6.4 — Sidebar click clears search when category has no matches
 
   it("clicking non-matching category clears search and scrolls", () => {
-    let scrolledEl: Element | null = null;
-    Element.prototype.scrollIntoView = vi.fn(function (this: Element) {
-      scrolledEl = this;
-    });
+    const getScrollTarget = mockScrollIntoView();
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
     fireEvent.change(search, { target: { value: "fold" } });
@@ -818,14 +839,11 @@ describe("SettingsModal", () => {
       expect(container.querySelector(`[data-testid='${id}']`), `missing ${id}`).toBeTruthy();
     }
 
-    expect((scrolledEl as HTMLElement | null)?.id).toBe("settings-section-Appearance");
+    expect((getScrollTarget() as HTMLElement)?.id).toBe("settings-section-Appearance");
   });
 
   it("clicking matching category while searching preserves search and scrolls", () => {
-    let scrolledEl: Element | null = null;
-    Element.prototype.scrollIntoView = vi.fn(function (this: Element) {
-      scrolledEl = this;
-    });
+    const getScrollTarget = mockScrollIntoView();
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
     fireEvent.change(search, { target: { value: "fold" } });
@@ -835,7 +853,7 @@ describe("SettingsModal", () => {
     fireEvent.click(editorBtn);
 
     expect(search.value).toBe("fold");
-    expect((scrolledEl as HTMLElement | null)?.id).toBe("settings-section-Editor");
+    expect((getScrollTarget() as HTMLElement)?.id).toBe("settings-section-Editor");
 
     expect(container.querySelector("[data-testid='settings-foldingEnabled']")).toBeTruthy();
     expect(container.querySelector("[data-testid^='settings-foldingShowControls']")).toBeTruthy();
@@ -961,17 +979,14 @@ describe("SettingsModal", () => {
   });
 
   it("arrow navigation calls scrollIntoView on the target section", () => {
-    let scrolledEl: Element | null = null;
-    Element.prototype.scrollIntoView = vi.fn(function (this: Element) {
-      scrolledEl = this;
-    });
+    const getScrollTarget = mockScrollIntoView();
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
     const buttons = Array.from(sidebar.querySelectorAll("button"));
     buttons[0]!.focus();
 
     fireEvent.keyDown(sidebar, { key: "ArrowDown" });
-    expect((scrolledEl as HTMLElement | null)?.id).toBe("settings-section-Editor");
+    expect((getScrollTarget() as HTMLElement)?.id).toBe("settings-section-Editor");
   });
 
   it("arrow navigation skips categories with no matches during search", () => {

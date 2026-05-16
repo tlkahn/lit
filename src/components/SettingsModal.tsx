@@ -191,20 +191,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
         data-testid="settings-modal-dialog"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-5 pt-5 pb-3">
-          <h2 className="text-base font-semibold text-text-normal">Settings</h2>
-          <button
-            className="rounded p-1 text-text-muted hover:bg-bg-secondary"
-            onClick={onClose}
-            data-testid="settings-modal-close"
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M4 4l8 8M12 4l-8 8" />
-            </svg>
-          </button>
-        </div>
-
-        <div className="px-5 pb-2">
+        <div className="order-2 px-5 pb-2">
           <input
             ref={searchInputRef}
             data-testid="settings-search"
@@ -223,7 +210,20 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
           />
         </div>
 
-        <div data-testid="settings-modal-content" className="flex-1 overflow-y-auto flex flex-row">
+        <div className="order-1 flex items-center justify-between px-5 pt-5 pb-3">
+          <h2 className="text-base font-semibold text-text-normal">Settings</h2>
+          <button
+            className="rounded p-1 text-text-muted hover:bg-bg-secondary"
+            onClick={onClose}
+            data-testid="settings-modal-close"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M4 4l8 8M12 4l-8 8" />
+            </svg>
+          </button>
+        </div>
+
+        <div data-testid="settings-modal-content" className="order-3 flex-1 overflow-y-auto flex flex-row">
           <nav
             data-testid="settings-sidebar"
             role="tablist"
