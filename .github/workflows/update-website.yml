@@ -20,6 +20,9 @@ jobs:
       actions: read
       contents: read
     steps:
+      - name: Checkout lit repo
+        uses: actions/checkout@v4
+
       - name: Get release tag
         id: tag
         env:
@@ -85,6 +88,16 @@ jobs:
         run: |
           git clone "https://x-access-token:${GH_TOKEN}@github.com/tlkahn/tlkahn.github.io.git" website
 
+      - name: Copy release notes to website
+        run: |
+          mkdir -p website/content/releases
+          if ls release-notes/*.md 1>/dev/null 2>&1; then
+            cp release-notes/*.md website/content/releases/
+            echo "Copied $(ls release-notes/*.md | wc -l | tr -d ' ') release notes"
+          else
+            echo "No release notes to copy"
+          fi
+
       - name: Update content/_index.md
         run: |
           FILE="website/content/_index.md"
@@ -111,12 +124,12 @@ jobs:
           cd website
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add content/_index.md hugo.toml
+          git add content/_index.md hugo.toml content/releases/
           if git diff --cached --quiet; then
             echo "No changes to commit — website already up to date"
             exit 0
           fi
-          git commit -m "Update download button to ${{ steps.tag.outputs.tag }}"
+          git commit -m "Update download button and release notes for ${{ steps.tag.outputs.tag }}"
           git push
 
       - name: Install Hugo
@@ -128,6 +141,14 @@ jobs:
       - name: Build Hugo site
         run: hugo --minify
         working-directory: website
+
+      - name: Verify releases page
+        run: |
+          if [ ! -f website/public/releases/index.html ]; then
+            echo "::error::Releases page not found in Hugo output"
+            exit 1
+          fi
+          echo "Verified: /releases/ page exists in build output"
 
       - name: Sync to S3
         run: aws s3 sync website/public/ s3://${{ steps.bucket.outputs.name }} --delete --exclude "releases/*"

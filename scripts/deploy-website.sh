@@ -17,6 +17,17 @@ echo "==> Cloning website repo"
 rm -rf "$WEBSITE_DIR"
 git clone --depth 1 "$WEBSITE_REPO" "$WEBSITE_DIR"
 
+echo "==> Copying release notes"
+mkdir -p "$WEBSITE_DIR/content/releases"
+if ls release-notes/*.md 1>/dev/null 2>&1; then
+  cp release-notes/*.md "$WEBSITE_DIR/content/releases/"
+  NOTES_COPIED=$(ls release-notes/*.md | wc -l | tr -d ' ')
+  echo "    Copied $NOTES_COPIED notes"
+else
+  NOTES_COPIED=0
+  echo "    No release notes found"
+fi
+
 if [ -n "$TAG" ]; then
   echo "==> Updating download button for $TAG"
   VERSION="${TAG#v}"
@@ -30,9 +41,19 @@ if [ -n "$TAG" ]; then
 
   echo "==> Pushing content update to website repo"
   (cd "$WEBSITE_DIR" &&
-    git add content/_index.md hugo.toml &&
+    git add content/_index.md hugo.toml content/releases/ &&
     if ! git diff --cached --quiet; then
-      git commit -m "Update download button to $TAG"
+      git commit -m "Update download button and release notes for $TAG"
+      git push
+    else
+      echo "    (no content changes)"
+    fi)
+elif [ "$NOTES_COPIED" -gt 0 ]; then
+  echo "==> Pushing release notes to website repo"
+  (cd "$WEBSITE_DIR" &&
+    git add content/releases/ &&
+    if ! git diff --cached --quiet; then
+      git commit -m "Update release notes"
       git push
     else
       echo "    (no content changes)"
