@@ -12,6 +12,7 @@ pub const MENU_ID_LICENSE_INFO: &str = "license_info";
 pub const MENU_ID_EXPORT_MARKDOWN: &str = "export_markdown";
 pub const MENU_ID_ABOUT: &str = "show_about";
 
+pub const EVENT_OPEN_PREFERENCES: &str = "menu://open-preferences";
 pub const EVENT_BUY_LICENSE: &str = "menu://buy-license";
 pub const EVENT_ENTER_LICENSE_KEY: &str = "menu://enter-license-key";
 pub const EVENT_LICENSE_INFO: &str = "menu://license-info";
@@ -90,15 +91,8 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
             });
         }
         MenuAction::OpenPreferences => {
-            let handle = app.clone();
-            tauri::async_runtime::spawn(async move {
-                crate::preferences::seed_default_if_missing(&handle);
-                let path = crate::preferences::preferences_path(&handle);
-                if let Some(path_str) = path.to_str() {
-                    use tauri_plugin_opener::OpenerExt;
-                    let _ = handle.opener().open_path(path_str, None::<&str>);
-                }
-            });
+            use tauri::Emitter;
+            let _ = app.emit(EVENT_OPEN_PREFERENCES, ());
         }
         MenuAction::OpenInExternalEditor => {
             use tauri::Emitter;
@@ -314,6 +308,7 @@ mod tests {
 
     #[test]
     fn menu_event_name_constants_defined() {
+        assert_eq!(EVENT_OPEN_PREFERENCES, "menu://open-preferences");
         assert_eq!(EVENT_BUY_LICENSE, "menu://buy-license");
         assert_eq!(EVENT_ENTER_LICENSE_KEY, "menu://enter-license-key");
         assert_eq!(EVENT_LICENSE_INFO, "menu://license-info");
