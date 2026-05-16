@@ -21,6 +21,8 @@ import {
   getDefaultKeymaps,
   getUserKeymapsPath,
   saveUserKeymaps,
+  getPreferencesRaw,
+  setPreferencesRaw,
   resolveAllDecorations,
   getDefinitions,
   expandTemplate,
@@ -118,6 +120,10 @@ describe("ipc", () => {
         case "get_user_keymaps_path":
           return "/data/keymaps/user.json";
         case "save_user_keymaps":
+          return null;
+        case "get_preferences_raw":
+          return '{"a":1}';
+        case "set_preferences_raw":
           return null;
         case "resolve_all_decorations":
           return {
@@ -517,6 +523,17 @@ describe("ipc", () => {
     await saveUserKeymaps(bindings);
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("save_user_keymaps", { bindings });
+  });
+
+  it("getPreferencesRaw returns raw JSON string", async () => {
+    const raw = await getPreferencesRaw();
+    expect(raw).toBe('{"a":1}');
+  });
+
+  it("setPreferencesRaw sends json argument", async () => {
+    await setPreferencesRaw('{"b":2}');
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("set_preferences_raw", { json: '{"b":2}' });
   });
 
   it("installCli invokes install_cli", async () => {

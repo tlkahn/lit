@@ -169,6 +169,14 @@ export async function setPreference(key: string, value: unknown): Promise<void> 
   return invoke<void>("set_preference", { key, value });
 }
 
+export async function getPreferencesRaw(): Promise<string> {
+  return invoke<string>("get_preferences_raw");
+}
+
+export async function setPreferencesRaw(json: string): Promise<void> {
+  return invoke<void>("set_preferences_raw", { json });
+}
+
 // Crossref commands
 
 export interface ResolvedCitation {
