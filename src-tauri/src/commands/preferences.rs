@@ -27,3 +27,20 @@ pub fn set_preference(
 ) -> Result<(), String> {
     preferences::set_preference(&app_handle, &key, value)
 }
+
+#[tauri::command]
+pub fn get_preferences_raw(
+    app_handle: tauri::AppHandle,
+    seed_state: State<'_, Arc<SeedState>>,
+) -> String {
+    seed_state.wait_ready();
+    preferences::read_preferences_raw(&app_handle)
+}
+
+#[tauri::command]
+pub fn set_preferences_raw(
+    app_handle: tauri::AppHandle,
+    json: String,
+) -> Result<(), String> {
+    preferences::set_preferences_raw(&app_handle, &json)
+}

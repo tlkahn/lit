@@ -145,6 +145,30 @@ pub fn set_preference(app_handle: &AppHandle, key: &str, value: serde_json::Valu
     set_preference_at_path(&path, key, value)
 }
 
+pub fn read_preferences_raw_from_path(path: &PathBuf) -> String {
+    match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(_) => serde_json::to_string_pretty(&Preferences::default()).unwrap(),
+    }
+}
+
+pub fn read_preferences_raw(app_handle: &AppHandle) -> String {
+    read_preferences_raw_from_path(&preferences_path(app_handle))
+}
+
+pub fn set_preferences_raw_at_path(path: &std::path::Path, json: &str) -> Result<(), String> {
+    let _: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("invalid JSON: {e}"))?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    fs::write(path, json).map_err(|e| e.to_string())
+}
+
+pub fn set_preferences_raw(app_handle: &AppHandle, json: &str) -> Result<(), String> {
+    set_preferences_raw_at_path(&preferences_path(app_handle), json)
+}
+
 pub fn seed_default_if_missing(app_handle: &AppHandle) {
     let path = preferences_path(app_handle);
     if path.exists() {
@@ -706,5 +730,60 @@ mod tests {
         let content = fs::read_to_string(&path).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(parsed["workbench.darkMode"], serde_json::json!("auto"));
+    }
+
+    #[test]
+    fn read_preferences_raw_returns_file_contents() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("preferences.json");
+        let raw = "{\n\t\"workbench.darkMode\": \"dark\"\n}\n";
+        fs::write(&path, raw).unwrap();
+
+        let result = read_preferences_raw_from_path(&path);
+        assert_eq!(result, raw);
+    }
+
+    #[test]
+    fn read_preferences_raw_missing_file_returns_default() {
+        let path = PathBuf::from("/tmp/lit-test-raw-missing.json");
+        let _ = fs::remove_file(&path);
+
+        let result = read_preferences_raw_from_path(&path);
+        let expected = serde_json::to_string_pretty(&Preferences::default()).unwrap();
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn set_preferences_raw_valid_json_writes_file() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("preferences.json");
+        let json = r#"{"workbench.darkMode": "dark"}"#;
+
+        set_preferences_raw_at_path(&path, json).unwrap();
+
+        let content = fs::read_to_string(&path).unwrap();
+        assert_eq!(content, json);
+    }
+
+    #[test]
+    fn set_preferences_raw_invalid_json_returns_error() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("preferences.json");
+
+        let result = set_preferences_raw_at_path(&path, "not { valid");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("invalid JSON"));
+    }
+
+    #[test]
+    fn set_preferences_raw_preserves_exact_content() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("preferences.json");
+        let json = "{\n\t\"workbench.darkMode\":\t\"dark\"\n}";
+
+        set_preferences_raw_at_path(&path, json).unwrap();
+
+        let content = fs::read_to_string(&path).unwrap();
+        assert_eq!(content, json);
     }
 }

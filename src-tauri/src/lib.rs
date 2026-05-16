@@ -275,6 +275,8 @@ pub fn run() {
             commands::preferences::get_preferences,
             commands::preferences::get_preferences_path,
             commands::preferences::set_preference,
+            commands::preferences::get_preferences_raw,
+            commands::preferences::set_preferences_raw,
             commands::cli::install_cli,
             commands::cli::uninstall_cli,
             commands::cli::is_cli_installed,
