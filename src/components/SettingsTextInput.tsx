@@ -2,7 +2,7 @@ interface SettingsTextInputProps {
   value: string;
   onChange: (value: string) => void;
   testId: string;
-  label?: string;
+  label?: React.ReactNode;
   onCommit?: () => void;
 }
 

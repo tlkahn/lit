@@ -2,7 +2,7 @@ interface ToggleSwitchProps {
   checked: boolean;
   onChange: (checked: boolean) => void;
   testId: string;
-  label?: string;
+  label?: React.ReactNode;
 }
 
 export function ToggleSwitch({ checked, onChange, testId, label }: ToggleSwitchProps) {

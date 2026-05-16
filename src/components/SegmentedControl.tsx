@@ -3,7 +3,7 @@ interface SegmentedControlProps {
   value: string;
   onChange: (value: string) => void;
   testId: string;
-  label?: string;
+  label?: React.ReactNode;
 }
 
 export function SegmentedControl({ options, value, onChange, testId, label }: SegmentedControlProps) {
