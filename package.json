@@ -30,7 +30,7 @@
     "@codemirror/lint": "^6.9.6",
     "@codemirror/search": "^6.7.0",
     "@codemirror/state": "^6.6.0",
-    "@codemirror/view": "^6.41.1",
+    "@codemirror/view": "^6.43.0",
     "@lezer/highlight": "^1.2.3",
     "@lezer/markdown": "^1.6.3",
     "@sigma/node-border": "^3.0.0",
@@ -51,6 +51,9 @@
     "react-dom": "^18.3.1",
     "sigma": "^3.0.3",
     "zustand": "^5.0.12"
+  },
+  "overrides": {
+    "@codemirror/view": "^6.43.0"
   },
   "devDependencies": {
     "@eslint/js": "^9",
