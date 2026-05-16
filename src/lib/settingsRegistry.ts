@@ -12,11 +12,12 @@ export const CATEGORIES = [
 export type Category = (typeof CATEGORIES)[number];
 
 type ControlType = "toggle" | "segmented" | "text";
+type PreferenceField = Exclude<keyof PreferencesState, "loaded" | "loadPreferences">;
 
 export interface SettingEntry {
   category: Category;
   label: string;
-  storeField: keyof PreferencesState;
+  storeField: PreferenceField;
   jsonKey: string;
   controlType: ControlType;
   testId: string;

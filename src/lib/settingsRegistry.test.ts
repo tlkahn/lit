@@ -55,10 +55,9 @@ describe("groupByCategory", () => {
 describe("filterSettings", () => {
   it('returns only Folding entries for query "fold"', () => {
     const results = filterSettings(SETTINGS_REGISTRY, "fold");
-    const labels = results.map((r) => r.entry.label);
-    expect(labels).toContain("Folding");
-    expect(labels).toContain("Folding Controls");
     expect(results).toHaveLength(2);
+    expect(results[0]!.entry.label).toBe("Folding");
+    expect(results[1]!.entry.label).toBe("Folding Controls");
     for (const r of results) {
       expect(r.indices.length).toBeGreaterThan(0);
     }
