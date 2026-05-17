@@ -43,4 +43,15 @@ describe("ToggleSwitch", () => {
     );
     expect(container.querySelector("em")?.textContent).toBe("Highlighted");
   });
+
+  it("renders label before toggle (label-left, control-right)", () => {
+    const { container } = render(
+      <ToggleSwitch checked={false} onChange={vi.fn()} testId="ts" label="Dark Mode" />,
+    );
+    const root = container.firstElementChild!;
+    const label = root.querySelector("span.text-sm")!;
+    const toggle = root.querySelector("[data-testid='ts']")!;
+    const children = Array.from(root.children);
+    expect(children.indexOf(label)).toBeLessThan(children.indexOf(toggle));
+  });
 });

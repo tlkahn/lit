@@ -8,7 +8,8 @@ interface SegmentedControlProps {
 
 export function SegmentedControl({ options, value, onChange, testId, label }: SegmentedControlProps) {
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center justify-between gap-2">
+      {label && <span className="text-sm text-text-normal">{label}</span>}
       <div className="flex rounded-md bg-bg-tertiary p-0.5">
         {options.map((option) => (
           <button
@@ -22,7 +23,6 @@ export function SegmentedControl({ options, value, onChange, testId, label }: Se
           </button>
         ))}
       </div>
-      {label && <span className="text-sm text-text-normal">{label}</span>}
     </div>
   );
 }

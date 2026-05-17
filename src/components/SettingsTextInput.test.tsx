@@ -65,4 +65,15 @@ describe("SettingsTextInput", () => {
     fireEvent.keyDown(container.querySelector("[data-testid='txt']")!, { key: "Enter" });
     expect(onCommit).toHaveBeenCalled();
   });
+
+  it("renders label before input (label-left, control-right)", () => {
+    const { container } = render(
+      <SettingsTextInput value="en" onChange={vi.fn()} testId="txt" label="Language" />,
+    );
+    const root = container.firstElementChild!;
+    const label = root.querySelector("span.text-sm")!;
+    const input = root.querySelector("[data-testid='txt']")!;
+    const children = Array.from(root.children);
+    expect(children.indexOf(label)).toBeLessThan(children.indexOf(input));
+  });
 });

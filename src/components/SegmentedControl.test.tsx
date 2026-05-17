@@ -46,4 +46,15 @@ describe("SegmentedControl", () => {
     );
     expect(container.querySelector("em")?.textContent).toBe("Highlighted");
   });
+
+  it("renders label before segmented buttons (label-left, control-right)", () => {
+    const { container } = render(
+      <SegmentedControl options={options} value="a" onChange={vi.fn()} testId="seg" label="Pick one" />,
+    );
+    const root = container.firstElementChild!;
+    const label = root.querySelector("span.text-sm")!;
+    const buttonGroup = root.querySelector("[data-testid='seg-a']")!.parentElement!;
+    const children = Array.from(root.children);
+    expect(children.indexOf(label)).toBeLessThan(children.indexOf(buttonGroup));
+  });
 });

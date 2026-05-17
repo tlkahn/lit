@@ -7,7 +7,8 @@ interface ToggleSwitchProps {
 
 export function ToggleSwitch({ checked, onChange, testId, label }: ToggleSwitchProps) {
   return (
-    <label className="flex items-center gap-2">
+    <label className="flex items-center justify-between gap-2">
+      {label && <span className="text-sm text-text-normal">{label}</span>}
       <button
         role="switch"
         aria-checked={checked}
@@ -19,7 +20,6 @@ export function ToggleSwitch({ checked, onChange, testId, label }: ToggleSwitchP
           className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${checked ? "translate-x-[1.125rem]" : "translate-x-0.5"}`}
         />
       </button>
-      {label && <span className="text-sm text-text-normal">{label}</span>}
     </label>
   );
 }
