@@ -2,7 +2,9 @@ import { useState, useEffect, useMemo } from "react";
 import { fetchCommandBindingTable, type CommandBindingEntry } from "../lib/commandBindingTable";
 import { KeyChord } from "./KeyChord";
 import { fuzzyMatch } from "../lib/fuzzyMatch";
-import type { Platform } from "../lib/keyChordFormat";
+import { formatChordSequence, type Platform } from "../lib/keyChordFormat";
+import { HighlightedText } from "./HighlightedText";
+import { ToggleSwitch } from "./ToggleSwitch";
 import type { KeyBinding } from "../lib/ipc";
 
 interface KeyboardShortcutsPanelProps {
@@ -47,22 +49,46 @@ function getCommandGroup(commandId: string): string {
   return dotIdx >= 0 ? commandId.slice(0, dotIdx) : "other";
 }
 
-function matchesFilter(entry: CommandBindingEntry, query: string): boolean {
+interface FilterMatch {
+  matches: boolean;
+  labelIndices: number[];
+}
+
+function getFilterMatch(entry: CommandBindingEntry, query: string, platform: Platform): FilterMatch {
   const label = entry.command?.label ?? entry.commandId;
-  if (fuzzyMatch(query, label)) return true;
-  if (fuzzyMatch(query, entry.commandId)) return true;
+
+  const labelMatch = fuzzyMatch(query, label);
+  if (labelMatch) return { matches: true, labelIndices: labelMatch.indices };
+
+  if (fuzzyMatch(query, entry.commandId)) return { matches: true, labelIndices: [] };
+
   const keywords = entry.command?.keywords ?? [];
   for (const kw of keywords) {
-    if (fuzzyMatch(query, kw)) return true;
+    if (fuzzyMatch(query, kw)) return { matches: true, labelIndices: [] };
   }
-  return false;
+
+  for (const b of entry.bindings) {
+    const formatted = formatChordSequence(b.key, platform);
+    if (fuzzyMatch(query, formatted)) return { matches: true, labelIndices: [] };
+    if (fuzzyMatch(query, b.key)) return { matches: true, labelIndices: [] };
+  }
+
+  return { matches: false, labelIndices: [] };
+}
+
+interface FilteredEntry {
+  entry: CommandBindingEntry;
+  labelIndices: number[];
 }
 
 export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps) {
+  const resolvedPlatform: Platform = platform ?? "mac";
   const [entries, setEntries] = useState<CommandBindingEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [showUnbound, setShowUnbound] = useState(false);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -80,18 +106,29 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
     return () => { cancelled = true; };
   }, []);
 
-  const filtered = useMemo(() => {
-    if (!filter) return entries;
-    return entries.filter((e) => matchesFilter(e, filter));
-  }, [entries, filter]);
+  const filtered = useMemo((): FilteredEntry[] => {
+    let base = entries;
+    if (!showUnbound) {
+      base = base.filter((e) => e.status !== "unbound");
+    }
+    if (!filter) return base.map((e) => ({ entry: e, labelIndices: [] }));
+    const result: FilteredEntry[] = [];
+    for (const e of base) {
+      const match = getFilterMatch(e, filter, resolvedPlatform);
+      if (match.matches) {
+        result.push({ entry: e, labelIndices: match.labelIndices });
+      }
+    }
+    return result;
+  }, [entries, filter, showUnbound, resolvedPlatform]);
 
   const grouped = useMemo(() => {
-    const groups = new Map<string, CommandBindingEntry[]>();
-    for (const entry of filtered) {
-      const group = getCommandGroup(entry.commandId);
+    const groups = new Map<string, FilteredEntry[]>();
+    for (const fe of filtered) {
+      const group = getCommandGroup(fe.entry.commandId);
       const list = groups.get(group);
-      if (list) list.push(entry);
-      else groups.set(group, [entry]);
+      if (list) list.push(fe);
+      else groups.set(group, [fe]);
     }
     return groups;
   }, [filtered]);
@@ -114,14 +151,20 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
 
   return (
     <div data-testid="keyboard-shortcuts-panel" className="flex flex-col h-full">
-      <div className="px-1 pb-3">
+      <div className="px-1 pb-3 flex items-center gap-3">
         <input
           data-testid="shortcuts-filter"
           type="text"
           placeholder="Filter shortcuts…"
-          className="w-full rounded border border-border bg-bg-secondary px-3 py-1.5 text-sm text-text-normal placeholder:text-text-muted outline-none focus:border-accent"
+          className="flex-1 rounded border border-border bg-bg-secondary px-3 py-1.5 text-sm text-text-normal placeholder:text-text-muted outline-none focus:border-accent"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
+        />
+        <ToggleSwitch
+          checked={showUnbound}
+          onChange={setShowUnbound}
+          testId="show-unbound-toggle"
+          label="Show unbound commands"
         />
       </div>
 
@@ -140,7 +183,21 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
             </thead>
             <tbody>
               {Array.from(grouped).map(([group, groupEntries]) => (
-                <GroupRows key={group} group={group} entries={groupEntries} platform={platform} />
+                <GroupRows
+                  key={group}
+                  group={group}
+                  entries={groupEntries}
+                  platform={resolvedPlatform}
+                  isCollapsed={!filter && collapsed.has(group)}
+                  onToggleCollapse={() => {
+                    setCollapsed((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(group)) next.delete(group);
+                      else next.add(group);
+                      return next;
+                    });
+                  }}
+                />
               ))}
             </tbody>
           </table>
@@ -150,25 +207,43 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
   );
 }
 
-function GroupRows({ group, entries, platform }: { group: string; entries: CommandBindingEntry[]; platform?: Platform }) {
+function GroupRows({
+  group,
+  entries,
+  platform,
+  isCollapsed,
+  onToggleCollapse,
+}: {
+  group: string;
+  entries: FilteredEntry[];
+  platform: Platform;
+  isCollapsed: boolean;
+  onToggleCollapse: () => void;
+}) {
   return (
     <>
       <tr>
         <td colSpan={4} className="pt-4 pb-1">
-          <span data-testid="group-header" className="text-xs font-semibold text-text-muted uppercase tracking-wide">
-            {group}
-          </span>
+          <button
+            className="flex items-center gap-1 text-xs font-semibold text-text-muted uppercase tracking-wide cursor-pointer"
+            onClick={onToggleCollapse}
+          >
+            <span data-testid="collapse-indicator" className="text-[10px]">
+              {isCollapsed ? "▶" : "▼"}
+            </span>
+            <span data-testid="group-header">{group}</span>
+          </button>
         </td>
       </tr>
-      {entries.map((entry) => (
-        <EntryRow key={entry.commandId} entry={entry} platform={platform} />
+      {!isCollapsed && entries.map((fe) => (
+        <EntryRow key={fe.entry.commandId} entry={fe.entry} labelIndices={fe.labelIndices} platform={platform} />
       ))}
     </>
   );
 }
 
-function EntryRow({ entry, platform }: { entry: CommandBindingEntry; platform?: Platform }) {
-  const label = entry.command?.label;
+function EntryRow({ entry, labelIndices, platform }: { entry: CommandBindingEntry; labelIndices: number[]; platform: Platform }) {
+  const label = entry.command?.label ?? entry.commandId;
   const source = getSourceBadge(entry.bindings);
   const whenContexts = [...new Set(entry.bindings.map((b) => b.when).filter(Boolean))];
 
@@ -177,8 +252,10 @@ function EntryRow({ entry, platform }: { entry: CommandBindingEntry; platform?: 
       <td className="py-1.5 pr-3">
         {entry.status === "unknown-command" ? (
           <em className="text-text-muted">{entry.commandId}</em>
+        ) : labelIndices.length > 0 ? (
+          <HighlightedText text={label} indices={labelIndices} />
         ) : (
-          <span>{label ?? entry.commandId}</span>
+          <span>{label}</span>
         )}
       </td>
       <td className="py-1.5 pr-3">

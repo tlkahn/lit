@@ -76,6 +76,11 @@ describe("KeyboardShortcutsPanel", () => {
 
     const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
     await act(() => new Promise((r) => setTimeout(r, 10)));
+
+    // Unbound commands are hidden by default — toggle them on
+    const toggle = container.querySelector("[data-testid='show-unbound-toggle']") as HTMLElement;
+    fireEvent.click(toggle);
+
     const rows = container.querySelectorAll("tbody tr");
     const unboundRow = Array.from(rows).find((r) => r.textContent?.includes("Unbound Command"));
     expect(unboundRow).toBeDefined();
@@ -217,5 +222,229 @@ describe("KeyboardShortcutsPanel", () => {
     const errorEl = container.querySelector("[data-testid='shortcuts-error']");
     expect(errorEl).not.toBeNull();
     expect(errorEl!.textContent).toContain("Failed to load shortcuts");
+  });
+
+  // --- Cycle 1: Search by Key Chord ---
+
+  it("filter matches by formatted chord display (mac)", async () => {
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+
+    const filter = container.querySelector("[data-testid='shortcuts-filter']") as HTMLInputElement;
+    fireEvent.change(filter, { target: { value: "⌘B" } });
+    const allRows = Array.from(container.querySelectorAll("tbody tr"));
+    const dataRows = allRows.filter((r) => !r.querySelector("[data-testid='group-header']"));
+    expect(dataRows.length).toBe(1);
+    expect(dataRows[0]!.textContent).toContain("Toggle Bold");
+  });
+
+  it("filter matches by CM6 notation", async () => {
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+
+    const filter = container.querySelector("[data-testid='shortcuts-filter']") as HTMLInputElement;
+    fireEvent.change(filter, { target: { value: "Mod-b" } });
+    const allRows = Array.from(container.querySelectorAll("tbody tr"));
+    const dataRows = allRows.filter((r) => !r.querySelector("[data-testid='group-header']"));
+    expect(dataRows.length).toBe(1);
+    expect(dataRows[0]!.textContent).toContain("Toggle Bold");
+  });
+
+  it("filter matches by formatted chord (other platform)", async () => {
+    const { container } = render(<KeyboardShortcutsPanel platform="other" />);
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+
+    const filter = container.querySelector("[data-testid='shortcuts-filter']") as HTMLInputElement;
+    fireEvent.change(filter, { target: { value: "Ctrl+B" } });
+    const allRows = Array.from(container.querySelectorAll("tbody tr"));
+    const dataRows = allRows.filter((r) => !r.querySelector("[data-testid='group-header']"));
+    expect(dataRows.length).toBe(1);
+    expect(dataRows[0]!.textContent).toContain("Toggle Bold");
+  });
+
+  // --- Cycle 2: "Show Unbound Commands" Toggle ---
+
+  it("hides unbound commands by default", async () => {
+    _clear();
+    registerCommand({ id: "editor.toggleBold", label: "Toggle Bold", keywords: ["bold"], action: () => {} });
+    registerCommand({ id: "test.unboundCmd", label: "Unbound Test Cmd", action: () => {} });
+    mockInvoke((cmd) => {
+      if (cmd === "get_keymaps")
+        return [{ command: "editor.toggleBold", key: "Mod-b", source: "default" }];
+      if (cmd === "get_menu_shortcuts") return [];
+      return [];
+    });
+
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+
+    const allRows = Array.from(container.querySelectorAll("tbody tr"));
+    const dataRows = allRows.filter((r) => !r.querySelector("[data-testid='group-header']"));
+    expect(dataRows.some((r) => r.textContent?.includes("Unbound Test Cmd"))).toBe(false);
+    expect(dataRows.some((r) => r.textContent?.includes("Toggle Bold"))).toBe(true);
+  });
+
+  it("shows unbound commands when toggle is on", async () => {
+    _clear();
+    registerCommand({ id: "editor.toggleBold", label: "Toggle Bold", keywords: ["bold"], action: () => {} });
+    registerCommand({ id: "test.unboundCmd", label: "Unbound Test Cmd", action: () => {} });
+    mockInvoke((cmd) => {
+      if (cmd === "get_keymaps")
+        return [{ command: "editor.toggleBold", key: "Mod-b", source: "default" }];
+      if (cmd === "get_menu_shortcuts") return [];
+      return [];
+    });
+
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+
+    // Initially unbound is hidden
+    let allRows = Array.from(container.querySelectorAll("tbody tr"));
+    let dataRows = allRows.filter((r) => !r.querySelector("[data-testid='group-header']"));
+    expect(dataRows.some((r) => r.textContent?.includes("Unbound Test Cmd"))).toBe(false);
+
+    // Click the toggle
+    const toggle = container.querySelector("[data-testid='show-unbound-toggle']") as HTMLElement;
+    expect(toggle).not.toBeNull();
+    fireEvent.click(toggle);
+
+    allRows = Array.from(container.querySelectorAll("tbody tr"));
+    dataRows = allRows.filter((r) => !r.querySelector("[data-testid='group-header']"));
+    expect(dataRows.some((r) => r.textContent?.includes("Unbound Test Cmd"))).toBe(true);
+  });
+
+  it("toggle has label 'Show unbound commands'", async () => {
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+    expect(container.textContent).toContain("Show unbound commands");
+  });
+
+  // --- Cycle 3: Collapsible Category Sections ---
+
+  it("group headers collapse their section on click", async () => {
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+
+    // Find and click the "editor" group header
+    const headers = container.querySelectorAll("[data-testid='group-header']");
+    const editorHeader = Array.from(headers).find((h) => h.textContent?.includes("editor"));
+    expect(editorHeader).toBeDefined();
+    fireEvent.click(editorHeader!);
+
+    // Editor entries (Toggle Bold, Toggle Italic) should be hidden
+    const allRows = Array.from(container.querySelectorAll("tbody tr"));
+    const dataRows = allRows.filter((r) => !r.querySelector("[data-testid='group-header']"));
+    expect(dataRows.some((r) => r.textContent?.includes("Toggle Bold"))).toBe(false);
+    expect(dataRows.some((r) => r.textContent?.includes("Toggle Italic"))).toBe(false);
+    // Other groups still visible
+    expect(dataRows.some((r) => r.textContent?.includes("Command Palette"))).toBe(true);
+  });
+
+  it("clicking collapsed header re-expands", async () => {
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+
+    const headers = container.querySelectorAll("[data-testid='group-header']");
+    const editorHeader = Array.from(headers).find((h) => h.textContent?.includes("editor"));
+    // Collapse
+    fireEvent.click(editorHeader!);
+    // Expand
+    fireEvent.click(editorHeader!);
+
+    const allRows = Array.from(container.querySelectorAll("tbody tr"));
+    const dataRows = allRows.filter((r) => !r.querySelector("[data-testid='group-header']"));
+    expect(dataRows.some((r) => r.textContent?.includes("Toggle Bold"))).toBe(true);
+  });
+
+  it("group headers show collapse indicator", async () => {
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+
+    const indicators = container.querySelectorAll("[data-testid='collapse-indicator']");
+    expect(indicators.length).toBeGreaterThan(0);
+  });
+
+  // --- Cycle 4: Highlight Matching Text ---
+
+  it("highlights matching characters in label when filtering", async () => {
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+
+    const filter = container.querySelector("[data-testid='shortcuts-filter']") as HTMLInputElement;
+    fireEvent.change(filter, { target: { value: "bold" } });
+
+    const allRows = Array.from(container.querySelectorAll("tbody tr"));
+    const dataRows = allRows.filter((r) => !r.querySelector("[data-testid='group-header']"));
+    const boldRow = dataRows.find((r) => r.textContent?.includes("Bold"));
+    expect(boldRow).toBeDefined();
+    const marks = boldRow!.querySelectorAll("mark");
+    expect(marks.length).toBeGreaterThan(0);
+  });
+
+  it("no highlight when filter is empty", async () => {
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+
+    const allRows = Array.from(container.querySelectorAll("tbody tr"));
+    const dataRows = allRows.filter((r) => !r.querySelector("[data-testid='group-header']"));
+    const marks = dataRows[0]!.querySelectorAll("mark");
+    expect(marks.length).toBe(0);
+  });
+
+  // --- Cycle 5: Integration / Edge Cases ---
+
+  it("empty state when chord search matches nothing", async () => {
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+
+    const filter = container.querySelector("[data-testid='shortcuts-filter']") as HTMLInputElement;
+    fireEvent.change(filter, { target: { value: "⌘Z" } });
+    expect(container.textContent).toContain("No matching shortcuts");
+  });
+
+  it("chord search + unbound toggle combined", async () => {
+    _clear();
+    registerCommand({ id: "editor.toggleBold", label: "Toggle Bold", keywords: ["bold"], action: () => {} });
+    registerCommand({ id: "editor.unboundCmd", label: "Unbound Editor Cmd", action: () => {} });
+    mockInvoke((cmd) => {
+      if (cmd === "get_keymaps")
+        return [{ command: "editor.toggleBold", key: "Mod-b", source: "default" }];
+      if (cmd === "get_menu_shortcuts") return [];
+      return [];
+    });
+
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+
+    // With unbound hidden, chord search on bound commands works
+    const filter = container.querySelector("[data-testid='shortcuts-filter']") as HTMLInputElement;
+    fireEvent.change(filter, { target: { value: "⌘B" } });
+    const allRows = Array.from(container.querySelectorAll("tbody tr"));
+    const dataRows = allRows.filter((r) => !r.querySelector("[data-testid='group-header']"));
+    expect(dataRows.length).toBe(1);
+    expect(dataRows[0]!.textContent).toContain("Toggle Bold");
+  });
+
+  it("filtering auto-expands collapsed groups", async () => {
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+
+    // Collapse the editor group
+    const headers = container.querySelectorAll("[data-testid='group-header']");
+    const editorHeader = Array.from(headers).find((h) => h.textContent?.includes("editor"));
+    fireEvent.click(editorHeader!);
+
+    // Verify collapsed
+    let allRows = Array.from(container.querySelectorAll("tbody tr"));
+    let dataRows = allRows.filter((r) => !r.querySelector("[data-testid='group-header']"));
+    expect(dataRows.some((r) => r.textContent?.includes("Toggle Bold"))).toBe(false);
+
+    // Type a filter that matches an editor entry
+    const filter = container.querySelector("[data-testid='shortcuts-filter']") as HTMLInputElement;
+    fireEvent.change(filter, { target: { value: "bold" } });
+
+    allRows = Array.from(container.querySelectorAll("tbody tr"));
+    dataRows = allRows.filter((r) => !r.querySelector("[data-testid='group-header']"));
+    expect(dataRows.some((r) => r.textContent?.includes("Toggle Bold"))).toBe(true);
   });
 });
