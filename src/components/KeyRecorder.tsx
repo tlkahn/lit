@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback } from "react";
 import type { Platform } from "../lib/keyChordFormat";
 import { keyEventToNotation } from "../lib/keyEventToNotation";
 import { KeyChord } from "./KeyChord";
@@ -12,10 +12,13 @@ export interface KeyRecorderProps {
   onCancel?: () => void;
 }
 
+function hasModifiers(e: React.KeyboardEvent): boolean {
+  return e.metaKey || e.ctrlKey || e.shiftKey || e.altKey;
+}
+
 export function KeyRecorder({ platform, value, onConfirm, onCancel }: KeyRecorderProps) {
   const [state, setState] = useState<RecorderState>("idle");
   const [captured, setCaptured] = useState<string | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
 
   const p: Platform = platform ?? (navigator.platform?.startsWith("Mac") ? "mac" : "other");
 
@@ -35,7 +38,7 @@ export function KeyRecorder({ platform, value, onConfirm, onCancel }: KeyRecorde
       if (state === "recording") {
         e.preventDefault();
 
-        if (e.key === "Escape") {
+        if (e.key === "Escape" && !hasModifiers(e)) {
           reset();
           onCancel?.();
           return;
@@ -51,13 +54,13 @@ export function KeyRecorder({ platform, value, onConfirm, onCancel }: KeyRecorde
       } else if (state === "captured") {
         e.preventDefault();
 
-        if (e.key === "Escape") {
+        if (e.key === "Escape" && !hasModifiers(e)) {
           reset();
           onCancel?.();
           return;
         }
 
-        if (e.key === "Enter") {
+        if (e.key === "Enter" && !hasModifiers(e)) {
           const result = captured;
           reset();
           if (result) onConfirm?.(result);
@@ -81,7 +84,7 @@ export function KeyRecorder({ platform, value, onConfirm, onCancel }: KeyRecorde
 
   return (
     <div
-      ref={containerRef}
+
       data-testid="key-recorder"
       data-state={state}
       tabIndex={0}

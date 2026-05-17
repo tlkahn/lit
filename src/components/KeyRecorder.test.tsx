@@ -85,6 +85,27 @@ describe("KeyRecorder", () => {
       expect(recorder.getAttribute("data-state")).toBe("idle");
       expect(onCancel).toHaveBeenCalledTimes(1);
     });
+
+    it("modified Escape in recording is captured, not cancelled", () => {
+      const onCancel = vi.fn();
+      const { container } = render(<KeyRecorder platform="mac" onCancel={onCancel} />);
+      const recorder = container.querySelector("[data-testid='key-recorder']")!;
+      fireEvent.click(recorder);
+      fireEvent.keyDown(recorder, { key: "Escape", metaKey: true });
+      expect(recorder.getAttribute("data-state")).toBe("captured");
+      expect(onCancel).not.toHaveBeenCalled();
+    });
+
+    it("modified Escape in captured re-captures, not cancels", () => {
+      const onCancel = vi.fn();
+      const { container } = render(<KeyRecorder platform="mac" onCancel={onCancel} />);
+      const recorder = container.querySelector("[data-testid='key-recorder']")!;
+      fireEvent.click(recorder);
+      fireEvent.keyDown(recorder, { key: "b", metaKey: true });
+      fireEvent.keyDown(recorder, { key: "Escape", shiftKey: true });
+      expect(recorder.getAttribute("data-state")).toBe("captured");
+      expect(onCancel).not.toHaveBeenCalled();
+    });
   });
 
   describe("Enter confirms", () => {
@@ -116,6 +137,17 @@ describe("KeyRecorder", () => {
       fireEvent.click(recorder);
       fireEvent.keyDown(recorder, { key: "Enter", metaKey: true });
       expect(recorder.getAttribute("data-state")).toBe("captured");
+    });
+
+    it("modified Enter in captured re-captures, not confirms", () => {
+      const onConfirm = vi.fn();
+      const { container } = render(<KeyRecorder platform="mac" onConfirm={onConfirm} />);
+      const recorder = container.querySelector("[data-testid='key-recorder']")!;
+      fireEvent.click(recorder);
+      fireEvent.keyDown(recorder, { key: "b", metaKey: true });
+      fireEvent.keyDown(recorder, { key: "Enter", shiftKey: true });
+      expect(recorder.getAttribute("data-state")).toBe("captured");
+      expect(onConfirm).not.toHaveBeenCalled();
     });
   });
 

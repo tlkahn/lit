@@ -29,7 +29,7 @@ export function keyEventToNotation(
   if (event.altKey) parts.push("Alt");
 
   const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
-  parts.push(key);
+  parts.push(key === " " ? "Space" : key);
 
   return parts.join("-");
 }

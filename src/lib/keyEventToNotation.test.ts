@@ -98,7 +98,11 @@ describe("keyEventToNotation", () => {
     });
 
     it("Space", () => {
-      expect(keyEventToNotation(fakeEvent({ key: " " }), "mac")).toBe(" ");
+      expect(keyEventToNotation(fakeEvent({ key: " " }), "mac")).toBe("Space");
+    });
+
+    it("Mod-Space", () => {
+      expect(keyEventToNotation(fakeEvent({ key: " ", metaKey: true }), "mac")).toBe("Mod-Space");
     });
 
     it("F1", () => {
