@@ -8,6 +8,7 @@ interface CodeMirrorEditorProps {
   onChange?: (content: string) => void;
   resolveImageSrc?: (src: string) => string;
   viewRef?: React.RefObject<EditorView | null>;
+  onViewChange?: (view: EditorView | null) => void;
   onDocReplaced?: () => void;
   keymapBindings?: CM6KeyBinding[];
   frontmatter?: Record<string, unknown>;
@@ -17,7 +18,7 @@ interface CodeMirrorEditorProps {
   style?: React.CSSProperties;
 }
 
-export function CodeMirrorEditor({ doc, onChange, resolveImageSrc, viewRef, onDocReplaced, keymapBindings, frontmatter, noteDir, openFilePath, navigateToPage, style }: CodeMirrorEditorProps) {
+export function CodeMirrorEditor({ doc, onChange, resolveImageSrc, viewRef, onViewChange, onDocReplaced, keymapBindings, frontmatter, noteDir, openFilePath, navigateToPage, style }: CodeMirrorEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const { view } = useCodeMirror({ containerRef, doc, onChange, resolveImageSrc, onDocReplaced, keymapBindings, frontmatter, noteDir, openFilePath, navigateToPage });
 
@@ -25,7 +26,9 @@ export function CodeMirrorEditor({ doc, onChange, resolveImageSrc, viewRef, onDo
     if (viewRef) {
       (viewRef as React.MutableRefObject<EditorView | null>).current = view;
     }
-  }, [view, viewRef]);
+    if (view) onViewChange?.(view);
+    return () => { onViewChange?.(null); };
+  }, [view, viewRef, onViewChange]);
 
   useEffect(() => {
     if (!view) return;
