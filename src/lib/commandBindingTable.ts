@@ -28,6 +28,7 @@ export function buildCommandBindingTable(
 
   const commandMap = new Map<string, Command>();
   for (const cmd of commands) {
+    if (commandMap.has(cmd.id)) commandMap.delete(cmd.id);
     commandMap.set(cmd.id, cmd);
   }
 
@@ -59,12 +60,21 @@ export function buildCommandBindingTable(
   return entries;
 }
 
+function deduplicateBindings(bindings: KeyBinding[]): KeyBinding[] {
+  const seen = new Map<string, KeyBinding>();
+  for (const b of bindings) {
+    const key = `${b.command}\0${b.key}\0${b.when ?? ""}`;
+    seen.set(key, b);
+  }
+  return [...seen.values()];
+}
+
 export async function fetchCommandBindingTable(): Promise<CommandBindingEntry[]> {
   const [keymaps, menuShortcuts] = await Promise.all([
     getKeymaps(),
     getMenuShortcuts(),
   ]);
-  const allBindings = [...keymaps, ...menuShortcuts];
+  const allBindings = deduplicateBindings([...keymaps, ...menuShortcuts]);
   const commands = getAllCommands();
   return buildCommandBindingTable(commands, allBindings);
 }

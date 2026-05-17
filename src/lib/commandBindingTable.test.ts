@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { mockInvoke } from "../test/tauri-mock";
+import { describe, it, expect, afterEach, beforeEach } from "vitest";
+import { mockInvoke, resetInvokeMock } from "../test/tauri-mock";
 import { registerCommand, _clear } from "./commandRegistry";
 import type { Command } from "./commandRegistry";
 import type { KeyBinding } from "./ipc";
@@ -113,12 +113,15 @@ describe("buildCommandBindingTable", () => {
     expect(result[0]!.status).toBe("unknown-command");
   });
 
-  it("deduplicates commands with same id (last wins)", () => {
-    const cmd1 = makeCommand("editor.save", "Save v1");
-    const cmd2 = makeCommand("editor.save", "Save v2");
-    const result = buildCommandBindingTable([cmd1, cmd2], []);
-    expect(result).toHaveLength(1);
-    expect(result[0]!.command!.label).toBe("Save v2");
+  it("deduplicates commands with same id (last wins on value and position)", () => {
+    const cmdA = makeCommand("aaa", "A");
+    const cmdB1 = makeCommand("bbb", "B v1");
+    const cmdB2 = makeCommand("bbb", "B v2");
+    const result = buildCommandBindingTable([cmdB1, cmdA, cmdB2], []);
+    expect(result).toHaveLength(2);
+    expect(result[0]!.commandId).toBe("aaa");
+    expect(result[1]!.commandId).toBe("bbb");
+    expect(result[1]!.command!.label).toBe("B v2");
   });
 
   it("preserves source metadata on bindings", () => {
@@ -144,6 +147,28 @@ describe("buildCommandBindingTable", () => {
 describe("fetchCommandBindingTable", () => {
   beforeEach(() => {
     _clear();
+  });
+
+  afterEach(() => {
+    _clear();
+    resetInvokeMock();
+  });
+
+  it("deduplicates bindings that appear in both keymaps and menu shortcuts", async () => {
+    registerCommand(makeCommand("editor.save"));
+
+    mockInvoke((cmd) => {
+      if (cmd === "get_keymaps")
+        return [{ command: "editor.save", key: "Cmd+S", source: "default" }];
+      if (cmd === "get_menu_shortcuts")
+        return [{ command: "editor.save", key: "Cmd+S", source: "menu" }];
+      return [];
+    });
+
+    const result = await fetchCommandBindingTable();
+    const save = result.find((e) => e.commandId === "editor.save")!;
+    expect(save.bindings).toHaveLength(1);
+    expect(save.bindings[0]!.source).toBe("menu");
   });
 
   it("joins IPC keymaps + menu shortcuts with registered commands", async () => {
