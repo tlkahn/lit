@@ -477,3 +477,296 @@ describe("Section B: Store", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Section C: Tree-Mutation Actions
+// ---------------------------------------------------------------------------
+
+describe("Section C: Tree-Mutation Actions", () => {
+  describe("splitPane", () => {
+    describe("basic — split the only leaf", () => {
+      beforeEach(() => {
+        usePaneStore.setState({
+          root: { type: "leaf", id: "solo", pagePath: "note.md" },
+          focusedPaneId: "solo",
+        });
+        usePaneStore.getState().splitPane("solo", "horizontal");
+      });
+
+      it("root becomes split with direction matching arg, 2 children, sizes [50, 50]", () => {
+        const root = usePaneStore.getState().root as PaneSplit;
+        expect(root.type).toBe("split");
+        expect(root.direction).toBe("horizontal");
+        expect(root.children).toHaveLength(2);
+        expect(root.sizes).toEqual([50, 50]);
+      });
+
+      it("original leaf preserved as first child (same ID, same pagePath)", () => {
+        const root = usePaneStore.getState().root as PaneSplit;
+        const first = root.children[0] as PaneLeaf;
+        expect(first.type).toBe("leaf");
+        expect(first.id).toBe("solo");
+        expect(first.pagePath).toBe("note.md");
+      });
+
+      it("new leaf as second child with pagePath: null and different ID", () => {
+        const root = usePaneStore.getState().root as PaneSplit;
+        const second = root.children[1] as PaneLeaf;
+        expect(second.type).toBe("leaf");
+        expect(second.pagePath).toBeNull();
+        expect(second.id).not.toBe("solo");
+        expect(second.id.length).toBeGreaterThan(0);
+      });
+
+      it("focus transfers to the new pane", () => {
+        const root = usePaneStore.getState().root as PaneSplit;
+        const second = root.children[1] as PaneLeaf;
+        expect(usePaneStore.getState().focusedPaneId).toBe(second.id);
+      });
+    });
+
+    describe("nested — split inside existing split", () => {
+      it("splitting a leaf inside a split creates nested splits", () => {
+        const left: PaneLeaf = { type: "leaf", id: "left", pagePath: null };
+        const right: PaneLeaf = { type: "leaf", id: "right", pagePath: null };
+        const root: PaneSplit = {
+          type: "split",
+          direction: "horizontal",
+          children: [left, right],
+          sizes: [50, 50],
+        };
+        usePaneStore.setState({ root, focusedPaneId: "left" });
+        usePaneStore.getState().splitPane("right", "vertical");
+
+        const newRoot = usePaneStore.getState().root as PaneSplit;
+        expect(newRoot.type).toBe("split");
+        expect(newRoot.direction).toBe("horizontal");
+        const nested = newRoot.children[1] as PaneSplit;
+        expect(nested.type).toBe("split");
+        expect(nested.direction).toBe("vertical");
+        expect(nested.children).toHaveLength(2);
+      });
+
+      it("original sibling unchanged by reference", () => {
+        const left: PaneLeaf = { type: "leaf", id: "left", pagePath: null };
+        const right: PaneLeaf = { type: "leaf", id: "right", pagePath: null };
+        const root: PaneSplit = {
+          type: "split",
+          direction: "horizontal",
+          children: [left, right],
+          sizes: [50, 50],
+        };
+        usePaneStore.setState({ root, focusedPaneId: "left" });
+        usePaneStore.getState().splitPane("right", "vertical");
+
+        const newRoot = usePaneStore.getState().root as PaneSplit;
+        expect(newRoot.children[0]).toBe(left);
+      });
+
+      it("no-op for non-existent pane", () => {
+        const root: PaneLeaf = { type: "leaf", id: "solo", pagePath: null };
+        usePaneStore.setState({ root, focusedPaneId: "solo" });
+        usePaneStore.getState().splitPane("nonexistent", "horizontal");
+        expect(usePaneStore.getState().root).toBe(root);
+      });
+    });
+  });
+
+  describe("closePane", () => {
+    describe("basic", () => {
+      it("close one of two → root collapses to remaining leaf", () => {
+        const left: PaneLeaf = { type: "leaf", id: "left", pagePath: "a.md" };
+        const right: PaneLeaf = { type: "leaf", id: "right", pagePath: null };
+        const root: PaneSplit = {
+          type: "split",
+          direction: "horizontal",
+          children: [left, right],
+          sizes: [50, 50],
+        };
+        usePaneStore.setState({ root, focusedPaneId: "right" });
+        usePaneStore.getState().closePane("right");
+
+        expect(usePaneStore.getState().root).toBe(left);
+      });
+
+      it("closing the focused pane → focus moves to remaining leaf", () => {
+        const left: PaneLeaf = { type: "leaf", id: "left", pagePath: null };
+        const right: PaneLeaf = { type: "leaf", id: "right", pagePath: null };
+        const root: PaneSplit = {
+          type: "split",
+          direction: "horizontal",
+          children: [left, right],
+          sizes: [50, 50],
+        };
+        usePaneStore.setState({ root, focusedPaneId: "right" });
+        usePaneStore.getState().closePane("right");
+
+        expect(usePaneStore.getState().focusedPaneId).toBe("left");
+      });
+
+      it("close last pane → no-op", () => {
+        const root: PaneLeaf = { type: "leaf", id: "solo", pagePath: null };
+        usePaneStore.setState({ root, focusedPaneId: "solo" });
+        usePaneStore.getState().closePane("solo");
+
+        expect(usePaneStore.getState().root).toBe(root);
+        expect(usePaneStore.getState().focusedPaneId).toBe("solo");
+      });
+
+      it("close non-existent pane → no-op", () => {
+        const left: PaneLeaf = { type: "leaf", id: "left", pagePath: null };
+        const right: PaneLeaf = { type: "leaf", id: "right", pagePath: null };
+        const root: PaneSplit = {
+          type: "split",
+          direction: "horizontal",
+          children: [left, right],
+          sizes: [50, 50],
+        };
+        usePaneStore.setState({ root, focusedPaneId: "left" });
+        usePaneStore.getState().closePane("nonexistent");
+
+        expect(usePaneStore.getState().root).toBe(root);
+        expect(usePaneStore.getState().focusedPaneId).toBe("left");
+      });
+    });
+
+    describe("deep tree + focus heuristics", () => {
+      it("deep tree: close inner leaf → sibling promoted, outer structure correct", () => {
+        const innerA: PaneLeaf = { type: "leaf", id: "inner-a", pagePath: null };
+        const innerB: PaneLeaf = { type: "leaf", id: "inner-b", pagePath: null };
+        const outerA: PaneLeaf = { type: "leaf", id: "outer-a", pagePath: null };
+        const root: PaneSplit = {
+          type: "split",
+          direction: "horizontal",
+          children: [
+            outerA,
+            { type: "split", direction: "vertical", children: [innerA, innerB], sizes: [50, 50] },
+          ],
+          sizes: [50, 50],
+        };
+        usePaneStore.setState({ root, focusedPaneId: "inner-b" });
+        usePaneStore.getState().closePane("inner-b");
+
+        const newRoot = usePaneStore.getState().root as PaneSplit;
+        expect(newRoot.type).toBe("split");
+        expect(newRoot.children).toHaveLength(2);
+        expect(newRoot.children[0]).toBe(outerA);
+        expect(newRoot.children[1]).toBe(innerA);
+      });
+
+      it("3-pane: close middle → focus moves to next leaf in order", () => {
+        const a: PaneLeaf = { type: "leaf", id: "a", pagePath: null };
+        const b: PaneLeaf = { type: "leaf", id: "b", pagePath: null };
+        const c: PaneLeaf = { type: "leaf", id: "c", pagePath: null };
+        const root: PaneSplit = {
+          type: "split",
+          direction: "horizontal",
+          children: [a, b, c],
+          sizes: [33, 34, 33],
+        };
+        usePaneStore.setState({ root, focusedPaneId: "b" });
+        usePaneStore.getState().closePane("b");
+
+        expect(usePaneStore.getState().focusedPaneId).toBe("c");
+      });
+
+      it("2-pane: close last in order → focus moves to previous", () => {
+        const a: PaneLeaf = { type: "leaf", id: "a", pagePath: null };
+        const b: PaneLeaf = { type: "leaf", id: "b", pagePath: null };
+        const root: PaneSplit = {
+          type: "split",
+          direction: "horizontal",
+          children: [a, b],
+          sizes: [50, 50],
+        };
+        usePaneStore.setState({ root, focusedPaneId: "b" });
+        usePaneStore.getState().closePane("b");
+
+        expect(usePaneStore.getState().focusedPaneId).toBe("a");
+      });
+
+      it("close non-focused pane → focus preserved", () => {
+        const a: PaneLeaf = { type: "leaf", id: "a", pagePath: null };
+        const b: PaneLeaf = { type: "leaf", id: "b", pagePath: null };
+        const c: PaneLeaf = { type: "leaf", id: "c", pagePath: null };
+        const root: PaneSplit = {
+          type: "split",
+          direction: "horizontal",
+          children: [a, b, c],
+          sizes: [33, 34, 33],
+        };
+        usePaneStore.setState({ root, focusedPaneId: "a" });
+        usePaneStore.getState().closePane("c");
+
+        expect(usePaneStore.getState().focusedPaneId).toBe("a");
+      });
+    });
+  });
+
+  describe("focusNext / focusPrev", () => {
+    it("focusNext advances to next leaf in left-to-right order", () => {
+      const a: PaneLeaf = { type: "leaf", id: "a", pagePath: null };
+      const b: PaneLeaf = { type: "leaf", id: "b", pagePath: null };
+      const c: PaneLeaf = { type: "leaf", id: "c", pagePath: null };
+      const root: PaneSplit = {
+        type: "split",
+        direction: "horizontal",
+        children: [a, b, c],
+        sizes: [33, 34, 33],
+      };
+      usePaneStore.setState({ root, focusedPaneId: "a" });
+      usePaneStore.getState().focusNext();
+      expect(usePaneStore.getState().focusedPaneId).toBe("b");
+    });
+
+    it("focusNext wraps from last to first", () => {
+      const a: PaneLeaf = { type: "leaf", id: "a", pagePath: null };
+      const b: PaneLeaf = { type: "leaf", id: "b", pagePath: null };
+      const root: PaneSplit = {
+        type: "split",
+        direction: "horizontal",
+        children: [a, b],
+        sizes: [50, 50],
+      };
+      usePaneStore.setState({ root, focusedPaneId: "b" });
+      usePaneStore.getState().focusNext();
+      expect(usePaneStore.getState().focusedPaneId).toBe("a");
+    });
+
+    it("focusNext is no-op with single pane", () => {
+      const root: PaneLeaf = { type: "leaf", id: "solo", pagePath: null };
+      usePaneStore.setState({ root, focusedPaneId: "solo" });
+      usePaneStore.getState().focusNext();
+      expect(usePaneStore.getState().focusedPaneId).toBe("solo");
+    });
+
+    it("focusPrev goes to previous leaf", () => {
+      const a: PaneLeaf = { type: "leaf", id: "a", pagePath: null };
+      const b: PaneLeaf = { type: "leaf", id: "b", pagePath: null };
+      const c: PaneLeaf = { type: "leaf", id: "c", pagePath: null };
+      const root: PaneSplit = {
+        type: "split",
+        direction: "horizontal",
+        children: [a, b, c],
+        sizes: [33, 34, 33],
+      };
+      usePaneStore.setState({ root, focusedPaneId: "c" });
+      usePaneStore.getState().focusPrev();
+      expect(usePaneStore.getState().focusedPaneId).toBe("b");
+    });
+
+    it("focusPrev wraps from first to last", () => {
+      const a: PaneLeaf = { type: "leaf", id: "a", pagePath: null };
+      const b: PaneLeaf = { type: "leaf", id: "b", pagePath: null };
+      const root: PaneSplit = {
+        type: "split",
+        direction: "horizontal",
+        children: [a, b],
+        sizes: [50, 50],
+      };
+      usePaneStore.setState({ root, focusedPaneId: "a" });
+      usePaneStore.getState().focusPrev();
+      expect(usePaneStore.getState().focusedPaneId).toBe("b");
+    });
+  });
+});

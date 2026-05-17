@@ -167,8 +167,50 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
     set({ root: newRoot });
   },
 
-  splitPane: () => {},
-  closePane: () => {},
-  focusNext: () => {},
-  focusPrev: () => {},
+  splitPane: (paneId, direction) => {
+    const { root } = get();
+    const leaf = findLeaf(root, paneId);
+    if (!leaf) return;
+    const newLeaf: PaneLeaf = { type: "leaf", id: generatePaneId(), pagePath: null };
+    const split: PaneSplit = {
+      type: "split",
+      direction,
+      children: [leaf, newLeaf],
+      sizes: [50, 50],
+    };
+    const newRoot = replaceLeaf(root, paneId, split);
+    set({ root: newRoot, focusedPaneId: newLeaf.id });
+  },
+
+  closePane: (paneId) => {
+    const { root, focusedPaneId } = get();
+    const newRoot = removeLeaf(root, paneId);
+    if (!newRoot) return;
+    if (newRoot === root) return;
+    if (focusedPaneId !== paneId) {
+      set({ root: newRoot });
+      return;
+    }
+    const oldLeaves = collectLeaves(root);
+    const idx = oldLeaves.findIndex((l) => l.id === paneId);
+    const newLeaves = collectLeaves(newRoot);
+    const newFocus = newLeaves[Math.min(idx, newLeaves.length - 1)]!.id;
+    set({ root: newRoot, focusedPaneId: newFocus });
+  },
+
+  focusNext: () => {
+    const { root, focusedPaneId } = get();
+    const leaves = collectLeaves(root);
+    if (leaves.length <= 1) return;
+    const idx = leaves.findIndex((l) => l.id === focusedPaneId);
+    set({ focusedPaneId: leaves[(idx + 1) % leaves.length]!.id });
+  },
+
+  focusPrev: () => {
+    const { root, focusedPaneId } = get();
+    const leaves = collectLeaves(root);
+    if (leaves.length <= 1) return;
+    const idx = leaves.findIndex((l) => l.id === focusedPaneId);
+    set({ focusedPaneId: leaves[(idx - 1 + leaves.length) % leaves.length]!.id });
+  },
 }));
