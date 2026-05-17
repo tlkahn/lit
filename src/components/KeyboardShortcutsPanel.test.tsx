@@ -1186,6 +1186,272 @@ describe("KeyboardShortcutsPanel", () => {
     expect(resetBtns.length).toBe(2);
   });
 
+  // --- Feature D: Menu shortcuts non-interactive ---
+
+  it("clicking a menu-source binding does NOT open KeyRecorder", async () => {
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+
+    const rows = container.querySelectorAll("tbody tr");
+    const paletteRow = Array.from(rows).find((r) => r.textContent?.includes("Command Palette"));
+    const keybindingCell = paletteRow!.querySelectorAll("td")[1]!;
+    const chord = keybindingCell.querySelector("[data-testid='key-chord']");
+    fireEvent.click(chord!.parentElement!);
+
+    expect(container.querySelector("[data-testid='key-recorder']")).toBeNull();
+  });
+
+  it("menu-source keybinding cell does NOT have cursor-pointer class", async () => {
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+
+    const rows = container.querySelectorAll("tbody tr");
+    const paletteRow = Array.from(rows).find((r) => r.textContent?.includes("Command Palette"));
+    const keybindingCell = paletteRow!.querySelectorAll("td")[1]!;
+    expect(keybindingCell.className).not.toContain("cursor-pointer");
+    expect(keybindingCell.className).toContain("cursor-default");
+  });
+
+  it("menu-source keybinding cell has title attribute 'Menu shortcuts cannot be rebound'", async () => {
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+
+    const rows = container.querySelectorAll("tbody tr");
+    const paletteRow = Array.from(rows).find((r) => r.textContent?.includes("Command Palette"));
+    const keybindingCell = paletteRow!.querySelectorAll("td")[1]!;
+    expect(keybindingCell.getAttribute("title")).toBe("Menu shortcuts cannot be rebound");
+  });
+
+  // --- Feature A: Click-away (blur) confirms integration ---
+
+  it("blurring KeyRecorder after capturing a key applies the rebind", async () => {
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+
+    await clickKeybindingCell(container, "Toggle Italic");
+    const recorder = container.querySelector("[data-testid='key-recorder']")!;
+    fireEvent.click(recorder);
+    fireEvent.keyDown(recorder, { key: "x", code: "KeyX", metaKey: true });
+    fireEvent.blur(recorder);
+
+    // Recorder should be gone, new binding visible
+    expect(container.querySelector("[data-testid='key-recorder']")).toBeNull();
+    const rows = container.querySelectorAll("tbody tr");
+    const italicRow = Array.from(rows).find((r) => r.textContent?.includes("Toggle Italic"));
+    expect(italicRow).toBeDefined();
+  });
+
+  // --- Feature C: Toast integration ---
+
+  it("successful rebind shows toast with command label and new key", async () => {
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+
+    await clickKeybindingCell(container, "Toggle Italic");
+    await recordKey(container, "x", "KeyX", { metaKey: true });
+
+    const toast = container.querySelector("[data-testid='toast']");
+    expect(toast).not.toBeNull();
+    expect(toast!.textContent).toContain("Toggle Italic");
+    expect(toast!.textContent).toContain("⌘X");
+  });
+
+  it("conflict-resolution rebind also shows toast", async () => {
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+
+    await clickKeybindingCell(container, "Toggle Italic");
+    await recordKey(container, "b", "KeyB", { metaKey: true });
+
+    const rebindBtn = container.querySelector("[data-testid='conflict-rebind-btn']")!;
+    fireEvent.click(rebindBtn);
+
+    const toast = container.querySelector("[data-testid='toast']");
+    expect(toast).not.toBeNull();
+    expect(toast!.textContent).toContain("Toggle Italic");
+  });
+
+  // --- Feature B: Session-level undo ---
+
+  it("undo button is NOT visible when no rebinds have been made", async () => {
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+    expect(container.querySelector("[data-testid='undo-btn']")).toBeNull();
+  });
+
+  it("after a successful rebind, undo button appears", async () => {
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+
+    await clickKeybindingCell(container, "Toggle Italic");
+    await recordKey(container, "x", "KeyX", { metaKey: true });
+
+    expect(container.querySelector("[data-testid='undo-btn']")).not.toBeNull();
+  });
+
+  it("clicking undo reverts the last rebind and persists", async () => {
+    let savedBindings: unknown = null;
+    _clear();
+    registerCommand({ id: "editor.toggleBold", label: "Toggle Bold", keywords: ["bold"], action: () => {} });
+    registerCommand({ id: "editor.toggleItalic", label: "Toggle Italic", keywords: ["italic"], action: () => {} });
+    mockInvoke((cmd, args) => {
+      if (cmd === "get_keymaps") {
+        return [
+          { command: "editor.toggleBold", key: "Mod-b", when: "editorFocus", source: "default" },
+          { command: "editor.toggleItalic", key: "Mod-i", when: "editorFocus", source: "user" },
+        ];
+      }
+      if (cmd === "get_default_keymaps") {
+        return [
+          { command: "editor.toggleBold", key: "Mod-b", when: "editorFocus", source: "default" },
+          { command: "editor.toggleItalic", key: "Mod-i", when: "editorFocus", source: "default" },
+        ];
+      }
+      if (cmd === "get_menu_shortcuts") return [];
+      if (cmd === "save_user_keymaps") {
+        savedBindings = (args as Record<string, unknown>)?.bindings;
+        return undefined;
+      }
+      return [];
+    });
+
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+
+    await clickKeybindingCell(container, "Toggle Italic");
+    await recordKey(container, "x", "KeyX", { metaKey: true });
+
+    // Undo
+    const undoBtn = container.querySelector("[data-testid='undo-btn']")!;
+    fireEvent.click(undoBtn);
+
+    // Should revert — save called with original state diff
+    await waitFor(() => {
+      expect(savedBindings).toEqual([]);
+    });
+    // Undo button should disappear
+    expect(container.querySelector("[data-testid='undo-btn']")).toBeNull();
+  });
+
+  it("undo after conflict-resolution rebind restores both commands", async () => {
+    _clear();
+    registerCommand({ id: "editor.toggleBold", label: "Toggle Bold", keywords: ["bold"], action: () => {} });
+    registerCommand({ id: "editor.toggleItalic", label: "Toggle Italic", keywords: ["italic"], action: () => {} });
+    mockInvoke((cmd) => {
+      if (cmd === "get_keymaps") {
+        return [
+          { command: "editor.toggleBold", key: "Mod-b", when: "editorFocus", source: "default" },
+          { command: "editor.toggleItalic", key: "Mod-i", when: "editorFocus", source: "user" },
+        ];
+      }
+      if (cmd === "get_default_keymaps") {
+        return [
+          { command: "editor.toggleBold", key: "Mod-b", when: "editorFocus", source: "default" },
+          { command: "editor.toggleItalic", key: "Mod-i", when: "editorFocus", source: "default" },
+        ];
+      }
+      if (cmd === "get_menu_shortcuts") return [];
+      if (cmd === "save_user_keymaps") return undefined;
+      return [];
+    });
+
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+
+    // Rebind Toggle Italic to Mod-b (conflicts with Bold)
+    await clickKeybindingCell(container, "Toggle Italic");
+    await recordKey(container, "b", "KeyB", { metaKey: true });
+    fireEvent.click(container.querySelector("[data-testid='conflict-rebind-btn']")!);
+
+    // Undo
+    fireEvent.click(container.querySelector("[data-testid='undo-btn']")!);
+
+    // Both commands should be restored
+    const rows = container.querySelectorAll("tbody tr");
+    const boldRow = Array.from(rows).find((r) => r.textContent?.includes("Toggle Bold"));
+    const italicRow = Array.from(rows).find((r) => r.textContent?.includes("Toggle Italic"));
+    expect(boldRow!.querySelector("[data-testid='key-chord']")).not.toBeNull();
+    expect(italicRow!.querySelector("[data-testid='key-chord']")).not.toBeNull();
+  });
+
+  it("undo shows a toast confirming the revert", async () => {
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+
+    await clickKeybindingCell(container, "Toggle Italic");
+    await recordKey(container, "x", "KeyX", { metaKey: true });
+
+    fireEvent.click(container.querySelector("[data-testid='undo-btn']")!);
+
+    const toast = container.querySelector("[data-testid='toast']");
+    expect(toast).not.toBeNull();
+    expect(toast!.textContent).toContain("Undid");
+    expect(toast!.textContent).toContain("Toggle Italic");
+  });
+
+  it("Cmd+Z triggers undo when panel is focused and not recording", async () => {
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+
+    await clickKeybindingCell(container, "Toggle Italic");
+    await recordKey(container, "x", "KeyX", { metaKey: true });
+
+    // Focus panel and trigger Cmd+Z
+    const panel = container.querySelector("[data-testid='keyboard-shortcuts-panel']")!;
+    fireEvent.keyDown(panel, { key: "z", metaKey: true });
+
+    // Undo button should disappear (undo applied)
+    expect(container.querySelector("[data-testid='undo-btn']")).toBeNull();
+  });
+
+  it("performing a second rebind makes undo revert to the state before the second rebind (not the first)", async () => {
+    _clear();
+    registerCommand({ id: "editor.toggleBold", label: "Toggle Bold", keywords: ["bold"], action: () => {} });
+    registerCommand({ id: "editor.toggleItalic", label: "Toggle Italic", keywords: ["italic"], action: () => {} });
+    registerCommand({ id: "workbench.toggleSideBar", label: "Toggle Sidebar", keywords: ["sidebar"], action: () => {} });
+    mockInvoke((cmd) => {
+      if (cmd === "get_keymaps") {
+        return [
+          { command: "editor.toggleBold", key: "Mod-b", when: "editorFocus", source: "default" },
+          { command: "editor.toggleItalic", key: "Mod-i", when: "editorFocus", source: "user" },
+          { command: "workbench.toggleSideBar", key: "Mod-\\", source: "default" },
+        ];
+      }
+      if (cmd === "get_default_keymaps") {
+        return [
+          { command: "editor.toggleBold", key: "Mod-b", when: "editorFocus", source: "default" },
+          { command: "editor.toggleItalic", key: "Mod-i", when: "editorFocus", source: "default" },
+          { command: "workbench.toggleSideBar", key: "Mod-\\", source: "default" },
+        ];
+      }
+      if (cmd === "get_menu_shortcuts") return [];
+      if (cmd === "save_user_keymaps") return undefined;
+      return [];
+    });
+
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+
+    // First rebind: Toggle Italic Mod-i → Mod-x
+    await clickKeybindingCell(container, "Toggle Italic");
+    await recordKey(container, "x", "KeyX", { metaKey: true });
+
+    // Second rebind: Toggle Sidebar Mod-\ → Mod-y
+    await clickKeybindingCell(container, "Toggle Sidebar");
+    await recordKey(container, "y", "KeyY", { metaKey: true });
+
+    // Undo should revert only the second rebind
+    fireEvent.click(container.querySelector("[data-testid='undo-btn']")!);
+
+    // Toggle Italic should still have Mod-x (from first rebind)
+    const rows = container.querySelectorAll("tbody tr");
+    const italicRow = Array.from(rows).find((r) => r.textContent?.includes("Toggle Italic"));
+    expect(italicRow).toBeDefined();
+    // Toggle Sidebar should have Mod-\ again
+    const sidebarRow = Array.from(rows).find((r) => r.textContent?.includes("Toggle Sidebar"));
+    expect(sidebarRow).toBeDefined();
+  });
+
   it("editing second binding replaces only that binding, not the first", async () => {
     _clear();
     registerCommand({ id: "editor.save", label: "Save", action: () => {} });

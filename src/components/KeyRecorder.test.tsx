@@ -221,4 +221,38 @@ describe("KeyRecorder", () => {
       expect(onConfirm).toHaveBeenCalledWith("Mod-Shift-k");
     });
   });
+
+  describe("blur behavior", () => {
+    it("blur in captured state calls onConfirm with captured notation", () => {
+      const onConfirm = vi.fn();
+      const { container } = render(<KeyRecorder platform="mac" onConfirm={onConfirm} />);
+      const recorder = container.querySelector("[data-testid='key-recorder']")!;
+      fireEvent.click(recorder);
+      fireEvent.keyDown(recorder, { key: "b", metaKey: true });
+      expect(recorder.getAttribute("data-state")).toBe("captured");
+      fireEvent.blur(recorder);
+      expect(onConfirm).toHaveBeenCalledWith("Mod-b");
+    });
+
+    it("blur in recording state with nothing captured calls onCancel", () => {
+      const onCancel = vi.fn();
+      const { container } = render(<KeyRecorder platform="mac" onCancel={onCancel} />);
+      const recorder = container.querySelector("[data-testid='key-recorder']")!;
+      fireEvent.click(recorder);
+      expect(recorder.getAttribute("data-state")).toBe("recording");
+      fireEvent.blur(recorder);
+      expect(onCancel).toHaveBeenCalledTimes(1);
+    });
+
+    it("blur in idle state does not call onConfirm or onCancel", () => {
+      const onConfirm = vi.fn();
+      const onCancel = vi.fn();
+      const { container } = render(<KeyRecorder platform="mac" onConfirm={onConfirm} onCancel={onCancel} />);
+      const recorder = container.querySelector("[data-testid='key-recorder']")!;
+      expect(recorder.getAttribute("data-state")).toBe("idle");
+      fireEvent.blur(recorder);
+      expect(onConfirm).not.toHaveBeenCalled();
+      expect(onCancel).not.toHaveBeenCalled();
+    });
+  });
 });

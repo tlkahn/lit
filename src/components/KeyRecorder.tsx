@@ -33,6 +33,17 @@ export function KeyRecorder({ platform, value, onConfirm, onCancel }: KeyRecorde
     }
   }, [state]);
 
+  const handleBlur = useCallback(() => {
+    if (state === "captured" && captured) {
+      const result = captured;
+      reset();
+      onConfirm?.(result);
+    } else if (state === "recording") {
+      reset();
+      onCancel?.();
+    }
+  }, [state, captured, onConfirm, onCancel, reset]);
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (state === "recording") {
@@ -90,6 +101,7 @@ export function KeyRecorder({ platform, value, onConfirm, onCancel }: KeyRecorde
       tabIndex={0}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
+      onBlur={handleBlur}
       className={`inline-flex items-center justify-center rounded border px-2 py-1 min-w-[120px] cursor-pointer select-none focus:outline-none ${borderClass}`}
     >
       {state === "idle" && (

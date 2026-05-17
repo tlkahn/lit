@@ -3,6 +3,7 @@ import { fetchCommandBindingTable, type CommandBindingEntry } from "../lib/comma
 import { KeyChord } from "./KeyChord";
 import { KeyRecorder } from "./KeyRecorder";
 import { ConflictResolutionDialog } from "./ConflictResolutionDialog";
+import { Toast } from "./Toast";
 import { fuzzyMatch } from "../lib/fuzzyMatch";
 import { formatChordSequence, type Platform } from "../lib/keyChordFormat";
 import { HighlightedText } from "./HighlightedText";
@@ -115,6 +116,9 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
   const defaultsRef = useRef<KeyBinding[]>([]);
 
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [lastSnapshot, setLastSnapshot] = useState<CommandBindingEntry[] | null>(null);
+  const [lastUndoLabel, setLastUndoLabel] = useState<string>("");
 
   const persistAndReload = useCallback(async (updatedEntries: CommandBindingEntry[]) => {
     const allCurrent = updatedEntries.flatMap((e) => e.bindings);
@@ -195,6 +199,8 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
     const conflictBindings = detectConflicts(notation, when, allBindings, commandId);
 
     if (conflictBindings.length === 0) {
+      setLastSnapshot(entries);
+      setLastUndoLabel(commandLabel);
       const updatedEntries = entries.map((e) => {
         if (e.commandId !== commandId) return e;
         const newBinding: KeyBinding = { command: commandId, key: notation, when, source: "user" };
@@ -207,6 +213,7 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
         return { ...e, bindings: newBindings, status: "bound" as const };
       });
       setEntries(updatedEntries);
+      setToastMessage(`${commandLabel} rebound to ${formatChordSequence(notation, resolvedPlatform)}`);
       persistAndReload(updatedEntries).catch((err) => setSaveError(err instanceof Error ? err.message : String(err)));
     } else {
       const conflicts: ConflictEntry[] = conflictBindings.map((b) => ({
@@ -216,7 +223,7 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
       setConflictDialog({ newKey: notation, newWhen: when, command: commandId, commandLabel, conflicts, bindingIndex });
     }
     setEditing(null);
-  }, [entries, allBindings, persistAndReload]);
+  }, [entries, allBindings, persistAndReload, resolvedPlatform]);
 
   const handleCancelEdit = useCallback(() => {
     setEditing(null);
@@ -224,7 +231,9 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
 
   const handleRebind = useCallback(() => {
     if (!conflictDialog) return;
-    const { newKey, newWhen, command, conflicts, bindingIndex } = conflictDialog;
+    const { newKey, newWhen, command, commandLabel, conflicts, bindingIndex } = conflictDialog;
+    setLastSnapshot(entries);
+    setLastUndoLabel(commandLabel);
     const conflictBindings = conflicts.map((c) => c.binding);
     const bindingsWithSlotRemoved = allBindings.filter((b, _i) => {
       if (b.command !== command) return true;
@@ -244,9 +253,10 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
       };
     });
     setEntries(updatedEntries);
+    setToastMessage(`${commandLabel} rebound to ${formatChordSequence(newKey, resolvedPlatform)}`);
     persistAndReload(updatedEntries).catch((err) => setSaveError(err instanceof Error ? err.message : String(err)));
     setConflictDialog(null);
-  }, [conflictDialog, allBindings, entries, persistAndReload]);
+  }, [conflictDialog, allBindings, entries, persistAndReload, resolvedPlatform]);
 
   const handleResetBinding = useCallback((commandId: string, bindingIndex: number) => {
     const entry = entries.find((e) => e.commandId === commandId);
@@ -290,6 +300,21 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
     setResetAllOpen(false);
   }, []);
 
+  const handleUndo = useCallback(() => {
+    if (!lastSnapshot) return;
+    setEntries(lastSnapshot);
+    setToastMessage(`Undid rebind of ${lastUndoLabel}`);
+    persistAndReload(lastSnapshot).catch((err) => setSaveError(err instanceof Error ? err.message : String(err)));
+    setLastSnapshot(null);
+  }, [lastSnapshot, lastUndoLabel, persistAndReload]);
+
+  const handlePanelKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "z" && !editing && lastSnapshot) {
+      e.preventDefault();
+      handleUndo();
+    }
+  }, [editing, lastSnapshot, handleUndo]);
+
   const handleCancelConflict = useCallback(() => {
     setConflictDialog(null);
   }, []);
@@ -311,7 +336,8 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
   }
 
   return (
-    <div data-testid="keyboard-shortcuts-panel" className="flex flex-col h-full">
+    <div data-testid="keyboard-shortcuts-panel" className="relative flex flex-col h-full" tabIndex={-1} onKeyDown={handlePanelKeyDown}>
+      <Toast message={toastMessage ?? ""} visible={toastMessage !== null} onDismiss={() => setToastMessage(null)} />
       <div className="px-1 pb-3 flex items-center gap-3">
         <input
           data-testid="shortcuts-filter"
@@ -334,6 +360,15 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
         >
           Reset All
         </button>
+        {lastSnapshot && (
+          <button
+            data-testid="undo-btn"
+            className="rounded border border-border px-2 py-1 text-xs text-text-muted hover:text-text-normal"
+            onClick={handleUndo}
+          >
+            Undo
+          </button>
+        )}
       </div>
 
       {resetAllOpen && (
@@ -497,6 +532,12 @@ function EntryRow({
     ? entry.bindings[editingIndex]
     : undefined;
 
+  const isMenuOnly = entry.bindings.length > 0 && entry.bindings.every((b) => b.source === "menu");
+
+  const keybindingCellClass = isMenuOnly
+    ? "py-1.5 pr-3 cursor-default opacity-60"
+    : "py-1.5 pr-3 cursor-pointer";
+
   return (
     <tr className="border-b border-border/50">
       <td className="py-1.5 pr-3">
@@ -509,8 +550,9 @@ function EntryRow({
         )}
       </td>
       <td
-        className="py-1.5 pr-3 cursor-pointer"
-        onClick={() => !isEditing && entry.bindings.length === 0 && onStartEdit(entry.commandId, entry.bindings.length)}
+        className={keybindingCellClass}
+        title={isMenuOnly ? "Menu shortcuts cannot be rebound" : undefined}
+        onClick={() => !isMenuOnly && !isEditing && entry.bindings.length === 0 && onStartEdit(entry.commandId, entry.bindings.length)}
       >
         {isEditing ? (
           <KeyRecorder
@@ -525,7 +567,7 @@ function EntryRow({
           <span className="inline-flex flex-wrap gap-1 items-center">
             {entry.bindings.map((b, i) => (
               <span key={i} className="inline-flex items-center gap-0.5">
-                <span onClick={(e) => { e.stopPropagation(); onStartEdit(entry.commandId, i); }}>
+                <span onClick={(e) => { e.stopPropagation(); if (!isMenuOnly) onStartEdit(entry.commandId, i); }}>
                   <KeyChord chord={b.key} platform={platform} />
                 </span>
                 {b.source === "user" && (
