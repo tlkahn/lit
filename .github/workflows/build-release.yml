@@ -27,6 +27,11 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Fetch libpdfium
         run: bash scripts/fetch-pdfium.sh
+      - name: Install and stage llm binary
+        run: |
+          cargo install llm-cmd --target aarch64-apple-darwin --root ./llm-install
+          mkdir -p src-tauri/binaries
+          cp ./llm-install/bin/llm src-tauri/binaries/llm-aarch64-apple-darwin
       - name: Pre-build lit-cli
         working-directory: src-tauri
         env:
@@ -37,11 +42,6 @@ jobs:
           touch binaries/lit-cli-aarch64-apple-darwin
           cargo build --release --bin lit-cli --target aarch64-apple-darwin
           cp target/aarch64-apple-darwin/release/lit-cli binaries/lit-cli-aarch64-apple-darwin
-      - name: Install and stage llm binary
-        run: |
-          cargo install llm-cmd --target aarch64-apple-darwin --root ./llm-install
-          mkdir -p src-tauri/binaries
-          cp ./llm-install/bin/llm src-tauri/binaries/llm-aarch64-apple-darwin
       - name: Import Apple Developer Certificate
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
