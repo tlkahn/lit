@@ -62,14 +62,21 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
   const [entries, setEntries] = useState<CommandBindingEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    fetchCommandBindingTable().then((result) => {
-      if (cancelled) return;
-      setEntries(result);
-      setLoading(false);
-    });
+    fetchCommandBindingTable()
+      .then((result) => {
+        if (cancelled) return;
+        setEntries(result);
+        setLoading(false);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : String(err));
+        setLoading(false);
+      });
     return () => { cancelled = true; };
   }, []);
 
@@ -93,6 +100,14 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
     return (
       <div data-testid="shortcuts-loading" className="flex items-center justify-center py-8">
         <div className="h-5 w-5 animate-spin rounded-full border-2 border-border border-t-accent" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div data-testid="shortcuts-error" className="py-8 text-center text-sm text-red-500">
+        Failed to load shortcuts
       </div>
     );
   }

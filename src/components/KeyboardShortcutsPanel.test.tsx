@@ -203,4 +203,19 @@ describe("KeyboardShortcutsPanel", () => {
     expect(headerTexts).toContain("app");
     expect(headerTexts).toContain("workbench");
   });
+
+  it("shows error state when IPC call fails", async () => {
+    _clear();
+    mockInvoke((cmd) => {
+      if (cmd === "get_keymaps") throw new Error("IPC connection lost");
+      if (cmd === "get_menu_shortcuts") return [];
+      return [];
+    });
+
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+    const errorEl = container.querySelector("[data-testid='shortcuts-error']");
+    expect(errorEl).not.toBeNull();
+    expect(errorEl!.textContent).toContain("Failed to load shortcuts");
+  });
 });

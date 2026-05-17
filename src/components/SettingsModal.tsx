@@ -118,14 +118,16 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
     return matched;
   }, [searchQuery, filteredGroups]);
 
+  const prevOpenRef = useRef(false);
+
   useEffect(() => {
-    if (open) {
+    if (open && !prevOpenRef.current) {
       setSearchQuery("");
       setJsonMode(false);
-      if (initialCategory) setActiveCategory(initialCategory);
-      else setActiveCategory(CATEGORIES[0]);
+      setActiveCategory(initialCategory ?? CATEGORIES[0]);
       searchInputRef.current?.focus();
     }
+    prevOpenRef.current = open;
   }, [open, initialCategory]);
 
   const [localTextValues, setLocalTextValues] = useState<Record<string, string>>(() => {

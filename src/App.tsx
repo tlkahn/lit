@@ -151,6 +151,7 @@ function App() {
       unlisteners.push(unInfo);
 
       const unPrefs = await listen("menu://open-preferences", () => {
+        setSettingsInitialCategory(undefined);
         setSettingsOpen(true);
       });
       if (cancelled) { unPrefs(); return; }
