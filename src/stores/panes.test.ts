@@ -700,6 +700,22 @@ describe("Section C: Tree-Mutation Actions", () => {
 
         expect(usePaneStore.getState().focusedPaneId).toBe("a");
       });
+
+      it("stale focusedPaneId: still removes pane and falls back to first leaf", () => {
+        const a: PaneLeaf = { type: "leaf", id: "a", pagePath: null };
+        const b: PaneLeaf = { type: "leaf", id: "b", pagePath: null };
+        const root: PaneSplit = {
+          type: "split",
+          direction: "horizontal",
+          children: [a, b],
+          sizes: [50, 50],
+        };
+        usePaneStore.setState({ root, focusedPaneId: "stale-ghost" });
+        usePaneStore.getState().closePane("b");
+
+        expect(usePaneStore.getState().root).toBe(a);
+        expect(usePaneStore.getState().focusedPaneId).toBe("a");
+      });
     });
   });
 
@@ -765,6 +781,34 @@ describe("Section C: Tree-Mutation Actions", () => {
         sizes: [50, 50],
       };
       usePaneStore.setState({ root, focusedPaneId: "a" });
+      usePaneStore.getState().focusPrev();
+      expect(usePaneStore.getState().focusedPaneId).toBe("b");
+    });
+
+    it("focusNext with stale focusedPaneId: resets to first leaf", () => {
+      const a: PaneLeaf = { type: "leaf", id: "a", pagePath: null };
+      const b: PaneLeaf = { type: "leaf", id: "b", pagePath: null };
+      const root: PaneSplit = {
+        type: "split",
+        direction: "horizontal",
+        children: [a, b],
+        sizes: [50, 50],
+      };
+      usePaneStore.setState({ root, focusedPaneId: "stale-ghost" });
+      usePaneStore.getState().focusNext();
+      expect(usePaneStore.getState().focusedPaneId).toBe("a");
+    });
+
+    it("focusPrev with stale focusedPaneId: resets to last leaf", () => {
+      const a: PaneLeaf = { type: "leaf", id: "a", pagePath: null };
+      const b: PaneLeaf = { type: "leaf", id: "b", pagePath: null };
+      const root: PaneSplit = {
+        type: "split",
+        direction: "horizontal",
+        children: [a, b],
+        sizes: [50, 50],
+      };
+      usePaneStore.setState({ root, focusedPaneId: "stale-ghost" });
       usePaneStore.getState().focusPrev();
       expect(usePaneStore.getState().focusedPaneId).toBe("b");
     });

@@ -187,14 +187,15 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
     const newRoot = removeLeaf(root, paneId);
     if (!newRoot) return;
     if (newRoot === root) return;
-    if (focusedPaneId !== paneId) {
+    if (focusedPaneId !== paneId && findLeaf(newRoot, focusedPaneId)) {
       set({ root: newRoot });
       return;
     }
     const oldLeaves = collectLeaves(root);
     const idx = oldLeaves.findIndex((l) => l.id === paneId);
     const newLeaves = collectLeaves(newRoot);
-    const newFocus = newLeaves[Math.min(idx, newLeaves.length - 1)]!.id;
+    const clampedIdx = Math.max(0, Math.min(idx, newLeaves.length - 1));
+    const newFocus = newLeaves[clampedIdx]!.id;
     set({ root: newRoot, focusedPaneId: newFocus });
   },
 
@@ -203,6 +204,7 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
     const leaves = collectLeaves(root);
     if (leaves.length <= 1) return;
     const idx = leaves.findIndex((l) => l.id === focusedPaneId);
+    if (idx === -1) { set({ focusedPaneId: leaves[0]!.id }); return; }
     set({ focusedPaneId: leaves[(idx + 1) % leaves.length]!.id });
   },
 
@@ -211,6 +213,7 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
     const leaves = collectLeaves(root);
     if (leaves.length <= 1) return;
     const idx = leaves.findIndex((l) => l.id === focusedPaneId);
+    if (idx === -1) { set({ focusedPaneId: leaves[leaves.length - 1]!.id }); return; }
     set({ focusedPaneId: leaves[(idx - 1 + leaves.length) % leaves.length]!.id });
   },
 }));
