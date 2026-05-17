@@ -3,6 +3,7 @@ import { useCallback, useSyncExternalStore } from "react";
 export interface PaneContentEntry {
   title: string;
   frontmatter: Record<string, unknown>;
+  rawYaml?: string;
 }
 
 const entries = new Map<string, PaneContentEntry>();

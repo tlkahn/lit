@@ -88,6 +88,22 @@ describe("paneContentRegistry", () => {
     unsub();
   });
 
+  it("rawYaml round-trips through register/get and survives partial updates", () => {
+    registerPaneContent("p1", {
+      title: "T",
+      frontmatter: { tags: ["a"] },
+      rawYaml: "tags:\n  - a\n",
+    });
+    expect(getPaneContent("p1")).toEqual({
+      title: "T",
+      frontmatter: { tags: ["a"] },
+      rawYaml: "tags:\n  - a\n",
+    });
+
+    updatePaneContent("p1", { title: "T2" });
+    expect(getPaneContent("p1")!.rawYaml).toBe("tags:\n  - a\n");
+  });
+
   it("updatePaneContent deep-merges frontmatter keys", () => {
     registerPaneContent("p1", {
       title: "T",
