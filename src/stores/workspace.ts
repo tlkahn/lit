@@ -14,6 +14,8 @@ export interface ViewState {
   mindmapFoldedIds?: string[];
 }
 
+const DEFAULT_VIEW_STATE: ViewState = { scrollTop: 0, cursor: 0 };
+
 export interface WorkspaceStore {
   workspacePath: string | null;
   pages: PageMeta[];
@@ -168,20 +170,20 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
 
   saveViewState: (path: string, scrollTop: number, cursor: number) =>
     set((state) => ({
-      viewStates: { ...state.viewStates, [path]: { ...state.viewStates[path], scrollTop, cursor } },
+      viewStates: { ...state.viewStates, [path]: { ...(state.viewStates[path] ?? DEFAULT_VIEW_STATE), scrollTop, cursor } },
     })),
 
   saveMindmapFoldState: (path: string, ids: string[]) =>
     set((state) => ({
       viewStates: {
         ...state.viewStates,
-        [path]: { ...(state.viewStates[path] ?? { scrollTop: 0, cursor: 0 }), mindmapFoldedIds: ids },
+        [path]: { ...(state.viewStates[path] ?? DEFAULT_VIEW_STATE), mindmapFoldedIds: ids },
       },
     })),
 
   savePaneViewState: (paneId: string, scrollTop: number, cursor: number) =>
     set((state) => ({
-      paneViewStates: { ...state.paneViewStates, [paneId]: { ...state.paneViewStates[paneId], scrollTop, cursor } },
+      paneViewStates: { ...state.paneViewStates, [paneId]: { ...(state.paneViewStates[paneId] ?? DEFAULT_VIEW_STATE), scrollTop, cursor } },
     })),
 
   removePaneViewState: (paneId: string) =>
@@ -195,7 +197,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     set((state) => ({
       paneViewStates: {
         ...state.paneViewStates,
-        [paneId]: { ...(state.paneViewStates[paneId] ?? { scrollTop: 0, cursor: 0 }), mindmapFoldedIds: ids },
+        [paneId]: { ...(state.paneViewStates[paneId] ?? DEFAULT_VIEW_STATE), mindmapFoldedIds: ids },
       },
     })),
 

@@ -518,6 +518,17 @@ describe("WorkspaceStore", () => {
     expect(useWorkspaceStore.getState().paneViewStates["pane-1"]?.mindmapFoldedIds).toEqual(["h-1", "h-3"]);
   });
 
+  it("savePaneViewState preserves existing mindmapFoldedIds", () => {
+    act(() => {
+      useWorkspaceStore.getState().savePaneMindmapFoldState("pane-1", ["h-1"]);
+    });
+    act(() => {
+      useWorkspaceStore.getState().savePaneViewState("pane-1", 200, 50);
+    });
+    const pvs = useWorkspaceStore.getState().paneViewStates["pane-1"];
+    expect(pvs).toEqual({ scrollTop: 200, cursor: 50, mindmapFoldedIds: ["h-1"] });
+  });
+
   it("savePaneMindmapFoldState preserves existing scrollTop and cursor", () => {
     act(() => {
       useWorkspaceStore.getState().savePaneViewState("pane-1", 150, 42);
