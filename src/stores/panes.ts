@@ -1,3 +1,5 @@
+import { create } from "zustand";
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -131,3 +133,41 @@ export function replaceSplitSizes(
   newChildren[idx] = newChild;
   return { ...root, children: newChildren };
 }
+
+// ---------------------------------------------------------------------------
+// Section B: Zustand Store
+// ---------------------------------------------------------------------------
+
+export function createInitialState() {
+  const root: PaneLeaf = { type: "leaf", id: generatePaneId(), pagePath: null };
+  return { root, focusedPaneId: root.id };
+}
+
+export const usePaneStore = create<PaneStore>((set, get) => ({
+  ...createInitialState(),
+
+  focusPane: (paneId) => {
+    const { root } = get();
+    if (findLeaf(root, paneId)) set({ focusedPaneId: paneId });
+  },
+
+  setPanePage: (paneId, pagePath) => {
+    const { root } = get();
+    if (!findLeaf(root, paneId)) return;
+    const newRoot = replaceLeaf(root, paneId, { type: "leaf", id: paneId, pagePath });
+    set({ root: newRoot });
+  },
+
+  resize: (splitPath, sizes) => {
+    const { root } = get();
+    const split = findSplitByPath(root, splitPath);
+    if (!split || split.children.length !== sizes.length) return;
+    const newRoot = replaceSplitSizes(root, splitPath, sizes);
+    set({ root: newRoot });
+  },
+
+  splitPane: () => {},
+  closePane: () => {},
+  focusNext: () => {},
+  focusPrev: () => {},
+}))

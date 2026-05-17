@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import {
   generatePaneId,
   findLeaf,
@@ -7,6 +7,8 @@ import {
   removeLeaf,
   findSplitByPath,
   replaceSplitSizes,
+  createInitialState,
+  usePaneStore,
 } from "./panes";
 import type { PaneLeaf, PaneSplit } from "./panes";
 
@@ -331,5 +333,140 @@ describe("replaceSplitSizes", () => {
   it("returns same ref when target is a leaf", () => {
     const root: PaneLeaf = { type: "leaf", id: "a", pagePath: null };
     expect(replaceSplitSizes(root, [], [50, 50])).toBe(root);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Section B: Zustand Store
+// ---------------------------------------------------------------------------
+
+describe("Section B: Store", () => {
+  describe("initial state", () => {
+    it("createInitialState root is a leaf with pagePath: null", () => {
+      const state = createInitialState();
+      expect(state.root.type).toBe("leaf");
+      expect((state.root as PaneLeaf).pagePath).toBeNull();
+    });
+
+    it("createInitialState focusedPaneId matches root leaf id", () => {
+      const state = createInitialState();
+      expect(state.focusedPaneId).toBe((state.root as PaneLeaf).id);
+    });
+
+    it("createInitialState root leaf has a non-empty id", () => {
+      const state = createInitialState();
+      expect((state.root as PaneLeaf).id.length).toBeGreaterThan(0);
+    });
+
+    it("store default state has a leaf root", () => {
+      usePaneStore.setState(createInitialState());
+      const { root } = usePaneStore.getState();
+      expect(root.type).toBe("leaf");
+    });
+  });
+
+  describe("focusPane", () => {
+    beforeEach(() => {
+      const left: PaneLeaf = { type: "leaf", id: "left", pagePath: null };
+      const right: PaneLeaf = { type: "leaf", id: "right", pagePath: null };
+      const root: PaneSplit = {
+        type: "split",
+        direction: "horizontal",
+        children: [left, right],
+        sizes: [50, 50],
+      };
+      usePaneStore.setState({ root, focusedPaneId: "left" });
+    });
+
+    it("sets focusedPaneId to an existing leaf", () => {
+      usePaneStore.getState().focusPane("right");
+      expect(usePaneStore.getState().focusedPaneId).toBe("right");
+    });
+
+    it("no-op for nonexistent pane id", () => {
+      usePaneStore.getState().focusPane("nonexistent");
+      expect(usePaneStore.getState().focusedPaneId).toBe("left");
+    });
+  });
+
+  describe("setPanePage", () => {
+    beforeEach(() => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "test-root", pagePath: null },
+        focusedPaneId: "test-root",
+      });
+    });
+
+    it("sets pagePath on target leaf", () => {
+      usePaneStore.getState().setPanePage("test-root", "hello.md");
+      const leaf = findLeaf(usePaneStore.getState().root, "test-root");
+      expect(leaf!.pagePath).toBe("hello.md");
+    });
+
+    it("passing null clears pagePath", () => {
+      usePaneStore.getState().setPanePage("test-root", "hello.md");
+      usePaneStore.getState().setPanePage("test-root", null);
+      const leaf = findLeaf(usePaneStore.getState().root, "test-root");
+      expect(leaf!.pagePath).toBeNull();
+    });
+
+    it("no-op for missing pane: root is same reference", () => {
+      const before = usePaneStore.getState().root;
+      usePaneStore.getState().setPanePage("missing", "hello.md");
+      expect(usePaneStore.getState().root).toBe(before);
+    });
+  });
+
+  describe("resize", () => {
+    const makeNestedTree = () => {
+      const inner: PaneSplit = {
+        type: "split",
+        direction: "vertical",
+        children: [
+          { type: "leaf", id: "b", pagePath: null },
+          { type: "leaf", id: "c", pagePath: null },
+        ],
+        sizes: [50, 50],
+      };
+      const root: PaneSplit = {
+        type: "split",
+        direction: "horizontal",
+        children: [{ type: "leaf", id: "a", pagePath: null }, inner],
+        sizes: [40, 60],
+      };
+      return root;
+    };
+
+    beforeEach(() => {
+      usePaneStore.setState({
+        root: makeNestedTree(),
+        focusedPaneId: "a",
+      });
+    });
+
+    it("updates root split sizes (empty path)", () => {
+      usePaneStore.getState().resize([], [30, 70]);
+      const root = usePaneStore.getState().root as PaneSplit;
+      expect(root.sizes).toEqual([30, 70]);
+    });
+
+    it("updates nested split sizes; outer sizes unchanged", () => {
+      usePaneStore.getState().resize([1], [25, 75]);
+      const root = usePaneStore.getState().root as PaneSplit;
+      expect(root.sizes).toEqual([40, 60]);
+      expect((root.children[1] as PaneSplit).sizes).toEqual([25, 75]);
+    });
+
+    it("no-op when sizes.length mismatches children count", () => {
+      const before = usePaneStore.getState().root;
+      usePaneStore.getState().resize([], [30, 40, 30]);
+      expect(usePaneStore.getState().root).toBe(before);
+    });
+
+    it("no-op for invalid path (root same ref)", () => {
+      const before = usePaneStore.getState().root;
+      usePaneStore.getState().resize([5], [50, 50]);
+      expect(usePaneStore.getState().root).toBe(before);
+    });
   });
 });
