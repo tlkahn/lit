@@ -34,6 +34,7 @@ describe("WorkspaceStore", () => {
       isDirty: false,
       reloadTrigger: 0,
       viewStates: {},
+      paneViewStates: {},
       graphReady: false,
       indexProgress: null,
       loading: false,
@@ -475,6 +476,57 @@ describe("WorkspaceStore", () => {
     });
     const vs = useWorkspaceStore.getState().viewStates["Page A.md"];
     expect(vs).toEqual({ scrollTop: 200, cursor: 50, mindmapFoldedIds: ["h-1"] });
+  });
+
+  it("paneViewStates defaults to {}", () => {
+    expect(useWorkspaceStore.getState().paneViewStates).toEqual({});
+  });
+
+  it("savePaneViewState stores scrollTop and cursor", () => {
+    act(() => {
+      useWorkspaceStore.getState().savePaneViewState("pane-1", 100, 42);
+    });
+    expect(useWorkspaceStore.getState().paneViewStates["pane-1"]).toEqual({ scrollTop: 100, cursor: 42 });
+  });
+
+  it("multiple panes stored independently", () => {
+    act(() => {
+      useWorkspaceStore.getState().savePaneViewState("pane-1", 100, 10);
+    });
+    act(() => {
+      useWorkspaceStore.getState().savePaneViewState("pane-2", 200, 20);
+    });
+    const pvs = useWorkspaceStore.getState().paneViewStates;
+    expect(pvs["pane-1"]).toEqual({ scrollTop: 100, cursor: 10 });
+    expect(pvs["pane-2"]).toEqual({ scrollTop: 200, cursor: 20 });
+  });
+
+  it("removePaneViewState removes the entry", () => {
+    act(() => {
+      useWorkspaceStore.getState().savePaneViewState("pane-1", 100, 42);
+    });
+    act(() => {
+      useWorkspaceStore.getState().removePaneViewState("pane-1");
+    });
+    expect(useWorkspaceStore.getState().paneViewStates["pane-1"]).toBeUndefined();
+  });
+
+  it("savePaneMindmapFoldState stores ids in paneViewStates", () => {
+    act(() => {
+      useWorkspaceStore.getState().savePaneMindmapFoldState("pane-1", ["h-1", "h-3"]);
+    });
+    expect(useWorkspaceStore.getState().paneViewStates["pane-1"]?.mindmapFoldedIds).toEqual(["h-1", "h-3"]);
+  });
+
+  it("savePaneMindmapFoldState preserves existing scrollTop and cursor", () => {
+    act(() => {
+      useWorkspaceStore.getState().savePaneViewState("pane-1", 150, 42);
+    });
+    act(() => {
+      useWorkspaceStore.getState().savePaneMindmapFoldState("pane-1", ["h-2"]);
+    });
+    const pvs = useWorkspaceStore.getState().paneViewStates["pane-1"];
+    expect(pvs).toEqual({ scrollTop: 150, cursor: 42, mindmapFoldedIds: ["h-2"] });
   });
 
   it("refreshPages re-fetches page list", async () => {

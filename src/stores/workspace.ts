@@ -47,6 +47,10 @@ export interface WorkspaceStore {
   triggerReload: () => void;
   saveViewState: (path: string, scrollTop: number, cursor: number) => void;
   saveMindmapFoldState: (path: string, ids: string[]) => void;
+  paneViewStates: Record<string, ViewState>;
+  savePaneViewState: (paneId: string, scrollTop: number, cursor: number) => void;
+  removePaneViewState: (paneId: string) => void;
+  savePaneMindmapFoldState: (paneId: string, ids: string[]) => void;
 }
 
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
@@ -63,6 +67,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   isDirty: false,
   reloadTrigger: 0,
   viewStates: {},
+  paneViewStates: {},
   graphReady: false,
   indexProgress: null,
   loading: false,
@@ -171,6 +176,26 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       viewStates: {
         ...state.viewStates,
         [path]: { ...(state.viewStates[path] ?? { scrollTop: 0, cursor: 0 }), mindmapFoldedIds: ids },
+      },
+    })),
+
+  savePaneViewState: (paneId: string, scrollTop: number, cursor: number) =>
+    set((state) => ({
+      paneViewStates: { ...state.paneViewStates, [paneId]: { ...state.paneViewStates[paneId], scrollTop, cursor } },
+    })),
+
+  removePaneViewState: (paneId: string) =>
+    set((state) => ({
+      paneViewStates: Object.fromEntries(
+        Object.entries(state.paneViewStates).filter(([k]) => k !== paneId),
+      ),
+    })),
+
+  savePaneMindmapFoldState: (paneId: string, ids: string[]) =>
+    set((state) => ({
+      paneViewStates: {
+        ...state.paneViewStates,
+        [paneId]: { ...(state.paneViewStates[paneId] ?? { scrollTop: 0, cursor: 0 }), mindmapFoldedIds: ids },
       },
     })),
 
