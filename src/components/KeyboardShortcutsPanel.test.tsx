@@ -1017,6 +1017,175 @@ describe("KeyboardShortcutsPanel", () => {
     });
   });
 
+  // --- Cycle 2C-1: Race condition on defaultsRef ---
+
+  it("if get_default_keymaps is slow, editing still saves correct minimal diff", async () => {
+    let savedBindings: unknown = null;
+    let resolveDefaults: ((v: unknown) => void) | null = null;
+    _clear();
+    registerCommand({ id: "editor.toggleBold", label: "Toggle Bold", keywords: ["bold"], action: () => {} });
+    registerCommand({ id: "editor.toggleItalic", label: "Toggle Italic", keywords: ["italic"], action: () => {} });
+    mockInvoke((cmd, args) => {
+      if (cmd === "get_keymaps") {
+        return [
+          { command: "editor.toggleBold", key: "Mod-b", when: "editorFocus", source: "default" },
+          { command: "editor.toggleItalic", key: "Mod-i", when: "editorFocus", source: "user" },
+        ];
+      }
+      if (cmd === "get_default_keymaps") {
+        return new Promise((resolve) => { resolveDefaults = resolve; });
+      }
+      if (cmd === "get_menu_shortcuts") return [];
+      if (cmd === "save_user_keymaps") {
+        savedBindings = (args as Record<string, unknown>)?.bindings;
+        return undefined;
+      }
+      return [];
+    });
+
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+
+    // Panel stays in loading state until defaults resolve
+    expect(container.querySelector("[data-testid='shortcuts-loading']")).not.toBeNull();
+
+    // Resolve defaults (simulating slow fetch completing)
+    resolveDefaults!([
+      { command: "editor.toggleBold", key: "Mod-b", when: "editorFocus", source: "default" },
+      { command: "editor.toggleItalic", key: "Mod-i", when: "editorFocus", source: "default" },
+    ]);
+    await waitForLoaded(container);
+
+    await clickKeybindingCell(container, "Toggle Italic");
+    await recordKey(container, "x", "KeyX", { metaKey: true });
+
+    await waitFor(() => {
+      expect(savedBindings).not.toBeNull();
+    });
+    // Should be minimal diff (only the changed binding), NOT the full set
+    expect(savedBindings).toEqual([
+      { command: "editor.toggleItalic", key: "Mod-x", when: "editorFocus" },
+    ]);
+  });
+
+  // --- Cycle 2C-2: Handle persistAndReload errors ---
+
+  it("if save_user_keymaps rejects, an error banner is shown", async () => {
+    _clear();
+    registerCommand({ id: "editor.toggleBold", label: "Toggle Bold", keywords: ["bold"], action: () => {} });
+    registerCommand({ id: "editor.toggleItalic", label: "Toggle Italic", keywords: ["italic"], action: () => {} });
+    mockInvoke((cmd) => {
+      if (cmd === "get_keymaps") {
+        return [
+          { command: "editor.toggleBold", key: "Mod-b", when: "editorFocus", source: "default" },
+          { command: "editor.toggleItalic", key: "Mod-i", when: "editorFocus", source: "user" },
+        ];
+      }
+      if (cmd === "get_default_keymaps") {
+        return [
+          { command: "editor.toggleBold", key: "Mod-b", when: "editorFocus", source: "default" },
+          { command: "editor.toggleItalic", key: "Mod-i", when: "editorFocus", source: "default" },
+        ];
+      }
+      if (cmd === "get_menu_shortcuts") return [];
+      if (cmd === "save_user_keymaps") {
+        throw new Error("Disk full");
+      }
+      return [];
+    });
+
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+
+    await clickKeybindingCell(container, "Toggle Italic");
+    await recordKey(container, "x", "KeyX", { metaKey: true });
+
+    await waitFor(() => {
+      expect(container.querySelector("[data-testid='save-error']")).not.toBeNull();
+    });
+    expect(container.querySelector("[data-testid='save-error']")!.textContent).toContain("Disk full");
+  });
+
+  it("if save fails, lit:keymaps-changed is NOT dispatched", async () => {
+    _clear();
+    registerCommand({ id: "editor.toggleBold", label: "Toggle Bold", keywords: ["bold"], action: () => {} });
+    registerCommand({ id: "editor.toggleItalic", label: "Toggle Italic", keywords: ["italic"], action: () => {} });
+    mockInvoke((cmd) => {
+      if (cmd === "get_keymaps") {
+        return [
+          { command: "editor.toggleBold", key: "Mod-b", when: "editorFocus", source: "default" },
+          { command: "editor.toggleItalic", key: "Mod-i", when: "editorFocus", source: "user" },
+        ];
+      }
+      if (cmd === "get_default_keymaps") {
+        return [
+          { command: "editor.toggleBold", key: "Mod-b", when: "editorFocus", source: "default" },
+          { command: "editor.toggleItalic", key: "Mod-i", when: "editorFocus", source: "default" },
+        ];
+      }
+      if (cmd === "get_menu_shortcuts") return [];
+      if (cmd === "save_user_keymaps") {
+        throw new Error("Backend error");
+      }
+      return [];
+    });
+
+    const listener = vi.fn();
+    window.addEventListener("lit:keymaps-changed", listener);
+
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+
+    await clickKeybindingCell(container, "Toggle Italic");
+    await recordKey(container, "x", "KeyX", { metaKey: true });
+
+    // Wait for async save to have been attempted
+    await waitFor(() => {
+      expect(container.querySelector("[data-testid='save-error']")).not.toBeNull();
+    });
+    expect(listener).not.toHaveBeenCalled();
+
+    window.removeEventListener("lit:keymaps-changed", listener);
+  });
+
+  // --- Cycle 2C-3: Reset button inline next to chord ---
+
+  it("reset button is inside the keybinding cell, not the source cell", async () => {
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+
+    const resetBtn = container.querySelector("[data-testid='reset-binding-btn']")!;
+    expect(resetBtn).not.toBeNull();
+    const td = resetBtn.closest("td")!;
+    const row = td.closest("tr")!;
+    const cells = Array.from(row.querySelectorAll("td"));
+    // Keybinding cell is index 1 (Command=0, Keybinding=1, Source=2, When=3)
+    expect(cells.indexOf(td)).toBe(1);
+  });
+
+  it("each user-source chord has its own adjacent reset button", async () => {
+    _clear();
+    registerCommand({ id: "editor.save", label: "Save", action: () => {} });
+    mockInvoke((cmd) => {
+      if (cmd === "get_keymaps")
+        return [
+          { command: "editor.save", key: "Mod-s", source: "user" },
+          { command: "editor.save", key: "Ctrl-s", when: "editorFocus", source: "user" },
+        ];
+      if (cmd === "get_menu_shortcuts") return [];
+      return [];
+    });
+
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+
+    const rows = container.querySelectorAll("tbody tr");
+    const saveRow = Array.from(rows).find((r) => r.textContent?.includes("Save"));
+    expect(saveRow).toBeDefined();
+    const keybindingCell = saveRow!.querySelectorAll("td")[1]!;
+    const resetBtns = keybindingCell.querySelectorAll("[data-testid='reset-binding-btn']");
+    expect(resetBtns.length).toBe(2);
+  });
+
   it("editing second binding replaces only that binding, not the first", async () => {
     _clear();
     registerCommand({ id: "editor.save", label: "Save", action: () => {} });

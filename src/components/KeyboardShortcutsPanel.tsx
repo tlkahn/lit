@@ -114,16 +114,13 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
   const [resetAllOpen, setResetAllOpen] = useState(false);
   const defaultsRef = useRef<KeyBinding[]>([]);
 
-  useEffect(() => {
-    getDefaultKeymaps().then((defaults) => {
-      defaultsRef.current = defaults;
-    });
-  }, []);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const persistAndReload = useCallback(async (updatedEntries: CommandBindingEntry[]) => {
     const allCurrent = updatedEntries.flatMap((e) => e.bindings);
     const diff = computeKeymapDiff(allCurrent, defaultsRef.current);
     await saveUserKeymaps(diff);
+    setSaveError(null);
     window.dispatchEvent(new CustomEvent("lit:keymaps-changed"));
   }, []);
 
@@ -133,9 +130,10 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
 
   useEffect(() => {
     let cancelled = false;
-    fetchCommandBindingTable()
-      .then((result) => {
+    Promise.all([fetchCommandBindingTable(), getDefaultKeymaps()])
+      .then(([result, defaults]) => {
         if (cancelled) return;
+        defaultsRef.current = defaults;
         setEntries(result);
         setLoading(false);
       })
@@ -209,7 +207,7 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
         return { ...e, bindings: newBindings, status: "bound" as const };
       });
       setEntries(updatedEntries);
-      persistAndReload(updatedEntries);
+      persistAndReload(updatedEntries).catch((err) => setSaveError(err instanceof Error ? err.message : String(err)));
     } else {
       const conflicts: ConflictEntry[] = conflictBindings.map((b) => ({
         binding: b,
@@ -246,7 +244,7 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
       };
     });
     setEntries(updatedEntries);
-    persistAndReload(updatedEntries);
+    persistAndReload(updatedEntries).catch((err) => setSaveError(err instanceof Error ? err.message : String(err)));
     setConflictDialog(null);
   }, [conflictDialog, allBindings, entries, persistAndReload]);
 
@@ -281,7 +279,7 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
       });
     }
     setEntries(updatedEntries);
-    persistAndReload(updatedEntries);
+    persistAndReload(updatedEntries).catch((err) => setSaveError(err instanceof Error ? err.message : String(err)));
   }, [entries, persistAndReload]);
 
   const handleResetAll = useCallback(async () => {
@@ -357,6 +355,12 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
               Cancel
             </button>
           </div>
+        </div>
+      )}
+
+      {saveError && (
+        <div data-testid="save-error" className="mb-2 mx-1 rounded border border-red-300 bg-red-50 px-3 py-1.5 text-sm text-red-700">
+          {saveError}
         </div>
       )}
 
@@ -518,32 +522,29 @@ function EntryRow({
         ) : entry.bindings.length === 0 ? (
           <KeyChord chord="" platform={platform} />
         ) : (
-          <span className="inline-flex flex-wrap gap-1">
+          <span className="inline-flex flex-wrap gap-1 items-center">
             {entry.bindings.map((b, i) => (
-              <span key={i} onClick={(e) => { e.stopPropagation(); onStartEdit(entry.commandId, i); }}>
-                <KeyChord chord={b.key} platform={platform} />
+              <span key={i} className="inline-flex items-center gap-0.5">
+                <span onClick={(e) => { e.stopPropagation(); onStartEdit(entry.commandId, i); }}>
+                  <KeyChord chord={b.key} platform={platform} />
+                </span>
+                {b.source === "user" && (
+                  <button
+                    data-testid="reset-binding-btn"
+                    className="text-text-muted hover:text-text-normal text-xs"
+                    onClick={(e) => { e.stopPropagation(); onResetBinding(entry.commandId, i); }}
+                    title="Reset to default"
+                  >
+                    ↺
+                  </button>
+                )}
               </span>
             ))}
           </span>
         )}
       </td>
       <td className="py-1.5 pr-3">
-        <span className="inline-flex items-center gap-1">
-          <SourceBadge source={source} />
-          {entry.bindings.map((b, i) =>
-            b.source === "user" ? (
-              <button
-                key={i}
-                data-testid="reset-binding-btn"
-                className="ml-1 text-text-muted hover:text-text-normal text-xs"
-                onClick={() => onResetBinding(entry.commandId, i)}
-                title="Reset to default"
-              >
-                ↺
-              </button>
-            ) : null,
-          )}
-        </span>
+        <SourceBadge source={source} />
       </td>
       <td className="py-1.5 text-text-muted text-xs">
         {whenContexts.join(", ")}
