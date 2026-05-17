@@ -14,7 +14,11 @@ export function ToggleSwitch({ checked, onChange, testId, label }: ToggleSwitchP
         aria-checked={checked}
         onClick={() => onChange(!checked)}
         data-testid={testId}
-        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors ${checked ? "bg-accent" : "bg-bg-tertiary"}`}
+        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 transition-colors ${
+          checked
+            ? "border-transparent bg-toggle-active"
+            : "border-border bg-white dark:bg-[#1c2128]"
+        }`}
       >
         <span
           className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${checked ? "translate-x-[1.125rem]" : "translate-x-0.5"}`}

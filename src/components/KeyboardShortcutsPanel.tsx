@@ -382,7 +382,7 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
           <div className="flex gap-2">
             <button
               data-testid="reset-all-confirm-btn"
-              className="rounded bg-accent px-2 py-1 text-xs text-white"
+              className="rounded bg-interactive-accent px-2 py-1 text-xs text-white"
               onClick={handleResetAll}
             >
               Confirm
