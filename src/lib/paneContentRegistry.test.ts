@@ -70,4 +70,33 @@ describe("paneContentRegistry", () => {
   it("getPaneContent returns null for unknown paneId", () => {
     expect(getPaneContent("nonexistent")).toBeNull();
   });
+
+  it("updatePaneContent returns true when paneId exists", () => {
+    registerPaneContent("p1", { title: "T", frontmatter: {} });
+    expect(updatePaneContent("p1", { title: "T2" })).toBe(true);
+  });
+
+  it("updatePaneContent returns false for unknown paneId", () => {
+    const cb = vi.fn();
+    const unsub = subscribe(cb);
+    const vBefore = getSnapshot();
+
+    expect(updatePaneContent("unknown", { title: "X" })).toBe(false);
+
+    expect(cb).not.toHaveBeenCalled();
+    expect(getSnapshot()).toBe(vBefore);
+    unsub();
+  });
+
+  it("updatePaneContent deep-merges frontmatter keys", () => {
+    registerPaneContent("p1", {
+      title: "T",
+      frontmatter: { tags: ["a"], draft: true },
+    });
+    updatePaneContent("p1", { frontmatter: { tags: ["b"] } });
+    expect(getPaneContent("p1")).toEqual({
+      title: "T",
+      frontmatter: { tags: ["b"], draft: true },
+    });
+  });
 });

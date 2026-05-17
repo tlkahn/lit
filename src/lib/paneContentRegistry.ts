@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 
 export interface PaneContentEntry {
   title: string;
@@ -34,12 +34,18 @@ export function getPaneContent(paneId: string): PaneContentEntry | null {
 export function updatePaneContent(
   paneId: string,
   partial: Partial<PaneContentEntry>,
-): void {
+): boolean {
   const existing = entries.get(paneId);
-  if (existing) {
-    entries.set(paneId, { ...existing, ...partial });
-    notify();
-  }
+  if (!existing) return false;
+  entries.set(paneId, {
+    ...existing,
+    ...partial,
+    frontmatter: partial.frontmatter
+      ? { ...existing.frontmatter, ...partial.frontmatter }
+      : existing.frontmatter,
+  });
+  notify();
+  return true;
 }
 
 export function subscribe(cb: () => void): () => void {
@@ -52,7 +58,8 @@ export function getSnapshot(): number {
 }
 
 export function usePaneContent(paneId: string): PaneContentEntry | null {
-  return useSyncExternalStore(subscribe, () => getPaneContent(paneId));
+  const snap = useCallback(() => getPaneContent(paneId), [paneId]);
+  return useSyncExternalStore(subscribe, snap);
 }
 
 export function _resetForTesting(): void {
