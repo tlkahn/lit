@@ -5,14 +5,22 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::{Manager, State};
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum KeyBindingSource {
+    Default,
+    User,
+    Menu,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct KeyBinding {
     pub key: String,
     pub command: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub when: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<KeyBindingSource>,
 }
 
 pub fn annotate_sources(
@@ -24,12 +32,12 @@ pub fn annotate_sources(
         .iter()
         .map(|b| {
             let source = if user.iter().any(|u| u.command == b.command) {
-                "user"
+                KeyBindingSource::User
             } else {
-                "default"
+                KeyBindingSource::Default
             };
             KeyBinding {
-                source: Some(source.to_string()),
+                source: Some(source),
                 ..b.clone()
             }
         })
@@ -44,7 +52,7 @@ pub fn convert_accelerator(accel: &str) -> String {
             "shift" => "Shift".to_string(),
             "alt" => "Alt".to_string(),
             "ctrl" => "Ctrl".to_string(),
-            other => other.to_string(),
+            _ => token.to_string(),
         })
         .collect::<Vec<_>>()
         .join("-")
@@ -58,7 +66,7 @@ pub fn get_menu_shortcut_bindings() -> Vec<KeyBinding> {
             key: convert_accelerator(def.accelerator),
             command: def.command_id.to_string(),
             when: None,
-            source: Some("menu".to_string()),
+            source: Some(KeyBindingSource::Menu),
         })
         .collect()
 }
@@ -304,7 +312,7 @@ mod tests {
     #[test]
     fn test_keybinding_with_source_serializes() {
         let binding = KeyBinding {
-            source: Some("default".to_string()),
+            source: Some(KeyBindingSource::Default),
             ..kb("Mod-b", "editor.toggleBold", None)
         };
         let json = serde_json::to_string(&binding).unwrap();
@@ -329,7 +337,7 @@ mod tests {
     fn test_keybinding_deserialize_with_source_field() {
         let json = r#"{"key":"Mod-b","command":"editor.toggleBold","source":"user"}"#;
         let binding: KeyBinding = serde_json::from_str(json).unwrap();
-        assert_eq!(binding.source, Some("user".to_string()));
+        assert_eq!(binding.source, Some(KeyBindingSource::User));
     }
 
     // --- Cycle 2: annotate_sources ---
@@ -340,7 +348,7 @@ mod tests {
         let user: Vec<KeyBinding> = vec![];
         let merged = merge_keymaps(&defaults, &user);
         let annotated = annotate_sources(&merged, &defaults, &user);
-        assert_eq!(annotated[0].source, Some("default".to_string()));
+        assert_eq!(annotated[0].source, Some(KeyBindingSource::Default));
     }
 
     #[test]
@@ -349,7 +357,7 @@ mod tests {
         let user = vec![kb("Mod-Shift-b", "editor.toggleBold", None)];
         let merged = merge_keymaps(&defaults, &user);
         let annotated = annotate_sources(&merged, &defaults, &user);
-        assert_eq!(annotated[0].source, Some("user".to_string()));
+        assert_eq!(annotated[0].source, Some(KeyBindingSource::User));
     }
 
     #[test]
@@ -358,8 +366,8 @@ mod tests {
         let user = vec![kb("Mod-n", "app.newPage", None)];
         let merged = merge_keymaps(&defaults, &user);
         let annotated = annotate_sources(&merged, &defaults, &user);
-        assert_eq!(annotated[0].source, Some("default".to_string()));
-        assert_eq!(annotated[1].source, Some("user".to_string()));
+        assert_eq!(annotated[0].source, Some(KeyBindingSource::Default));
+        assert_eq!(annotated[1].source, Some(KeyBindingSource::User));
     }
 
     // --- Cycle 3: convert_accelerator ---
@@ -394,7 +402,7 @@ mod tests {
     #[test]
     fn test_menu_shortcuts_have_source_menu() {
         for b in get_menu_shortcut_bindings() {
-            assert_eq!(b.source, Some("menu".to_string()));
+            assert_eq!(b.source, Some(KeyBindingSource::Menu));
         }
     }
 
@@ -423,7 +431,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("user.json");
         let bindings = vec![KeyBinding {
-            source: Some("user".to_string()),
+            source: Some(KeyBindingSource::User),
             ..kb("Mod-b", "editor.toggleBold", None)
         }];
         let clean: Vec<KeyBinding> = bindings
@@ -468,12 +476,12 @@ mod tests {
         // user-overridden
         assert_eq!(annotated[0].command, "editor.toggleBold");
         assert_eq!(annotated[0].key, "Mod-Shift-b");
-        assert_eq!(annotated[0].source, Some("user".to_string()));
+        assert_eq!(annotated[0].source, Some(KeyBindingSource::User));
         // unmodified default
         assert_eq!(annotated[1].command, "editor.toggleItalic");
-        assert_eq!(annotated[1].source, Some("default".to_string()));
+        assert_eq!(annotated[1].source, Some(KeyBindingSource::Default));
         // user-added
         assert_eq!(annotated[2].command, "app.newPage");
-        assert_eq!(annotated[2].source, Some("user".to_string()));
+        assert_eq!(annotated[2].source, Some(KeyBindingSource::User));
     }
 }

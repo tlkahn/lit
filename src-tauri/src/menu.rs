@@ -13,9 +13,11 @@ pub const MENU_ID_EXPORT_MARKDOWN: &str = "export_markdown";
 pub const MENU_ID_ABOUT: &str = "show_about";
 
 pub struct MenuShortcutDef {
+    #[allow(dead_code)]
     pub menu_id: &'static str,
     pub command_id: &'static str,
     pub accelerator: &'static str,
+    #[allow(dead_code)]
     pub label: &'static str,
 }
 
