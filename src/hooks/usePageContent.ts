@@ -60,6 +60,7 @@ export function usePageContent(
         });
       })
       .catch(() => {
+        if (currentPathRef.current !== pagePath) return;
         setBody("");
         setTitle("");
         setFrontmatter({});

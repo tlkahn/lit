@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { renderHook, waitFor, act } from "@testing-library/react";
+import { invoke } from "@tauri-apps/api/core";
 import { mockInvoke, resetInvokeMock } from "../test/tauri-mock";
 import {
   getPaneContent,
@@ -21,6 +22,7 @@ const mockPage = {
 };
 
 beforeEach(() => {
+  // shouldAdvanceTime: waitFor polls via setTimeout, which fake timers intercept
   vi.useFakeTimers({ shouldAdvanceTime: true });
   _resetForTesting();
   resetInvokeMock();
@@ -44,6 +46,7 @@ describe("usePageContent", () => {
     expect(result.current.frontmatter).toEqual({});
     expect(result.current.rawYaml).toBe("");
     expect(result.current.isDirty).toBe(false);
+    expect(invoke).not.toHaveBeenCalled();
     expect(getPaneContent("p1")).toBeNull();
   });
 
@@ -189,7 +192,8 @@ describe("usePageContent", () => {
     expect(result.current.isDirty).toBe(true);
   });
 
-  it("resets state when pagePath changes", async () => {
+  it("resets state when pagePath changes and cancels old-path debounce", async () => {
+    const writeCalls: Record<string, unknown>[] = [];
     const mockPage2 = {
       meta: {
         title: "World",
@@ -208,7 +212,10 @@ describe("usePageContent", () => {
         const path = (args as Record<string, unknown>).relativePath;
         return path === "world.md" ? mockPage2 : mockPage;
       }
-      if (cmd === "write_page") return null;
+      if (cmd === "write_page") {
+        writeCalls.push(args as Record<string, unknown>);
+        return null;
+      }
       return null;
     });
 
@@ -221,7 +228,17 @@ describe("usePageContent", () => {
       expect(result.current.body).toBe("# Hello\nContent here");
     });
 
+    act(() => {
+      result.current.handleChange("old path edit");
+    });
+
     rerender({ path: "world.md" });
+
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+    });
+
+    expect(writeCalls).toHaveLength(0);
 
     await waitFor(() => {
       expect(result.current.body).toBe("# World\nAnother page");
