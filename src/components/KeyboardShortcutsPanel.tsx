@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback, memo } from "react";
 import { fetchCommandBindingTable, type CommandBindingEntry } from "../lib/commandBindingTable";
 import { KeyChord } from "./KeyChord";
 import { fuzzyMatch } from "../lib/fuzzyMatch";
@@ -91,6 +91,10 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   useEffect(() => {
+    if (filter) setCollapsed(new Set());
+  }, [filter]);
+
+  useEffect(() => {
     let cancelled = false;
     fetchCommandBindingTable()
       .then((result) => {
@@ -132,6 +136,15 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
     }
     return groups;
   }, [filtered]);
+
+  const toggleCollapse = useCallback((group: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(group)) next.delete(group);
+      else next.add(group);
+      return next;
+    });
+  }, []);
 
   if (loading) {
     return (
@@ -189,14 +202,7 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
                   entries={groupEntries}
                   platform={resolvedPlatform}
                   isCollapsed={!filter && collapsed.has(group)}
-                  onToggleCollapse={() => {
-                    setCollapsed((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(group)) next.delete(group);
-                      else next.add(group);
-                      return next;
-                    });
-                  }}
+                  onToggleCollapse={toggleCollapse}
                 />
               ))}
             </tbody>
@@ -207,7 +213,7 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
   );
 }
 
-function GroupRows({
+const GroupRows = memo(function GroupRows({
   group,
   entries,
   platform,
@@ -218,15 +224,17 @@ function GroupRows({
   entries: FilteredEntry[];
   platform: Platform;
   isCollapsed: boolean;
-  onToggleCollapse: () => void;
+  onToggleCollapse: (group: string) => void;
 }) {
   return (
     <>
       <tr>
         <td colSpan={4} className="pt-4 pb-1">
           <button
+            aria-expanded={!isCollapsed}
+            aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${group} group`}
             className="flex items-center gap-1 text-xs font-semibold text-text-muted uppercase tracking-wide cursor-pointer"
-            onClick={onToggleCollapse}
+            onClick={() => onToggleCollapse(group)}
           >
             <span data-testid="collapse-indicator" className="text-[10px]">
               {isCollapsed ? "▶" : "▼"}
@@ -240,7 +248,7 @@ function GroupRows({
       ))}
     </>
   );
-}
+});
 
 function EntryRow({ entry, labelIndices, platform }: { entry: CommandBindingEntry; labelIndices: number[]; platform: Platform }) {
   const label = entry.command?.label ?? entry.commandId;

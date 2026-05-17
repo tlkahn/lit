@@ -1,8 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { render, fireEvent, act } from "@testing-library/react";
+import { render, fireEvent, waitFor } from "@testing-library/react";
 import { mockInvoke, resetInvokeMock } from "../test/tauri-mock";
 import { registerCommand, _clear } from "../lib/commandRegistry";
 import { KeyboardShortcutsPanel } from "./KeyboardShortcutsPanel";
+
+async function waitForLoaded(container: HTMLElement) {
+  await waitFor(() => {
+    expect(container.querySelector("[data-testid='shortcuts-loading']")).toBeNull();
+  });
+}
 
 function setupMocks() {
   registerCommand({ id: "editor.toggleBold", label: "Toggle Bold", keywords: ["bold", "strong"], action: () => {} });
@@ -40,13 +46,13 @@ describe("KeyboardShortcutsPanel", () => {
 
   it("renders a table with data-testid", async () => {
     const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
-    await act(() => new Promise((r) => setTimeout(r, 10)));
+    await waitForLoaded(container);
     expect(container.querySelector("[data-testid='keyboard-shortcuts-table']")).not.toBeNull();
   });
 
   it("renders column headers: Command, Keybinding, Source, When", async () => {
     const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
-    await act(() => new Promise((r) => setTimeout(r, 10)));
+    await waitForLoaded(container);
     const headers = container.querySelectorAll("th");
     const texts = Array.from(headers).map((h) => h.textContent);
     expect(texts).toContain("Command");
@@ -57,7 +63,7 @@ describe("KeyboardShortcutsPanel", () => {
 
   it("shows bound entry with command label, KeyChord, and source badge", async () => {
     const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
-    await act(() => new Promise((r) => setTimeout(r, 10)));
+    await waitForLoaded(container);
     const rows = container.querySelectorAll("tbody tr");
     const boldRow = Array.from(rows).find((r) => r.textContent?.includes("Toggle Bold"));
     expect(boldRow).toBeDefined();
@@ -75,7 +81,7 @@ describe("KeyboardShortcutsPanel", () => {
     });
 
     const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
-    await act(() => new Promise((r) => setTimeout(r, 10)));
+    await waitForLoaded(container);
 
     // Unbound commands are hidden by default — toggle them on
     const toggle = container.querySelector("[data-testid='show-unbound-toggle']") as HTMLElement;
@@ -97,7 +103,7 @@ describe("KeyboardShortcutsPanel", () => {
     });
 
     const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
-    await act(() => new Promise((r) => setTimeout(r, 10)));
+    await waitForLoaded(container);
     const rows = container.querySelectorAll("tbody tr");
     const ghostRow = Array.from(rows).find((r) => r.textContent?.includes("ghost.command"));
     expect(ghostRow).toBeDefined();
@@ -108,7 +114,7 @@ describe("KeyboardShortcutsPanel", () => {
 
   it("styles source badges: default=muted, user=accent, menu=distinct", async () => {
     const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
-    await act(() => new Promise((r) => setTimeout(r, 10)));
+    await waitForLoaded(container);
     const rows = container.querySelectorAll("tbody tr");
 
     const boldRow = Array.from(rows).find((r) => r.textContent?.includes("Toggle Bold"));
@@ -140,7 +146,7 @@ describe("KeyboardShortcutsPanel", () => {
     });
 
     const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
-    await act(() => new Promise((r) => setTimeout(r, 10)));
+    await waitForLoaded(container);
     const rows = container.querySelectorAll("tbody tr");
     const saveRow = Array.from(rows).find((r) => r.textContent?.includes("Save"));
     const chords = saveRow!.querySelectorAll("[data-testid='key-chord']");
@@ -154,7 +160,7 @@ describe("KeyboardShortcutsPanel", () => {
 
   it("has a filter input that filters rows by command label", async () => {
     const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
-    await act(() => new Promise((r) => setTimeout(r, 10)));
+    await waitForLoaded(container);
 
     const filter = container.querySelector("[data-testid='shortcuts-filter']") as HTMLInputElement;
     expect(filter).not.toBeNull();
@@ -168,7 +174,7 @@ describe("KeyboardShortcutsPanel", () => {
 
   it("filter matches commandId", async () => {
     const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
-    await act(() => new Promise((r) => setTimeout(r, 10)));
+    await waitForLoaded(container);
 
     const filter = container.querySelector("[data-testid='shortcuts-filter']") as HTMLInputElement;
     fireEvent.change(filter, { target: { value: "workbench" } });
@@ -180,7 +186,7 @@ describe("KeyboardShortcutsPanel", () => {
 
   it("filter matches keywords", async () => {
     const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
-    await act(() => new Promise((r) => setTimeout(r, 10)));
+    await waitForLoaded(container);
 
     const filter = container.querySelector("[data-testid='shortcuts-filter']") as HTMLInputElement;
     fireEvent.change(filter, { target: { value: "strong" } });
@@ -192,7 +198,7 @@ describe("KeyboardShortcutsPanel", () => {
 
   it("shows empty state when filter matches nothing", async () => {
     const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
-    await act(() => new Promise((r) => setTimeout(r, 10)));
+    await waitForLoaded(container);
 
     const filter = container.querySelector("[data-testid='shortcuts-filter']") as HTMLInputElement;
     fireEvent.change(filter, { target: { value: "zzzznothing" } });
@@ -201,7 +207,7 @@ describe("KeyboardShortcutsPanel", () => {
 
   it("groups commands by prefix with group headers", async () => {
     const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
-    await act(() => new Promise((r) => setTimeout(r, 10)));
+    await waitForLoaded(container);
     const headers = container.querySelectorAll("[data-testid='group-header']");
     const headerTexts = Array.from(headers).map((h) => h.textContent);
     expect(headerTexts).toContain("editor");
@@ -218,7 +224,7 @@ describe("KeyboardShortcutsPanel", () => {
     });
 
     const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
-    await act(() => new Promise((r) => setTimeout(r, 10)));
+    await waitForLoaded(container);
     const errorEl = container.querySelector("[data-testid='shortcuts-error']");
     expect(errorEl).not.toBeNull();
     expect(errorEl!.textContent).toContain("Failed to load shortcuts");
@@ -228,7 +234,7 @@ describe("KeyboardShortcutsPanel", () => {
 
   it("filter matches by formatted chord display (mac)", async () => {
     const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
-    await act(() => new Promise((r) => setTimeout(r, 10)));
+    await waitForLoaded(container);
 
     const filter = container.querySelector("[data-testid='shortcuts-filter']") as HTMLInputElement;
     fireEvent.change(filter, { target: { value: "⌘B" } });
@@ -240,7 +246,7 @@ describe("KeyboardShortcutsPanel", () => {
 
   it("filter matches by CM6 notation", async () => {
     const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
-    await act(() => new Promise((r) => setTimeout(r, 10)));
+    await waitForLoaded(container);
 
     const filter = container.querySelector("[data-testid='shortcuts-filter']") as HTMLInputElement;
     fireEvent.change(filter, { target: { value: "Mod-b" } });
@@ -252,7 +258,7 @@ describe("KeyboardShortcutsPanel", () => {
 
   it("filter matches by formatted chord (other platform)", async () => {
     const { container } = render(<KeyboardShortcutsPanel platform="other" />);
-    await act(() => new Promise((r) => setTimeout(r, 10)));
+    await waitForLoaded(container);
 
     const filter = container.querySelector("[data-testid='shortcuts-filter']") as HTMLInputElement;
     fireEvent.change(filter, { target: { value: "Ctrl+B" } });
@@ -276,7 +282,7 @@ describe("KeyboardShortcutsPanel", () => {
     });
 
     const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
-    await act(() => new Promise((r) => setTimeout(r, 10)));
+    await waitForLoaded(container);
 
     const allRows = Array.from(container.querySelectorAll("tbody tr"));
     const dataRows = allRows.filter((r) => !r.querySelector("[data-testid='group-header']"));
@@ -296,7 +302,7 @@ describe("KeyboardShortcutsPanel", () => {
     });
 
     const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
-    await act(() => new Promise((r) => setTimeout(r, 10)));
+    await waitForLoaded(container);
 
     // Initially unbound is hidden
     let allRows = Array.from(container.querySelectorAll("tbody tr"));
@@ -315,7 +321,7 @@ describe("KeyboardShortcutsPanel", () => {
 
   it("toggle has label 'Show unbound commands'", async () => {
     const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
-    await act(() => new Promise((r) => setTimeout(r, 10)));
+    await waitForLoaded(container);
     expect(container.textContent).toContain("Show unbound commands");
   });
 
@@ -323,7 +329,7 @@ describe("KeyboardShortcutsPanel", () => {
 
   it("group headers collapse their section on click", async () => {
     const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
-    await act(() => new Promise((r) => setTimeout(r, 10)));
+    await waitForLoaded(container);
 
     // Find and click the "editor" group header
     const headers = container.querySelectorAll("[data-testid='group-header']");
@@ -342,7 +348,7 @@ describe("KeyboardShortcutsPanel", () => {
 
   it("clicking collapsed header re-expands", async () => {
     const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
-    await act(() => new Promise((r) => setTimeout(r, 10)));
+    await waitForLoaded(container);
 
     const headers = container.querySelectorAll("[data-testid='group-header']");
     const editorHeader = Array.from(headers).find((h) => h.textContent?.includes("editor"));
@@ -358,7 +364,7 @@ describe("KeyboardShortcutsPanel", () => {
 
   it("group headers show collapse indicator", async () => {
     const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
-    await act(() => new Promise((r) => setTimeout(r, 10)));
+    await waitForLoaded(container);
 
     const indicators = container.querySelectorAll("[data-testid='collapse-indicator']");
     expect(indicators.length).toBeGreaterThan(0);
@@ -368,7 +374,7 @@ describe("KeyboardShortcutsPanel", () => {
 
   it("highlights matching characters in label when filtering", async () => {
     const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
-    await act(() => new Promise((r) => setTimeout(r, 10)));
+    await waitForLoaded(container);
 
     const filter = container.querySelector("[data-testid='shortcuts-filter']") as HTMLInputElement;
     fireEvent.change(filter, { target: { value: "bold" } });
@@ -383,7 +389,7 @@ describe("KeyboardShortcutsPanel", () => {
 
   it("no highlight when filter is empty", async () => {
     const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
-    await act(() => new Promise((r) => setTimeout(r, 10)));
+    await waitForLoaded(container);
 
     const allRows = Array.from(container.querySelectorAll("tbody tr"));
     const dataRows = allRows.filter((r) => !r.querySelector("[data-testid='group-header']"));
@@ -395,7 +401,7 @@ describe("KeyboardShortcutsPanel", () => {
 
   it("empty state when chord search matches nothing", async () => {
     const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
-    await act(() => new Promise((r) => setTimeout(r, 10)));
+    await waitForLoaded(container);
 
     const filter = container.querySelector("[data-testid='shortcuts-filter']") as HTMLInputElement;
     fireEvent.change(filter, { target: { value: "⌘Z" } });
@@ -414,7 +420,7 @@ describe("KeyboardShortcutsPanel", () => {
     });
 
     const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
-    await act(() => new Promise((r) => setTimeout(r, 10)));
+    await waitForLoaded(container);
 
     // With unbound hidden, chord search on bound commands works
     const filter = container.querySelector("[data-testid='shortcuts-filter']") as HTMLInputElement;
@@ -427,7 +433,7 @@ describe("KeyboardShortcutsPanel", () => {
 
   it("filtering auto-expands collapsed groups", async () => {
     const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
-    await act(() => new Promise((r) => setTimeout(r, 10)));
+    await waitForLoaded(container);
 
     // Collapse the editor group
     const headers = container.querySelectorAll("[data-testid='group-header']");
