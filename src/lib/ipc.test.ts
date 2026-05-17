@@ -21,6 +21,7 @@ import {
   getDefaultKeymaps,
   getUserKeymapsPath,
   saveUserKeymaps,
+  getMenuShortcuts,
   getPreferencesRaw,
   setPreferencesRaw,
   resolveAllDecorations,
@@ -111,7 +112,7 @@ describe("ipc", () => {
           return true;
         case "get_keymaps":
           return [
-            { key: "Mod-b", command: "editor.toggleBold", when: "editorFocus" },
+            { key: "Mod-b", command: "editor.toggleBold", when: "editorFocus", source: "default" },
           ];
         case "get_default_keymaps":
           return [
@@ -121,6 +122,12 @@ describe("ipc", () => {
           return "/data/keymaps/user.json";
         case "save_user_keymaps":
           return null;
+        case "get_menu_shortcuts":
+          return [
+            { key: "Mod-,", command: "core.settings.open", source: "menu" },
+            { key: "Mod-Shift-s", command: "app.exportMarkdown", source: "menu" },
+            { key: "Mod-Shift-e", command: "editor.openInExternalEditor", source: "menu" },
+          ];
         case "get_preferences_raw":
           return '{"a":1}';
         case "set_preferences_raw":
@@ -501,10 +508,11 @@ describe("ipc", () => {
     expect(invoke).toHaveBeenCalledWith("get_startup_context");
   });
 
-  it("getKeymaps returns merged keybindings", async () => {
+  it("getKeymaps returns merged keybindings with source", async () => {
     const bindings = await getKeymaps();
     expect(bindings).toHaveLength(1);
     expect(bindings[0]!.command).toBe("editor.toggleBold");
+    expect(bindings[0]!.source).toBe("default");
   });
 
   it("getDefaultKeymaps returns default keybindings", async () => {
@@ -523,6 +531,15 @@ describe("ipc", () => {
     await saveUserKeymaps(bindings);
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("save_user_keymaps", { bindings });
+  });
+
+  it("getMenuShortcuts returns menu bindings", async () => {
+    const bindings = await getMenuShortcuts();
+    expect(bindings).toHaveLength(3);
+    expect(bindings[0]!.source).toBe("menu");
+    expect(bindings[0]!.command).toBe("core.settings.open");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("get_menu_shortcuts");
   });
 
   it("getPreferencesRaw returns raw JSON string", async () => {

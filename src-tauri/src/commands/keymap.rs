@@ -11,6 +11,61 @@ pub struct KeyBinding {
     pub command: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub when: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
+pub fn annotate_sources(
+    merged: &[KeyBinding],
+    _defaults: &[KeyBinding],
+    user: &[KeyBinding],
+) -> Vec<KeyBinding> {
+    merged
+        .iter()
+        .map(|b| {
+            let source = if user.iter().any(|u| u.command == b.command) {
+                "user"
+            } else {
+                "default"
+            };
+            KeyBinding {
+                source: Some(source.to_string()),
+                ..b.clone()
+            }
+        })
+        .collect()
+}
+
+pub fn convert_accelerator(accel: &str) -> String {
+    accel
+        .split('+')
+        .map(|token| match token.to_lowercase().as_str() {
+            "cmdorctrl" => "Mod".to_string(),
+            "shift" => "Shift".to_string(),
+            "alt" => "Alt".to_string(),
+            "ctrl" => "Ctrl".to_string(),
+            other => other.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+pub fn get_menu_shortcut_bindings() -> Vec<KeyBinding> {
+    use crate::menu::MENU_SHORTCUTS;
+    MENU_SHORTCUTS
+        .iter()
+        .map(|def| KeyBinding {
+            key: convert_accelerator(def.accelerator),
+            command: def.command_id.to_string(),
+            when: None,
+            source: Some("menu".to_string()),
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub fn get_menu_shortcuts() -> Vec<KeyBinding> {
+    get_menu_shortcut_bindings()
 }
 
 pub fn merge_keymaps(defaults: &[KeyBinding], user: &[KeyBinding]) -> Vec<KeyBinding> {
@@ -86,7 +141,8 @@ pub fn get_keymaps(
     let dir = keymaps_dir(&app_handle)?;
     let defaults = read_keymaps_file(&dir.join("default.json"));
     let user = read_keymaps_file(&dir.join("user.json"));
-    Ok(merge_keymaps(&defaults, &user))
+    let merged = merge_keymaps(&defaults, &user);
+    Ok(annotate_sources(&merged, &defaults, &user))
 }
 
 #[tauri::command]
@@ -111,8 +167,15 @@ pub fn save_user_keymaps(
     bindings: Vec<KeyBinding>,
 ) -> Result<(), String> {
     let dir = keymaps_dir(&app_handle)?;
+    let clean: Vec<KeyBinding> = bindings
+        .iter()
+        .map(|b| KeyBinding {
+            source: None,
+            ..b.clone()
+        })
+        .collect();
     let json =
-        serde_json::to_string_pretty(&bindings).map_err(|e| format!("Failed to serialize: {e}"))?;
+        serde_json::to_string_pretty(&clean).map_err(|e| format!("Failed to serialize: {e}"))?;
     fs::write(dir.join("user.json"), json).map_err(|e| format!("Failed to write: {e}"))
 }
 
@@ -125,6 +188,7 @@ mod tests {
             key: key.to_string(),
             command: command.to_string(),
             when: when.map(|s| s.to_string()),
+            source: None,
         }
     }
 
@@ -233,5 +297,183 @@ mod tests {
 
         let read = read_keymaps_file(&path);
         assert_eq!(read, bindings);
+    }
+
+    // --- Cycle 1: source field serialization ---
+
+    #[test]
+    fn test_keybinding_with_source_serializes() {
+        let binding = KeyBinding {
+            source: Some("default".to_string()),
+            ..kb("Mod-b", "editor.toggleBold", None)
+        };
+        let json = serde_json::to_string(&binding).unwrap();
+        assert!(json.contains(r#""source":"default""#));
+    }
+
+    #[test]
+    fn test_keybinding_without_source_skips_field() {
+        let binding = kb("Mod-b", "editor.toggleBold", None);
+        let json = serde_json::to_string(&binding).unwrap();
+        assert!(!json.contains("source"));
+    }
+
+    #[test]
+    fn test_keybinding_deserialize_without_source_field() {
+        let json = r#"{"key":"Mod-b","command":"editor.toggleBold"}"#;
+        let binding: KeyBinding = serde_json::from_str(json).unwrap();
+        assert_eq!(binding.source, None);
+    }
+
+    #[test]
+    fn test_keybinding_deserialize_with_source_field() {
+        let json = r#"{"key":"Mod-b","command":"editor.toggleBold","source":"user"}"#;
+        let binding: KeyBinding = serde_json::from_str(json).unwrap();
+        assert_eq!(binding.source, Some("user".to_string()));
+    }
+
+    // --- Cycle 2: annotate_sources ---
+
+    #[test]
+    fn test_annotate_sources_tags_defaults() {
+        let defaults = vec![kb("Mod-b", "editor.toggleBold", None)];
+        let user: Vec<KeyBinding> = vec![];
+        let merged = merge_keymaps(&defaults, &user);
+        let annotated = annotate_sources(&merged, &defaults, &user);
+        assert_eq!(annotated[0].source, Some("default".to_string()));
+    }
+
+    #[test]
+    fn test_annotate_sources_tags_user_override() {
+        let defaults = vec![kb("Mod-b", "editor.toggleBold", None)];
+        let user = vec![kb("Mod-Shift-b", "editor.toggleBold", None)];
+        let merged = merge_keymaps(&defaults, &user);
+        let annotated = annotate_sources(&merged, &defaults, &user);
+        assert_eq!(annotated[0].source, Some("user".to_string()));
+    }
+
+    #[test]
+    fn test_annotate_sources_tags_user_addition() {
+        let defaults = vec![kb("Mod-b", "editor.toggleBold", None)];
+        let user = vec![kb("Mod-n", "app.newPage", None)];
+        let merged = merge_keymaps(&defaults, &user);
+        let annotated = annotate_sources(&merged, &defaults, &user);
+        assert_eq!(annotated[0].source, Some("default".to_string()));
+        assert_eq!(annotated[1].source, Some("user".to_string()));
+    }
+
+    // --- Cycle 3: convert_accelerator ---
+
+    #[test]
+    fn test_convert_accelerator_simple() {
+        assert_eq!(convert_accelerator("cmdOrCtrl+,"), "Mod-,");
+    }
+
+    #[test]
+    fn test_convert_accelerator_with_shift() {
+        assert_eq!(convert_accelerator("cmdOrCtrl+shift+s"), "Mod-Shift-s");
+    }
+
+    #[test]
+    fn test_convert_accelerator_alt() {
+        assert_eq!(convert_accelerator("alt+f"), "Alt-f");
+    }
+
+    #[test]
+    fn test_convert_accelerator_ctrl_only() {
+        assert_eq!(convert_accelerator("ctrl+z"), "Ctrl-z");
+    }
+
+    // --- Cycle 4: menu shortcut extraction ---
+
+    #[test]
+    fn test_menu_shortcuts_returns_three_entries() {
+        assert_eq!(get_menu_shortcut_bindings().len(), 3);
+    }
+
+    #[test]
+    fn test_menu_shortcuts_have_source_menu() {
+        for b in get_menu_shortcut_bindings() {
+            assert_eq!(b.source, Some("menu".to_string()));
+        }
+    }
+
+    #[test]
+    fn test_menu_shortcuts_keys_are_converted() {
+        let bindings = get_menu_shortcut_bindings();
+        let keys: Vec<&str> = bindings.iter().map(|b| b.key.as_str()).collect();
+        assert!(keys.contains(&"Mod-,"));
+        assert!(keys.contains(&"Mod-Shift-s"));
+        assert!(keys.contains(&"Mod-Shift-e"));
+    }
+
+    #[test]
+    fn test_menu_shortcuts_command_ids() {
+        let bindings = get_menu_shortcut_bindings();
+        let cmds: Vec<&str> = bindings.iter().map(|b| b.command.as_str()).collect();
+        assert!(cmds.contains(&"core.settings.open"));
+        assert!(cmds.contains(&"app.exportMarkdown"));
+        assert!(cmds.contains(&"editor.openInExternalEditor"));
+    }
+
+    // --- Cycle 5: save strips source ---
+
+    #[test]
+    fn test_save_strips_source() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("user.json");
+        let bindings = vec![KeyBinding {
+            source: Some("user".to_string()),
+            ..kb("Mod-b", "editor.toggleBold", None)
+        }];
+        let clean: Vec<KeyBinding> = bindings
+            .iter()
+            .map(|b| KeyBinding {
+                source: None,
+                ..b.clone()
+            })
+            .collect();
+        let json = serde_json::to_string_pretty(&clean).unwrap();
+        fs::write(&path, &json).unwrap();
+        let read = read_keymaps_file(&path);
+        assert!(read.iter().all(|b| b.source.is_none()));
+    }
+
+    // --- Cycle 7: full pipeline integration ---
+
+    #[test]
+    fn test_full_pipeline_with_sources() {
+        let tmp = tempfile::tempdir().unwrap();
+        let default_path = tmp.path().join("default.json");
+        let user_path = tmp.path().join("user.json");
+
+        let defaults = vec![
+            kb("Mod-b", "editor.toggleBold", Some("editorFocus")),
+            kb("Mod-i", "editor.toggleItalic", Some("editorFocus")),
+        ];
+        let user = vec![
+            kb("Mod-Shift-b", "editor.toggleBold", Some("editorFocus")),
+            kb("Mod-n", "app.newPage", None),
+        ];
+
+        fs::write(&default_path, serde_json::to_string_pretty(&defaults).unwrap()).unwrap();
+        fs::write(&user_path, serde_json::to_string_pretty(&user).unwrap()).unwrap();
+
+        let read_defaults = read_keymaps_file(&default_path);
+        let read_user = read_keymaps_file(&user_path);
+        let merged = merge_keymaps(&read_defaults, &read_user);
+        let annotated = annotate_sources(&merged, &read_defaults, &read_user);
+
+        assert_eq!(annotated.len(), 3);
+        // user-overridden
+        assert_eq!(annotated[0].command, "editor.toggleBold");
+        assert_eq!(annotated[0].key, "Mod-Shift-b");
+        assert_eq!(annotated[0].source, Some("user".to_string()));
+        // unmodified default
+        assert_eq!(annotated[1].command, "editor.toggleItalic");
+        assert_eq!(annotated[1].source, Some("default".to_string()));
+        // user-added
+        assert_eq!(annotated[2].command, "app.newPage");
+        assert_eq!(annotated[2].source, Some("user".to_string()));
     }
 }

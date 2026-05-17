@@ -272,6 +272,7 @@ pub fn run() {
             commands::keymap::get_default_keymaps,
             commands::keymap::get_user_keymaps_path,
             commands::keymap::save_user_keymaps,
+            commands::keymap::get_menu_shortcuts,
             commands::preferences::get_preferences,
             commands::preferences::get_preferences_path,
             commands::preferences::set_preference,

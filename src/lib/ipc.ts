@@ -122,10 +122,13 @@ export async function getThemesDirectory(): Promise<string> {
 
 // Keymap commands
 
+export type KeyBindingSource = "default" | "user" | "menu";
+
 export interface KeyBinding {
   key: string;
   command: string;
   when?: string;
+  source?: KeyBindingSource;
 }
 
 export async function getKeymaps(): Promise<KeyBinding[]> {
@@ -142,6 +145,10 @@ export async function getUserKeymapsPath(): Promise<string> {
 
 export async function saveUserKeymaps(bindings: KeyBinding[]): Promise<void> {
   return invoke<void>("save_user_keymaps", { bindings });
+}
+
+export async function getMenuShortcuts(): Promise<KeyBinding[]> {
+  return invoke<KeyBinding[]>("get_menu_shortcuts");
 }
 
 // Preferences commands

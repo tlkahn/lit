@@ -12,6 +12,19 @@ pub const MENU_ID_LICENSE_INFO: &str = "license_info";
 pub const MENU_ID_EXPORT_MARKDOWN: &str = "export_markdown";
 pub const MENU_ID_ABOUT: &str = "show_about";
 
+pub struct MenuShortcutDef {
+    pub menu_id: &'static str,
+    pub command_id: &'static str,
+    pub accelerator: &'static str,
+    pub label: &'static str,
+}
+
+pub const MENU_SHORTCUTS: &[MenuShortcutDef] = &[
+    MenuShortcutDef { menu_id: MENU_ID_OPEN_PREFERENCES, command_id: "core.settings.open", accelerator: "cmdOrCtrl+,", label: "Settings" },
+    MenuShortcutDef { menu_id: MENU_ID_EXPORT_MARKDOWN, command_id: "app.exportMarkdown", accelerator: "cmdOrCtrl+shift+s", label: "Export as Markdown Archive" },
+    MenuShortcutDef { menu_id: MENU_ID_OPEN_IN_EXTERNAL_EDITOR, command_id: "editor.openInExternalEditor", accelerator: "cmdOrCtrl+shift+e", label: "Open in External Editor" },
+];
+
 pub const EVENT_OPEN_PREFERENCES: &str = "menu://open-preferences";
 pub const EVENT_OPEN_IN_EXTERNAL_EDITOR: &str = "menu://open-in-external-editor";
 pub const EVENT_BUY_LICENSE: &str = "menu://buy-license";
