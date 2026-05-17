@@ -110,13 +110,13 @@ describe("applyRebind", () => {
 
   it("removes the conflicting command's binding", () => {
     const conflicting = bindings[0]!;
-    const result = applyRebind(bindings, "Mod-b", "workbench.openFile", "editorFocus", conflicting);
+    const result = applyRebind(bindings, "Mod-b", "workbench.openFile", "editorFocus", [conflicting]);
     expect(result.find((b) => b.command === "editor.toggleBold")).toBeUndefined();
   });
 
   it("adds the new binding for the target command", () => {
     const conflicting = bindings[0]!;
-    const result = applyRebind(bindings, "Mod-b", "workbench.openFile", "editorFocus", conflicting);
+    const result = applyRebind(bindings, "Mod-b", "workbench.openFile", "editorFocus", [conflicting]);
     expect(result).toContainEqual(
       expect.objectContaining({ command: "workbench.openFile", key: "Mod-b", when: "editorFocus" }),
     );
@@ -128,14 +128,14 @@ describe("applyRebind", () => {
       { command: "workbench.openFile", key: "Mod-o", when: "editorFocus", source: "user" },
     ];
     const conflicting = bindings[0]!;
-    const result = applyRebind(withExisting, "Mod-b", "workbench.openFile", "editorFocus", conflicting);
+    const result = applyRebind(withExisting, "Mod-b", "workbench.openFile", "editorFocus", [conflicting]);
     expect(result.filter((b) => b.command === "workbench.openFile")).toHaveLength(1);
     expect(result.find((b) => b.command === "workbench.openFile")!.key).toBe("Mod-b");
   });
 
   it("preserves unrelated bindings", () => {
     const conflicting = bindings[0]!;
-    const result = applyRebind(bindings, "Mod-b", "workbench.openFile", "editorFocus", conflicting);
+    const result = applyRebind(bindings, "Mod-b", "workbench.openFile", "editorFocus", [conflicting]);
     expect(result).toContainEqual(
       expect.objectContaining({ command: "editor.toggleItalic", key: "Mod-i" }),
     );
@@ -147,7 +147,21 @@ describe("applyRebind", () => {
   it("does not mutate the input array", () => {
     const conflicting = bindings[0]!;
     const original = [...bindings];
-    applyRebind(bindings, "Mod-b", "workbench.openFile", "editorFocus", conflicting);
+    applyRebind(bindings, "Mod-b", "workbench.openFile", "editorFocus", [conflicting]);
     expect(bindings).toEqual(original);
+  });
+
+  it("removes ALL conflicting bindings when given an array", () => {
+    const multiBindings: KeyBinding[] = [
+      { command: "editor.toggleBold", key: "Mod-b", when: "editorFocus", source: "default" },
+      { command: "workbench.toggleSideBar", key: "Mod-b", source: "default" },
+      { command: "editor.toggleItalic", key: "Mod-i", when: "editorFocus", source: "user" },
+    ];
+    const conflicts: KeyBinding[] = [multiBindings[0]!, multiBindings[1]!];
+    const result = applyRebind(multiBindings, "Mod-b", "custom.command", "editorFocus", conflicts);
+    expect(result.find((b) => b.command === "editor.toggleBold")).toBeUndefined();
+    expect(result.find((b) => b.command === "workbench.toggleSideBar")).toBeUndefined();
+    expect(result).toContainEqual(expect.objectContaining({ command: "custom.command", key: "Mod-b" }));
+    expect(result).toContainEqual(expect.objectContaining({ command: "editor.toggleItalic" }));
   });
 });

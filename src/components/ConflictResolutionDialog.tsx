@@ -1,5 +1,5 @@
 import { useEffect, useCallback } from "react";
-import type { KeyBinding } from "../lib/ipc";
+import type { ConflictEntry } from "../lib/conflictDetection";
 import type { Platform } from "../lib/keyChordFormat";
 import { KeyChord } from "./KeyChord";
 
@@ -7,7 +7,7 @@ interface ConflictResolutionDialogProps {
   open: boolean;
   newKey: string;
   newCommandLabel: string;
-  conflicts: KeyBinding[];
+  conflicts: ConflictEntry[];
   platform: Platform;
   onRebind: () => void;
   onCancel: () => void;
@@ -37,7 +37,7 @@ export function ConflictResolutionDialog({
 
   if (!open) return null;
 
-  const isMenuConflict = conflicts.some((c) => c.source === "menu");
+  const isMenuConflict = conflicts.some((c) => c.binding.source === "menu");
 
   return (
     <div
@@ -50,8 +50,8 @@ export function ConflictResolutionDialog({
         </p>
         <ul className="mb-4 space-y-1">
           {conflicts.map((c) => (
-            <li key={c.command} className="text-sm font-medium text-text-normal">
-              {c.command}
+            <li key={c.binding.command} className="text-sm font-medium text-text-normal">
+              {c.label}
             </li>
           ))}
         </ul>

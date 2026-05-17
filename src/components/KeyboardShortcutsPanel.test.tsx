@@ -461,7 +461,12 @@ describe("KeyboardShortcutsPanel", () => {
     const row = Array.from(rows).find((r) => r.textContent?.includes(commandLabel));
     expect(row).toBeDefined();
     const keybindingCell = row!.querySelectorAll("td")[1]!;
-    fireEvent.click(keybindingCell);
+    const chord = keybindingCell.querySelector("[data-testid='key-chord']");
+    if (chord) {
+      fireEvent.click(chord.parentElement!);
+    } else {
+      fireEvent.click(keybindingCell);
+    }
     return row!;
   }
 
@@ -484,9 +489,9 @@ describe("KeyboardShortcutsPanel", () => {
     // Record Mod-b which conflicts with Toggle Bold
     await recordKey(container, "b", "KeyB", { metaKey: true });
 
-    // Conflict dialog should appear
+    // Conflict dialog should appear with human-readable label
     expect(container.querySelector("[data-testid='conflict-dialog-backdrop']")).not.toBeNull();
-    expect(container.querySelector("[data-testid='conflict-dialog']")!.textContent).toContain("editor.toggleBold");
+    expect(container.querySelector("[data-testid='conflict-dialog']")!.textContent).toContain("Toggle Bold");
   });
 
   it("recording a non-conflicting key applies directly (no dialog)", async () => {
@@ -551,6 +556,59 @@ describe("KeyboardShortcutsPanel", () => {
     expect(italicRow).toBeDefined();
   });
 
+  it("keybinding cell has cursor-pointer class", async () => {
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+    const rows = container.querySelectorAll("tbody tr");
+    const dataRow = Array.from(rows).find((r) => r.textContent?.includes("Toggle Bold"));
+    const keybindingCell = dataRow!.querySelectorAll("td")[1]!;
+    expect(keybindingCell.className).toContain("cursor-pointer");
+  });
+
+  it("Rebind resolves ALL conflicts, not just the first", async () => {
+    _clear();
+    registerCommand({ id: "editor.toggleBold", label: "Toggle Bold", keywords: ["bold"], action: () => {} });
+    registerCommand({ id: "editor.toggleItalic", label: "Toggle Italic", keywords: ["italic"], action: () => {} });
+    registerCommand({ id: "workbench.toggleSideBar", label: "Toggle Sidebar", keywords: ["sidebar"], action: () => {} });
+    mockInvoke((cmd) => {
+      if (cmd === "get_keymaps")
+        return [
+          { command: "editor.toggleBold", key: "Mod-b", when: "editorFocus", source: "default" },
+          { command: "workbench.toggleSideBar", key: "Mod-b", source: "default" },
+          { command: "editor.toggleItalic", key: "Mod-i", when: "editorFocus", source: "user" },
+        ];
+      if (cmd === "get_menu_shortcuts") return [];
+      return [];
+    });
+
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+
+    // Rebind Toggle Italic to Mod-b (conflicts with both toggleBold and toggleSideBar)
+    await clickKeybindingCell(container, "Toggle Italic");
+    await recordKey(container, "b", "KeyB", { metaKey: true });
+
+    // Conflict dialog should appear
+    expect(container.querySelector("[data-testid='conflict-dialog-backdrop']")).not.toBeNull();
+
+    // Click Rebind
+    const rebindBtn = container.querySelector("[data-testid='conflict-rebind-btn']")!;
+    fireEvent.click(rebindBtn);
+
+    // Both conflicting commands should now be unbound
+    const toggle = container.querySelector("[data-testid='show-unbound-toggle']") as HTMLElement;
+    fireEvent.click(toggle);
+
+    const rows = container.querySelectorAll("tbody tr");
+    const boldRow = Array.from(rows).find((r) => r.textContent?.includes("Toggle Bold"));
+    expect(boldRow).toBeDefined();
+    expect(boldRow!.querySelector("[data-testid='key-chord']")!.textContent).toBe("—");
+
+    const sidebarRow = Array.from(rows).find((r) => r.textContent?.includes("Toggle Sidebar"));
+    expect(sidebarRow).toBeDefined();
+    expect(sidebarRow!.querySelector("[data-testid='key-chord']")!.textContent).toBe("—");
+  });
+
   it("menu conflict shows read-only variant (no Rebind button)", async () => {
     const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
     await waitForLoaded(container);
@@ -567,5 +625,71 @@ describe("KeyboardShortcutsPanel", () => {
     expect(container.querySelector("[data-testid='conflict-cancel-btn']")).not.toBeNull();
     // Shows explanation
     expect(container.querySelector("[data-testid='conflict-dialog']")!.textContent).toContain("Menu shortcuts cannot be rebound");
+  });
+
+  // --- Cycle 4: Per-binding editing ---
+
+  it("clicking a specific binding chord starts editing that binding", async () => {
+    _clear();
+    registerCommand({ id: "editor.save", label: "Save", action: () => {} });
+    mockInvoke((cmd) => {
+      if (cmd === "get_keymaps")
+        return [
+          { command: "editor.save", key: "Mod-s", source: "default" },
+          { command: "editor.save", key: "Ctrl-s", when: "editorFocus", source: "user" },
+        ];
+      if (cmd === "get_menu_shortcuts") return [];
+      return [];
+    });
+
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+
+    // Click the second KeyChord specifically
+    const rows = container.querySelectorAll("tbody tr");
+    const saveRow = Array.from(rows).find((r) => r.textContent?.includes("Save"));
+    const chords = saveRow!.querySelectorAll("[data-testid='key-chord']");
+    expect(chords.length).toBe(2);
+    fireEvent.click(chords[1]!);
+
+    // KeyRecorder should appear
+    expect(container.querySelector("[data-testid='key-recorder']")).not.toBeNull();
+  });
+
+  it("editing second binding replaces only that binding, not the first", async () => {
+    _clear();
+    registerCommand({ id: "editor.save", label: "Save", action: () => {} });
+    mockInvoke((cmd) => {
+      if (cmd === "get_keymaps")
+        return [
+          { command: "editor.save", key: "Mod-s", source: "default" },
+          { command: "editor.save", key: "Ctrl-s", when: "editorFocus", source: "user" },
+        ];
+      if (cmd === "get_menu_shortcuts") return [];
+      return [];
+    });
+
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+
+    // Before edit: first chord is ⌘S, second is ⌃S
+    const rows = container.querySelectorAll("tbody tr");
+    const saveRow = Array.from(rows).find((r) => r.textContent?.includes("Save"));
+    const chordsBefore = saveRow!.querySelectorAll("[data-testid='key-chord']");
+    const firstChordBefore = chordsBefore[0]!.textContent;
+
+    // Click the second KeyChord (Ctrl-s with editorFocus)
+    fireEvent.click(chordsBefore[1]!);
+
+    // Record Mod-x (no conflict)
+    await recordKey(container, "x", "KeyX", { metaKey: true });
+
+    // First binding (Mod-s, global) must be unchanged
+    const updatedRows = container.querySelectorAll("tbody tr");
+    const updatedSaveRow = Array.from(updatedRows).find((r) => r.textContent?.includes("Save"));
+    const updatedChords = updatedSaveRow!.querySelectorAll("[data-testid='key-chord']");
+    expect(updatedChords.length).toBe(2);
+    // First chord text should be exactly the same as before
+    expect(updatedChords[0]!.textContent).toBe(firstChordBefore);
   });
 });

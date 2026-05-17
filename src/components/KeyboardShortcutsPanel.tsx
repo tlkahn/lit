@@ -8,6 +8,7 @@ import { formatChordSequence, type Platform } from "../lib/keyChordFormat";
 import { HighlightedText } from "./HighlightedText";
 import { ToggleSwitch } from "./ToggleSwitch";
 import { detectConflicts, applyRebind } from "../lib/conflictDetection";
+import type { ConflictEntry } from "../lib/conflictDetection";
 import type { KeyBinding } from "../lib/ipc";
 
 interface KeyboardShortcutsPanelProps {
@@ -84,12 +85,18 @@ interface FilteredEntry {
   labelIndices: number[];
 }
 
+interface EditingState {
+  commandId: string;
+  bindingIndex: number;
+}
+
 interface ConflictDialogState {
   newKey: string;
   newWhen: string | undefined;
   command: string;
   commandLabel: string;
-  conflicts: KeyBinding[];
+  conflicts: ConflictEntry[];
+  bindingIndex: number;
 }
 
 export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps) {
@@ -100,7 +107,7 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
   const [error, setError] = useState<string | null>(null);
   const [showUnbound, setShowUnbound] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const [editingCommand, setEditingCommand] = useState<string | null>(null);
+  const [editing, setEditing] = useState<EditingState | null>(null);
   const [conflictDialog, setConflictDialog] = useState<ConflictDialogState | null>(null);
 
   useEffect(() => {
@@ -164,38 +171,54 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
     [entries],
   );
 
-  const handleStartEdit = useCallback((commandId: string) => {
-    setEditingCommand(commandId);
+  const handleStartEdit = useCallback((commandId: string, bindingIndex: number) => {
+    setEditing({ commandId, bindingIndex });
   }, []);
 
-  const handleConfirmKey = useCallback((commandId: string, notation: string, when: string | undefined) => {
+  const handleConfirmKey = useCallback((commandId: string, notation: string, when: string | undefined, bindingIndex: number) => {
     const commandLabel = entries.find((e) => e.commandId === commandId)?.command?.label ?? commandId;
-    const conflicts = detectConflicts(notation, when, allBindings, commandId);
+    const conflictBindings = detectConflicts(notation, when, allBindings, commandId);
 
-    if (conflicts.length === 0) {
+    if (conflictBindings.length === 0) {
       setEntries((prev) =>
         prev.map((e) => {
           if (e.commandId !== commandId) return e;
-          const newBindings = e.bindings.filter((b) => b.when !== when);
-          newBindings.push({ command: commandId, key: notation, when, source: "user" });
+          const newBinding: KeyBinding = { command: commandId, key: notation, when, source: "user" };
+          let newBindings: KeyBinding[];
+          if (bindingIndex >= 0 && bindingIndex < e.bindings.length) {
+            newBindings = e.bindings.map((b, i) => i === bindingIndex ? newBinding : b);
+          } else {
+            newBindings = [...e.bindings, newBinding];
+          }
           return { ...e, bindings: newBindings, status: "bound" as const };
         }),
       );
     } else {
-      setConflictDialog({ newKey: notation, newWhen: when, command: commandId, commandLabel, conflicts });
+      const conflicts: ConflictEntry[] = conflictBindings.map((b) => ({
+        binding: b,
+        label: entries.find((e) => e.commandId === b.command)?.command?.label ?? b.command,
+      }));
+      setConflictDialog({ newKey: notation, newWhen: when, command: commandId, commandLabel, conflicts, bindingIndex });
     }
-    setEditingCommand(null);
+    setEditing(null);
   }, [entries, allBindings]);
 
   const handleCancelEdit = useCallback(() => {
-    setEditingCommand(null);
+    setEditing(null);
   }, []);
 
   const handleRebind = useCallback(() => {
     if (!conflictDialog) return;
-    const { newKey, newWhen, command, conflicts } = conflictDialog;
-    const conflict = conflicts[0]!;
-    const updatedBindings = applyRebind(allBindings, newKey, command, newWhen, conflict);
+    const { newKey, newWhen, command, conflicts, bindingIndex } = conflictDialog;
+    const conflictBindings = conflicts.map((c) => c.binding);
+    const bindingsWithSlotRemoved = allBindings.filter((b, _i) => {
+      if (b.command !== command) return true;
+      const entry = entries.find((e) => e.commandId === command);
+      if (!entry) return true;
+      const idx = entry.bindings.indexOf(b);
+      return idx !== bindingIndex;
+    });
+    const updatedBindings = applyRebind(bindingsWithSlotRemoved, newKey, command, newWhen, conflictBindings);
 
     setEntries((prev) =>
       prev.map((e) => {
@@ -208,7 +231,7 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
       }),
     );
     setConflictDialog(null);
-  }, [conflictDialog, allBindings]);
+  }, [conflictDialog, allBindings, entries]);
 
   const handleCancelConflict = useCallback(() => {
     setConflictDialog(null);
@@ -281,7 +304,7 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
                   platform={resolvedPlatform}
                   isCollapsed={!filter && collapsed.has(group)}
                   onToggleCollapse={toggleCollapse}
-                  editingCommand={editingCommand}
+                  editing={editing}
                   onStartEdit={handleStartEdit}
                   onConfirmKey={handleConfirmKey}
                   onCancelEdit={handleCancelEdit}
@@ -301,7 +324,7 @@ const GroupRows = memo(function GroupRows({
   platform,
   isCollapsed,
   onToggleCollapse,
-  editingCommand,
+  editing,
   onStartEdit,
   onConfirmKey,
   onCancelEdit,
@@ -311,9 +334,9 @@ const GroupRows = memo(function GroupRows({
   platform: Platform;
   isCollapsed: boolean;
   onToggleCollapse: (group: string) => void;
-  editingCommand: string | null;
-  onStartEdit: (commandId: string) => void;
-  onConfirmKey: (commandId: string, notation: string, when: string | undefined) => void;
+  editing: EditingState | null;
+  onStartEdit: (commandId: string, bindingIndex: number) => void;
+  onConfirmKey: (commandId: string, notation: string, when: string | undefined, bindingIndex: number) => void;
   onCancelEdit: () => void;
 }) {
   return (
@@ -339,7 +362,7 @@ const GroupRows = memo(function GroupRows({
           entry={fe.entry}
           labelIndices={fe.labelIndices}
           platform={platform}
-          isEditing={editingCommand === fe.entry.commandId}
+          editing={editing?.commandId === fe.entry.commandId ? editing : null}
           onStartEdit={onStartEdit}
           onConfirmKey={onConfirmKey}
           onCancelEdit={onCancelEdit}
@@ -353,7 +376,7 @@ function EntryRow({
   entry,
   labelIndices,
   platform,
-  isEditing,
+  editing,
   onStartEdit,
   onConfirmKey,
   onCancelEdit,
@@ -361,16 +384,20 @@ function EntryRow({
   entry: CommandBindingEntry;
   labelIndices: number[];
   platform: Platform;
-  isEditing: boolean;
-  onStartEdit: (commandId: string) => void;
-  onConfirmKey: (commandId: string, notation: string, when: string | undefined) => void;
+  editing: EditingState | null;
+  onStartEdit: (commandId: string, bindingIndex: number) => void;
+  onConfirmKey: (commandId: string, notation: string, when: string | undefined, bindingIndex: number) => void;
   onCancelEdit: () => void;
 }) {
   const label = entry.command?.label ?? entry.commandId;
   const source = getSourceBadge(entry.bindings);
   const whenContexts = [...new Set(entry.bindings.map((b) => b.when).filter(Boolean))];
-  const currentKey = entry.bindings[0]?.key;
-  const currentWhen = entry.bindings[0]?.when;
+
+  const isEditing = editing !== null;
+  const editingIndex = editing?.bindingIndex ?? -1;
+  const editingBinding = editingIndex >= 0 && editingIndex < entry.bindings.length
+    ? entry.bindings[editingIndex]
+    : undefined;
 
   return (
     <tr className="border-b border-border/50">
@@ -383,12 +410,15 @@ function EntryRow({
           <span>{label}</span>
         )}
       </td>
-      <td className="py-1.5 pr-3" onClick={() => !isEditing && onStartEdit(entry.commandId)}>
+      <td
+        className="py-1.5 pr-3 cursor-pointer"
+        onClick={() => !isEditing && entry.bindings.length === 0 && onStartEdit(entry.commandId, entry.bindings.length)}
+      >
         {isEditing ? (
           <KeyRecorder
             platform={platform}
-            value={currentKey}
-            onConfirm={(notation) => onConfirmKey(entry.commandId, notation, currentWhen)}
+            value={editingBinding?.key}
+            onConfirm={(notation) => onConfirmKey(entry.commandId, notation, editingBinding?.when, editingIndex)}
             onCancel={onCancelEdit}
           />
         ) : entry.bindings.length === 0 ? (
@@ -396,7 +426,9 @@ function EntryRow({
         ) : (
           <span className="inline-flex flex-wrap gap-1">
             {entry.bindings.map((b, i) => (
-              <KeyChord key={i} chord={b.key} platform={platform} />
+              <span key={i} onClick={(e) => { e.stopPropagation(); onStartEdit(entry.commandId, i); }}>
+                <KeyChord chord={b.key} platform={platform} />
+              </span>
             ))}
           </span>
         )}

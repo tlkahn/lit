@@ -1,19 +1,16 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@testing-library/react";
 import { ConflictResolutionDialog } from "./ConflictResolutionDialog";
-import type { KeyBinding } from "../lib/ipc";
+import type { ConflictEntry } from "../lib/conflictDetection";
 
-const defaultConflict: KeyBinding = {
-  command: "editor.toggleBold",
-  key: "Mod-b",
-  when: "editorFocus",
-  source: "default",
+const defaultConflict: ConflictEntry = {
+  binding: { command: "editor.toggleBold", key: "Mod-b", when: "editorFocus", source: "default" },
+  label: "Toggle Bold",
 };
 
-const menuConflict: KeyBinding = {
-  command: "app.preferences",
-  key: "Mod-,",
-  source: "menu",
+const menuConflict: ConflictEntry = {
+  binding: { command: "app.preferences", key: "Mod-,", source: "menu" },
+  label: "Preferences",
 };
 
 describe("ConflictResolutionDialog", () => {
@@ -63,8 +60,8 @@ describe("ConflictResolutionDialog", () => {
     expect(container.querySelector("[data-testid='key-chord']")).not.toBeNull();
   });
 
-  it("displays conflicting command label", () => {
-    const { getByText } = render(
+  it("displays human-readable label, not raw command ID", () => {
+    const { getByText, queryByText } = render(
       <ConflictResolutionDialog
         open={true}
         newKey="Mod-b"
@@ -75,7 +72,8 @@ describe("ConflictResolutionDialog", () => {
         onCancel={vi.fn()}
       />,
     );
-    expect(getByText("editor.toggleBold")).toBeTruthy();
+    expect(getByText("Toggle Bold")).toBeTruthy();
+    expect(queryByText("editor.toggleBold")).toBeNull();
   });
 
   it("shows Rebind and Cancel buttons for default/user conflicts", () => {

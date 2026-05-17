@@ -1,6 +1,11 @@
 import { keysEqual } from "./normalizeKeyNotation";
 import type { KeyBinding } from "./ipc";
 
+export interface ConflictEntry {
+  binding: KeyBinding;
+  label: string;
+}
+
 export function contextsOverlap(
   a: string | null | undefined,
   b: string | null | undefined,
@@ -29,10 +34,12 @@ export function applyRebind(
   newKey: string,
   newCommand: string,
   newWhen: string | undefined,
-  conflicting: KeyBinding,
+  conflicting: KeyBinding[],
 ): KeyBinding[] {
   const result = allBindings.filter((b) => {
-    if (b.command === conflicting.command && b.key === conflicting.key) return false;
+    for (const c of conflicting) {
+      if (b.command === c.command && b.key === c.key) return false;
+    }
     if (b.command === newCommand && b.when === newWhen) return false;
     return true;
   });
