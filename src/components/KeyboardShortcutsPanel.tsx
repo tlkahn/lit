@@ -1,10 +1,13 @@
 import { useState, useEffect, useMemo, useCallback, memo } from "react";
 import { fetchCommandBindingTable, type CommandBindingEntry } from "../lib/commandBindingTable";
 import { KeyChord } from "./KeyChord";
+import { KeyRecorder } from "./KeyRecorder";
+import { ConflictResolutionDialog } from "./ConflictResolutionDialog";
 import { fuzzyMatch } from "../lib/fuzzyMatch";
 import { formatChordSequence, type Platform } from "../lib/keyChordFormat";
 import { HighlightedText } from "./HighlightedText";
 import { ToggleSwitch } from "./ToggleSwitch";
+import { detectConflicts, applyRebind } from "../lib/conflictDetection";
 import type { KeyBinding } from "../lib/ipc";
 
 interface KeyboardShortcutsPanelProps {
@@ -81,6 +84,14 @@ interface FilteredEntry {
   labelIndices: number[];
 }
 
+interface ConflictDialogState {
+  newKey: string;
+  newWhen: string | undefined;
+  command: string;
+  commandLabel: string;
+  conflicts: KeyBinding[];
+}
+
 export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps) {
   const resolvedPlatform: Platform = platform ?? "mac";
   const [entries, setEntries] = useState<CommandBindingEntry[]>([]);
@@ -89,6 +100,8 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
   const [error, setError] = useState<string | null>(null);
   const [showUnbound, setShowUnbound] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [editingCommand, setEditingCommand] = useState<string | null>(null);
+  const [conflictDialog, setConflictDialog] = useState<ConflictDialogState | null>(null);
 
   useEffect(() => {
     if (filter) setCollapsed(new Set());
@@ -146,6 +159,61 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
     });
   }, []);
 
+  const allBindings = useMemo(
+    () => entries.flatMap((e) => e.bindings),
+    [entries],
+  );
+
+  const handleStartEdit = useCallback((commandId: string) => {
+    setEditingCommand(commandId);
+  }, []);
+
+  const handleConfirmKey = useCallback((commandId: string, notation: string, when: string | undefined) => {
+    const commandLabel = entries.find((e) => e.commandId === commandId)?.command?.label ?? commandId;
+    const conflicts = detectConflicts(notation, when, allBindings, commandId);
+
+    if (conflicts.length === 0) {
+      setEntries((prev) =>
+        prev.map((e) => {
+          if (e.commandId !== commandId) return e;
+          const newBindings = e.bindings.filter((b) => b.when !== when);
+          newBindings.push({ command: commandId, key: notation, when, source: "user" });
+          return { ...e, bindings: newBindings, status: "bound" as const };
+        }),
+      );
+    } else {
+      setConflictDialog({ newKey: notation, newWhen: when, command: commandId, commandLabel, conflicts });
+    }
+    setEditingCommand(null);
+  }, [entries, allBindings]);
+
+  const handleCancelEdit = useCallback(() => {
+    setEditingCommand(null);
+  }, []);
+
+  const handleRebind = useCallback(() => {
+    if (!conflictDialog) return;
+    const { newKey, newWhen, command, conflicts } = conflictDialog;
+    const conflict = conflicts[0]!;
+    const updatedBindings = applyRebind(allBindings, newKey, command, newWhen, conflict);
+
+    setEntries((prev) =>
+      prev.map((e) => {
+        const myBindings = updatedBindings.filter((b) => b.command === e.commandId);
+        return {
+          ...e,
+          bindings: myBindings,
+          status: myBindings.length > 0 ? "bound" as const : "unbound" as const,
+        };
+      }),
+    );
+    setConflictDialog(null);
+  }, [conflictDialog, allBindings]);
+
+  const handleCancelConflict = useCallback(() => {
+    setConflictDialog(null);
+  }, []);
+
   if (loading) {
     return (
       <div data-testid="shortcuts-loading" className="flex items-center justify-center py-8">
@@ -181,6 +249,16 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
         />
       </div>
 
+      <ConflictResolutionDialog
+        open={conflictDialog !== null}
+        newKey={conflictDialog?.newKey ?? ""}
+        newCommandLabel={conflictDialog?.commandLabel ?? ""}
+        conflicts={conflictDialog?.conflicts ?? []}
+        platform={resolvedPlatform}
+        onRebind={handleRebind}
+        onCancel={handleCancelConflict}
+      />
+
       {filtered.length === 0 ? (
         <div className="py-8 text-center text-sm text-text-muted">No matching shortcuts</div>
       ) : (
@@ -203,6 +281,10 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
                   platform={resolvedPlatform}
                   isCollapsed={!filter && collapsed.has(group)}
                   onToggleCollapse={toggleCollapse}
+                  editingCommand={editingCommand}
+                  onStartEdit={handleStartEdit}
+                  onConfirmKey={handleConfirmKey}
+                  onCancelEdit={handleCancelEdit}
                 />
               ))}
             </tbody>
@@ -219,12 +301,20 @@ const GroupRows = memo(function GroupRows({
   platform,
   isCollapsed,
   onToggleCollapse,
+  editingCommand,
+  onStartEdit,
+  onConfirmKey,
+  onCancelEdit,
 }: {
   group: string;
   entries: FilteredEntry[];
   platform: Platform;
   isCollapsed: boolean;
   onToggleCollapse: (group: string) => void;
+  editingCommand: string | null;
+  onStartEdit: (commandId: string) => void;
+  onConfirmKey: (commandId: string, notation: string, when: string | undefined) => void;
+  onCancelEdit: () => void;
 }) {
   return (
     <>
@@ -244,16 +334,43 @@ const GroupRows = memo(function GroupRows({
         </td>
       </tr>
       {!isCollapsed && entries.map((fe) => (
-        <EntryRow key={fe.entry.commandId} entry={fe.entry} labelIndices={fe.labelIndices} platform={platform} />
+        <EntryRow
+          key={fe.entry.commandId}
+          entry={fe.entry}
+          labelIndices={fe.labelIndices}
+          platform={platform}
+          isEditing={editingCommand === fe.entry.commandId}
+          onStartEdit={onStartEdit}
+          onConfirmKey={onConfirmKey}
+          onCancelEdit={onCancelEdit}
+        />
       ))}
     </>
   );
 });
 
-function EntryRow({ entry, labelIndices, platform }: { entry: CommandBindingEntry; labelIndices: number[]; platform: Platform }) {
+function EntryRow({
+  entry,
+  labelIndices,
+  platform,
+  isEditing,
+  onStartEdit,
+  onConfirmKey,
+  onCancelEdit,
+}: {
+  entry: CommandBindingEntry;
+  labelIndices: number[];
+  platform: Platform;
+  isEditing: boolean;
+  onStartEdit: (commandId: string) => void;
+  onConfirmKey: (commandId: string, notation: string, when: string | undefined) => void;
+  onCancelEdit: () => void;
+}) {
   const label = entry.command?.label ?? entry.commandId;
   const source = getSourceBadge(entry.bindings);
   const whenContexts = [...new Set(entry.bindings.map((b) => b.when).filter(Boolean))];
+  const currentKey = entry.bindings[0]?.key;
+  const currentWhen = entry.bindings[0]?.when;
 
   return (
     <tr className="border-b border-border/50">
@@ -266,8 +383,15 @@ function EntryRow({ entry, labelIndices, platform }: { entry: CommandBindingEntr
           <span>{label}</span>
         )}
       </td>
-      <td className="py-1.5 pr-3">
-        {entry.bindings.length === 0 ? (
+      <td className="py-1.5 pr-3" onClick={() => !isEditing && onStartEdit(entry.commandId)}>
+        {isEditing ? (
+          <KeyRecorder
+            platform={platform}
+            value={currentKey}
+            onConfirm={(notation) => onConfirmKey(entry.commandId, notation, currentWhen)}
+            onCancel={onCancelEdit}
+          />
+        ) : entry.bindings.length === 0 ? (
           <KeyChord chord="" platform={platform} />
         ) : (
           <span className="inline-flex flex-wrap gap-1">

@@ -453,4 +453,119 @@ describe("KeyboardShortcutsPanel", () => {
     dataRows = allRows.filter((r) => !r.querySelector("[data-testid='group-header']"));
     expect(dataRows.some((r) => r.textContent?.includes("Toggle Bold"))).toBe(true);
   });
+
+  // --- Cycle 7: Conflict Detection Integration ---
+
+  async function clickKeybindingCell(container: HTMLElement, commandLabel: string) {
+    const rows = container.querySelectorAll("tbody tr");
+    const row = Array.from(rows).find((r) => r.textContent?.includes(commandLabel));
+    expect(row).toBeDefined();
+    const keybindingCell = row!.querySelectorAll("td")[1]!;
+    fireEvent.click(keybindingCell);
+    return row!;
+  }
+
+  async function recordKey(container: HTMLElement, key: string, code: string, mods: { metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean; altKey?: boolean } = {}) {
+    const recorder = container.querySelector("[data-testid='key-recorder']")!;
+    // Enter recording state
+    fireEvent.click(recorder);
+    // Fire key event
+    fireEvent.keyDown(recorder, { key, code, ...mods });
+    // Confirm with Enter
+    fireEvent.keyDown(recorder, { key: "Enter", code: "Enter" });
+  }
+
+  it("recording a conflicting key shows ConflictResolutionDialog", async () => {
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+
+    // Click the keybinding cell for Toggle Italic to start rebinding
+    await clickKeybindingCell(container, "Toggle Italic");
+    // Record Mod-b which conflicts with Toggle Bold
+    await recordKey(container, "b", "KeyB", { metaKey: true });
+
+    // Conflict dialog should appear
+    expect(container.querySelector("[data-testid='conflict-dialog-backdrop']")).not.toBeNull();
+    expect(container.querySelector("[data-testid='conflict-dialog']")!.textContent).toContain("editor.toggleBold");
+  });
+
+  it("recording a non-conflicting key applies directly (no dialog)", async () => {
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+
+    // Click the keybinding cell for Toggle Italic to start rebinding
+    await clickKeybindingCell(container, "Toggle Italic");
+    // Record Mod-x which does not conflict with anything
+    await recordKey(container, "x", "KeyX", { metaKey: true });
+
+    // No conflict dialog
+    expect(container.querySelector("[data-testid='conflict-dialog-backdrop']")).toBeNull();
+    // The new binding should be visible in the row
+    const rows = container.querySelectorAll("tbody tr");
+    const italicRow = Array.from(rows).find((r) => r.textContent?.includes("Toggle Italic"));
+    expect(italicRow).toBeDefined();
+  });
+
+  it("Rebind in dialog unbinds conflicting command and assigns new binding", async () => {
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+
+    await clickKeybindingCell(container, "Toggle Italic");
+    await recordKey(container, "b", "KeyB", { metaKey: true });
+
+    // Click Rebind
+    const rebindBtn = container.querySelector("[data-testid='conflict-rebind-btn']")!;
+    fireEvent.click(rebindBtn);
+
+    // Dialog dismissed
+    expect(container.querySelector("[data-testid='conflict-dialog-backdrop']")).toBeNull();
+
+    // Toggle Bold is now unbound — enable "show unbound" to see it
+    const toggle = container.querySelector("[data-testid='show-unbound-toggle']") as HTMLElement;
+    fireEvent.click(toggle);
+
+    const rows = container.querySelectorAll("tbody tr");
+    const boldRow = Array.from(rows).find((r) => r.textContent?.includes("Toggle Bold"));
+    expect(boldRow).toBeDefined();
+    const boldChord = boldRow!.querySelector("[data-testid='key-chord']");
+    expect(boldChord!.textContent).toBe("—");
+  });
+
+  it("Cancel dismisses dialog with no changes", async () => {
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+
+    await clickKeybindingCell(container, "Toggle Italic");
+    await recordKey(container, "b", "KeyB", { metaKey: true });
+
+    // Click Cancel
+    const cancelBtn = container.querySelector("[data-testid='conflict-cancel-btn']")!;
+    fireEvent.click(cancelBtn);
+
+    // Dialog dismissed
+    expect(container.querySelector("[data-testid='conflict-dialog-backdrop']")).toBeNull();
+
+    // Toggle Italic still has Mod-i (unchanged)
+    const rows = container.querySelectorAll("tbody tr");
+    const italicRow = Array.from(rows).find((r) => r.textContent?.includes("Toggle Italic"));
+    expect(italicRow).toBeDefined();
+  });
+
+  it("menu conflict shows read-only variant (no Rebind button)", async () => {
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+
+    // Rebind Toggle Italic to Mod-p which is a menu shortcut
+    await clickKeybindingCell(container, "Toggle Italic");
+    await recordKey(container, "p", "KeyP", { metaKey: true });
+
+    // Conflict dialog should appear
+    expect(container.querySelector("[data-testid='conflict-dialog-backdrop']")).not.toBeNull();
+    // No Rebind button (menu conflicts can't be rebound)
+    expect(container.querySelector("[data-testid='conflict-rebind-btn']")).toBeNull();
+    // Cancel button is present
+    expect(container.querySelector("[data-testid='conflict-cancel-btn']")).not.toBeNull();
+    // Shows explanation
+    expect(container.querySelector("[data-testid='conflict-dialog']")!.textContent).toContain("Menu shortcuts cannot be rebound");
+  });
 });
