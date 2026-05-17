@@ -3,7 +3,7 @@ import {
   generatePaneId,
   findLeaf,
   collectLeaves,
-  replaceNode,
+  replaceLeaf,
   removeLeaf,
   findSplitByPath,
   replaceSplitSizes,
@@ -91,7 +91,7 @@ describe("collectLeaves", () => {
   });
 });
 
-describe("replaceNode", () => {
+describe("replaceLeaf", () => {
   it("replaces root leaf", () => {
     const root: PaneLeaf = { type: "leaf", id: "a", pagePath: null };
     const replacement: PaneSplit = {
@@ -103,7 +103,7 @@ describe("replaceNode", () => {
       ],
       sizes: [50, 50],
     };
-    expect(replaceNode(root, "a", replacement)).toBe(replacement);
+    expect(replaceLeaf(root, "a", replacement)).toBe(replacement);
   });
 
   it("replaces leaf inside a split (sibling unchanged by reference)", () => {
@@ -116,7 +116,7 @@ describe("replaceNode", () => {
       sizes: [50, 50],
     };
     const replacement: PaneLeaf = { type: "leaf", id: "b", pagePath: "new.md" };
-    const result = replaceNode(root, "b", replacement) as PaneSplit;
+    const result = replaceLeaf(root, "b", replacement) as PaneSplit;
     expect(result.children[1]).toBe(replacement);
     expect(result.children[0]).toBe(sibling);
   });
@@ -131,7 +131,7 @@ describe("replaceNode", () => {
       ],
       sizes: [50, 50],
     };
-    expect(replaceNode(root, "missing", { type: "leaf", id: "x", pagePath: null })).toBe(root);
+    expect(replaceLeaf(root, "missing", { type: "leaf", id: "x", pagePath: null })).toBe(root);
   });
 });
 
@@ -246,6 +246,19 @@ describe("findSplitByPath", () => {
       sizes: [50, 50],
     };
     expect(findSplitByPath(root, [1])).toBe(nested);
+  });
+
+  it("path to a leaf child returns null", () => {
+    const root: PaneSplit = {
+      type: "split",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "a", pagePath: null },
+        { type: "leaf", id: "b", pagePath: null },
+      ],
+      sizes: [50, 50],
+    };
+    expect(findSplitByPath(root, [0])).toBeNull();
   });
 
   it("invalid path returns null", () => {

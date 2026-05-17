@@ -45,7 +45,7 @@ export function collectLeaves(root: PaneNode): PaneLeaf[] {
   return root.children.flatMap(collectLeaves);
 }
 
-export function replaceNode(
+export function replaceLeaf(
   root: PaneNode,
   leafId: string,
   replacement: PaneNode,
@@ -53,7 +53,7 @@ export function replaceNode(
   if (root.type === "leaf") return root.id === leafId ? replacement : root;
   let changed = false;
   const newChildren = root.children.map((child) => {
-    const result = replaceNode(child, leafId, replacement);
+    const result = replaceLeaf(child, leafId, replacement);
     if (result !== child) changed = true;
     return result;
   });
@@ -76,8 +76,13 @@ export function removeLeaf(root: PaneNode, leafId: string): PaneNode | null {
 
   for (let i = 0; i < root.children.length; i++) {
     const child = root.children[i]!;
-    if (child.type === "leaf" && child.id === leafId) {
-      changed = true;
+    if (child.type === "leaf") {
+      if (child.id === leafId) {
+        changed = true;
+        continue;
+      }
+      newChildren.push(child);
+      newSizes.push(root.sizes[i]!);
       continue;
     }
     const result = removeLeaf(child, leafId);
