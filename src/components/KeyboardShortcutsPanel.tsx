@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, memo } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";
 import { fetchCommandBindingTable, type CommandBindingEntry } from "../lib/commandBindingTable";
 import { KeyChord } from "./KeyChord";
 import { KeyRecorder } from "./KeyRecorder";
@@ -8,6 +8,8 @@ import { formatChordSequence, type Platform } from "../lib/keyChordFormat";
 import { HighlightedText } from "./HighlightedText";
 import { ToggleSwitch } from "./ToggleSwitch";
 import { detectConflicts, applyRebind } from "../lib/conflictDetection";
+import { computeKeymapDiff } from "../lib/keymapDiff";
+import { getDefaultKeymaps, saveUserKeymaps } from "../lib/ipc";
 import type { ConflictEntry } from "../lib/conflictDetection";
 import type { KeyBinding } from "../lib/ipc";
 
@@ -109,6 +111,21 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<EditingState | null>(null);
   const [conflictDialog, setConflictDialog] = useState<ConflictDialogState | null>(null);
+  const [resetAllOpen, setResetAllOpen] = useState(false);
+  const defaultsRef = useRef<KeyBinding[]>([]);
+
+  useEffect(() => {
+    getDefaultKeymaps().then((defaults) => {
+      defaultsRef.current = defaults;
+    });
+  }, []);
+
+  const persistAndReload = useCallback(async (updatedEntries: CommandBindingEntry[]) => {
+    const allCurrent = updatedEntries.flatMap((e) => e.bindings);
+    const diff = computeKeymapDiff(allCurrent, defaultsRef.current);
+    await saveUserKeymaps(diff);
+    window.dispatchEvent(new CustomEvent("lit:keymaps-changed"));
+  }, []);
 
   useEffect(() => {
     if (filter) setCollapsed(new Set());
@@ -180,19 +197,19 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
     const conflictBindings = detectConflicts(notation, when, allBindings, commandId);
 
     if (conflictBindings.length === 0) {
-      setEntries((prev) =>
-        prev.map((e) => {
-          if (e.commandId !== commandId) return e;
-          const newBinding: KeyBinding = { command: commandId, key: notation, when, source: "user" };
-          let newBindings: KeyBinding[];
-          if (bindingIndex >= 0 && bindingIndex < e.bindings.length) {
-            newBindings = e.bindings.map((b, i) => i === bindingIndex ? newBinding : b);
-          } else {
-            newBindings = [...e.bindings, newBinding];
-          }
-          return { ...e, bindings: newBindings, status: "bound" as const };
-        }),
-      );
+      const updatedEntries = entries.map((e) => {
+        if (e.commandId !== commandId) return e;
+        const newBinding: KeyBinding = { command: commandId, key: notation, when, source: "user" };
+        let newBindings: KeyBinding[];
+        if (bindingIndex >= 0 && bindingIndex < e.bindings.length) {
+          newBindings = e.bindings.map((b, i) => i === bindingIndex ? newBinding : b);
+        } else {
+          newBindings = [...e.bindings, newBinding];
+        }
+        return { ...e, bindings: newBindings, status: "bound" as const };
+      });
+      setEntries(updatedEntries);
+      persistAndReload(updatedEntries);
     } else {
       const conflicts: ConflictEntry[] = conflictBindings.map((b) => ({
         binding: b,
@@ -201,7 +218,7 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
       setConflictDialog({ newKey: notation, newWhen: when, command: commandId, commandLabel, conflicts, bindingIndex });
     }
     setEditing(null);
-  }, [entries, allBindings]);
+  }, [entries, allBindings, persistAndReload]);
 
   const handleCancelEdit = useCallback(() => {
     setEditing(null);
@@ -220,18 +237,60 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
     });
     const updatedBindings = applyRebind(bindingsWithSlotRemoved, newKey, command, newWhen, conflictBindings);
 
-    setEntries((prev) =>
-      prev.map((e) => {
-        const myBindings = updatedBindings.filter((b) => b.command === e.commandId);
+    const updatedEntries = entries.map((e) => {
+      const myBindings = updatedBindings.filter((b) => b.command === e.commandId);
+      return {
+        ...e,
+        bindings: myBindings,
+        status: myBindings.length > 0 ? "bound" as const : "unbound" as const,
+      };
+    });
+    setEntries(updatedEntries);
+    persistAndReload(updatedEntries);
+    setConflictDialog(null);
+  }, [conflictDialog, allBindings, entries, persistAndReload]);
+
+  const handleResetBinding = useCallback((commandId: string, bindingIndex: number) => {
+    const entry = entries.find((e) => e.commandId === commandId);
+    if (!entry) return;
+    const binding = entry.bindings[bindingIndex];
+    if (!binding) return;
+
+    const defaultBinding = defaultsRef.current.find(
+      (d) => d.command === commandId && (d.when ?? "") === (binding.when ?? ""),
+    );
+
+    let updatedEntries: CommandBindingEntry[];
+    if (defaultBinding) {
+      updatedEntries = entries.map((e) => {
+        if (e.commandId !== commandId) return e;
+        const newBindings = e.bindings.map((b, i) =>
+          i === bindingIndex ? { ...defaultBinding } : b,
+        );
+        return { ...e, bindings: newBindings };
+      });
+    } else {
+      updatedEntries = entries.map((e) => {
+        if (e.commandId !== commandId) return e;
+        const newBindings = e.bindings.filter((_, i) => i !== bindingIndex);
         return {
           ...e,
-          bindings: myBindings,
-          status: myBindings.length > 0 ? "bound" as const : "unbound" as const,
+          bindings: newBindings,
+          status: newBindings.length > 0 ? "bound" as const : "unbound" as const,
         };
-      }),
-    );
-    setConflictDialog(null);
-  }, [conflictDialog, allBindings, entries]);
+      });
+    }
+    setEntries(updatedEntries);
+    persistAndReload(updatedEntries);
+  }, [entries, persistAndReload]);
+
+  const handleResetAll = useCallback(async () => {
+    await saveUserKeymaps([]);
+    window.dispatchEvent(new CustomEvent("lit:keymaps-changed"));
+    const result = await fetchCommandBindingTable();
+    setEntries(result);
+    setResetAllOpen(false);
+  }, []);
 
   const handleCancelConflict = useCallback(() => {
     setConflictDialog(null);
@@ -270,7 +329,36 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
           testId="show-unbound-toggle"
           label="Show unbound commands"
         />
+        <button
+          data-testid="reset-all-btn"
+          className="rounded border border-border px-2 py-1 text-xs text-text-muted hover:text-text-normal"
+          onClick={() => setResetAllOpen(true)}
+        >
+          Reset All
+        </button>
       </div>
+
+      {resetAllOpen && (
+        <div data-testid="reset-all-dialog" className="mb-3 mx-1 rounded border border-border bg-bg-secondary p-3 text-sm">
+          <p className="mb-2">Reset all shortcuts to defaults? This cannot be undone.</p>
+          <div className="flex gap-2">
+            <button
+              data-testid="reset-all-confirm-btn"
+              className="rounded bg-accent px-2 py-1 text-xs text-white"
+              onClick={handleResetAll}
+            >
+              Confirm
+            </button>
+            <button
+              data-testid="reset-all-cancel-btn"
+              className="rounded border border-border px-2 py-1 text-xs"
+              onClick={() => setResetAllOpen(false)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       <ConflictResolutionDialog
         open={conflictDialog !== null}
@@ -308,6 +396,7 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
                   onStartEdit={handleStartEdit}
                   onConfirmKey={handleConfirmKey}
                   onCancelEdit={handleCancelEdit}
+                  onResetBinding={handleResetBinding}
                 />
               ))}
             </tbody>
@@ -328,6 +417,7 @@ const GroupRows = memo(function GroupRows({
   onStartEdit,
   onConfirmKey,
   onCancelEdit,
+  onResetBinding,
 }: {
   group: string;
   entries: FilteredEntry[];
@@ -338,6 +428,7 @@ const GroupRows = memo(function GroupRows({
   onStartEdit: (commandId: string, bindingIndex: number) => void;
   onConfirmKey: (commandId: string, notation: string, when: string | undefined, bindingIndex: number) => void;
   onCancelEdit: () => void;
+  onResetBinding: (commandId: string, bindingIndex: number) => void;
 }) {
   return (
     <>
@@ -366,6 +457,7 @@ const GroupRows = memo(function GroupRows({
           onStartEdit={onStartEdit}
           onConfirmKey={onConfirmKey}
           onCancelEdit={onCancelEdit}
+          onResetBinding={onResetBinding}
         />
       ))}
     </>
@@ -380,6 +472,7 @@ function EntryRow({
   onStartEdit,
   onConfirmKey,
   onCancelEdit,
+  onResetBinding,
 }: {
   entry: CommandBindingEntry;
   labelIndices: number[];
@@ -388,6 +481,7 @@ function EntryRow({
   onStartEdit: (commandId: string, bindingIndex: number) => void;
   onConfirmKey: (commandId: string, notation: string, when: string | undefined, bindingIndex: number) => void;
   onCancelEdit: () => void;
+  onResetBinding: (commandId: string, bindingIndex: number) => void;
 }) {
   const label = entry.command?.label ?? entry.commandId;
   const source = getSourceBadge(entry.bindings);
@@ -434,7 +528,22 @@ function EntryRow({
         )}
       </td>
       <td className="py-1.5 pr-3">
-        <SourceBadge source={source} />
+        <span className="inline-flex items-center gap-1">
+          <SourceBadge source={source} />
+          {entry.bindings.map((b, i) =>
+            b.source === "user" ? (
+              <button
+                key={i}
+                data-testid="reset-binding-btn"
+                className="ml-1 text-text-muted hover:text-text-normal text-xs"
+                onClick={() => onResetBinding(entry.commandId, i)}
+                title="Reset to default"
+              >
+                ↺
+              </button>
+            ) : null,
+          )}
+        </span>
       </td>
       <td className="py-1.5 text-text-muted text-xs">
         {whenContexts.join(", ")}

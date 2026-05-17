@@ -173,4 +173,63 @@ describe("useKeymaps", () => {
     expect(capturedArgs).toBeTruthy();
     expect(capturedArgs!.args).toEqual({ key: "workbench.sideBar.visible", value: false });
   });
+
+  it("dispatching lit:keymaps-changed re-fetches keymaps and updates editorBindings", async () => {
+    const { result } = await loadHook();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const initialKeys = result.current.editorBindings.map((b) => b.key);
+    expect(initialKeys).toContain("Mod-b");
+
+    mockInvoke((cmd) => {
+      if (cmd === "get_keymaps") {
+        return [
+          { key: "Mod-x", command: "editor.toggleBold", when: "editorFocus" },
+          { key: "Mod-i", command: "editor.toggleItalic", when: "editorFocus" },
+        ];
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    window.dispatchEvent(new CustomEvent("lit:keymaps-changed"));
+
+    await waitFor(() => {
+      const keys = result.current.editorBindings.map((b) => b.key);
+      expect(keys).toContain("Mod-x");
+      expect(keys).not.toContain("Mod-b");
+    });
+  });
+
+  it("app keydown handler uses updated bindings after reload event", async () => {
+    registerHandler("app.newPage", vi.fn());
+    const { result } = await loadHook();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    mockInvoke((cmd) => {
+      if (cmd === "get_keymaps") {
+        return [
+          { key: "Mod-Shift-m", command: "app.newPage" },
+        ];
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    window.dispatchEvent(new CustomEvent("lit:keymaps-changed"));
+
+    await waitFor(() => {
+      expect(result.current.editorBindings.length).toBe(0);
+    });
+
+    const listener = vi.fn();
+    registerHandler("app.newPage", listener);
+
+    const event = new KeyboardEvent("keydown", {
+      key: "m",
+      metaKey: true,
+      shiftKey: true,
+    });
+    document.dispatchEvent(event);
+
+    expect(listener).toHaveBeenCalled();
+  });
 });

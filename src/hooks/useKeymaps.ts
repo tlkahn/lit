@@ -174,6 +174,22 @@ export function useKeymaps(): {
   }, []);
 
   useEffect(() => {
+    const reload = () => {
+      getKeymaps()
+        .then((merged) => {
+          const resolved = resolveKeymaps(merged);
+          setEditorBindings(resolved.editorBindings);
+          appBindingsRef.current = resolved.appBindings;
+        })
+        .catch((err) => {
+          console.error("[useKeymaps] failed to reload keymaps:", err);
+        });
+    };
+    window.addEventListener("lit:keymaps-changed", reload);
+    return () => window.removeEventListener("lit:keymaps-changed", reload);
+  }, []);
+
+  useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const pressed = keyStringFromEvent(e);
       for (const binding of appBindingsRef.current) {
