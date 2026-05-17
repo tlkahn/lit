@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import type { Platform } from "../lib/keyChordFormat";
 import { keyEventToNotation } from "../lib/keyEventToNotation";
 import { KeyChord } from "./KeyChord";
@@ -19,6 +19,7 @@ function hasModifiers(e: React.KeyboardEvent): boolean {
 export function KeyRecorder({ platform, value, onConfirm, onCancel }: KeyRecorderProps) {
   const [state, setState] = useState<RecorderState>("idle");
   const [captured, setCaptured] = useState<string | null>(null);
+  const settledRef = useRef(false);
 
   const p: Platform = platform ?? (navigator.platform?.startsWith("Mac") ? "mac" : "other");
 
@@ -29,16 +30,20 @@ export function KeyRecorder({ platform, value, onConfirm, onCancel }: KeyRecorde
 
   const handleClick = useCallback(() => {
     if (state === "idle") {
+      settledRef.current = false;
       setState("recording");
     }
   }, [state]);
 
   const handleBlur = useCallback(() => {
+    if (settledRef.current) return;
     if (state === "captured" && captured) {
+      settledRef.current = true;
       const result = captured;
       reset();
       onConfirm?.(result);
     } else if (state === "recording") {
+      settledRef.current = true;
       reset();
       onCancel?.();
     }
@@ -46,10 +51,12 @@ export function KeyRecorder({ platform, value, onConfirm, onCancel }: KeyRecorde
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      if (settledRef.current) return;
       if (state === "recording") {
         e.preventDefault();
 
         if (e.key === "Escape" && !hasModifiers(e)) {
+          settledRef.current = true;
           reset();
           onCancel?.();
           return;
@@ -66,12 +73,14 @@ export function KeyRecorder({ platform, value, onConfirm, onCancel }: KeyRecorde
         e.preventDefault();
 
         if (e.key === "Escape" && !hasModifiers(e)) {
+          settledRef.current = true;
           reset();
           onCancel?.();
           return;
         }
 
         if (e.key === "Enter" && !hasModifiers(e)) {
+          settledRef.current = true;
           const result = captured;
           reset();
           if (result) onConfirm?.(result);

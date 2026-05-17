@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { createPortal } from "react-dom";
 
 interface ToastProps {
   message: string;
@@ -15,12 +16,13 @@ export function Toast({ message, visible, onDismiss }: ToastProps) {
 
   if (!visible) return null;
 
-  return (
+  return createPortal(
     <div
       data-testid="toast"
-      className="absolute top-3 right-3 z-50 rounded border border-border bg-bg-secondary px-4 py-2 text-sm text-text-normal shadow-lg"
+      className="fixed top-3 right-3 z-50 rounded border border-border bg-bg-secondary px-4 py-2 text-sm text-text-normal shadow-lg"
     >
       {message}
-    </div>
+    </div>,
+    document.body,
   );
 }

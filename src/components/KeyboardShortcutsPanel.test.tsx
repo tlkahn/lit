@@ -1222,6 +1222,171 @@ describe("KeyboardShortcutsPanel", () => {
     expect(keybindingCell.getAttribute("title")).toBe("Menu shortcuts cannot be rebound");
   });
 
+  // --- Fix 1: Undo covers per-binding reset ---
+
+  it("after resetting a binding, undo button appears", async () => {
+    _clear();
+    registerCommand({ id: "editor.toggleItalic", label: "Toggle Italic", keywords: ["italic"], action: () => {} });
+    mockInvoke((cmd) => {
+      if (cmd === "get_keymaps")
+        return [{ command: "editor.toggleItalic", key: "Mod-x", when: "editorFocus", source: "user" }];
+      if (cmd === "get_default_keymaps")
+        return [{ command: "editor.toggleItalic", key: "Mod-i", when: "editorFocus", source: "default" }];
+      if (cmd === "get_menu_shortcuts") return [];
+      if (cmd === "save_user_keymaps") return undefined;
+      return [];
+    });
+
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+
+    const resetBtn = container.querySelector("[data-testid='reset-binding-btn']")!;
+    fireEvent.click(resetBtn);
+
+    expect(container.querySelector("[data-testid='undo-btn']")).not.toBeNull();
+  });
+
+  it("clicking undo after reset reverts the binding back to user-modified state", async () => {
+    _clear();
+    registerCommand({ id: "editor.toggleItalic", label: "Toggle Italic", keywords: ["italic"], action: () => {} });
+    mockInvoke((cmd) => {
+      if (cmd === "get_keymaps")
+        return [{ command: "editor.toggleItalic", key: "Mod-x", when: "editorFocus", source: "user" }];
+      if (cmd === "get_default_keymaps")
+        return [{ command: "editor.toggleItalic", key: "Mod-i", when: "editorFocus", source: "default" }];
+      if (cmd === "get_menu_shortcuts") return [];
+      if (cmd === "save_user_keymaps") return undefined;
+      return [];
+    });
+
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+
+    const resetBtn = container.querySelector("[data-testid='reset-binding-btn']")!;
+    fireEvent.click(resetBtn);
+
+    // Undo the reset
+    const undoBtn = container.querySelector("[data-testid='undo-btn']")!;
+    fireEvent.click(undoBtn);
+
+    // Should revert to user-modified Mod-x with User badge
+    const badge = container.querySelector("[data-testid='source-badge']");
+    expect(badge!.textContent).toBe("User");
+  });
+
+  it("undo after reset shows toast with 'Undid change to {label}'", async () => {
+    _clear();
+    registerCommand({ id: "editor.toggleItalic", label: "Toggle Italic", keywords: ["italic"], action: () => {} });
+    mockInvoke((cmd) => {
+      if (cmd === "get_keymaps")
+        return [{ command: "editor.toggleItalic", key: "Mod-x", when: "editorFocus", source: "user" }];
+      if (cmd === "get_default_keymaps")
+        return [{ command: "editor.toggleItalic", key: "Mod-i", when: "editorFocus", source: "default" }];
+      if (cmd === "get_menu_shortcuts") return [];
+      if (cmd === "save_user_keymaps") return undefined;
+      return [];
+    });
+
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+
+    const resetBtn = container.querySelector("[data-testid='reset-binding-btn']")!;
+    fireEvent.click(resetBtn);
+
+    const undoBtn = container.querySelector("[data-testid='undo-btn']")!;
+    fireEvent.click(undoBtn);
+
+    const toast = document.body.querySelector("[data-testid='toast']");
+    expect(toast).not.toBeNull();
+    expect(toast!.textContent).toContain("Undid change to Toggle Italic");
+  });
+
+  // --- Fix 2: Per-binding menu guard in mixed entry ---
+
+  it("clicking a menu-source binding in a mixed entry does NOT open KeyRecorder", async () => {
+    _clear();
+    registerCommand({ id: "app.commandPalette", label: "Command Palette", keywords: ["palette"], action: () => {} });
+    mockInvoke((cmd) => {
+      if (cmd === "get_keymaps")
+        return [
+          { command: "app.commandPalette", key: "Mod-k", source: "default" },
+        ];
+      if (cmd === "get_menu_shortcuts")
+        return [
+          { command: "app.commandPalette", key: "Mod-p", source: "menu" },
+        ];
+      return [];
+    });
+
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+
+    const rows = container.querySelectorAll("tbody tr");
+    const paletteRow = Array.from(rows).find((r) => r.textContent?.includes("Command Palette"));
+    const chords = paletteRow!.querySelectorAll("[data-testid='key-chord']");
+    // Find the menu-source chord (Mod-p) — it's the one from menu_shortcuts
+    const menuChord = Array.from(chords).find((c) => c.textContent?.includes("⌘P"));
+    expect(menuChord).toBeDefined();
+    fireEvent.click(menuChord!.parentElement!);
+
+    expect(container.querySelector("[data-testid='key-recorder']")).toBeNull();
+  });
+
+  it("individual menu-source chord in mixed entry has cursor-default", async () => {
+    _clear();
+    registerCommand({ id: "app.commandPalette", label: "Command Palette", keywords: ["palette"], action: () => {} });
+    mockInvoke((cmd) => {
+      if (cmd === "get_keymaps")
+        return [
+          { command: "app.commandPalette", key: "Mod-k", source: "default" },
+        ];
+      if (cmd === "get_menu_shortcuts")
+        return [
+          { command: "app.commandPalette", key: "Mod-p", source: "menu" },
+        ];
+      return [];
+    });
+
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+
+    const rows = container.querySelectorAll("tbody tr");
+    const paletteRow = Array.from(rows).find((r) => r.textContent?.includes("Command Palette"));
+    const chords = paletteRow!.querySelectorAll("[data-testid='key-chord']");
+    const menuChord = Array.from(chords).find((c) => c.textContent?.includes("⌘P"));
+    const chordWrapper = menuChord!.parentElement!;
+    expect(chordWrapper.className).toContain("cursor-default");
+  });
+
+  it("clicking a non-menu binding in a mixed entry still opens KeyRecorder", async () => {
+    _clear();
+    registerCommand({ id: "app.commandPalette", label: "Command Palette", keywords: ["palette"], action: () => {} });
+    mockInvoke((cmd) => {
+      if (cmd === "get_keymaps")
+        return [
+          { command: "app.commandPalette", key: "Mod-k", source: "default" },
+        ];
+      if (cmd === "get_menu_shortcuts")
+        return [
+          { command: "app.commandPalette", key: "Mod-p", source: "menu" },
+        ];
+      return [];
+    });
+
+    const { container } = render(<KeyboardShortcutsPanel platform="mac" />);
+    await waitForLoaded(container);
+
+    const rows = container.querySelectorAll("tbody tr");
+    const paletteRow = Array.from(rows).find((r) => r.textContent?.includes("Command Palette"));
+    const chords = paletteRow!.querySelectorAll("[data-testid='key-chord']");
+    // Click the non-menu chord (Mod-k)
+    const defaultChord = Array.from(chords).find((c) => c.textContent?.includes("⌘K"));
+    expect(defaultChord).toBeDefined();
+    fireEvent.click(defaultChord!.parentElement!);
+
+    expect(container.querySelector("[data-testid='key-recorder']")).not.toBeNull();
+  });
+
   // --- Feature A: Click-away (blur) confirms integration ---
 
   it("blurring KeyRecorder after capturing a key applies the rebind", async () => {
@@ -1250,7 +1415,7 @@ describe("KeyboardShortcutsPanel", () => {
     await clickKeybindingCell(container, "Toggle Italic");
     await recordKey(container, "x", "KeyX", { metaKey: true });
 
-    const toast = container.querySelector("[data-testid='toast']");
+    const toast = document.body.querySelector("[data-testid='toast']");
     expect(toast).not.toBeNull();
     expect(toast!.textContent).toContain("Toggle Italic");
     expect(toast!.textContent).toContain("⌘X");
@@ -1266,7 +1431,7 @@ describe("KeyboardShortcutsPanel", () => {
     const rebindBtn = container.querySelector("[data-testid='conflict-rebind-btn']")!;
     fireEvent.click(rebindBtn);
 
-    const toast = container.querySelector("[data-testid='toast']");
+    const toast = document.body.querySelector("[data-testid='toast']");
     expect(toast).not.toBeNull();
     expect(toast!.textContent).toContain("Toggle Italic");
   });
@@ -1383,7 +1548,7 @@ describe("KeyboardShortcutsPanel", () => {
 
     fireEvent.click(container.querySelector("[data-testid='undo-btn']")!);
 
-    const toast = container.querySelector("[data-testid='toast']");
+    const toast = document.body.querySelector("[data-testid='toast']");
     expect(toast).not.toBeNull();
     expect(toast!.textContent).toContain("Undid");
     expect(toast!.textContent).toContain("Toggle Italic");

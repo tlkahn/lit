@@ -222,6 +222,40 @@ describe("KeyRecorder", () => {
     });
   });
 
+  describe("double-fire guard", () => {
+    it("onConfirm is called at most once when Enter and blur fire consecutively", () => {
+      const onConfirm = vi.fn();
+      const { container } = render(<KeyRecorder platform="mac" onConfirm={onConfirm} />);
+      const recorder = container.querySelector("[data-testid='key-recorder']")!;
+      fireEvent.click(recorder);
+      fireEvent.keyDown(recorder, { key: "b", metaKey: true });
+      // Confirm via Enter
+      fireEvent.keyDown(recorder, { key: "Enter" });
+      // Immediately blur (simulates focus moving after Enter)
+      fireEvent.blur(recorder);
+      expect(onConfirm).toHaveBeenCalledTimes(1);
+      expect(onConfirm).toHaveBeenCalledWith("Mod-b");
+    });
+
+    it("after a completed recording (Enter), clicking again to start a new session still works", () => {
+      const onConfirm = vi.fn();
+      const { container } = render(<KeyRecorder platform="mac" onConfirm={onConfirm} />);
+      const recorder = container.querySelector("[data-testid='key-recorder']")!;
+      // First session
+      fireEvent.click(recorder);
+      fireEvent.keyDown(recorder, { key: "b", metaKey: true });
+      fireEvent.keyDown(recorder, { key: "Enter" });
+      expect(onConfirm).toHaveBeenCalledTimes(1);
+      // Start new session
+      fireEvent.click(recorder);
+      expect(recorder.getAttribute("data-state")).toBe("recording");
+      fireEvent.keyDown(recorder, { key: "k", metaKey: true });
+      fireEvent.blur(recorder);
+      expect(onConfirm).toHaveBeenCalledTimes(2);
+      expect(onConfirm).toHaveBeenLastCalledWith("Mod-k");
+    });
+  });
+
   describe("blur behavior", () => {
     it("blur in captured state calls onConfirm with captured notation", () => {
       const onConfirm = vi.fn();

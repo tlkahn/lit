@@ -119,6 +119,7 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [lastSnapshot, setLastSnapshot] = useState<CommandBindingEntry[] | null>(null);
   const [lastUndoLabel, setLastUndoLabel] = useState<string>("");
+  const dismissToast = useCallback(() => setToastMessage(null), []);
 
   const persistAndReload = useCallback(async (updatedEntries: CommandBindingEntry[]) => {
     const allCurrent = updatedEntries.flatMap((e) => e.bindings);
@@ -264,6 +265,10 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
     const binding = entry.bindings[bindingIndex];
     if (!binding) return;
 
+    const commandLabel = entry.command?.label ?? commandId;
+    setLastSnapshot(entries);
+    setLastUndoLabel(commandLabel);
+
     const defaultBinding = defaultsRef.current.find(
       (d) => d.command === commandId && (d.when ?? "") === (binding.when ?? ""),
     );
@@ -303,7 +308,7 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
   const handleUndo = useCallback(() => {
     if (!lastSnapshot) return;
     setEntries(lastSnapshot);
-    setToastMessage(`Undid rebind of ${lastUndoLabel}`);
+    setToastMessage(`Undid change to ${lastUndoLabel}`);
     persistAndReload(lastSnapshot).catch((err) => setSaveError(err instanceof Error ? err.message : String(err)));
     setLastSnapshot(null);
   }, [lastSnapshot, lastUndoLabel, persistAndReload]);
@@ -336,8 +341,8 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
   }
 
   return (
-    <div data-testid="keyboard-shortcuts-panel" className="relative flex flex-col h-full" tabIndex={-1} onKeyDown={handlePanelKeyDown}>
-      <Toast message={toastMessage ?? ""} visible={toastMessage !== null} onDismiss={() => setToastMessage(null)} />
+    <div data-testid="keyboard-shortcuts-panel" className="flex flex-col h-full" tabIndex={-1} onKeyDown={handlePanelKeyDown}>
+      <Toast message={toastMessage ?? ""} visible={toastMessage !== null} onDismiss={dismissToast} />
       <div className="px-1 pb-3 flex items-center gap-3">
         <input
           data-testid="shortcuts-filter"
@@ -567,7 +572,10 @@ function EntryRow({
           <span className="inline-flex flex-wrap gap-1 items-center">
             {entry.bindings.map((b, i) => (
               <span key={i} className="inline-flex items-center gap-0.5">
-                <span onClick={(e) => { e.stopPropagation(); if (!isMenuOnly) onStartEdit(entry.commandId, i); }}>
+                <span
+                  className={b.source === "menu" ? "cursor-default opacity-60" : ""}
+                  onClick={(e) => { e.stopPropagation(); if (b.source !== "menu") onStartEdit(entry.commandId, i); }}
+                >
                   <KeyChord chord={b.key} platform={platform} />
                 </span>
                 {b.source === "user" && (

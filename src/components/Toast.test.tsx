@@ -12,8 +12,8 @@ describe("Toast", () => {
   });
 
   it("renders message text when visible", () => {
-    const { container } = render(<Toast message="Saved!" visible={true} onDismiss={() => {}} />);
-    const toast = container.querySelector("[data-testid='toast']");
+    render(<Toast message="Saved!" visible={true} onDismiss={() => {}} />);
+    const toast = document.body.querySelector("[data-testid='toast']");
     expect(toast).not.toBeNull();
     expect(toast!.textContent).toContain("Saved!");
   });
@@ -31,10 +31,18 @@ describe("Toast", () => {
     expect(onDismiss).toHaveBeenCalledTimes(1);
   });
 
-  it("has positioning classes", () => {
-    const { container } = render(<Toast message="Hi" visible={true} onDismiss={() => {}} />);
-    const toast = container.querySelector("[data-testid='toast']")!;
-    expect(toast.className).toContain("absolute");
+  it("renders as a child of document.body via portal, not inside its parent container", () => {
+    const { container } = render(<div id="wrapper"><Toast message="Hi" visible={true} onDismiss={() => {}} /></div>);
+    const toastInsideWrapper = container.querySelector("[data-testid='toast']");
+    expect(toastInsideWrapper).toBeNull();
+    const toastInBody = document.body.querySelector("[data-testid='toast']");
+    expect(toastInBody).not.toBeNull();
+  });
+
+  it("has fixed positioning classes", () => {
+    render(<Toast message="Hi" visible={true} onDismiss={() => {}} />);
+    const toast = document.body.querySelector("[data-testid='toast']")!;
+    expect(toast.className).toContain("fixed");
     expect(toast.className).toContain("top-3");
     expect(toast.className).toContain("right-3");
   });
