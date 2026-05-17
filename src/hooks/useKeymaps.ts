@@ -51,6 +51,7 @@ function ensureCommandsRegistered() {
     keywords: ["sidebar", "side", "panel", "hide", "show"],
     action: () => {
       const current = usePreferencesStore.getState().sidebarVisible;
+      usePreferencesStore.setState({ sidebarVisible: !current });
       setPreference("workbench.sideBar.visible", !current).catch(console.error);
     },
   });

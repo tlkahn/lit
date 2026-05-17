@@ -174,6 +174,54 @@ describe("useKeymaps", () => {
     expect(capturedArgs!.args).toEqual({ key: "workbench.sideBar.visible", value: false });
   });
 
+  it("workbench.toggleSideBar updates store synchronously before IPC", async () => {
+    usePreferencesStore.setState({ sidebarVisible: true });
+    await loadHook();
+
+    mockInvoke((cmd) => {
+      if (cmd === "set_preference") return undefined;
+      if (cmd === "get_keymaps") return [];
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    executeCommand("workbench.toggleSideBar");
+    expect(usePreferencesStore.getState().sidebarVisible).toBe(false);
+  });
+
+  it("double-toggle restores original sidebarVisible state", async () => {
+    usePreferencesStore.setState({ sidebarVisible: true });
+    await loadHook();
+
+    mockInvoke((cmd) => {
+      if (cmd === "set_preference") return undefined;
+      if (cmd === "get_keymaps") return [];
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    executeCommand("workbench.toggleSideBar");
+    executeCommand("workbench.toggleSideBar");
+    expect(usePreferencesStore.getState().sidebarVisible).toBe(true);
+  });
+
+  it("workbench.toggleSideBar still fires IPC set_preference", async () => {
+    usePreferencesStore.setState({ sidebarVisible: true });
+    await loadHook();
+
+    const ipcCalls: Array<{ key: string; value: unknown }> = [];
+    mockInvoke((cmd, args) => {
+      if (cmd === "set_preference") {
+        ipcCalls.push(args as { key: string; value: unknown });
+        return undefined;
+      }
+      if (cmd === "get_keymaps") return [];
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    executeCommand("workbench.toggleSideBar");
+    expect(ipcCalls).toHaveLength(1);
+    expect(ipcCalls[0]).toEqual({ key: "workbench.sideBar.visible", value: false });
+  });
+
   it("dispatching lit:keymaps-changed re-fetches keymaps and updates editorBindings", async () => {
     const { result } = await loadHook();
     await waitFor(() => expect(result.current.loading).toBe(false));
