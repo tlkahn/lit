@@ -10,10 +10,12 @@ import { SettingsTextInput } from "./SettingsTextInput";
 import { HighlightedText } from "./HighlightedText";
 import { SettingsJsonEditor } from "./SettingsJsonEditor";
 import { CATEGORIES, SETTINGS_REGISTRY, STORE_FIELDS, filterSettings, type Category, type SettingEntry, type FilteredSetting, type PreferenceField } from "../lib/settingsRegistry";
+import { KeyboardShortcutsPanel } from "./KeyboardShortcutsPanel";
 
 interface SettingsModalProps {
   open: boolean;
   onClose: () => void;
+  initialCategory?: Category;
 }
 
 function setRegistryPref(storeField: PreferenceField, jsonKey: string, value: unknown) {
@@ -78,7 +80,7 @@ function renderControl(
 
 const textEntries = SETTINGS_REGISTRY.filter((e) => e.controlType === "text");
 
-export function SettingsModal({ open, onClose }: SettingsModalProps) {
+export function SettingsModal({ open, onClose, initialCategory }: SettingsModalProps) {
   const prefs = usePreferencesStore(useShallow((s) => {
     const obj: Record<string, unknown> = {};
     for (const f of STORE_FIELDS) obj[f] = s[f];
@@ -120,9 +122,11 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     if (open) {
       setSearchQuery("");
       setJsonMode(false);
+      if (initialCategory) setActiveCategory(initialCategory);
+      else setActiveCategory(CATEGORIES[0]);
       searchInputRef.current?.focus();
     }
-  }, [open]);
+  }, [open, initialCategory]);
 
   const [localTextValues, setLocalTextValues] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
@@ -204,7 +208,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
         data-testid="settings-modal-dialog"
         onClick={(e) => e.stopPropagation()}
       >
-        {!jsonMode && (
+        {!jsonMode && activeCategory !== "Keyboard Shortcuts" && (
           <div className="order-2 px-5 pb-2">
             <input
               ref={searchInputRef}
@@ -273,12 +277,16 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   setActiveCategory(nextCat);
                   const buttons = (e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>("button");
                   buttons[idx]?.focus();
-                  const section = document.getElementById(`settings-section-${nextCat}`);
-                  section?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  if (nextCat !== "Keyboard Shortcuts") {
+                    const section = document.getElementById(`settings-section-${nextCat}`);
+                    section?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }
                 }}
               >
                 {CATEGORIES.map((cat) => {
-                  const hasMatches = matchedCategories ? matchedCategories.has(cat) : undefined;
+                  const hasMatches = matchedCategories
+                    ? cat === "Keyboard Shortcuts" ? undefined : matchedCategories.has(cat)
+                    : undefined;
                   return (
                     <button
                       key={cat}
@@ -287,12 +295,14 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                       {...(hasMatches !== undefined && { "data-has-matches": String(hasMatches) })}
                       className={`text-left px-2 py-1 rounded text-sm ${cat === activeCategory ? "bg-bg-secondary text-text-normal" : "text-text-muted hover:bg-bg-secondary"} ${hasMatches === false ? "opacity-40" : ""}`}
                       onClick={() => {
-                        if (searchQuery !== "" && matchedCategories && !matchedCategories.has(cat)) {
+                        if (cat !== "Keyboard Shortcuts" && searchQuery !== "" && matchedCategories && !matchedCategories.has(cat)) {
                           flushSync(() => setSearchQuery(""));
                         }
                         setActiveCategory(cat);
-                        const section = document.getElementById(`settings-section-${cat}`);
-                        section?.scrollIntoView({ behavior: "smooth", block: "start" });
+                        if (cat !== "Keyboard Shortcuts") {
+                          const section = document.getElementById(`settings-section-${cat}`);
+                          section?.scrollIntoView({ behavior: "smooth", block: "start" });
+                        }
                       }}
                     >
                       {cat}
@@ -301,13 +311,15 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 })}
               </nav>
               <div className="flex-1 overflow-y-auto px-5 pb-5">
-                {filteredResults.length === 0 && searchQuery !== "" ? (
+                {activeCategory === "Keyboard Shortcuts" ? (
+                  <KeyboardShortcutsPanel />
+                ) : filteredResults.length === 0 && searchQuery !== "" ? (
                   <div data-testid="settings-no-results" className="py-8 text-center text-sm text-text-muted">
                     No matching settings
                   </div>
                 ) : (
                   Array.from(filteredGroups)
-                    .filter(([, results]) => results.length > 0)
+                    .filter(([cat, results]) => cat !== "Keyboard Shortcuts" && results.length > 0)
                     .map(([cat, results], i) => (
                       <section key={cat} id={`settings-section-${cat}`} className={i > 0 ? "mt-5" : undefined}>
                         <h3 className="text-sm font-medium text-text-muted mb-3">{cat}</h3>

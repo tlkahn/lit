@@ -64,6 +64,14 @@ function ensureCommandsRegistered() {
     window.dispatchEvent(new CustomEvent("lit:toggle-command-palette"));
   });
   registerCommand({
+    id: "app.openKeyboardShortcuts",
+    label: "Keyboard Shortcuts",
+    keywords: ["shortcut", "keybinding", "hotkey", "keymap"],
+    action: () => {
+      window.dispatchEvent(new CustomEvent("lit:open-keyboard-shortcuts"));
+    },
+  });
+  registerCommand({
     id: "app.showGraphView",
     label: "Show Graph View",
     keywords: ["graph", "network", "visualize"],

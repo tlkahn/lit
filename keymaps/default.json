@@ -15,5 +15,6 @@
   { "key": "Mod-Shift-:", "command": "app.insertAnnotation" },
   { "key": "Mod-Shift-g", "command": "app.showGraphView" },
   { "key": "Mod-d", "command": "editor.selectNextOccurrence", "when": "editorFocus" },
-  { "key": "Mod-\\", "command": "workbench.toggleSideBar" }
+  { "key": "Mod-\\", "command": "workbench.toggleSideBar" },
+  { "key": "Mod-Shift-k", "command": "app.openKeyboardShortcuts" }
 ]

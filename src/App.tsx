@@ -118,6 +118,7 @@ function App() {
   const [selectionText, setSelectionText] = useState<string | undefined>();
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialCategory, setSettingsInitialCategory] = useState<"Keyboard Shortcuts" | undefined>();
   const [licenseEntryOpen, setLicenseEntryOpen] = useState(false);
   const [licenseInfoOpen, setLicenseInfoOpen] = useState(false);
   const licenseState = useLicenseStore((s) => s.state);
@@ -214,9 +215,21 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const handler = () => setSettingsOpen(true);
+    const handler = () => {
+      setSettingsInitialCategory(undefined);
+      setSettingsOpen(true);
+    };
     window.addEventListener("lit:open-settings", handler);
     return () => window.removeEventListener("lit:open-settings", handler);
+  }, []);
+
+  useEffect(() => {
+    const handler = () => {
+      setSettingsInitialCategory("Keyboard Shortcuts");
+      setSettingsOpen(true);
+    };
+    window.addEventListener("lit:open-keyboard-shortcuts", handler);
+    return () => window.removeEventListener("lit:open-keyboard-shortcuts", handler);
   }, []);
 
   useEffect(() => {
@@ -335,7 +348,7 @@ function App() {
             initialFields={editingAnnotation ? annotationToFields(editingAnnotation) : undefined}
           />
         )}
-        <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+        <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} initialCategory={settingsInitialCategory} />
         <LicenseEntryDialog open={licenseEntryOpen} onClose={() => setLicenseEntryOpen(false)} />
         <LicenseInfoDialog open={licenseInfoOpen} licenseState={licenseState} licensedTo={licensedTo} daysRemaining={daysRemaining} onClose={() => setLicenseInfoOpen(false)} />
       </div>

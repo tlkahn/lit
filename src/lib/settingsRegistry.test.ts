@@ -31,19 +31,21 @@ describe("CATEGORIES", () => {
       "Cross-references",
       "Annotations",
       "Experimental",
+      "Keyboard Shortcuts",
     ]);
   });
 });
 
 describe("groupByCategory", () => {
-  it("returns Map with 5 keys and correct counts", () => {
+  it("returns Map with 6 keys and correct counts", () => {
     const grouped = groupByCategory(SETTINGS_REGISTRY);
-    expect(grouped.size).toBe(5);
+    expect(grouped.size).toBe(6);
     expect(grouped.get("Appearance")).toHaveLength(4);
     expect(grouped.get("Editor")).toHaveLength(3);
     expect(grouped.get("Cross-references")).toHaveLength(3);
     expect(grouped.get("Annotations")).toHaveLength(4);
     expect(grouped.get("Experimental")).toHaveLength(1);
+    expect(grouped.get("Keyboard Shortcuts")).toHaveLength(0);
   });
 
   it("preserves CATEGORIES order", () => {

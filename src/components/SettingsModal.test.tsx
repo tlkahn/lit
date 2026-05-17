@@ -30,6 +30,7 @@ beforeEach(() => {
   invokeCalls = [];
   mockInvoke((cmd, args) => {
     invokeCalls.push({ cmd, args: args ?? {} });
+    if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
     return undefined;
   });
   usePreferencesStore.setState(defaults);

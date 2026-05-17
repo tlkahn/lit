@@ -7,6 +7,7 @@ export const CATEGORIES = [
   "Cross-references",
   "Annotations",
   "Experimental",
+  "Keyboard Shortcuts",
 ] as const;
 
 export type Category = (typeof CATEGORIES)[number];
