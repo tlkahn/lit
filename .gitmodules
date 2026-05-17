@@ -1,3 +1,0 @@
-[submodule "llm-rs"]
-	path = llm-rs
-	url = https://github.com/tlkahn/llm-rs.git

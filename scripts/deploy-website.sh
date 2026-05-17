@@ -20,9 +20,8 @@ git clone --depth 1 "$WEBSITE_REPO" "$WEBSITE_DIR"
 
 if [ -n "$TAG" ]; then
   if ! command -v llm >/dev/null 2>&1; then
-    echo "==> Building llm CLI from submodule"
-    (cd llm-rs && cargo build --release -p llm-cli)
-    export PATH="$PWD/llm-rs/target/release:$PATH"
+    echo "==> Installing llm CLI"
+    cargo install llm-cmd
   fi
   echo "==> Generating release notes for $TAG"
   bash "$SCRIPT_DIR/generate-release-notes.sh" --force "$TAG" || echo "    (generation failed, will use existing notes if any)"
@@ -45,10 +44,12 @@ if [ -n "$TAG" ]; then
   URL="https://lit.solar/releases/Lit_${TAG}_aarch64.dmg"
   LABEL="Download ${TAG} for Mac"
 
-  sed -i '' "s|^download_url:.*|download_url: \"$URL\"|"       "$WEBSITE_DIR/content/_index.md"
-  sed -i '' "s|^download_label:.*|download_label: \"$LABEL\"|" "$WEBSITE_DIR/content/_index.md"
-  sed -i '' "s|^  downloadURL = .*|  downloadURL = '$URL'|"    "$WEBSITE_DIR/hugo.toml"
-  sed -i '' "s|^  version = .*|  version = '$VERSION'|"        "$WEBSITE_DIR/hugo.toml"
+  INDEX="$WEBSITE_DIR/content/_index.md"
+  TOML="$WEBSITE_DIR/hugo.toml"
+  sed "s|^download_url:.*|download_url: \"$URL\"|" "$INDEX" > "$INDEX.tmp" && mv "$INDEX.tmp" "$INDEX"
+  sed "s|^download_label:.*|download_label: \"$LABEL\"|" "$INDEX" > "$INDEX.tmp" && mv "$INDEX.tmp" "$INDEX"
+  sed "s|^  downloadURL = .*|  downloadURL = '$URL'|" "$TOML" > "$TOML.tmp" && mv "$TOML.tmp" "$TOML"
+  sed "s|^  version = .*|  version = '$VERSION'|" "$TOML" > "$TOML.tmp" && mv "$TOML.tmp" "$TOML"
 
   echo "==> Pushing content update to website repo"
   (cd "$WEBSITE_DIR" &&

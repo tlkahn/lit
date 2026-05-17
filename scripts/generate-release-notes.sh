@@ -45,7 +45,7 @@ FROM_TAG="${POSITIONAL[1]:-}"
 
 # --- Preflight checks ---
 
-command -v llm >/dev/null 2>&1 || die "'llm' not found in PATH. Install it: pip install llm (https://llm.datasette.io)"
+command -v llm >/dev/null 2>&1 || die "'llm' not found in PATH. Install it: cargo install llm-cmd"
 
 git rev-parse "$TAG" >/dev/null 2>&1 || die "Tag '$TAG' does not exist in this repository."
 

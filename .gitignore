@@ -37,6 +37,9 @@ src-tauri/libs/
 src-tauri/WixTools/
 src-tauri/Frameworks/
 
+# cargo install staging (used by scripts/stage-llm.sh)
+llm-install/
+
 # Documentation (separate repo)
 doc/
 spec/

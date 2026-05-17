@@ -13,7 +13,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: true
           fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
         with:
@@ -21,9 +20,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
         with:
-          workspaces: |
-            src-tauri
-            llm-rs
+          workspaces: src-tauri
           key: aarch64-apple-darwin
       - name: Configure git for private deps
         run: git config --global url."https://${{ secrets.PUBLIC_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
@@ -40,13 +37,11 @@ jobs:
           touch binaries/lit-cli-aarch64-apple-darwin
           cargo build --release --bin lit-cli --target aarch64-apple-darwin
           cp target/aarch64-apple-darwin/release/lit-cli binaries/lit-cli-aarch64-apple-darwin
-      - name: Pre-build llm
+      - name: Install and stage llm binary
         run: |
-          cd llm-rs
-          cargo build --release -p llm-cli --target aarch64-apple-darwin
-          cd ..
+          cargo install llm-cmd --target aarch64-apple-darwin --root ./llm-install
           mkdir -p src-tauri/binaries
-          cp llm-rs/target/aarch64-apple-darwin/release/llm src-tauri/binaries/llm-aarch64-apple-darwin
+          cp ./llm-install/bin/llm src-tauri/binaries/llm-aarch64-apple-darwin
       - name: Import Apple Developer Certificate
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
