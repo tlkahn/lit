@@ -153,7 +153,8 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
 
   setPanePage: (paneId, pagePath) => {
     const { root } = get();
-    if (!findLeaf(root, paneId)) return;
+    const leaf = findLeaf(root, paneId);
+    if (!leaf || leaf.pagePath === pagePath) return;
     const newRoot = replaceLeaf(root, paneId, { type: "leaf", id: paneId, pagePath });
     set({ root: newRoot });
   },
@@ -170,4 +171,4 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
   closePane: () => {},
   focusNext: () => {},
   focusPrev: () => {},
-}))
+}));

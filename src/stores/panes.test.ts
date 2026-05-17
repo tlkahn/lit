@@ -415,6 +415,13 @@ describe("Section B: Store", () => {
       usePaneStore.getState().setPanePage("missing", "hello.md");
       expect(usePaneStore.getState().root).toBe(before);
     });
+
+    it("no-op when pagePath is already the target value (root same ref)", () => {
+      usePaneStore.getState().setPanePage("test-root", "same.md");
+      const before = usePaneStore.getState().root;
+      usePaneStore.getState().setPanePage("test-root", "same.md");
+      expect(usePaneStore.getState().root).toBe(before);
+    });
   });
 
   describe("resize", () => {
