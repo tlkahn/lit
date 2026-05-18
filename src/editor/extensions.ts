@@ -38,6 +38,7 @@ export interface ExtensionConfig {
   mediaThumbnails?: boolean;
   keymapBindings?: import("@codemirror/view").KeyBinding[];
   onChange?: (content: string) => void;
+  onSelectionChange?: (line: number, col: number) => void;
   openUrl?: (url: string) => void;
   openFilePath?: (path: string) => void;
   resolveImageSrc?: (src: string) => string;
@@ -79,6 +80,11 @@ export function createExtensions(config: ExtensionConfig): Extension[] {
     EditorView.updateListener.of((update) => {
       if (update.docChanged && config.onChange) {
         config.onChange(update.state.doc.toString());
+      }
+      if (update.view.hasFocus && (update.selectionSet || update.focusChanged) && config.onSelectionChange) {
+        const pos = update.state.selection.main.head;
+        const line = update.state.doc.lineAt(pos);
+        config.onSelectionChange(line.number, pos - line.from + 1);
       }
     }),
   ];

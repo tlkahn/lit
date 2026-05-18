@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { StatusBar } from "./StatusBar";
 import { useWorkspaceStore } from "../stores/workspace";
+import { usePaneStore } from "../stores/panes";
+import { useCursorInfoStore } from "../stores/cursorInfo";
 
 beforeEach(() => {
   useWorkspaceStore.setState({
@@ -9,11 +11,20 @@ beforeEach(() => {
     graphReady: false,
     indexProgress: null,
   });
+  usePaneStore.setState({
+    root: { type: "leaf", id: "p1", pagePath: null },
+    focusedPaneId: "p1",
+  });
+  useCursorInfoStore.setState({ line: 0, col: 0 });
 });
 
 describe("StatusBar", () => {
-  it("renders nothing when graphReady is true", () => {
+  it("renders nothing when graphReady is true but no pagePath", () => {
     useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+    usePaneStore.setState({
+      root: { type: "leaf", id: "p1", pagePath: null },
+      focusedPaneId: "p1",
+    });
     const { container } = render(<StatusBar />);
     expect(container.innerHTML).toBe("");
   });
@@ -70,5 +81,48 @@ describe("StatusBar", () => {
     render(<StatusBar />);
     const fill = screen.getByTestId("status-bar-fill");
     expect(fill.className).toContain("animate-pulse");
+  });
+
+  it("shows file path when graphReady and pane has pagePath", () => {
+    useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+    usePaneStore.setState({
+      root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
+      focusedPaneId: "p1",
+    });
+    render(<StatusBar />);
+    expect(screen.getByTestId("status-bar-path")).toHaveTextContent("notes/hello.md");
+  });
+
+  it("shows cursor position Ln X, Col Y", () => {
+    useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+    usePaneStore.setState({
+      root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
+      focusedPaneId: "p1",
+    });
+    useCursorInfoStore.setState({ line: 5, col: 10 });
+    render(<StatusBar />);
+    expect(screen.getByTestId("status-bar-cursor")).toHaveTextContent("Ln 5, Col 10");
+  });
+
+  it("hides cursor position when line is 0", () => {
+    useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+    usePaneStore.setState({
+      root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
+      focusedPaneId: "p1",
+    });
+    useCursorInfoStore.setState({ line: 0, col: 0 });
+    render(<StatusBar />);
+    expect(screen.getByTestId("status-bar-path")).toBeInTheDocument();
+    expect(screen.queryByTestId("status-bar-cursor")).toBeNull();
+  });
+
+  it("still shows indexing progress when graphReady is false", () => {
+    useWorkspaceStore.setState({
+      workspacePath: "/test",
+      graphReady: false,
+      indexProgress: { phase: "scanning", current: 1, total: 5 },
+    });
+    render(<StatusBar />);
+    expect(screen.getByTestId("status-bar")).toHaveTextContent("Scanning files...");
   });
 });

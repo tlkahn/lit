@@ -5,6 +5,7 @@ import { EditorView } from "@codemirror/view";
 import { EditorSelection } from "@codemirror/state";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import { useWorkspaceStore } from "../stores/workspace";
+import { useCursorInfoStore } from "../stores/cursorInfo";
 import { usePageContent } from "../hooks/usePageContent";
 import { useKeymaps } from "../hooks/useKeymaps";
 import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
@@ -56,6 +57,10 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
     },
     [paneId],
   );
+
+  const handleSelectionChange = useCallback((line: number, col: number) => {
+    useCursorInfoStore.getState().setCursorInfo(line, col);
+  }, []);
 
   const handleFocus = useCallback(() => {
     usePaneStore.getState().focusPane(paneId);
@@ -197,6 +202,7 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
         doc={body}
         frontmatter={frontmatter}
         onChange={handleChange}
+        onSelectionChange={handleSelectionChange}
         onViewChange={handleViewChange}
         keymapBindings={editorBindings}
         noteDir={noteDir}

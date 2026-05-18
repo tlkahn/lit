@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { useEffect } from "react";
 import { usePaneStore } from "../stores/panes";
 import { useWorkspaceStore } from "../stores/workspace";
+import { useCursorInfoStore } from "../stores/cursorInfo";
 import { mockInvoke } from "../test/tauri-mock";
 import * as editorViewRef from "../lib/editorViewRef";
 import type { EditorView } from "@codemirror/view";
@@ -17,6 +18,7 @@ vi.mock("../editor/CodeMirrorEditor", () => ({
     doc: string;
     frontmatter?: Record<string, unknown>;
     onViewChange?: (view: EditorView | null) => void;
+    onSelectionChange?: (line: number, col: number) => void;
     keymapBindings?: unknown[];
     noteDir?: string;
     resolveImageSrc?: (src: string) => string;
@@ -73,6 +75,7 @@ beforeEach(() => {
     currentPagePath: null,
   });
   editorViewRef._resetForTesting();
+  useCursorInfoStore.setState({ line: 0, col: 0 });
 
   mockInvoke((cmd) => {
     if (cmd === "read_page") return samplePage;
@@ -369,6 +372,24 @@ describe("EditorPane", () => {
       await waitFor(() => {
         expect(screen.getByTestId("mock-editor")).toHaveAttribute("data-has-on-doc-replaced", "true");
       });
+    });
+  });
+
+  describe("onSelectionChange", () => {
+    it("updates cursorInfo store on selection change", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onSelectionChange).toBeDefined();
+      });
+      const onSelectionChange = capturedProps.onSelectionChange as (line: number, col: number) => void;
+      onSelectionChange(5, 10);
+      const { line, col } = useCursorInfoStore.getState();
+      expect(line).toBe(5);
+      expect(col).toBe(10);
     });
   });
 });

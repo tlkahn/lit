@@ -17,6 +17,7 @@ export interface UseCodeMirrorProps {
   containerRef: React.RefObject<HTMLDivElement | null>;
   doc: string;
   onChange?: (content: string) => void;
+  onSelectionChange?: (line: number, col: number) => void;
   resolveImageSrc?: (src: string) => string;
   onDocReplaced?: () => void;
   keymapBindings?: CM6KeyBinding[];
@@ -29,7 +30,7 @@ export interface UseCodeMirrorProps {
 export function useCodeMirror(props: UseCodeMirrorProps): {
   view: EditorView | null;
 } {
-  const { containerRef, doc, onChange, resolveImageSrc, onDocReplaced, keymapBindings, frontmatter, noteDir, openFilePath, navigateToPage } = props;
+  const { containerRef, doc, onChange, onSelectionChange, resolveImageSrc, onDocReplaced, keymapBindings, frontmatter, noteDir, openFilePath, navigateToPage } = props;
   const [view, setView] = useState<EditorView | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const themeCompartment = useRef(new Compartment());
@@ -44,6 +45,8 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
   const suppressOnChange = useRef(false);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const onSelectionChangeRef = useRef(onSelectionChange);
+  onSelectionChangeRef.current = onSelectionChange;
   const resolveImageSrcRef = useRef(resolveImageSrc);
   resolveImageSrcRef.current = resolveImageSrc;
   const onDocReplacedRef = useRef(onDocReplaced);
@@ -85,6 +88,7 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
           onChangeRef.current?.(content);
         }
       },
+      onSelectionChange: (line, col) => onSelectionChangeRef.current?.(line, col),
       openFilePath: (path) => openFilePathRef.current?.(path),
       resolveImageSrc: (src) => resolveImageSrcRef.current?.(src) ?? src,
       navigateToPage: (target, section, departurePos) => navigateToPageRef.current?.(target, section, departurePos),

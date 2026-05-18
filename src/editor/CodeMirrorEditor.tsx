@@ -6,6 +6,7 @@ import { EditorSelection } from "@codemirror/state";
 interface CodeMirrorEditorProps {
   doc: string;
   onChange?: (content: string) => void;
+  onSelectionChange?: (line: number, col: number) => void;
   resolveImageSrc?: (src: string) => string;
   viewRef?: React.RefObject<EditorView | null>;
   onViewChange?: (view: EditorView | null) => void;
@@ -18,9 +19,9 @@ interface CodeMirrorEditorProps {
   style?: React.CSSProperties;
 }
 
-export function CodeMirrorEditor({ doc, onChange, resolveImageSrc, viewRef, onViewChange, onDocReplaced, keymapBindings, frontmatter, noteDir, openFilePath, navigateToPage, style }: CodeMirrorEditorProps) {
+export function CodeMirrorEditor({ doc, onChange, onSelectionChange, resolveImageSrc, viewRef, onViewChange, onDocReplaced, keymapBindings, frontmatter, noteDir, openFilePath, navigateToPage, style }: CodeMirrorEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const { view } = useCodeMirror({ containerRef, doc, onChange, resolveImageSrc, onDocReplaced, keymapBindings, frontmatter, noteDir, openFilePath, navigateToPage });
+  const { view } = useCodeMirror({ containerRef, doc, onChange, onSelectionChange, resolveImageSrc, onDocReplaced, keymapBindings, frontmatter, noteDir, openFilePath, navigateToPage });
 
   useEffect(() => {
     if (viewRef) {
