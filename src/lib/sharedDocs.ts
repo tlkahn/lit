@@ -6,8 +6,11 @@ export interface SharedDoc {
   title: string;
   frontmatter: Record<string, unknown>;
   rawYaml: string;
+  loaded: boolean;
   subscribers: Map<string, (newBody: string, fromPaneId: string) => void>;
   saveSettledSubscribers: Map<string, (isDirty: boolean) => void>;
+  contentReloadSubscribers: Map<string, (content: SharedDocContent) => void>;
+  reloadInFlight: boolean;
   saveTimer?: ReturnType<typeof setTimeout>;
   editGen: number;
   saveGen: number;
@@ -25,8 +28,11 @@ export function acquire(pagePath: string, paneId: string): void {
       title: "",
       frontmatter: {},
       rawYaml: "",
+      loaded: false,
       subscribers: new Map(),
       saveSettledSubscribers: new Map(),
+      contentReloadSubscribers: new Map(),
+      reloadInFlight: false,
       editGen: 0,
       saveGen: 0,
       saveInFlightGen: 0,
@@ -76,6 +82,7 @@ export function release(pagePath: string, paneId: string): void {
   doc.panes.delete(paneId);
   doc.subscribers.delete(paneId);
   doc.saveSettledSubscribers.delete(paneId);
+  doc.contentReloadSubscribers.delete(paneId);
   if (doc.panes.size === 0) {
     if (doc.saveTimer) {
       clearTimeout(doc.saveTimer);
@@ -111,6 +118,7 @@ export function setContent(pagePath: string, content: SharedDocContent): void {
   doc.title = content.title;
   doc.frontmatter = content.frontmatter;
   doc.rawYaml = content.rawYaml;
+  doc.loaded = true;
 }
 
 export function setBody(pagePath: string, newBody: string, fromPaneId: string): void {
@@ -159,6 +167,46 @@ export function subscribeSaveSettled(
   return () => {
     doc.saveSettledSubscribers.delete(paneId);
   };
+}
+
+export function subscribeContentReload(
+  pagePath: string,
+  paneId: string,
+  cb: (content: SharedDocContent) => void,
+): () => void {
+  const doc = docs.get(pagePath);
+  if (!doc) return () => {};
+  doc.contentReloadSubscribers.set(paneId, cb);
+  return () => {
+    doc.contentReloadSubscribers.delete(paneId);
+  };
+}
+
+export function startReload(pagePath: string): boolean {
+  const doc = docs.get(pagePath);
+  if (!doc || doc.reloadInFlight) return false;
+  doc.reloadInFlight = true;
+  return true;
+}
+
+export function finishReload(
+  pagePath: string,
+  content: SharedDocContent,
+  fromPaneId: string,
+): void {
+  const doc = docs.get(pagePath);
+  if (!doc) return;
+  doc.reloadInFlight = false;
+  setContent(pagePath, content);
+  for (const [paneId, cb] of doc.contentReloadSubscribers) {
+    if (paneId !== fromPaneId) cb(content);
+  }
+}
+
+export function cancelReload(pagePath: string): void {
+  const doc = docs.get(pagePath);
+  if (!doc) return;
+  doc.reloadInFlight = false;
 }
 
 export function _resetForTesting(): void {

@@ -7,6 +7,10 @@ import {
   setContent,
   subscribe,
   subscribeSaveSettled,
+  subscribeContentReload,
+  startReload,
+  finishReload,
+  cancelReload,
   setBody,
   isDirty,
   isShared,
@@ -332,6 +336,26 @@ describe("SharedDocRegistry", () => {
     });
   });
 
+  describe("loaded flag", () => {
+    it("getDoc after acquire has loaded === false", () => {
+      acquire("notes.md", "p1");
+      const doc = getDoc("notes.md");
+      expect(doc!.loaded).toBe(false);
+    });
+
+    it("setContent sets loaded = true", () => {
+      acquire("notes.md", "p1");
+      setContent("notes.md", {
+        body: "# Hello",
+        title: "Hello",
+        frontmatter: {},
+        rawYaml: "",
+      });
+      const doc = getDoc("notes.md");
+      expect(doc!.loaded).toBe(true);
+    });
+  });
+
   describe("isShared", () => {
     it("returns false with 1 pane", () => {
       acquire("notes.md", "p1");
@@ -353,6 +377,58 @@ describe("SharedDocRegistry", () => {
 
     it("returns false for unknown path", () => {
       expect(isShared("unknown.md")).toBe(false);
+    });
+  });
+
+  describe("reload coordination", () => {
+    it("startReload returns true first call, false while in flight", () => {
+      acquire("notes.md", "p1");
+      expect(startReload("notes.md")).toBe(true);
+      expect(startReload("notes.md")).toBe(false);
+    });
+
+    it("finishReload clears flag, updates content, notifies content-reload subscribers (not fromPaneId)", () => {
+      acquire("notes.md", "p1");
+      acquire("notes.md", "p2");
+      const cb1 = vi.fn();
+      const cb2 = vi.fn();
+      subscribeContentReload("notes.md", "p1", cb1);
+      subscribeContentReload("notes.md", "p2", cb2);
+
+      expect(startReload("notes.md")).toBe(true);
+      const content = { body: "reloaded", title: "R", frontmatter: {}, rawYaml: "" };
+      finishReload("notes.md", content, "p1");
+
+      expect(cb1).not.toHaveBeenCalled();
+      expect(cb2).toHaveBeenCalledOnce();
+      expect(cb2).toHaveBeenCalledWith(content);
+
+      expect(startReload("notes.md")).toBe(true);
+      expect(getDoc("notes.md")!.body).toBe("reloaded");
+    });
+
+    it("cancelReload clears the in-flight flag without notifying", () => {
+      acquire("notes.md", "p1");
+      const cb = vi.fn();
+      subscribeContentReload("notes.md", "p1", cb);
+
+      expect(startReload("notes.md")).toBe(true);
+      cancelReload("notes.md");
+      expect(cb).not.toHaveBeenCalled();
+      expect(startReload("notes.md")).toBe(true);
+    });
+
+    it("release removes content-reload subscriber", () => {
+      acquire("notes.md", "p1");
+      acquire("notes.md", "p2");
+      const cb = vi.fn();
+      subscribeContentReload("notes.md", "p1", cb);
+
+      release("notes.md", "p1");
+
+      startReload("notes.md");
+      finishReload("notes.md", { body: "new", title: "N", frontmatter: {}, rawYaml: "" }, "p2");
+      expect(cb).not.toHaveBeenCalled();
     });
   });
 

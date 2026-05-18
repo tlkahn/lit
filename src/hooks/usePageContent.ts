@@ -13,6 +13,10 @@ import {
   setBody as sharedSetBody,
   subscribe as sharedSubscribe,
   subscribeSaveSettled,
+  subscribeContentReload,
+  startReload,
+  finishReload,
+  cancelReload,
 } from "../lib/sharedDocs";
 import { extractHeadings } from "../lib/headings";
 import { frontmatterLineCount } from "../lib/pathUtils";
@@ -41,7 +45,6 @@ export function usePageContent(
 
   const headingDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const currentPathRef = useRef<string | null>(null);
-  const frontmatterRef = useRef<Record<string, unknown>>({});
   const siblingUpdateRef = useRef(false);
 
   const setCurrentPageHeadings = useWorkspaceStore((s) => s.setCurrentPageHeadings);
@@ -77,14 +80,29 @@ export function usePageContent(
       }
     });
 
+    const unsubContentReload = subscribeContentReload(pagePath, paneId, (content) => {
+      setBody(content.body);
+      setTitle(content.title);
+      setFrontmatter(content.frontmatter);
+      setRawYaml(content.rawYaml);
+      setIsDirty(false);
+      registerPaneContent(paneId, {
+        title: content.title,
+        body: content.body,
+        frontmatter: content.frontmatter,
+        rawYaml: content.rawYaml,
+      });
+      setCurrentPageHeadings(extractHeadings(content.body));
+      setCurrentFrontmatterLineCount(frontmatterLineCount(content.rawYaml));
+    });
+
     const doc = getDoc(pagePath);
-    if (doc && doc.body) {
+    if (doc && doc.loaded) {
       setBody(doc.body);
       setTitle(doc.title);
       setFrontmatter(doc.frontmatter);
       setRawYaml(doc.rawYaml);
       setIsDirty(false);
-      frontmatterRef.current = doc.frontmatter;
       siblingUpdateRef.current = false;
       registerPaneContent(paneId, {
         title: doc.title,
@@ -103,7 +121,6 @@ export function usePageContent(
           setFrontmatter(content.meta.frontmatter);
           setRawYaml(content.raw_yaml);
           setIsDirty(false);
-          frontmatterRef.current = content.meta.frontmatter;
           siblingUpdateRef.current = false;
           setContent(pagePath, {
             body: content.body,
@@ -133,6 +150,7 @@ export function usePageContent(
     return () => {
       unsubBody();
       unsubSave();
+      unsubContentReload();
       if (headingDebounceRef.current) clearTimeout(headingDebounceRef.current);
       release(pagePath, paneId);
     };
@@ -151,25 +169,28 @@ export function usePageContent(
     if (wsIsDirty) {
       acknowledgeFileHash(pagePath);
     } else {
+      if (!startReload(pagePath)) return;
       const view = getCurrentEditorView();
       if (view) {
         saveViewState(pagePath, view.scrollDOM.scrollTop, view.state.selection.main.head);
       }
       readPage(pagePath)
         .then((content) => {
-          if (currentPathRef.current !== pagePath) return;
+          if (currentPathRef.current !== pagePath) {
+            cancelReload(pagePath);
+            return;
+          }
           setBody(content.body);
           setTitle(content.meta.title);
           setFrontmatter(content.meta.frontmatter);
           setRawYaml(content.raw_yaml);
           setIsDirty(false);
-          frontmatterRef.current = content.meta.frontmatter;
-          setContent(pagePath, {
+          finishReload(pagePath, {
             body: content.body,
             title: content.meta.title,
             frontmatter: content.meta.frontmatter,
             rawYaml: content.raw_yaml,
-          });
+          }, paneId);
           registerPaneContent(paneId, {
             title: content.meta.title,
             body: content.body,
@@ -180,6 +201,7 @@ export function usePageContent(
           setCurrentFrontmatterLineCount(frontmatterLineCount(content.raw_yaml));
         })
         .catch(() => {
+          cancelReload(pagePath);
           if (currentPathRef.current !== pagePath) return;
         });
     }

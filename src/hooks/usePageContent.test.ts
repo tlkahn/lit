@@ -756,6 +756,113 @@ describe("usePageContent", () => {
     expect(r2.current.siblingUpdateRef.current).toBe(false);
   });
 
+  it("siblingUpdateRef is false after initial readPage load", async () => {
+    const { result } = renderHook(() => usePageContent("p1", "hello.md"));
+
+    await waitFor(() => {
+      expect(result.current.body).toBe("# Hello\nContent here");
+    });
+
+    expect(result.current.siblingUpdateRef.current).toBe(false);
+  });
+
+  it("second pane on blank page uses cache (no redundant readPage)", async () => {
+    const blankPage = {
+      meta: {
+        title: "Blank",
+        relative_path: "blank.md",
+        frontmatter: {},
+        created_at: null,
+        modified_at: null,
+        file_type: "markdown",
+      },
+      body: "",
+      raw_yaml: "",
+    };
+
+    let readCount = 0;
+    mockInvoke((cmd) => {
+      if (cmd === "read_page") {
+        readCount++;
+        return blankPage;
+      }
+      if (cmd === "write_page") return null;
+      return null;
+    });
+
+    const { result: r1 } = renderHook(() => usePageContent("p1", "blank.md"));
+
+    await waitFor(() => {
+      expect(r1.current.title).toBe("Blank");
+    });
+    expect(readCount).toBe(1);
+
+    const { result: r2 } = renderHook(() => usePageContent("p2", "blank.md"));
+
+    await waitFor(() => {
+      expect(r2.current.title).toBe("Blank");
+    });
+    expect(readCount).toBe(1);
+
+    expect(r2.current.body).toBe("");
+    expect(r2.current.frontmatter).toEqual({});
+    expect(r2.current.rawYaml).toBe("");
+  });
+
+  it("reload with two panes only triggers one readPage and both panes update", async () => {
+    const reloadPage = {
+      meta: {
+        title: "Hello",
+        relative_path: "hello.md",
+        frontmatter: { tags: ["test"] },
+        created_at: null,
+        modified_at: null,
+        file_type: "markdown",
+      },
+      body: "# Hello\nReloaded content",
+      raw_yaml: "tags:\n  - test\n",
+    };
+
+    let readCount = 0;
+    mockInvoke((cmd) => {
+      if (cmd === "read_page") {
+        readCount++;
+        return readCount === 1 ? mockPage : reloadPage;
+      }
+      if (cmd === "write_page") return null;
+      if (cmd === "acknowledge_file_hash") return null;
+      return null;
+    });
+
+    const { result: r1 } = renderHook(() => usePageContent("p1", "hello.md"));
+
+    await waitFor(() => {
+      expect(r1.current.body).toBe("# Hello\nContent here");
+    });
+    expect(readCount).toBe(1);
+
+    const { result: r2 } = renderHook(() => usePageContent("p2", "hello.md"));
+
+    await waitFor(() => {
+      expect(r2.current.body).toBe("# Hello\nContent here");
+    });
+    expect(readCount).toBe(1);
+
+    act(() => {
+      useWorkspaceStore.getState().triggerReload();
+    });
+
+    await waitFor(() => {
+      expect(r1.current.body).toBe("# Hello\nReloaded content");
+    });
+
+    await waitFor(() => {
+      expect(r2.current.body).toBe("# Hello\nReloaded content");
+    });
+
+    expect(readCount).toBe(2);
+  });
+
   it("reload updates currentFrontmatterLineCount", async () => {
     const reloadPage = {
       meta: {
