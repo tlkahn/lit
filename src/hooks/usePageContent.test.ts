@@ -6,6 +6,7 @@ import {
   getPaneContent,
   _resetForTesting,
 } from "../lib/paneContentRegistry";
+import { useWorkspaceStore } from "../stores/workspace";
 import { usePageContent } from "./usePageContent";
 
 const mockPage = {
@@ -22,13 +23,19 @@ const mockPage = {
 };
 
 beforeEach(() => {
-  // shouldAdvanceTime: waitFor polls via setTimeout, which fake timers intercept
   vi.useFakeTimers({ shouldAdvanceTime: true });
   _resetForTesting();
   resetInvokeMock();
+  useWorkspaceStore.setState({
+    currentPageHeadings: [],
+    isDirty: false,
+    reloadTrigger: 0,
+    viewStates: {},
+  });
   mockInvoke((cmd) => {
     if (cmd === "read_page") return mockPage;
     if (cmd === "write_page") return null;
+    if (cmd === "acknowledge_file_hash") return null;
     return null;
   });
 });
@@ -341,5 +348,124 @@ describe("usePageContent", () => {
     });
 
     expect(writeCalls).toHaveLength(0);
+  });
+
+  it("body appears in registry after readPage", async () => {
+    const { result } = renderHook(() => usePageContent("p1", "hello.md"));
+
+    await waitFor(() => {
+      expect(result.current.body).toBe("# Hello\nContent here");
+    });
+
+    const entry = getPaneContent("p1");
+    expect(entry).not.toBeNull();
+    expect(entry!.body).toBe("# Hello\nContent here");
+  });
+
+  it("body updates in registry on handleChange", async () => {
+    const { result } = renderHook(() => usePageContent("p1", "hello.md"));
+
+    await waitFor(() => {
+      expect(result.current.body).toBe("# Hello\nContent here");
+    });
+
+    act(() => {
+      result.current.handleChange("new body");
+    });
+
+    const entry = getPaneContent("p1");
+    expect(entry!.body).toBe("new body");
+  });
+
+  it("sets headings on initial load (immediate)", async () => {
+    renderHook(() => usePageContent("p1", "hello.md"));
+
+    await waitFor(() => {
+      const headings = useWorkspaceStore.getState().currentPageHeadings;
+      expect(headings).toEqual([
+        { level: 1, text: "Hello", line: 0, from: 0, to: 7 },
+      ]);
+    });
+  });
+
+  it("updates headings on handleChange (debounced 150ms)", async () => {
+    const { result } = renderHook(() => usePageContent("p1", "hello.md"));
+
+    await waitFor(() => {
+      expect(result.current.body).toBe("# Hello\nContent here");
+    });
+
+    act(() => {
+      result.current.handleChange("# New Title\n## Sub");
+    });
+
+    // Not yet updated (debounced)
+    const headingsBefore = useWorkspaceStore.getState().currentPageHeadings;
+    expect(headingsBefore).toEqual([
+      { level: 1, text: "Hello", line: 0, from: 0, to: 7 },
+    ]);
+
+    await act(async () => {
+      vi.advanceTimersByTime(150);
+    });
+
+    const headingsAfter = useWorkspaceStore.getState().currentPageHeadings;
+    expect(headingsAfter).toHaveLength(2);
+    expect(headingsAfter[0]!.text).toBe("New Title");
+    expect(headingsAfter[1]!.text).toBe("Sub");
+  });
+
+  it("reload trigger re-reads page when clean", async () => {
+    let readCount = 0;
+    mockInvoke((cmd) => {
+      if (cmd === "read_page") {
+        readCount++;
+        return mockPage;
+      }
+      if (cmd === "write_page") return null;
+      if (cmd === "acknowledge_file_hash") return null;
+      return null;
+    });
+
+    renderHook(() => usePageContent("p1", "hello.md"));
+
+    await waitFor(() => {
+      expect(readCount).toBe(1);
+    });
+
+    act(() => {
+      useWorkspaceStore.getState().triggerReload();
+    });
+
+    await waitFor(() => {
+      expect(readCount).toBe(2);
+    });
+  });
+
+  it("reload trigger acknowledges when dirty", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "read_page") return mockPage;
+      if (cmd === "write_page") return null;
+      if (cmd === "acknowledge_file_hash") return null;
+      return null;
+    });
+
+    renderHook(() => usePageContent("p1", "hello.md"));
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("read_page", expect.anything());
+    });
+
+    act(() => {
+      useWorkspaceStore.setState({ isDirty: true });
+    });
+
+    act(() => {
+      useWorkspaceStore.getState().triggerReload();
+    });
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("acknowledge_file_hash", { relativePath: "hello.md" });
+    });
   });
 });

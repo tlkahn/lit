@@ -2,6 +2,7 @@ import { useCallback, useSyncExternalStore } from "react";
 
 export interface PaneContentEntry {
   title: string;
+  body: string;
   frontmatter: Record<string, unknown>;
   rawYaml?: string;
 }
@@ -60,6 +61,17 @@ export function getSnapshot(): number {
 
 export function usePaneContent(paneId: string): PaneContentEntry | null {
   const snap = useCallback(() => getPaneContent(paneId), [paneId]);
+  return useSyncExternalStore(subscribe, snap);
+}
+
+export function usePaneField<T>(
+  paneId: string,
+  selector: (entry: PaneContentEntry | null) => T,
+): T {
+  const snap = useCallback(
+    () => selector(entries.get(paneId) ?? null),
+    [paneId, selector],
+  );
   return useSyncExternalStore(subscribe, snap);
 }
 
