@@ -7,6 +7,7 @@ export interface SharedDoc {
   frontmatter: Record<string, unknown>;
   rawYaml: string;
   subscribers: Map<string, (newBody: string, fromPaneId: string) => void>;
+  saveSettledSubscribers: Map<string, (isDirty: boolean) => void>;
   saveTimer?: ReturnType<typeof setTimeout>;
   editGen: number;
   saveGen: number;
@@ -25,6 +26,7 @@ export function acquire(pagePath: string, paneId: string): void {
       frontmatter: {},
       rawYaml: "",
       subscribers: new Map(),
+      saveSettledSubscribers: new Map(),
       editGen: 0,
       saveGen: 0,
       saveInFlightGen: 0,
@@ -32,6 +34,13 @@ export function acquire(pagePath: string, paneId: string): void {
     docs.set(pagePath, doc);
   }
   doc.panes.add(paneId);
+}
+
+function notifySaveSettled(doc: SharedDoc): void {
+  const stillDirty = doc.editGen > doc.saveGen;
+  for (const cb of doc.saveSettledSubscribers.values()) {
+    cb(stillDirty);
+  }
 }
 
 function executeSave(pagePath: string, doc: SharedDoc): void {
@@ -44,10 +53,12 @@ function executeSave(pagePath: string, doc: SharedDoc): void {
     if (doc.saveInFlightGen === genAtSave) {
       doc.saveInFlightGen = 0;
     }
+    notifySaveSettled(doc);
   }).catch(() => {
     if (doc.saveInFlightGen === genAtSave) {
       doc.saveInFlightGen = 0;
     }
+    notifySaveSettled(doc);
   });
 }
 
@@ -64,6 +75,7 @@ export function release(pagePath: string, paneId: string): void {
   if (!doc) return;
   doc.panes.delete(paneId);
   doc.subscribers.delete(paneId);
+  doc.saveSettledSubscribers.delete(paneId);
   if (doc.panes.size === 0) {
     if (doc.saveTimer) {
       clearTimeout(doc.saveTimer);
@@ -133,6 +145,19 @@ export function subscribe(
   doc.subscribers.set(paneId, cb);
   return () => {
     doc.subscribers.delete(paneId);
+  };
+}
+
+export function subscribeSaveSettled(
+  pagePath: string,
+  paneId: string,
+  cb: (isDirty: boolean) => void,
+): () => void {
+  const doc = docs.get(pagePath);
+  if (!doc) return () => {};
+  doc.saveSettledSubscribers.set(paneId, cb);
+  return () => {
+    doc.saveSettledSubscribers.delete(paneId);
   };
 }
 

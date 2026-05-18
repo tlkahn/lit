@@ -6,6 +6,7 @@ import {
   getDoc,
   setContent,
   subscribe,
+  subscribeSaveSettled,
   setBody,
   isDirty,
   isShared,
@@ -352,6 +353,74 @@ describe("SharedDocRegistry", () => {
 
     it("returns false for unknown path", () => {
       expect(isShared("unknown.md")).toBe(false);
+    });
+  });
+
+  describe("subscribeSaveSettled", () => {
+    it("calls back with isDirty=false after successful save", async () => {
+      let resolveWrite!: () => void;
+      vi.mocked(writePage).mockImplementation(
+        () => new Promise<void>((r) => { resolveWrite = r; }),
+      );
+
+      acquire("notes.md", "p1");
+      setContent("notes.md", { body: "", title: "T", frontmatter: {}, rawYaml: "" });
+
+      const cb = vi.fn();
+      subscribeSaveSettled("notes.md", "p1", cb);
+
+      setBody("notes.md", "edited", "p1");
+      expect(cb).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(300);
+      resolveWrite();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(cb).toHaveBeenCalledOnce();
+      expect(cb).toHaveBeenCalledWith(false);
+    });
+
+    it("calls back with isDirty=true when edit happens during save flight", async () => {
+      let resolveWrite!: () => void;
+      vi.mocked(writePage).mockImplementation(
+        () => new Promise<void>((r) => { resolveWrite = r; }),
+      );
+
+      acquire("notes.md", "p1");
+      setContent("notes.md", { body: "", title: "T", frontmatter: {}, rawYaml: "" });
+
+      const cb = vi.fn();
+      subscribeSaveSettled("notes.md", "p1", cb);
+
+      setBody("notes.md", "v1", "p1");
+      vi.advanceTimersByTime(300);
+
+      setBody("notes.md", "v2", "p1");
+
+      resolveWrite();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(cb).toHaveBeenCalledOnce();
+      expect(cb).toHaveBeenCalledWith(true);
+    });
+
+    it("release removes save-settled subscriber", async () => {
+      acquire("notes.md", "p1");
+      setContent("notes.md", { body: "", title: "T", frontmatter: {}, rawYaml: "" });
+
+      const cb = vi.fn();
+      subscribeSaveSettled("notes.md", "p1", cb);
+
+      release("notes.md", "p1");
+
+      // Re-acquire so we can trigger a save cycle
+      acquire("notes.md", "p2");
+      setContent("notes.md", { body: "", title: "T", frontmatter: {}, rawYaml: "" });
+      setBody("notes.md", "edited", "p2");
+      vi.advanceTimersByTime(300);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(cb).not.toHaveBeenCalled();
     });
   });
 });

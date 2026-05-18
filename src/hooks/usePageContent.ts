@@ -1,10 +1,19 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { readPage, writePage, acknowledgeFileHash } from "../lib/ipc";
+import { readPage, acknowledgeFileHash } from "../lib/ipc";
 import {
   registerPaneContent,
   unregisterPaneContent,
   updatePaneContent,
 } from "../lib/paneContentRegistry";
+import {
+  acquire,
+  release,
+  getDoc,
+  setContent,
+  setBody as sharedSetBody,
+  subscribe as sharedSubscribe,
+  subscribeSaveSettled,
+} from "../lib/sharedDocs";
 import { extractHeadings } from "../lib/headings";
 import { frontmatterLineCount } from "../lib/pathUtils";
 import { useWorkspaceStore } from "../stores/workspace";
@@ -17,6 +26,7 @@ export interface PageContentState {
   rawYaml: string;
   isDirty: boolean;
   handleChange: (newBody: string) => void;
+  siblingUpdateRef: React.RefObject<boolean>;
 }
 
 export function usePageContent(
@@ -29,11 +39,10 @@ export function usePageContent(
   const [rawYaml, setRawYaml] = useState("");
   const [isDirty, setIsDirty] = useState(false);
 
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const headingDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const editGenRef = useRef(0);
   const currentPathRef = useRef<string | null>(null);
   const frontmatterRef = useRef<Record<string, unknown>>({});
+  const siblingUpdateRef = useRef(false);
 
   const setCurrentPageHeadings = useWorkspaceStore((s) => s.setCurrentPageHeadings);
   const setCurrentFrontmatterLineCount = useWorkspaceStore((s) => s.setCurrentFrontmatterLineCount);
@@ -41,9 +50,7 @@ export function usePageContent(
 
   useEffect(() => {
     currentPathRef.current = pagePath;
-    if (debounceRef.current) clearTimeout(debounceRef.current);
     if (headingDebounceRef.current) clearTimeout(headingDebounceRef.current);
-    editGenRef.current = 0;
 
     if (!pagePath) {
       setBody("");
@@ -55,38 +62,81 @@ export function usePageContent(
       return;
     }
 
-    readPage(pagePath)
-      .then((content) => {
-        if (currentPathRef.current !== pagePath) return;
-        setBody(content.body);
-        setTitle(content.meta.title);
-        setFrontmatter(content.meta.frontmatter);
-        setRawYaml(content.raw_yaml);
+    acquire(pagePath, paneId);
+
+    const unsubBody = sharedSubscribe(pagePath, paneId, (newBody) => {
+      siblingUpdateRef.current = true;
+      setBody(newBody);
+      updatePaneContent(paneId, { body: newBody });
+    });
+
+    const unsubSave = subscribeSaveSettled(pagePath, paneId, (stillDirty) => {
+      if (!stillDirty) {
         setIsDirty(false);
-        frontmatterRef.current = content.meta.frontmatter;
-        registerPaneContent(paneId, {
-          title: content.meta.title,
-          body: content.body,
-          frontmatter: content.meta.frontmatter,
-          rawYaml: content.raw_yaml,
-        });
-        setCurrentPageHeadings(extractHeadings(content.body));
-        setCurrentFrontmatterLineCount(frontmatterLineCount(content.raw_yaml));
-      })
-      .catch(() => {
-        if (currentPathRef.current !== pagePath) return;
-        setBody("");
-        setTitle("");
-        setFrontmatter({});
-        setRawYaml("");
-        setIsDirty(false);
+        setDirty(false);
+      }
+    });
+
+    const doc = getDoc(pagePath);
+    if (doc && doc.body) {
+      setBody(doc.body);
+      setTitle(doc.title);
+      setFrontmatter(doc.frontmatter);
+      setRawYaml(doc.rawYaml);
+      setIsDirty(false);
+      frontmatterRef.current = doc.frontmatter;
+      siblingUpdateRef.current = false;
+      registerPaneContent(paneId, {
+        title: doc.title,
+        body: doc.body,
+        frontmatter: doc.frontmatter,
+        rawYaml: doc.rawYaml,
       });
+      setCurrentPageHeadings(extractHeadings(doc.body));
+      setCurrentFrontmatterLineCount(frontmatterLineCount(doc.rawYaml));
+    } else {
+      readPage(pagePath)
+        .then((content) => {
+          if (currentPathRef.current !== pagePath) return;
+          setBody(content.body);
+          setTitle(content.meta.title);
+          setFrontmatter(content.meta.frontmatter);
+          setRawYaml(content.raw_yaml);
+          setIsDirty(false);
+          frontmatterRef.current = content.meta.frontmatter;
+          siblingUpdateRef.current = false;
+          setContent(pagePath, {
+            body: content.body,
+            title: content.meta.title,
+            frontmatter: content.meta.frontmatter,
+            rawYaml: content.raw_yaml,
+          });
+          registerPaneContent(paneId, {
+            title: content.meta.title,
+            body: content.body,
+            frontmatter: content.meta.frontmatter,
+            rawYaml: content.raw_yaml,
+          });
+          setCurrentPageHeadings(extractHeadings(content.body));
+          setCurrentFrontmatterLineCount(frontmatterLineCount(content.raw_yaml));
+        })
+        .catch(() => {
+          if (currentPathRef.current !== pagePath) return;
+          setBody("");
+          setTitle("");
+          setFrontmatter({});
+          setRawYaml("");
+          setIsDirty(false);
+        });
+    }
 
     return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
+      unsubBody();
+      unsubSave();
       if (headingDebounceRef.current) clearTimeout(headingDebounceRef.current);
+      release(pagePath, paneId);
     };
-  }, [pagePath, paneId, setCurrentPageHeadings, setCurrentFrontmatterLineCount]);
+  }, [pagePath, paneId, setCurrentPageHeadings, setCurrentFrontmatterLineCount, setDirty]);
 
   useEffect(() => {
     return () => unregisterPaneContent(paneId);
@@ -114,6 +164,12 @@ export function usePageContent(
           setRawYaml(content.raw_yaml);
           setIsDirty(false);
           frontmatterRef.current = content.meta.frontmatter;
+          setContent(pagePath, {
+            body: content.body,
+            title: content.meta.title,
+            frontmatter: content.meta.frontmatter,
+            rawYaml: content.raw_yaml,
+          });
           registerPaneContent(paneId, {
             title: content.meta.title,
             body: content.body,
@@ -133,26 +189,19 @@ export function usePageContent(
     setBody(newBody);
     setIsDirty(true);
     setDirty(true);
+    siblingUpdateRef.current = false;
     updatePaneContent(paneId, { body: newBody });
-    const gen = ++editGenRef.current;
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      const path = currentPathRef.current;
-      if (!path) return;
-      writePage(path, newBody, frontmatterRef.current)
-        .then(() => {
-          if (editGenRef.current === gen) {
-            setIsDirty(false);
-            setDirty(false);
-          }
-        })
-        .catch(console.error);
-    }, 300);
+
+    const path = currentPathRef.current;
+    if (path) {
+      sharedSetBody(path, newBody, paneId);
+    }
+
     if (headingDebounceRef.current) clearTimeout(headingDebounceRef.current);
     headingDebounceRef.current = setTimeout(() => {
       setCurrentPageHeadings(extractHeadings(newBody));
     }, 150);
   }, [paneId, setCurrentPageHeadings, setDirty]);
 
-  return { body, title, frontmatter, rawYaml, isDirty, handleChange };
+  return { body, title, frontmatter, rawYaml, isDirty, handleChange, siblingUpdateRef };
 }

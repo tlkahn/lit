@@ -6,6 +6,7 @@ import {
   getPaneContent,
   _resetForTesting,
 } from "../lib/paneContentRegistry";
+import { _resetForTesting as resetSharedDocs, getPaneIds } from "../lib/sharedDocs";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePageContent } from "./usePageContent";
 
@@ -25,6 +26,7 @@ const mockPage = {
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   _resetForTesting();
+  resetSharedDocs();
   resetInvokeMock();
   useWorkspaceStore.setState({
     currentPageHeadings: [],
@@ -199,7 +201,7 @@ describe("usePageContent", () => {
     expect(result.current.isDirty).toBe(true);
   });
 
-  it("resets state when pagePath changes and cancels old-path debounce", async () => {
+  it("resets state when pagePath changes and flushes old-path save", async () => {
     const writeCalls: Record<string, unknown>[] = [];
     const mockPage2 = {
       meta: {
@@ -241,11 +243,11 @@ describe("usePageContent", () => {
 
     rerender({ path: "world.md" });
 
-    await act(async () => {
-      vi.advanceTimersByTime(500);
+    expect(writeCalls).toHaveLength(1);
+    expect(writeCalls[0]).toMatchObject({
+      relativePath: "hello.md",
+      body: "old path edit",
     });
-
-    expect(writeCalls).toHaveLength(0);
 
     await waitFor(() => {
       expect(result.current.body).toBe("# World\nAnother page");
@@ -318,7 +320,7 @@ describe("usePageContent", () => {
     expect(getPaneContent("p1")).toBeNull();
   });
 
-  it("cancels pending debounce on unmount", async () => {
+  it("flushes pending save on unmount of last pane", async () => {
     const writeCalls: unknown[] = [];
     mockInvoke((cmd, args) => {
       if (cmd === "read_page") return mockPage;
@@ -343,11 +345,7 @@ describe("usePageContent", () => {
 
     unmount();
 
-    await act(async () => {
-      vi.advanceTimersByTime(500);
-    });
-
-    expect(writeCalls).toHaveLength(0);
+    expect(writeCalls).toHaveLength(1);
   });
 
   it("body appears in registry after readPage", async () => {
@@ -538,6 +536,224 @@ describe("usePageContent", () => {
     });
 
     expect(readCount).toBe(1);
+  });
+
+  it("second pane on same file skips readPage", async () => {
+    let readCount = 0;
+    mockInvoke((cmd) => {
+      if (cmd === "read_page") {
+        readCount++;
+        return mockPage;
+      }
+      if (cmd === "write_page") return null;
+      return null;
+    });
+
+    const { result: r1 } = renderHook(() => usePageContent("p1", "hello.md"));
+
+    await waitFor(() => {
+      expect(r1.current.body).toBe("# Hello\nContent here");
+    });
+    expect(readCount).toBe(1);
+
+    const { result: r2 } = renderHook(() => usePageContent("p2", "hello.md"));
+
+    await waitFor(() => {
+      expect(r2.current.body).toBe("# Hello\nContent here");
+    });
+    expect(readCount).toBe(1);
+
+    expect(r2.current.title).toBe("Hello");
+    expect(r2.current.frontmatter).toEqual({ tags: ["test"] });
+    expect(r2.current.rawYaml).toBe("tags:\n  - test\n");
+  });
+
+  it("edit in pane A propagates to pane B", async () => {
+    const { result: r1 } = renderHook(() => usePageContent("p1", "hello.md"));
+
+    await waitFor(() => {
+      expect(r1.current.body).toBe("# Hello\nContent here");
+    });
+
+    const { result: r2 } = renderHook(() => usePageContent("p2", "hello.md"));
+
+    await waitFor(() => {
+      expect(r2.current.body).toBe("# Hello\nContent here");
+    });
+
+    act(() => {
+      r1.current.handleChange("edited by p1");
+    });
+
+    expect(r2.current.body).toBe("edited by p1");
+  });
+
+  it("two panes share a single save — no duplicate writePage", async () => {
+    const writeCalls: unknown[] = [];
+    mockInvoke((cmd, args) => {
+      if (cmd === "read_page") return mockPage;
+      if (cmd === "write_page") {
+        writeCalls.push(args);
+        return null;
+      }
+      return null;
+    });
+
+    const { result: r1 } = renderHook(() => usePageContent("p1", "hello.md"));
+
+    await waitFor(() => {
+      expect(r1.current.body).toBe("# Hello\nContent here");
+    });
+
+    const { result: r2 } = renderHook(() => usePageContent("p2", "hello.md"));
+
+    await waitFor(() => {
+      expect(r2.current.body).toBe("# Hello\nContent here");
+    });
+
+    act(() => {
+      r1.current.handleChange("from p1");
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(300);
+    });
+
+    expect(writeCalls).toHaveLength(1);
+
+    writeCalls.length = 0;
+
+    act(() => {
+      r1.current.handleChange("from p1 again");
+    });
+
+    act(() => {
+      r2.current.handleChange("from p2");
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(300);
+    });
+
+    expect(writeCalls).toHaveLength(1);
+    expect(writeCalls[0]).toMatchObject({ body: "from p2" });
+  });
+
+  it("pane navigates to different page — releases old, acquires new", async () => {
+    const mockPage2 = {
+      meta: {
+        title: "World",
+        relative_path: "world.md",
+        frontmatter: { draft: true },
+        created_at: null,
+        modified_at: null,
+        file_type: "markdown",
+      },
+      body: "# World\nAnother page",
+      raw_yaml: "draft: true\n",
+    };
+
+    mockInvoke((cmd, args) => {
+      if (cmd === "read_page") {
+        const path = (args as Record<string, unknown>).relativePath;
+        return path === "world.md" ? mockPage2 : mockPage;
+      }
+      if (cmd === "write_page") return null;
+      return null;
+    });
+
+    const { result: r1 } = renderHook(() => usePageContent("p1", "hello.md"));
+
+    await waitFor(() => {
+      expect(r1.current.body).toBe("# Hello\nContent here");
+    });
+
+    const { result: r2, rerender: rerenderP2 } = renderHook(
+      ({ path }) => usePageContent("p2", path),
+      { initialProps: { path: "hello.md" as string | null } },
+    );
+
+    await waitFor(() => {
+      expect(r2.current.body).toBe("# Hello\nContent here");
+    });
+
+    rerenderP2({ path: "world.md" });
+
+    await waitFor(() => {
+      expect(r2.current.body).toBe("# World\nAnother page");
+    });
+
+    expect(getPaneIds("hello.md")).toEqual(["p1"]);
+    expect(getPaneIds("world.md")).toEqual(["p2"]);
+
+    act(() => {
+      r1.current.handleChange("edit in p1");
+    });
+    expect(r2.current.body).toBe("# World\nAnother page");
+  });
+
+  it("unmount last pane flushes pending save", async () => {
+    const writeCalls: unknown[] = [];
+    mockInvoke((cmd, args) => {
+      if (cmd === "read_page") return mockPage;
+      if (cmd === "write_page") {
+        writeCalls.push(args);
+        return null;
+      }
+      return null;
+    });
+
+    const { result: r1, unmount: unmount1 } = renderHook(() =>
+      usePageContent("p1", "hello.md"),
+    );
+
+    await waitFor(() => {
+      expect(r1.current.body).toBe("# Hello\nContent here");
+    });
+
+    const { result: r2, unmount: unmount2 } = renderHook(() =>
+      usePageContent("p2", "hello.md"),
+    );
+
+    await waitFor(() => {
+      expect(r2.current.body).toBe("# Hello\nContent here");
+    });
+
+    act(() => {
+      r1.current.handleChange("unsaved");
+    });
+
+    unmount2();
+    expect(writeCalls).toHaveLength(0);
+
+    unmount1();
+    expect(writeCalls).toHaveLength(1);
+  });
+
+  it("siblingUpdateRef tracks cross-pane vs own updates", async () => {
+    const { result: r1 } = renderHook(() => usePageContent("p1", "hello.md"));
+
+    await waitFor(() => {
+      expect(r1.current.body).toBe("# Hello\nContent here");
+    });
+
+    const { result: r2 } = renderHook(() => usePageContent("p2", "hello.md"));
+
+    await waitFor(() => {
+      expect(r2.current.body).toBe("# Hello\nContent here");
+    });
+
+    expect(r2.current.siblingUpdateRef.current).toBe(false);
+
+    act(() => {
+      r1.current.handleChange("from p1");
+    });
+    expect(r2.current.siblingUpdateRef.current).toBe(true);
+
+    act(() => {
+      r2.current.handleChange("own edit");
+    });
+    expect(r2.current.siblingUpdateRef.current).toBe(false);
   });
 
   it("reload updates currentFrontmatterLineCount", async () => {
