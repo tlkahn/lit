@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
-use tauri::{Manager, State, WebviewWindowBuilder};
+use tauri::{Emitter, Manager, State, WebviewWindowBuilder};
 
 pub struct WorkspaceEntry {
     pub root: PathBuf,
@@ -35,6 +35,50 @@ pub fn read_last_workspace(app_data_dir: &Path) -> Option<String> {
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct CliNavigatePayload {
+    pub file: Option<String>,
+    pub line: Option<u32>,
+    pub col: Option<u32>,
+}
+
+pub fn try_navigate_existing_window(
+    app_handle: &tauri::AppHandle,
+    workspace_path: &str,
+    file: Option<&str>,
+    line: Option<u32>,
+    col: Option<u32>,
+) -> Option<String> {
+    let registry = app_handle.try_state::<WorkspaceRegistry>()?;
+    let target_path = PathBuf::from(workspace_path);
+    let label = {
+        let workspaces = registry.workspaces.lock().unwrap();
+        workspaces.iter().find_map(|(lbl, entry)| {
+            if entry.root == target_path {
+                Some(lbl.clone())
+            } else {
+                None
+            }
+        })?
+    };
+
+    let _ = app_handle.emit_to(
+        label.as_str(),
+        "lit:cli-navigate",
+        CliNavigatePayload {
+            file: file.map(|s| s.to_string()),
+            line,
+            col,
+        },
+    );
+
+    if let Some(win) = app_handle.get_webview_window(&label) {
+        let _ = win.set_focus();
+    }
+
+    Some(label)
 }
 
 pub fn get_workspace_root(registry: &WorkspaceRegistry, label: &str) -> Result<PathBuf, String> {

@@ -21,6 +21,8 @@ import { useLicenseStore } from "./stores/license";
 import { getStartupContext } from "./lib/ipc";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { usePaneStore, findLeaf } from "./stores/panes";
+import { EditorView } from "@codemirror/view";
 import { HeadingQuickSwitcher } from "./components/HeadingQuickSwitcher";
 import { CommandPalette } from "./components/CommandPalette";
 import { AnnotationBuilderModal } from "./components/AnnotationBuilderModal";
@@ -195,6 +197,56 @@ function App() {
       unlistenProgress?.();
       unlistenComplete?.();
       clearTimeout(exportTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+
+    listen<{ file: string | null; line: number | null; col: number | null }>(
+      "lit:cli-navigate",
+      (event) => {
+        const { file, line, col } = event.payload;
+        if (!file) return;
+
+        const paneState = usePaneStore.getState();
+        const leaf = findLeaf(paneState.root, paneState.focusedPaneId);
+
+        if (leaf?.pagePath === file && line == null) return;
+
+        if (leaf?.pagePath === file && line != null) {
+          const view = getCurrentEditorView();
+          if (view) {
+            const fmCount = useWorkspaceStore.getState().currentFrontmatterLineCount;
+            const adjustedLine = Math.max(1, line - fmCount);
+            const lineNum = Math.min(adjustedLine, view.state.doc.lines);
+            const docLine = view.state.doc.line(lineNum);
+            const position = docLine.from + Math.min(col ?? 0, docLine.length);
+            view.dispatch({
+              selection: { anchor: position },
+              effects: EditorView.scrollIntoView(position, { y: "center" }),
+            });
+            view.focus();
+          }
+          return;
+        }
+
+        const ws = useWorkspaceStore.getState();
+        if (line != null) {
+          ws.selectPageAtLine(file, line, col ?? undefined, true);
+        } else {
+          ws.selectPage(file);
+        }
+      },
+    ).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
     };
   }, []);
 
