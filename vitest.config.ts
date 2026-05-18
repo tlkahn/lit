@@ -10,7 +10,7 @@ export default defineConfig({
     css: true,
     exclude: ["e2e/**", "node_modules/**", "server/**"],
     benchmark: {
-      include: ["src/**/*.bench.ts"],
+      include: ["src/**/*.bench.{ts,tsx}"],
     },
   },
 });
