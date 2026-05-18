@@ -9,8 +9,12 @@ import {
   replaceSplitSizes,
   createInitialState,
   usePaneStore,
+  startLayoutSync,
+  stopLayoutSync,
 } from "./panes";
 import type { PaneLeaf, PaneSplit, PaneNode } from "./panes";
+import { loadLayout, validateLayout } from "../lib/paneLayout";
+import { useWorkspaceStore } from "./workspace";
 
 // ---------------------------------------------------------------------------
 // Section A: Pure Tree Helpers (no store dependency)
@@ -1016,6 +1020,148 @@ describe("Section E: Integration & Edge Cases", () => {
 
       const nodeAsSplit: PaneNode = split;
       expect(nodeAsSplit.type).toBe("split");
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Section F: Layout Persistence
+// ---------------------------------------------------------------------------
+
+describe("Section F: Layout Persistence", () => {
+  const WS = "/test/workspace";
+  const key = `lit-pane-layout-${WS}`;
+
+  beforeEach(() => {
+    stopLayoutSync();
+    usePaneStore.setState({
+      root: { type: "leaf", id: "solo", pagePath: null },
+      focusedPaneId: "solo",
+    });
+    useWorkspaceStore.setState({ paneViewStates: {} });
+  });
+
+  describe("startLayoutSync", () => {
+    it("splitPane writes layout to localStorage", () => {
+      startLayoutSync(WS, () => useWorkspaceStore.getState().paneViewStates);
+      usePaneStore.getState().splitPane("solo", "horizontal");
+      const raw = localStorage.getItem(key);
+      expect(raw).not.toBeNull();
+      const stored = JSON.parse(raw!);
+      expect(stored.root.type).toBe("split");
+    });
+
+    it("closePane writes layout to localStorage", () => {
+      usePaneStore.getState().splitPane("solo", "horizontal");
+      const root = usePaneStore.getState().root as PaneSplit;
+      const secondId = (root.children[1] as PaneLeaf).id;
+      startLayoutSync(WS, () => useWorkspaceStore.getState().paneViewStates);
+      usePaneStore.getState().closePane(secondId);
+      const stored = JSON.parse(localStorage.getItem(key)!);
+      expect(stored.root.type).toBe("leaf");
+    });
+
+    it("setPanePage writes layout to localStorage", () => {
+      startLayoutSync(WS, () => useWorkspaceStore.getState().paneViewStates);
+      usePaneStore.getState().setPanePage("solo", "note.md");
+      const stored = JSON.parse(localStorage.getItem(key)!);
+      expect(stored.root.pagePath).toBe("note.md");
+    });
+
+    it("resize writes layout to localStorage", () => {
+      const left: PaneLeaf = { type: "leaf", id: "left", pagePath: null };
+      const right: PaneLeaf = { type: "leaf", id: "right", pagePath: null };
+      const root: PaneSplit = {
+        type: "split",
+        id: "s1",
+        direction: "horizontal",
+        children: [left, right],
+        sizes: [50, 50],
+      };
+      usePaneStore.setState({ root, focusedPaneId: "left" });
+      startLayoutSync(WS, () => useWorkspaceStore.getState().paneViewStates);
+      usePaneStore.getState().resize([], [30, 70]);
+      const stored = JSON.parse(localStorage.getItem(key)!);
+      expect(stored.root.sizes).toEqual([30, 70]);
+    });
+  });
+
+  describe("stopLayoutSync", () => {
+    it("stops persisting changes", () => {
+      startLayoutSync(WS, () => useWorkspaceStore.getState().paneViewStates);
+      usePaneStore.getState().setPanePage("solo", "first.md");
+      expect(localStorage.getItem(key)).not.toBeNull();
+      localStorage.removeItem(key);
+
+      stopLayoutSync();
+      usePaneStore.getState().setPanePage("solo", "second.md");
+      expect(localStorage.getItem(key)).toBeNull();
+    });
+  });
+
+  describe("startLayoutSync idempotent", () => {
+    it("calling twice replaces previous subscription", () => {
+      startLayoutSync(WS, () => useWorkspaceStore.getState().paneViewStates);
+      startLayoutSync(WS, () => useWorkspaceStore.getState().paneViewStates);
+      usePaneStore.getState().setPanePage("solo", "note.md");
+      // If both subscriptions were active, localStorage would be written twice.
+      // We just verify no error and data is there.
+      expect(localStorage.getItem(key)).not.toBeNull();
+
+      // Verify stop works (only one unsub needed)
+      stopLayoutSync();
+      localStorage.removeItem(key);
+      usePaneStore.getState().setPanePage("solo", "another.md");
+      expect(localStorage.getItem(key)).toBeNull();
+    });
+  });
+
+  describe("round-trip", () => {
+    it("split + setPanePage + close → restore → layout correct", () => {
+      startLayoutSync(WS, () => useWorkspaceStore.getState().paneViewStates);
+      usePaneStore.getState().splitPane("solo", "horizontal");
+      const afterSplit = usePaneStore.getState().root as PaneSplit;
+      const newId = (afterSplit.children[1] as PaneLeaf).id;
+      usePaneStore.getState().setPanePage("solo", "keep.md");
+      usePaneStore.getState().setPanePage(newId, "other.md");
+      stopLayoutSync();
+
+      const stored = loadLayout(WS)!;
+      expect(stored.root.type).toBe("split");
+      const leaves = collectLeaves(stored.root);
+      expect(leaves).toHaveLength(2);
+      expect(leaves[0]!.pagePath).toBe("keep.md");
+      expect(leaves[1]!.pagePath).toBe("other.md");
+    });
+
+    it("resize → restore → sizes preserved", () => {
+      const left: PaneLeaf = { type: "leaf", id: "left", pagePath: null };
+      const right: PaneLeaf = { type: "leaf", id: "right", pagePath: null };
+      const root: PaneSplit = {
+        type: "split",
+        id: "s1",
+        direction: "horizontal",
+        children: [left, right],
+        sizes: [50, 50],
+      };
+      usePaneStore.setState({ root, focusedPaneId: "left" });
+      startLayoutSync(WS, () => useWorkspaceStore.getState().paneViewStates);
+      usePaneStore.getState().resize([], [25, 75]);
+      stopLayoutSync();
+
+      const stored = loadLayout(WS)!;
+      expect((stored.root as PaneSplit).sizes).toEqual([25, 75]);
+    });
+
+    it("layout with deleted file → restore → pane has null pagePath", () => {
+      startLayoutSync(WS, () => useWorkspaceStore.getState().paneViewStates);
+      usePaneStore.getState().setPanePage("solo", "will-be-deleted.md");
+      stopLayoutSync();
+
+      const stored = loadLayout(WS)!;
+      const existingPages = new Set(["other.md"]);
+      const validated = validateLayout(stored.root, existingPages);
+      expect((validated as PaneLeaf).pagePath).toBeNull();
     });
   });
 });

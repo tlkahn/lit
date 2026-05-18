@@ -1,6 +1,9 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mockInvoke, mockListen, emitMockEvent } from "../test/tauri-mock";
 import { useWorkspaceStore, getRecentWorkspaces, addRecentWorkspace } from "./workspace";
+import { usePaneStore, createInitialState, collectLeaves, stopLayoutSync } from "./panes";
+import type { PaneLeaf, PaneSplit } from "./panes";
+import { saveLayout, STALE_THRESHOLD_MS } from "../lib/paneLayout";
 import { act } from "@testing-library/react";
 
 const samplePages = [
@@ -584,5 +587,225 @@ describe("addRecentWorkspace", () => {
     }
     expect(getRecentWorkspaces()).toHaveLength(10);
     expect(getRecentWorkspaces()[0]).toBe("/path/14");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Layout Persistence — openWorkspace restore + cleanup
+// ---------------------------------------------------------------------------
+
+describe("Layout Persistence", () => {
+  beforeEach(() => {
+    stopLayoutSync();
+    usePaneStore.setState(createInitialState());
+    useWorkspaceStore.setState({
+      workspacePath: null,
+      pages: [],
+      currentPagePath: null,
+      pendingTitleFocus: false,
+      pendingSection: null,
+      currentPageHeadings: [],
+      isDirty: false,
+      reloadTrigger: 0,
+      viewStates: {},
+      paneViewStates: {},
+      graphReady: false,
+      indexProgress: null,
+      loading: false,
+      error: null,
+    });
+
+    mockListen();
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "open_workspace":
+          return samplePages;
+        case "ensure_graph_ready":
+          return null;
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+  });
+
+  afterEach(() => {
+    stopLayoutSync();
+  });
+
+  it("restores stored pane layout when valid layout exists", async () => {
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "a", pagePath: "Page A.md" },
+        { type: "leaf", id: "b", pagePath: "Page B.md" },
+      ],
+      sizes: [40, 60],
+    };
+    saveLayout("/my/workspace", root, "b", {});
+
+    await act(async () => {
+      await useWorkspaceStore.getState().openWorkspace("/my/workspace");
+    });
+
+    const paneState = usePaneStore.getState();
+    expect(paneState.root.type).toBe("split");
+    expect((paneState.root as PaneSplit).sizes).toEqual([40, 60]);
+    expect(paneState.focusedPaneId).toBe("b");
+  });
+
+  it("falls back to initial single-pane state when no stored layout", async () => {
+    await act(async () => {
+      await useWorkspaceStore.getState().openWorkspace("/my/workspace");
+    });
+
+    const paneState = usePaneStore.getState();
+    expect(paneState.root.type).toBe("leaf");
+    expect((paneState.root as PaneLeaf).pagePath).toBeNull();
+  });
+
+  it("falls back to initial state when stored layout is corrupted", async () => {
+    localStorage.setItem("lit-pane-layout-/my/workspace", "{{bad json");
+
+    await act(async () => {
+      await useWorkspaceStore.getState().openWorkspace("/my/workspace");
+    });
+
+    const paneState = usePaneStore.getState();
+    expect(paneState.root.type).toBe("leaf");
+  });
+
+  it("nulls pagePath for panes referencing deleted files", async () => {
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "a", pagePath: "Page A.md" },
+        { type: "leaf", id: "b", pagePath: "deleted-file.md" },
+      ],
+      sizes: [50, 50],
+    };
+    saveLayout("/my/workspace", root, "a", {});
+
+    await act(async () => {
+      await useWorkspaceStore.getState().openWorkspace("/my/workspace");
+    });
+
+    const leaves = collectLeaves(usePaneStore.getState().root);
+    expect(leaves[0]!.pagePath).toBe("Page A.md");
+    expect(leaves[1]!.pagePath).toBeNull();
+  });
+
+  it("validates focusedPaneId: falls back to first leaf when stored ID gone", async () => {
+    const root: PaneLeaf = { type: "leaf", id: "only-leaf", pagePath: "Page A.md" };
+    saveLayout("/my/workspace", root, "nonexistent-id", {});
+
+    await act(async () => {
+      await useWorkspaceStore.getState().openWorkspace("/my/workspace");
+    });
+
+    expect(usePaneStore.getState().focusedPaneId).toBe("only-leaf");
+  });
+
+  it("restores paneViewStates for surviving panes", async () => {
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "a", pagePath: "Page A.md" },
+        { type: "leaf", id: "b", pagePath: "Page B.md" },
+      ],
+      sizes: [50, 50],
+    };
+    const pvs = {
+      a: { scrollTop: 100, cursor: 42 },
+      b: { scrollTop: 200, cursor: 84 },
+      gone: { scrollTop: 0, cursor: 0 },
+    };
+    saveLayout("/my/workspace", root, "a", pvs);
+
+    await act(async () => {
+      await useWorkspaceStore.getState().openWorkspace("/my/workspace");
+    });
+
+    const ws = useWorkspaceStore.getState();
+    expect(ws.paneViewStates["a"]).toEqual({ scrollTop: 100, cursor: 42 });
+    expect(ws.paneViewStates["b"]).toEqual({ scrollTop: 200, cursor: 84 });
+    expect(ws.paneViewStates["gone"]).toBeUndefined();
+  });
+
+  it("starts layout sync subscription after restore", async () => {
+    await act(async () => {
+      await useWorkspaceStore.getState().openWorkspace("/my/workspace");
+    });
+
+    // Mutate pane store — if sync is active, localStorage should update
+    usePaneStore.getState().setPanePage(
+      usePaneStore.getState().focusedPaneId,
+      "Page A.md",
+    );
+    const raw = localStorage.getItem("lit-pane-layout-/my/workspace");
+    expect(raw).not.toBeNull();
+  });
+
+  it("stops previous sync when opening different workspace", async () => {
+    await act(async () => {
+      await useWorkspaceStore.getState().openWorkspace("/workspace-1");
+    });
+
+    // Open a second workspace
+    await act(async () => {
+      await useWorkspaceStore.getState().openWorkspace("/workspace-2");
+    });
+
+    // Mutate pane store — should only write to workspace-2, not workspace-1
+    localStorage.removeItem("lit-pane-layout-/workspace-1");
+    localStorage.removeItem("lit-pane-layout-/workspace-2");
+
+    usePaneStore.getState().setPanePage(
+      usePaneStore.getState().focusedPaneId,
+      "Page A.md",
+    );
+
+    expect(localStorage.getItem("lit-pane-layout-/workspace-1")).toBeNull();
+    expect(localStorage.getItem("lit-pane-layout-/workspace-2")).not.toBeNull();
+  });
+
+  it("removes stale layout entries >30 days", async () => {
+    const staleTime = Date.now() - STALE_THRESHOLD_MS - 1;
+    localStorage.setItem(
+      "lit-pane-layout-/old-workspace",
+      JSON.stringify({
+        root: { type: "leaf", id: "x", pagePath: null },
+        focusedPaneId: "x",
+        paneViewStates: {},
+        savedAt: staleTime,
+      }),
+    );
+
+    await act(async () => {
+      await useWorkspaceStore.getState().openWorkspace("/my/workspace");
+    });
+
+    expect(localStorage.getItem("lit-pane-layout-/old-workspace")).toBeNull();
+  });
+
+  it("keeps fresh layout entries for other workspaces", async () => {
+    const freshLayout = JSON.stringify({
+      root: { type: "leaf", id: "y", pagePath: null },
+      focusedPaneId: "y",
+      paneViewStates: {},
+      savedAt: Date.now(),
+    });
+    localStorage.setItem("lit-pane-layout-/other-workspace", freshLayout);
+
+    await act(async () => {
+      await useWorkspaceStore.getState().openWorkspace("/my/workspace");
+    });
+
+    expect(localStorage.getItem("lit-pane-layout-/other-workspace")).not.toBeNull();
   });
 });

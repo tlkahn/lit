@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { saveLayout } from "../lib/paneLayout";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -219,3 +220,24 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
     set({ focusedPaneId: leaves[(idx - 1 + leaves.length) % leaves.length]!.id });
   },
 }));
+
+// ---------------------------------------------------------------------------
+// Section D: Layout Sync (auto-persist to localStorage)
+// ---------------------------------------------------------------------------
+
+let unsub: (() => void) | null = null;
+
+export function startLayoutSync(
+  workspacePath: string,
+  getPaneViewStates: () => Record<string, import("./workspace").ViewState>,
+): void {
+  stopLayoutSync();
+  unsub = usePaneStore.subscribe((state) => {
+    saveLayout(workspacePath, state.root, state.focusedPaneId, getPaneViewStates());
+  });
+}
+
+export function stopLayoutSync(): void {
+  unsub?.();
+  unsub = null;
+}

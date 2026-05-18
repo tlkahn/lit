@@ -3,6 +3,15 @@ import { listen } from "@tauri-apps/api/event";
 import * as ipc from "../lib/ipc";
 import type { PageMeta, IndexProgress } from "../lib/ipc";
 import type { Heading } from "../lib/headings";
+import { usePaneStore, createInitialState } from "./panes";
+import { startLayoutSync, stopLayoutSync } from "./panes";
+import {
+  loadLayout,
+  validateLayout,
+  validateFocusedPaneId,
+  pruneViewStates,
+  cleanupStaleLayouts,
+} from "../lib/paneLayout";
 
 const RECENT_KEY = "lit-recent-workspaces";
 const LEGACY_KEY = "lit-workspace-path";
@@ -81,6 +90,22 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       const pages = await ipc.openWorkspace(path);
       set({ workspacePath: path, pages, loading: false });
       addRecentWorkspace(path);
+
+      stopLayoutSync();
+      cleanupStaleLayouts();
+      const stored = loadLayout(path);
+      if (stored) {
+        const pageSet = new Set(pages.map((p) => p.relative_path));
+        const validRoot = validateLayout(stored.root, pageSet);
+        const validFocus = validateFocusedPaneId(validRoot, stored.focusedPaneId);
+        const validViewStates = pruneViewStates(stored.paneViewStates, validRoot);
+        usePaneStore.setState({ root: validRoot, focusedPaneId: validFocus });
+        set({ paneViewStates: validViewStates });
+      } else {
+        usePaneStore.setState(createInitialState());
+        set({ paneViewStates: {} });
+      }
+      startLayoutSync(path, () => get().paneViewStates);
 
       const unlisten = await listen<IndexProgress>("lit:index-progress", (event) => {
         set({ indexProgress: event.payload });
