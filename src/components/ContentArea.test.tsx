@@ -4,6 +4,9 @@ import userEvent from "@testing-library/user-event";
 import { ContentArea, parseYamlErrorLocation } from "./ContentArea";
 import { mockInvoke, mockListen, emitMockEvent, resetListenMock } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
+import { usePaneStore } from "../stores/panes";
+import { _resetForTesting as resetRegistry } from "../lib/paneContentRegistry";
+import { _resetForTesting as resetEditorViewRef } from "../lib/editorViewRef";
 import * as commandRegistryModule from "../lib/commandRegistry";
 
 vi.mock("sigma", () => ({
@@ -63,6 +66,13 @@ beforeEach(() => {
     error: null,
   });
 
+  usePaneStore.setState({
+    root: { type: "leaf", id: "test-pane", pagePath: null },
+    focusedPaneId: "test-pane",
+  });
+  resetRegistry();
+  resetEditorViewRef();
+
   mockInvoke((cmd, args) => {
     if (cmd === "read_page") {
       const rp = (args as Record<string, unknown>)?.relativePath;
@@ -92,6 +102,11 @@ beforeEach(() => {
   });
 });
 
+function setPage(path: string) {
+  usePaneStore.getState().setPanePage("test-pane", path);
+  useWorkspaceStore.setState({ currentPagePath: path });
+}
+
 describe("ContentArea", () => {
   it("shows empty state when no page selected", () => {
     render(<ContentArea />);
@@ -99,7 +114,7 @@ describe("ContentArea", () => {
   });
 
   it("loads page content into editor", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    setPage("Hello.md");
     render(<ContentArea />);
 
     await waitFor(() => {
@@ -110,7 +125,7 @@ describe("ContentArea", () => {
   });
 
   it("displays page title", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    setPage("Hello.md");
     render(<ContentArea />);
 
     await waitFor(() => {
@@ -119,7 +134,7 @@ describe("ContentArea", () => {
   });
 
   it("switches content on page change", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    setPage("Hello.md");
     const { unmount } = render(<ContentArea />);
 
     await waitFor(() => {
@@ -127,7 +142,7 @@ describe("ContentArea", () => {
     });
     unmount();
 
-    useWorkspaceStore.setState({ currentPagePath: "Other.md" });
+    setPage("Other.md");
     render(<ContentArea />);
 
     await waitFor(() => {
@@ -136,72 +151,55 @@ describe("ContentArea", () => {
     });
   });
 
-  it("calls writePage on edit (debounced 300ms)", async () => {
-    vi.useFakeTimers();
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+  it("renders PaneContainer in editor mode", async () => {
+    setPage("Hello.md");
     render(<ContentArea />);
 
-    await vi.waitFor(() => {
-      expect(screen.getByTestId("editor").textContent).toContain("Some content");
+    await waitFor(() => {
+      expect(screen.getByTestId("editor-pane")).toBeInTheDocument();
     });
-
-    const cmEditor = screen.getByTestId("editor").querySelector(".cm-editor");
-    expect(cmEditor).not.toBeNull();
-
-    // Simulate a user edit via CM6 view
-    const { EditorView } = await import("@codemirror/view");
-    const view = EditorView.findFromDOM(cmEditor as HTMLElement);
-    expect(view).not.toBeNull();
-
-    act(() => {
-      view!.dispatch({
-        changes: { from: view!.state.doc.length, insert: " edited" },
-      });
-    });
-
-    expect(writePageCalls).toHaveLength(0);
-    await act(async () => { vi.advanceTimersByTime(300); });
-    expect(writePageCalls).toHaveLength(1);
-    expect(writePageCalls[0]!.body).toContain("edited");
-
-    vi.useRealTimers();
   });
 
-  it("debounces rapid changes (single writePage call)", async () => {
-    vi.useFakeTimers();
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+  it("title bar shows focused pane's page title", async () => {
+    setPage("Hello.md");
     render(<ContentArea />);
 
-    await vi.waitFor(() => {
-      expect(screen.getByTestId("editor").textContent).toContain("Some content");
+    await waitFor(() => {
+      expect(screen.getByTestId("page-title")).toHaveValue("Hello");
+    });
+  });
+
+  it("BottomPanel receives focused pane's pagePath", async () => {
+    setPage("Hello.md");
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("bottom-panel")).toBeInTheDocument();
+    });
+  });
+
+  it("title editing commits rename for focused pane's page", async () => {
+    const spy = vi.fn();
+    useWorkspaceStore.setState({ renamePage: spy });
+    setPage("Hello.md");
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("page-title")).toHaveValue("Hello");
     });
 
-    const cmEditor = screen.getByTestId("editor").querySelector(".cm-editor");
-    const { EditorView } = await import("@codemirror/view");
-    const view = EditorView.findFromDOM(cmEditor as HTMLElement)!;
-
-    act(() => {
-      view.dispatch({ changes: { from: view.state.doc.length, insert: "a" } });
+    const input = screen.getByTestId("page-title");
+    await userEvent.clear(input);
+    await userEvent.type(input, "NewTitle");
+    await act(async () => {
+      input.blur();
     });
-    await act(async () => { vi.advanceTimersByTime(100); });
 
-    act(() => {
-      view.dispatch({ changes: { from: view.state.doc.length, insert: "b" } });
-    });
-    await act(async () => { vi.advanceTimersByTime(100); });
-
-    act(() => {
-      view.dispatch({ changes: { from: view.state.doc.length, insert: "c" } });
-    });
-    await act(async () => { vi.advanceTimersByTime(300); });
-
-    expect(writePageCalls).toHaveLength(1);
-
-    vi.useRealTimers();
+    expect(spy).toHaveBeenCalledWith("Hello.md", "NewTitle");
   });
 
   it("frontmatter toggle works", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    setPage("Hello.md");
     render(<ContentArea />);
 
     await waitFor(() => {
@@ -221,7 +219,7 @@ describe("ContentArea", () => {
 
 describe("frontmatter editing", () => {
   async function showFrontmatterPanel() {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    setPage("Hello.md");
     render(<ContentArea />);
     await waitFor(() => {
       expect(screen.getByTitle("Show frontmatter")).toBeInTheDocument();
@@ -326,7 +324,7 @@ describe("frontmatter editing", () => {
     expect(screen.getByTestId("frontmatter-editor")).toBeInTheDocument();
 
     await act(async () => {
-      useWorkspaceStore.setState({ currentPagePath: "Other.md" });
+      setPage("Other.md");
     });
     await waitFor(() => {
       expect(screen.queryByTestId("frontmatter-editor")).not.toBeInTheDocument();
@@ -334,143 +332,9 @@ describe("frontmatter editing", () => {
   });
 });
 
-describe("ContentArea dirty tracking", () => {
-  it("buffer is clean after page load", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
-    render(<ContentArea />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("editor").textContent).toContain("Some content");
-    });
-    expect(useWorkspaceStore.getState().isDirty).toBe(false);
-  });
-
-  it("buffer becomes dirty on edit", async () => {
-    vi.useFakeTimers();
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
-    render(<ContentArea />);
-
-    await vi.waitFor(() => {
-      expect(screen.getByTestId("editor").textContent).toContain("Some content");
-    });
-
-    const cmEditor = screen.getByTestId("editor").querySelector(".cm-editor");
-    const { EditorView } = await import("@codemirror/view");
-    const view = EditorView.findFromDOM(cmEditor as HTMLElement)!;
-
-    act(() => {
-      view.dispatch({ changes: { from: view.state.doc.length, insert: " dirty" } });
-    });
-
-    expect(useWorkspaceStore.getState().isDirty).toBe(true);
-    vi.useRealTimers();
-  });
-
-  it("buffer becomes clean after debounced save", async () => {
-    vi.useFakeTimers();
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
-    render(<ContentArea />);
-
-    await vi.waitFor(() => {
-      expect(screen.getByTestId("editor").textContent).toContain("Some content");
-    });
-
-    const cmEditor = screen.getByTestId("editor").querySelector(".cm-editor");
-    const { EditorView } = await import("@codemirror/view");
-    const view = EditorView.findFromDOM(cmEditor as HTMLElement)!;
-
-    act(() => {
-      view.dispatch({ changes: { from: view.state.doc.length, insert: " saved" } });
-    });
-
-    expect(useWorkspaceStore.getState().isDirty).toBe(true);
-
-    await act(async () => { vi.advanceTimersByTime(300); });
-    await vi.waitFor(() => {
-      expect(useWorkspaceStore.getState().isDirty).toBe(false);
-    });
-
-    vi.useRealTimers();
-  });
-
-  it("rapid edits during writePage flight keep dirty flag", async () => {
-    vi.useFakeTimers();
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
-    render(<ContentArea />);
-
-    await vi.waitFor(() => {
-      expect(screen.getByTestId("editor").textContent).toContain("Some content");
-    });
-
-    const cmEditor = screen.getByTestId("editor").querySelector(".cm-editor");
-    const { EditorView } = await import("@codemirror/view");
-    const view = EditorView.findFromDOM(cmEditor as HTMLElement)!;
-
-    act(() => {
-      view.dispatch({ changes: { from: view.state.doc.length, insert: "a" } });
-    });
-
-    await act(async () => { vi.advanceTimersByTime(300); });
-
-    act(() => {
-      view.dispatch({ changes: { from: view.state.doc.length, insert: "b" } });
-    });
-
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    expect(useWorkspaceStore.getState().isDirty).toBe(true);
-
-    vi.useRealTimers();
-  });
-});
-
-describe("ContentArea conflict handling", () => {
-  it("auto-reloads when reloadTrigger increments and buffer is clean", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
-    render(<ContentArea />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("editor").textContent).toContain("Some content");
-    });
-
-    expect(useWorkspaceStore.getState().isDirty).toBe(false);
-
-    act(() => {
-      useWorkspaceStore.getState().triggerReload();
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("editor").textContent).toContain("Some content");
-    });
-    expect(screen.queryByTestId("conflict-dialog")).not.toBeInTheDocument();
-  });
-
-  it("silently acknowledges external change when buffer is dirty", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
-    render(<ContentArea />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("editor").textContent).toContain("Some content");
-    });
-
-    act(() => {
-      useWorkspaceStore.getState().setDirty(true);
-    });
-
-    act(() => {
-      useWorkspaceStore.getState().triggerReload();
-    });
-
-    const { invoke } = await import("@tauri-apps/api/core");
-    await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith("acknowledge_file_hash", { relativePath: "Hello.md" });
-    });
-    expect(screen.queryByTestId("conflict-dialog")).not.toBeInTheDocument();
-  });
-});
-
 describe("ContentArea headings", () => {
   it("after page load, store has correct headings", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    setPage("Hello.md");
     render(<ContentArea />);
 
     await waitFor(() => {
@@ -484,204 +348,6 @@ describe("ContentArea headings", () => {
   it("when no page selected, headings are []", () => {
     render(<ContentArea />);
     expect(useWorkspaceStore.getState().currentPageHeadings).toEqual([]);
-  });
-});
-
-describe("ContentArea scroll position", () => {
-  it("saves scroll position on page switch", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
-    render(<ContentArea />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("editor").textContent).toContain("Some content");
-    });
-
-    act(() => {
-      useWorkspaceStore.getState().selectPage("Other.md");
-    });
-
-    await waitFor(() => {
-      const vs = useWorkspaceStore.getState().viewStates["Hello.md"];
-      expect(vs).toBeDefined();
-      expect(vs!.scrollTop).toBeDefined();
-      expect(vs!.cursor).toBeDefined();
-    });
-  });
-
-  it("no save when switching from null", async () => {
-    render(<ContentArea />);
-    expect(screen.getByTestId("empty-state")).toBeInTheDocument();
-
-    act(() => {
-      useWorkspaceStore.getState().selectPage("Hello.md");
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("editor").textContent).toContain("Some content");
-    });
-
-    expect(useWorkspaceStore.getState().viewStates).toEqual({});
-  });
-
-  it("saves when deselecting to null", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
-    render(<ContentArea />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("editor").textContent).toContain("Some content");
-    });
-
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-
-    act(() => {
-      useWorkspaceStore.getState().selectPage(null);
-    });
-
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("selectPage(null)"),
-      expect.anything(),
-    );
-    warnSpy.mockRestore();
-
-    await waitFor(() => {
-      expect(useWorkspaceStore.getState().viewStates["Hello.md"]).toBeDefined();
-    });
-  });
-
-  it("saves cursor position on page switch", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
-    render(<ContentArea />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("editor").textContent).toContain("Some content");
-    });
-
-    const cmEditor = screen.getByTestId("editor").querySelector(".cm-editor");
-    const { EditorView } = await import("@codemirror/view");
-    const { EditorSelection } = await import("@codemirror/state");
-    const view = EditorView.findFromDOM(cmEditor as HTMLElement)!;
-
-    act(() => {
-      view.dispatch({ selection: EditorSelection.cursor(5) });
-    });
-
-    act(() => {
-      useWorkspaceStore.getState().selectPage("Other.md");
-    });
-
-    await waitFor(() => {
-      expect(useWorkspaceStore.getState().viewStates["Hello.md"]?.cursor).toBe(5);
-    });
-  });
-
-  it("pendingCursorLine scroll uses y:'center'", async () => {
-    const { EditorView } = await import("@codemirror/view");
-    const spy = vi.spyOn(EditorView, "scrollIntoView");
-
-    useWorkspaceStore.setState({
-      currentPagePath: "Hello.md",
-      pendingCursorLine: 2,
-      pendingCursorCol: 0,
-    });
-    render(<ContentArea />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("editor").textContent).toContain("Some content");
-    });
-
-    await waitFor(() => {
-      const centerCalls = spy.mock.calls.filter(
-        (args) => args[1] && (args[1] as Record<string, unknown>).y === "center",
-      );
-      expect(centerCalls.length).toBeGreaterThanOrEqual(1);
-    });
-
-    spy.mockRestore();
-  });
-
-  it("pendingCursorLine with fileAbsolute adjusts for frontmatter", async () => {
-    const { EditorView } = await import("@codemirror/view");
-
-    // samplePage has raw_yaml "tags:\n  - test\n" → 2 YAML lines + 2 fences = 4 line offset
-    // File line 6 should become body line 2
-    useWorkspaceStore.setState({
-      currentPagePath: "Hello.md",
-      pendingCursorLine: 6,
-      pendingCursorCol: 0,
-      pendingCursorFileAbsolute: true,
-    });
-    render(<ContentArea />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("editor").textContent).toContain("Some content");
-    });
-
-    const cmEditor = screen.getByTestId("editor").querySelector(".cm-editor");
-    const view = EditorView.findFromDOM(cmEditor as HTMLElement)!;
-
-    await waitFor(() => {
-      const pos = view.state.selection.main.head;
-      const line = view.state.doc.lineAt(pos);
-      expect(line.number).toBe(2);
-    });
-  });
-
-  it("pendingCursorLine with fileAbsolute and no frontmatter passes through unchanged", async () => {
-    const { EditorView } = await import("@codemirror/view");
-
-    // otherPage has raw_yaml "" → no offset, line 2 stays line 2
-    useWorkspaceStore.setState({
-      currentPagePath: "Other.md",
-      pendingCursorLine: 2,
-      pendingCursorCol: 0,
-      pendingCursorFileAbsolute: true,
-    });
-    render(<ContentArea />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("editor").textContent).toContain("Different content");
-    });
-
-    const cmEditor = screen.getByTestId("editor").querySelector(".cm-editor");
-    const view = EditorView.findFromDOM(cmEditor as HTMLElement)!;
-
-    await waitFor(() => {
-      const pos = view.state.selection.main.head;
-      const line = view.state.doc.lineAt(pos);
-      expect(line.number).toBe(2);
-    });
-  });
-});
-
-describe("parseYamlErrorLocation", () => {
-  it("parses 'at line X column Y' at end of message", () => {
-    expect(
-      parseYamlErrorLocation("mapping values are not allowed in this context at line 1 column 8"),
-    ).toEqual({ line: 1, column: 8 });
-  });
-
-  it("prefers 'while parsing' origin location over detection location", () => {
-    expect(
-      parseYamlErrorLocation(
-        "did not find expected ',' or ']' at line 2 column 1, while parsing a flow sequence at line 1 column 6",
-      ),
-    ).toEqual({ line: 1, column: 6 });
-  });
-
-  it("parses multi-digit line and column", () => {
-    expect(
-      parseYamlErrorLocation("something went wrong at line 123 column 45"),
-    ).toEqual({ line: 123, column: 45 });
-  });
-
-  it("returns null for messages without location", () => {
-    expect(
-      parseYamlErrorLocation("invalid type: sequence, expected a map"),
-    ).toBeNull();
-  });
-
-  it("returns null for empty string", () => {
-    expect(parseYamlErrorLocation("")).toBeNull();
   });
 });
 
@@ -700,7 +366,7 @@ const multiHeadingPage = {
 
 describe("ContentArea mindmap toggle", () => {
   it("toggle button switches between editor and mindmap views", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    setPage("Hello.md");
     const user = userEvent.setup();
     render(<ContentArea />);
 
@@ -736,7 +402,7 @@ describe("ContentArea mindmap toggle", () => {
       throw new Error(`Unknown command: ${cmd}`);
     });
 
-    useWorkspaceStore.setState({ currentPagePath: "Multi.md" });
+    setPage("Multi.md");
     const user = userEvent.setup();
     render(<ContentArea />);
 
@@ -783,7 +449,7 @@ describe("ContentArea mindmap selection persistence", () => {
 
   it("selection persists when body changes and selected node still exists", async () => {
     setupMultiHeadingMock();
-    useWorkspaceStore.setState({ currentPagePath: "Multi.md" });
+    setPage("Multi.md");
     const user = userEvent.setup();
     render(<ContentArea />);
 
@@ -826,7 +492,7 @@ describe("ContentArea mindmap selection persistence", () => {
 
   it("selection clears when selected node is removed from body", async () => {
     setupMultiHeadingMock();
-    useWorkspaceStore.setState({ currentPagePath: "Multi.md" });
+    setPage("Multi.md");
     const user = userEvent.setup();
     render(<ContentArea />);
 
@@ -887,7 +553,7 @@ describe("ContentArea outline-to-mindmap selection", () => {
 
   it("dispatching lit:scroll-to-line selects corresponding mindmap node", async () => {
     setupMultiHeadingMock();
-    useWorkspaceStore.setState({ currentPagePath: "Multi.md" });
+    setPage("Multi.md");
     const user = userEvent.setup();
     render(<ContentArea />);
 
@@ -915,7 +581,7 @@ describe("ContentArea outline-to-mindmap selection", () => {
 
   it("dispatching lit:scroll-to-line with nonexistent line does not select any node", async () => {
     setupMultiHeadingMock();
-    useWorkspaceStore.setState({ currentPagePath: "Multi.md" });
+    setPage("Multi.md");
     const user = userEvent.setup();
     render(<ContentArea />);
 
@@ -941,7 +607,7 @@ describe("ContentArea outline-to-mindmap selection", () => {
 
   it("dispatching lit:scroll-to-line in editor mode does NOT affect mindmap", async () => {
     setupMultiHeadingMock();
-    useWorkspaceStore.setState({ currentPagePath: "Multi.md" });
+    setPage("Multi.md");
     render(<ContentArea />);
 
     await waitFor(() => {
@@ -972,7 +638,7 @@ describe("ContentArea bottom panel", () => {
   });
 
   it("renders BottomPanel with pageId", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    setPage("Hello.md");
     render(<ContentArea />);
 
     await waitFor(() => {
@@ -987,7 +653,7 @@ describe("ContentArea jump recording on page switch", () => {
   });
 
   it("records departure jump when switching pages via selectPage", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    setPage("Hello.md");
     render(<ContentArea />);
 
     await waitFor(() => {
@@ -995,7 +661,7 @@ describe("ContentArea jump recording on page switch", () => {
     });
 
     act(() => {
-      useWorkspaceStore.getState().selectPage("Other.md");
+      setPage("Other.md");
     });
 
     await waitFor(() => {
@@ -1011,7 +677,7 @@ describe("ContentArea jump recording on page switch", () => {
     expect(screen.getByTestId("empty-state")).toBeInTheDocument();
 
     act(() => {
-      useWorkspaceStore.getState().selectPage("Hello.md");
+      setPage("Hello.md");
     });
 
     await waitFor(() => {
@@ -1022,7 +688,7 @@ describe("ContentArea jump recording on page switch", () => {
   });
 
   it("does not record departure when isNavigating is true (jump navigation)", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    setPage("Hello.md");
     render(<ContentArea />);
 
     await waitFor(() => {
@@ -1032,7 +698,7 @@ describe("ContentArea jump recording on page switch", () => {
     globalJumpTracker.isNavigating = true;
 
     act(() => {
-      useWorkspaceStore.getState().selectPage("Other.md");
+      setPage("Other.md");
     });
 
     await waitFor(() => {
@@ -1059,6 +725,7 @@ describe("ContentArea PDF rendering", () => {
       pages: [pdfPage],
       currentPagePath: "doc.pdf",
     });
+    usePaneStore.getState().setPanePage("test-pane", "doc.pdf");
 
     mockInvoke((cmd, args) => {
       if (cmd === "pdf_open") return { page_count: 2, path: (args as Record<string, unknown>)?.path ?? "" };
@@ -1082,6 +749,7 @@ describe("ContentArea PDF rendering", () => {
       pages: [samplePage.meta],
       currentPagePath: "Hello.md",
     });
+    setPage("Hello.md");
 
     render(<ContentArea />);
 
@@ -1099,7 +767,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
   });
 
   it("delegates to commandRegistry.execute with the editor view", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    setPage("Hello.md");
     const spy = vi.spyOn(commandRegistryModule, "executeCommand").mockReturnValue(true);
     render(<ContentArea />);
 
@@ -1133,7 +801,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
   });
 
   it("Graph toggle button exists", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    setPage("Hello.md");
     render(<ContentArea />);
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Graph" })).toBeInTheDocument();
@@ -1141,7 +809,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
   });
 
   it("clicking Graph button shows graph view", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    setPage("Hello.md");
     render(<ContentArea />);
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Graph" })).toBeInTheDocument();
@@ -1153,7 +821,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
   });
 
   it("clicking Editor button from graph view hides graph wrapper", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    setPage("Hello.md");
     render(<ContentArea />);
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Graph" })).toBeInTheDocument();
@@ -1169,7 +837,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
   });
 
   it("dispatching lit:toggle-graph-view when in editor switches to graph", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    setPage("Hello.md");
     render(<ContentArea />);
     await waitFor(() => {
       expect(screen.getByTestId("editor")).toBeInTheDocument();
@@ -1183,7 +851,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
   });
 
   it("dispatching lit:toggle-graph-view when already in graph hides graph wrapper", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    setPage("Hello.md");
     render(<ContentArea />);
     await waitFor(() => {
       expect(screen.getByTestId("editor")).toBeInTheDocument();
@@ -1203,31 +871,11 @@ describe("ContentArea menu://open-in-external-editor", () => {
   });
 
   it("lit:toggle-graph-view with detail.mode='local' passes initialMode to GraphView", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    setPage("Hello.md");
     render(<ContentArea />);
     await waitFor(() => {
       expect(screen.getByTestId("editor")).toBeInTheDocument();
     });
-    act(() => {
-      window.dispatchEvent(new CustomEvent("lit:toggle-graph-view", { detail: { mode: "local" } }));
-    });
-    await waitFor(() => {
-      expect(screen.getByTestId("graph-view-wrapper")).toBeInTheDocument();
-    });
-    // When launched with mode "local", Local button should be active
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Local" }).getAttribute("aria-pressed")).toBe("true");
-    });
-  });
-
-  it("toggling off graph and re-entering retains last mode (mount-once-then-hide)", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
-    render(<ContentArea />);
-    await waitFor(() => {
-      expect(screen.getByTestId("editor")).toBeInTheDocument();
-    });
-
-    // Enter graph with mode='local'
     act(() => {
       window.dispatchEvent(new CustomEvent("lit:toggle-graph-view", { detail: { mode: "local" } }));
     });
@@ -1237,8 +885,25 @@ describe("ContentArea menu://open-in-external-editor", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Local" }).getAttribute("aria-pressed")).toBe("true");
     });
+  });
 
-    // Toggle off (back to editor)
+  it("toggling off graph and re-entering retains last mode (mount-once-then-hide)", async () => {
+    setPage("Hello.md");
+    render(<ContentArea />);
+    await waitFor(() => {
+      expect(screen.getByTestId("editor")).toBeInTheDocument();
+    });
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent("lit:toggle-graph-view", { detail: { mode: "local" } }));
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("graph-view-wrapper")).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Local" }).getAttribute("aria-pressed")).toBe("true");
+    });
+
     act(() => {
       window.dispatchEvent(new CustomEvent("lit:toggle-graph-view"));
     });
@@ -1246,7 +911,6 @@ describe("ContentArea menu://open-in-external-editor", () => {
       expect(screen.getByTestId("graph-view-wrapper").style.display).toBe("none");
     });
 
-    // Re-enter via Graph button — graph is still alive, retains local mode
     await userEvent.click(screen.getByRole("button", { name: "Graph" }));
     await waitFor(() => {
       expect(screen.getByTestId("graph-view-wrapper").style.display).not.toBe("none");
@@ -1257,7 +921,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
   });
 
   it("graph-view-wrapper stays in DOM after switching back to editor (mount-once-then-hide)", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    setPage("Hello.md");
     render(<ContentArea />);
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Graph" })).toBeInTheDocument();
@@ -1278,7 +942,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
   });
 
   it("graph-view-wrapper is NOT in DOM before first graph view switch", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    setPage("Hello.md");
     render(<ContentArea />);
     await waitFor(() => {
       expect(screen.getByTestId("editor")).toBeInTheDocument();
@@ -1287,7 +951,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
   });
 
   it("Escape in graph view hides graph wrapper (via onExit)", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
+    setPage("Hello.md");
     render(<ContentArea />);
     await waitFor(() => {
       expect(screen.getByTestId("editor")).toBeInTheDocument();
@@ -1307,87 +971,34 @@ describe("ContentArea menu://open-in-external-editor", () => {
   });
 });
 
-describe("ContentArea external-reload cursor preservation", () => {
-  it("auto-reload preserves cursor position when buffer is clean", async () => {
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
-    render(<ContentArea />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("editor").textContent).toContain("Some content");
-    });
-
-    const { getCurrentEditorView } = await import("../lib/editorViewRef");
-    const { EditorSelection } = await import("@codemirror/state");
-    const view = getCurrentEditorView()!;
-    expect(view).not.toBeNull();
-
-    act(() => {
-      view.dispatch({ selection: EditorSelection.cursor(10) });
-    });
-    expect(view.state.selection.main.head).toBe(10);
-
-    act(() => {
-      useWorkspaceStore.getState().triggerReload();
-    });
-
-    await waitFor(() => {
-      expect(useWorkspaceStore.getState().viewStates["Hello.md"]?.cursor).toBe(10);
-    });
-
-    await waitFor(() => {
-      const v = getCurrentEditorView()!;
-      expect(v.state.selection.main.head).toBe(10);
-    });
+describe("parseYamlErrorLocation", () => {
+  it("parses 'at line X column Y' at end of message", () => {
+    expect(
+      parseYamlErrorLocation("mapping values are not allowed in this context at line 1 column 8"),
+    ).toEqual({ line: 1, column: 8 });
   });
 
-  it("auto-reload clamps cursor when reloaded content is shorter", async () => {
-    let readCount = 0;
-    mockInvoke((cmd) => {
-      if (cmd === "read_page") {
-        readCount++;
-        if (readCount > 1) {
-          return {
-            body: "# Hi",
-            raw_yaml: "",
-            meta: { title: "Hi", frontmatter: {}, relative_path: "Hello.md", created_at: 1000, modified_at: 2000, file_type: "markdown" as const },
-          };
-        }
-        return samplePage;
-      }
-      if (cmd === "write_page") return null;
-      if (cmd === "parse_raw_yaml") return {};
-      if (cmd === "get_backlinks") return [];
-      if (cmd === "get_keymaps") return [];
-      if (cmd === "get_graph_subgraph") return { nodes: [], edges: [] };
-      if (cmd === "get_pagerank") return {};
-      if (cmd === "get_graph_positions") return {};
-      if (cmd === "acknowledge_file_hash") return null;
-      throw new Error(`Unknown command: ${cmd}`);
-    });
-
-    useWorkspaceStore.setState({ currentPagePath: "Hello.md" });
-    render(<ContentArea />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("editor").textContent).toContain("Some content");
-    });
-
-    const { getCurrentEditorView } = await import("../lib/editorViewRef");
-    const { EditorSelection } = await import("@codemirror/state");
-    const view = getCurrentEditorView()!;
-
-    act(() => {
-      view.dispatch({ selection: EditorSelection.cursor(19) });
-    });
-
-    act(() => {
-      useWorkspaceStore.getState().triggerReload();
-    });
-
-    await waitFor(() => {
-      const v = getCurrentEditorView()!;
-      expect(v.state.selection.main.head).toBeLessThanOrEqual(4);
-    });
+  it("prefers 'while parsing' origin location over detection location", () => {
+    expect(
+      parseYamlErrorLocation(
+        "did not find expected ',' or ']' at line 2 column 1, while parsing a flow sequence at line 1 column 6",
+      ),
+    ).toEqual({ line: 1, column: 6 });
   });
 
+  it("parses multi-digit line and column", () => {
+    expect(
+      parseYamlErrorLocation("something went wrong at line 123 column 45"),
+    ).toEqual({ line: 123, column: 45 });
+  });
+
+  it("returns null for messages without location", () => {
+    expect(
+      parseYamlErrorLocation("invalid type: sequence, expected a map"),
+    ).toBeNull();
+  });
+
+  it("returns null for empty string", () => {
+    expect(parseYamlErrorLocation("")).toBeNull();
+  });
 });

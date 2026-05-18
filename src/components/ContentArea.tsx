@@ -1,26 +1,25 @@
 import { useEffect, useState, useRef, useCallback, useMemo, lazy, Suspense } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
-import { openPath } from "@tauri-apps/plugin-opener";
 import { EditorView } from "@codemirror/view";
 import { EditorSelection } from "@codemirror/state";
 import { listen } from "@tauri-apps/api/event";
 import { useWorkspaceStore } from "../stores/workspace";
-import { readPage, writePage, parseRawYaml, resolveWikilink, createPage as ipcCreatePage, acknowledgeFileHash } from "../lib/ipc";
+import { usePaneStore, findLeaf } from "../stores/panes";
+import { usePaneField, updatePaneContent, type PaneContentEntry } from "../lib/paneContentRegistry";
+import { writePage, parseRawYaml } from "../lib/ipc";
 import { executeCommand } from "../lib/commandRegistry";
-import { navigateWikilink } from "../lib/wikilinkNavigation";
-import { setCurrentEditorView } from "../lib/editorViewRef";
-import { extractHeadings, type Heading } from "../lib/headings";
-import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
+import { getCurrentEditorView } from "../lib/editorViewRef";
+import { extractHeadings } from "../lib/headings";
+import { PaneContainer } from "./PaneContainer";
 import { PdfViewer } from "./PdfViewer";
 import { BottomPanel } from "./BottomPanel";
 import { buildHeadingTree, applyRename, applyMove, insertChild, insertSibling, insertDangling, resolveDeleteFallback, findNode } from "../lib/headingTree";
 import { YamlHighlighter } from "./YamlHighlighter";
-import { useKeymaps } from "../hooks/useKeymaps";
+import { globalJumpTracker } from "../editor/jumpTracker";
 
 const LazyMindmapView = lazy(() => import("./MindmapView"));
 const LazyGraphView = lazy(() => import("./GraphView"));
 
-import { globalJumpTracker } from "../editor/jumpTracker";
+const EMPTY_FM: Record<string, unknown> = {};
 
 export function parseYamlErrorLocation(msg: string): { line: number; column: number } | null {
   const origin = msg.match(/while parsing .+ at line (\d+) column (\d+)/);
@@ -30,126 +29,105 @@ export function parseYamlErrorLocation(msg: string): { line: number; column: num
   return { line: parseInt(match[1]!, 10), column: parseInt(match[2]!, 10) };
 }
 
-function resolveRelativePath(base: string, relative: string): string {
-  const segments = (base ? base + "/" + relative : relative).split("/");
-  const resolved: string[] = [];
-  for (const seg of segments) {
-    if (seg === "..") resolved.pop();
-    else if (seg !== "." && seg !== "") resolved.push(seg);
-  }
-  return resolved.join("/");
-}
-
-function frontmatterLineCount(rawYaml: string): number {
-  if (!rawYaml) return 0;
-  return rawYaml.trimEnd().split("\n").length + 2;
-}
-
 export function ContentArea() {
-  const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
+  const focusedPaneId = usePaneStore((s) => s.focusedPaneId);
+  const focusedLeaf = usePaneStore((s) => findLeaf(s.root, s.focusedPaneId));
+  const currentPanePage = focusedLeaf?.pagePath ?? null;
+
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const pendingTitleFocus = useWorkspaceStore((s) => s.pendingTitleFocus);
   const clearPendingTitleFocus = useWorkspaceStore((s) => s.clearPendingTitleFocus);
   const renamePageAction = useWorkspaceStore((s) => s.renamePage);
-  const setCurrentPageHeadings = useWorkspaceStore((s) => s.setCurrentPageHeadings);
-  const isDirty = useWorkspaceStore((s) => s.isDirty);
-  const setDirty = useWorkspaceStore((s) => s.setDirty);
-  const reloadTrigger = useWorkspaceStore((s) => s.reloadTrigger);
+  const selectPage = useWorkspaceStore((s) => s.selectPage);
   const saveViewState = useWorkspaceStore((s) => s.saveViewState);
   const saveMindmapFoldState = useWorkspaceStore((s) => s.saveMindmapFoldState);
 
-  const { editorBindings } = useKeymaps();
-  const editorViewRef = useRef<EditorView | null>(null);
-  const [body, setBody] = useState("");
   const [viewMode, setViewMode] = useState<"editor" | "mindmap" | "graph">("editor");
+
+  const titleSel = useMemo(() => (e: PaneContentEntry | null) => e?.title ?? "", []);
+  const title = usePaneField(focusedPaneId, titleSel);
+
+  const fmSel = useMemo(() => (e: PaneContentEntry | null) => e?.frontmatter ?? EMPTY_FM, []);
+  const frontmatter = usePaneField(focusedPaneId, fmSel);
+
+  const rawYamlSel = useMemo(() => (e: PaneContentEntry | null) => e?.rawYaml ?? "", []);
+  const rawYaml = usePaneField(focusedPaneId, rawYamlSel);
+
+  const bodySel = useMemo(
+    () => (e: PaneContentEntry | null) => viewMode === "mindmap" ? (e?.body ?? "") : "",
+    [viewMode],
+  );
+  const body = usePaneField(focusedPaneId, bodySel);
+
   const [graphInitialMode, setGraphInitialMode] = useState<"full" | "local" | undefined>(undefined);
   const [graphEverOpened, setGraphEverOpened] = useState(false);
   const [mindmapSelectedId, setMindmapSelectedId] = useState<string | null>(null);
-  const [title, setTitle] = useState("");
   const [editingTitle, setEditingTitle] = useState("");
-  const [frontmatter, setFrontmatter] = useState<Record<string, unknown>>({});
-  const [rawYaml, setRawYaml] = useState("");
   const [showFrontmatter, setShowFrontmatter] = useState(false);
   const [editingYaml, setEditingYaml] = useState(false);
   const [yamlDraft, setYamlDraft] = useState("");
   const [yamlError, setYamlError] = useState<string | null>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const headingDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const headingsRef = useRef<Heading[]>([]);
-  const editGenRef = useRef(0);
+
   const currentPathRef = useRef<string | null>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cancelledRef = useRef(false);
   const pendingScrollLineRef = useRef<number | null>(null);
-  const rawYamlRef = useRef("");
 
-  const loadPage = useCallback(async (path: string) => {
-    try {
-      const content = await readPage(path);
-      if (currentPathRef.current === path) {
-        console.debug("[ContentArea] loadPage OK:", path, "body length:", content.body.length);
-        setBody(content.body);
-        setTitle(content.meta.title);
-        setEditingTitle(content.meta.title);
-        setFrontmatter(content.meta.frontmatter);
-        setRawYaml(content.raw_yaml);
-        rawYamlRef.current = content.raw_yaml;
-        useWorkspaceStore.getState().setCurrentFrontmatterLineCount(frontmatterLineCount(content.raw_yaml));
-        setCurrentPageHeadings(extractHeadings(content.body));
-      } else {
-        console.debug("[ContentArea] loadPage stale, ignoring:", path);
+  useEffect(() => {
+    setEditingTitle(title);
+  }, [title]);
+
+  useEffect(() => {
+    if (currentPanePage !== null) {
+      const current = useWorkspaceStore.getState().currentPagePath;
+      if (currentPanePage !== current) {
+        useWorkspaceStore.setState({ currentPagePath: currentPanePage });
       }
-    } catch (err) {
-      console.error("[ContentArea] loadPage failed:", path, err);
-      setBody("");
-      setTitle("");
-      setEditingTitle("");
-      setFrontmatter({});
-      setRawYaml("");
-      rawYamlRef.current = "";
-      setCurrentPageHeadings([]);
     }
-  }, [setCurrentPageHeadings]);
+  }, [currentPanePage]);
+
+  useEffect(() => {
+    const { currentPagePath } = useWorkspaceStore.getState();
+    if (currentPagePath) {
+      const paneState = usePaneStore.getState();
+      const leaf = findLeaf(paneState.root, paneState.focusedPaneId);
+      if (leaf?.pagePath !== currentPagePath) {
+        paneState.setPanePage(paneState.focusedPaneId, currentPagePath);
+      }
+    }
+    return useWorkspaceStore.subscribe((state, prev) => {
+      if (state.currentPagePath !== prev.currentPagePath && state.currentPagePath) {
+        const { focusedPaneId: fpId } = usePaneStore.getState();
+        const leaf = findLeaf(usePaneStore.getState().root, fpId);
+        if (leaf?.pagePath !== state.currentPagePath) {
+          usePaneStore.getState().setPanePage(fpId, state.currentPagePath);
+        }
+      }
+    });
+  }, []);
 
   useEffect(() => {
     const previousPath = currentPathRef.current;
-    if (previousPath && editorViewRef.current) {
-      const view = editorViewRef.current;
-      saveViewState(previousPath, view.scrollDOM.scrollTop, view.state.selection.main.head);
-      if (!globalJumpTracker.isNavigating) {
-        const pos = view.state.selection.main.head;
-        const line = view.state.doc.lineAt(pos);
-        globalJumpTracker.recordJump(
-          { notePath: previousPath, line: line.number, col: pos - line.from },
-          { notePath: "", line: 0, col: 0 },
-        );
+    if (previousPath) {
+      const view = getCurrentEditorView();
+      if (view) {
+        saveViewState(previousPath, view.scrollDOM.scrollTop, view.state.selection.main.head);
+        if (!globalJumpTracker.isNavigating) {
+          const pos = view.state.selection.main.head;
+          const line = view.state.doc.lineAt(pos);
+          globalJumpTracker.recordJump(
+            { notePath: previousPath, line: line.number, col: pos - line.from },
+            { notePath: "", line: 0, col: 0 },
+          );
+        }
       }
     }
-    currentPathRef.current = currentPagePath;
-    if (currentPagePath) {
-      const { pages: currentPages } = useWorkspaceStore.getState();
-      const page = currentPages.find(p => p.relative_path === currentPagePath);
-      if (page?.file_type === 'pdf') {
-        return;
-      }
-      loadPage(currentPagePath);
-    } else {
-      setBody("");
-      setTitle("");
-      setEditingTitle("");
-      setFrontmatter({});
-      setRawYaml("");
-      rawYamlRef.current = "";
-    }
+    currentPathRef.current = currentPanePage;
     setEditingYaml(false);
     setYamlDraft("");
     setYamlError(null);
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      if (headingDebounceRef.current) clearTimeout(headingDebounceRef.current);
-    };
-  }, [currentPagePath, loadPage, saveViewState]);
+  }, [currentPanePage, saveViewState]);
 
   useEffect(() => {
     if (pendingTitleFocus && title) {
@@ -159,184 +137,38 @@ export function ContentArea() {
     }
   }, [pendingTitleFocus, title, clearPendingTitleFocus]);
 
+  const headingTree = useMemo(
+    () => viewMode === "mindmap" ? buildHeadingTree(extractHeadings(body)) : buildHeadingTree([]),
+    [body, viewMode],
+  );
+
   useEffect(() => {
-    if (reloadTrigger === 0 || !currentPagePath) return;
-    if (isDirty) {
-      acknowledgeFileHash(currentPagePath);
-    } else {
-      const view = editorViewRef.current;
-      if (view) {
-        saveViewState(currentPagePath, view.scrollDOM.scrollTop, view.state.selection.main.head);
-      }
-      loadPage(currentPagePath);
+    if (viewMode === "mindmap" && mindmapSelectedId && !findNode(headingTree, mindmapSelectedId)) {
+      setMindmapSelectedId(null);
     }
-  }, [reloadTrigger, currentPagePath, isDirty, loadPage]);
+  }, [headingTree, mindmapSelectedId, viewMode]);
 
-  const resolveImageSrc = useCallback((src: string): string => {
-    if (/^(https?:|data:|blob:)/.test(src)) return src;
-    if (!workspacePath || !currentPagePath) return src;
+  const mindmapInitialFoldedIds = useMemo(() => {
+    if (!currentPanePage) return undefined;
+    const vs = useWorkspaceStore.getState().viewStates[currentPanePage];
+    return vs?.mindmapFoldedIds ? new Set(vs.mindmapFoldedIds) : undefined;
+  }, [currentPanePage]);
 
-    const lastSlash = currentPagePath.lastIndexOf("/");
-    const fileDir = lastSlash >= 0 ? currentPagePath.substring(0, lastSlash) : "";
-    const absolutePath = workspacePath + "/" + resolveRelativePath(fileDir, src);
-    return convertFileSrc(absolutePath);
-  }, [workspacePath, currentPagePath]);
-
-  const openFilePath = useCallback((path: string) => {
-    if (path.startsWith("/")) {
-      openPath(path);
-      return;
+  const handleFoldChange = useCallback((ids: Set<string>) => {
+    if (currentPanePage) {
+      saveMindmapFoldState(currentPanePage, Array.from(ids));
     }
-    if (!workspacePath || !currentPagePath) return;
-    const lastSlash = currentPagePath.lastIndexOf("/");
-    const fileDir = lastSlash >= 0 ? currentPagePath.substring(0, lastSlash) : "";
-    const absolutePath = workspacePath + "/" + resolveRelativePath(fileDir, path);
-    openPath(absolutePath);
-  }, [workspacePath, currentPagePath]);
-
-  const selectPage = useWorkspaceStore((s) => s.selectPage);
-  const triggerReload = useWorkspaceStore((s) => s.triggerReload);
-  const refreshPages = useWorkspaceStore((s) => s.refreshPages);
-
-  const navigateToPage = useCallback((target: string, section?: string, departurePos?: number) => {
-    navigateWikilink(target, section, {
-      resolveWikilink,
-      createPage: async (name: string) => {
-        const meta = await ipcCreatePage(name);
-        await refreshPages();
-        return meta;
-      },
-      selectPage,
-      setPendingSection: (s: string) => useWorkspaceStore.setState({ pendingSection: s }),
-      currentPagePath: currentPathRef.current,
-      triggerReload,
-      recordDeparture: () => {
-        const view = editorViewRef.current;
-        const notePath = currentPathRef.current ?? "";
-        if (!view || !notePath) return;
-        const pos = departurePos ?? view.state.selection.main.head;
-        const line = view.state.doc.lineAt(pos);
-        globalJumpTracker.recordJump(
-          { notePath, line: line.number, col: pos - line.from },
-          { notePath: "", line: 0, col: 0 },
-        );
-        globalJumpTracker.isNavigating = true;
-      },
-    });
-  }, [selectPage, triggerReload, refreshPages]);
-
-  const noteDir = useMemo(() => {
-    if (!workspacePath || !currentPagePath) return "";
-    const lastSlash = currentPagePath.lastIndexOf("/");
-    const fileDir = lastSlash >= 0 ? currentPagePath.substring(0, lastSlash) : "";
-    return fileDir ? workspacePath + "/" + fileDir : workspacePath;
-  }, [workspacePath, currentPagePath]);
-
-  const handleDocReplaced = useCallback(() => {
-    const path = currentPathRef.current;
-    if (!path) return;
-    const storeState = useWorkspaceStore.getState();
-    requestAnimationFrame(() => {
-      const view = editorViewRef.current;
-      if (!view) return;
-      if (storeState.pendingCursorLine != null) {
-        let adjustedLine = storeState.pendingCursorLine;
-        if (storeState.pendingCursorFileAbsolute && rawYamlRef.current) {
-          adjustedLine = Math.max(1, adjustedLine - frontmatterLineCount(rawYamlRef.current));
-        }
-        const lineNum = Math.min(adjustedLine, view.state.doc.lines);
-        const line = view.state.doc.line(lineNum);
-        const col = storeState.pendingCursorCol ?? 0;
-        const pos = line.from + Math.min(col, line.length);
-        view.dispatch({
-          selection: EditorSelection.cursor(pos),
-          effects: EditorView.scrollIntoView(pos, { y: "center" }),
-        });
-        useWorkspaceStore.setState({ pendingCursorLine: null, pendingCursorCol: null, pendingCursorFileAbsolute: false });
-      } else if (storeState.pendingSection != null) {
-        const section = storeState.pendingSection;
-        useWorkspaceStore.setState({ pendingSection: null });
-        const docBody = view.state.doc.toString();
-        const headings = extractHeadings(docBody);
-        const match = headings.find(
-          (h) => h.text.toLowerCase() === section.toLowerCase(),
-        );
-        if (match) {
-          const pos = match.from;
-          view.dispatch({
-            selection: EditorSelection.cursor(pos),
-            effects: EditorView.scrollIntoView(pos, { y: "start" }),
-          });
-        }
-      } else {
-        const vs = storeState.viewStates[path];
-        view.scrollDOM.scrollTop = vs?.scrollTop ?? 0;
-        const cursor = Math.min(vs?.cursor ?? 0, view.state.doc.length);
-        view.dispatch({ selection: EditorSelection.cursor(cursor) });
-      }
-      const active = document.activeElement;
-      if (!(active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement)) {
-        view.focus();
-      }
-      globalJumpTracker.isNavigating = false;
-    });
-  }, []);
+  }, [currentPanePage, saveMindmapFoldState]);
 
   const commitTitle = () => {
     const trimmed = editingTitle.trim();
-    if (trimmed && trimmed !== title && currentPagePath) {
-      renamePageAction(currentPagePath, trimmed);
-      setTitle(trimmed);
+    if (trimmed && trimmed !== title && currentPanePage) {
+      renamePageAction(currentPanePage, trimmed);
+      updatePaneContent(focusedPaneId, { title: trimmed });
     } else {
       setEditingTitle(title);
     }
   };
-
-  const handleChange = (newBody: string) => {
-    setBody(newBody);
-    setDirty(true);
-    const gen = ++editGenRef.current;
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      if (currentPagePath) {
-        writePage(currentPagePath, newBody, frontmatter)
-          .then(() => {
-            if (editGenRef.current === gen) setDirty(false);
-          })
-          .catch((err) => {
-            console.error("[ContentArea] writePage failed:", err);
-          });
-      }
-    }, 300);
-    if (headingDebounceRef.current) clearTimeout(headingDebounceRef.current);
-    headingDebounceRef.current = setTimeout(() => {
-      setCurrentPageHeadings(headingsRef.current);
-    }, 150);
-  };
-
-  const headingTree = useMemo(() => {
-    const h = extractHeadings(body);
-    headingsRef.current = h;
-    return buildHeadingTree(h);
-  }, [body]);
-
-  useEffect(() => {
-    if (mindmapSelectedId && !findNode(headingTree, mindmapSelectedId)) {
-      setMindmapSelectedId(null);
-    }
-  }, [headingTree, mindmapSelectedId]);
-
-  const mindmapInitialFoldedIds = useMemo(() => {
-    if (!currentPagePath) return undefined;
-    const vs = useWorkspaceStore.getState().viewStates[currentPagePath];
-    return vs?.mindmapFoldedIds ? new Set(vs.mindmapFoldedIds) : undefined;
-  }, [currentPagePath]);
-
-  const handleFoldChange = useCallback((ids: Set<string>) => {
-    if (currentPagePath) {
-      saveMindmapFoldState(currentPagePath, Array.from(ids));
-    }
-  }, [currentPagePath, saveMindmapFoldState]);
 
   const enterYamlEdit = () => {
     setYamlDraft(rawYaml);
@@ -349,12 +181,13 @@ export function ContentArea() {
     if (cancelledRef.current) return;
     try {
       const parsed = await parseRawYaml(yamlDraft);
-      setFrontmatter(parsed);
-      setRawYaml(yamlDraft);
       setEditingYaml(false);
       setYamlError(null);
-      if (currentPagePath) {
-        writePage(currentPagePath, body, parsed).catch((err) => {
+      updatePaneContent(focusedPaneId, { frontmatter: parsed, rawYaml: yamlDraft });
+      if (currentPanePage) {
+        const view = getCurrentEditorView();
+        const currentBody = view?.state.doc.toString() ?? "";
+        writePage(currentPanePage, currentBody, parsed).catch((err) => {
           console.error("[ContentArea] writePage failed:", err);
         });
       }
@@ -402,17 +235,12 @@ export function ContentArea() {
   }, [editingYaml, autoResizeTextarea]);
 
   useEffect(() => {
-    setCurrentEditorView(editorViewRef.current);
-    return () => setCurrentEditorView(null);
-  });
-
-  useEffect(() => {
     if (viewMode === "graph" && !graphEverOpened) setGraphEverOpened(true);
   }, [viewMode, graphEverOpened]);
 
   useEffect(() => {
     if (viewMode !== "editor") return;
-    const view = editorViewRef.current;
+    const view = getCurrentEditorView();
     if (!view) return;
     view.requestMeasure();
     const line = pendingScrollLineRef.current;
@@ -453,13 +281,13 @@ export function ContentArea() {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     listen("menu://open-in-external-editor", () => {
-      const view = editorViewRef.current;
+      const view = getCurrentEditorView();
       if (view) executeCommand("editor.openInExternalEditor", view);
     }).then((fn) => { unlisten = fn; });
     return () => { unlisten?.(); };
   }, []);
 
-  if (!currentPagePath) {
+  if (!currentPanePage) {
     return (
       <main
         className="flex flex-1 items-center justify-center bg-bg-primary-alt"
@@ -473,10 +301,10 @@ export function ContentArea() {
   }
 
   const currentPageMeta = useWorkspaceStore.getState().pages.find(
-    (p) => p.relative_path === currentPagePath,
+    (p) => p.relative_path === currentPanePage,
   );
   if (currentPageMeta?.file_type === "pdf" && workspacePath) {
-    return <PdfViewer filePath={`${workspacePath}/${currentPagePath}`} />;
+    return <PdfViewer filePath={`${workspacePath}/${currentPanePage}`} />;
   }
 
   return (
@@ -570,19 +398,7 @@ export function ContentArea() {
           )
         )}
       </div>
-      <CodeMirrorEditor
-        doc={body}
-        onChange={handleChange}
-        resolveImageSrc={resolveImageSrc}
-        viewRef={editorViewRef}
-        onDocReplaced={handleDocReplaced}
-        keymapBindings={editorBindings}
-        frontmatter={frontmatter}
-        noteDir={noteDir}
-        openFilePath={openFilePath}
-        navigateToPage={navigateToPage}
-        style={viewMode !== "editor" ? { display: "none" } : undefined}
-      />
+      <PaneContainer style={viewMode !== "editor" ? { display: "none" } : undefined} />
       {viewMode === "mindmap" && (
         <div
           data-testid="mindmap-view"
@@ -590,7 +406,7 @@ export function ContentArea() {
         >
           <Suspense fallback={<div className="flex items-center justify-center h-full text-text-faint">Loading…</div>}>
             <LazyMindmapView
-              key={currentPagePath}
+              key={currentPanePage}
               tree={headingTree}
               selectedId={mindmapSelectedId}
               initialFoldedIds={mindmapInitialFoldedIds}
@@ -599,30 +415,45 @@ export function ContentArea() {
                 setMindmapSelectedId(node.id);
               }}
               onNodeRename={(node, newText) => {
-                const newBody = applyRename(body, node, newText);
-                handleChange(newBody);
+                const view = getCurrentEditorView();
+                if (!view) return;
+                const currentBody = view.state.doc.toString();
+                const newBody = applyRename(currentBody, node, newText);
+                view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: newBody } });
               }}
               onNodeMove={(sourceId, targetParentId, targetIndex) => {
-                const newBody = applyMove(body, headingTree, sourceId, targetParentId, targetIndex);
-                handleChange(newBody);
+                const view = getCurrentEditorView();
+                if (!view) return;
+                const currentBody = view.state.doc.toString();
+                const newBody = applyMove(currentBody, headingTree, sourceId, targetParentId, targetIndex);
+                view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: newBody } });
               }}
               onInsertChild={(parentId, text) => {
-                const result = insertChild(body, headingTree, parentId, text);
+                const view = getCurrentEditorView();
+                if (!view) return null;
+                const currentBody = view.state.doc.toString();
+                const result = insertChild(currentBody, headingTree, parentId, text);
                 if (!result) return null;
-                handleChange(result.body);
+                view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: result.body } });
                 setMindmapSelectedId(result.nodeId);
                 return result.nodeId;
               }}
               onInsertSibling={(siblingId, text) => {
-                const result = insertSibling(body, headingTree, siblingId, text);
+                const view = getCurrentEditorView();
+                if (!view) return null;
+                const currentBody = view.state.doc.toString();
+                const result = insertSibling(currentBody, headingTree, siblingId, text);
                 if (!result) return null;
-                handleChange(result.body);
+                view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: result.body } });
                 setMindmapSelectedId(result.nodeId);
                 return result.nodeId;
               }}
               onInsertDangling={(text) => {
-                const result = insertDangling(body, 2, text);
-                handleChange(result.body);
+                const view = getCurrentEditorView();
+                if (!view) return null;
+                const currentBody = view.state.doc.toString();
+                const result = insertDangling(currentBody, 2, text);
+                view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: result.body } });
                 setMindmapSelectedId(result.nodeId);
                 return result.nodeId;
               }}
@@ -631,8 +462,11 @@ export function ContentArea() {
                 setViewMode("editor");
               }}
               onDeleteNode={(nodeId) => {
-                const { newBody, fallbackId } = resolveDeleteFallback(body, headingTree, nodeId);
-                handleChange(newBody);
+                const view = getCurrentEditorView();
+                if (!view) return;
+                const currentBody = view.state.doc.toString();
+                const { newBody, fallbackId } = resolveDeleteFallback(currentBody, headingTree, nodeId);
+                view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: newBody } });
                 setMindmapSelectedId(fallbackId);
               }}
             />
@@ -643,7 +477,7 @@ export function ContentArea() {
         <div data-testid="graph-view-wrapper" className="flex-1 min-h-0" style={viewMode !== "graph" ? { display: "none" } : undefined}>
           <Suspense fallback={<div className="flex items-center justify-center h-full text-text-faint">Loading…</div>}>
             <LazyGraphView
-              activePageId={currentPagePath}
+              activePageId={currentPanePage}
               initialMode={graphInitialMode}
               visible={viewMode === "graph"}
               onNavigate={(pageId) => {
@@ -655,7 +489,7 @@ export function ContentArea() {
           </Suspense>
         </div>
       )}
-      <BottomPanel pageId={currentPagePath} />
+      <BottomPanel pageId={currentPanePage} />
     </main>
   );
 }

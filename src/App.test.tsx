@@ -5,6 +5,9 @@ import { mockInvoke, mockListen, emitMockEvent } from "./test/tauri-mock";
 import { useWorkspaceStore } from "./stores/workspace";
 import { usePreferencesStore } from "./stores/preferences";
 import { useLicenseStore } from "./stores/license";
+import { usePaneStore } from "./stores/panes";
+import { _resetForTesting as resetRegistry } from "./lib/paneContentRegistry";
+import { _resetForTesting as resetEditorViewRef } from "./lib/editorViewRef";
 import { SIDEBAR_WIDTH_PX } from "./components/Sidebar";
 
 const samplePages = [
@@ -30,6 +33,13 @@ describe("App", () => {
       loading: false,
       error: null,
     });
+
+    usePaneStore.setState({
+      root: { type: "leaf", id: "test-pane", pagePath: null },
+      focusedPaneId: "test-pane",
+    });
+    resetRegistry();
+    resetEditorViewRef();
 
     usePreferencesStore.setState({
       darkMode: "light",
