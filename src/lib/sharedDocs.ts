@@ -6,10 +6,11 @@ export interface SharedDoc {
   title: string;
   frontmatter: Record<string, unknown>;
   rawYaml: string;
-  subscribers?: Map<string, (newBody: string, fromPaneId: string) => void>;
+  subscribers: Map<string, (newBody: string, fromPaneId: string) => void>;
   saveTimer?: ReturnType<typeof setTimeout>;
   editGen: number;
   saveGen: number;
+  saveInFlightGen: number;
 }
 
 const docs = new Map<string, SharedDoc>();
@@ -23,8 +24,10 @@ export function acquire(pagePath: string, paneId: string): void {
       title: "",
       frontmatter: {},
       rawYaml: "",
+      subscribers: new Map(),
       editGen: 0,
       saveGen: 0,
+      saveInFlightGen: 0,
     };
     docs.set(pagePath, doc);
   }
@@ -33,19 +36,19 @@ export function acquire(pagePath: string, paneId: string): void {
 
 function executeSave(pagePath: string, doc: SharedDoc): void {
   const genAtSave = doc.editGen;
+  doc.saveInFlightGen = genAtSave;
   writePage(pagePath, doc.body, doc.frontmatter).then(() => {
     if (doc.editGen === genAtSave) {
       doc.saveGen = genAtSave;
     }
+    if (doc.saveInFlightGen === genAtSave) {
+      doc.saveInFlightGen = 0;
+    }
+  }).catch(() => {
+    if (doc.saveInFlightGen === genAtSave) {
+      doc.saveInFlightGen = 0;
+    }
   });
-}
-
-function flushSave(pagePath: string, doc: SharedDoc): void {
-  if (doc.saveTimer) {
-    clearTimeout(doc.saveTimer);
-    doc.saveTimer = undefined;
-  }
-  executeSave(pagePath, doc);
 }
 
 function scheduleSave(pagePath: string, doc: SharedDoc): void {
@@ -60,10 +63,14 @@ export function release(pagePath: string, paneId: string): void {
   const doc = docs.get(pagePath);
   if (!doc) return;
   doc.panes.delete(paneId);
-  doc.subscribers?.delete(paneId);
+  doc.subscribers.delete(paneId);
   if (doc.panes.size === 0) {
-    if (doc.editGen > doc.saveGen) {
-      flushSave(pagePath, doc);
+    if (doc.saveTimer) {
+      clearTimeout(doc.saveTimer);
+      doc.saveTimer = undefined;
+    }
+    if (doc.editGen > Math.max(doc.saveGen, doc.saveInFlightGen)) {
+      executeSave(pagePath, doc);
     }
     docs.delete(pagePath);
   }
@@ -99,10 +106,8 @@ export function setBody(pagePath: string, newBody: string, fromPaneId: string): 
   if (!doc) return;
   doc.body = newBody;
   doc.editGen++;
-  if (doc.subscribers) {
-    for (const [paneId, cb] of doc.subscribers) {
-      if (paneId !== fromPaneId) cb(newBody, fromPaneId);
-    }
+  for (const [paneId, cb] of doc.subscribers) {
+    if (paneId !== fromPaneId) cb(newBody, fromPaneId);
   }
   scheduleSave(pagePath, doc);
 }
@@ -125,10 +130,9 @@ export function subscribe(
 ): () => void {
   const doc = docs.get(pagePath);
   if (!doc) return () => {};
-  if (!doc.subscribers) doc.subscribers = new Map();
   doc.subscribers.set(paneId, cb);
   return () => {
-    doc.subscribers?.delete(paneId);
+    doc.subscribers.delete(paneId);
   };
 }
 

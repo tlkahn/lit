@@ -250,6 +250,75 @@ describe("SharedDocRegistry", () => {
       expect(writePage).toHaveBeenCalledOnce();
       expect(writePage).toHaveBeenCalledWith("notes.md", "unsaved", {});
     });
+
+    it("save failure keeps isDirty true", async () => {
+      vi.mocked(writePage).mockImplementation(
+        () => Promise.reject(new Error("disk full")),
+      );
+
+      acquire("notes.md", "p1");
+      setContent("notes.md", { body: "", title: "T", frontmatter: {}, rawYaml: "" });
+
+      setBody("notes.md", "edited", "p1");
+      vi.advanceTimersByTime(300);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(isDirty("notes.md")).toBe(true);
+    });
+
+    it("no duplicate save when in-flight save covers latest edit", async () => {
+      let resolveWrite!: () => void;
+      vi.mocked(writePage).mockImplementation(
+        () => new Promise<void>((r) => { resolveWrite = r; }),
+      );
+
+      acquire("notes.md", "p1");
+      setContent("notes.md", { body: "", title: "T", frontmatter: {}, rawYaml: "" });
+
+      setBody("notes.md", "v1", "p1");
+      vi.advanceTimersByTime(300);
+
+      release("notes.md", "p1");
+      expect(writePage).toHaveBeenCalledOnce();
+
+      resolveWrite();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    it("flush still happens when new edits arrive after in-flight save started", async () => {
+      let resolveWrite!: () => void;
+      vi.mocked(writePage).mockImplementation(
+        () => new Promise<void>((r) => { resolveWrite = r; }),
+      );
+
+      acquire("notes.md", "p1");
+      setContent("notes.md", { body: "", title: "T", frontmatter: {}, rawYaml: "" });
+
+      setBody("notes.md", "v1", "p1");
+      vi.advanceTimersByTime(300);
+      expect(writePage).toHaveBeenCalledOnce();
+
+      setBody("notes.md", "v2", "p1");
+      release("notes.md", "p1");
+
+      expect(writePage).toHaveBeenCalledTimes(2);
+      expect(writePage).toHaveBeenLastCalledWith("notes.md", "v2", {});
+
+      resolveWrite();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    it("release cancels timer so it does not fire after flush", () => {
+      acquire("notes.md", "p1");
+      setContent("notes.md", { body: "", title: "T", frontmatter: {}, rawYaml: "" });
+
+      setBody("notes.md", "unsaved", "p1");
+      release("notes.md", "p1");
+      expect(writePage).toHaveBeenCalledOnce();
+
+      vi.advanceTimersByTime(300);
+      expect(writePage).toHaveBeenCalledOnce();
+    });
   });
 
   describe("misc", () => {
