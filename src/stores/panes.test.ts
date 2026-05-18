@@ -40,6 +40,7 @@ describe("findLeaf", () => {
     const target: PaneLeaf = { type: "leaf", id: "b", pagePath: "page.md" };
     const root: PaneSplit = {
       type: "split",
+      id: "s1",
       direction: "horizontal",
       children: [
         { type: "leaf", id: "a", pagePath: null },
@@ -68,8 +69,9 @@ describe("collectLeaves", () => {
     const l3: PaneLeaf = { type: "leaf", id: "3", pagePath: null };
     const root: PaneSplit = {
       type: "split",
+      id: "s1",
       direction: "horizontal",
-      children: [l1, { type: "split", direction: "vertical", children: [l2, l3], sizes: [50, 50] }],
+      children: [l1, { type: "split", id: "s2", direction: "vertical", children: [l2, l3], sizes: [50, 50] }],
       sizes: [50, 50],
     };
     expect(collectLeaves(root).map((l) => l.id)).toEqual(["1", "2", "3"]);
@@ -82,10 +84,11 @@ describe("collectLeaves", () => {
     const d: PaneLeaf = { type: "leaf", id: "d", pagePath: null };
     const root: PaneSplit = {
       type: "split",
+      id: "s1",
       direction: "horizontal",
       children: [
-        { type: "split", direction: "vertical", children: [a, b], sizes: [50, 50] },
-        { type: "split", direction: "vertical", children: [c, d], sizes: [50, 50] },
+        { type: "split", id: "s2", direction: "vertical", children: [a, b], sizes: [50, 50] },
+        { type: "split", id: "s3", direction: "vertical", children: [c, d], sizes: [50, 50] },
       ],
       sizes: [50, 50],
     };
@@ -98,6 +101,7 @@ describe("replaceLeaf", () => {
     const root: PaneLeaf = { type: "leaf", id: "a", pagePath: null };
     const replacement: PaneSplit = {
       type: "split",
+      id: "s1",
       direction: "horizontal",
       children: [
         { type: "leaf", id: "a", pagePath: null },
@@ -113,6 +117,7 @@ describe("replaceLeaf", () => {
     const target: PaneLeaf = { type: "leaf", id: "b", pagePath: null };
     const root: PaneSplit = {
       type: "split",
+      id: "s1",
       direction: "horizontal",
       children: [sibling, target],
       sizes: [50, 50],
@@ -126,6 +131,7 @@ describe("replaceLeaf", () => {
   it("returns tree unchanged (same ref) when ID not found", () => {
     const root: PaneSplit = {
       type: "split",
+      id: "s1",
       direction: "horizontal",
       children: [
         { type: "leaf", id: "a", pagePath: null },
@@ -147,6 +153,7 @@ describe("removeLeaf", () => {
     const sibling: PaneLeaf = { type: "leaf", id: "a", pagePath: "a.md" };
     const root: PaneSplit = {
       type: "split",
+      id: "s1",
       direction: "horizontal",
       children: [sibling, { type: "leaf", id: "b", pagePath: null }],
       sizes: [50, 50],
@@ -157,6 +164,7 @@ describe("removeLeaf", () => {
   it("3-child split, remove middle → 2-child split with normalized sizes", () => {
     const root: PaneSplit = {
       type: "split",
+      id: "s1",
       direction: "horizontal",
       children: [
         { type: "leaf", id: "a", pagePath: null },
@@ -180,11 +188,13 @@ describe("removeLeaf", () => {
     const innerSibling: PaneLeaf = { type: "leaf", id: "inner-a", pagePath: null };
     const root: PaneSplit = {
       type: "split",
+      id: "s1",
       direction: "horizontal",
       children: [
         { type: "leaf", id: "outer-a", pagePath: null },
         {
           type: "split",
+          id: "s2",
           direction: "vertical",
           children: [innerSibling, { type: "leaf", id: "inner-b", pagePath: null }],
           sizes: [50, 50],
@@ -201,6 +211,7 @@ describe("removeLeaf", () => {
   it("missing ID → returns tree unchanged (same ref)", () => {
     const root: PaneSplit = {
       type: "split",
+      id: "s1",
       direction: "horizontal",
       children: [
         { type: "leaf", id: "a", pagePath: null },
@@ -216,6 +227,7 @@ describe("findSplitByPath", () => {
   it("empty path on split returns root", () => {
     const root: PaneSplit = {
       type: "split",
+      id: "s1",
       direction: "horizontal",
       children: [
         { type: "leaf", id: "a", pagePath: null },
@@ -234,6 +246,7 @@ describe("findSplitByPath", () => {
   it("path [1] navigates to nested split", () => {
     const nested: PaneSplit = {
       type: "split",
+      id: "s2",
       direction: "vertical",
       children: [
         { type: "leaf", id: "b", pagePath: null },
@@ -243,6 +256,7 @@ describe("findSplitByPath", () => {
     };
     const root: PaneSplit = {
       type: "split",
+      id: "s1",
       direction: "horizontal",
       children: [{ type: "leaf", id: "a", pagePath: null }, nested],
       sizes: [50, 50],
@@ -253,6 +267,7 @@ describe("findSplitByPath", () => {
   it("path to a leaf child returns null", () => {
     const root: PaneSplit = {
       type: "split",
+      id: "s1",
       direction: "horizontal",
       children: [
         { type: "leaf", id: "a", pagePath: null },
@@ -266,6 +281,7 @@ describe("findSplitByPath", () => {
   it("invalid path returns null", () => {
     const root: PaneSplit = {
       type: "split",
+      id: "s1",
       direction: "horizontal",
       children: [
         { type: "leaf", id: "a", pagePath: null },
@@ -281,6 +297,7 @@ describe("replaceSplitSizes", () => {
   it("replaces sizes at root (empty path)", () => {
     const root: PaneSplit = {
       type: "split",
+      id: "s1",
       direction: "horizontal",
       children: [
         { type: "leaf", id: "a", pagePath: null },
@@ -297,6 +314,7 @@ describe("replaceSplitSizes", () => {
   it("replaces sizes at nested path", () => {
     const nested: PaneSplit = {
       type: "split",
+      id: "s2",
       direction: "vertical",
       children: [
         { type: "leaf", id: "b", pagePath: null },
@@ -307,6 +325,7 @@ describe("replaceSplitSizes", () => {
     const outerLeaf: PaneLeaf = { type: "leaf", id: "a", pagePath: null };
     const root: PaneSplit = {
       type: "split",
+      id: "s1",
       direction: "horizontal",
       children: [outerLeaf, nested],
       sizes: [40, 60],
@@ -320,6 +339,7 @@ describe("replaceSplitSizes", () => {
   it("returns same ref when path is invalid", () => {
     const root: PaneSplit = {
       type: "split",
+      id: "s1",
       direction: "horizontal",
       children: [
         { type: "leaf", id: "a", pagePath: null },
@@ -371,6 +391,7 @@ describe("Section B: Store", () => {
       const right: PaneLeaf = { type: "leaf", id: "right", pagePath: null };
       const root: PaneSplit = {
         type: "split",
+        id: "s1",
         direction: "horizontal",
         children: [left, right],
         sizes: [50, 50],
@@ -428,6 +449,7 @@ describe("Section B: Store", () => {
     const makeNestedTree = () => {
       const inner: PaneSplit = {
         type: "split",
+        id: "s2",
         direction: "vertical",
         children: [
           { type: "leaf", id: "b", pagePath: null },
@@ -437,6 +459,7 @@ describe("Section B: Store", () => {
       };
       const root: PaneSplit = {
         type: "split",
+        id: "s1",
         direction: "horizontal",
         children: [{ type: "leaf", id: "a", pagePath: null }, inner],
         sizes: [40, 60],
@@ -523,6 +546,35 @@ describe("Section C: Tree-Mutation Actions", () => {
         const second = root.children[1] as PaneLeaf;
         expect(usePaneStore.getState().focusedPaneId).toBe(second.id);
       });
+
+      it("assigns a unique string id to the created split node", () => {
+        const root = usePaneStore.getState().root as PaneSplit;
+        expect(typeof root.id).toBe("string");
+        expect(root.id.length).toBeGreaterThan(0);
+        const first = root.children[0] as PaneLeaf;
+        const second = root.children[1] as PaneLeaf;
+        expect(root.id).not.toBe(first.id);
+        expect(root.id).not.toBe(second.id);
+      });
+
+      it("nested splits get distinct ids", () => {
+        const root = usePaneStore.getState().root as PaneSplit;
+        const newLeaf = root.children[1] as PaneLeaf;
+        usePaneStore.getState().splitPane(newLeaf.id, "vertical");
+
+        const outerSplit = usePaneStore.getState().root as PaneSplit;
+        const innerSplit = outerSplit.children[1] as PaneSplit;
+        expect(typeof outerSplit.id).toBe("string");
+        expect(outerSplit.id.length).toBeGreaterThan(0);
+        expect(typeof innerSplit.id).toBe("string");
+        expect(innerSplit.id.length).toBeGreaterThan(0);
+        expect(outerSplit.id).not.toBe(innerSplit.id);
+        const allLeaves = collectLeaves(usePaneStore.getState().root);
+        for (const leaf of allLeaves) {
+          expect(outerSplit.id).not.toBe(leaf.id);
+          expect(innerSplit.id).not.toBe(leaf.id);
+        }
+      });
     });
 
     describe("nested — split inside existing split", () => {
@@ -531,6 +583,7 @@ describe("Section C: Tree-Mutation Actions", () => {
         const right: PaneLeaf = { type: "leaf", id: "right", pagePath: null };
         const root: PaneSplit = {
           type: "split",
+          id: "s1",
           direction: "horizontal",
           children: [left, right],
           sizes: [50, 50],
@@ -552,6 +605,7 @@ describe("Section C: Tree-Mutation Actions", () => {
         const right: PaneLeaf = { type: "leaf", id: "right", pagePath: null };
         const root: PaneSplit = {
           type: "split",
+          id: "s1",
           direction: "horizontal",
           children: [left, right],
           sizes: [50, 50],
@@ -579,6 +633,7 @@ describe("Section C: Tree-Mutation Actions", () => {
         const right: PaneLeaf = { type: "leaf", id: "right", pagePath: null };
         const root: PaneSplit = {
           type: "split",
+          id: "s1",
           direction: "horizontal",
           children: [left, right],
           sizes: [50, 50],
@@ -594,6 +649,7 @@ describe("Section C: Tree-Mutation Actions", () => {
         const right: PaneLeaf = { type: "leaf", id: "right", pagePath: null };
         const root: PaneSplit = {
           type: "split",
+          id: "s1",
           direction: "horizontal",
           children: [left, right],
           sizes: [50, 50],
@@ -618,6 +674,7 @@ describe("Section C: Tree-Mutation Actions", () => {
         const right: PaneLeaf = { type: "leaf", id: "right", pagePath: null };
         const root: PaneSplit = {
           type: "split",
+          id: "s1",
           direction: "horizontal",
           children: [left, right],
           sizes: [50, 50],
@@ -637,10 +694,11 @@ describe("Section C: Tree-Mutation Actions", () => {
         const outerA: PaneLeaf = { type: "leaf", id: "outer-a", pagePath: null };
         const root: PaneSplit = {
           type: "split",
+          id: "s1",
           direction: "horizontal",
           children: [
             outerA,
-            { type: "split", direction: "vertical", children: [innerA, innerB], sizes: [50, 50] },
+            { type: "split", id: "s2", direction: "vertical", children: [innerA, innerB], sizes: [50, 50] },
           ],
           sizes: [50, 50],
         };
@@ -660,6 +718,7 @@ describe("Section C: Tree-Mutation Actions", () => {
         const c: PaneLeaf = { type: "leaf", id: "c", pagePath: null };
         const root: PaneSplit = {
           type: "split",
+          id: "s1",
           direction: "horizontal",
           children: [a, b, c],
           sizes: [33, 34, 33],
@@ -675,6 +734,7 @@ describe("Section C: Tree-Mutation Actions", () => {
         const b: PaneLeaf = { type: "leaf", id: "b", pagePath: null };
         const root: PaneSplit = {
           type: "split",
+          id: "s1",
           direction: "horizontal",
           children: [a, b],
           sizes: [50, 50],
@@ -691,6 +751,7 @@ describe("Section C: Tree-Mutation Actions", () => {
         const c: PaneLeaf = { type: "leaf", id: "c", pagePath: null };
         const root: PaneSplit = {
           type: "split",
+          id: "s1",
           direction: "horizontal",
           children: [a, b, c],
           sizes: [33, 34, 33],
@@ -706,6 +767,7 @@ describe("Section C: Tree-Mutation Actions", () => {
         const b: PaneLeaf = { type: "leaf", id: "b", pagePath: null };
         const root: PaneSplit = {
           type: "split",
+          id: "s1",
           direction: "horizontal",
           children: [a, b],
           sizes: [50, 50],
@@ -726,6 +788,7 @@ describe("Section C: Tree-Mutation Actions", () => {
       const c: PaneLeaf = { type: "leaf", id: "c", pagePath: null };
       const root: PaneSplit = {
         type: "split",
+        id: "s1",
         direction: "horizontal",
         children: [a, b, c],
         sizes: [33, 34, 33],
@@ -740,6 +803,7 @@ describe("Section C: Tree-Mutation Actions", () => {
       const b: PaneLeaf = { type: "leaf", id: "b", pagePath: null };
       const root: PaneSplit = {
         type: "split",
+        id: "s1",
         direction: "horizontal",
         children: [a, b],
         sizes: [50, 50],
@@ -762,6 +826,7 @@ describe("Section C: Tree-Mutation Actions", () => {
       const c: PaneLeaf = { type: "leaf", id: "c", pagePath: null };
       const root: PaneSplit = {
         type: "split",
+        id: "s1",
         direction: "horizontal",
         children: [a, b, c],
         sizes: [33, 34, 33],
@@ -776,6 +841,7 @@ describe("Section C: Tree-Mutation Actions", () => {
       const b: PaneLeaf = { type: "leaf", id: "b", pagePath: null };
       const root: PaneSplit = {
         type: "split",
+        id: "s1",
         direction: "horizontal",
         children: [a, b],
         sizes: [50, 50],
@@ -790,6 +856,7 @@ describe("Section C: Tree-Mutation Actions", () => {
       const b: PaneLeaf = { type: "leaf", id: "b", pagePath: null };
       const root: PaneSplit = {
         type: "split",
+        id: "s1",
         direction: "horizontal",
         children: [a, b],
         sizes: [50, 50],
@@ -804,6 +871,7 @@ describe("Section C: Tree-Mutation Actions", () => {
       const b: PaneLeaf = { type: "leaf", id: "b", pagePath: null };
       const root: PaneSplit = {
         type: "split",
+        id: "s1",
         direction: "horizontal",
         children: [a, b],
         sizes: [50, 50],
@@ -936,6 +1004,7 @@ describe("Section E: Integration & Edge Cases", () => {
 
       const split: PaneSplit = {
         type: "split",
+        id: "s1",
         direction: "horizontal",
         children: [leaf],
         sizes: [100],

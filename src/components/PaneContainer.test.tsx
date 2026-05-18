@@ -29,6 +29,7 @@ describe("PaneContainer", () => {
   it("horizontal split renders flex-row with two EditorPanes", () => {
     const root: PaneNode = {
       type: "split",
+      id: "s1",
       direction: "horizontal",
       children: [
         { type: "leaf", id: "pane-a", pagePath: null },
@@ -48,6 +49,7 @@ describe("PaneContainer", () => {
   it("vertical split renders flex-col", () => {
     const root: PaneNode = {
       type: "split",
+      id: "s1",
       direction: "vertical",
       children: [
         { type: "leaf", id: "pane-a", pagePath: null },
@@ -65,6 +67,7 @@ describe("PaneContainer", () => {
   it("children have flex-basis matching sizes", () => {
     const root: PaneNode = {
       type: "split",
+      id: "s1",
       direction: "horizontal",
       children: [
         { type: "leaf", id: "pane-a", pagePath: null },
@@ -84,11 +87,13 @@ describe("PaneContainer", () => {
   it("nested splits render correct tree structure", () => {
     const root: PaneNode = {
       type: "split",
+      id: "s1",
       direction: "horizontal",
       children: [
         { type: "leaf", id: "pane-a", pagePath: null },
         {
           type: "split",
+          id: "s2",
           direction: "vertical",
           children: [
             { type: "leaf", id: "pane-b", pagePath: null },

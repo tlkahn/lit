@@ -17,7 +17,7 @@ function PaneNodeRenderer({ node }: { node: PaneNode }) {
     >
       {node.children.map((child, i) => (
         <div
-          key={child.type === "leaf" ? child.id : i}
+          key={child.id}
           style={{ flexBasis: `${node.sizes[i]}%` }}
           className="min-h-0 min-w-0 flex flex-col overflow-hidden"
         >

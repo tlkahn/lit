@@ -7,6 +7,7 @@ import { create } from "zustand";
 export type PaneLeaf = { type: "leaf"; id: string; pagePath: string | null };
 export type PaneSplit = {
   type: "split";
+  id: string;
   direction: "horizontal" | "vertical";
   children: PaneNode[];
   sizes: number[];
@@ -174,6 +175,7 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
     const newLeaf: PaneLeaf = { type: "leaf", id: generatePaneId(), pagePath: null };
     const split: PaneSplit = {
       type: "split",
+      id: generatePaneId(),
       direction,
       children: [leaf, newLeaf],
       sizes: [50, 50],

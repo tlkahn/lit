@@ -115,6 +115,7 @@ describe("EditorPane", () => {
     usePaneStore.setState({
       root: {
         type: "split",
+        id: "s1",
         direction: "horizontal",
         children: [
           { type: "leaf", id: "pane-1", pagePath: null },
@@ -180,6 +181,7 @@ describe("EditorPane", () => {
     usePaneStore.setState({
       root: {
         type: "split",
+        id: "s1",
         direction: "horizontal",
         children: [
           { type: "leaf", id: "pane-1", pagePath: null },
