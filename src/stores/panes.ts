@@ -16,6 +16,8 @@ export type PaneSplit = {
 };
 export type PaneNode = PaneLeaf | PaneSplit;
 
+export const MAX_PANES = 6;
+
 export interface PaneStore {
   root: PaneNode;
   focusedPaneId: string;
@@ -174,6 +176,7 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
     const { root } = get();
     const leaf = findLeaf(root, paneId);
     if (!leaf) return;
+    if (collectLeaves(root).length >= MAX_PANES) return;
     const newLeaf: PaneLeaf = { type: "leaf", id: generatePaneId(), pagePath: null };
     const split: PaneSplit = {
       type: "split",

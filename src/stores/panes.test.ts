@@ -11,6 +11,7 @@ import {
   usePaneStore,
   startLayoutSync,
   stopLayoutSync,
+  MAX_PANES,
 } from "./panes";
 import type { PaneLeaf, PaneSplit, PaneNode } from "./panes";
 import { loadLayout, validateLayout } from "../lib/paneLayout";
@@ -625,6 +626,50 @@ describe("Section C: Tree-Mutation Actions", () => {
         const root: PaneLeaf = { type: "leaf", id: "solo", pagePath: null };
         usePaneStore.setState({ root, focusedPaneId: "solo" });
         usePaneStore.getState().splitPane("nonexistent", "horizontal");
+        expect(usePaneStore.getState().root).toBe(root);
+      });
+    });
+
+    describe("max-pane cap", () => {
+      it("MAX_PANES is exported and equals 6", () => {
+        expect(MAX_PANES).toBe(6);
+      });
+
+      it("splitPane is a no-op when already at MAX_PANES leaves", () => {
+        const leaves = Array.from({ length: 6 }, (_, i): PaneLeaf => ({ type: "leaf", id: `l${i}`, pagePath: null }));
+        const root: PaneSplit = {
+          type: "split", id: "s1", direction: "horizontal",
+          children: leaves, sizes: leaves.map(() => 100 / 6),
+        };
+        usePaneStore.setState({ root, focusedPaneId: "l0" });
+        usePaneStore.getState().splitPane("l0", "horizontal");
+        expect(usePaneStore.getState().root).toBe(root);
+      });
+
+      it("splitPane works when at MAX_PANES - 1 leaves", () => {
+        const leaves = Array.from({ length: 5 }, (_, i): PaneLeaf => ({ type: "leaf", id: `l${i}`, pagePath: null }));
+        const root: PaneSplit = {
+          type: "split", id: "s1", direction: "horizontal",
+          children: leaves, sizes: leaves.map(() => 100 / 5),
+        };
+        usePaneStore.setState({ root, focusedPaneId: "l0" });
+        usePaneStore.getState().splitPane("l0", "horizontal");
+        expect(collectLeaves(usePaneStore.getState().root)).toHaveLength(6);
+      });
+
+      it("splitPane is a no-op at MAX_PANES even for nested trees", () => {
+        const leftLeaves = Array.from({ length: 3 }, (_, i): PaneLeaf => ({ type: "leaf", id: `left${i}`, pagePath: null }));
+        const rightLeaves = Array.from({ length: 3 }, (_, i): PaneLeaf => ({ type: "leaf", id: `right${i}`, pagePath: null }));
+        const root: PaneSplit = {
+          type: "split", id: "s1", direction: "horizontal",
+          children: [
+            { type: "split", id: "s2", direction: "vertical", children: leftLeaves, sizes: [33, 34, 33] },
+            { type: "split", id: "s3", direction: "vertical", children: rightLeaves, sizes: [33, 34, 33] },
+          ],
+          sizes: [50, 50],
+        };
+        usePaneStore.setState({ root, focusedPaneId: "left0" });
+        usePaneStore.getState().splitPane("left0", "horizontal");
         expect(usePaneStore.getState().root).toBe(root);
       });
     });

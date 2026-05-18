@@ -418,6 +418,38 @@ describe("useKeymaps", () => {
     expect(ids).toContain("pane.focusPrev");
   });
 
+  // --- Cycle 8: Max-pane cap when guards ---
+
+  it("pane.splitRight and pane.splitDown hidden in command palette at MAX_PANES", async () => {
+    await loadHook();
+    const leaves: PaneLeaf[] = Array.from({ length: 6 }, (_, i) => ({
+      type: "leaf", id: `l${i}`, pagePath: null,
+    }));
+    const root: PaneSplit = {
+      type: "split", id: "split-root", direction: "horizontal",
+      children: leaves, sizes: leaves.map(() => 100 / 6),
+    };
+    usePaneStore.setState({ root, focusedPaneId: leaves[0]!.id });
+    const ids = getVisibleCommands("pane").map((c) => c.id);
+    expect(ids).not.toContain("pane.splitRight");
+    expect(ids).not.toContain("pane.splitDown");
+  });
+
+  it("pane.splitRight and pane.splitDown visible at MAX_PANES - 1", async () => {
+    await loadHook();
+    const leaves: PaneLeaf[] = Array.from({ length: 5 }, (_, i) => ({
+      type: "leaf", id: `l${i}`, pagePath: null,
+    }));
+    const root: PaneSplit = {
+      type: "split", id: "split-root", direction: "horizontal",
+      children: leaves, sizes: leaves.map(() => 100 / 5),
+    };
+    usePaneStore.setState({ root, focusedPaneId: leaves[0]!.id });
+    const ids = getVisibleCommands("pane").map((c) => c.id);
+    expect(ids).toContain("pane.splitRight");
+    expect(ids).toContain("pane.splitDown");
+  });
+
   // --- Cycle 10: Keyboard dispatch end-to-end ---
 
   it("Mod-d keydown triggers pane.splitRight", async () => {

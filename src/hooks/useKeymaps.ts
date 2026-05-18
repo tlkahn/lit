@@ -11,7 +11,7 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { usePreferencesStore } from "../stores/preferences";
 import { useFocusModeStore } from "../stores/focusMode";
 import { getCurrentEditorView, getPaneView, setFocusedPane } from "../lib/editorViewRef";
-import { usePaneStore, collectLeaves } from "../stores/panes";
+import { usePaneStore, collectLeaves, MAX_PANES } from "../stores/panes";
 import { annotationDataField, findAnnotationAtCursor } from "../editor/livePreview/annotationState";
 import type { AnnotationBuilderEventDetail } from "../lib/annotationDsl";
 import type { EditorView } from "@codemirror/view";
@@ -100,6 +100,7 @@ function ensureCommandsRegistered() {
     id: "pane.splitRight",
     label: "Split Pane Right",
     keywords: ["split", "pane", "vertical", "right"],
+    when: () => collectLeaves(usePaneStore.getState().root).length < MAX_PANES,
     action: () => {
       const { focusedPaneId } = usePaneStore.getState();
       usePaneStore.getState().splitPane(focusedPaneId, "vertical");
@@ -109,6 +110,7 @@ function ensureCommandsRegistered() {
     id: "pane.splitDown",
     label: "Split Pane Down",
     keywords: ["split", "pane", "horizontal", "down"],
+    when: () => collectLeaves(usePaneStore.getState().root).length < MAX_PANES,
     action: () => {
       const { focusedPaneId } = usePaneStore.getState();
       usePaneStore.getState().splitPane(focusedPaneId, "horizontal");
