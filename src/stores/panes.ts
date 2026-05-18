@@ -28,6 +28,7 @@ export interface PaneStore {
   focusPrev(): void;
   setPanePage(paneId: string, pagePath: string | null): void;
   resize(splitPath: number[], sizes: number[]): void;
+  clearPageFromPanes(pagePath: string): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -139,6 +140,17 @@ export function replaceSplitSizes(
   return { ...root, children: newChildren };
 }
 
+export function clearPagePath(root: PaneNode, pagePath: string): PaneNode {
+  if (root.type === "leaf") return root.pagePath === pagePath ? { ...root, pagePath: null } : root;
+  let changed = false;
+  const newChildren = root.children.map((child) => {
+    const result = clearPagePath(child, pagePath);
+    if (result !== child) changed = true;
+    return result;
+  });
+  return changed ? { ...root, children: newChildren } : root;
+}
+
 // ---------------------------------------------------------------------------
 // Section B: Zustand Store
 // ---------------------------------------------------------------------------
@@ -170,6 +182,12 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
     if (!split || split.children.length !== sizes.length) return;
     const newRoot = replaceSplitSizes(root, splitPath, sizes);
     set({ root: newRoot });
+  },
+
+  clearPageFromPanes: (pagePath) => {
+    const { root } = get();
+    const newRoot = clearPagePath(root, pagePath);
+    if (newRoot !== root) set({ root: newRoot });
   },
 
   splitPane: (paneId, direction) => {

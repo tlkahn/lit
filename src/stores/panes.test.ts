@@ -7,6 +7,7 @@ import {
   removeLeaf,
   findSplitByPath,
   replaceSplitSizes,
+  clearPagePath,
   createInitialState,
   usePaneStore,
   startLayoutSync,
@@ -361,6 +362,63 @@ describe("replaceSplitSizes", () => {
   });
 });
 
+describe("clearPagePath", () => {
+  it("sets matching leaf pagePaths to null", () => {
+    const keep: PaneLeaf = { type: "leaf", id: "a", pagePath: "keep.md" };
+    const deleted: PaneLeaf = { type: "leaf", id: "b", pagePath: "deleted.md" };
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [deleted, keep],
+      sizes: [50, 50],
+    };
+    const result = clearPagePath(root, "deleted.md") as PaneSplit;
+    expect((result.children[0] as PaneLeaf).pagePath).toBeNull();
+    expect(result.children[1]).toBe(keep);
+  });
+
+  it("handles multiple matching panes", () => {
+    const a: PaneLeaf = { type: "leaf", id: "a", pagePath: "deleted.md" };
+    const b: PaneLeaf = { type: "leaf", id: "b", pagePath: "keep.md" };
+    const c: PaneLeaf = { type: "leaf", id: "c", pagePath: "deleted.md" };
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [a, b, c],
+      sizes: [33, 34, 33],
+    };
+    const result = clearPagePath(root, "deleted.md") as PaneSplit;
+    expect((result.children[0] as PaneLeaf).pagePath).toBeNull();
+    expect((result.children[1] as PaneLeaf).pagePath).toBe("keep.md");
+    expect((result.children[2] as PaneLeaf).pagePath).toBeNull();
+  });
+
+  it("returns same reference when no match", () => {
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "a", pagePath: "other.md" },
+        { type: "leaf", id: "b", pagePath: "another.md" },
+      ],
+      sizes: [50, 50],
+    };
+    expect(clearPagePath(root, "deleted.md")).toBe(root);
+  });
+
+  it("works on single-leaf root", () => {
+    const leaf: PaneLeaf = { type: "leaf", id: "a", pagePath: "deleted.md" };
+    const result = clearPagePath(leaf, "deleted.md") as PaneLeaf;
+    expect(result.pagePath).toBeNull();
+
+    const other: PaneLeaf = { type: "leaf", id: "b", pagePath: "other.md" };
+    expect(clearPagePath(other, "deleted.md")).toBe(other);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Section B: Zustand Store
 // ---------------------------------------------------------------------------
@@ -502,6 +560,25 @@ describe("Section B: Store", () => {
       const before = usePaneStore.getState().root;
       usePaneStore.getState().resize([5], [50, 50]);
       expect(usePaneStore.getState().root).toBe(before);
+    });
+  });
+
+  describe("clearPageFromPanes", () => {
+    it("updates pane store root", () => {
+      const left: PaneLeaf = { type: "leaf", id: "left", pagePath: "deleted.md" };
+      const right: PaneLeaf = { type: "leaf", id: "right", pagePath: "keep.md" };
+      const root: PaneSplit = {
+        type: "split",
+        id: "s1",
+        direction: "horizontal",
+        children: [left, right],
+        sizes: [50, 50],
+      };
+      usePaneStore.setState({ root, focusedPaneId: "left" });
+      usePaneStore.getState().clearPageFromPanes("deleted.md");
+      const newRoot = usePaneStore.getState().root as PaneSplit;
+      expect((newRoot.children[0] as PaneLeaf).pagePath).toBeNull();
+      expect((newRoot.children[1] as PaneLeaf).pagePath).toBe("keep.md");
     });
   });
 });

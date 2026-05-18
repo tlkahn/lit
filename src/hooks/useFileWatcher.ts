@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useWorkspaceStore } from "../stores/workspace";
+import { usePaneStore } from "../stores/panes";
 import { useModalLockStore } from "../stores/modalLock";
 import type { FileEvent } from "../lib/ipc";
 
@@ -62,6 +63,7 @@ export function useFileWatcher(onCurrentPageModified?: () => void) {
             console.warn("[FileWatcher] current page deleted, deselecting:", event.payload.path);
             selectPage(null);
           }
+          usePaneStore.getState().clearPageFromPanes(event.payload.path);
           refreshPages();
         },
       );

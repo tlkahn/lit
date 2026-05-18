@@ -236,6 +236,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
           viewStates,
         };
       });
+      usePaneStore.getState().clearPageFromPanes(relativePath);
     } catch (e) {
       set({ error: String(e) });
     }

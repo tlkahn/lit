@@ -405,6 +405,28 @@ describe("WorkspaceStore", () => {
     expect(vs["Page B.md"]).toEqual({ scrollTop: 200, cursor: 20 });
   });
 
+  it("deletePage clears pagePath from panes referencing deleted file", async () => {
+    useWorkspaceStore.setState({ pages: [...samplePages] });
+    const left: PaneLeaf = { type: "leaf", id: "left", pagePath: "Page A.md" };
+    const right: PaneLeaf = { type: "leaf", id: "right", pagePath: "Page B.md" };
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [left, right],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "left" });
+
+    await act(async () => {
+      await useWorkspaceStore.getState().deletePage("Page A.md");
+    });
+
+    const paneRoot = usePaneStore.getState().root as PaneSplit;
+    expect((paneRoot.children[0] as PaneLeaf).pagePath).toBeNull();
+    expect((paneRoot.children[1] as PaneLeaf).pagePath).toBe("Page B.md");
+  });
+
   it("deletePage clears viewState for deleted page", async () => {
     useWorkspaceStore.setState({ pages: [...samplePages] });
     act(() => {
