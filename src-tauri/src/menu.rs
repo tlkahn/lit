@@ -1,5 +1,5 @@
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri::Wry;
 
 pub const MENU_ID_OPEN_WORKSPACE: &str = "open_workspace";
@@ -68,6 +68,16 @@ impl MenuAction {
     }
 }
 
+fn find_focused_window(app: &AppHandle<Wry>) -> Option<tauri::WebviewWindow<Wry>> {
+    let windows = app.webview_windows();
+    for window in windows.values() {
+        if window.is_focused().unwrap_or(false) {
+            return Some(window.clone());
+        }
+    }
+    windows.values().next().cloned()
+}
+
 pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
     match action {
         MenuAction::OpenWorkspace => {
@@ -112,16 +122,17 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
             });
         }
         MenuAction::OpenPreferences => {
-            use tauri::Emitter;
-            let _ = app.emit(EVENT_OPEN_PREFERENCES, ());
+            if let Some(window) = find_focused_window(app) {
+                let _ = window.emit(EVENT_OPEN_PREFERENCES, ());
+            }
         }
         MenuAction::OpenInExternalEditor => {
-            use tauri::Emitter;
-            let _ = app.emit(EVENT_OPEN_IN_EXTERNAL_EDITOR, ());
+            if let Some(window) = find_focused_window(app) {
+                let _ = window.emit(EVENT_OPEN_IN_EXTERNAL_EDITOR, ());
+            }
         }
         MenuAction::ClosePaneOrWindow => {
-            use tauri::Emitter;
-            if let Some(window) = app.webview_windows().values().next().cloned() {
+            if let Some(window) = find_focused_window(app) {
                 let _ = window.emit(EVENT_CLOSE_PANE_OR_WINDOW, ());
             }
         }
@@ -138,6 +149,7 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
         }
         MenuAction::ExportMarkdown => {
             let handle = app.clone();
+            let target_window = find_focused_window(app);
             tauri::async_runtime::spawn(async move {
                 use tauri_plugin_dialog::DialogExt;
                 let dialog = handle.dialog().clone();
@@ -148,7 +160,7 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
                     .save_file(move |path| {
                         if let Some(dest) = path {
                             let dest_str = dest.to_string();
-                            if let Some(window) = handle.webview_windows().values().next().cloned() {
+                            if let Some(window) = target_window.clone() {
                                 let state: tauri::State<crate::commands::workspace::WorkspaceRegistry> = handle.state();
                                 let root = match crate::commands::workspace::get_workspace_root(&state, window.label()) {
                                     Ok(r) => r,
@@ -160,7 +172,6 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
                                 let dest_path = std::path::PathBuf::from(&dest_str);
                                 let dialog_handle = handle.clone();
                                 std::thread::spawn(move || {
-                                    use tauri::Emitter;
                                     match crate::export::run_export(&root, &dest_path, |current, total| {
                                         let _ = window.emit("lit:export-progress", crate::export::ExportProgress { current, total });
                                     }) {
@@ -178,15 +189,12 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
             });
         }
         MenuAction::BuyLicense => {
-            use tauri::Emitter;
             let _ = app.emit(EVENT_BUY_LICENSE, ());
         }
         MenuAction::EnterLicenseKey => {
-            use tauri::Emitter;
             let _ = app.emit(EVENT_ENTER_LICENSE_KEY, ());
         }
         MenuAction::LicenseInfo => {
-            use tauri::Emitter;
             let _ = app.emit(EVENT_LICENSE_INFO, ());
         }
     }
@@ -343,6 +351,11 @@ mod tests {
         assert_eq!(EVENT_BUY_LICENSE, "menu://buy-license");
         assert_eq!(EVENT_ENTER_LICENSE_KEY, "menu://enter-license-key");
         assert_eq!(EVENT_LICENSE_INFO, "menu://license-info");
+    }
+
+    #[test]
+    fn find_focused_window_exists() {
+        let _: fn(&AppHandle<Wry>) -> Option<tauri::WebviewWindow<Wry>> = find_focused_window;
     }
 
     #[test]

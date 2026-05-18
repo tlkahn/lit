@@ -971,6 +971,61 @@ describe("ContentArea menu://open-in-external-editor", () => {
   });
 });
 
+describe("ContentArea menu://close-pane-or-window", () => {
+  beforeEach(() => {
+    resetListenMock();
+    mockListen();
+  });
+
+  it("executes pane.close when >1 pane exists", async () => {
+    setPage("Hello.md");
+    usePaneStore.setState({
+      root: {
+        type: "split", id: "split-root", direction: "horizontal",
+        children: [
+          { type: "leaf", id: "pane-1", pagePath: "Hello.md" },
+          { type: "leaf", id: "pane-2", pagePath: null },
+        ],
+        sizes: [50, 50],
+      },
+      focusedPaneId: "pane-1",
+    });
+    const spy = vi.spyOn(commandRegistryModule, "executeCommand").mockReturnValue(true);
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor")).toBeInTheDocument();
+    });
+
+    act(() => {
+      emitMockEvent("menu://close-pane-or-window", {});
+    });
+
+    expect(spy).toHaveBeenCalledWith("pane.close");
+    spy.mockRestore();
+  });
+
+  it("calls getCurrentWindow().close() when only 1 pane exists", async () => {
+    usePaneStore.setState({
+      root: { type: "leaf", id: "solo", pagePath: null },
+      focusedPaneId: "solo",
+    });
+    const spy = vi.spyOn(commandRegistryModule, "executeCommand");
+    render(<ContentArea />);
+
+    expect(screen.getByTestId("empty-state")).toBeInTheDocument();
+
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    act(() => {
+      emitMockEvent("menu://close-pane-or-window", {});
+    });
+
+    expect(spy).not.toHaveBeenCalled();
+    expect(vi.mocked(getCurrentWindow).mock.results[0]?.value.close).toHaveBeenCalled();
+    spy.mockRestore();
+  });
+});
+
 describe("parseYamlErrorLocation", () => {
   it("parses 'at line X column Y' at end of message", () => {
     expect(

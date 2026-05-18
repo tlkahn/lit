@@ -88,6 +88,7 @@ vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: vi.fn(() => ({
     setTheme: vi.fn(() => Promise.resolve()),
     setTitle: vi.fn(() => Promise.resolve()),
+    close: vi.fn(() => Promise.resolve()),
   })),
 }));
 
