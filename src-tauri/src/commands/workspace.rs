@@ -20,6 +20,26 @@ pub struct WorkspaceRegistry {
     pub workspaces: Mutex<HashMap<String, WorkspaceEntry>>,
 }
 
+impl WorkspaceRegistry {
+    pub fn find_window_for_workspace(&self, workspace_path: &Path) -> Option<String> {
+        let target = workspace_path
+            .canonicalize()
+            .unwrap_or_else(|_| workspace_path.to_path_buf());
+        let workspaces = self.workspaces.lock().unwrap();
+        workspaces.iter().find_map(|(label, entry)| {
+            let stored = entry
+                .root
+                .canonicalize()
+                .unwrap_or_else(|_| entry.root.clone());
+            if stored == target {
+                Some(label.clone())
+            } else {
+                None
+            }
+        })
+    }
+}
+
 pub struct PendingWorkspaces(pub Mutex<HashMap<String, String>>);
 pub struct PendingFiles(pub Mutex<HashMap<String, String>>);
 pub struct PendingLines(pub Mutex<HashMap<String, u32>>);
@@ -53,18 +73,9 @@ pub fn try_navigate_existing_window(
 ) -> Option<String> {
     let registry = app_handle.try_state::<WorkspaceRegistry>()?;
     let target_path = PathBuf::from(workspace_path);
-    let label = {
-        let workspaces = registry.workspaces.lock().unwrap();
-        workspaces.iter().find_map(|(lbl, entry)| {
-            if entry.root == target_path {
-                Some(lbl.clone())
-            } else {
-                None
-            }
-        })?
-    };
+    let label = registry.find_window_for_workspace(&target_path)?;
 
-    let _ = app_handle.emit_to(
+    if let Err(e) = app_handle.emit_to(
         label.as_str(),
         "lit:cli-navigate",
         CliNavigatePayload {
@@ -72,7 +83,14 @@ pub fn try_navigate_existing_window(
             line,
             col,
         },
-    );
+    ) {
+        tracing::warn!(
+            label,
+            error = %e,
+            "emit_to failed for cli-navigate, falling back to new window"
+        );
+        return None;
+    }
 
     if let Some(win) = app_handle.get_webview_window(&label) {
         let _ = win.set_focus();
@@ -506,5 +524,116 @@ mod tests {
         assert_eq!(ctx.file, None);
         assert_eq!(ctx.line, None);
         assert_eq!(ctx.col, None);
+    }
+
+    #[test]
+    fn find_window_for_workspace_returns_none_for_empty_registry() {
+        let registry = WorkspaceRegistry {
+            workspaces: Mutex::new(HashMap::new()),
+        };
+        assert_eq!(registry.find_window_for_workspace(Path::new("/my/vault")), None);
+    }
+
+    #[test]
+    fn find_window_for_workspace_returns_label_for_matching_path() {
+        let mut map = HashMap::new();
+        map.insert(
+            "win-1".to_string(),
+            WorkspaceEntry {
+                root: PathBuf::from("/my/vault"),
+                watcher: None,
+            },
+        );
+        let registry = WorkspaceRegistry {
+            workspaces: Mutex::new(map),
+        };
+        assert_eq!(
+            registry.find_window_for_workspace(Path::new("/my/vault")),
+            Some("win-1".to_string())
+        );
+    }
+
+    #[test]
+    fn find_window_for_workspace_returns_none_for_non_matching_path() {
+        let mut map = HashMap::new();
+        map.insert(
+            "win-1".to_string(),
+            WorkspaceEntry {
+                root: PathBuf::from("/my/vault"),
+                watcher: None,
+            },
+        );
+        let registry = WorkspaceRegistry {
+            workspaces: Mutex::new(map),
+        };
+        assert_eq!(
+            registry.find_window_for_workspace(Path::new("/other/vault")),
+            None
+        );
+    }
+
+    #[test]
+    fn find_window_for_workspace_matches_via_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let non_canonical = dir.path().to_path_buf();
+        let canonical = dir.path().canonicalize().unwrap();
+
+        let mut map = HashMap::new();
+        map.insert(
+            "win-1".to_string(),
+            WorkspaceEntry {
+                root: non_canonical,
+                watcher: None,
+            },
+        );
+        let registry = WorkspaceRegistry {
+            workspaces: Mutex::new(map),
+        };
+        assert_eq!(
+            registry.find_window_for_workspace(&canonical),
+            Some("win-1".to_string())
+        );
+    }
+
+    #[test]
+    fn find_window_for_workspace_matches_stored_canonical_looked_up_non_canonical() {
+        let dir = tempfile::tempdir().unwrap();
+        let non_canonical = dir.path().to_path_buf();
+        let canonical = dir.path().canonicalize().unwrap();
+
+        let mut map = HashMap::new();
+        map.insert(
+            "win-1".to_string(),
+            WorkspaceEntry {
+                root: canonical,
+                watcher: None,
+            },
+        );
+        let registry = WorkspaceRegistry {
+            workspaces: Mutex::new(map),
+        };
+        assert_eq!(
+            registry.find_window_for_workspace(&non_canonical),
+            Some("win-1".to_string())
+        );
+    }
+
+    #[test]
+    fn find_window_for_workspace_falls_back_to_direct_comparison_when_path_deleted() {
+        let mut map = HashMap::new();
+        map.insert(
+            "win-1".to_string(),
+            WorkspaceEntry {
+                root: PathBuf::from("/nonexistent/path"),
+                watcher: None,
+            },
+        );
+        let registry = WorkspaceRegistry {
+            workspaces: Mutex::new(map),
+        };
+        assert_eq!(
+            registry.find_window_for_workspace(Path::new("/nonexistent/path")),
+            Some("win-1".to_string())
+        );
     }
 }

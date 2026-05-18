@@ -92,6 +92,12 @@ vi.mock("@tauri-apps/api/window", () => ({
   })),
 }));
 
+vi.mock("@tauri-apps/api/webviewWindow", () => ({
+  getCurrentWebviewWindow: vi.fn(() => ({
+    listen: vi.fn(() => Promise.resolve(vi.fn())),
+  })),
+}));
+
 beforeEach(() => {
   resetInvokeMock();
   resetListenMock();
