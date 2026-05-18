@@ -5,13 +5,32 @@ import {
   registerHandler,
   hasCommand,
   executeCommand,
+  getVisibleCommands,
   _clear,
 } from "../lib/commandRegistry";
 import { usePreferencesStore } from "../stores/preferences";
+import { usePaneStore, createInitialState, collectLeaves, type PaneSplit, type PaneLeaf, type PaneNode } from "../stores/panes";
+import { registerPaneView, _resetForTesting as resetEditorViewRef } from "../lib/editorViewRef";
+import type { EditorView } from "@codemirror/view";
+
+function makeTwoLeafState(): { root: PaneNode; focusedPaneId: string } {
+  const leaf1: PaneLeaf = { type: "leaf", id: "leaf-1", pagePath: null };
+  const leaf2: PaneLeaf = { type: "leaf", id: "leaf-2", pagePath: null };
+  const root: PaneSplit = {
+    type: "split",
+    id: "split-root",
+    direction: "vertical",
+    children: [leaf1, leaf2],
+    sizes: [50, 50],
+  };
+  return { root, focusedPaneId: leaf1.id };
+}
 
 describe("useKeymaps", () => {
   beforeEach(() => {
     _clear();
+    resetEditorViewRef();
+    usePaneStore.setState(createInitialState());
     mockInvoke((cmd) => {
       if (cmd === "get_keymaps") {
         return [
@@ -23,6 +42,11 @@ describe("useKeymaps", () => {
           { key: "Mod-r", command: "app.gotoHeading" },
           { key: "Mod-Shift-e", command: "editor.openInExternalEditor", when: "editorFocus" },
           { key: "Mod-Shift-g", command: "app.showGraphView" },
+          { key: "Mod-d", command: "pane.splitRight" },
+          { key: "Mod-Shift-d", command: "pane.splitDown" },
+          { key: "Mod-Alt-ArrowRight", command: "pane.focusNext" },
+          { key: "Mod-Alt-ArrowLeft", command: "pane.focusPrev" },
+          { key: "Ctrl-g", command: "editor.selectNextOccurrence", when: "editorFocus" },
         ];
       }
       throw new Error(`Unknown command: ${cmd}`);
@@ -279,5 +303,175 @@ describe("useKeymaps", () => {
     document.dispatchEvent(event);
 
     expect(listener).toHaveBeenCalled();
+  });
+
+  // --- Cycle 1: pane.splitRight command registration ---
+
+  it("pane.splitRight is registered after ensureCommandsRegistered", async () => {
+    await loadHook();
+    expect(hasCommand("pane.splitRight")).toBe(true);
+  });
+
+  it("executing pane.splitRight splits focused pane vertically", async () => {
+    await loadHook();
+    usePaneStore.setState(createInitialState());
+    executeCommand("pane.splitRight");
+    const root = usePaneStore.getState().root;
+    expect(root.type).toBe("split");
+    expect((root as PaneSplit).direction).toBe("vertical");
+  });
+
+  // --- Cycle 2: pane.splitDown command registration ---
+
+  it("pane.splitDown is registered after ensureCommandsRegistered", async () => {
+    await loadHook();
+    expect(hasCommand("pane.splitDown")).toBe(true);
+  });
+
+  it("executing pane.splitDown splits focused pane horizontally", async () => {
+    await loadHook();
+    usePaneStore.setState(createInitialState());
+    executeCommand("pane.splitDown");
+    const root = usePaneStore.getState().root;
+    expect(root.type).toBe("split");
+    expect((root as PaneSplit).direction).toBe("horizontal");
+  });
+
+  // --- Cycle 3: pane.focusNext with DOM focus transfer ---
+
+  it("executing pane.focusNext advances focus and calls view.focus()", async () => {
+    await loadHook();
+    const twoLeafState = makeTwoLeafState();
+    usePaneStore.setState(twoLeafState);
+    const [, leaf2] = collectLeaves(usePaneStore.getState().root);
+    const mockView2 = { focus: vi.fn() } as unknown as EditorView;
+    registerPaneView(leaf2!.id, mockView2);
+
+    executeCommand("pane.focusNext");
+
+    expect(usePaneStore.getState().focusedPaneId).toBe(leaf2!.id);
+    expect(mockView2.focus).toHaveBeenCalled();
+  });
+
+  // --- Cycle 4: pane.focusPrev with DOM focus transfer ---
+
+  it("executing pane.focusPrev moves focus backward and calls view.focus()", async () => {
+    await loadHook();
+    const twoLeafState = makeTwoLeafState();
+    usePaneStore.setState({ ...twoLeafState, focusedPaneId: "leaf-2" });
+    const mockView1 = { focus: vi.fn() } as unknown as EditorView;
+    registerPaneView("leaf-1", mockView1);
+
+    executeCommand("pane.focusPrev");
+
+    expect(usePaneStore.getState().focusedPaneId).toBe("leaf-1");
+    expect(mockView1.focus).toHaveBeenCalled();
+  });
+
+  // --- Cycle 5: pane.close closes pane when multiple exist ---
+
+  it("executing pane.close with >1 pane closes the focused pane", async () => {
+    await loadHook();
+    const twoLeafState = makeTwoLeafState();
+    usePaneStore.setState(twoLeafState);
+    const originalLeaves = collectLeaves(usePaneStore.getState().root);
+
+    executeCommand("pane.close");
+
+    const newLeaves = collectLeaves(usePaneStore.getState().root);
+    expect(newLeaves).toHaveLength(1);
+    expect(newLeaves[0]!.id).toBe(originalLeaves[1]!.id);
+  });
+
+  // --- Cycle 6: pane.close returns false when single pane ---
+
+  it("executing pane.close with 1 pane returns false and does not close", async () => {
+    await loadHook();
+    usePaneStore.setState(createInitialState());
+    const result = executeCommand("pane.close");
+    expect(result).toBe(false);
+    expect(usePaneStore.getState().root.type).toBe("leaf");
+  });
+
+  // --- Cycle 7: Command palette when guards ---
+
+  it("pane.close is hidden in command palette with 1 pane", async () => {
+    await loadHook();
+    usePaneStore.setState(createInitialState());
+    const visible = getVisibleCommands("pane");
+    const ids = visible.map((c) => c.id);
+    expect(ids).toContain("pane.splitRight");
+    expect(ids).toContain("pane.splitDown");
+    expect(ids).not.toContain("pane.close");
+    expect(ids).not.toContain("pane.focusNext");
+    expect(ids).not.toContain("pane.focusPrev");
+  });
+
+  it("all pane commands visible in command palette with 2 panes", async () => {
+    await loadHook();
+    usePaneStore.setState(makeTwoLeafState());
+    const ids = getVisibleCommands("pane").map((c) => c.id);
+    expect(ids).toContain("pane.splitRight");
+    expect(ids).toContain("pane.splitDown");
+    expect(ids).toContain("pane.close");
+    expect(ids).toContain("pane.focusNext");
+    expect(ids).toContain("pane.focusPrev");
+  });
+
+  // --- Cycle 10: Keyboard dispatch end-to-end ---
+
+  it("Mod-d keydown triggers pane.splitRight", async () => {
+    const { result } = await loadHook();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    usePaneStore.setState(createInitialState());
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "d", metaKey: true }));
+
+    expect(usePaneStore.getState().root.type).toBe("split");
+  });
+
+  // --- Cycle 12: close-menu event logic (unit-level, no component render) ---
+
+  it("close-pane-or-window logic with >1 pane executes pane.close", async () => {
+    await loadHook();
+    usePaneStore.setState(makeTwoLeafState());
+
+    const leaves = collectLeaves(usePaneStore.getState().root);
+    expect(leaves).toHaveLength(2);
+    executeCommand("pane.close");
+
+    const newLeaves = collectLeaves(usePaneStore.getState().root);
+    expect(newLeaves).toHaveLength(1);
+  });
+
+  it("close-pane-or-window logic with 1 pane does not close pane", async () => {
+    await loadHook();
+    usePaneStore.setState(createInitialState());
+
+    const result = executeCommand("pane.close");
+    expect(result).toBe(false);
+    expect(usePaneStore.getState().root.type).toBe("leaf");
+  });
+
+  // --- Cycle 13: Integration smoke test ---
+
+  it("split → navigate → close full keyboard flow", async () => {
+    await loadHook();
+    usePaneStore.setState(createInitialState());
+
+    executeCommand("pane.splitRight");
+    const afterSplit = usePaneStore.getState();
+    expect(afterSplit.root.type).toBe("split");
+    const splitLeaves = collectLeaves(afterSplit.root);
+    expect(splitLeaves).toHaveLength(2);
+
+    const originalFocused = afterSplit.focusedPaneId;
+    executeCommand("pane.focusNext");
+    const afterNav = usePaneStore.getState();
+    expect(afterNav.focusedPaneId).not.toBe(originalFocused);
+
+    executeCommand("pane.close");
+    const afterClose = usePaneStore.getState();
+    expect(collectLeaves(afterClose.root)).toHaveLength(1);
   });
 });

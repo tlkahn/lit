@@ -14,7 +14,11 @@
   { "key": "Mod-p", "command": "app.commandPalette" },
   { "key": "Mod-Shift-:", "command": "app.insertAnnotation" },
   { "key": "Mod-Shift-g", "command": "app.showGraphView" },
-  { "key": "Mod-d", "command": "editor.selectNextOccurrence", "when": "editorFocus" },
+  { "key": "Ctrl-g", "command": "editor.selectNextOccurrence", "when": "editorFocus" },
+  { "key": "Mod-d", "command": "pane.splitRight" },
+  { "key": "Mod-Shift-d", "command": "pane.splitDown" },
+  { "key": "Mod-Alt-ArrowRight", "command": "pane.focusNext" },
+  { "key": "Mod-Alt-ArrowLeft", "command": "pane.focusPrev" },
   { "key": "Mod-\\", "command": "workbench.toggleSideBar" },
   { "key": "Mod-Shift-k", "command": "app.openKeyboardShortcuts" }
 ]

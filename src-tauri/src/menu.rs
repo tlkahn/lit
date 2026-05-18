@@ -10,6 +10,7 @@ pub const MENU_ID_BUY_LICENSE: &str = "buy_license";
 pub const MENU_ID_ENTER_LICENSE_KEY: &str = "enter_license_key";
 pub const MENU_ID_LICENSE_INFO: &str = "license_info";
 pub const MENU_ID_EXPORT_MARKDOWN: &str = "export_markdown";
+pub const MENU_ID_CLOSE: &str = "close-pane-or-window";
 pub const MENU_ID_ABOUT: &str = "show_about";
 
 pub struct MenuShortcutDef {
@@ -25,8 +26,10 @@ pub const MENU_SHORTCUTS: &[MenuShortcutDef] = &[
     MenuShortcutDef { menu_id: MENU_ID_OPEN_PREFERENCES, command_id: "core.settings.open", accelerator: "cmdOrCtrl+,", label: "Settings" },
     MenuShortcutDef { menu_id: MENU_ID_EXPORT_MARKDOWN, command_id: "app.exportMarkdown", accelerator: "cmdOrCtrl+shift+s", label: "Export as Markdown Archive" },
     MenuShortcutDef { menu_id: MENU_ID_OPEN_IN_EXTERNAL_EDITOR, command_id: "editor.openInExternalEditor", accelerator: "cmdOrCtrl+shift+e", label: "Open in External Editor" },
+    MenuShortcutDef { menu_id: MENU_ID_CLOSE, command_id: "pane.close", accelerator: "cmdOrCtrl+w", label: "Close" },
 ];
 
+pub const EVENT_CLOSE_PANE_OR_WINDOW: &str = "menu://close-pane-or-window";
 pub const EVENT_OPEN_PREFERENCES: &str = "menu://open-preferences";
 pub const EVENT_OPEN_IN_EXTERNAL_EDITOR: &str = "menu://open-in-external-editor";
 pub const EVENT_BUY_LICENSE: &str = "menu://buy-license";
@@ -39,6 +42,7 @@ pub(crate) enum MenuAction {
     InstallCli,
     OpenPreferences,
     OpenInExternalEditor,
+    ClosePaneOrWindow,
     BuyLicense,
     EnterLicenseKey,
     ExportMarkdown,
@@ -53,6 +57,7 @@ impl MenuAction {
             MENU_ID_INSTALL_CLI => Some(Self::InstallCli),
             MENU_ID_OPEN_PREFERENCES => Some(Self::OpenPreferences),
             MENU_ID_OPEN_IN_EXTERNAL_EDITOR => Some(Self::OpenInExternalEditor),
+            MENU_ID_CLOSE => Some(Self::ClosePaneOrWindow),
             MENU_ID_BUY_LICENSE => Some(Self::BuyLicense),
             MENU_ID_ENTER_LICENSE_KEY => Some(Self::EnterLicenseKey),
             MENU_ID_LICENSE_INFO => Some(Self::LicenseInfo),
@@ -113,6 +118,12 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
         MenuAction::OpenInExternalEditor => {
             use tauri::Emitter;
             let _ = app.emit(EVENT_OPEN_IN_EXTERNAL_EDITOR, ());
+        }
+        MenuAction::ClosePaneOrWindow => {
+            use tauri::Emitter;
+            if let Some(window) = app.webview_windows().values().next().cloned() {
+                let _ = window.emit(EVENT_CLOSE_PANE_OR_WINDOW, ());
+            }
         }
         MenuAction::ShowAbout => {
             let handle = app.clone();
@@ -218,7 +229,7 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, MENU_ID_OPEN_IN_EXTERNAL_EDITOR, "Open in External Editor", true, Some("cmdOrCtrl+shift+e"))?,
             &PredefinedMenuItem::separator(app)?,
-            &PredefinedMenuItem::close_window(app, None)?,
+            &MenuItem::with_id(app, MENU_ID_CLOSE, "Close", true, Some("cmdOrCtrl+w"))?,
         ],
     )?;
 
@@ -292,6 +303,7 @@ mod tests {
             MENU_ID_INSTALL_CLI,
             MENU_ID_OPEN_PREFERENCES,
             MENU_ID_OPEN_IN_EXTERNAL_EDITOR,
+            MENU_ID_CLOSE,
             MENU_ID_EXPORT_MARKDOWN,
             MENU_ID_BUY_LICENSE,
             MENU_ID_ENTER_LICENSE_KEY,
@@ -310,6 +322,7 @@ mod tests {
         assert_eq!(MenuAction::from_id(MENU_ID_INSTALL_CLI), Some(MenuAction::InstallCli));
         assert_eq!(MenuAction::from_id(MENU_ID_OPEN_PREFERENCES), Some(MenuAction::OpenPreferences));
         assert_eq!(MenuAction::from_id(MENU_ID_OPEN_IN_EXTERNAL_EDITOR), Some(MenuAction::OpenInExternalEditor));
+        assert_eq!(MenuAction::from_id(MENU_ID_CLOSE), Some(MenuAction::ClosePaneOrWindow));
         assert_eq!(MenuAction::from_id(MENU_ID_EXPORT_MARKDOWN), Some(MenuAction::ExportMarkdown));
         assert_eq!(MenuAction::from_id(MENU_ID_BUY_LICENSE), Some(MenuAction::BuyLicense));
         assert_eq!(MenuAction::from_id(MENU_ID_ENTER_LICENSE_KEY), Some(MenuAction::EnterLicenseKey));
@@ -324,6 +337,7 @@ mod tests {
 
     #[test]
     fn menu_event_name_constants_defined() {
+        assert_eq!(EVENT_CLOSE_PANE_OR_WINDOW, "menu://close-pane-or-window");
         assert_eq!(EVENT_OPEN_PREFERENCES, "menu://open-preferences");
         assert_eq!(EVENT_OPEN_IN_EXTERNAL_EDITOR, "menu://open-in-external-editor");
         assert_eq!(EVENT_BUY_LICENSE, "menu://buy-license");

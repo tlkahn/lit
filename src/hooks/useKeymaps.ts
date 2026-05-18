@@ -10,10 +10,17 @@ import { openInExternalEditor, setPreference } from "../lib/ipc";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePreferencesStore } from "../stores/preferences";
 import { useFocusModeStore } from "../stores/focusMode";
-import { getCurrentEditorView } from "../lib/editorViewRef";
+import { getCurrentEditorView, getPaneView, setFocusedPane } from "../lib/editorViewRef";
+import { usePaneStore, collectLeaves } from "../stores/panes";
 import { annotationDataField, findAnnotationAtCursor } from "../editor/livePreview/annotationState";
 import type { AnnotationBuilderEventDetail } from "../lib/annotationDsl";
 import type { EditorView } from "@codemirror/view";
+
+function transferDomFocus() {
+  const id = usePaneStore.getState().focusedPaneId;
+  setFocusedPane(id);
+  getPaneView(id)?.focus();
+}
 
 function ensureCommandsRegistered() {
   if (hasCommand("editor.toggleBold")) return;
@@ -87,6 +94,57 @@ function ensureCommandsRegistered() {
     when: () => useWorkspaceStore.getState().currentPagePath != null,
     action: () => {
       window.dispatchEvent(new CustomEvent("lit:toggle-graph-view", { detail: { mode: "local" } }));
+    },
+  });
+  registerCommand({
+    id: "pane.splitRight",
+    label: "Split Pane Right",
+    keywords: ["split", "pane", "vertical", "right"],
+    action: () => {
+      const { focusedPaneId } = usePaneStore.getState();
+      usePaneStore.getState().splitPane(focusedPaneId, "vertical");
+    },
+  });
+  registerCommand({
+    id: "pane.splitDown",
+    label: "Split Pane Down",
+    keywords: ["split", "pane", "horizontal", "down"],
+    action: () => {
+      const { focusedPaneId } = usePaneStore.getState();
+      usePaneStore.getState().splitPane(focusedPaneId, "horizontal");
+    },
+  });
+  registerCommand({
+    id: "pane.focusNext",
+    label: "Focus Next Pane",
+    keywords: ["pane", "focus", "next", "right"],
+    when: () => collectLeaves(usePaneStore.getState().root).length > 1,
+    action: () => {
+      usePaneStore.getState().focusNext();
+      transferDomFocus();
+    },
+  });
+  registerCommand({
+    id: "pane.focusPrev",
+    label: "Focus Previous Pane",
+    keywords: ["pane", "focus", "previous", "left"],
+    when: () => collectLeaves(usePaneStore.getState().root).length > 1,
+    action: () => {
+      usePaneStore.getState().focusPrev();
+      transferDomFocus();
+    },
+  });
+  registerCommand({
+    id: "pane.close",
+    label: "Close Pane",
+    keywords: ["pane", "close"],
+    when: () => collectLeaves(usePaneStore.getState().root).length > 1,
+    action: () => {
+      const leaves = collectLeaves(usePaneStore.getState().root);
+      if (leaves.length <= 1) return false;
+      const { focusedPaneId } = usePaneStore.getState();
+      usePaneStore.getState().closePane(focusedPaneId);
+      transferDomFocus();
     },
   });
   registerCommand({

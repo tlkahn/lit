@@ -2,8 +2,9 @@ import { useEffect, useState, useRef, useCallback, useMemo, lazy, Suspense } fro
 import { EditorView } from "@codemirror/view";
 import { EditorSelection } from "@codemirror/state";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useWorkspaceStore } from "../stores/workspace";
-import { usePaneStore, findLeaf } from "../stores/panes";
+import { usePaneStore, findLeaf, collectLeaves } from "../stores/panes";
 import { usePaneField, updatePaneContent, type PaneContentEntry } from "../lib/paneContentRegistry";
 import { writePage, parseRawYaml } from "../lib/ipc";
 import { executeCommand } from "../lib/commandRegistry";
@@ -283,6 +284,19 @@ export function ContentArea() {
     listen("menu://open-in-external-editor", () => {
       const view = getCurrentEditorView();
       if (view) executeCommand("editor.openInExternalEditor", view);
+    }).then((fn) => { unlisten = fn; });
+    return () => { unlisten?.(); };
+  }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen("menu://close-pane-or-window", () => {
+      const leaves = collectLeaves(usePaneStore.getState().root);
+      if (leaves.length > 1) {
+        executeCommand("pane.close");
+      } else {
+        getCurrentWindow().close();
+      }
     }).then((fn) => { unlisten = fn; });
     return () => { unlisten?.(); };
   }, []);

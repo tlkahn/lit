@@ -71,11 +71,20 @@ describe("keymaps/default.json", () => {
     expect(entry).toBeDefined();
   });
 
-  it("contains Mod-d binding for editor.selectNextOccurrence", () => {
+  it("selectNextOccurrence is bound to Ctrl-g (not Mod-d)", () => {
     const entry = defaultKeymaps.find(
       (b: { key: string; command: string }) =>
-        b.key === "Mod-d" && b.command === "editor.selectNextOccurrence",
+        b.command === "editor.selectNextOccurrence",
     );
-    expect(entry).toBeDefined();
+    expect(entry?.key).toBe("Ctrl-g");
+  });
+
+  it("contains pane keybindings in default.json", () => {
+    const find = (cmd: string) =>
+      defaultKeymaps.find((b: { key: string; command: string }) => b.command === cmd);
+    expect(find("pane.splitRight")).toEqual(expect.objectContaining({ key: "Mod-d" }));
+    expect(find("pane.splitDown")).toEqual(expect.objectContaining({ key: "Mod-Shift-d" }));
+    expect(find("pane.focusNext")).toEqual(expect.objectContaining({ key: "Mod-Alt-ArrowRight" }));
+    expect(find("pane.focusPrev")).toEqual(expect.objectContaining({ key: "Mod-Alt-ArrowLeft" }));
   });
 });
