@@ -354,12 +354,12 @@ describe("App", () => {
     expect(screen.getByTestId("status-bar")).toBeInTheDocument();
   });
 
-  it("shows Sidebar without StatusBar when workspace set and graphReady is true", () => {
+  it("shows Sidebar and StatusBar when workspace set and graphReady is true", () => {
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
     render(<App />);
     expect(screen.queryByTestId("indexing-screen")).not.toBeInTheDocument();
     expect(screen.getByText("Files")).toBeInTheDocument();
-    expect(screen.queryByTestId("status-bar")).not.toBeInTheDocument();
+    expect(screen.getByTestId("status-bar")).toBeInTheDocument();
   });
 
   it("shows Sidebar and ContentArea while graphReady is false", () => {
