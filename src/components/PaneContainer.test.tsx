@@ -117,6 +117,29 @@ describe("PaneContainer", () => {
     expect(splits[1]!.className).toContain("flex-col");
   });
 
+  it("wraps tree in a container div with flex classes", () => {
+    const { container } = render(<PaneContainer />);
+    const wrapper = container.firstElementChild as HTMLElement;
+    expect(wrapper.tagName).toBe("DIV");
+    expect(wrapper.className).toContain("flex");
+    expect(wrapper.className).toContain("flex-1");
+    expect(wrapper.className).toContain("min-h-0");
+  });
+
+  it("passes style prop to the container div", () => {
+    const { container } = render(
+      <PaneContainer style={{ display: "none" }} />,
+    );
+    const wrapper = container.firstElementChild as HTMLElement;
+    expect(wrapper.style.display).toBe("none");
+  });
+
+  it("renders without style prop (undefined)", () => {
+    const { container } = render(<PaneContainer />);
+    const wrapper = container.firstElementChild as HTMLElement;
+    expect(wrapper.style.display).toBe("");
+  });
+
   it("updates rendered tree after store splitPane action", () => {
     const { queryAllByTestId } = render(<PaneContainer />);
     expect(queryAllByTestId(/^editor-pane-/)).toHaveLength(1);

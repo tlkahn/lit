@@ -1,3 +1,4 @@
+import type React from "react";
 import { usePaneStore } from "../stores/panes";
 import type { PaneNode } from "../stores/panes";
 import { EditorPane } from "./EditorPane";
@@ -28,7 +29,11 @@ function PaneNodeRenderer({ node }: { node: PaneNode }) {
   );
 }
 
-export function PaneContainer() {
+export function PaneContainer({ style }: { style?: React.CSSProperties }) {
   const root = usePaneStore((s) => s.root);
-  return <PaneNodeRenderer node={root} />;
+  return (
+    <div style={style} className="flex flex-1 min-h-0">
+      <PaneNodeRenderer node={root} />
+    </div>
+  );
 }
