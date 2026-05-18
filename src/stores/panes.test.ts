@@ -1123,6 +1123,63 @@ describe("Section E: Integration & Edge Cases", () => {
     });
   });
 
+  describe("Cycle 21: store preserves tree after close (regression for #132)", () => {
+    it("3-pane split+setPanePage → close middle → 2-child split with correct pagePaths", () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "A", pagePath: null },
+        focusedPaneId: "A",
+      });
+      usePaneStore.getState().setPanePage("A", "a.md");
+      usePaneStore.getState().splitPane("A", "horizontal");
+      const afterFirst = usePaneStore.getState().root as PaneSplit;
+      const B = (afterFirst.children[1] as PaneLeaf).id;
+      usePaneStore.getState().setPanePage(B, "b.md");
+
+      usePaneStore.getState().splitPane(B, "vertical");
+      const afterSecond = usePaneStore.getState().root as PaneSplit;
+      const innerSplit = afterSecond.children[1] as PaneSplit;
+      const C = (innerSplit.children[1] as PaneLeaf).id;
+      usePaneStore.getState().setPanePage(C, "c.md");
+
+      usePaneStore.getState().closePane(B);
+
+      const root = usePaneStore.getState().root as PaneSplit;
+      expect(root.type).toBe("split");
+      expect(root.children).toHaveLength(2);
+      expect((root.children[0] as PaneLeaf).pagePath).toBe("a.md");
+      expect((root.children[1] as PaneLeaf).pagePath).toBe("c.md");
+      const focusedId = usePaneStore.getState().focusedPaneId;
+      expect(findLeaf(root, focusedId)).not.toBeNull();
+    });
+  });
+
+  describe("Cycle 22: focus lands on null-pagePath pane after close", () => {
+    it("close focused pane → focus lands on null-pagePath sibling, tree correct", () => {
+      const A: PaneLeaf = { type: "leaf", id: "A", pagePath: "a.md" };
+      const B: PaneLeaf = { type: "leaf", id: "B", pagePath: "b.md" };
+      const C: PaneLeaf = { type: "leaf", id: "C", pagePath: null };
+      const root: PaneSplit = {
+        type: "split",
+        id: "s1",
+        direction: "horizontal",
+        children: [A, B, C],
+        sizes: [33, 34, 33],
+      };
+      usePaneStore.setState({ root, focusedPaneId: "B" });
+
+      usePaneStore.getState().closePane("B");
+
+      const newRoot = usePaneStore.getState().root as PaneSplit;
+      expect(newRoot.type).toBe("split");
+      expect(newRoot.children).toHaveLength(2);
+      expect((newRoot.children[0] as PaneLeaf).id).toBe("A");
+      expect((newRoot.children[0] as PaneLeaf).pagePath).toBe("a.md");
+      expect((newRoot.children[1] as PaneLeaf).id).toBe("C");
+      expect((newRoot.children[1] as PaneLeaf).pagePath).toBeNull();
+      expect(usePaneStore.getState().focusedPaneId).toBe("C");
+    });
+  });
+
   describe("Cycle 20: Type exports validation", () => {
     it("PaneLeaf, PaneSplit, and PaneNode types are properly exported and usable", () => {
       const leaf: PaneLeaf = { type: "leaf", id: "t1", pagePath: null };

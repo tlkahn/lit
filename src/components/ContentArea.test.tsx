@@ -1026,6 +1026,77 @@ describe("ContentArea menu://close-pane-or-window", () => {
   });
 });
 
+describe("ContentArea multi-pane close (#132)", () => {
+  it("does not show empty-state when closing a pane shifts focus to null-pagePath sibling", async () => {
+    useWorkspaceStore.setState({
+      pages: [samplePage.meta, otherPage.meta],
+      currentPagePath: "Other.md",
+    });
+    usePaneStore.setState({
+      root: {
+        type: "split",
+        id: "s1",
+        direction: "horizontal",
+        children: [
+          { type: "leaf", id: "A", pagePath: "Hello.md" },
+          { type: "leaf", id: "B", pagePath: "Other.md" },
+          { type: "leaf", id: "C", pagePath: null },
+        ],
+        sizes: [33, 34, 33],
+      },
+      focusedPaneId: "B",
+    });
+
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("page-title")).toBeInTheDocument();
+    });
+
+    act(() => {
+      usePaneStore.getState().closePane("B");
+    });
+
+    expect(screen.queryByTestId("empty-state")).not.toBeInTheDocument();
+    const panes = screen.getAllByTestId("editor-pane");
+    expect(panes.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("workspace.currentPagePath syncs after close to remaining focused pane", async () => {
+    useWorkspaceStore.setState({
+      pages: [samplePage.meta, otherPage.meta],
+      currentPagePath: "Other.md",
+    });
+    usePaneStore.setState({
+      root: {
+        type: "split",
+        id: "s1",
+        direction: "horizontal",
+        children: [
+          { type: "leaf", id: "A", pagePath: "Hello.md" },
+          { type: "leaf", id: "B", pagePath: "Other.md" },
+        ],
+        sizes: [50, 50],
+      },
+      focusedPaneId: "B",
+    });
+
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("page-title")).toBeInTheDocument();
+    });
+
+    act(() => {
+      usePaneStore.getState().closePane("B");
+    });
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().currentPagePath).toBe("Hello.md");
+    });
+  });
+});
+
 describe("parseYamlErrorLocation", () => {
   it("parses 'at line X column Y' at end of message", () => {
     expect(

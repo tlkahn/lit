@@ -34,6 +34,7 @@ export function ContentArea() {
   const focusedPaneId = usePaneStore((s) => s.focusedPaneId);
   const focusedLeaf = usePaneStore((s) => findLeaf(s.root, s.focusedPaneId));
   const currentPanePage = focusedLeaf?.pagePath ?? null;
+  const isMultiPane = usePaneStore((s) => s.root.type === "split");
 
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const pendingTitleFocus = useWorkspaceStore((s) => s.pendingTitleFocus);
@@ -301,7 +302,7 @@ export function ContentArea() {
     return () => { unlisten?.(); };
   }, []);
 
-  if (!currentPanePage) {
+  if (!currentPanePage && !isMultiPane) {
     return (
       <main
         className="flex flex-1 items-center justify-center bg-bg-primary-alt"
@@ -314,16 +315,18 @@ export function ContentArea() {
     );
   }
 
-  const currentPageMeta = useWorkspaceStore.getState().pages.find(
-    (p) => p.relative_path === currentPanePage,
-  );
-  if (currentPageMeta?.file_type === "pdf" && workspacePath) {
-    return <PdfViewer filePath={`${workspacePath}/${currentPanePage}`} />;
+  if (currentPanePage) {
+    const currentPageMeta = useWorkspaceStore.getState().pages.find(
+      (p) => p.relative_path === currentPanePage,
+    );
+    if (currentPageMeta?.file_type === "pdf" && workspacePath) {
+      return <PdfViewer filePath={`${workspacePath}/${currentPanePage}`} />;
+    }
   }
 
   return (
     <main className="flex min-h-0 flex-1 flex-col bg-bg-primary-alt">
-      <div className="px-6 py-3">
+      {currentPanePage && (<div className="px-6 py-3">
         <div className="flex items-center gap-2">
           <input
             ref={titleInputRef}
@@ -411,7 +414,7 @@ export function ContentArea() {
             />
           )
         )}
-      </div>
+      </div>)}
       <PaneContainer style={viewMode !== "editor" ? { display: "none" } : undefined} />
       {viewMode === "mindmap" && (
         <div
@@ -503,7 +506,7 @@ export function ContentArea() {
           </Suspense>
         </div>
       )}
-      <BottomPanel pageId={currentPanePage} />
+      {currentPanePage && <BottomPanel pageId={currentPanePage} />}
     </main>
   );
 }

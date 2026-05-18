@@ -339,6 +339,32 @@ describe("PaneContainer", () => {
     expect(wrapperA.style.minHeight).toBe("120px");
   });
 
+  // Cycle 22 — close middle pane leaves correct pane count (#132)
+  it("closing middle pane leaves 2 editor panes rendered", () => {
+    const root: PaneNode = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "pane-a", pagePath: "a.md" },
+        { type: "leaf", id: "pane-b", pagePath: "b.md" },
+        { type: "leaf", id: "pane-c", pagePath: null },
+      ],
+      sizes: [33, 34, 33],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "pane-b" });
+    const { queryAllByTestId } = render(<PaneContainer />);
+    expect(queryAllByTestId(/^editor-pane-/)).toHaveLength(3);
+
+    act(() => {
+      usePaneStore.getState().closePane("pane-b");
+    });
+
+    expect(queryAllByTestId(/^editor-pane-/)).toHaveLength(2);
+    expect(queryAllByTestId(/^editor-pane-pane-a/)).toHaveLength(1);
+    expect(queryAllByTestId(/^editor-pane-pane-c/)).toHaveLength(1);
+  });
+
   // Cycle 21 — dividers have ARIA attributes
   it("dividers have role=separator and aria-orientation", () => {
     const root: PaneNode = {
