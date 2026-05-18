@@ -19,14 +19,15 @@ beforeEach(() => {
 });
 
 describe("StatusBar", () => {
-  it("renders nothing when graphReady is true but no pagePath", () => {
+  it("renders status bar with no buffer label when graphReady but no pagePath", () => {
     useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
     usePaneStore.setState({
       root: { type: "leaf", id: "p1", pagePath: null },
       focusedPaneId: "p1",
     });
-    const { container } = render(<StatusBar />);
-    expect(container.innerHTML).toBe("");
+    render(<StatusBar />);
+    expect(screen.getByTestId("status-bar")).toBeInTheDocument();
+    expect(screen.queryByTestId("buffer-stack-label")).toBeNull();
   });
 
   it("renders nothing when workspacePath is null", () => {
@@ -83,14 +84,14 @@ describe("StatusBar", () => {
     expect(fill.className).toContain("animate-pulse");
   });
 
-  it("shows file path when graphReady and pane has pagePath", () => {
+  it("shows file path via BufferStack when graphReady and pane has pagePath", () => {
     useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
     usePaneStore.setState({
       root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
       focusedPaneId: "p1",
     });
     render(<StatusBar />);
-    expect(screen.getByTestId("status-bar-path")).toHaveTextContent("notes/hello.md");
+    expect(screen.getByTestId("buffer-stack-label")).toHaveTextContent("notes/hello.md");
   });
 
   it("shows cursor position Ln X, Col Y", () => {
@@ -112,7 +113,7 @@ describe("StatusBar", () => {
     });
     useCursorInfoStore.setState({ line: 0, col: 0 });
     render(<StatusBar />);
-    expect(screen.getByTestId("status-bar-path")).toBeInTheDocument();
+    expect(screen.getByTestId("buffer-stack-label")).toBeInTheDocument();
     expect(screen.queryByTestId("status-bar-cursor")).toBeNull();
   });
 
@@ -124,5 +125,25 @@ describe("StatusBar", () => {
     });
     render(<StatusBar />);
     expect(screen.getByTestId("status-bar")).toHaveTextContent("Scanning files...");
+  });
+
+  it("shows buffer chip with count for multiple open panes", () => {
+    useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+    usePaneStore.setState({
+      root: {
+        type: "split",
+        id: "s1",
+        direction: "horizontal",
+        children: [
+          { type: "leaf", id: "p1", pagePath: "notes/foo.md" },
+          { type: "leaf", id: "p2", pagePath: "notes/bar.md" },
+        ],
+        sizes: [50, 50],
+      },
+      focusedPaneId: "p1",
+    });
+    render(<StatusBar />);
+    expect(screen.getByTestId("buffer-stack-chip")).toBeInTheDocument();
+    expect(screen.getByTestId("buffer-stack-count")).toHaveTextContent("(+1)");
   });
 });
