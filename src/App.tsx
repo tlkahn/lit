@@ -23,6 +23,7 @@ import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { usePaneStore, findLeaf } from "./stores/panes";
 import { EditorView } from "@codemirror/view";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { HeadingQuickSwitcher } from "./components/HeadingQuickSwitcher";
 import { CommandPalette } from "./components/CommandPalette";
 import { AnnotationBuilderModal } from "./components/AnnotationBuilderModal";
@@ -204,7 +205,7 @@ function App() {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
 
-    listen<{ file: string | null; line: number | null; col: number | null }>(
+    getCurrentWebviewWindow().listen<{ file: string | null; line: number | null; col: number | null }>(
       "lit:cli-navigate",
       (event) => {
         const { file, line, col } = event.payload;
