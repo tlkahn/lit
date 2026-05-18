@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, act } from "@testing-library/react";
 import { useRef } from "react";
 import { CodeMirrorEditor } from "./CodeMirrorEditor";
-import type { EditorView } from "@codemirror/view";
+import { EditorView } from "@codemirror/view";
 
 describe("CodeMirrorEditor", () => {
   it("renders container with data-testid='editor'", () => {
@@ -149,5 +149,23 @@ describe("CodeMirrorEditor", () => {
     expect(() => {
       window.dispatchEvent(new CustomEvent("lit:request-editor-focus"));
     }).not.toThrow();
+  });
+
+  it("onViewChange is not called with null before being called with a view", () => {
+    const spy = vi.fn();
+    render(<CodeMirrorEditor doc="test" onViewChange={spy} />);
+    expect(spy).toHaveBeenCalled();
+    const firstCall = spy.mock.calls[0]!;
+    expect(firstCall[0]).not.toBeNull();
+    expect(firstCall[0]).toBeInstanceOf(EditorView);
+  });
+
+  it("onViewChange(null) is called on unmount after view was established", () => {
+    const spy = vi.fn();
+    const { unmount } = render(<CodeMirrorEditor doc="test" onViewChange={spy} />);
+    expect(spy).toHaveBeenCalledWith(expect.any(Object));
+    spy.mockClear();
+    unmount();
+    expect(spy).toHaveBeenCalledWith(null);
   });
 });

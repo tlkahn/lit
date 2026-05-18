@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, waitFor, cleanup } from "@testing-library/react";
+import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useEffect } from "react";
 import { usePaneStore } from "../stores/panes";
@@ -10,12 +10,22 @@ import type { EditorView } from "@codemirror/view";
 const mockView = {} as EditorView;
 
 vi.mock("../editor/CodeMirrorEditor", () => ({
-  CodeMirrorEditor: (props: { doc: string; onViewChange?: (view: EditorView | null) => void }) => {
+  CodeMirrorEditor: (props: {
+    doc: string;
+    frontmatter?: Record<string, unknown>;
+    onViewChange?: (view: EditorView | null) => void;
+  }) => {
     useEffect(() => {
       props.onViewChange?.(mockView);
       return () => { props.onViewChange?.(null); };
     }, []);
-    return <div data-testid="mock-editor" data-doc={props.doc} />;
+    return (
+      <div
+        data-testid="mock-editor"
+        data-doc={props.doc}
+        data-frontmatter={props.frontmatter ? JSON.stringify(props.frontmatter) : undefined}
+      />
+    );
   },
 }));
 
@@ -142,5 +152,51 @@ describe("EditorPane", () => {
     render(<EditorPane paneId="pane-1" />);
     await userEvent.click(screen.getByTestId("editor-pane"));
     expect(spy).toHaveBeenCalledWith("pane-1");
+  });
+
+  it("passes frontmatter from usePageContent to CodeMirrorEditor", async () => {
+    const pageWithFm = {
+      ...samplePage,
+      meta: { ...samplePage.meta, frontmatter: { tags: ["note"], draft: true } },
+    };
+    mockInvoke((cmd) => {
+      if (cmd === "read_page") return pageWithFm;
+      if (cmd === "write_page") return null;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    usePaneStore.setState({
+      root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+      focusedPaneId: "pane-1",
+    });
+    render(<EditorPane paneId="pane-1" />);
+    await waitFor(() => {
+      const fm = screen.getByTestId("mock-editor").getAttribute("data-frontmatter");
+      expect(fm).not.toBeNull();
+      expect(JSON.parse(fm!)).toEqual({ tags: ["note"], draft: true });
+    });
+  });
+
+  it("focuses pane on mousedown even when click propagation is blocked", () => {
+    usePaneStore.setState({
+      root: {
+        type: "split",
+        direction: "horizontal",
+        children: [
+          { type: "leaf", id: "pane-1", pagePath: null },
+          { type: "leaf", id: "other", pagePath: null },
+        ],
+        sizes: [50, 50],
+      },
+      focusedPaneId: "other",
+    });
+    render(<EditorPane paneId="pane-1" />);
+    const child = screen.getByTestId("pane-empty-state");
+
+    child.addEventListener("click", (e) => e.stopPropagation());
+    child.addEventListener("mousedown", (e) => e.stopPropagation());
+
+    fireEvent.mouseDown(child);
+
+    expect(usePaneStore.getState().focusedPaneId).toBe("pane-1");
   });
 });

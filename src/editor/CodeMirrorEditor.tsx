@@ -26,8 +26,10 @@ export function CodeMirrorEditor({ doc, onChange, resolveImageSrc, viewRef, onVi
     if (viewRef) {
       (viewRef as React.MutableRefObject<EditorView | null>).current = view;
     }
-    if (view) onViewChange?.(view);
-    return () => { onViewChange?.(null); };
+    if (view) {
+      onViewChange?.(view);
+      return () => { onViewChange?.(null); };
+    }
   }, [view, viewRef, onViewChange]);
 
   useEffect(() => {

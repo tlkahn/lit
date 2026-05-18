@@ -16,7 +16,7 @@ interface EditorPaneProps {
 function EditorPaneInner({ paneId }: EditorPaneProps) {
   const pagePath = usePaneStore((s) => findLeaf(s.root, paneId)?.pagePath ?? null);
   const isFocused = usePaneStore((s) => s.focusedPaneId === paneId);
-  const { body, title, handleChange } = usePageContent(paneId, pagePath);
+  const { body, title, frontmatter, handleChange } = usePageContent(paneId, pagePath);
 
   const handleViewChange = useCallback(
     (view: EditorView | null) => {
@@ -43,7 +43,7 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
       <div
         data-testid="editor-pane"
         className={`flex flex-1 items-center justify-center border-t-2 ${isFocused ? "border-interactive-accent" : "border-transparent"}`}
-        onClick={handleFocus}
+        onMouseDownCapture={handleFocus}
         onFocus={handleFocus}
         tabIndex={-1}
       >
@@ -56,13 +56,14 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
     <div
       data-testid="editor-pane"
       className={`flex flex-1 flex-col border-t-2 ${isFocused ? "border-interactive-accent" : "border-transparent"}`}
-      onClick={handleFocus}
+      onMouseDownCapture={handleFocus}
       onFocus={handleFocus}
       tabIndex={-1}
     >
       <div data-testid="pane-breadcrumb">{title}</div>
       <CodeMirrorEditor
         doc={body}
+        frontmatter={frontmatter}
         onChange={handleChange}
         onViewChange={handleViewChange}
       />
