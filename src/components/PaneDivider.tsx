@@ -34,7 +34,6 @@ function computeNewSizes(
 
 export function PaneDivider({ splitPath, direction, index }: PaneDividerProps) {
   const resize = usePaneStore((s) => s.resize);
-  const root = usePaneStore((s) => s.root);
 
   const dividerRef = useRef<HTMLDivElement>(null);
   const dragStartPos = useRef(0);
@@ -49,6 +48,7 @@ export function PaneDivider({ splitPath, direction, index }: PaneDividerProps) {
     (e: React.MouseEvent) => {
       e.preventDefault();
 
+      const root = usePaneStore.getState().root;
       const split = findSplitByPath(root, splitPath);
       if (!split) return;
 
@@ -109,16 +109,17 @@ export function PaneDivider({ splitPath, direction, index }: PaneDividerProps) {
         }
       };
     },
-    [root, splitPath, index, isHorizontal, resize],
+    [splitPath, index, isHorizontal, resize],
   );
 
   const handleDoubleClick = useCallback(() => {
+    const root = usePaneStore.getState().root;
     const split = findSplitByPath(root, splitPath);
     if (!split) return;
     const count = split.children.length;
     const equalSize = 100 / count;
     resize(splitPath, Array(count).fill(equalSize));
-  }, [root, splitPath, resize]);
+  }, [splitPath, resize]);
 
   useEffect(() => {
     return () => {
