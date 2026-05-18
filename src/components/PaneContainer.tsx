@@ -3,6 +3,7 @@ import { usePaneStore } from "../stores/panes";
 import type { PaneNode } from "../stores/panes";
 import { EditorPane } from "./EditorPane";
 import { PaneDivider } from "./PaneDivider";
+import { MIN_PANE_PX } from "../lib/paneConstants";
 
 function PaneNodeRenderer({ node, path }: { node: PaneNode; path: number[] }) {
   if (node.type === "leaf") {
@@ -27,7 +28,12 @@ function PaneNodeRenderer({ node, path }: { node: PaneNode; path: number[] }) {
     items.push(
       <div
         key={child.id}
-        style={{ flexBasis: `${node.sizes[i]}%` }}
+        style={{
+          flexBasis: `${node.sizes[i]}%`,
+          ...(node.direction === "horizontal"
+            ? { minWidth: MIN_PANE_PX }
+            : { minHeight: MIN_PANE_PX }),
+        }}
         className="min-h-0 min-w-0 grow-0 shrink-0 flex flex-col overflow-hidden"
       >
         <PaneNodeRenderer node={child} path={[...path, i]} />

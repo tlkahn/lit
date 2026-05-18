@@ -304,6 +304,41 @@ describe("PaneContainer", () => {
     }
   });
 
+  // Cycle 2b — pixel-based min-width/min-height on pane wrappers
+  it("pane wrapper has min-width of 120px for horizontal splits", () => {
+    const root: PaneNode = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "pane-a", pagePath: null },
+        { type: "leaf", id: "pane-b", pagePath: null },
+      ],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "pane-a" });
+    const { getByTestId } = render(<PaneContainer />);
+    const wrapperA = getByTestId("editor-pane-pane-a").parentElement!;
+    expect(wrapperA.style.minWidth).toBe("120px");
+  });
+
+  it("pane wrapper has min-height of 120px for vertical splits", () => {
+    const root: PaneNode = {
+      type: "split",
+      id: "s1",
+      direction: "vertical",
+      children: [
+        { type: "leaf", id: "pane-a", pagePath: null },
+        { type: "leaf", id: "pane-b", pagePath: null },
+      ],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "pane-a" });
+    const { getByTestId } = render(<PaneContainer />);
+    const wrapperA = getByTestId("editor-pane-pane-a").parentElement!;
+    expect(wrapperA.style.minHeight).toBe("120px");
+  });
+
   // Cycle 21 — dividers have ARIA attributes
   it("dividers have role=separator and aria-orientation", () => {
     const root: PaneNode = {

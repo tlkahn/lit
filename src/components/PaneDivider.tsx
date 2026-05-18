@@ -1,5 +1,6 @@
 import { useRef, useEffect, useCallback } from "react";
 import { usePaneStore, findSplitByPath } from "../stores/panes";
+import { MIN_PANE_PX } from "../lib/paneConstants";
 
 const MIN_PANE_PCT = 10;
 
@@ -70,7 +71,9 @@ export function PaneDivider({ splitPath, direction, index }: PaneDividerProps) {
         const pos = isHorizontal ? ev.clientX : ev.clientY;
         const deltaPixels = pos - dragStartPos.current;
         const deltaPct = (deltaPixels / containerSize) * 100;
-        const newSizes = computeNewSizes(startSizes.current, indexRef.current, deltaPct, MIN_PANE_PCT);
+        const pixelMinPct = (MIN_PANE_PX / containerSize) * 100;
+        const effectiveMin = Math.max(MIN_PANE_PCT, pixelMinPct);
+        const newSizes = computeNewSizes(startSizes.current, indexRef.current, deltaPct, effectiveMin);
         pendingSizes.current = newSizes;
 
         if (!rafIdRef.current) {

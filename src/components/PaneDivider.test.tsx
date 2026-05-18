@@ -3,6 +3,7 @@ import { render, cleanup, fireEvent, act } from "@testing-library/react";
 import { usePaneStore } from "../stores/panes";
 import type { PaneNode } from "../stores/panes";
 import { PaneDivider } from "./PaneDivider";
+import { MIN_PANE_PX } from "../lib/paneConstants";
 
 function setupSplit(sizes: number[], direction: "horizontal" | "vertical" = "horizontal") {
   const children: PaneNode[] = sizes.map((_, i) => ({
@@ -161,8 +162,8 @@ describe("PaneDivider", () => {
     }
   });
 
-  // Cycle 7 — clamping to minimum 10%
-  it("clamps left pane to minimum 10%", () => {
+  // Cycle 7 — clamping to effective minimum (pixel-based on 1000px = 12%)
+  it("clamps left pane to effective minimum", () => {
     setupSplit([50, 50]);
     const { getByTestId } = render(
       <div style={{ width: 1000, height: 500 }}>
@@ -180,12 +181,12 @@ describe("PaneDivider", () => {
 
     const root = usePaneStore.getState().root;
     if (root.type === "split") {
-      expect(root.sizes[0]).toBeCloseTo(10, 0);
-      expect(root.sizes[1]).toBeCloseTo(90, 0);
+      expect(root.sizes[0]).toBeCloseTo(12, 0);
+      expect(root.sizes[1]).toBeCloseTo(88, 0);
     }
   });
 
-  it("clamps right pane to minimum 10%", () => {
+  it("clamps right pane to effective minimum", () => {
     setupSplit([50, 50]);
     const { getByTestId } = render(
       <div style={{ width: 1000, height: 500 }}>
@@ -203,8 +204,8 @@ describe("PaneDivider", () => {
 
     const root = usePaneStore.getState().root;
     if (root.type === "split") {
-      expect(root.sizes[0]).toBeCloseTo(90, 0);
-      expect(root.sizes[1]).toBeCloseTo(10, 0);
+      expect(root.sizes[0]).toBeCloseTo(88, 0);
+      expect(root.sizes[1]).toBeCloseTo(12, 0);
     }
   });
 
@@ -480,5 +481,56 @@ describe("PaneDivider", () => {
       <PaneDivider splitPath={[]} direction="vertical" index={0} />,
     );
     expect(getByTestId("pane-divider").getAttribute("aria-orientation")).toBe("vertical");
+  });
+
+  // Cycle 2a — pixel-based minimum pane size
+  it("MIN_PANE_PX is exported and equals 120", () => {
+    expect(MIN_PANE_PX).toBe(120);
+  });
+
+  it("drag does not allow pane below 120px", () => {
+    setupSplit([50, 50]);
+    const { getByTestId } = render(
+      <div style={{ width: 400, height: 300 }}>
+        <PaneDivider splitPath={[]} direction="horizontal" index={0} />
+      </div>,
+    );
+    const divider = getByTestId("pane-divider");
+    mockParentRect(divider, 400, 300);
+
+    act(() => {
+      fireEvent.mouseDown(divider, { clientX: 200, clientY: 150 });
+      fireEvent.mouseMove(document, { clientX: 50, clientY: 150 });
+      flushRaf();
+    });
+
+    const root = usePaneStore.getState().root;
+    if (root.type === "split") {
+      expect(root.sizes[0]).toBeCloseTo(30, 0);
+      expect(root.sizes[1]).toBeCloseTo(70, 0);
+    }
+  });
+
+  it("pixel minimum dominates when > percentage minimum", () => {
+    setupSplit([50, 50]);
+    const { getByTestId } = render(
+      <div style={{ width: 800, height: 400 }}>
+        <PaneDivider splitPath={[]} direction="horizontal" index={0} />
+      </div>,
+    );
+    const divider = getByTestId("pane-divider");
+    mockParentRect(divider, 800, 400);
+
+    act(() => {
+      fireEvent.mouseDown(divider, { clientX: 400, clientY: 200 });
+      fireEvent.mouseMove(document, { clientX: 80, clientY: 200 });
+      flushRaf();
+    });
+
+    const root = usePaneStore.getState().root;
+    if (root.type === "split") {
+      expect(root.sizes[0]).toBeCloseTo(15, 0);
+      expect(root.sizes[1]).toBeCloseTo(85, 0);
+    }
   });
 });
