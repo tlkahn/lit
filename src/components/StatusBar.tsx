@@ -16,7 +16,8 @@ export function StatusBar() {
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const indexProgress = useWorkspaceStore((s) => s.indexProgress);
   const pagePath = usePaneStore((s) => findLeaf(s.root, s.focusedPaneId)?.pagePath ?? null);
-  const { line, col } = useCursorInfoStore();
+  const line = useCursorInfoStore((s) => s.line);
+  const col = useCursorInfoStore((s) => s.col);
 
   if (!workspacePath) return null;
 

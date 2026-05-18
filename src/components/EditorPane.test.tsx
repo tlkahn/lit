@@ -391,5 +391,28 @@ describe("EditorPane", () => {
       expect(line).toBe(5);
       expect(col).toBe(10);
     });
+
+    it("resets cursorInfo to 0,0 when pagePath changes while focused", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onSelectionChange).toBeDefined();
+      });
+      const onSelectionChange = capturedProps.onSelectionChange as (line: number, col: number) => void;
+      onSelectionChange(5, 10);
+      expect(useCursorInfoStore.getState().line).toBe(5);
+
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "other.md" },
+      });
+
+      await waitFor(() => {
+        expect(useCursorInfoStore.getState().line).toBe(0);
+        expect(useCursorInfoStore.getState().col).toBe(0);
+      });
+    });
   });
 });

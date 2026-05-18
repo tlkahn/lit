@@ -41,6 +41,11 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
   const isFocusedRef = useRef(isFocused);
 
   useEffect(() => { currentPathRef.current = pagePath; }, [pagePath]);
+  useEffect(() => {
+    if (isFocused) {
+      useCursorInfoStore.getState().setCursorInfo(0, 0);
+    }
+  }, [pagePath]);
   useEffect(() => { rawYamlRef.current = rawYaml; }, [rawYaml]);
   useEffect(() => {
     isFocusedRef.current = isFocused;
