@@ -184,7 +184,7 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
     return (
       <div
         data-testid="editor-pane"
-        className={`flex flex-1 items-center justify-center border-t-2 ${isFocused ? "border-interactive-accent" : "border-transparent"}`}
+        className={`flex min-h-0 flex-1 items-center justify-center border-t-2 ${isFocused ? "border-interactive-accent" : "border-transparent"}`}
         onMouseDownCapture={handleFocus}
         onFocus={handleFocus}
         tabIndex={-1}
@@ -197,7 +197,7 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
   return (
     <div
       data-testid="editor-pane"
-      className={`flex flex-1 flex-col border-t-2 ${isFocused ? "border-interactive-accent" : "border-transparent"}`}
+      className={`flex min-h-0 flex-1 flex-col border-t-2 ${isFocused ? "border-interactive-accent" : "border-transparent"}`}
       onMouseDownCapture={handleFocus}
       onFocus={handleFocus}
       tabIndex={-1}
