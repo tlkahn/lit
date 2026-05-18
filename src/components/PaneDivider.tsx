@@ -41,6 +41,10 @@ export function PaneDivider({ splitPath, direction, index }: PaneDividerProps) {
   const pendingSizes = useRef<number[] | null>(null);
   const rafIdRef = useRef(0);
   const cleanupRef = useRef<(() => void) | null>(null);
+  const splitPathRef = useRef(splitPath);
+  splitPathRef.current = splitPath;
+  const indexRef = useRef(index);
+  indexRef.current = index;
 
   const isHorizontal = direction === "horizontal";
 
@@ -49,7 +53,7 @@ export function PaneDivider({ splitPath, direction, index }: PaneDividerProps) {
       e.preventDefault();
 
       const root = usePaneStore.getState().root;
-      const split = findSplitByPath(root, splitPath);
+      const split = findSplitByPath(root, splitPathRef.current);
       if (!split) return;
 
       dragStartPos.current = isHorizontal ? e.clientX : e.clientY;
@@ -66,14 +70,14 @@ export function PaneDivider({ splitPath, direction, index }: PaneDividerProps) {
         const pos = isHorizontal ? ev.clientX : ev.clientY;
         const deltaPixels = pos - dragStartPos.current;
         const deltaPct = (deltaPixels / containerSize) * 100;
-        const newSizes = computeNewSizes(startSizes.current, index, deltaPct, MIN_PANE_PCT);
+        const newSizes = computeNewSizes(startSizes.current, indexRef.current, deltaPct, MIN_PANE_PCT);
         pendingSizes.current = newSizes;
 
         if (!rafIdRef.current) {
           rafIdRef.current = requestAnimationFrame(() => {
             rafIdRef.current = 0;
             if (pendingSizes.current) {
-              resize(splitPath, pendingSizes.current);
+              resize(splitPathRef.current, pendingSizes.current);
               pendingSizes.current = null;
             }
           });
@@ -90,7 +94,7 @@ export function PaneDivider({ splitPath, direction, index }: PaneDividerProps) {
           rafIdRef.current = 0;
         }
         if (pendingSizes.current) {
-          resize(splitPath, pendingSizes.current);
+          resize(splitPathRef.current, pendingSizes.current);
           pendingSizes.current = null;
         }
 
@@ -109,17 +113,17 @@ export function PaneDivider({ splitPath, direction, index }: PaneDividerProps) {
         }
       };
     },
-    [splitPath, index, isHorizontal, resize],
+    [isHorizontal, resize],
   );
 
   const handleDoubleClick = useCallback(() => {
     const root = usePaneStore.getState().root;
-    const split = findSplitByPath(root, splitPath);
+    const split = findSplitByPath(root, splitPathRef.current);
     if (!split) return;
     const count = split.children.length;
     const equalSize = 100 / count;
-    resize(splitPath, Array(count).fill(equalSize));
-  }, [splitPath, resize]);
+    resize(splitPathRef.current, Array(count).fill(equalSize));
+  }, [resize]);
 
   useEffect(() => {
     return () => {

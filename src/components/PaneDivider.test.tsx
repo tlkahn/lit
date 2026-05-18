@@ -388,6 +388,31 @@ describe("PaneDivider", () => {
     }
   });
 
+  // 3-pane drag leaves uninvolved pane unchanged
+  it("3-pane drag only changes adjacent panes", () => {
+    setupSplit([30, 40, 30]);
+    const { getByTestId } = render(
+      <div style={{ width: 1000, height: 500 }}>
+        <PaneDivider splitPath={[]} direction="horizontal" index={0} />
+      </div>,
+    );
+    const divider = getByTestId("pane-divider");
+    mockParentRect(divider, 1000, 500);
+
+    act(() => {
+      fireEvent.mouseDown(divider, { clientX: 300, clientY: 250 });
+      fireEvent.mouseMove(document, { clientX: 400, clientY: 250 });
+      flushRaf();
+    });
+
+    const root = usePaneStore.getState().root;
+    if (root.type === "split") {
+      expect(root.sizes[0]).toBeCloseTo(40, 0);
+      expect(root.sizes[1]).toBeCloseTo(30, 0);
+      expect(root.sizes[2]).toBe(30);
+    }
+  });
+
   // Cycle 13 — invalid splitPath is no-op
   it("drag on invalid splitPath does not crash", () => {
     // root is a leaf, splitPath won't find a split
