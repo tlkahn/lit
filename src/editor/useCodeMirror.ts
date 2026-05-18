@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { EditorView, keymap, type KeyBinding as CM6KeyBinding } from "@codemirror/view";
-import { EditorState, Compartment } from "@codemirror/state";
+import { EditorState, EditorSelection, Compartment } from "@codemirror/state";
 import { defaultKeymap, historyKeymap } from "@codemirror/commands";
 import { createExtensions } from "./extensions";
 import { getThemeExtension } from "./theme";
@@ -111,12 +111,15 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
     if (current === doc) return;
 
     console.debug("[useCodeMirror] doc prop changed, replacing editor content. old:", current.length, "new:", doc.length);
+    const savedHead = view.state.selection.main.head;
     suppressOnChange.current = true;
     view.dispatch({
       changes: { from: 0, to: view.state.doc.length, insert: doc },
       annotations: docReplaced.of(true),
     });
     suppressOnChange.current = false;
+    const clampedPos = Math.min(savedHead, view.state.doc.length);
+    view.dispatch({ selection: EditorSelection.cursor(clampedPos) });
     onDocReplacedRef.current?.();
   }, [doc]);
 
