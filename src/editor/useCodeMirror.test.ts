@@ -244,6 +244,65 @@ describe("useCodeMirror", () => {
     expect(view.state.facet(EditorView.editable)).toBe(true);
   });
 
+  describe("cursor preservation on doc prop change", () => {
+    it("preserves cursor position when doc prop changes", () => {
+      const { result, rerender } = renderHook(
+        ({ doc }) =>
+          useCodeMirror({
+            containerRef: container.ref,
+            doc,
+          }),
+        { initialProps: { doc: "hello world" } },
+      );
+
+      const view = result.current.view!;
+      act(() => {
+        view.dispatch({ selection: { anchor: 5, head: 5 } });
+      });
+      expect(view.state.selection.main.head).toBe(5);
+
+      rerender({ doc: "hello brave world" });
+      expect(view.state.selection.main.head).toBe(5);
+    });
+
+    it("clamps cursor to new doc length when doc shrinks", () => {
+      const { result, rerender } = renderHook(
+        ({ doc }) =>
+          useCodeMirror({
+            containerRef: container.ref,
+            doc,
+          }),
+        { initialProps: { doc: "hello world" } },
+      );
+
+      const view = result.current.view!;
+      act(() => {
+        view.dispatch({ selection: { anchor: 10, head: 10 } });
+      });
+      expect(view.state.selection.main.head).toBe(10);
+
+      rerender({ doc: "short" });
+      expect(view.state.selection.main.head).toBe(5);
+    });
+
+    it("preserves cursor at position 0", () => {
+      const { result, rerender } = renderHook(
+        ({ doc }) =>
+          useCodeMirror({
+            containerRef: container.ref,
+            doc,
+          }),
+        { initialProps: { doc: "hello world" } },
+      );
+
+      const view = result.current.view!;
+      expect(view.state.selection.main.head).toBe(0);
+
+      rerender({ doc: "different content" });
+      expect(view.state.selection.main.head).toBe(0);
+    });
+  });
+
   it("reconfigures theme when dark class changes on document element", () => {
     renderHook(() =>
       useCodeMirror({
