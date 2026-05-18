@@ -468,4 +468,121 @@ describe("usePageContent", () => {
       expect(invoke).toHaveBeenCalledWith("acknowledge_file_hash", { relativePath: "hello.md" });
     });
   });
+
+  it("handleChange sets workspace store isDirty", async () => {
+    const { result } = renderHook(() => usePageContent("p1", "hello.md"));
+
+    await waitFor(() => {
+      expect(result.current.body).toBe("# Hello\nContent here");
+    });
+
+    expect(useWorkspaceStore.getState().isDirty).toBe(false);
+
+    act(() => {
+      result.current.handleChange("x");
+    });
+
+    expect(useWorkspaceStore.getState().isDirty).toBe(true);
+  });
+
+  it("successful save clears workspace store isDirty", async () => {
+    const { result } = renderHook(() => usePageContent("p1", "hello.md"));
+
+    await waitFor(() => {
+      expect(result.current.body).toBe("# Hello\nContent here");
+    });
+
+    act(() => {
+      result.current.handleChange("x");
+    });
+
+    expect(useWorkspaceStore.getState().isDirty).toBe(true);
+
+    await act(async () => {
+      vi.advanceTimersByTime(300);
+    });
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().isDirty).toBe(false);
+    });
+  });
+
+  it("reload acknowledges when hook has unsaved edits", async () => {
+    let readCount = 0;
+    mockInvoke((cmd) => {
+      if (cmd === "read_page") {
+        readCount++;
+        return mockPage;
+      }
+      if (cmd === "write_page") return null;
+      if (cmd === "acknowledge_file_hash") return null;
+      return null;
+    });
+
+    const { result } = renderHook(() => usePageContent("p1", "hello.md"));
+
+    await waitFor(() => {
+      expect(readCount).toBe(1);
+    });
+
+    act(() => {
+      result.current.handleChange("x");
+    });
+
+    act(() => {
+      useWorkspaceStore.getState().triggerReload();
+    });
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("acknowledge_file_hash", { relativePath: "hello.md" });
+    });
+
+    expect(readCount).toBe(1);
+  });
+
+  it("reload updates currentFrontmatterLineCount", async () => {
+    const reloadPage = {
+      meta: {
+        title: "Hello",
+        relative_path: "hello.md",
+        frontmatter: { tags: ["test"], draft: true },
+        created_at: null,
+        modified_at: null,
+        file_type: "markdown",
+      },
+      body: "# Hello\nContent here",
+      raw_yaml: "tags:\n  - test\ndraft: true\n",
+    };
+
+    let readCount = 0;
+    mockInvoke((cmd) => {
+      if (cmd === "read_page") {
+        readCount++;
+        return readCount === 1 ? mockPage : reloadPage;
+      }
+      if (cmd === "write_page") return null;
+      if (cmd === "acknowledge_file_hash") return null;
+      return null;
+    });
+
+    renderHook(() => usePageContent("p1", "hello.md"));
+
+    await waitFor(() => {
+      expect(readCount).toBe(1);
+    });
+
+    // Initial load: "tags:\n  - test\n" → 2 content lines + 2 delimiters = 4
+    expect(useWorkspaceStore.getState().currentFrontmatterLineCount).toBe(4);
+
+    act(() => {
+      useWorkspaceStore.getState().triggerReload();
+    });
+
+    await waitFor(() => {
+      expect(readCount).toBe(2);
+    });
+
+    // Reload: "tags:\n  - test\ndraft: true\n" → 3 content lines + 2 delimiters = 5
+    expect(useWorkspaceStore.getState().currentFrontmatterLineCount).toBe(5);
+  });
 });

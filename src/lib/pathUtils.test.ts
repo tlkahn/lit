@@ -1,0 +1,68 @@
+import { describe, it, expect } from "vitest";
+import { resolveRelativePath, getFileDir, frontmatterLineCount } from "./pathUtils";
+
+describe("resolveRelativePath", () => {
+  it("resolves simple relative path", () => {
+    expect(resolveRelativePath("sub", "image.png")).toBe("sub/image.png");
+  });
+
+  it("resolves with empty base", () => {
+    expect(resolveRelativePath("", "image.png")).toBe("image.png");
+  });
+
+  it("resolves .. segments", () => {
+    expect(resolveRelativePath("a/b", "../c.png")).toBe("a/c.png");
+  });
+
+  it("resolves . segments", () => {
+    expect(resolveRelativePath("a/b", "./c.png")).toBe("a/b/c.png");
+  });
+
+  it("resolves multiple .. segments", () => {
+    expect(resolveRelativePath("a/b/c", "../../d.png")).toBe("a/d.png");
+  });
+
+  it("does not go above root", () => {
+    expect(resolveRelativePath("a", "../../x.png")).toBe("x.png");
+  });
+
+  it("handles trailing slashes in base", () => {
+    expect(resolveRelativePath("a/", "b.png")).toBe("a/b.png");
+  });
+});
+
+describe("getFileDir", () => {
+  it("returns directory for nested path", () => {
+    expect(getFileDir("sub/hello.md")).toBe("sub");
+  });
+
+  it("returns empty string for root-level file", () => {
+    expect(getFileDir("hello.md")).toBe("");
+  });
+
+  it("returns null for null input", () => {
+    expect(getFileDir(null)).toBeNull();
+  });
+
+  it("handles deeply nested path", () => {
+    expect(getFileDir("a/b/c/file.md")).toBe("a/b/c");
+  });
+});
+
+describe("frontmatterLineCount", () => {
+  it("returns 0 for empty string", () => {
+    expect(frontmatterLineCount("")).toBe(0);
+  });
+
+  it("counts lines correctly for multi-line yaml", () => {
+    expect(frontmatterLineCount("title: Hello\ntags: [a, b]")).toBe(4);
+  });
+
+  it("counts lines correctly for single-line yaml", () => {
+    expect(frontmatterLineCount("title: Hello")).toBe(3);
+  });
+
+  it("handles trailing newline", () => {
+    expect(frontmatterLineCount("title: Hello\n")).toBe(3);
+  });
+});

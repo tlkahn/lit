@@ -6,6 +6,7 @@ import {
   updatePaneContent,
 } from "../lib/paneContentRegistry";
 import { extractHeadings } from "../lib/headings";
+import { frontmatterLineCount } from "../lib/pathUtils";
 import { useWorkspaceStore } from "../stores/workspace";
 import { getCurrentEditorView } from "../lib/editorViewRef";
 
@@ -36,6 +37,7 @@ export function usePageContent(
 
   const setCurrentPageHeadings = useWorkspaceStore((s) => s.setCurrentPageHeadings);
   const setCurrentFrontmatterLineCount = useWorkspaceStore((s) => s.setCurrentFrontmatterLineCount);
+  const setDirty = useWorkspaceStore((s) => s.setDirty);
 
   useEffect(() => {
     currentPathRef.current = pagePath;
@@ -69,10 +71,7 @@ export function usePageContent(
           rawYaml: content.raw_yaml,
         });
         setCurrentPageHeadings(extractHeadings(content.body));
-        const fmLineCount = content.raw_yaml
-          ? content.raw_yaml.trimEnd().split("\n").length + 2
-          : 0;
-        setCurrentFrontmatterLineCount(fmLineCount);
+        setCurrentFrontmatterLineCount(frontmatterLineCount(content.raw_yaml));
       })
       .catch(() => {
         if (currentPathRef.current !== pagePath) return;
@@ -122,16 +121,18 @@ export function usePageContent(
             rawYaml: content.raw_yaml,
           });
           setCurrentPageHeadings(extractHeadings(content.body));
+          setCurrentFrontmatterLineCount(frontmatterLineCount(content.raw_yaml));
         })
         .catch(() => {
           if (currentPathRef.current !== pagePath) return;
         });
     }
-  }, [reloadTrigger, pagePath, wsIsDirty, paneId, saveViewState, setCurrentPageHeadings]);
+  }, [reloadTrigger, pagePath, wsIsDirty, paneId, saveViewState, setCurrentPageHeadings, setCurrentFrontmatterLineCount]);
 
   const handleChange = useCallback((newBody: string) => {
     setBody(newBody);
     setIsDirty(true);
+    setDirty(true);
     updatePaneContent(paneId, { body: newBody });
     const gen = ++editGenRef.current;
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -140,7 +141,10 @@ export function usePageContent(
       if (!path) return;
       writePage(path, newBody, frontmatterRef.current)
         .then(() => {
-          if (editGenRef.current === gen) setIsDirty(false);
+          if (editGenRef.current === gen) {
+            setIsDirty(false);
+            setDirty(false);
+          }
         })
         .catch(console.error);
     }, 300);
@@ -148,7 +152,7 @@ export function usePageContent(
     headingDebounceRef.current = setTimeout(() => {
       setCurrentPageHeadings(extractHeadings(newBody));
     }, 150);
-  }, [paneId, setCurrentPageHeadings]);
+  }, [paneId, setCurrentPageHeadings, setDirty]);
 
   return { body, title, frontmatter, rawYaml, isDirty, handleChange };
 }
