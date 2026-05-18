@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { ViewState } from "../types";
 import { saveLayout } from "../lib/paneLayout";
 
 // ---------------------------------------------------------------------------
@@ -226,18 +227,27 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
 // ---------------------------------------------------------------------------
 
 let unsub: (() => void) | null = null;
+let beforeUnloadHandler: (() => void) | null = null;
 
 export function startLayoutSync(
   workspacePath: string,
-  getPaneViewStates: () => Record<string, import("./workspace").ViewState>,
+  getPaneViewStates: () => Record<string, ViewState>,
 ): void {
   stopLayoutSync();
-  unsub = usePaneStore.subscribe((state) => {
-    saveLayout(workspacePath, state.root, state.focusedPaneId, getPaneViewStates());
-  });
+  const flush = () => {
+    const { root, focusedPaneId } = usePaneStore.getState();
+    saveLayout(workspacePath, root, focusedPaneId, getPaneViewStates());
+  };
+  unsub = usePaneStore.subscribe(flush);
+  beforeUnloadHandler = flush;
+  window.addEventListener("beforeunload", beforeUnloadHandler);
 }
 
 export function stopLayoutSync(): void {
   unsub?.();
   unsub = null;
+  if (beforeUnloadHandler) {
+    window.removeEventListener("beforeunload", beforeUnloadHandler);
+    beforeUnloadHandler = null;
+  }
 }

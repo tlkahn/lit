@@ -3,8 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import * as ipc from "../lib/ipc";
 import type { PageMeta, IndexProgress } from "../lib/ipc";
 import type { Heading } from "../lib/headings";
-import { usePaneStore, createInitialState } from "./panes";
-import { startLayoutSync, stopLayoutSync } from "./panes";
+import { usePaneStore, createInitialState, startLayoutSync, stopLayoutSync } from "./panes";
 import {
   loadLayout,
   validateLayout,
@@ -17,13 +16,10 @@ const RECENT_KEY = "lit-recent-workspaces";
 const LEGACY_KEY = "lit-workspace-path";
 const MAX_RECENT = 10;
 
-export interface ViewState {
-  scrollTop: number;
-  cursor: number;
-  mindmapFoldedIds?: string[];
-}
+import type { ViewState } from "../types";
+import { DEFAULT_VIEW_STATE } from "../types";
 
-const DEFAULT_VIEW_STATE: ViewState = { scrollTop: 0, cursor: 0 };
+export type { ViewState };
 
 export interface WorkspaceStore {
   workspacePath: string | null;

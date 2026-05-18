@@ -1,6 +1,6 @@
 import type { PaneNode } from "../stores/panes";
 import { findLeaf, collectLeaves } from "../stores/panes";
-import type { ViewState } from "../stores/workspace";
+import type { ViewState } from "../types";
 
 export const LAYOUT_KEY_PREFIX = "lit-pane-layout-";
 export const STALE_THRESHOLD_MS = 30 * 24 * 60 * 60 * 1000;

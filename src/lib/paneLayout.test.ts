@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { PaneLeaf, PaneSplit } from "../stores/panes";
-import type { ViewState } from "../stores/workspace";
+import type { ViewState } from "../types";
 import {
   STALE_THRESHOLD_MS,
   layoutStorageKey,

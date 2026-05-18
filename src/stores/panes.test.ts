@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   generatePaneId,
   findLeaf,
@@ -1041,6 +1041,10 @@ describe("Section F: Layout Persistence", () => {
     useWorkspaceStore.setState({ paneViewStates: {} });
   });
 
+  afterEach(() => {
+    stopLayoutSync();
+  });
+
   describe("startLayoutSync", () => {
     it("splitPane writes layout to localStorage", () => {
       startLayoutSync(WS, () => useWorkspaceStore.getState().paneViewStates);
@@ -1113,6 +1117,40 @@ describe("Section F: Layout Persistence", () => {
       localStorage.removeItem(key);
       usePaneStore.getState().setPanePage("solo", "another.md");
       expect(localStorage.getItem(key)).toBeNull();
+    });
+  });
+
+  describe("beforeunload flushes paneViewStates", () => {
+    it("saves layout including latest paneViewStates", () => {
+      startLayoutSync(WS, () => useWorkspaceStore.getState().paneViewStates);
+      usePaneStore.getState().setPanePage("solo", "note.md");
+      useWorkspaceStore.getState().savePaneViewState("solo", 300, 77);
+      localStorage.removeItem(key);
+      window.dispatchEvent(new Event("beforeunload"));
+      const stored = JSON.parse(localStorage.getItem(key)!);
+      expect(stored.paneViewStates["solo"]).toEqual({ scrollTop: 300, cursor: 77 });
+    });
+
+    it("stopLayoutSync removes the beforeunload listener", () => {
+      startLayoutSync(WS, () => useWorkspaceStore.getState().paneViewStates);
+      usePaneStore.getState().setPanePage("solo", "note.md");
+      stopLayoutSync();
+      localStorage.removeItem(key);
+      window.dispatchEvent(new Event("beforeunload"));
+      expect(localStorage.getItem(key)).toBeNull();
+    });
+
+    it("calling startLayoutSync twice does not leak beforeunload handlers", () => {
+      const addSpy = vi.spyOn(window, "addEventListener");
+      const removeSpy = vi.spyOn(window, "removeEventListener");
+      startLayoutSync(WS, () => useWorkspaceStore.getState().paneViewStates);
+      startLayoutSync(WS, () => useWorkspaceStore.getState().paneViewStates);
+      const addCalls = addSpy.mock.calls.filter(([e]) => e === "beforeunload");
+      const removeCalls = removeSpy.mock.calls.filter(([e]) => e === "beforeunload");
+      expect(addCalls).toHaveLength(2);
+      expect(removeCalls).toHaveLength(1);
+      addSpy.mockRestore();
+      removeSpy.mockRestore();
     });
   });
 
