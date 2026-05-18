@@ -334,7 +334,9 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   }, [visible, mode, activePageId]);
 
   useEffect(() => {
-    const unlisten = listen("lit:graph-updated", async () => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    listen("lit:graph-updated", async () => {
       const graph = graphRef.current as import("graphology").default | null;
       const sigma = sigmaRef.current as { refresh: () => void } | null;
       if (!graph || !sigma) return;
@@ -370,13 +372,16 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
       } finally {
         diffInProgressRef.current = false;
       }
+    }).then((fn) => {
+      if (cancelled) { fn(); } else { unlisten = fn; }
     });
-
-    return () => { unlisten.then((fn) => fn()); };
+    return () => { cancelled = true; unlisten?.(); };
   }, []);
 
   useEffect(() => {
-    const unlisten = listen("lit:layout-ready", async () => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    listen("lit:layout-ready", async () => {
       const graph = graphRef.current as import("graphology").default | null;
       const sigma = sigmaRef.current as { refresh: () => void; getCamera: () => { animatedReset: () => void } } | null;
       if (!graph || !sigma) return;
@@ -390,8 +395,10 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
       } catch {
         // Rust positions not available
       }
+    }).then((fn) => {
+      if (cancelled) { fn(); } else { unlisten = fn; }
     });
-    return () => { unlisten.then((fn) => fn()); };
+    return () => { cancelled = true; unlisten?.(); };
   }, []);
 
   const activeThemeId = useThemeStore((s) => s.activeThemeId);

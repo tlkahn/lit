@@ -5,6 +5,8 @@
   "windows": ["main", "workspace-*"],
   "permissions": [
     "core:default",
+    "core:window:allow-close",
+    "core:window:allow-set-title",
     "core:window:allow-set-theme",
     "dialog:default",
     "dialog:allow-open",

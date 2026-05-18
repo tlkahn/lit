@@ -45,15 +45,14 @@ export function UnlinkedMentionsPanel({ pageId, onCountChange, contentHeight }: 
   }, [pageId, fetchMentions]);
 
   useEffect(() => {
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
     listen("lit:graph-updated", () => {
       fetchMentions();
     }).then((fn) => {
-      unlisten = fn;
+      if (cancelled) { fn(); } else { unlisten = fn; }
     });
-    return () => {
-      unlisten?.();
-    };
+    return () => { cancelled = true; unlisten?.(); };
   }, [fetchMentions]);
 
   useEffect(() => {

@@ -69,15 +69,14 @@ export function BacklinksPanel({ pageId, onCountChange, contentHeight }: Backlin
   }, [pageId, graphReady, fetchBacklinks]);
 
   useEffect(() => {
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
     listen("lit:graph-updated", () => {
       fetchBacklinks();
     }).then((fn) => {
-      unlisten = fn;
+      if (cancelled) { fn(); } else { unlisten = fn; }
     });
-    return () => {
-      unlisten?.();
-    };
+    return () => { cancelled = true; unlisten?.(); };
   }, [fetchBacklinks]);
 
   useEffect(() => {

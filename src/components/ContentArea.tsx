@@ -281,15 +281,19 @@ export function ContentArea() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
     listen("menu://open-in-external-editor", () => {
       const view = getCurrentEditorView();
       if (view) executeCommand("editor.openInExternalEditor", view);
-    }).then((fn) => { unlisten = fn; });
-    return () => { unlisten?.(); };
+    }).then((fn) => {
+      if (cancelled) { fn(); } else { unlisten = fn; }
+    });
+    return () => { cancelled = true; unlisten?.(); };
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
     listen("menu://close-pane-or-window", () => {
       const leaves = collectLeaves(usePaneStore.getState().root);
@@ -298,8 +302,10 @@ export function ContentArea() {
       } else {
         getCurrentWindow().close();
       }
-    }).then((fn) => { unlisten = fn; });
-    return () => { unlisten?.(); };
+    }).then((fn) => {
+      if (cancelled) { fn(); } else { unlisten = fn; }
+    });
+    return () => { cancelled = true; unlisten?.(); };
   }, []);
 
   if (!currentPanePage && !isMultiPane) {
