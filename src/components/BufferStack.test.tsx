@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import { BufferStack } from "./BufferStack";
 import { usePaneStore, collectLeaves } from "../stores/panes";
@@ -595,5 +595,320 @@ describe("BufferStack", () => {
     fireEvent.click(screen.getByTestId("buffer-stack-chip"));
     fireEvent.click(screen.getByTestId("buffer-stack-close-p2"));
     expect(screen.queryAllByTestId(/^buffer-stack-close-/)).toHaveLength(0);
+  });
+
+  // --- Phase 5 Cycle 1: Long Filename Truncation ---
+
+  it("chip label has title attribute with full path", () => {
+    usePaneStore.setState(twoBufferState());
+    render(<BufferStack />);
+    expect(screen.getByTestId("buffer-stack-label")).toHaveAttribute("title", "notes/foo.md");
+  });
+
+  it("chip label span has truncate and max-w classes", () => {
+    usePaneStore.setState(twoBufferState());
+    render(<BufferStack />);
+    const label = screen.getByTestId("buffer-stack-label");
+    expect(label.className).toContain("truncate");
+    expect(label.className).toContain("max-w-[200px]");
+  });
+
+  it("popover row filename span has title with full path", () => {
+    usePaneStore.setState(twoBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    expect(screen.getByTestId("buffer-stack-filename-p1")).toHaveAttribute("title", "notes/foo.md");
+    expect(screen.getByTestId("buffer-stack-filename-p2")).toHaveAttribute("title", "notes/bar.md");
+  });
+
+  it("popover row filename span has truncation classes", () => {
+    usePaneStore.setState(twoBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    const fn = screen.getByTestId("buffer-stack-filename-p1");
+    expect(fn.className).toContain("truncate");
+    expect(fn.className).toContain("max-w-[200px]");
+  });
+
+  it("single-buffer label has title", () => {
+    usePaneStore.setState({
+      root: { type: "leaf", id: "p1", pagePath: "notes/foo.md" },
+      focusedPaneId: "p1",
+    });
+    render(<BufferStack />);
+    expect(screen.getByTestId("buffer-stack-label")).toHaveAttribute("title", "notes/foo.md");
+  });
+
+  // --- Phase 5 Cycle 2: Accessibility — aria-label, id, aria-activedescendant ---
+
+  it("chip has aria-label='Buffer list'", () => {
+    usePaneStore.setState(twoBufferState());
+    render(<BufferStack />);
+    expect(screen.getByTestId("buffer-stack-chip")).toHaveAttribute("aria-label", "Buffer list");
+  });
+
+  it("each option row has id='buffer-option-{leaf.id}'", () => {
+    usePaneStore.setState(twoBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    expect(screen.getByTestId("buffer-stack-row-p1")).toHaveAttribute("id", "buffer-option-p1");
+    expect(screen.getByTestId("buffer-stack-row-p2")).toHaveAttribute("id", "buffer-option-p2");
+  });
+
+  it("listbox has aria-activedescendant pointing to focused pane's row on open", () => {
+    usePaneStore.setState(twoBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    expect(screen.getByTestId("buffer-stack-popover")).toHaveAttribute("aria-activedescendant", "buffer-option-p1");
+  });
+
+  it("aria-activedescendant updates when focused pane differs", () => {
+    usePaneStore.setState({ ...twoBufferState(), focusedPaneId: "p2" });
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    expect(screen.getByTestId("buffer-stack-popover")).toHaveAttribute("aria-activedescendant", "buffer-option-p2");
+  });
+
+  // --- Phase 5 Cycle 3: Keyboard Navigation ---
+
+  it("ArrowDown moves aria-activedescendant to next row", () => {
+    usePaneStore.setState(threeBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    const popover = screen.getByTestId("buffer-stack-popover");
+    fireEvent.keyDown(popover, { key: "ArrowDown" });
+    expect(popover).toHaveAttribute("aria-activedescendant", "buffer-option-p2");
+  });
+
+  it("ArrowUp moves to previous row", () => {
+    usePaneStore.setState(threeBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    const popover = screen.getByTestId("buffer-stack-popover");
+    fireEvent.keyDown(popover, { key: "ArrowDown" });
+    fireEvent.keyDown(popover, { key: "ArrowUp" });
+    expect(popover).toHaveAttribute("aria-activedescendant", "buffer-option-p1");
+  });
+
+  it("ArrowDown wraps from last to first", () => {
+    usePaneStore.setState(threeBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    const popover = screen.getByTestId("buffer-stack-popover");
+    fireEvent.keyDown(popover, { key: "ArrowDown" });
+    fireEvent.keyDown(popover, { key: "ArrowDown" });
+    fireEvent.keyDown(popover, { key: "ArrowDown" });
+    expect(popover).toHaveAttribute("aria-activedescendant", "buffer-option-p1");
+  });
+
+  it("ArrowUp wraps from first to last", () => {
+    usePaneStore.setState(threeBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    const popover = screen.getByTestId("buffer-stack-popover");
+    fireEvent.keyDown(popover, { key: "ArrowUp" });
+    expect(popover).toHaveAttribute("aria-activedescendant", "buffer-option-p3");
+  });
+
+  it("Enter on highlighted row calls focusPane and closes popover", () => {
+    usePaneStore.setState(threeBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    const popover = screen.getByTestId("buffer-stack-popover");
+    fireEvent.keyDown(popover, { key: "ArrowDown" });
+    fireEvent.keyDown(popover, { key: "Enter" });
+    expect(usePaneStore.getState().focusedPaneId).toBe("p2");
+    expect(screen.queryByTestId("buffer-stack-popover")).toBeNull();
+  });
+
+  it("Escape still closes popover (keyboard nav regression)", () => {
+    usePaneStore.setState(twoBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    expect(screen.getByTestId("buffer-stack-popover")).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByTestId("buffer-stack-popover")).toBeNull();
+  });
+
+  it("highlighted row has visual highlight class", () => {
+    usePaneStore.setState(threeBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    const popover = screen.getByTestId("buffer-stack-popover");
+    fireEvent.keyDown(popover, { key: "ArrowDown" });
+    expect(screen.getByTestId("buffer-stack-row-p2").className).toContain("bg-bg-hover");
+  });
+
+  it("highlight resets to focused pane's index when popover reopens", () => {
+    usePaneStore.setState(threeBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    const popover = screen.getByTestId("buffer-stack-popover");
+    fireEvent.keyDown(popover, { key: "ArrowDown" });
+    fireEvent.keyDown(popover, { key: "ArrowDown" });
+    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    expect(screen.getByTestId("buffer-stack-popover")).toHaveAttribute("aria-activedescendant", "buffer-option-p1");
+  });
+
+  // --- Phase 5 Cycle 4: Entry Animation ---
+
+  describe("entry animation", () => {
+    beforeEach(() => { vi.useFakeTimers(); });
+    afterEach(() => { vi.useRealTimers(); });
+
+    it("popover has transition style containing opacity and transform", () => {
+      usePaneStore.setState(twoBufferState());
+      render(<BufferStack />);
+      act(() => { fireEvent.click(screen.getByTestId("buffer-stack-chip")); });
+      const popover = screen.getByTestId("buffer-stack-popover");
+      expect(popover.style.transition).toContain("opacity");
+      expect(popover.style.transition).toContain("transform");
+    });
+
+    it("popover starts with opacity 0 before animation frame", () => {
+      usePaneStore.setState(twoBufferState());
+      render(<BufferStack />);
+      act(() => { fireEvent.click(screen.getByTestId("buffer-stack-chip")); });
+      const popover = screen.getByTestId("buffer-stack-popover");
+      expect(popover.style.opacity).toBe("0");
+    });
+
+    it("popover has opacity 1 after advancing timers", () => {
+      usePaneStore.setState(twoBufferState());
+      render(<BufferStack />);
+      act(() => { fireEvent.click(screen.getByTestId("buffer-stack-chip")); });
+      act(() => { vi.advanceTimersByTime(1); });
+      const popover = screen.getByTestId("buffer-stack-popover");
+      expect(popover.style.opacity).toBe("1");
+    });
+  });
+
+  // --- Phase 5 Cycle 5: Focus Management ---
+
+  it("opening popover moves activeElement to popover", () => {
+    usePaneStore.setState(twoBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    expect(document.activeElement).toBe(screen.getByTestId("buffer-stack-popover"));
+  });
+
+  it("Escape returns focus to chip button", () => {
+    usePaneStore.setState(twoBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(document.activeElement).toBe(screen.getByTestId("buffer-stack-chip"));
+  });
+
+  it("click-outside returns focus to chip button", () => {
+    usePaneStore.setState(twoBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    fireEvent.mouseDown(document.body);
+    expect(document.activeElement).toBe(screen.getByTestId("buffer-stack-chip"));
+  });
+
+  it("Enter-to-select returns focus away from popover", () => {
+    usePaneStore.setState(threeBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    const popover = screen.getByTestId("buffer-stack-popover");
+    fireEvent.keyDown(popover, { key: "Enter" });
+    expect(screen.queryByTestId("buffer-stack-popover")).toBeNull();
+    expect(document.activeElement).not.toBe(popover);
+  });
+
+  it("focus restores correctly across multiple open/close cycles", () => {
+    usePaneStore.setState(twoBufferState());
+    render(<BufferStack />);
+    for (let i = 0; i < 3; i++) {
+      fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+      expect(document.activeElement).toBe(screen.getByTestId("buffer-stack-popover"));
+      fireEvent.keyDown(document, { key: "Escape" });
+      expect(document.activeElement).toBe(screen.getByTestId("buffer-stack-chip"));
+    }
+  });
+
+  // --- Phase 5 Cycle 6: Tab Trapping Among Close Buttons ---
+
+  it("Tab from popover moves focus to first close button", () => {
+    usePaneStore.setState(threeBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    const popover = screen.getByTestId("buffer-stack-popover");
+    fireEvent.keyDown(popover, { key: "Tab" });
+    expect(document.activeElement).toBe(screen.getByTestId("buffer-stack-close-p1"));
+  });
+
+  it("Tab from last close button wraps to first", () => {
+    usePaneStore.setState(threeBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    const popover = screen.getByTestId("buffer-stack-popover");
+    fireEvent.keyDown(popover, { key: "Tab" });
+    const lastClose = screen.getByTestId("buffer-stack-close-p3");
+    lastClose.focus();
+    fireEvent.keyDown(popover, { key: "Tab" });
+    expect(document.activeElement).toBe(screen.getByTestId("buffer-stack-close-p1"));
+  });
+
+  it("Shift+Tab from first close button wraps to last", () => {
+    usePaneStore.setState(threeBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    const popover = screen.getByTestId("buffer-stack-popover");
+    fireEvent.keyDown(popover, { key: "Tab" });
+    fireEvent.keyDown(popover, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(screen.getByTestId("buffer-stack-close-p3"));
+  });
+
+  // --- Phase 5 Cycle 7: Edge Cases & Integration ---
+
+  it("highlighted row still has title attribute", () => {
+    usePaneStore.setState(threeBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    const popover = screen.getByTestId("buffer-stack-popover");
+    fireEvent.keyDown(popover, { key: "ArrowDown" });
+    expect(screen.getByTestId("buffer-stack-filename-p2")).toHaveAttribute("title", "notes/bar.md");
+  });
+
+  it("closing pane that is currently highlighted clamps highlightedIndex", () => {
+    usePaneStore.setState(threeBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    const popover = screen.getByTestId("buffer-stack-popover");
+    fireEvent.keyDown(popover, { key: "ArrowDown" });
+    fireEvent.keyDown(popover, { key: "ArrowDown" });
+    expect(popover).toHaveAttribute("aria-activedescendant", "buffer-option-p3");
+    fireEvent.click(screen.getByTestId("buffer-stack-close-p3"));
+    const ad = screen.getByTestId("buffer-stack-popover").getAttribute("aria-activedescendant");
+    expect(ad).not.toBe("buffer-option-p3");
+    expect(ad).toMatch(/^buffer-option-p/);
+  });
+
+  it("ArrowDown after pane close does not crash", () => {
+    usePaneStore.setState(threeBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    const popover = screen.getByTestId("buffer-stack-popover");
+    fireEvent.keyDown(popover, { key: "ArrowDown" });
+    fireEvent.keyDown(popover, { key: "ArrowDown" });
+    fireEvent.click(screen.getByTestId("buffer-stack-close-p3"));
+    expect(() => {
+      fireEvent.keyDown(screen.getByTestId("buffer-stack-popover"), { key: "ArrowDown" });
+    }).not.toThrow();
+  });
+
+  it("six buffers: ArrowDown wraps correctly at boundary", () => {
+    usePaneStore.setState(sixBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    const popover = screen.getByTestId("buffer-stack-popover");
+    for (let i = 0; i < 6; i++) {
+      fireEvent.keyDown(popover, { key: "ArrowDown" });
+    }
+    expect(popover).toHaveAttribute("aria-activedescendant", "buffer-option-p1");
   });
 });

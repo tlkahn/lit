@@ -6,6 +6,8 @@ export function BufferStack() {
   const root = usePaneStore((s) => s.root);
   const focusedPaneId = usePaneStore((s) => s.focusedPaneId);
   const [open, setOpen] = useState(false);
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
+  const [animatedIn, setAnimatedIn] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
 
@@ -16,6 +18,29 @@ export function BufferStack() {
   useEffect(() => {
     if (!shouldShowChip) setOpen(false);
   }, [shouldShowChip]);
+
+  useEffect(() => {
+    if (open) {
+      const focusedIdx = leaves.findIndex((l) => l.id === focusedPaneId);
+      setHighlightedIndex(focusedIdx >= 0 ? focusedIdx : 0);
+      setAnimatedIn(false);
+      const t = setTimeout(() => setAnimatedIn(true), 0);
+      return () => clearTimeout(t);
+    } else {
+      setAnimatedIn(false);
+      buttonRef.current?.focus();
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (open && popoverRef.current) {
+      popoverRef.current.focus();
+    }
+  }, [open]);
+
+  useEffect(() => {
+    setHighlightedIndex((prev) => Math.min(prev, Math.max(leaves.length - 1, 0)));
+  }, [leaves.length]);
 
   useEffect(() => {
     if (!open) return;
@@ -67,7 +92,7 @@ export function BufferStack() {
   const otherCount = openBuffers.length - 1;
 
   if (otherCount === 0) {
-    return <span data-testid="buffer-stack-label">{displayPath}</span>;
+    return <span data-testid="buffer-stack-label" title={displayPath} className="truncate max-w-[200px]">{displayPath}</span>;
   }
 
   return (
@@ -78,9 +103,10 @@ export function BufferStack() {
         className="flex items-center gap-1"
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-label="Buffer list"
         onClick={() => setOpen((v) => !v)}
       >
-        <span data-testid="buffer-stack-label">{displayPath}</span>
+        <span data-testid="buffer-stack-label" title={displayPath} className="truncate max-w-[200px]">{displayPath}</span>
         <span data-testid="buffer-stack-count">(+{otherCount})</span>
       </button>
       {open && createPortal(
@@ -88,11 +114,52 @@ export function BufferStack() {
           ref={popoverRef}
           data-testid="buffer-stack-popover"
           role="listbox"
-          style={{ position: "fixed", left: 0, top: 0 }}
+          tabIndex={0}
+          aria-activedescendant={`buffer-option-${leaves[highlightedIndex]?.id}`}
+          style={{
+            position: "fixed",
+            left: 0,
+            top: 0,
+            opacity: animatedIn ? 1 : 0,
+            transform: animatedIn ? "translateY(0)" : "translateY(4px)",
+            transition: "opacity 100ms ease-out, transform 100ms ease-out",
+          }}
           className="z-50 min-w-[200px] select-none rounded-lg border border-border/40 bg-bg-primary/80 p-1 shadow-xl shadow-black/20 backdrop-blur-xl backdrop-saturate-150 dark:border-border/10 dark:bg-bg-primary/70"
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              setHighlightedIndex((prev) => (prev + 1) % leaves.length);
+            } else if (e.key === "ArrowUp") {
+              e.preventDefault();
+              setHighlightedIndex((prev) => (prev - 1 + leaves.length) % leaves.length);
+            } else if (e.key === "Enter") {
+              e.preventDefault();
+              const leaf = leaves[highlightedIndex];
+              if (leaf) {
+                usePaneStore.getState().focusPane(leaf.id);
+                setOpen(false);
+              }
+            } else if (e.key === "Tab") {
+              const closeButtons = popoverRef.current?.querySelectorAll<HTMLElement>('[data-testid^="buffer-stack-close-"]');
+              if (!closeButtons?.length) return;
+              const first = closeButtons[0]!;
+              const last = closeButtons[closeButtons.length - 1]!;
+              if (e.shiftKey && document.activeElement === first) {
+                e.preventDefault();
+                last.focus();
+              } else if (!e.shiftKey && document.activeElement === last) {
+                e.preventDefault();
+                first.focus();
+              } else if (!e.shiftKey && document.activeElement === popoverRef.current) {
+                e.preventDefault();
+                first.focus();
+              }
+            }
+          }}
         >
-          {leaves.map((leaf) => {
+          {leaves.map((leaf, idx) => {
             const isActive = leaf.id === focusedPaneId;
+            const isHighlighted = idx === highlightedIndex;
             const label = leaf.pagePath
               ? leaf.pagePath.split("/").pop()
               : "(empty)";
@@ -100,6 +167,7 @@ export function BufferStack() {
             return (
               <div
                 key={leaf.id}
+                id={`buffer-option-${leaf.id}`}
                 data-testid={`buffer-stack-row-${leaf.id}`}
                 role="option"
                 aria-selected={isActive}
@@ -107,14 +175,18 @@ export function BufferStack() {
                   isActive
                     ? "border-l-2 border-interactive-accent bg-interactive-accent/10"
                     : ""
-                }`}
+                }${isHighlighted ? " bg-bg-hover" : ""}`}
                 onClick={() => {
                   usePaneStore.getState().focusPane(leaf.id);
                   setOpen(false);
                 }}
               >
                 <span className="flex items-center gap-1">
-                  <span>{label}</span>
+                  <span
+                    data-testid={`buffer-stack-filename-${leaf.id}`}
+                    title={leaf.pagePath ?? "(empty)"}
+                    className="truncate max-w-[200px]"
+                  >{label}</span>
                   {pos && (
                     <span
                       data-testid={`buffer-stack-position-${leaf.id}`}
