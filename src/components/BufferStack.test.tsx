@@ -911,4 +911,44 @@ describe("BufferStack", () => {
     }
     expect(popover).toHaveAttribute("aria-activedescendant", "buffer-option-p1");
   });
+
+  // --- Review fix Cycle 1: Focus restore on mount ---
+
+  it("chip does not steal focus on initial render", () => {
+    usePaneStore.setState(twoBufferState());
+    render(<BufferStack />);
+    expect(document.activeElement).not.toBe(screen.getByTestId("buffer-stack-chip"));
+  });
+
+  // --- Review fix Cycle 2: Duplicate bg-bg-hover on active+highlighted row ---
+
+  it("active row does not get bg-bg-hover when also highlighted", () => {
+    usePaneStore.setState(twoBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    const row = screen.getByTestId("buffer-stack-row-p1");
+    expect(row.className).toContain("bg-interactive-accent");
+    const classes = row.className.split(/\s+/);
+    expect(classes).not.toContain("bg-bg-hover");
+  });
+
+  // --- Review fix Cycle 3: Shift+Tab from popover ---
+
+  it("Shift+Tab from popover moves focus to last close button", () => {
+    usePaneStore.setState(threeBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    const popover = screen.getByTestId("buffer-stack-popover");
+    fireEvent.keyDown(popover, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(screen.getByTestId("buffer-stack-close-p3"));
+  });
+
+  // --- Review fix Cycle 4: outline-none on popover ---
+
+  it("popover has outline-none class when open", () => {
+    usePaneStore.setState(twoBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    expect(screen.getByTestId("buffer-stack-popover").className).toContain("outline-none");
+  });
 });

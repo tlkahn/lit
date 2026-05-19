@@ -10,6 +10,7 @@ export function BufferStack() {
   const [animatedIn, setAnimatedIn] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const hasBeenOpenRef = useRef(false);
 
   const leaves = collectLeaves(root);
   const openBuffers = leaves.filter((l) => l.pagePath !== null);
@@ -21,12 +22,13 @@ export function BufferStack() {
 
   useEffect(() => {
     if (open) {
+      hasBeenOpenRef.current = true;
       const focusedIdx = leaves.findIndex((l) => l.id === focusedPaneId);
       setHighlightedIndex(focusedIdx >= 0 ? focusedIdx : 0);
       setAnimatedIn(false);
       const t = setTimeout(() => setAnimatedIn(true), 0);
       return () => clearTimeout(t);
-    } else {
+    } else if (hasBeenOpenRef.current) {
       setAnimatedIn(false);
       buttonRef.current?.focus();
     }
@@ -124,7 +126,7 @@ export function BufferStack() {
             transform: animatedIn ? "translateY(0)" : "translateY(4px)",
             transition: "opacity 100ms ease-out, transform 100ms ease-out",
           }}
-          className="z-50 min-w-[200px] select-none rounded-lg border border-border/40 bg-bg-primary/80 p-1 shadow-xl shadow-black/20 backdrop-blur-xl backdrop-saturate-150 dark:border-border/10 dark:bg-bg-primary/70"
+          className="z-50 min-w-[200px] select-none rounded-lg border border-border/40 bg-bg-primary/80 p-1 shadow-xl shadow-black/20 backdrop-blur-xl backdrop-saturate-150 outline-none dark:border-border/10 dark:bg-bg-primary/70"
           onKeyDown={(e) => {
             if (e.key === "ArrowDown") {
               e.preventDefault();
@@ -150,6 +152,9 @@ export function BufferStack() {
               } else if (!e.shiftKey && document.activeElement === last) {
                 e.preventDefault();
                 first.focus();
+              } else if (e.shiftKey && document.activeElement === popoverRef.current) {
+                e.preventDefault();
+                last.focus();
               } else if (!e.shiftKey && document.activeElement === popoverRef.current) {
                 e.preventDefault();
                 first.focus();
@@ -175,7 +180,7 @@ export function BufferStack() {
                   isActive
                     ? "border-l-2 border-interactive-accent bg-interactive-accent/10"
                     : ""
-                }${isHighlighted ? " bg-bg-hover" : ""}`}
+                }${isHighlighted && !isActive ? " bg-bg-hover" : ""}`}
                 onClick={() => {
                   usePaneStore.getState().focusPane(leaf.id);
                   setOpen(false);
