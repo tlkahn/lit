@@ -518,6 +518,14 @@ export async function exportData(destination: string): Promise<ExportSummary> {
   return invoke<ExportSummary>("export_data", { destination });
 }
 
+export async function exportSubgraph(
+  nodeId: string,
+  depth: number,
+  destination: string,
+): Promise<ExportSummary> {
+  return invoke<ExportSummary>("export_subgraph", { nodeId, depth, destination });
+}
+
 // License
 
 export interface LicenseStatusResponse {

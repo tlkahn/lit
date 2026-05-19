@@ -59,6 +59,7 @@ import {
   searchAnnotations,
   listAnnotations,
   exportData,
+  exportSubgraph,
   getLicenseStatus,
   activateLicense,
   checkOnlineValidation,
@@ -314,6 +315,8 @@ describe("ipc", () => {
         }
         case "export_data":
           return { exported_count: 42, destination: (args as Record<string, unknown>)?.destination ?? "" };
+        case "export_subgraph":
+          return { exported_count: 7, destination: (args as Record<string, unknown>)?.destination ?? "" };
         case "get_license_status":
           return { state: "trial", days_remaining: 12 };
         case "activate_license":
@@ -1012,6 +1015,18 @@ describe("ipc", () => {
     expect(summary.destination).toBe("/tmp/out.zip");
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("export_data", { destination: "/tmp/out.zip" });
+  });
+
+  it("exportSubgraph calls export_subgraph with nodeId, depth, destination", async () => {
+    const summary = await exportSubgraph("concepts/ai.md", 2, "/tmp/subgraph.zip");
+    expect(summary.exported_count).toBe(7);
+    expect(summary.destination).toBe("/tmp/subgraph.zip");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("export_subgraph", {
+      nodeId: "concepts/ai.md",
+      depth: 2,
+      destination: "/tmp/subgraph.zip",
+    });
   });
 
   it("getLicenseStatus calls get_license_status", async () => {
