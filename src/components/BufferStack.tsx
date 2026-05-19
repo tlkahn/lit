@@ -113,15 +113,17 @@ export function BufferStack() {
                   setOpen(false);
                 }}
               >
-                <span>{label}</span>
-                {pos && (
-                  <span
-                    data-testid={`buffer-stack-position-${leaf.id}`}
-                    className="ml-1 text-[11px] text-text-faint"
-                  >
-                    {pos}
-                  </span>
-                )}
+                <span className="flex items-center gap-1">
+                  <span>{label}</span>
+                  {pos && (
+                    <span
+                      data-testid={`buffer-stack-position-${leaf.id}`}
+                      className="text-[11px] text-text-faint"
+                    >
+                      {pos}
+                    </span>
+                  )}
+                </span>
                 {leaves.length > 1 && (
                   <button
                     data-testid={`buffer-stack-close-${leaf.id}`}

@@ -495,6 +495,16 @@ describe("BufferStack", () => {
     expect(screen.getByTestId("buffer-stack-position-p3")).toHaveTextContent("bottom-right");
   });
 
+  it("position label is grouped with filename, not a direct child of the row", () => {
+    usePaneStore.setState(twoBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    const row = screen.getByTestId("buffer-stack-row-p1");
+    const posSpan = screen.getByTestId("buffer-stack-position-p1");
+    expect(posSpan.parentElement).not.toBe(row);
+    expect(row.contains(posSpan)).toBe(true);
+  });
+
   it("single-leaf root renders no position spans", () => {
     usePaneStore.setState({
       root: { type: "leaf", id: "p1", pagePath: "notes/foo.md" },
