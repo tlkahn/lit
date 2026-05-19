@@ -397,6 +397,61 @@ mod tests {
         assert_eq!(paths, vec!["note.md", "paper.pdf"]);
     }
 
+    #[test]
+    fn subgraph_skips_path_traversal() {
+        let outer = tempfile::tempdir().unwrap();
+        let workspace = outer.path().join("workspace");
+        std::fs::create_dir(&workspace).unwrap();
+        std::fs::write(outer.path().join("secret.txt"), "top secret").unwrap();
+        std::fs::write(workspace.join("bad.md"), "![x](../secret.txt)").unwrap();
+
+        let node_ids = vec!["bad.md".to_string()];
+        let entries = collect_subgraph_export_files(&workspace, &node_ids).unwrap();
+        let paths: Vec<&str> = entries.iter().map(|e| e.relative_path.as_str()).collect();
+        assert!(paths.contains(&"bad.md"));
+        assert!(!paths.iter().any(|p| p.contains("secret")));
+    }
+
+    #[test]
+    fn subgraph_deduplicates_shared_assets() {
+        let dir = tempfile::tempdir().unwrap();
+        let imgs = dir.path().join("imgs");
+        std::fs::create_dir(&imgs).unwrap();
+        std::fs::write(imgs.join("shared.png"), b"png").unwrap();
+        std::fs::write(dir.path().join("a.md"), "![](imgs/shared.png)").unwrap();
+        std::fs::write(dir.path().join("b.md"), "![](imgs/shared.png)").unwrap();
+
+        let node_ids = vec!["a.md".to_string(), "b.md".to_string()];
+        let entries = collect_subgraph_export_files(dir.path(), &node_ids).unwrap();
+        let count = entries.iter().filter(|e| e.relative_path == "imgs/shared.png").count();
+        assert_eq!(count, 1);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn subgraph_nfc_normalizes_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let nfd_name = "caf\u{0065}\u{0301}.md";
+        std::fs::write(dir.path().join(nfd_name), "hello").unwrap();
+
+        let node_ids = vec![nfd_name.to_string()];
+        let entries = collect_subgraph_export_files(dir.path(), &node_ids).unwrap();
+        let expected_nfc = "caf\u{00e9}.md";
+        assert!(entries.iter().any(|e| e.relative_path == expected_nfc));
+    }
+
+    #[test]
+    fn subgraph_ignores_non_md_non_pdf_nodes() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("data.json"), "{}").unwrap();
+        std::fs::write(dir.path().join("note.md"), "hello").unwrap();
+
+        let node_ids = vec!["data.json".to_string(), "note.md".to_string()];
+        let entries = collect_subgraph_export_files(dir.path(), &node_ids).unwrap();
+        let paths: Vec<&str> = entries.iter().map(|e| e.relative_path.as_str()).collect();
+        assert_eq!(paths, vec!["note.md"]);
+    }
+
     // --- write_zip tests ---
 
     #[test]
