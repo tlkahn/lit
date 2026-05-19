@@ -111,6 +111,69 @@ pub fn collect_export_files(root: &Path) -> Result<Vec<ExportEntry>, String> {
     Ok(entries)
 }
 
+pub fn collect_subgraph_export_files(
+    root: &Path,
+    node_ids: &[String],
+) -> Result<Vec<ExportEntry>, String> {
+    let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let mut entries = Vec::new();
+    let mut md_files: Vec<PathBuf> = Vec::new();
+
+    for node_id in node_ids {
+        let path = root.join(node_id);
+        if !path.exists() {
+            continue;
+        }
+        let canonical = match path.canonicalize() {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        if !canonical.starts_with(&canonical_root) {
+            continue;
+        }
+        let is_md = path.extension().and_then(|e| e.to_str()) == Some("md");
+        let is_pdf = path.extension().and_then(|e| e.to_str()) == Some("pdf");
+        if !is_md && !is_pdf {
+            continue;
+        }
+        if let Ok(relative) = canonical.strip_prefix(&canonical_root) {
+            entries.push(ExportEntry {
+                relative_path: normalize_to_nfc(&relative.to_string_lossy()),
+                absolute_path: canonical,
+            });
+        }
+        if is_md {
+            md_files.push(path);
+        }
+    }
+
+    for md_path in &md_files {
+        let content = std::fs::read_to_string(md_path).unwrap_or_default();
+        let refs = extract_asset_references(&content);
+        let md_dir = md_path.parent().unwrap_or(root);
+        for asset_ref in refs {
+            let asset_path = md_dir.join(&asset_ref);
+            let canonical = match asset_path.canonicalize() {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            if !canonical.starts_with(&canonical_root) {
+                continue;
+            }
+            if let Ok(relative) = canonical.strip_prefix(&canonical_root) {
+                entries.push(ExportEntry {
+                    relative_path: normalize_to_nfc(&relative.to_string_lossy()),
+                    absolute_path: canonical,
+                });
+            }
+        }
+    }
+
+    entries.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+    entries.dedup_by(|a, b| a.relative_path == b.relative_path);
+    Ok(entries)
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ExportProgress {
     pub current: usize,
@@ -276,6 +339,62 @@ mod tests {
         let mut paths: Vec<&str> = entries.iter().map(|e| e.relative_path.as_str()).collect();
         paths.sort();
         assert_eq!(paths, vec!["note.md", "other.md"]);
+    }
+
+    // --- collect_subgraph_export_files tests ---
+
+    #[test]
+    fn subgraph_empty_node_list() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("note.md"), "hello").unwrap();
+        let entries = collect_subgraph_export_files(dir.path(), &[]).unwrap();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn subgraph_skips_nonexistent_nodes() {
+        let dir = tempfile::tempdir().unwrap();
+        let node_ids = vec!["ghost.md".to_string(), "phantom.pdf".to_string()];
+        let entries = collect_subgraph_export_files(dir.path(), &node_ids).unwrap();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn subgraph_collects_md_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("note.md"), "hello").unwrap();
+        let node_ids = vec!["note.md".to_string()];
+        let entries = collect_subgraph_export_files(dir.path(), &node_ids).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].relative_path, "note.md");
+    }
+
+    #[test]
+    fn subgraph_collects_md_with_assets() {
+        let dir = tempfile::tempdir().unwrap();
+        let imgs = dir.path().join("imgs");
+        std::fs::create_dir(&imgs).unwrap();
+        std::fs::write(dir.path().join("note.md"), "![](imgs/photo.png)").unwrap();
+        std::fs::write(imgs.join("photo.png"), b"fake png").unwrap();
+
+        let node_ids = vec!["note.md".to_string()];
+        let entries = collect_subgraph_export_files(dir.path(), &node_ids).unwrap();
+        let mut paths: Vec<&str> = entries.iter().map(|e| e.relative_path.as_str()).collect();
+        paths.sort();
+        assert_eq!(paths, vec!["imgs/photo.png", "note.md"]);
+    }
+
+    #[test]
+    fn subgraph_collects_pdf_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("paper.pdf"), b"fake pdf").unwrap();
+        std::fs::write(dir.path().join("note.md"), "hello").unwrap();
+
+        let node_ids = vec!["paper.pdf".to_string(), "note.md".to_string()];
+        let entries = collect_subgraph_export_files(dir.path(), &node_ids).unwrap();
+        let mut paths: Vec<&str> = entries.iter().map(|e| e.relative_path.as_str()).collect();
+        paths.sort();
+        assert_eq!(paths, vec!["note.md", "paper.pdf"]);
     }
 
     // --- write_zip tests ---
