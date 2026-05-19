@@ -43,6 +43,26 @@ function threeBufferState() {
   };
 }
 
+function sixBufferState() {
+  return {
+    root: {
+      type: "split" as const,
+      id: "s1",
+      direction: "horizontal" as const,
+      children: [
+        { type: "leaf" as const, id: "p1", pagePath: "notes/foo.md" },
+        { type: "leaf" as const, id: "p2", pagePath: "notes/bar.md" },
+        { type: "leaf" as const, id: "p3", pagePath: "notes/baz.md" },
+        { type: "leaf" as const, id: "p4", pagePath: "notes/qux.md" },
+        { type: "leaf" as const, id: "p5", pagePath: "notes/quux.md" },
+        { type: "leaf" as const, id: "p6", pagePath: "notes/corge.md" },
+      ],
+      sizes: [16, 17, 17, 17, 17, 16],
+    },
+    focusedPaneId: "p1",
+  };
+}
+
 describe("BufferStack", () => {
   it("renders nothing when all panes have null pagePath", () => {
     usePaneStore.setState({
@@ -505,6 +525,26 @@ describe("BufferStack", () => {
     expect(row.contains(posSpan)).toBe(true);
   });
 
+  it("popover rows show position labels for vertical split", () => {
+    usePaneStore.setState({
+      root: {
+        type: "split" as const,
+        id: "s1",
+        direction: "vertical" as const,
+        children: [
+          { type: "leaf" as const, id: "p1", pagePath: "notes/foo.md" },
+          { type: "leaf" as const, id: "p2", pagePath: "notes/bar.md" },
+        ],
+        sizes: [50, 50],
+      },
+      focusedPaneId: "p1",
+    });
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    expect(screen.getByTestId("buffer-stack-position-p1")).toHaveTextContent("top");
+    expect(screen.getByTestId("buffer-stack-position-p2")).toHaveTextContent("bottom");
+  });
+
   it("single-leaf root renders no position spans", () => {
     usePaneStore.setState({
       root: { type: "leaf", id: "p1", pagePath: "notes/foo.md" },
@@ -525,5 +565,35 @@ describe("BufferStack", () => {
     rerender(<BufferStack />);
     expect(screen.queryByTestId("buffer-stack-popover")).toBeNull();
     expect(screen.getByTestId("buffer-stack-chip")).toHaveAttribute("aria-expanded", "false");
+  });
+
+  // --- Cycle 10: MAX_PANES boundary ---
+
+  it("chip shows (+5) count with 6 open buffers", () => {
+    usePaneStore.setState(sixBufferState());
+    render(<BufferStack />);
+    expect(screen.getByTestId("buffer-stack-count")).toHaveTextContent("(+5)");
+  });
+
+  it("popover lists all 6 rows with 6 open buffers", () => {
+    usePaneStore.setState(sixBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    expect(screen.getByTestId("buffer-stack-row-p1")).toBeInTheDocument();
+    expect(screen.getByTestId("buffer-stack-row-p2")).toBeInTheDocument();
+    expect(screen.getByTestId("buffer-stack-row-p3")).toBeInTheDocument();
+    expect(screen.getByTestId("buffer-stack-row-p4")).toBeInTheDocument();
+    expect(screen.getByTestId("buffer-stack-row-p5")).toBeInTheDocument();
+    expect(screen.getByTestId("buffer-stack-row-p6")).toBeInTheDocument();
+  });
+
+  // --- Cycle 11: Close button on last pane ---
+
+  it("no close buttons remain after closing down to a single pane", () => {
+    usePaneStore.setState(twoBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    fireEvent.click(screen.getByTestId("buffer-stack-close-p2"));
+    expect(screen.queryByTestId(/^buffer-stack-close-/)).toBeNull();
   });
 });

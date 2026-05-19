@@ -79,6 +79,26 @@ describe("StatusBar", () => {
     expect(screen.getByTestId("status-bar")).toHaveTextContent("Initializing...");
   });
 
+  it("shows Resolving links phase label", () => {
+    useWorkspaceStore.setState({
+      workspacePath: "/test",
+      graphReady: false,
+      indexProgress: { phase: "resolving", current: 5, total: 10 },
+    });
+    render(<StatusBar />);
+    expect(screen.getByTestId("status-bar")).toHaveTextContent("Resolving links...");
+  });
+
+  it("shows Checking for changes phase label", () => {
+    useWorkspaceStore.setState({
+      workspacePath: "/test",
+      graphReady: false,
+      indexProgress: { phase: "diffing", current: 2, total: 8 },
+    });
+    render(<StatusBar />);
+    expect(screen.getByTestId("status-bar")).toHaveTextContent("Checking for changes...");
+  });
+
   it("shows progress bar with correct width", () => {
     useWorkspaceStore.setState({
       workspacePath: "/test",
@@ -162,6 +182,21 @@ describe("StatusBar", () => {
     render(<StatusBar />);
     expect(screen.getByTestId("buffer-stack-chip")).toBeInTheDocument();
     expect(screen.getByTestId("buffer-stack-count")).toHaveTextContent("(+1)");
+  });
+
+  it("hides BufferStack during indexing even when pagePath is set", () => {
+    useWorkspaceStore.setState({
+      workspacePath: "/test",
+      graphReady: false,
+      indexProgress: { phase: "parsing", current: 3, total: 10 },
+    });
+    usePaneStore.setState({
+      root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
+      focusedPaneId: "p1",
+    });
+    render(<StatusBar />);
+    expect(screen.queryByTestId("buffer-stack-label")).toBeNull();
+    expect(screen.queryByTestId("buffer-stack-chip")).toBeNull();
   });
 
   describe("BottomPanelTabs", () => {
