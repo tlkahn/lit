@@ -103,7 +103,7 @@ function ensureCommandsRegistered() {
     when: () => collectLeaves(usePaneStore.getState().root).length < MAX_PANES,
     action: () => {
       const { focusedPaneId } = usePaneStore.getState();
-      usePaneStore.getState().splitPane(focusedPaneId, "vertical");
+      usePaneStore.getState().splitPane(focusedPaneId, "horizontal");
     },
   });
   registerCommand({
@@ -113,7 +113,7 @@ function ensureCommandsRegistered() {
     when: () => collectLeaves(usePaneStore.getState().root).length < MAX_PANES,
     action: () => {
       const { focusedPaneId } = usePaneStore.getState();
-      usePaneStore.getState().splitPane(focusedPaneId, "horizontal");
+      usePaneStore.getState().splitPane(focusedPaneId, "vertical");
     },
   });
   registerCommand({

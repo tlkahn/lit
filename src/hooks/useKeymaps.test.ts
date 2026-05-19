@@ -312,13 +312,13 @@ describe("useKeymaps", () => {
     expect(hasCommand("pane.splitRight")).toBe(true);
   });
 
-  it("executing pane.splitRight splits focused pane vertically", async () => {
+  it("executing pane.splitRight splits focused pane horizontally", async () => {
     await loadHook();
     usePaneStore.setState(createInitialState());
     executeCommand("pane.splitRight");
     const root = usePaneStore.getState().root;
     expect(root.type).toBe("split");
-    expect((root as PaneSplit).direction).toBe("vertical");
+    expect((root as PaneSplit).direction).toBe("horizontal");
   });
 
   // --- Cycle 2: pane.splitDown command registration ---
@@ -328,13 +328,13 @@ describe("useKeymaps", () => {
     expect(hasCommand("pane.splitDown")).toBe(true);
   });
 
-  it("executing pane.splitDown splits focused pane horizontally", async () => {
+  it("executing pane.splitDown splits focused pane vertically", async () => {
     await loadHook();
     usePaneStore.setState(createInitialState());
     executeCommand("pane.splitDown");
     const root = usePaneStore.getState().root;
     expect(root.type).toBe("split");
-    expect((root as PaneSplit).direction).toBe("horizontal");
+    expect((root as PaneSplit).direction).toBe("vertical");
   });
 
   // --- Cycle 3: pane.focusNext with DOM focus transfer ---
