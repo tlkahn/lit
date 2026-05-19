@@ -30,6 +30,8 @@ import { AnnotationBuilderModal } from "./components/AnnotationBuilderModal";
 import { ExportDialog } from "./components/ExportDialog";
 import { SettingsModal } from "./components/SettingsModal";
 import { useModalLock } from "./hooks/useModalLock";
+import { useSubgraphExport } from "./hooks/useSubgraphExport";
+import { SubgraphExportPicker } from "./components/SubgraphExportPicker";
 import { useBottomPanelEvents } from "./hooks/useBottomPanelEvents";
 import { getCurrentEditorView } from "./lib/editorViewRef";
 import { annotationToFields, getEditCursorOffset, type AnnotationBuilderEventDetail, type EditRawInfo } from "./lib/annotationDsl";
@@ -355,6 +357,7 @@ function App() {
     return () => document.removeEventListener("keydown", handler);
   }, [focusModeActive, toggleFocusMode]);
 
+  const exportFlow = useSubgraphExport();
   useFileWatcher(triggerReload);
 
   if (!workspacePath) {
@@ -373,11 +376,11 @@ function App() {
               flexShrink: 0,
             }}
           >
-            <Sidebar />
+            <Sidebar onExportNetwork={exportFlow.requestExport} />
           </div>
           <div className="flex min-h-0 flex-1 flex-col">
             <ErrorBoundary fallback={ContentErrorFallback} resetKey={currentPagePath}>
-              <ContentArea />
+              <ContentArea onExportNetwork={exportFlow.requestExport} />
             </ErrorBoundary>
           </div>
         </div>
@@ -407,6 +410,11 @@ function App() {
         <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} initialCategory={settingsInitialCategory} />
         <LicenseEntryDialog open={licenseEntryOpen} onClose={() => setLicenseEntryOpen(false)} />
         <LicenseInfoDialog open={licenseInfoOpen} licenseState={licenseState} licensedTo={licensedTo} daysRemaining={daysRemaining} onClose={() => setLicenseInfoOpen(false)} />
+        <SubgraphExportPicker
+          open={exportFlow.pickerOpen}
+          onExport={exportFlow.handlePickerExport}
+          onCancel={exportFlow.handlePickerCancel}
+        />
       </div>
     </LicenseGate>
   );

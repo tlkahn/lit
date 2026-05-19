@@ -61,6 +61,8 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   const [searchMatches, setSearchMatches] = useState<string[]>([]);
   const [graphStats, setGraphStats] = useState<{ nodes: number; edges: number } | null>(null);
   const [contextMenu, setContextMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null);
+  const contextMenuOpenRef = useRef(false);
+  useEffect(() => { contextMenuOpenRef.current = contextMenu !== null; }, [contextMenu]);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -451,7 +453,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
       e.preventDefault();
       setSearchOpen(true);
     } else if (e.key === "Escape") {
-      if (!searchOpenRef.current) {
+      if (!searchOpenRef.current && !contextMenuOpenRef.current) {
         onExitRef.current?.();
       }
     }
@@ -504,7 +506,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         style={{ position: "absolute", inset: 0, cursor: "grab" }}
         onContextMenu={(e) => e.preventDefault()}
       />
-      {contextMenu && (
+      {contextMenu && onExportNetwork && (
         <div
           data-graph-context-menu
           className="fixed z-50 min-w-[160px] select-none rounded-lg border border-border/40 bg-bg-primary/80 p-1 shadow-xl shadow-black/20 backdrop-blur-xl backdrop-saturate-150 dark:border-border/10 dark:bg-bg-primary/70"

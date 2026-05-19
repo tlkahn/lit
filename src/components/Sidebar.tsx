@@ -10,8 +10,6 @@ import { useFlatTree, type FolderNode } from "../hooks/useFlatTree";
 import { useSidebarSort } from "../hooks/useSidebarSort";
 import { Outline } from "./Outline";
 import { SortDropdown } from "./SortDropdown";
-import { SubgraphExportPicker } from "./SubgraphExportPicker";
-import { useSubgraphExport } from "../hooks/useSubgraphExport";
 import type { PageMeta } from "../lib/ipc";
 
 function buildTree(pages: PageMeta[]): FolderNode {
@@ -219,8 +217,7 @@ const PageItem = memo(function PageItem({
 
 export const SIDEBAR_WIDTH_PX = 240;
 
-export function Sidebar() {
-  const exportFlow = useSubgraphExport();
+export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) => void } = {}) {
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const pages = useWorkspaceStore((s) => s.pages);
   const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
@@ -299,7 +296,6 @@ export function Sidebar() {
   }, [sidebarMenu]);
 
   return (
-    <>
     <aside className="flex h-full shrink-0 flex-col border-e border-border bg-bg-secondary" style={{ width: SIDEBAR_WIDTH_PX }} onContextMenu={handleAsideContextMenu}>
       <div className="flex items-center border-b border-border">
         <button
@@ -382,8 +378,7 @@ export function Sidebar() {
                         onRenameCommit={handleRenameCommit}
                         onRenameCancel={handleRenameCancel}
                         onExportNetwork={(path) => {
-                          handleMenuClose();
-                          exportFlow.requestExport(path);
+                          onExportNetwork?.(path);
                         }}
                         depth={row.depth}
                       />
@@ -426,11 +421,5 @@ export function Sidebar() {
         document.body,
       )}
     </aside>
-    <SubgraphExportPicker
-      open={exportFlow.pickerOpen}
-      onExport={exportFlow.handlePickerExport}
-      onCancel={exportFlow.handlePickerCancel}
-    />
-    </>
   );
 }

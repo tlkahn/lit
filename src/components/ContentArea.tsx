@@ -15,8 +15,6 @@ import { PdfViewer } from "./PdfViewer";
 import { BottomPanel } from "./BottomPanel";
 import { buildHeadingTree, applyRename, applyMove, insertChild, insertSibling, insertDangling, resolveDeleteFallback, findNode } from "../lib/headingTree";
 import { YamlHighlighter } from "./YamlHighlighter";
-import { SubgraphExportPicker } from "./SubgraphExportPicker";
-import { useSubgraphExport } from "../hooks/useSubgraphExport";
 import { globalJumpTracker } from "../editor/jumpTracker";
 
 const LazyMindmapView = lazy(() => import("./MindmapView"));
@@ -32,8 +30,7 @@ export function parseYamlErrorLocation(msg: string): { line: number; column: num
   return { line: parseInt(match[1]!, 10), column: parseInt(match[2]!, 10) };
 }
 
-export function ContentArea() {
-  const exportFlow = useSubgraphExport();
+export function ContentArea({ onExportNetwork }: { onExportNetwork?: (nodeId: string) => void } = {}) {
   const focusedPaneId = usePaneStore((s) => s.focusedPaneId);
   const focusedLeaf = usePaneStore((s) => findLeaf(s.root, s.focusedPaneId));
   const currentPanePage = focusedLeaf?.pagePath ?? null;
@@ -496,7 +493,7 @@ export function ContentArea() {
                 setMindmapSelectedId(fallbackId);
               }}
               onExportNetwork={() => {
-                if (currentPanePage) exportFlow.requestExport(currentPanePage);
+                if (currentPanePage) onExportNetwork?.(currentPanePage);
               }}
             />
           </Suspense>
@@ -514,17 +511,12 @@ export function ContentArea() {
                 setViewMode("editor");
               }}
               onExit={() => setViewMode("editor")}
-              onExportNetwork={(nodeId) => exportFlow.requestExport(nodeId)}
+              onExportNetwork={(nodeId) => onExportNetwork?.(nodeId)}
             />
           </Suspense>
         </div>
       )}
       {currentPanePage && <BottomPanel pageId={currentPanePage} />}
-      <SubgraphExportPicker
-        open={exportFlow.pickerOpen}
-        onExport={exportFlow.handlePickerExport}
-        onCancel={exportFlow.handlePickerCancel}
-      />
     </main>
   );
 }

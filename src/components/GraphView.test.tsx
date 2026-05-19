@@ -1538,4 +1538,84 @@ describe("GraphView", () => {
     await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
     expect(container.querySelector("[data-graph-context-menu]")).toBeNull();
   });
+
+  it("context menu hidden when onExportNetwork is not provided", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    const { container } = render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    act(() => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    expect(container.querySelector("[data-graph-context-menu]")).toBeNull();
+  });
+
+  it("Escape when context menu is open does NOT call onExit", async () => {
+    const onExit = vi.fn();
+    const GraphView = (await import("./GraphView")).default;
+    const { container } = render(<GraphView onExit={onExit} onExportNetwork={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    act(() => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+    expect(container.querySelector("[data-graph-context-menu]")).toBeTruthy();
+
+    const graphContainer = screen.getByTestId("graph-view");
+    await act(async () => {
+      graphContainer.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    expect(onExit).not.toHaveBeenCalled();
+  });
+
+  it("Escape dismisses context menu without calling onExit", async () => {
+    const onExit = vi.fn();
+    const GraphView = (await import("./GraphView")).default;
+    const { container } = render(<GraphView onExit={onExit} onExportNetwork={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    act(() => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(container.querySelector("[data-graph-context-menu]")).toBeNull();
+    expect(onExit).not.toHaveBeenCalled();
+  });
+
+  it("Escape after context menu dismissed calls onExit", async () => {
+    const onExit = vi.fn();
+    const GraphView = (await import("./GraphView")).default;
+    const { container } = render(<GraphView onExit={onExit} onExportNetwork={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    act(() => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(container.querySelector("[data-graph-context-menu]")).toBeNull();
+
+    onExit.mockClear();
+    const graphContainer = screen.getByTestId("graph-view");
+    await act(async () => {
+      graphContainer.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    expect(onExit).toHaveBeenCalledTimes(1);
+  });
 });

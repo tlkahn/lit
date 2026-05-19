@@ -772,68 +772,37 @@ describe("Sidebar context menu – Export Local Network", () => {
     expect(screen.getByText("Export Local Network…")).toBeInTheDocument();
   });
 
-  it("clicking it shows SubgraphExportPicker", async () => {
+  it("calls onExportNetwork prop with page path when clicked", async () => {
+    const onExportNetwork = vi.fn();
     useWorkspaceStore.setState({
       pages: [makePage("Notes", "Notes.md")],
     });
     const user = userEvent.setup();
-    render(<Sidebar />);
+    render(<Sidebar onExportNetwork={onExportNetwork} />);
 
     const pageButton = screen.getByText("Notes");
     await user.pointer({ keys: "[MouseRight]", target: pageButton });
     fireEvent.pointerMove(document);
     await user.click(screen.getByText("Export Local Network…"));
 
-    expect(screen.getByTestId("subgraph-export-picker")).toBeInTheDocument();
+    expect(onExportNetwork).toHaveBeenCalledWith("Notes.md");
   });
 
-  it("cancelling picker hides it", async () => {
+  it("menu closes once (via PageItem) when Export Local Network is clicked", async () => {
+    const onExportNetwork = vi.fn();
     useWorkspaceStore.setState({
       pages: [makePage("Notes", "Notes.md")],
     });
     const user = userEvent.setup();
-    render(<Sidebar />);
+    render(<Sidebar onExportNetwork={onExportNetwork} />);
 
     const pageButton = screen.getByText("Notes");
     await user.pointer({ keys: "[MouseRight]", target: pageButton });
+    expect(screen.getByTestId("context-menu")).toBeInTheDocument();
+
     fireEvent.pointerMove(document);
     await user.click(screen.getByText("Export Local Network…"));
-    expect(screen.getByTestId("subgraph-export-picker")).toBeInTheDocument();
 
-    await user.click(screen.getByText("Cancel"));
-    expect(screen.queryByTestId("subgraph-export-picker")).not.toBeInTheDocument();
-  });
-
-  it("exporting calls save dialog and exportSubgraph IPC", async () => {
-    const { save } = await import("@tauri-apps/plugin-dialog");
-    const mockedSave = save as unknown as ReturnType<typeof vi.fn>;
-    mockedSave.mockResolvedValue("/out/export.zip");
-
-    mockInvoke((cmd, args) => {
-      if (cmd === "create_page") {
-        return makePage((args as Record<string, unknown>)?.name as string);
-      }
-      if (cmd === "export_subgraph") return { pages_exported: 1, zip_path: "/out/export.zip" };
-      if (cmd === "open_in_external_editor") return null;
-      if (cmd === "set_preference") return undefined;
-      throw new Error(`Unknown command: ${cmd}`);
-    });
-
-    useWorkspaceStore.setState({
-      pages: [makePage("Notes", "Notes.md")],
-    });
-    const user = userEvent.setup();
-    render(<Sidebar />);
-
-    const pageButton = screen.getByText("Notes");
-    await user.pointer({ keys: "[MouseRight]", target: pageButton });
-    fireEvent.pointerMove(document);
-    await user.click(screen.getByText("Export Local Network…"));
-    await user.click(screen.getByText("Export"));
-
-    expect(mockedSave).toHaveBeenCalledWith({
-      defaultPath: "export.zip",
-      filters: [{ name: "ZIP", extensions: ["zip"] }],
-    });
+    expect(screen.queryByTestId("context-menu")).not.toBeInTheDocument();
   });
 });
