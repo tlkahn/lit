@@ -115,6 +115,21 @@ describe("BottomPanel", () => {
     expect(panel.style.transition).toContain("height");
   });
 
+  it("has no shadow class when folded", () => {
+    render(<BottomPanel pageId="target.md" />);
+    const panel = screen.getByTestId("bottom-panel");
+    expect(panel.className).not.toContain("shadow-");
+  });
+
+  it("has shadow class when unfolded", () => {
+    render(<BottomPanel pageId="target.md" />);
+    act(() => {
+      useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+    });
+    const panel = screen.getByTestId("bottom-panel");
+    expect(panel.className).toContain("shadow-");
+  });
+
   describe("content rendering", () => {
     it("shows linked content when activeTab is linked", async () => {
       mockInvoke((cmd) => {

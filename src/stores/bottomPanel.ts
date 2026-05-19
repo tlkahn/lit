@@ -72,6 +72,8 @@ export const useBottomPanelStore = create<BottomPanelState>((set, get) => ({
   resetForPage: () => {
     const { activeTab, unfolded } = get();
     set({
+      unfolded: false,
+      linkedCount: null,
       unlinkedCount: null,
       annotationCount: 0,
       hasOpenedAnnotations: false,

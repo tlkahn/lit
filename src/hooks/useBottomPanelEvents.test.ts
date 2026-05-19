@@ -369,5 +369,33 @@ describe("useBottomPanelEvents", () => {
       expect(state.annotationCount).toBe(0);
       expect(state.hasOpenedAnnotations).toBe(false);
     });
+
+    it("resets linkedCount to null when focused pane page changes", () => {
+      useBottomPanelStore.setState({ linkedCount: 5 });
+      renderHook(() => useBottomPanelEvents());
+
+      act(() => {
+        usePaneStore.setState({
+          root: { type: "leaf", id: "p1", pagePath: "other.md" },
+          focusedPaneId: "p1",
+        });
+      });
+
+      expect(useBottomPanelStore.getState().linkedCount).toBe(null);
+    });
+
+    it("folds the panel when focused pane page changes", () => {
+      useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+      renderHook(() => useBottomPanelEvents());
+
+      act(() => {
+        usePaneStore.setState({
+          root: { type: "leaf", id: "p1", pagePath: "other.md" },
+          focusedPaneId: "p1",
+        });
+      });
+
+      expect(useBottomPanelStore.getState().unfolded).toBe(false);
+    });
   });
 });
