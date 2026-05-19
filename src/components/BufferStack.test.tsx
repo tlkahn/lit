@@ -594,6 +594,6 @@ describe("BufferStack", () => {
     render(<BufferStack />);
     fireEvent.click(screen.getByTestId("buffer-stack-chip"));
     fireEvent.click(screen.getByTestId("buffer-stack-close-p2"));
-    expect(screen.queryByTestId(/^buffer-stack-close-/)).toBeNull();
+    expect(screen.queryAllByTestId(/^buffer-stack-close-/)).toHaveLength(0);
   });
 });
