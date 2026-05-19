@@ -452,6 +452,44 @@ mod tests {
         assert_eq!(paths, vec!["note.md"]);
     }
 
+    #[test]
+    fn subgraph_deduplicates_duplicate_node_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("note.md"), "hello").unwrap();
+
+        let node_ids = vec!["note.md".to_string(), "note.md".to_string()];
+        let entries = collect_subgraph_export_files(dir.path(), &node_ids).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].relative_path, "note.md");
+    }
+
+    #[test]
+    fn subgraph_collects_nested_node_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        std::fs::write(sub.join("note.md"), "nested").unwrap();
+
+        let node_ids = vec!["sub/note.md".to_string()];
+        let entries = collect_subgraph_export_files(dir.path(), &node_ids).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].relative_path, "sub/note.md");
+    }
+
+    #[test]
+    fn subgraph_skips_node_id_path_traversal() {
+        let outer = tempfile::tempdir().unwrap();
+        let workspace = outer.path().join("workspace");
+        std::fs::create_dir(&workspace).unwrap();
+        std::fs::write(outer.path().join("secret.md"), "top secret").unwrap();
+        std::fs::write(workspace.join("safe.md"), "hello").unwrap();
+
+        let node_ids = vec!["../secret.md".to_string(), "safe.md".to_string()];
+        let entries = collect_subgraph_export_files(&workspace, &node_ids).unwrap();
+        let paths: Vec<&str> = entries.iter().map(|e| e.relative_path.as_str()).collect();
+        assert_eq!(paths, vec!["safe.md"]);
+    }
+
     // --- write_zip tests ---
 
     #[test]
