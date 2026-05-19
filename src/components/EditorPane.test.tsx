@@ -100,17 +100,6 @@ describe("EditorPane", () => {
     expect(screen.queryByTestId("mock-editor")).toBeNull();
   });
 
-  it("renders breadcrumb with page title", async () => {
-    usePaneStore.setState({
-      root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
-      focusedPaneId: "pane-1",
-    });
-    render(<EditorPane paneId="pane-1" />);
-    await waitFor(() => {
-      expect(screen.getByTestId("pane-breadcrumb")).toHaveTextContent("Hello");
-    });
-  });
-
   it("passes loaded body to CodeMirrorEditor", async () => {
     usePaneStore.setState({
       root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },

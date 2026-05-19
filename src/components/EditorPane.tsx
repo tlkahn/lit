@@ -33,7 +33,7 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
   const triggerReload = useWorkspaceStore((s) => s.triggerReload);
   const refreshPages = useWorkspaceStore((s) => s.refreshPages);
 
-  const { body, title, frontmatter, rawYaml, handleChange } = usePageContent(paneId, pagePath);
+  const { body, frontmatter, rawYaml, handleChange } = usePageContent(paneId, pagePath);
   const { editorBindings } = useKeymaps();
 
   const currentPathRef = useRef<string | null>(pagePath);
@@ -202,7 +202,6 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
       onFocus={handleFocus}
       tabIndex={-1}
     >
-      <div data-testid="pane-breadcrumb">{title}</div>
       <CodeMirrorEditor
         doc={body}
         frontmatter={frontmatter}
