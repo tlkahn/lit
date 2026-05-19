@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { BottomPanel } from "./BottomPanel";
 import { mockInvoke } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePreferencesStore } from "../stores/preferences";
+import { useBottomPanelStore } from "../stores/bottomPanel";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { annotationDataField, setAnnotationData } from "../editor/livePreview/annotationState";
@@ -59,6 +59,16 @@ beforeEach(() => {
     graphReady: true,
   });
   usePreferencesStore.setState({ experimentalUnlinkedReferences: true });
+  useBottomPanelStore.setState({
+    activeTab: "linked",
+    unfolded: false,
+    panelHeight: 200,
+    linkedCount: null,
+    unlinkedCount: null,
+    annotationCount: 0,
+    hasOpenedUnlinked: false,
+    hasOpenedAnnotations: false,
+  });
   mockInvoke((cmd) => {
     if (cmd === "get_backlinks") return [];
     if (cmd === "get_unlinked_mentions") return [];
@@ -73,29 +83,13 @@ afterEach(() => {
 });
 
 describe("BottomPanel", () => {
-  it("renders tab bar with Linked References tab", () => {
-    render(<BottomPanel pageId="target.md" />);
-    expect(screen.getByText("Linked References")).toBeInTheDocument();
-  });
-
-  it("renders tab bar with Unlinked References tab when flag is true", () => {
-    render(<BottomPanel pageId="target.md" />);
-    expect(screen.getByText("Unlinked References")).toBeInTheDocument();
-  });
-
-  it("hides Unlinked References tab when experimentalUnlinkedReferences is false", () => {
-    usePreferencesStore.setState({ experimentalUnlinkedReferences: false });
-    render(<BottomPanel pageId="target.md" />);
-    expect(screen.queryByText("Unlinked References")).not.toBeInTheDocument();
-  });
-
-  it("starts folded — panel body not visible", () => {
+  it("starts folded — panel height is 0", () => {
     render(<BottomPanel pageId="target.md" />);
     const panel = screen.getByTestId("bottom-panel");
-    expect(panel.style.height).toBe("32px");
+    expect(panel.style.height).toBe("0px");
   });
 
-  it("click Linked tab unfolds panel and shows backlinks content", async () => {
+  it("renders backlinks content when unfolded via store", async () => {
     mockInvoke((cmd) => {
       if (cmd === "get_backlinks") return [];
       if (cmd === "get_unlinked_mentions") return [];
@@ -104,131 +98,15 @@ describe("BottomPanel", () => {
 
     render(<BottomPanel pageId="target.md" />);
 
-    await userEvent.click(screen.getByText("Linked References"));
+    act(() => {
+      useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+    });
 
     const panel = screen.getByTestId("bottom-panel");
-    expect(panel.style.height).not.toBe("32px");
+    expect(panel.style.height).not.toBe("0px");
     await waitFor(() => {
       expect(screen.getByText("No other pages link to this page")).toBeInTheDocument();
     });
-  });
-
-  it("click active tab folds panel", async () => {
-    render(<BottomPanel pageId="target.md" />);
-
-    await userEvent.click(screen.getByText("Linked References"));
-    const panel = screen.getByTestId("bottom-panel");
-    expect(panel.style.height).not.toBe("32px");
-
-    await userEvent.click(screen.getByText("Linked References"));
-    expect(panel.style.height).toBe("32px");
-  });
-
-  it("click inactive tab while unfolded switches content without folding", async () => {
-    render(<BottomPanel pageId="target.md" />);
-
-    await userEvent.click(screen.getByText("Linked References"));
-    const panel = screen.getByTestId("bottom-panel");
-    expect(panel.style.height).not.toBe("32px");
-
-    await userEvent.click(screen.getByText("Unlinked References"));
-    expect(panel.style.height).not.toBe("32px");
-  });
-
-  it("lit:toggle-bottom-panel event toggles fold/unfold", async () => {
-    render(<BottomPanel pageId="target.md" />);
-    const panel = screen.getByTestId("bottom-panel");
-
-    expect(panel.style.height).toBe("32px");
-
-    act(() => {
-      window.dispatchEvent(new CustomEvent("lit:toggle-bottom-panel"));
-    });
-    expect(panel.style.height).not.toBe("32px");
-
-    act(() => {
-      window.dispatchEvent(new CustomEvent("lit:toggle-bottom-panel"));
-    });
-    expect(panel.style.height).toBe("32px");
-  });
-
-  it("shows linked count in tab after backlinks load", async () => {
-    mockInvoke((cmd) => {
-      if (cmd === "get_backlinks")
-        return [
-          { source_id: "a.md", source_title: "A", context: "ctx", source_line: 1 },
-          { source_id: "b.md", source_title: "B", context: "ctx", source_line: 1 },
-        ];
-      if (cmd === "get_unlinked_mentions") return [];
-      throw new Error(`Unknown command: ${cmd}`);
-    });
-
-    render(<BottomPanel pageId="target.md" />);
-
-    await waitFor(() => {
-      expect(screen.getByText("Linked References (2)")).toBeInTheDocument();
-    });
-  });
-
-  it("shows unlinked count in tab only after tab has been opened", async () => {
-    mockInvoke((cmd) => {
-      if (cmd === "get_backlinks") return [];
-      if (cmd === "get_unlinked_mentions")
-        return [
-          { source_id: "c.md", source_title: "C", context: "ctx", source_line: 1, matched_text: "target" },
-        ];
-      throw new Error(`Unknown command: ${cmd}`);
-    });
-
-    render(<BottomPanel pageId="target.md" />);
-
-    expect(screen.queryByText("Unlinked References (1)")).not.toBeInTheDocument();
-    expect(screen.getByText("Unlinked References")).toBeInTheDocument();
-
-    await userEvent.click(screen.getByText("Unlinked References"));
-
-    await waitFor(() => {
-      expect(screen.getByText("Unlinked References (1)")).toBeInTheDocument();
-    });
-  });
-
-  it("does not mount UnlinkedMentionsPanel until unlinked tab is clicked (lazy)", async () => {
-    let fetchCount = 0;
-    mockInvoke((cmd) => {
-      if (cmd === "get_backlinks") return [];
-      if (cmd === "get_unlinked_mentions") {
-        fetchCount++;
-        return [];
-      }
-      throw new Error(`Unknown command: ${cmd}`);
-    });
-
-    render(<BottomPanel pageId="target.md" />);
-
-    await waitFor(() => {
-      expect(screen.getByText("Linked References")).toBeInTheDocument();
-    });
-
-    // Allow any pending effects to settle
-    await act(async () => {});
-    expect(fetchCount).toBe(0);
-
-    await userEvent.click(screen.getByText("Unlinked References"));
-    await waitFor(() => {
-      expect(fetchCount).toBeGreaterThan(0);
-    });
-  });
-
-  it("shows subtle active indicator on last-active tab when folded", async () => {
-    render(<BottomPanel pageId="target.md" />);
-
-    await userEvent.click(screen.getByText("Linked References"));
-
-    await userEvent.click(screen.getByText("Linked References"));
-
-    const tab = screen.getByTestId("tab-linked");
-    expect(tab.className).toContain("border-b");
-    expect(tab.className).toContain("border-border-faint");
   });
 
   it("panel body has CSS transition style", () => {
@@ -237,318 +115,202 @@ describe("BottomPanel", () => {
     expect(panel.style.transition).toContain("height");
   });
 
-  it("clamps activeTab to linked when experimentalUnlinkedReferences turns off while on unlinked tab", async () => {
-    render(<BottomPanel pageId="target.md" />);
+  describe("content rendering", () => {
+    it("shows linked content when activeTab is linked", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "get_backlinks") return [];
+        if (cmd === "get_unlinked_mentions") return [];
+        throw new Error(`Unknown command: ${cmd}`);
+      });
 
-    await userEvent.click(screen.getByText("Unlinked References"));
-    const panel = screen.getByTestId("bottom-panel");
-    expect(panel.style.height).not.toBe("32px");
-
-    act(() => {
-      usePreferencesStore.setState({ experimentalUnlinkedReferences: false });
-    });
-
-    expect(screen.queryByText("Unlinked References")).not.toBeInTheDocument();
-    expect(panel.style.height).toBe("32px");
-  });
-
-  describe("Annotations tab", () => {
-    it("does not show tab when no annotations exist", () => {
-      render(<BottomPanel pageId="target.md" />);
-      expect(screen.queryByText("Annotations")).not.toBeInTheDocument();
-    });
-
-    it("shows 'Annotations (N)' tab when annotations exist", () => {
-      testEditorView = setupEditorWithAnnotations([
-        makeAnnotation({ char_start: 0, char_end: 10 }),
-        makeAnnotation({ char_start: 15, char_end: 25 }),
-      ]);
       render(<BottomPanel pageId="target.md" />);
 
       act(() => {
-        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+        useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
       });
 
-      expect(screen.getByText("Annotations (2)")).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByText("No other pages link to this page")).toBeInTheDocument();
+      });
     });
 
-    it("click Annotations tab unfolds panel and shows annotation content", async () => {
+    it("shows unlinked content when activeTab is unlinked and hasOpenedUnlinked", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "get_backlinks") return [];
+        if (cmd === "get_unlinked_mentions") return [];
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      render(<BottomPanel pageId="target.md" />);
+
+      act(() => {
+        useBottomPanelStore.setState({
+          unfolded: true,
+          activeTab: "unlinked",
+          hasOpenedUnlinked: true,
+        });
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("No unlinked mentions found")).toBeInTheDocument();
+      });
+    });
+
+    it("shows annotation content when activeTab is annotations and hasOpenedAnnotations", async () => {
       testEditorView = setupEditorWithAnnotations([
         makeAnnotation({ char_start: 0, char_end: 10, body: "my note" }),
       ]);
       render(<BottomPanel pageId="target.md" />);
 
       act(() => {
-        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+        useBottomPanelStore.setState({
+          unfolded: true,
+          activeTab: "annotations",
+          hasOpenedAnnotations: true,
+        });
       });
 
-      await userEvent.click(screen.getByText("Annotations (1)"));
-
-      const panel = screen.getByTestId("bottom-panel");
-      expect(panel.style.height).not.toBe("32px");
-      expect(screen.getByTestId("annotation-body-0").textContent).toBe("my note");
+      await waitFor(() => {
+        expect(screen.getByTestId("annotation-body-0").textContent).toBe("my note");
+      });
     });
+  });
 
-    it("Annotations tab has correct ARIA attributes", () => {
-      testEditorView = setupEditorWithAnnotations([
-        makeAnnotation({ char_start: 0, char_end: 10 }),
-      ]);
+  describe("lazy mounting", () => {
+    it("does not mount UnlinkedMentionsPanel until hasOpenedUnlinked is true", async () => {
+      let fetchCount = 0;
+      mockInvoke((cmd) => {
+        if (cmd === "get_backlinks") return [];
+        if (cmd === "get_unlinked_mentions") {
+          fetchCount++;
+          return [];
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
       render(<BottomPanel pageId="target.md" />);
 
       act(() => {
-        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+        useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
       });
 
-      const tab = screen.getByTestId("tab-annotations");
-      expect(tab.getAttribute("role")).toBe("tab");
-      expect(tab.id).toBe("bp-tab-annotations");
-      expect(tab.getAttribute("aria-controls")).toBe("bp-tabpanel");
-    });
-
-    it("tab switching works across all 3 tabs", async () => {
-      testEditorView = setupEditorWithAnnotations([
-        makeAnnotation({ char_start: 0, char_end: 10 }),
-      ]);
-      render(<BottomPanel pageId="target.md" />);
+      // Allow any pending effects to settle
+      await act(async () => {});
+      expect(fetchCount).toBe(0);
 
       act(() => {
-        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+        useBottomPanelStore.setState({ activeTab: "unlinked", hasOpenedUnlinked: true });
       });
 
-      await userEvent.click(screen.getByText("Linked References"));
-      expect(screen.getByTestId("tab-linked")).toHaveAttribute("aria-selected", "true");
-
-      await userEvent.click(screen.getByText("Annotations (1)"));
-      expect(screen.getByTestId("tab-annotations")).toHaveAttribute("aria-selected", "true");
-      expect(screen.getByTestId("tab-linked")).toHaveAttribute("aria-selected", "false");
+      await waitFor(() => {
+        expect(fetchCount).toBeGreaterThan(0);
+      });
     });
 
-    it("lazy-mounts AnnotationPanel (not mounted until tab clicked)", () => {
+    it("does not mount AnnotationPanel until hasOpenedAnnotations is true", () => {
       testEditorView = setupEditorWithAnnotations([
         makeAnnotation({ char_start: 0, char_end: 10, body: "lazy" }),
       ]);
       render(<BottomPanel pageId="target.md" />);
 
       act(() => {
-        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+        useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
       });
 
       expect(screen.queryByTestId("annotation-entry-0")).not.toBeInTheDocument();
     });
+  });
 
-    it("lit:show-annotation event switches to Annotations tab and unfolds panel", () => {
-      testEditorView = setupEditorWithAnnotations([
-        makeAnnotation({ char_start: 5, char_end: 15, body: "shown" }),
-      ]);
+  describe("ARIA attributes", () => {
+    it("panel body has role=tabpanel when unfolded", () => {
       render(<BottomPanel pageId="target.md" />);
-
       act(() => {
-        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+        useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
       });
-
-      const panel = screen.getByTestId("bottom-panel");
-      expect(panel.style.height).toBe("32px");
-
-      act(() => {
-        window.dispatchEvent(
-          new CustomEvent("lit:show-annotation", { detail: { charStart: 5 } }),
-        );
-      });
-
-      expect(panel.style.height).not.toBe("32px");
-      expect(screen.getByTestId("tab-annotations")).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("tabpanel")).toBeInTheDocument();
     });
 
-    it("annotation count updates via onCountChange when panel is mounted", async () => {
-      testEditorView = setupEditorWithAnnotations([
-        makeAnnotation({ char_start: 0, char_end: 10 }),
-      ]);
+    it("panel body aria-labelledby points to active tab id", () => {
       render(<BottomPanel pageId="target.md" />);
-
       act(() => {
-        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+        useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
       });
-
-      await userEvent.click(screen.getByText("Annotations (1)"));
-
-      // Add a second annotation and notify
-      testEditorView!.dispatch({
-        effects: setAnnotationData.of([
-          makeAnnotation({ char_start: 0, char_end: 10 }),
-          makeAnnotation({ char_start: 15, char_end: 25 }),
-        ]),
-      });
-      act(() => {
-        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
-      });
-
-      expect(screen.getByText("Annotations (2)")).toBeInTheDocument();
+      const tabpanel = screen.getByRole("tabpanel");
+      expect(tabpanel).toHaveAttribute("aria-labelledby", "bp-tab-linked");
     });
 
-    it("falls back to linked tab when annotations disappear while on annotations tab", async () => {
-      testEditorView = setupEditorWithAnnotations([
-        makeAnnotation({ char_start: 0, char_end: 10 }),
-      ]);
+    it("switching activeTab updates aria-labelledby", () => {
       render(<BottomPanel pageId="target.md" />);
-
       act(() => {
-        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+        useBottomPanelStore.setState({
+          unfolded: true,
+          activeTab: "unlinked",
+          hasOpenedUnlinked: true,
+        });
       });
-
-      await userEvent.click(screen.getByText("Annotations (1)"));
-      expect(screen.getByTestId("tab-annotations")).toHaveAttribute("aria-selected", "true");
-
-      testEditorView!.dispatch({ effects: setAnnotationData.of([]) });
-      act(() => {
-        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
-      });
-
-      expect(screen.queryByTestId("tab-annotations")).not.toBeInTheDocument();
-      expect(screen.getByTestId("tab-linked")).toHaveAttribute("aria-selected", "true");
+      const tabpanel = screen.getByRole("tabpanel");
+      expect(tabpanel).toHaveAttribute("aria-labelledby", "bp-tab-unlinked");
     });
   });
 
-  describe("Panel lifecycle", () => {
-    it("auto-shows annotations tab when display mode changes to footnote", () => {
-      testEditorView = setupEditorWithAnnotations([
-        makeAnnotation({ char_start: 0, char_end: 10 }),
-      ]);
+  describe("scroll isolation", () => {
+    const backlinkEntry = { source_id: "a.md", source_title: "A", context: "ctx", source_line: 1 };
+    const unlinkedEntry = { source_id: "b.md", source_title: "B", context: "ctx", source_line: 1, matched_text: "target" };
+
+    it("each panel has its own scroll container", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "get_backlinks") return [backlinkEntry];
+        if (cmd === "get_unlinked_mentions") return [unlinkedEntry];
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
       render(<BottomPanel pageId="target.md" />);
 
       act(() => {
-        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+        useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
       });
-
-      const panel = screen.getByTestId("bottom-panel");
-      expect(panel.style.height).toBe("32px");
+      await waitFor(() => {
+        expect(screen.getByTestId("backlinks-scroll-container")).toBeInTheDocument();
+      });
 
       act(() => {
-        usePreferencesStore.setState({ annotationDisplayMode: "footnote" });
+        useBottomPanelStore.setState({ activeTab: "unlinked", hasOpenedUnlinked: true });
       });
-
-      expect(panel.style.height).not.toBe("32px");
-      expect(screen.getByTestId("tab-annotations")).toHaveAttribute("aria-selected", "true");
+      await waitFor(() => {
+        expect(screen.getByTestId("unlinked-scroll-container")).toBeInTheDocument();
+      });
     });
 
-    it("does not auto-show when no annotations exist in footnote mode", () => {
+    it("tabpanel div does not scroll itself", () => {
       render(<BottomPanel pageId="target.md" />);
-
-      const panel = screen.getByTestId("bottom-panel");
-      expect(panel.style.height).toBe("32px");
-
       act(() => {
-        usePreferencesStore.setState({ annotationDisplayMode: "footnote" });
+        useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
       });
 
-      expect(panel.style.height).toBe("32px");
+      const tabpanel = screen.getByRole("tabpanel");
+      expect(tabpanel.className).toContain("overflow-hidden");
+      expect(tabpanel.className).not.toContain("overflow-y-auto");
     });
 
-    it("auto-hides when display mode changes to pill while on annotations tab", async () => {
-      usePreferencesStore.setState({ annotationDisplayMode: "footnote" });
-      testEditorView = setupEditorWithAnnotations([
-        makeAnnotation({ char_start: 0, char_end: 10 }),
-      ]);
+    it("passes contentHeight equal to panelHeight to panels", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "get_backlinks") return [
+          { source_id: "a.md", source_title: "A", context: "ctx", source_line: 1 },
+        ];
+        if (cmd === "get_unlinked_mentions") return [];
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
       render(<BottomPanel pageId="target.md" />);
-
       act(() => {
-        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+        useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
       });
 
-      await userEvent.click(screen.getByText("Annotations (1)"));
-      const panel = screen.getByTestId("bottom-panel");
-      expect(panel.style.height).not.toBe("32px");
-
-      act(() => {
-        usePreferencesStore.setState({ annotationDisplayMode: "pill" });
+      await waitFor(() => {
+        const scrollContainer = screen.getByTestId("backlinks-scroll-container");
+        // contentHeight = panelHeight directly (no TAB_BAR_HEIGHT subtraction)
+        expect(scrollContainer.style.height).toBe("200px");
       });
-
-      expect(panel.style.height).toBe("32px");
-    });
-
-    it("does not auto-hide when on a different tab", async () => {
-      usePreferencesStore.setState({ annotationDisplayMode: "footnote" });
-      testEditorView = setupEditorWithAnnotations([
-        makeAnnotation({ char_start: 0, char_end: 10 }),
-      ]);
-      render(<BottomPanel pageId="target.md" />);
-
-      act(() => {
-        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
-      });
-
-      await userEvent.click(screen.getByText("Linked References"));
-      const panel = screen.getByTestId("bottom-panel");
-      expect(panel.style.height).not.toBe("32px");
-
-      act(() => {
-        usePreferencesStore.setState({ annotationDisplayMode: "pill" });
-      });
-
-      expect(panel.style.height).not.toBe("32px");
-    });
-
-    it("lit:toggle-annotation-panel event unfolds and switches to annotations tab", () => {
-      testEditorView = setupEditorWithAnnotations([
-        makeAnnotation({ char_start: 0, char_end: 10 }),
-      ]);
-      render(<BottomPanel pageId="target.md" />);
-
-      act(() => {
-        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
-      });
-
-      const panel = screen.getByTestId("bottom-panel");
-      expect(panel.style.height).toBe("32px");
-
-      act(() => {
-        window.dispatchEvent(new CustomEvent("lit:toggle-annotation-panel"));
-      });
-
-      expect(panel.style.height).not.toBe("32px");
-      expect(screen.getByTestId("tab-annotations")).toHaveAttribute("aria-selected", "true");
-    });
-
-    it("lit:toggle-annotation-panel folds when already on annotations tab and unfolded", async () => {
-      testEditorView = setupEditorWithAnnotations([
-        makeAnnotation({ char_start: 0, char_end: 10 }),
-      ]);
-      render(<BottomPanel pageId="target.md" />);
-
-      act(() => {
-        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
-      });
-
-      await userEvent.click(screen.getByText("Annotations (1)"));
-      const panel = screen.getByTestId("bottom-panel");
-      expect(panel.style.height).not.toBe("32px");
-
-      act(() => {
-        window.dispatchEvent(new CustomEvent("lit:toggle-annotation-panel"));
-      });
-
-      expect(panel.style.height).toBe("32px");
-    });
-
-    it("lit:toggle-annotation-panel switches to annotations when on different tab", async () => {
-      testEditorView = setupEditorWithAnnotations([
-        makeAnnotation({ char_start: 0, char_end: 10 }),
-      ]);
-      render(<BottomPanel pageId="target.md" />);
-
-      act(() => {
-        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
-      });
-
-      await userEvent.click(screen.getByText("Linked References"));
-      const panel = screen.getByTestId("bottom-panel");
-      expect(panel.style.height).not.toBe("32px");
-
-      act(() => {
-        window.dispatchEvent(new CustomEvent("lit:toggle-annotation-panel"));
-      });
-
-      expect(panel.style.height).not.toBe("32px");
-      expect(screen.getByTestId("tab-annotations")).toHaveAttribute("aria-selected", "true");
     });
   });
 
@@ -570,35 +332,24 @@ describe("BottomPanel", () => {
     }
 
     describe("localStorage persistence", () => {
-      it("restores height from localStorage on mount", async () => {
+      it("restores height from localStorage on mount", () => {
         localStorage.setItem("lit-bottom-panel-height", "350");
+        useBottomPanelStore.setState({ panelHeight: 350 });
         render(<BottomPanel pageId="target.md" />);
-        await userEvent.click(screen.getByText("Linked References"));
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
         const panel = screen.getByTestId("bottom-panel");
         expect(panel.style.height).toBe("350px");
       });
 
-      it("uses DEFAULT_PANEL_HEIGHT when localStorage is empty", async () => {
+      it("uses DEFAULT_PANEL_HEIGHT when localStorage is empty", () => {
         render(<BottomPanel pageId="target.md" />);
-        await userEvent.click(screen.getByText("Linked References"));
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
         const panel = screen.getByTestId("bottom-panel");
         expect(panel.style.height).toBe("200px");
-      });
-
-      it("ignores invalid localStorage values, falls back to default", async () => {
-        localStorage.setItem("lit-bottom-panel-height", "not-a-number");
-        render(<BottomPanel pageId="target.md" />);
-        await userEvent.click(screen.getByText("Linked References"));
-        const panel = screen.getByTestId("bottom-panel");
-        expect(panel.style.height).toBe("200px");
-      });
-
-      it("clamps restored value to min 100px", async () => {
-        localStorage.setItem("lit-bottom-panel-height", "50");
-        render(<BottomPanel pageId="target.md" />);
-        await userEvent.click(screen.getByText("Linked References"));
-        const panel = screen.getByTestId("bottom-panel");
-        expect(panel.style.height).toBe("100px");
       });
     });
 
@@ -622,9 +373,11 @@ describe("BottomPanel", () => {
     });
 
     describe("core drag", () => {
-      it("drag up increases height", async () => {
+      it("drag up increases height", () => {
         render(<BottomPanel pageId="target.md" />);
-        await userEvent.click(screen.getByText("Linked References"));
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
         const panel = screen.getByTestId("bottom-panel");
         mockParentBoundingRect(panel, 1000);
 
@@ -636,9 +389,11 @@ describe("BottomPanel", () => {
         expect(panel.style.height).toBe("300px");
       });
 
-      it("clamps to min 100px", async () => {
+      it("clamps to min 100px", () => {
         render(<BottomPanel pageId="target.md" />);
-        await userEvent.click(screen.getByText("Linked References"));
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
         const panel = screen.getByTestId("bottom-panel");
         mockParentBoundingRect(panel, 1000);
 
@@ -650,9 +405,11 @@ describe("BottomPanel", () => {
         expect(panel.style.height).toBe("100px");
       });
 
-      it("clamps to 60% of parent", async () => {
+      it("clamps to 60% of parent", () => {
         render(<BottomPanel pageId="target.md" />);
-        await userEvent.click(screen.getByText("Linked References"));
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
         const panel = screen.getByTestId("bottom-panel");
         mockParentBoundingRect(panel, 500);
 
@@ -664,9 +421,11 @@ describe("BottomPanel", () => {
         expect(panel.style.height).toBe("300px");
       });
 
-      it("persists final height to localStorage on mouseup", async () => {
+      it("persists final height to localStorage on mouseup", () => {
         render(<BottomPanel pageId="target.md" />);
-        await userEvent.click(screen.getByText("Linked References"));
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
         const panel = screen.getByTestId("bottom-panel");
         mockParentBoundingRect(panel, 1000);
 
@@ -689,12 +448,14 @@ describe("BottomPanel", () => {
           fireEvent.mouseDown(handle, { clientY: 500 });
           fireEvent.mouseMove(document, { clientY: 400 });
         });
-        expect(panel.style.height).toBe("32px");
+        expect(panel.style.height).toBe("0px");
       });
 
-      it("multiple mousemove events update height continuously", async () => {
+      it("multiple mousemove events update height continuously", () => {
         render(<BottomPanel pageId="target.md" />);
-        await userEvent.click(screen.getByText("Linked References"));
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
         const panel = screen.getByTestId("bottom-panel");
         mockParentBoundingRect(panel, 1000);
 
@@ -718,9 +479,11 @@ describe("BottomPanel", () => {
     });
 
     describe("transition during drag", () => {
-      it("disables transition during drag and restores after", async () => {
+      it("disables transition during drag and restores after", () => {
         render(<BottomPanel pageId="target.md" />);
-        await userEvent.click(screen.getByText("Linked References"));
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
         const panel = screen.getByTestId("bottom-panel");
         mockParentBoundingRect(panel, 1000);
 
@@ -740,9 +503,11 @@ describe("BottomPanel", () => {
     });
 
     describe("user-select during drag", () => {
-      it("sets body user-select to none during drag and clears after", async () => {
+      it("sets body user-select to none during drag and clears after", () => {
         render(<BottomPanel pageId="target.md" />);
-        await userEvent.click(screen.getByText("Linked References"));
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
         const panel = screen.getByTestId("bottom-panel");
         mockParentBoundingRect(panel, 1000);
 
@@ -760,13 +525,14 @@ describe("BottomPanel", () => {
     });
 
     describe("window resize re-clamp", () => {
-      it("re-clamps height when window resizes and parent shrinks", async () => {
-        localStorage.setItem("lit-bottom-panel-height", "400");
+      it("re-clamps height when window resizes and parent shrinks", () => {
         render(<BottomPanel pageId="target.md" />);
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked", panelHeight: 400 });
+        });
         const panel = screen.getByTestId("bottom-panel");
         mockParentBoundingRect(panel, 1000);
 
-        await userEvent.click(screen.getByText("Linked References"));
         expect(panel.style.height).toBe("400px");
 
         mockParentBoundingRect(panel, 500);
@@ -778,6 +544,7 @@ describe("BottomPanel", () => {
 
       it("does NOT re-clamp when folded", () => {
         localStorage.setItem("lit-bottom-panel-height", "400");
+        useBottomPanelStore.setState({ panelHeight: 400 });
         render(<BottomPanel pageId="target.md" />);
         const panel = screen.getByTestId("bottom-panel");
         mockParentBoundingRect(panel, 300);
@@ -785,17 +552,17 @@ describe("BottomPanel", () => {
         act(() => {
           window.dispatchEvent(new Event("resize"));
         });
-        expect(panel.style.height).toBe("32px");
+        expect(panel.style.height).toBe("0px");
         expect(localStorage.getItem("lit-bottom-panel-height")).toBe("400");
       });
 
-      it("persists re-clamped height to localStorage", async () => {
-        localStorage.setItem("lit-bottom-panel-height", "400");
+      it("persists re-clamped height to localStorage", () => {
         render(<BottomPanel pageId="target.md" />);
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked", panelHeight: 400 });
+        });
         const panel = screen.getByTestId("bottom-panel");
         mockParentBoundingRect(panel, 1000);
-
-        await userEvent.click(screen.getByText("Linked References"));
 
         mockParentBoundingRect(panel, 500);
         act(() => {
@@ -804,42 +571,29 @@ describe("BottomPanel", () => {
         expect(localStorage.getItem("lit-bottom-panel-height")).toBe("300");
       });
 
-      it("clamps on unfold if stored height exceeds current 60% max", async () => {
-        localStorage.setItem("lit-bottom-panel-height", "400");
+      it("clamps on unfold if stored height exceeds current 60% max", () => {
         render(<BottomPanel pageId="target.md" />);
         const panel = screen.getByTestId("bottom-panel");
         mockParentBoundingRect(panel, 500);
 
-        await userEvent.click(screen.getByText("Linked References"));
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked", panelHeight: 400 });
+        });
         expect(panel.style.height).toBe("300px");
       });
     });
 
     describe("edge cases", () => {
-      it("drag on handle does not trigger tab fold/unfold", async () => {
+      it("content area div height updates with panelHeight", () => {
         render(<BottomPanel pageId="target.md" />);
-        await userEvent.click(screen.getByText("Linked References"));
-        const panel = screen.getByTestId("bottom-panel");
-        mockParentBoundingRect(panel, 1000);
-
-        expect(panel.style.height).toBe("200px");
-
-        const handle = screen.getByTestId("resize-handle");
         act(() => {
-          fireEvent.mouseDown(handle, { clientY: 500 });
-          fireEvent.mouseUp(document);
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
         });
-        expect(panel.style.height).not.toBe("32px");
-      });
-
-      it("content area div height updates with panelHeight", async () => {
-        render(<BottomPanel pageId="target.md" />);
-        await userEvent.click(screen.getByText("Linked References"));
         const panel = screen.getByTestId("bottom-panel");
         mockParentBoundingRect(panel, 1000);
 
-        const contentArea = panel.children[1] as HTMLElement;
-        expect(contentArea.style.height).toBe("168px");
+        const contentArea = screen.getByRole("tabpanel");
+        expect(contentArea.style.height).toBe("200px");
 
         const handle = screen.getByTestId("resize-handle");
         act(() => {
@@ -847,12 +601,14 @@ describe("BottomPanel", () => {
           fireEvent.mouseMove(document, { clientY: 400 });
           fireEvent.mouseUp(document);
         });
-        expect(contentArea.style.height).toBe("268px");
+        expect(contentArea.style.height).toBe("300px");
       });
 
-      it("unmount during drag does not throw", async () => {
+      it("unmount during drag does not throw", () => {
         const { unmount } = render(<BottomPanel pageId="target.md" />);
-        await userEvent.click(screen.getByText("Linked References"));
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
         const panel = screen.getByTestId("bottom-panel");
         mockParentBoundingRect(panel, 1000);
 
@@ -876,14 +632,16 @@ describe("BottomPanel", () => {
         });
 
         render(<BottomPanel pageId="target.md" />);
-        await userEvent.click(screen.getByText("Linked References"));
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
 
         await waitFor(() => {
           expect(screen.getByTestId("backlinks-scroll-container")).toBeInTheDocument();
         });
 
         const scrollContainer = screen.getByTestId("backlinks-scroll-container");
-        expect(scrollContainer.style.height).toBe("168px");
+        expect(scrollContainer.style.height).toBe("200px");
 
         const panel = screen.getByTestId("bottom-panel");
         mockParentBoundingRect(panel, 1000);
@@ -896,20 +654,23 @@ describe("BottomPanel", () => {
           fireEvent.mouseMove(document, { clientY: 400 });
         });
 
-        expect(scrollContainer.style.height).toBe("168px");
+        // During drag, child contentHeight stays at original value
+        expect(scrollContainer.style.height).toBe("200px");
 
         act(() => {
           fireEvent.mouseUp(document);
         });
-        expect(scrollContainer.style.height).toBe("268px");
+        expect(scrollContainer.style.height).toBe("300px");
       });
 
-      it("tabpanel height updates via DOM during drag", async () => {
+      it("contentRef height updates via DOM during drag", () => {
         render(<BottomPanel pageId="target.md" />);
-        await userEvent.click(screen.getByText("Linked References"));
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
 
         const tabpanel = screen.getByRole("tabpanel");
-        expect(tabpanel.style.height).toBe("168px");
+        expect(tabpanel.style.height).toBe("200px");
 
         const panel = screen.getByTestId("bottom-panel");
         mockParentBoundingRect(panel, 1000);
@@ -920,173 +681,13 @@ describe("BottomPanel", () => {
           fireEvent.mouseMove(document, { clientY: 400 });
         });
 
-        expect(tabpanel.style.height).toBe("268px");
+        expect(tabpanel.style.height).toBe("300px");
 
         act(() => {
           fireEvent.mouseUp(document);
         });
-        expect(tabpanel.style.height).toBe("268px");
+        expect(tabpanel.style.height).toBe("300px");
       });
-    });
-  });
-
-  describe("ARIA attributes", () => {
-    it("tab bar container has role=tablist", () => {
-      render(<BottomPanel pageId="target.md" />);
-      expect(screen.getByRole("tablist")).toBeInTheDocument();
-    });
-
-    it("tab buttons have role=tab", () => {
-      render(<BottomPanel pageId="target.md" />);
-      const tabs = screen.getAllByRole("tab");
-      expect(tabs.length).toBe(2);
-    });
-
-    it("panel body has role=tabpanel when unfolded", async () => {
-      render(<BottomPanel pageId="target.md" />);
-      await userEvent.click(screen.getByText("Linked References"));
-      expect(screen.getByRole("tabpanel")).toBeInTheDocument();
-    });
-
-    it("tabs have correct IDs", () => {
-      render(<BottomPanel pageId="target.md" />);
-      expect(screen.getByTestId("tab-linked").id).toBe("bp-tab-linked");
-      expect(screen.getByTestId("tab-unlinked").id).toBe("bp-tab-unlinked");
-    });
-
-    it("active tab when unfolded has aria-selected=true, inactive has false", async () => {
-      render(<BottomPanel pageId="target.md" />);
-      await userEvent.click(screen.getByText("Linked References"));
-
-      expect(screen.getByTestId("tab-linked")).toHaveAttribute("aria-selected", "true");
-      expect(screen.getByTestId("tab-unlinked")).toHaveAttribute("aria-selected", "false");
-    });
-
-    it("when folded, all tabs have aria-selected=false", () => {
-      render(<BottomPanel pageId="target.md" />);
-      expect(screen.getByTestId("tab-linked")).toHaveAttribute("aria-selected", "false");
-      expect(screen.getByTestId("tab-unlinked")).toHaveAttribute("aria-selected", "false");
-    });
-
-    it("tabs have aria-controls pointing to panel body id", () => {
-      render(<BottomPanel pageId="target.md" />);
-      expect(screen.getByTestId("tab-linked")).toHaveAttribute("aria-controls", "bp-tabpanel");
-      expect(screen.getByTestId("tab-unlinked")).toHaveAttribute("aria-controls", "bp-tabpanel");
-    });
-
-    it("panel body aria-labelledby points to active tab id", async () => {
-      render(<BottomPanel pageId="target.md" />);
-      await userEvent.click(screen.getByText("Linked References"));
-      const panel = screen.getByRole("tabpanel");
-      expect(panel).toHaveAttribute("aria-labelledby", "bp-tab-linked");
-    });
-
-    it("switching tabs updates aria-labelledby", async () => {
-      render(<BottomPanel pageId="target.md" />);
-      await userEvent.click(screen.getByText("Linked References"));
-      await userEvent.click(screen.getByText("Unlinked References"));
-      const panel = screen.getByRole("tabpanel");
-      expect(panel).toHaveAttribute("aria-labelledby", "bp-tab-unlinked");
-    });
-  });
-
-  describe("scroll isolation", () => {
-    const backlinkEntry = { source_id: "a.md", source_title: "A", context: "ctx", source_line: 1 };
-    const unlinkedEntry = { source_id: "b.md", source_title: "B", context: "ctx", source_line: 1, matched_text: "target" };
-
-    it("each panel has its own scroll container", async () => {
-      mockInvoke((cmd) => {
-        if (cmd === "get_backlinks") return [backlinkEntry];
-        if (cmd === "get_unlinked_mentions") return [unlinkedEntry];
-        throw new Error(`Unknown command: ${cmd}`);
-      });
-
-      render(<BottomPanel pageId="target.md" />);
-
-      await userEvent.click(screen.getByText("Linked References"));
-      await waitFor(() => {
-        expect(screen.getByTestId("backlinks-scroll-container")).toBeInTheDocument();
-      });
-
-      await userEvent.click(screen.getByText("Unlinked References"));
-      await waitFor(() => {
-        expect(screen.getByTestId("unlinked-scroll-container")).toBeInTheDocument();
-      });
-    });
-
-    it("tabpanel div does not scroll itself", async () => {
-      render(<BottomPanel pageId="target.md" />);
-      await userEvent.click(screen.getByText("Linked References"));
-
-      const tabpanel = screen.getByRole("tabpanel");
-      expect(tabpanel.className).toContain("overflow-hidden");
-      expect(tabpanel.className).not.toContain("overflow-y-auto");
-    });
-
-    it("passes contentHeight to panels based on panelHeight minus tab bar", async () => {
-      mockInvoke((cmd) => {
-        if (cmd === "get_backlinks") return [backlinkEntry];
-        if (cmd === "get_unlinked_mentions") return [];
-        throw new Error(`Unknown command: ${cmd}`);
-      });
-
-      render(<BottomPanel pageId="target.md" />);
-      await userEvent.click(screen.getByText("Linked References"));
-
-      await waitFor(() => {
-        const scrollContainer = screen.getByTestId("backlinks-scroll-container");
-        // Default panelHeight is 200, TAB_BAR_HEIGHT is 32, so contentHeight = 168
-        expect(scrollContainer.style.height).toBe("168px");
-      });
-    });
-  });
-
-  describe("focus management", () => {
-    it("opening via toggle event does not steal focus", () => {
-      render(<BottomPanel pageId="target.md" />);
-      const dummy = document.createElement("input");
-      document.body.appendChild(dummy);
-      dummy.focus();
-      expect(document.activeElement).toBe(dummy);
-
-      act(() => {
-        window.dispatchEvent(new CustomEvent("lit:toggle-bottom-panel"));
-      });
-
-      expect(document.activeElement).toBe(dummy);
-      document.body.removeChild(dummy);
-    });
-
-    it("keyboard close dispatches lit:request-editor-focus", async () => {
-      render(<BottomPanel pageId="target.md" />);
-      const spy = vi.fn();
-      window.addEventListener("lit:request-editor-focus", spy);
-
-      act(() => {
-        window.dispatchEvent(new CustomEvent("lit:toggle-bottom-panel"));
-      });
-
-      act(() => {
-        window.dispatchEvent(new CustomEvent("lit:toggle-bottom-panel"));
-      });
-
-      await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
-      window.removeEventListener("lit:request-editor-focus", spy);
-    });
-
-    it("click-to-fold does NOT dispatch lit:request-editor-focus", async () => {
-      render(<BottomPanel pageId="target.md" />);
-      const spy = vi.fn();
-      window.addEventListener("lit:request-editor-focus", spy);
-
-      await userEvent.click(screen.getByText("Linked References"));
-      await userEvent.click(screen.getByText("Linked References"));
-
-      await act(async () => {
-        await new Promise((r) => setTimeout(r, 50));
-      });
-      expect(spy).not.toHaveBeenCalled();
-      window.removeEventListener("lit:request-editor-focus", spy);
     });
   });
 });

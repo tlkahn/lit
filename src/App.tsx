@@ -30,6 +30,7 @@ import { AnnotationBuilderModal } from "./components/AnnotationBuilderModal";
 import { ExportDialog } from "./components/ExportDialog";
 import { SettingsModal } from "./components/SettingsModal";
 import { useModalLock } from "./hooks/useModalLock";
+import { useBottomPanelEvents } from "./hooks/useBottomPanelEvents";
 import { getCurrentEditorView } from "./lib/editorViewRef";
 import { annotationToFields, getEditCursorOffset, type AnnotationBuilderEventDetail, type EditRawInfo } from "./lib/annotationDsl";
 import type { Annotation, ExportProgress, ExportSummary } from "./lib/ipc";
@@ -50,6 +51,7 @@ declare global {
 function App() {
   useTheme();
   useLicenseTitle();
+  useBottomPanelEvents();
   const { position } = useSidebarPosition();
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const openWorkspace = useWorkspaceStore((s) => s.openWorkspace);
