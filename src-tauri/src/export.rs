@@ -219,6 +219,48 @@ where
     write_zip(&entries, dest, on_progress)
 }
 
+pub fn run_subgraph_export<F>(
+    root: &Path,
+    graph_index: &crate::graph::indexer::GraphIndex,
+    node_id: &str,
+    depth: usize,
+    dest: &Path,
+    on_progress: F,
+) -> Result<ExportSummary, String>
+where
+    F: Fn(usize, usize),
+{
+    if !(1..=3).contains(&depth) {
+        return Err(format!(
+            "depth must be between 1 and 3, got {depth}"
+        ));
+    }
+
+    let subgraph = graph_index
+        .neighbors(node_id, depth, false)
+        .map_err(|e| e.to_string())?;
+
+    let seed_node = subgraph
+        .nodes
+        .iter()
+        .find(|n| n.id == node_id)
+        .ok_or_else(|| format!("seed node \"{node_id}\" not found in graph result"))?;
+
+    if seed_node.is_stub {
+        return Err(format!("seed node \"{node_id}\" is a stub (no backing file)"));
+    }
+
+    let node_ids: Vec<String> = subgraph
+        .nodes
+        .into_iter()
+        .filter(|n| !n.is_stub)
+        .map(|n| n.id)
+        .collect();
+
+    let entries = collect_subgraph_export_files(root, &node_ids)?;
+    write_zip(&entries, dest, on_progress)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -613,6 +655,191 @@ mod tests {
         let input = "before\n```\ncode\n```  ";
         let result = strip_code(input);
         assert!(!result.contains("code"));
+    }
+
+    // --- run_subgraph_export tests ---
+
+    fn write_md(root: &Path, rel_path: &str, content: &str) {
+        let abs = root.join(rel_path);
+        if let Some(parent) = abs.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(abs, content).unwrap();
+    }
+
+    fn build_graph(root: &Path) -> crate::graph::indexer::GraphIndex {
+        crate::graph::indexer::GraphIndex::build(root.to_path_buf(), false).unwrap()
+    }
+
+    fn zip_entries(path: &Path) -> Vec<String> {
+        let file = std::fs::File::open(path).unwrap();
+        let archive = zip::ZipArchive::new(file).unwrap();
+        let mut names: Vec<String> = (0..archive.len())
+            .map(|i| archive.name_for_index(i).unwrap().to_string())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn run_subgraph_export_rejects_depth_zero() {
+        let dir = tempfile::tempdir().unwrap();
+        write_md(dir.path(), "a.md", "# A");
+        let gi = build_graph(dir.path());
+        let dest = dir.path().join("out.zip");
+        let result = run_subgraph_export(dir.path(), &gi, "a.md", 0, &dest, |_, _| {});
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("depth"));
+    }
+
+    #[test]
+    fn run_subgraph_export_rejects_depth_four() {
+        let dir = tempfile::tempdir().unwrap();
+        write_md(dir.path(), "a.md", "# A");
+        let gi = build_graph(dir.path());
+        let dest = dir.path().join("out.zip");
+        let result = run_subgraph_export(dir.path(), &gi, "a.md", 4, &dest, |_, _| {});
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("depth"));
+    }
+
+    #[test]
+    fn run_subgraph_export_isolated_node() {
+        let dir = tempfile::tempdir().unwrap();
+        write_md(dir.path(), "a.md", "# A");
+        let gi = build_graph(dir.path());
+        let dest = dir.path().join("out.zip");
+        let summary = run_subgraph_export(dir.path(), &gi, "a.md", 1, &dest, |_, _| {}).unwrap();
+        assert_eq!(summary.exported_count, 1);
+        assert_eq!(zip_entries(&dest), vec!["a.md"]);
+    }
+
+    #[test]
+    fn run_subgraph_export_seed_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        write_md(dir.path(), "a.md", "# A");
+        let gi = build_graph(dir.path());
+        let dest = dir.path().join("out.zip");
+        let result = run_subgraph_export(dir.path(), &gi, "nonexistent.md", 1, &dest, |_, _| {});
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found"));
+    }
+
+    #[test]
+    fn run_subgraph_export_seed_is_stub() {
+        let dir = tempfile::tempdir().unwrap();
+        write_md(dir.path(), "a.md", "# A\n\n[[ghost]]");
+        let gi = build_graph(dir.path());
+        let dest = dir.path().join("out.zip");
+        let result = run_subgraph_export(dir.path(), &gi, "ghost", 1, &dest, |_, _| {});
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("stub"));
+    }
+
+    #[test]
+    fn run_subgraph_export_depth_one_with_neighbor() {
+        let dir = tempfile::tempdir().unwrap();
+        write_md(dir.path(), "a.md", "# A\n\n[[b]]");
+        write_md(dir.path(), "b.md", "# B");
+        write_md(dir.path(), "c.md", "# C");
+        let gi = build_graph(dir.path());
+        let dest = dir.path().join("out.zip");
+        let summary = run_subgraph_export(dir.path(), &gi, "a.md", 1, &dest, |_, _| {}).unwrap();
+        assert_eq!(summary.exported_count, 2);
+        assert_eq!(zip_entries(&dest), vec!["a.md", "b.md"]);
+    }
+
+    #[test]
+    fn run_subgraph_export_skips_stub_neighbors() {
+        let dir = tempfile::tempdir().unwrap();
+        write_md(dir.path(), "a.md", "# A\n\n[[b]] [[ghost]]");
+        write_md(dir.path(), "b.md", "# B");
+        let gi = build_graph(dir.path());
+        let dest = dir.path().join("out.zip");
+        let summary = run_subgraph_export(dir.path(), &gi, "a.md", 1, &dest, |_, _| {}).unwrap();
+        assert_eq!(summary.exported_count, 2);
+        assert_eq!(zip_entries(&dest), vec!["a.md", "b.md"]);
+    }
+
+    #[test]
+    fn run_subgraph_export_depth_two() {
+        let dir = tempfile::tempdir().unwrap();
+        write_md(dir.path(), "a.md", "# A\n\n[[b]]");
+        write_md(dir.path(), "b.md", "# B\n\n[[c]]");
+        write_md(dir.path(), "c.md", "# C");
+        write_md(dir.path(), "d.md", "# D");
+        let gi = build_graph(dir.path());
+        let dest = dir.path().join("out.zip");
+        let summary = run_subgraph_export(dir.path(), &gi, "a.md", 2, &dest, |_, _| {}).unwrap();
+        assert_eq!(summary.exported_count, 3);
+        assert_eq!(zip_entries(&dest), vec!["a.md", "b.md", "c.md"]);
+    }
+
+    #[test]
+    fn run_subgraph_export_depth_three() {
+        let dir = tempfile::tempdir().unwrap();
+        write_md(dir.path(), "a.md", "# A\n\n[[b]]");
+        write_md(dir.path(), "b.md", "# B\n\n[[c]]");
+        write_md(dir.path(), "c.md", "# C\n\n[[d]]");
+        write_md(dir.path(), "d.md", "# D");
+        write_md(dir.path(), "e.md", "# E");
+        let gi = build_graph(dir.path());
+        let dest = dir.path().join("out.zip");
+        let summary = run_subgraph_export(dir.path(), &gi, "a.md", 3, &dest, |_, _| {}).unwrap();
+        assert_eq!(summary.exported_count, 4);
+    }
+
+    #[test]
+    fn run_subgraph_export_includes_backlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        write_md(dir.path(), "a.md", "# A");
+        write_md(dir.path(), "b.md", "# B\n\n[[a]]");
+        let gi = build_graph(dir.path());
+        let dest = dir.path().join("out.zip");
+        let summary = run_subgraph_export(dir.path(), &gi, "a.md", 1, &dest, |_, _| {}).unwrap();
+        assert_eq!(summary.exported_count, 2);
+        assert_eq!(zip_entries(&dest), vec!["a.md", "b.md"]);
+    }
+
+    #[test]
+    fn run_subgraph_export_includes_assets() {
+        let dir = tempfile::tempdir().unwrap();
+        write_md(dir.path(), "a.md", "# A\n\n[[b]]\n\n![](imgs/photo.png)");
+        write_md(dir.path(), "b.md", "# B");
+        let imgs = dir.path().join("imgs");
+        std::fs::create_dir(&imgs).unwrap();
+        std::fs::write(imgs.join("photo.png"), b"fake png").unwrap();
+        let gi = build_graph(dir.path());
+        let dest = dir.path().join("out.zip");
+        let summary = run_subgraph_export(dir.path(), &gi, "a.md", 1, &dest, |_, _| {}).unwrap();
+        assert_eq!(summary.exported_count, 3);
+        assert_eq!(zip_entries(&dest), vec!["a.md", "b.md", "imgs/photo.png"]);
+    }
+
+    #[test]
+    fn run_subgraph_export_progress_callback() {
+        let dir = tempfile::tempdir().unwrap();
+        write_md(dir.path(), "a.md", "# A\n\n[[b]]");
+        write_md(dir.path(), "b.md", "# B");
+        let gi = build_graph(dir.path());
+        let dest = dir.path().join("out.zip");
+        let calls = std::sync::Mutex::new(Vec::new());
+        run_subgraph_export(dir.path(), &gi, "a.md", 1, &dest, |current, total| {
+            calls.lock().unwrap().push((current, total));
+        })
+        .unwrap();
+        let calls = calls.into_inner().unwrap();
+        assert_eq!(calls, vec![(1, 2), (2, 2)]);
+    }
+
+    #[test]
+    fn run_subgraph_export_summary_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        write_md(dir.path(), "a.md", "# A");
+        let gi = build_graph(dir.path());
+        let dest = dir.path().join("out.zip");
+        let summary = run_subgraph_export(dir.path(), &gi, "a.md", 1, &dest, |_, _| {}).unwrap();
+        assert_eq!(summary.destination, dest.to_string_lossy());
     }
 
     #[test]

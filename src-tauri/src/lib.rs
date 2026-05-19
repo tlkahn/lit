@@ -325,6 +325,7 @@ pub fn run() {
             commands::annotation::search_annotations,
             commands::annotation::list_annotations,
             commands::export::export_data,
+            commands::export::export_subgraph,
             commands::license::get_license_status,
             commands::license::activate_license,
             commands::license::check_online_validation,
