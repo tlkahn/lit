@@ -15,6 +15,8 @@ import { PdfViewer } from "./PdfViewer";
 import { BottomPanel } from "./BottomPanel";
 import { buildHeadingTree, applyRename, applyMove, insertChild, insertSibling, insertDangling, resolveDeleteFallback, findNode } from "../lib/headingTree";
 import { YamlHighlighter } from "./YamlHighlighter";
+import { SubgraphExportPicker } from "./SubgraphExportPicker";
+import { useSubgraphExport } from "../hooks/useSubgraphExport";
 import { globalJumpTracker } from "../editor/jumpTracker";
 
 const LazyMindmapView = lazy(() => import("./MindmapView"));
@@ -31,6 +33,7 @@ export function parseYamlErrorLocation(msg: string): { line: number; column: num
 }
 
 export function ContentArea() {
+  const exportFlow = useSubgraphExport();
   const focusedPaneId = usePaneStore((s) => s.focusedPaneId);
   const focusedLeaf = usePaneStore((s) => findLeaf(s.root, s.focusedPaneId));
   const currentPanePage = focusedLeaf?.pagePath ?? null;
@@ -492,6 +495,9 @@ export function ContentArea() {
                 view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: newBody } });
                 setMindmapSelectedId(fallbackId);
               }}
+              onExportNetwork={() => {
+                if (currentPanePage) exportFlow.requestExport(currentPanePage);
+              }}
             />
           </Suspense>
         </div>
@@ -508,11 +514,17 @@ export function ContentArea() {
                 setViewMode("editor");
               }}
               onExit={() => setViewMode("editor")}
+              onExportNetwork={(nodeId) => exportFlow.requestExport(nodeId)}
             />
           </Suspense>
         </div>
       )}
       {currentPanePage && <BottomPanel pageId={currentPanePage} />}
+      <SubgraphExportPicker
+        open={exportFlow.pickerOpen}
+        onExport={exportFlow.handlePickerExport}
+        onCancel={exportFlow.handlePickerCancel}
+      />
     </main>
   );
 }

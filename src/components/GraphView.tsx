@@ -19,9 +19,10 @@ export interface GraphViewProps {
   visible?: boolean;
   onNavigate?: (pageId: string) => void;
   onExit?: () => void;
+  onExportNetwork?: (nodeId: string) => void;
 }
 
-export default function GraphView({ activePageId, initialMode, visible = true, onNavigate, onExit }: GraphViewProps) {
+export default function GraphView({ activePageId, initialMode, visible = true, onNavigate, onExit, onExportNetwork }: GraphViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sigmaRef = useRef<unknown>(null);
   const graphRef = useRef<unknown>(null);
@@ -34,6 +35,8 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   onNavigateRef.current = onNavigate;
   const onExitRef = useRef(onExit);
   onExitRef.current = onExit;
+  const onExportNetworkRef = useRef(onExportNetwork);
+  onExportNetworkRef.current = onExportNetwork;
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
   const lastRenderedSeedRef = useRef<string | null>(null);
@@ -57,6 +60,25 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   const [searchQuery, setSearchQuery] = useState("");
   const [searchMatches, setSearchMatches] = useState<string[]>([]);
   const [graphStats, setGraphStats] = useState<{ nodes: number; edges: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const handleClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.closest?.("[data-graph-context-menu]")) return;
+      setContextMenu(null);
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setContextMenu(null);
+    };
+    document.addEventListener("pointerdown", handleClick);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("pointerdown", handleClick);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [contextMenu]);
 
   const handleResetZoom = useCallback(() => {
     const sigma = sigmaRef.current as { getCamera: () => { animatedReset: () => void } } | null;
@@ -222,6 +244,12 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
 
         sigma.on("clickNode", ({ node }) => {
           onNavigateRef.current?.(node);
+        });
+
+        sigma.on("rightClickNode", ({ node, event }) => {
+          const mouseEvent = event as { original?: MouseEvent; x?: number; y?: number } | undefined;
+          if (mouseEvent?.original) mouseEvent.original.preventDefault();
+          setContextMenu({ nodeId: node, x: mouseEvent?.x ?? 0, y: mouseEvent?.y ?? 0 });
         });
 
         sigma.on("enterNode", ({ node, event }) => {
@@ -470,7 +498,29 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         onClose={handleSearchClose}
       />
       <GraphTooltip {...tooltip} />
-      <div ref={containerRef} data-testid="graph-canvas" style={{ position: "absolute", inset: 0, cursor: "grab" }} />
+      <div
+        ref={containerRef}
+        data-testid="graph-canvas"
+        style={{ position: "absolute", inset: 0, cursor: "grab" }}
+        onContextMenu={(e) => e.preventDefault()}
+      />
+      {contextMenu && (
+        <div
+          data-graph-context-menu
+          className="fixed z-50 min-w-[160px] select-none rounded-lg border border-border/40 bg-bg-primary/80 p-1 shadow-xl shadow-black/20 backdrop-blur-xl backdrop-saturate-150 dark:border-border/10 dark:bg-bg-primary/70"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+        >
+          <button
+            className="block w-full rounded-md px-3 py-1 text-start text-[13px] text-text-normal hover:bg-interactive-accent hover:text-text-on-accent"
+            onClick={() => {
+              onExportNetworkRef.current?.(contextMenu.nodeId);
+              setContextMenu(null);
+            }}
+          >
+            Export Local Network…
+          </button>
+        </div>
+      )}
     </div>
   );
 }

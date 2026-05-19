@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, act } from "@testing-library/react";
+import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { mockInvoke, mockListen, emitMockEvent, resetListenMock } from "../test/tauri-mock";
 import * as graphLayout from "../lib/graphLayout";
@@ -1443,5 +1443,99 @@ describe("GraphView", () => {
     });
 
     resetListenMock();
+  });
+
+  it("right-click node shows context menu with 'Export Local Network…'", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    const { container } = render(<GraphView onExportNetwork={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    expect(rightClickHandler).toBeDefined();
+
+    act(() => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    const menu = container.querySelector("[data-graph-context-menu]");
+    expect(menu).toBeTruthy();
+    expect(menu!.textContent).toContain("Export Local Network…");
+  });
+
+  it("clicking 'Export Local Network…' calls onExportNetwork with node ID", async () => {
+    const onExportNetwork = vi.fn();
+    const GraphView = (await import("./GraphView")).default;
+    const { container } = render(<GraphView onExportNetwork={onExportNetwork} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    act(() => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    const exportBtn = container.querySelector("[data-graph-context-menu] button")!;
+    fireEvent.click(exportBtn);
+    expect(onExportNetwork).toHaveBeenCalledWith("a.md");
+  });
+
+  it("clicking 'Export Local Network…' dismisses context menu", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    const { container } = render(<GraphView onExportNetwork={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    act(() => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    fireEvent.click(container.querySelector("[data-graph-context-menu] button")!);
+    expect(container.querySelector("[data-graph-context-menu]")).toBeNull();
+  });
+
+  it("clicking outside context menu dismisses it", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    const { container } = render(<GraphView onExportNetwork={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    act(() => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+    expect(container.querySelector("[data-graph-context-menu]")).toBeTruthy();
+
+    fireEvent.pointerDown(document);
+    expect(container.querySelector("[data-graph-context-menu]")).toBeNull();
+  });
+
+  it("Escape dismisses context menu", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    const { container } = render(<GraphView onExportNetwork={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    act(() => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+    expect(container.querySelector("[data-graph-context-menu]")).toBeTruthy();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(container.querySelector("[data-graph-context-menu]")).toBeNull();
+  });
+
+  it("no context menu without right-click", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    const { container } = render(<GraphView onExportNetwork={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+    expect(container.querySelector("[data-graph-context-menu]")).toBeNull();
   });
 });

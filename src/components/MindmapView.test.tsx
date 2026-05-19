@@ -1583,3 +1583,40 @@ describe("MindmapView edit-dismiss refocus", () => {
     expect(document.activeElement).toBe(svg);
   });
 });
+
+describe("MindmapView export context menu", () => {
+  it("shows 'Export Local Network…' when onExportNetwork provided", () => {
+    const tree = makeTree("# A\n## B");
+    const { container } = render(
+      <MindmapView tree={tree} {...defaultProps()} onExportNetwork={vi.fn()} />,
+    );
+    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
+    fireEvent.contextMenu(nodeB);
+    const btn = container.querySelector("[data-mindmap-context-export]");
+    expect(btn).toBeTruthy();
+    expect(btn!.textContent).toBe("Export Local Network…");
+  });
+
+  it("does NOT show it when onExportNetwork is undefined", () => {
+    const tree = makeTree("# A\n## B");
+    const { container } = render(
+      <MindmapView tree={tree} {...defaultProps()} />,
+    );
+    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
+    fireEvent.contextMenu(nodeB);
+    expect(container.querySelector("[data-mindmap-context-export]")).toBeNull();
+  });
+
+  it("clicking it calls onExportNetwork and dismisses menu", () => {
+    const onExportNetwork = vi.fn();
+    const tree = makeTree("# A\n## B");
+    const { container } = render(
+      <MindmapView tree={tree} {...defaultProps()} onExportNetwork={onExportNetwork} />,
+    );
+    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
+    fireEvent.contextMenu(nodeB);
+    fireEvent.click(container.querySelector("[data-mindmap-context-export]")!);
+    expect(onExportNetwork).toHaveBeenCalled();
+    expect(container.querySelector("[data-mindmap-context-menu]")).toBeNull();
+  });
+});

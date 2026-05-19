@@ -10,6 +10,8 @@ import { useFlatTree, type FolderNode } from "../hooks/useFlatTree";
 import { useSidebarSort } from "../hooks/useSidebarSort";
 import { Outline } from "./Outline";
 import { SortDropdown } from "./SortDropdown";
+import { SubgraphExportPicker } from "./SubgraphExportPicker";
+import { useSubgraphExport } from "../hooks/useSubgraphExport";
 import type { PageMeta } from "../lib/ipc";
 
 function buildTree(pages: PageMeta[]): FolderNode {
@@ -41,6 +43,7 @@ const PageItem = memo(function PageItem({
   onRenameStart,
   onRenameCommit,
   onRenameCancel,
+  onExportNetwork,
   depth,
 }: {
   page: PageMeta;
@@ -54,6 +57,7 @@ const PageItem = memo(function PageItem({
   onRenameStart: (path: string) => void;
   onRenameCommit: (path: string, newName: string) => void;
   onRenameCancel: () => void;
+  onExportNetwork: (path: string) => void;
   depth: number;
 }) {
   const [renameValue, setRenameValue] = useState(page.title);
@@ -187,6 +191,15 @@ const PageItem = memo(function PageItem({
           >
             Open in External Editor
           </button>
+          <button
+            onClick={() => {
+              onMenuClose();
+              onExportNetwork(page.relative_path);
+            }}
+            className="block w-full rounded-md px-3 py-1 text-start text-[13px] text-text-normal hover:bg-interactive-accent hover:text-text-on-accent"
+          >
+            Export Local Network…
+          </button>
           <div className="mx-2 my-1 border-t border-border/40 dark:border-border/10" />
           <button
             onClick={() => {
@@ -207,6 +220,7 @@ const PageItem = memo(function PageItem({
 export const SIDEBAR_WIDTH_PX = 240;
 
 export function Sidebar() {
+  const exportFlow = useSubgraphExport();
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const pages = useWorkspaceStore((s) => s.pages);
   const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
@@ -285,6 +299,7 @@ export function Sidebar() {
   }, [sidebarMenu]);
 
   return (
+    <>
     <aside className="flex h-full shrink-0 flex-col border-e border-border bg-bg-secondary" style={{ width: SIDEBAR_WIDTH_PX }} onContextMenu={handleAsideContextMenu}>
       <div className="flex items-center border-b border-border">
         <button
@@ -366,6 +381,10 @@ export function Sidebar() {
                         onRenameStart={setRenamingPath}
                         onRenameCommit={handleRenameCommit}
                         onRenameCancel={handleRenameCancel}
+                        onExportNetwork={(path) => {
+                          handleMenuClose();
+                          exportFlow.requestExport(path);
+                        }}
                         depth={row.depth}
                       />
                     )}
@@ -407,5 +426,11 @@ export function Sidebar() {
         document.body,
       )}
     </aside>
+    <SubgraphExportPicker
+      open={exportFlow.pickerOpen}
+      onExport={exportFlow.handlePickerExport}
+      onCancel={exportFlow.handlePickerCancel}
+    />
+    </>
   );
 }

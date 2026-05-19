@@ -20,6 +20,7 @@ interface MindmapViewProps {
   onInsertDangling?: (text: string) => string | null;
   onDeleteNode?: (nodeId: string) => void;
   onNodeJump?: (node: HeadingNode) => void;
+  onExportNetwork?: () => void;
   initialFoldedIds?: Set<string>;
   onFoldChange?: (foldedIds: Set<string>) => void;
 }
@@ -34,7 +35,7 @@ function countDescendants(node: HeadingNode): number {
   return count;
 }
 
-export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNodeMove, onInsertChild, onInsertSibling, onInsertDangling, onDeleteNode, onNodeJump, initialFoldedIds, onFoldChange }: MindmapViewProps) {
+export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNodeMove, onInsertChild, onInsertSibling, onInsertDangling, onDeleteNode, onNodeJump, onExportNetwork, initialFoldedIds, onFoldChange }: MindmapViewProps) {
   const lastChildRef = useRef<Map<string, string>>(new Map());
   const prevTreeRef = useRef(tree);
   if (prevTreeRef.current !== tree) {
@@ -578,6 +579,18 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
             >
               Edit
             </button>
+            {onExportNetwork && (
+              <button
+                data-mindmap-context-export
+                className="w-full text-start px-3 py-1.5 text-sm text-neutral-800 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-700"
+                onClick={() => {
+                  onExportNetwork();
+                  setContextMenu(null);
+                }}
+              >
+                Export Local Network…
+              </button>
+            )}
           </div>
         );
       })()}

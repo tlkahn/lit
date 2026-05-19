@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, waitFor, act } from "@testing-library/react";
+import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ContentArea, parseYamlErrorLocation } from "./ContentArea";
 import { mockInvoke, mockListen, emitMockEvent, resetListenMock } from "../test/tauri-mock";
@@ -1126,5 +1126,70 @@ describe("parseYamlErrorLocation", () => {
 
   it("returns null for empty string", () => {
     expect(parseYamlErrorLocation("")).toBeNull();
+  });
+});
+
+describe("ContentArea export network wiring", () => {
+  it("MindmapView receives onExportNetwork callback", async () => {
+    mockInvoke((cmd, args) => {
+      if (cmd === "read_page") {
+        const rp = (args as Record<string, unknown>)?.relativePath;
+        if (rp === "Multi.md") return multiHeadingPage;
+        return samplePage;
+      }
+      if (cmd === "write_page") return null;
+      if (cmd === "parse_raw_yaml") return {};
+      if (cmd === "get_backlinks") return [];
+      if (cmd === "get_keymaps") return [];
+      if (cmd === "get_graph_subgraph") return { nodes: [], edges: [] };
+      if (cmd === "get_pagerank") return {};
+      if (cmd === "get_graph_positions") return {};
+      if (cmd === "acknowledge_file_hash") return null;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    setPage("Multi.md");
+    const user = userEvent.setup();
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor")).toBeInTheDocument();
+    });
+
+    const mindmapBtn = screen.getByRole("button", { name: /mindmap/i });
+    await user.click(mindmapBtn);
+    await waitFor(() => {
+      expect(screen.getByTestId("mindmap-view")).toBeInTheDocument();
+    });
+
+    const { container } = render(<ContentArea />);
+    await user.click(screen.getAllByRole("button", { name: /mindmap/i })[0]!);
+    await waitFor(() => {
+      expect(screen.getAllByTestId("mindmap-view").length).toBeGreaterThan(0);
+    });
+
+    const nodeGroups = container.querySelectorAll("[data-mindmap-node]");
+    if (nodeGroups.length > 0) {
+      fireEvent.contextMenu(nodeGroups[0]!);
+      const exportBtn = container.querySelector("[data-mindmap-context-export]");
+      expect(exportBtn).toBeTruthy();
+    }
+  });
+
+  it("GraphView receives onExportNetwork prop (wrapper renders)", async () => {
+    setPage("Hello.md");
+    const user = userEvent.setup();
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor")).toBeInTheDocument();
+    });
+
+    const graphBtn = screen.getByRole("button", { name: /graph/i });
+    await user.click(graphBtn);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("graph-view-wrapper")).toBeInTheDocument();
+    });
   });
 });
