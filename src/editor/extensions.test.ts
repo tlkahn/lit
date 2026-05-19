@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { EditorState, Compartment } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
+import { EditorView, keymap } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
-import { undo } from "@codemirror/commands";
+import { defaultKeymap, historyKeymap, undo } from "@codemirror/commands";
 import {
   getSearchQuery,
   openSearchPanel,
@@ -18,6 +18,8 @@ import {
 import { createExtensions } from "./extensions";
 import { livePreviewPlugin } from "./livePreview/plugin";
 import { mediaThumbnailsFacet } from "./livePreview";
+import { _clear, registerHandler, executeCommand } from "../lib/commandRegistry";
+import { resolveKeymaps } from "../lib/keymapResolver";
 
 vi.mock("katex", () => ({
   default: {
@@ -331,5 +333,108 @@ describe("search & replace", () => {
     const listKeys = new Set(["Enter", "Tab", "Shift-Tab"]);
     const hasConflict = searchKeymap.some((b) => b.key && listKeys.has(b.key));
     expect(hasConflict).toBe(false);
+  });
+
+  it("repeated selectNextOccurrence builds multi-selection", () => {
+    const { view, destroy } = createViewWithSearch("foo bar foo baz");
+    view.dispatch({ selection: { anchor: 1 } });
+    selectNextOccurrence(view);
+    selectNextOccurrence(view);
+    expect(view.state.selection.ranges.length).toBe(2);
+    expect(view.state.selection.ranges[0]!.from).toBe(0);
+    expect(view.state.selection.ranges[0]!.to).toBe(3);
+    expect(view.state.selection.ranges[1]!.from).toBe(8);
+    expect(view.state.selection.ranges[1]!.to).toBe(11);
+    destroy();
+  });
+
+  it("repeated selectNextOccurrence across lines selects all occurrences", () => {
+    const { view, destroy } = createViewWithSearch("hello world\nhello there\nhello again");
+    view.dispatch({ selection: { anchor: 0 } });
+    selectNextOccurrence(view);
+    selectNextOccurrence(view);
+    selectNextOccurrence(view);
+    expect(view.state.selection.ranges.length).toBe(3);
+    expect(view.state.doc.sliceString(view.state.selection.ranges[0]!.from, view.state.selection.ranges[0]!.to)).toBe("hello");
+    expect(view.state.doc.sliceString(view.state.selection.ranges[1]!.from, view.state.selection.ranges[1]!.to)).toBe("hello");
+    expect(view.state.doc.sliceString(view.state.selection.ranges[2]!.from, view.state.selection.ranges[2]!.to)).toBe("hello");
+    destroy();
+  });
+
+  it("selectNextOccurrence with single occurrence: second call is no-op", () => {
+    const { view, destroy } = createViewWithSearch("unique word here");
+    view.dispatch({ selection: { anchor: 0 } });
+    const first = selectNextOccurrence(view);
+    expect(first).toBe(true);
+    const second = selectNextOccurrence(view);
+    expect(second).toBe(false);
+    expect(view.state.selection.ranges.length).toBe(1);
+    destroy();
+  });
+
+  it("repeated executeCommand('editor.selectNextOccurrence') builds multi-selection", () => {
+    _clear();
+    registerHandler("editor.selectNextOccurrence", (...args: unknown[]) => selectNextOccurrence(args[0] as EditorView));
+
+    const { view, destroy } = createViewWithSearch("foo bar foo baz");
+    view.dispatch({ selection: { anchor: 1 } });
+    executeCommand("editor.selectNextOccurrence", view);
+    executeCommand("editor.selectNextOccurrence", view);
+    expect(view.state.selection.ranges.length).toBe(2);
+    expect(view.state.selection.ranges[0]!.from).toBe(0);
+    expect(view.state.selection.ranges[0]!.to).toBe(3);
+    expect(view.state.selection.ranges[1]!.from).toBe(8);
+    expect(view.state.selection.ranges[1]!.to).toBe(11);
+    _clear();
+    destroy();
+  });
+
+  it("repeated resolveKeymaps binding.run() builds multi-selection", () => {
+    _clear();
+    registerHandler("editor.selectNextOccurrence", (...args: unknown[]) => selectNextOccurrence(args[0] as EditorView));
+    const { editorBindings } = resolveKeymaps([{ key: "Mod-g", command: "editor.selectNextOccurrence" }]);
+    expect(editorBindings.length).toBe(1);
+
+    const { view, destroy } = createViewWithSearch("foo bar foo baz");
+    view.dispatch({ selection: { anchor: 1 } });
+    const binding = editorBindings[0]!;
+    binding.run!(view);
+    binding.run!(view);
+    expect(view.state.selection.ranges.length).toBe(2);
+    expect(view.state.selection.ranges[0]!.from).toBe(0);
+    expect(view.state.selection.ranges[0]!.to).toBe(3);
+    expect(view.state.selection.ranges[1]!.from).toBe(8);
+    expect(view.state.selection.ranges[1]!.to).toBe(11);
+    _clear();
+    destroy();
+  });
+
+  it("keymap compartment reconfigure between calls doesn't reset selection", () => {
+    const keymapCompartment = new Compartment();
+    const config = makeConfig();
+    config.keymapCompartment = keymapCompartment;
+    const exts = createExtensions(config);
+    const state = EditorState.create({ doc: "foo bar foo baz", extensions: exts });
+    const parent = document.createElement("div");
+    document.body.appendChild(parent);
+    const view = new EditorView({ state, parent });
+
+    view.dispatch({ selection: { anchor: 1 } });
+    selectNextOccurrence(view);
+    expect(view.state.selection.ranges.length).toBe(1);
+    expect(view.state.selection.main.from).toBe(0);
+    expect(view.state.selection.main.to).toBe(3);
+
+    view.dispatch({ effects: keymapCompartment.reconfigure(keymap.of([...defaultKeymap, ...historyKeymap])) });
+
+    selectNextOccurrence(view);
+    expect(view.state.selection.ranges.length).toBe(2);
+    expect(view.state.selection.ranges[0]!.from).toBe(0);
+    expect(view.state.selection.ranges[0]!.to).toBe(3);
+    expect(view.state.selection.ranges[1]!.from).toBe(8);
+    expect(view.state.selection.ranges[1]!.to).toBe(11);
+
+    view.destroy();
+    parent.remove();
   });
 });

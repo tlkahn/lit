@@ -1,4 +1,4 @@
-import { type Extension, Compartment, Prec } from "@codemirror/state";
+import { type Extension, Compartment, Prec, EditorState } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { enterInList, indentListItem, outdentListItem } from "./listCommands";
@@ -63,6 +63,7 @@ export function createExtensions(config: ExtensionConfig): Extension[] {
     config.foldCompartment.of(foldExtension(config.foldConfig)),
     config.focusModeCompartment.of(focusModeExtension(config.focusModeActive ?? false)),
     config.editableCompartment.of(EditorView.editable.of(!(config.editorLocked ?? false))),
+    EditorState.allowMultipleSelections.of(true),
     history(),
     search(),
     keymap.of(searchKeymap),
