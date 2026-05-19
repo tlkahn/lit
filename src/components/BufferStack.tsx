@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { usePaneStore, collectLeaves, findLeaf } from "../stores/panes";
 
@@ -11,6 +11,11 @@ export function BufferStack() {
 
   const leaves = collectLeaves(root);
   const openBuffers = leaves.filter((l) => l.pagePath !== null);
+  const shouldShowChip = openBuffers.length > 1;
+
+  useEffect(() => {
+    if (!shouldShowChip) setOpen(false);
+  }, [shouldShowChip]);
 
   useEffect(() => {
     if (!open) return;
@@ -33,7 +38,7 @@ export function BufferStack() {
     };
   }, [open]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open || !popoverRef.current || !buttonRef.current) return;
     const btnRect = buttonRef.current.getBoundingClientRect();
     const menu = popoverRef.current;

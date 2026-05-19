@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import { BufferStack } from "./BufferStack";
 import { usePaneStore, collectLeaves } from "../stores/panes";
 
@@ -420,5 +420,18 @@ describe("BufferStack", () => {
     expect(newFocused).not.toBe("p1");
     const leaves = collectLeaves(usePaneStore.getState().root);
     expect(leaves.find((l) => l.id === newFocused)).toBeDefined();
+  });
+
+  it("open state resets when chip disappears, so re-split does not auto-show popover", () => {
+    usePaneStore.setState(twoBufferState());
+    const { rerender } = render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    expect(screen.getByTestId("buffer-stack-popover")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("buffer-stack-close-p2"));
+    expect(screen.queryByTestId("buffer-stack-popover")).toBeNull();
+    act(() => usePaneStore.setState(twoBufferState()));
+    rerender(<BufferStack />);
+    expect(screen.queryByTestId("buffer-stack-popover")).toBeNull();
+    expect(screen.getByTestId("buffer-stack-chip")).toHaveAttribute("aria-expanded", "false");
   });
 });
