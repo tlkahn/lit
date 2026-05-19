@@ -455,6 +455,55 @@ describe("BufferStack", () => {
     fireEvent(window, new Event("resize"));
   });
 
+  // --- Cycle 9: Position labels ---
+
+  it("popover rows show position labels for horizontal split", () => {
+    usePaneStore.setState(twoBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    expect(screen.getByTestId("buffer-stack-position-p1")).toHaveTextContent("left");
+    expect(screen.getByTestId("buffer-stack-position-p2")).toHaveTextContent("right");
+  });
+
+  it("popover rows show composed position labels for nested splits", () => {
+    usePaneStore.setState({
+      root: {
+        type: "split" as const,
+        id: "s1",
+        direction: "horizontal" as const,
+        children: [
+          { type: "leaf" as const, id: "p1", pagePath: "notes/foo.md" },
+          {
+            type: "split" as const,
+            id: "s2",
+            direction: "vertical" as const,
+            children: [
+              { type: "leaf" as const, id: "p2", pagePath: "notes/bar.md" },
+              { type: "leaf" as const, id: "p3", pagePath: "notes/baz.md" },
+            ],
+            sizes: [50, 50],
+          },
+        ],
+        sizes: [50, 50],
+      },
+      focusedPaneId: "p1",
+    });
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    expect(screen.getByTestId("buffer-stack-position-p1")).toHaveTextContent("left");
+    expect(screen.getByTestId("buffer-stack-position-p2")).toHaveTextContent("top-right");
+    expect(screen.getByTestId("buffer-stack-position-p3")).toHaveTextContent("bottom-right");
+  });
+
+  it("single-leaf root renders no position spans", () => {
+    usePaneStore.setState({
+      root: { type: "leaf", id: "p1", pagePath: "notes/foo.md" },
+      focusedPaneId: "p1",
+    });
+    render(<BufferStack />);
+    expect(screen.queryByTestId("buffer-stack-position-p1")).toBeNull();
+  });
+
   it("open state resets when chip disappears, so re-split does not auto-show popover", () => {
     usePaneStore.setState(twoBufferState());
     const { rerender } = render(<BufferStack />);

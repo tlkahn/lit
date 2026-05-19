@@ -151,6 +151,47 @@ export function clearPagePath(root: PaneNode, pagePath: string): PaneNode {
   return changed ? { ...root, children: newChildren } : root;
 }
 
+function segmentLabel(
+  direction: "horizontal" | "vertical",
+  index: number,
+  count: number,
+): string {
+  if (count === 2) {
+    return direction === "horizontal"
+      ? index === 0 ? "left" : "right"
+      : index === 0 ? "top" : "bottom";
+  }
+  if (count === 3) {
+    const labels =
+      direction === "horizontal"
+        ? ["left", "center", "right"]
+        : ["top", "center", "bottom"];
+    return labels[index]!;
+  }
+  const prefix = direction === "horizontal" ? "col" : "row";
+  return `${prefix}-${index + 1}`;
+}
+
+export function getPanePosition(root: PaneNode, paneId: string): string | null {
+  if (root.type === "leaf") return null;
+
+  function walk(node: PaneNode): string[] | null {
+    if (node.type === "leaf") return node.id === paneId ? [] : null;
+    for (let i = 0; i < node.children.length; i++) {
+      const result = walk(node.children[i]!);
+      if (result !== null) {
+        result.push(segmentLabel(node.direction, i, node.children.length));
+        return result;
+      }
+    }
+    return null;
+  }
+
+  const segments = walk(root);
+  if (segments === null) return null;
+  return segments.join("-");
+}
+
 // ---------------------------------------------------------------------------
 // Section B: Zustand Store
 // ---------------------------------------------------------------------------

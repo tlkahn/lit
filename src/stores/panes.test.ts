@@ -8,6 +8,7 @@ import {
   findSplitByPath,
   replaceSplitSizes,
   clearPagePath,
+  getPanePosition,
   createInitialState,
   usePaneStore,
   startLayoutSync,
@@ -416,6 +417,210 @@ describe("clearPagePath", () => {
 
     const other: PaneLeaf = { type: "leaf", id: "b", pagePath: "other.md" };
     expect(clearPagePath(other, "deleted.md")).toBe(other);
+  });
+});
+
+describe("getPanePosition", () => {
+  it("returns null for a single leaf root", () => {
+    const leaf: PaneLeaf = { type: "leaf", id: "a", pagePath: null };
+    expect(getPanePosition(leaf, "a")).toBeNull();
+  });
+
+  it("returns null when pane not found", () => {
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "a", pagePath: null },
+        { type: "leaf", id: "b", pagePath: null },
+      ],
+      sizes: [50, 50],
+    };
+    expect(getPanePosition(root, "missing")).toBeNull();
+  });
+
+  it("2-child horizontal → left / right", () => {
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "a", pagePath: null },
+        { type: "leaf", id: "b", pagePath: null },
+      ],
+      sizes: [50, 50],
+    };
+    expect(getPanePosition(root, "a")).toBe("left");
+    expect(getPanePosition(root, "b")).toBe("right");
+  });
+
+  it("2-child vertical → top / bottom", () => {
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "vertical",
+      children: [
+        { type: "leaf", id: "a", pagePath: null },
+        { type: "leaf", id: "b", pagePath: null },
+      ],
+      sizes: [50, 50],
+    };
+    expect(getPanePosition(root, "a")).toBe("top");
+    expect(getPanePosition(root, "b")).toBe("bottom");
+  });
+
+  it("3-child horizontal → left / center / right", () => {
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "a", pagePath: null },
+        { type: "leaf", id: "b", pagePath: null },
+        { type: "leaf", id: "c", pagePath: null },
+      ],
+      sizes: [33, 34, 33],
+    };
+    expect(getPanePosition(root, "a")).toBe("left");
+    expect(getPanePosition(root, "b")).toBe("center");
+    expect(getPanePosition(root, "c")).toBe("right");
+  });
+
+  it("3-child vertical → top / center / bottom", () => {
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "vertical",
+      children: [
+        { type: "leaf", id: "a", pagePath: null },
+        { type: "leaf", id: "b", pagePath: null },
+        { type: "leaf", id: "c", pagePath: null },
+      ],
+      sizes: [33, 34, 33],
+    };
+    expect(getPanePosition(root, "a")).toBe("top");
+    expect(getPanePosition(root, "b")).toBe("center");
+    expect(getPanePosition(root, "c")).toBe("bottom");
+  });
+
+  it("4-child horizontal → col-1 / col-2 / col-3 / col-4", () => {
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "a", pagePath: null },
+        { type: "leaf", id: "b", pagePath: null },
+        { type: "leaf", id: "c", pagePath: null },
+        { type: "leaf", id: "d", pagePath: null },
+      ],
+      sizes: [25, 25, 25, 25],
+    };
+    expect(getPanePosition(root, "a")).toBe("col-1");
+    expect(getPanePosition(root, "d")).toBe("col-4");
+  });
+
+  it("4-child vertical → row-1 / row-2 / row-3 / row-4", () => {
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "vertical",
+      children: [
+        { type: "leaf", id: "a", pagePath: null },
+        { type: "leaf", id: "b", pagePath: null },
+        { type: "leaf", id: "c", pagePath: null },
+        { type: "leaf", id: "d", pagePath: null },
+      ],
+      sizes: [25, 25, 25, 25],
+    };
+    expect(getPanePosition(root, "a")).toBe("row-1");
+    expect(getPanePosition(root, "d")).toBe("row-4");
+  });
+
+  it("nested: horizontal root + vertical sub-split → composed labels", () => {
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "a", pagePath: null },
+        {
+          type: "split",
+          id: "s2",
+          direction: "vertical",
+          children: [
+            { type: "leaf", id: "b", pagePath: null },
+            { type: "leaf", id: "c", pagePath: null },
+          ],
+          sizes: [50, 50],
+        },
+      ],
+      sizes: [50, 50],
+    };
+    expect(getPanePosition(root, "a")).toBe("left");
+    expect(getPanePosition(root, "b")).toBe("top-right");
+    expect(getPanePosition(root, "c")).toBe("bottom-right");
+  });
+
+  it("nested: vertical sub-split on left side", () => {
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        {
+          type: "split",
+          id: "s2",
+          direction: "vertical",
+          children: [
+            { type: "leaf", id: "a", pagePath: null },
+            { type: "leaf", id: "b", pagePath: null },
+          ],
+          sizes: [50, 50],
+        },
+        { type: "leaf", id: "c", pagePath: null },
+      ],
+      sizes: [50, 50],
+    };
+    expect(getPanePosition(root, "a")).toBe("top-left");
+    expect(getPanePosition(root, "b")).toBe("bottom-left");
+    expect(getPanePosition(root, "c")).toBe("right");
+  });
+
+  it("3-level nesting → 3-segment labels", () => {
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        {
+          type: "split",
+          id: "s2",
+          direction: "vertical",
+          children: [
+            { type: "leaf", id: "a", pagePath: null },
+            {
+              type: "split",
+              id: "s3",
+              direction: "horizontal",
+              children: [
+                { type: "leaf", id: "b", pagePath: null },
+                { type: "leaf", id: "c", pagePath: null },
+              ],
+              sizes: [50, 50],
+            },
+          ],
+          sizes: [50, 50],
+        },
+        { type: "leaf", id: "d", pagePath: null },
+      ],
+      sizes: [50, 50],
+    };
+    expect(getPanePosition(root, "a")).toBe("top-left");
+    expect(getPanePosition(root, "b")).toBe("left-bottom-left");
+    expect(getPanePosition(root, "c")).toBe("right-bottom-left");
+    expect(getPanePosition(root, "d")).toBe("right");
   });
 });
 

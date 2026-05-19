@@ -1,6 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { usePaneStore, collectLeaves, findLeaf } from "../stores/panes";
+import { usePaneStore, collectLeaves, findLeaf, getPanePosition } from "../stores/panes";
 
 export function BufferStack() {
   const root = usePaneStore((s) => s.root);
@@ -96,6 +96,7 @@ export function BufferStack() {
             const label = leaf.pagePath
               ? leaf.pagePath.split("/").pop()
               : "(empty)";
+            const pos = getPanePosition(root, leaf.id);
             return (
               <div
                 key={leaf.id}
@@ -113,6 +114,14 @@ export function BufferStack() {
                 }}
               >
                 <span>{label}</span>
+                {pos && (
+                  <span
+                    data-testid={`buffer-stack-position-${leaf.id}`}
+                    className="ml-1 text-[11px] text-text-faint"
+                  >
+                    {pos}
+                  </span>
+                )}
                 {leaves.length > 1 && (
                   <button
                     data-testid={`buffer-stack-close-${leaf.id}`}
