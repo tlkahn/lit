@@ -240,14 +240,13 @@ where
         .neighbors(node_id, depth, false)
         .map_err(|e| e.to_string())?;
 
-    let seed_is_stub = subgraph
+    let seed_node = subgraph
         .nodes
         .iter()
         .find(|n| n.id == node_id)
-        .map(|n| n.is_stub)
-        .unwrap_or(true);
+        .ok_or_else(|| format!("seed node \"{node_id}\" not found in graph result"))?;
 
-    if seed_is_stub {
+    if seed_node.is_stub {
         return Err(format!("seed node \"{node_id}\" is a stub (no backing file)"));
     }
 
