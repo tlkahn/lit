@@ -422,6 +422,39 @@ describe("BufferStack", () => {
     expect(leaves.find((l) => l.id === newFocused)).toBeDefined();
   });
 
+  // --- Positioning re-calculation ---
+
+  it("repositions popover after closing a pane via ×", () => {
+    usePaneStore.setState(threeBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    const popover = screen.getByTestId("buffer-stack-popover");
+    // Clobber position to detect re-run
+    popover.style.top = "999px";
+    fireEvent.click(screen.getByTestId("buffer-stack-close-p3"));
+    expect(popover.style.top).not.toBe("999px");
+  });
+
+  it("repositions popover on window resize", () => {
+    usePaneStore.setState(twoBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    const popover = screen.getByTestId("buffer-stack-popover");
+    popover.style.top = "999px";
+    fireEvent(window, new Event("resize"));
+    expect(popover.style.top).not.toBe("999px");
+  });
+
+  it("cleans up resize listener when popover closes", () => {
+    usePaneStore.setState(twoBufferState());
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByTestId("buffer-stack-popover")).toBeNull();
+    // Should not throw — listener was removed
+    fireEvent(window, new Event("resize"));
+  });
+
   it("open state resets when chip disappears, so re-split does not auto-show popover", () => {
     usePaneStore.setState(twoBufferState());
     const { rerender } = render(<BufferStack />);

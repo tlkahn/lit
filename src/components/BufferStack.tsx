@@ -40,18 +40,24 @@ export function BufferStack() {
 
   useLayoutEffect(() => {
     if (!open || !popoverRef.current || !buttonRef.current) return;
-    const btnRect = buttonRef.current.getBoundingClientRect();
-    const menu = popoverRef.current;
-    const rect = menu.getBoundingClientRect();
-    const vw = window.innerWidth;
-    let left = btnRect.left;
-    let top = btnRect.top - rect.height - 4;
-    if (left + rect.width > vw) left = vw - rect.width;
-    if (left < 0) left = 0;
-    if (top < 0) top = 0;
-    menu.style.left = `${left}px`;
-    menu.style.top = `${top}px`;
-  }, [open]);
+    const position = () => {
+      if (!popoverRef.current || !buttonRef.current) return;
+      const btnRect = buttonRef.current.getBoundingClientRect();
+      const menu = popoverRef.current;
+      const rect = menu.getBoundingClientRect();
+      const vw = window.innerWidth;
+      let left = btnRect.left;
+      let top = btnRect.top - rect.height - 4;
+      if (left + rect.width > vw) left = vw - rect.width;
+      if (left < 0) left = 0;
+      if (top < 0) top = 0;
+      menu.style.left = `${left}px`;
+      menu.style.top = `${top}px`;
+    };
+    position();
+    window.addEventListener("resize", position);
+    return () => window.removeEventListener("resize", position);
+  }, [open, leaves.length]);
 
   if (openBuffers.length === 0) return null;
 
