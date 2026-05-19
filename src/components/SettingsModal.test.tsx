@@ -205,6 +205,42 @@ describe("SettingsModal", () => {
       });
     });
 
+    it("auto-clears stale colorTheme not in availableThemes", async () => {
+      usePreferencesStore.setState({ colorTheme: "deleted-theme" });
+      render(<SettingsModal open={true} onClose={vi.fn()} />);
+      await vi.waitFor(() => {
+        expect(usePreferencesStore.getState().colorTheme).toBeNull();
+      });
+      expect(invokeCalls).toContainEqual({
+        cmd: "set_preference",
+        args: { key: "workbench.colorTheme", value: null },
+      });
+    });
+
+    it("does not auto-clear valid colorTheme", () => {
+      usePreferencesStore.setState({ colorTheme: "dracula" });
+      render(<SettingsModal open={true} onClose={vi.fn()} />);
+      expect(usePreferencesStore.getState().colorTheme).toBe("dracula");
+    });
+
+    it("does not fire IPC when colorTheme is already null", () => {
+      render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const colorThemeCalls = invokeCalls.filter(
+        (c) => c.cmd === "set_preference" && c.args.key === "workbench.colorTheme",
+      );
+      expect(colorThemeCalls).toHaveLength(0);
+    });
+
+    it("dropdown shows Default after stale theme is auto-cleared", async () => {
+      usePreferencesStore.setState({ colorTheme: "deleted-theme" });
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      await vi.waitFor(() => {
+        expect(usePreferencesStore.getState().colorTheme).toBeNull();
+      });
+      const select = container.querySelector("[data-testid='settings-colorTheme']") as HTMLSelectElement;
+      expect(select.value).toBe("");
+    });
+
     it("selecting Default commits null", async () => {
       usePreferencesStore.setState({ colorTheme: "dracula" });
       const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);

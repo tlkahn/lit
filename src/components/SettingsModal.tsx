@@ -28,14 +28,17 @@ function setRegistryPref(storeField: PreferenceField, jsonKey: string, value: un
   });
 }
 
-function renderControl(
-  entry: SettingEntry,
-  prefs: Record<string, unknown>,
-  localTextValues: Record<string, string>,
-  setLocalTextValues: React.Dispatch<React.SetStateAction<Record<string, string>>>,
-  matchIndices: number[],
-  dynamicOptions: Record<string, { value: string; label: string }[]>,
-) {
+interface RenderControlParams {
+  entry: SettingEntry;
+  prefs: Record<string, unknown>;
+  localTextValues: Record<string, string>;
+  setLocalTextValues: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  matchIndices: number[];
+  dynamicOptions: Record<string, { value: string; label: string }[]>;
+}
+
+function renderControl(params: RenderControlParams) {
+  const { entry, prefs, localTextValues, setLocalTextValues, matchIndices, dynamicOptions } = params;
   const label = matchIndices.length > 0
     ? <HighlightedText text={entry.label} indices={matchIndices} />
     : entry.label;
@@ -100,6 +103,9 @@ function renderControl(
 }
 
 const textEntries = SETTINGS_REGISTRY.filter((e) => e.controlType === "text");
+const nullableDropdownEntries = SETTINGS_REGISTRY.filter(
+  (e) => e.controlType === "dropdown" && e.nullable,
+);
 
 export function SettingsModal({ open, onClose, initialCategory }: SettingsModalProps) {
   const prefs = usePreferencesStore(useShallow((s) => {
@@ -109,9 +115,20 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
   }));
 
   const availableThemes = useThemeStore((s) => s.availableThemes);
-  const dynamicOptions = useMemo(() => ({
+  const dynamicOptions: Record<string, { value: string; label: string }[]> = useMemo(() => ({
     colorTheme: availableThemes.map((t) => ({ value: t.directory_name, label: t.name })),
   }), [availableThemes]);
+
+  useEffect(() => {
+    for (const entry of nullableDropdownEntries) {
+      const raw = prefs[entry.storeField];
+      if (raw == null) continue;
+      const opts = dynamicOptions[entry.storeField] ?? [];
+      if (!opts.some((o) => o.value === String(raw))) {
+        setRegistryPref(entry.storeField, entry.jsonKey, null);
+      }
+    }
+  }, [prefs, dynamicOptions]);
 
   const dialogRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -352,7 +369,7 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
                       <section key={cat} id={`settings-section-${cat}`} className={i > 0 ? "mt-5" : undefined}>
                         <h3 className="text-sm font-medium text-text-muted mb-3">{cat}</h3>
                         <div className="space-y-3">
-                          {results.map(({ entry, indices }) => renderControl(entry, prefs, localTextValues, setLocalTextValues, indices, dynamicOptions))}
+                          {results.map(({ entry, indices }) => renderControl({ entry, prefs, localTextValues, setLocalTextValues, matchIndices: indices, dynamicOptions }))}
                         </div>
                       </section>
                     ))
