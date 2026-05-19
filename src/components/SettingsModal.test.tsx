@@ -3,6 +3,7 @@ import { render, fireEvent, act } from "@testing-library/react";
 import { SettingsModal } from "./SettingsModal";
 import { mockInvoke } from "../test/tauri-mock";
 import { usePreferencesStore } from "../stores/preferences";
+import { useThemeStore } from "../stores/theme";
 import { CATEGORIES } from "../lib/settingsRegistry";
 
 const defaults = {
@@ -34,6 +35,12 @@ beforeEach(() => {
     return undefined;
   });
   usePreferencesStore.setState(defaults);
+  useThemeStore.setState({
+    availableThemes: [
+      { name: "Dracula", version: "1.0", author: "Dracula Team", directory_name: "dracula" },
+      { name: "Nord", version: "1.0", author: "Arctic Ice Studio", directory_name: "nord" },
+    ],
+  });
   Element.prototype.scrollIntoView = vi.fn();
 });
 
@@ -149,42 +156,60 @@ describe("SettingsModal", () => {
     });
   });
 
-  // --- colorTheme (SettingsTextInput) ---
+  // --- colorTheme (SettingsDropdown) ---
 
   describe("colorTheme", () => {
-    it("shows empty when store is null", () => {
+    it("renders a <select> element", () => {
       const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const input = container.querySelector("[data-testid='settings-colorTheme']") as HTMLInputElement;
-      expect(input.value).toBe("");
+      const select = container.querySelector("[data-testid='settings-colorTheme']");
+      expect(select).toBeTruthy();
+      expect(select!.tagName).toBe("SELECT");
     });
 
-    it("shows current store value", () => {
-      usePreferencesStore.setState({ colorTheme: "dracula" });
+    it("shows Default + available theme names as options", () => {
       const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const input = container.querySelector("[data-testid='settings-colorTheme']") as HTMLInputElement;
-      expect(input.value).toBe("dracula");
+      const select = container.querySelector("[data-testid='settings-colorTheme']")!;
+      const opts = select.querySelectorAll("option");
+      expect(opts).toHaveLength(3);
+      expect(opts[0]!.value).toBe("");
+      expect(opts[0]!.textContent).toBe("Default");
+      expect(opts[1]!.value).toBe("dracula");
+      expect(opts[1]!.textContent).toBe("Dracula");
+      expect(opts[2]!.value).toBe("nord");
+      expect(opts[2]!.textContent).toBe("Nord");
     });
 
-    it("commits on blur via setPreference", async () => {
+    it("null store value selects Default", () => {
       const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const input = container.querySelector("[data-testid='settings-colorTheme']") as HTMLInputElement;
-      fireEvent.change(input, { target: { value: "monokai" } });
-      fireEvent.blur(input);
-      expect(usePreferencesStore.getState().colorTheme).toBe("monokai");
+      const select = container.querySelector("[data-testid='settings-colorTheme']") as HTMLSelectElement;
+      expect(select.value).toBe("");
+    });
+
+    it("non-null store value selects that theme", () => {
+      usePreferencesStore.setState({ colorTheme: "nord" });
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const select = container.querySelector("[data-testid='settings-colorTheme']") as HTMLSelectElement;
+      expect(select.value).toBe("nord");
+    });
+
+    it("selecting a theme commits immediately via setPreference", async () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const select = container.querySelector("[data-testid='settings-colorTheme']")!;
+      fireEvent.change(select, { target: { value: "dracula" } });
+      expect(usePreferencesStore.getState().colorTheme).toBe("dracula");
       await vi.waitFor(() => {
         expect(invokeCalls).toContainEqual({
           cmd: "set_preference",
-          args: { key: "workbench.colorTheme", value: "monokai" },
+          args: { key: "workbench.colorTheme", value: "dracula" },
         });
       });
     });
 
-    it("commits null when empty", async () => {
+    it("selecting Default commits null", async () => {
       usePreferencesStore.setState({ colorTheme: "dracula" });
       const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const input = container.querySelector("[data-testid='settings-colorTheme']") as HTMLInputElement;
-      fireEvent.change(input, { target: { value: "" } });
-      fireEvent.blur(input);
+      const select = container.querySelector("[data-testid='settings-colorTheme']")!;
+      fireEvent.change(select, { target: { value: "" } });
       expect(usePreferencesStore.getState().colorTheme).toBeNull();
       await vi.waitFor(() => {
         expect(invokeCalls).toContainEqual({
@@ -674,16 +699,16 @@ describe("SettingsModal", () => {
     expect(toggle.getAttribute("aria-checked")).toBe("false");
   });
 
-  it("syncs colorTheme local state when store changes externally", () => {
+  it("syncs colorTheme when store changes externally", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-    const input = container.querySelector("[data-testid='settings-colorTheme']") as HTMLInputElement;
-    expect(input.value).toBe("");
+    const select = container.querySelector("[data-testid='settings-colorTheme']") as HTMLSelectElement;
+    expect(select.value).toBe("");
 
     act(() => {
       usePreferencesStore.setState({ colorTheme: "nord" });
     });
 
-    expect(input.value).toBe("nord");
+    expect(select.value).toBe("nord");
   });
 
   // --- Phase 6: Search Filtering ---
@@ -1192,6 +1217,35 @@ describe("SettingsModal", () => {
     expect(container.querySelector("[data-testid='settings-sidebar']")).toBeTruthy();
     const darkBtn = container.querySelector("[data-testid='settings-darkMode-dark']")!;
     expect(darkBtn.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  // --- Phase 4: Edge Cases ---
+
+  it("empty theme list shows only Default option", () => {
+    useThemeStore.setState({ availableThemes: [] });
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const select = container.querySelector("[data-testid='settings-colorTheme']")!;
+    const opts = select.querySelectorAll("option");
+    expect(opts).toHaveLength(1);
+    expect(opts[0]!.textContent).toBe("Default");
+  });
+
+  it("dynamic theme list update reflects in dropdown", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const select = container.querySelector("[data-testid='settings-colorTheme']")!;
+    expect(select.querySelectorAll("option")).toHaveLength(3);
+
+    act(() => {
+      useThemeStore.setState({
+        availableThemes: [
+          { name: "Dracula", version: "1.0", author: "Dracula Team", directory_name: "dracula" },
+          { name: "Nord", version: "1.0", author: "Arctic Ice Studio", directory_name: "nord" },
+          { name: "Solarized", version: "1.0", author: "Ethan Schoonover", directory_name: "solarized" },
+        ],
+      });
+    });
+
+    expect(select.querySelectorAll("option")).toHaveLength(4);
   });
 
   it("re-opening modal resets to form view", async () => {

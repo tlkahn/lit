@@ -12,7 +12,7 @@ export const CATEGORIES = [
 
 export type Category = (typeof CATEGORIES)[number];
 
-type ControlType = "toggle" | "segmented" | "text";
+type ControlType = "toggle" | "segmented" | "text" | "dropdown";
 export type PreferenceField = Exclude<keyof PreferencesState, "loaded" | "loadPreferences">;
 
 export interface SettingEntry {
@@ -46,7 +46,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
     label: "Color Theme",
     storeField: "colorTheme",
     jsonKey: "workbench.colorTheme",
-    controlType: "text",
+    controlType: "dropdown",
     testId: "settings-colorTheme",
     nullable: true,
   },

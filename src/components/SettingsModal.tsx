@@ -7,9 +7,11 @@ import { useFocusTrap } from "../hooks/useFocusTrap";
 import { SegmentedControl } from "./SegmentedControl";
 import { ToggleSwitch } from "./ToggleSwitch";
 import { SettingsTextInput } from "./SettingsTextInput";
+import { SettingsDropdown } from "./SettingsDropdown";
 import { HighlightedText } from "./HighlightedText";
 import { SettingsJsonEditor } from "./SettingsJsonEditor";
 import { CATEGORIES, SETTINGS_REGISTRY, STORE_FIELDS, filterSettings, type Category, type SettingEntry, type FilteredSetting, type PreferenceField } from "../lib/settingsRegistry";
+import { useThemeStore } from "../stores/theme";
 import { KeyboardShortcutsPanel } from "./KeyboardShortcutsPanel";
 
 interface SettingsModalProps {
@@ -32,6 +34,7 @@ function renderControl(
   localTextValues: Record<string, string>,
   setLocalTextValues: React.Dispatch<React.SetStateAction<Record<string, string>>>,
   matchIndices: number[],
+  dynamicOptions: Record<string, { value: string; label: string }[]>,
 ) {
   const label = matchIndices.length > 0
     ? <HighlightedText text={entry.label} indices={matchIndices} />
@@ -69,12 +72,30 @@ function renderControl(
           onChange={(v) => setLocalTextValues((prev) => ({ ...prev, [entry.storeField]: v }))}
           onCommit={() => {
             const raw = localTextValues[entry.storeField] ?? "";
-            // nullable: empty → null; all text fields trim on commit
             const val = entry.nullable && raw.trim() === "" ? null : raw.trim();
             setRegistryPref(entry.storeField, entry.jsonKey, val);
           }}
         />
       );
+    case "dropdown": {
+      const opts = dynamicOptions[entry.storeField] ?? [];
+      const raw = prefs[entry.storeField];
+      const value = raw == null ? "" : String(raw);
+      return (
+        <SettingsDropdown
+          key={entry.storeField}
+          label={label}
+          testId={entry.testId}
+          options={opts}
+          value={value}
+          nullable={entry.nullable}
+          onChange={(v) => {
+            const val = entry.nullable && v === "" ? null : v;
+            setRegistryPref(entry.storeField, entry.jsonKey, val);
+          }}
+        />
+      );
+    }
   }
 }
 
@@ -86,6 +107,11 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
     for (const f of STORE_FIELDS) obj[f] = s[f];
     return obj;
   }));
+
+  const availableThemes = useThemeStore((s) => s.availableThemes);
+  const dynamicOptions = useMemo(() => ({
+    colorTheme: availableThemes.map((t) => ({ value: t.directory_name, label: t.name })),
+  }), [availableThemes]);
 
   const dialogRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -326,7 +352,7 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
                       <section key={cat} id={`settings-section-${cat}`} className={i > 0 ? "mt-5" : undefined}>
                         <h3 className="text-sm font-medium text-text-muted mb-3">{cat}</h3>
                         <div className="space-y-3">
-                          {results.map(({ entry, indices }) => renderControl(entry, prefs, localTextValues, setLocalTextValues, indices))}
+                          {results.map(({ entry, indices }) => renderControl(entry, prefs, localTextValues, setLocalTextValues, indices, dynamicOptions))}
                         </div>
                       </section>
                     ))

@@ -21,6 +21,12 @@ describe("SETTINGS_REGISTRY", () => {
       expect(entry.testId).toBeDefined();
     }
   });
+
+  it("colorTheme entry has controlType 'dropdown'", () => {
+    const entry = SETTINGS_REGISTRY.find((e) => e.storeField === "colorTheme");
+    expect(entry).toBeDefined();
+    expect(entry!.controlType).toBe("dropdown");
+  });
 });
 
 describe("CATEGORIES", () => {
