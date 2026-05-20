@@ -94,11 +94,14 @@ function serializeScope(scope: Scope | null): string {
     case "document":
       return "\\d";
     case "section":
-      return "\\sec";
+      return "\\h";
     case "asymmetric": {
-      const unitMap: Record<string, string> = { word: "w", sentence: "s", paragraph: "p", page: "f" };
+      if (scope.value.unit === "word") {
+        return `${scope.value.before}_${scope.value.after}`;
+      }
+      const unitMap: Record<string, string> = { sentence: "s", paragraph: "p", page: "f" };
       const u = unitMap[scope.value.unit] ?? "s";
-      return `\\${u}${scope.value.before}:${scope.value.after}`;
+      return `${scope.value.before}\\${u}${scope.value.after}`;
     }
   }
 }

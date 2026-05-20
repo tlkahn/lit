@@ -578,13 +578,13 @@ describe("annotationToFields", () => {
       ).toBe("%%! llm \\d | summarize all %%");
     });
 
-    it("section scope serializes as \\sec", () => {
+    it("section scope serializes as \\h", () => {
       expect(
         generateDsl(fields({ type: "note", scope: { kind: "section", value: 0 }, body: "review" })),
-      ).toBe("%%! n \\sec | review %%");
+      ).toBe("%%! n \\h | review %%");
     });
 
-    it("asymmetric scope serializes with unit and counts", () => {
+    it("asymmetric scope serializes with before\\unit after format", () => {
       expect(
         generateDsl(
           fields({
@@ -593,7 +593,7 @@ describe("annotationToFields", () => {
             body: "context",
           }),
         ),
-      ).toBe("%%! llm \\s2:3 | context %%");
+      ).toBe("%%! llm 2\\s3 | context %%");
     });
 
     it("asymmetric scope with paragraph unit", () => {
@@ -605,7 +605,19 @@ describe("annotationToFields", () => {
             body: "test",
           }),
         ),
-      ).toBe("%%! llm \\p1:2 | test %%");
+      ).toBe("%%! llm 1\\p2 | test %%");
+    });
+
+    it("asymmetric scope with word unit uses underscore", () => {
+      expect(
+        generateDsl(
+          fields({
+            type: "llm",
+            scope: { kind: "asymmetric", value: { unit: "word", before: 3, after: 1 } },
+            body: "test",
+          }),
+        ),
+      ).toBe("%%! llm 3_1 | test %%");
     });
   });
 });
