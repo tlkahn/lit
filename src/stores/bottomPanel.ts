@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-export type TabId = "linked" | "unlinked" | "annotations";
+export type TabId = "linked" | "unlinked" | "annotations" | "llm-response";
 
 const DEFAULT_PANEL_HEIGHT = 200;
 const MIN_PANEL_HEIGHT = 100;
@@ -23,6 +23,7 @@ export interface BottomPanelState {
   annotationCount: number;
   hasOpenedUnlinked: boolean;
   hasOpenedAnnotations: boolean;
+  hasOpenedLlm: boolean;
   handleTabClick: (tab: TabId) => void;
   setUnfolded: (v: boolean) => void;
   setPanelHeight: (h: number) => void;
@@ -41,12 +42,14 @@ export const useBottomPanelStore = create<BottomPanelState>((set, get) => ({
   annotationCount: 0,
   hasOpenedUnlinked: false,
   hasOpenedAnnotations: false,
+  hasOpenedLlm: false,
 
   handleTabClick: (tab: TabId) => {
     const { unfolded, activeTab } = get();
     const updates: Partial<BottomPanelState> = {};
     if (tab === "unlinked") updates.hasOpenedUnlinked = true;
     if (tab === "annotations") updates.hasOpenedAnnotations = true;
+    if (tab === "llm-response") updates.hasOpenedLlm = true;
     if (!unfolded) {
       updates.activeTab = tab;
       updates.unfolded = true;
@@ -77,6 +80,7 @@ export const useBottomPanelStore = create<BottomPanelState>((set, get) => ({
       unlinkedCount: null,
       annotationCount: 0,
       hasOpenedAnnotations: false,
+      hasOpenedLlm: false,
       hasOpenedUnlinked: activeTab === "unlinked" && unfolded ? true : false,
     });
   },

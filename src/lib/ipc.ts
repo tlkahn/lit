@@ -202,6 +202,36 @@ export async function deleteApiKey(provider: string): Promise<void> {
   return invoke<void>("delete_api_key", { provider });
 }
 
+// LLM commands
+
+export interface LlmPromptStreamingArgs {
+  model: string;
+  text: string;
+  system?: string;
+  messages?: Array<{ role: string; content: string }>;
+  options?: Record<string, unknown>;
+  baseUrl?: string;
+  apiKey?: string;
+}
+
+export async function llmPromptStreaming(args: LlmPromptStreamingArgs): Promise<void> {
+  return invoke<void>("llm_prompt_streaming", {
+    args: {
+      model: args.model,
+      text: args.text,
+      system: args.system ?? null,
+      messages: args.messages ?? [],
+      options: args.options ?? {},
+      base_url: args.baseUrl ?? null,
+      api_key: args.apiKey ?? null,
+    },
+  });
+}
+
+export async function llmCancel(): Promise<void> {
+  return invoke<void>("llm_cancel");
+}
+
 // Crossref commands
 
 export interface ResolvedCitation {

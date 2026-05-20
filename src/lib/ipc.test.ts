@@ -68,6 +68,8 @@ import {
   getApiKey,
   hasApiKey,
   deleteApiKey,
+  llmPromptStreaming,
+  llmCancel,
 } from "./ipc";
 
 const sampleMeta = {
@@ -336,6 +338,10 @@ describe("ipc", () => {
         case "has_api_key":
           return true;
         case "delete_api_key":
+          return null;
+        case "llm_prompt_streaming":
+          return null;
+        case "llm_cancel":
           return null;
         case "search_tags":
           return [
@@ -1095,6 +1101,52 @@ describe("ipc", () => {
     await deleteApiKey("anthropic");
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("delete_api_key", { provider: "anthropic" });
+  });
+
+  it("llmPromptStreaming invokes llm_prompt_streaming with args", async () => {
+    await llmPromptStreaming({ model: "claude-sonnet-4-6", text: "hello" });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("llm_prompt_streaming", {
+      args: {
+        model: "claude-sonnet-4-6",
+        text: "hello",
+        system: null,
+        messages: [],
+        options: {},
+        base_url: null,
+        api_key: null,
+      },
+    });
+  });
+
+  it("llmPromptStreaming passes optional fields", async () => {
+    await llmPromptStreaming({
+      model: "gpt-4o",
+      text: "test",
+      system: "be helpful",
+      messages: [{ role: "user", content: "hi" }],
+      options: { temperature: 0.5 },
+      baseUrl: "https://api.example.com",
+      apiKey: "sk-123",
+    });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("llm_prompt_streaming", {
+      args: {
+        model: "gpt-4o",
+        text: "test",
+        system: "be helpful",
+        messages: [{ role: "user", content: "hi" }],
+        options: { temperature: 0.5 },
+        base_url: "https://api.example.com",
+        api_key: "sk-123",
+      },
+    });
+  });
+
+  it("llmCancel invokes llm_cancel", async () => {
+    await llmCancel();
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("llm_cancel");
   });
 
 });
