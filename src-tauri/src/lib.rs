@@ -3,6 +3,7 @@ pub mod bib;
 pub mod pdf;
 pub mod cli;
 mod commands;
+pub mod llm;
 pub mod export;
 pub mod external_editor;
 pub mod graph;
@@ -117,6 +118,7 @@ pub fn run() {
         .manage(Arc::new(seed::SeedState::new()))
         .manage(Arc::new(KeychainStore) as Arc<dyn CredentialStore>)
         .manage(BibCache::new())
+        .manage(commands::llm::LlmState::new())
         .setup(move |app| {
             let data_dir = app
                 .path()
@@ -336,6 +338,8 @@ pub fn run() {
             commands::credential::get_api_key,
             commands::credential::has_api_key,
             commands::credential::delete_api_key,
+            commands::llm::llm_prompt_streaming,
+            commands::llm::llm_cancel,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
@@ -357,6 +361,9 @@ pub fn run() {
                 }
                 if let Some(pdf_state) = window.try_state::<commands::pdf_viewer::PdfViewerState>() {
                     let _ = pdf_state.close_for_window(&label);
+                }
+                if let Some(llm_state) = window.try_state::<commands::llm::LlmState>() {
+                    llm_state.cancel();
                 }
             }
         })
