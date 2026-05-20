@@ -7,8 +7,8 @@ import {
 } from "./settingsRegistry";
 
 describe("SETTINGS_REGISTRY", () => {
-  it("has 15 entries", () => {
-    expect(SETTINGS_REGISTRY).toHaveLength(15);
+  it("has 22 entries", () => {
+    expect(SETTINGS_REGISTRY).toHaveLength(22);
   });
 
   it("every entry has required fields defined", () => {
@@ -27,6 +27,30 @@ describe("SETTINGS_REGISTRY", () => {
     expect(entry).toBeDefined();
     expect(entry!.controlType).toBe("dropdown");
   });
+
+  it("llmModel entry has controlType 'dropdown'", () => {
+    const entry = SETTINGS_REGISTRY.find((e) => e.storeField === "llmModel");
+    expect(entry).toBeDefined();
+    expect(entry!.controlType).toBe("dropdown");
+  });
+
+  it("llmTemperature entry has controlType 'slider'", () => {
+    const entry = SETTINGS_REGISTRY.find((e) => e.storeField === "llmTemperature");
+    expect(entry).toBeDefined();
+    expect(entry!.controlType).toBe("slider");
+  });
+
+  it("llmOpenaiApiKeySet entry has controlType 'password'", () => {
+    const entry = SETTINGS_REGISTRY.find((e) => e.storeField === "llmOpenaiApiKeySet");
+    expect(entry).toBeDefined();
+    expect(entry!.controlType).toBe("password");
+  });
+
+  it("llmSystemPrompt entry has controlType 'textarea'", () => {
+    const entry = SETTINGS_REGISTRY.find((e) => e.storeField === "llmSystemPrompt");
+    expect(entry).toBeDefined();
+    expect(entry!.controlType).toBe("textarea");
+  });
 });
 
 describe("CATEGORIES", () => {
@@ -36,6 +60,7 @@ describe("CATEGORIES", () => {
       "Editor",
       "Cross-references",
       "Annotations",
+      "LLM",
       "Experimental",
       "Keyboard Shortcuts",
     ]);
@@ -43,13 +68,14 @@ describe("CATEGORIES", () => {
 });
 
 describe("groupByCategory", () => {
-  it("returns Map with 6 keys and correct counts", () => {
+  it("returns Map with 7 keys and correct counts", () => {
     const grouped = groupByCategory(SETTINGS_REGISTRY);
-    expect(grouped.size).toBe(6);
+    expect(grouped.size).toBe(7);
     expect(grouped.get("Appearance")).toHaveLength(4);
     expect(grouped.get("Editor")).toHaveLength(3);
     expect(grouped.get("Cross-references")).toHaveLength(3);
     expect(grouped.get("Annotations")).toHaveLength(4);
+    expect(grouped.get("LLM")).toHaveLength(7);
     expect(grouped.get("Experimental")).toHaveLength(1);
     expect(grouped.get("Keyboard Shortcuts")).toHaveLength(0);
   });
@@ -71,9 +97,9 @@ describe("filterSettings", () => {
     }
   });
 
-  it("returns all 15 entries with empty indices for empty query", () => {
+  it("returns all 22 entries with empty indices for empty query", () => {
     const results = filterSettings(SETTINGS_REGISTRY, "");
-    expect(results).toHaveLength(15);
+    expect(results).toHaveLength(22);
     for (const r of results) {
       expect(r.indices).toEqual([]);
     }

@@ -22,6 +22,13 @@ const defaults = {
   annotationScopeHighlight: true,
   annotationDefaultLang: "en",
   annotationDisplayMode: "pill" as const,
+  llmModel: "claude-sonnet-4-6",
+  llmOpenaiApiKeySet: false,
+  llmOpenaiBaseUrl: "",
+  llmAnthropicApiKeySet: false,
+  llmAnthropicBaseUrl: "",
+  llmSystemPrompt: "",
+  llmTemperature: 0.7,
   loaded: true,
 };
 
@@ -32,6 +39,7 @@ beforeEach(() => {
   mockInvoke((cmd, args) => {
     invokeCalls.push({ cmd, args: args ?? {} });
     if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
+    if (cmd === "has_api_key") return false;
     return undefined;
   });
   usePreferencesStore.setState(defaults);
@@ -114,10 +122,10 @@ describe("SettingsModal", () => {
 
   // --- Structural tests ---
 
-  it("renders all five section headings", () => {
+  it("renders all six section headings", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
-    expect(headings).toEqual(["Appearance", "Editor", "Cross-references", "Annotations", "Experimental"]);
+    expect(headings).toEqual(["Appearance", "Editor", "Cross-references", "Annotations", "LLM", "Experimental"]);
   });
 
   it("has a scrollable content area", () => {
@@ -547,6 +555,135 @@ describe("SettingsModal", () => {
     });
   });
 
+  // --- LLM Model (SettingsDropdown) ---
+
+  describe("llmModel", () => {
+    it("LLM Model dropdown reflects store value", () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const select = container.querySelector("[data-testid='settings-llmModel']") as HTMLSelectElement;
+      expect(select.value).toBe("claude-sonnet-4-6");
+    });
+
+    it("changing model calls setPreference", async () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const select = container.querySelector("[data-testid='settings-llmModel']")!;
+      fireEvent.change(select, { target: { value: "gpt-4o" } });
+      expect(usePreferencesStore.getState().llmModel).toBe("gpt-4o");
+      await vi.waitFor(() => {
+        expect(invokeCalls).toContainEqual({
+          cmd: "set_preference",
+          args: { key: "llm.model", value: "gpt-4o" },
+        });
+      });
+    });
+  });
+
+  // --- OpenAI API Key (SettingsPasswordInput) ---
+
+  describe("llmOpenaiApiKeySet", () => {
+    it("OpenAI API Key renders password input", () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const input = container.querySelector("[data-testid='settings-llmOpenaiApiKeySet']");
+      expect(input).toBeTruthy();
+      expect(input!.getAttribute("type")).toBe("password");
+    });
+
+    it("saving key calls set_api_key IPC and updates store", async () => {
+      let container!: HTMLElement;
+      await act(async () => {
+        ({ container } = render(<SettingsModal open={true} onClose={vi.fn()} />));
+      });
+      const input = container.querySelector("[data-testid='settings-llmOpenaiApiKeySet']")!;
+      const saveBtn = container.querySelector("[data-testid='settings-llmOpenaiApiKeySet-save']")!;
+      await act(async () => {
+        fireEvent.change(input, { target: { value: "sk-test" } });
+        fireEvent.click(saveBtn);
+      });
+      await vi.waitFor(() => {
+        expect(invokeCalls).toContainEqual({ cmd: "set_api_key", args: { provider: "openai", key: "sk-test" } });
+      });
+      expect(usePreferencesStore.getState().llmOpenaiApiKeySet).toBe(true);
+    });
+
+    it("deleting key calls delete_api_key IPC and updates store", async () => {
+      usePreferencesStore.setState({ llmOpenaiApiKeySet: true });
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const clearBtn = container.querySelector("[data-testid='settings-llmOpenaiApiKeySet-clear']")!;
+      await act(async () => {
+        fireEvent.click(clearBtn);
+      });
+      await vi.waitFor(() => {
+        expect(invokeCalls).toContainEqual({ cmd: "delete_api_key", args: { provider: "openai" } });
+      });
+      expect(usePreferencesStore.getState().llmOpenaiApiKeySet).toBe(false);
+    });
+  });
+
+  // --- System Prompt (SettingsTextArea) ---
+
+  describe("llmSystemPrompt", () => {
+    it("System Prompt renders textarea", () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const ta = container.querySelector("[data-testid='settings-llmSystemPrompt']");
+      expect(ta).toBeTruthy();
+      expect(ta!.tagName).toBe("TEXTAREA");
+    });
+
+    it("commits on blur via setPreference", async () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const ta = container.querySelector("[data-testid='settings-llmSystemPrompt']") as HTMLTextAreaElement;
+      fireEvent.change(ta, { target: { value: "You are helpful" } });
+      fireEvent.blur(ta);
+      expect(usePreferencesStore.getState().llmSystemPrompt).toBe("You are helpful");
+      await vi.waitFor(() => {
+        expect(invokeCalls).toContainEqual({
+          cmd: "set_preference",
+          args: { key: "llm.systemPrompt", value: "You are helpful" },
+        });
+      });
+    });
+  });
+
+  // --- Temperature (SettingsSlider) ---
+
+  describe("llmTemperature", () => {
+    it("Temperature renders slider", () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const input = container.querySelector("[data-testid='settings-llmTemperature']");
+      expect(input).toBeTruthy();
+      expect(input!.getAttribute("type")).toBe("range");
+    });
+
+    it("displays current value", () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const readout = container.querySelector("[data-testid='settings-llmTemperature-value']");
+      expect(readout).toBeTruthy();
+      expect(readout!.textContent).toBe("0.7");
+    });
+
+    it("changing slider calls setPreference", async () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const input = container.querySelector("[data-testid='settings-llmTemperature']")!;
+      fireEvent.change(input, { target: { value: "1.2" } });
+      expect(usePreferencesStore.getState().llmTemperature).toBe(1.2);
+      await vi.waitFor(() => {
+        expect(invokeCalls).toContainEqual({
+          cmd: "set_preference",
+          args: { key: "llm.temperature", value: 1.2 },
+        });
+      });
+    });
+  });
+
+  // --- LLM search ---
+
+  it("search 'model' includes LLM settings", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "model" } });
+    expect(container.querySelector("[data-testid='settings-llmModel']")).toBeTruthy();
+  });
+
   // --- experimentalUnlinkedReferences (ToggleSwitch) ---
 
   describe("experimentalUnlinkedReferences", () => {
@@ -670,7 +807,7 @@ describe("SettingsModal", () => {
 
   // --- Registry-driven rendering safety net ---
 
-  it("all 15 control data-testid values exist", () => {
+  it("all 22 control data-testid values exist", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const expectedIds = [
       "settings-darkMode-auto",
@@ -687,6 +824,13 @@ describe("SettingsModal", () => {
       "settings-annotationScopeHighlight",
       "settings-annotationDefaultLang",
       "settings-annotationDisplayMode-pill",
+      "settings-llmModel",
+      "settings-llmOpenaiApiKeySet",
+      "settings-llmOpenaiBaseUrl",
+      "settings-llmAnthropicApiKeySet",
+      "settings-llmAnthropicBaseUrl",
+      "settings-llmSystemPrompt",
+      "settings-llmTemperature",
       "settings-experimentalUnlinkedReferences",
     ];
     for (const id of expectedIds) {
@@ -694,10 +838,10 @@ describe("SettingsModal", () => {
     }
   });
 
-  it("all 5 h3 headings render with correct text", () => {
+  it("all 6 h3 headings render with correct text", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
-    expect(headings).toEqual(["Appearance", "Editor", "Cross-references", "Annotations", "Experimental"]);
+    expect(headings).toEqual(["Appearance", "Editor", "Cross-references", "Annotations", "LLM", "Experimental"]);
   });
 
   // --- Search input ---
@@ -777,7 +921,7 @@ describe("SettingsModal", () => {
     expect(container.querySelector("[data-testid='settings-no-results']")!.textContent).toContain("No matching settings");
   });
 
-  it("empty search shows all 15 controls", () => {
+  it("empty search shows all 22 controls", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
     fireEvent.change(search, { target: { value: "fold" } });
@@ -798,6 +942,13 @@ describe("SettingsModal", () => {
       "settings-annotationScopeHighlight",
       "settings-annotationDefaultLang",
       "settings-annotationDisplayMode-pill",
+      "settings-llmModel",
+      "settings-llmOpenaiApiKeySet",
+      "settings-llmOpenaiBaseUrl",
+      "settings-llmAnthropicApiKeySet",
+      "settings-llmAnthropicBaseUrl",
+      "settings-llmSystemPrompt",
+      "settings-llmTemperature",
       "settings-experimentalUnlinkedReferences",
     ];
     for (const id of expectedIds) {
@@ -825,14 +976,14 @@ describe("SettingsModal", () => {
     expect(headings).toEqual(["Cross-references", "Annotations"]);
   });
 
-  it("clearing search restores all 5 headings", () => {
+  it("clearing search restores all 6 headings", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
     fireEvent.change(search, { target: { value: "fold" } });
     fireEvent.change(search, { target: { value: "" } });
 
     const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
-    expect(headings).toEqual(["Appearance", "Editor", "Cross-references", "Annotations", "Experimental"]);
+    expect(headings).toEqual(["Appearance", "Editor", "Cross-references", "Annotations", "LLM", "Experimental"]);
   });
 
   // Cycle 6.3 — Sidebar highlights categories with matches
@@ -895,6 +1046,13 @@ describe("SettingsModal", () => {
       "settings-annotationScopeHighlight",
       "settings-annotationDefaultLang",
       "settings-annotationDisplayMode-pill",
+      "settings-llmModel",
+      "settings-llmOpenaiApiKeySet",
+      "settings-llmOpenaiBaseUrl",
+      "settings-llmAnthropicApiKeySet",
+      "settings-llmAnthropicBaseUrl",
+      "settings-llmSystemPrompt",
+      "settings-llmTemperature",
       "settings-experimentalUnlinkedReferences",
     ];
     for (const id of expectedIds) {
@@ -1074,16 +1232,16 @@ describe("SettingsModal", () => {
   it("arrow navigation wraps through matching categories during search", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
-    // "mode" matches Appearance (Dark Mode) and Annotations (Display Mode)
+    // "mode" matches Appearance (Dark Mode), Annotations (Display Mode), and LLM (Model)
     fireEvent.change(search, { target: { value: "mode" } });
 
     const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
     const buttons = Array.from(sidebar.querySelectorAll("button"));
-    const annotationsBtn = buttons.find((b) => b.textContent === "Annotations")!;
+    const llmBtn = buttons.find((b) => b.textContent === "LLM")!;
 
-    // Start at Annotations (last matching category)
-    fireEvent.click(annotationsBtn);
-    annotationsBtn.focus();
+    // Start at LLM (last matching category before Experimental)
+    fireEvent.click(llmBtn);
+    llmBtn.focus();
 
     // ArrowDown should wrap past Experimental to Appearance (first match)
     fireEvent.keyDown(sidebar, { key: "ArrowDown" });
@@ -1282,6 +1440,91 @@ describe("SettingsModal", () => {
     });
 
     expect(select.querySelectorAll("option")).toHaveLength(4);
+  });
+
+  // --- hasApiKey effect ---
+
+  describe("hasApiKey effect", () => {
+    it("checks all password providers on open", async () => {
+      const { rerender } = render(<SettingsModal open={false} onClose={vi.fn()} />);
+      invokeCalls.length = 0;
+      await act(async () => {
+        rerender(<SettingsModal open={true} onClose={vi.fn()} />);
+      });
+      const calls = invokeCalls.filter((c) => c.cmd === "has_api_key");
+      expect(calls).toContainEqual({ cmd: "has_api_key", args: { provider: "openai" } });
+      expect(calls).toContainEqual({ cmd: "has_api_key", args: { provider: "anthropic" } });
+      expect(calls).toHaveLength(2);
+    });
+
+    it("updates store when provider reports key exists", async () => {
+      mockInvoke((cmd, args) => {
+        if (cmd === "has_api_key" && args?.provider === "openai") return true;
+        if (cmd === "has_api_key") return false;
+        if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
+        return undefined;
+      });
+      await act(async () => {
+        render(<SettingsModal open={true} onClose={vi.fn()} />);
+      });
+      await vi.waitFor(() => {
+        expect(usePreferencesStore.getState().llmOpenaiApiKeySet).toBe(true);
+      });
+      expect(usePreferencesStore.getState().llmAnthropicApiKeySet).toBe(false);
+    });
+  });
+
+  // --- Password save/delete error rollback ---
+
+  it("password save optimistically updates store and rolls back on IPC failure", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "set_api_key") throw new Error("keychain locked");
+      if (cmd === "has_api_key") return false;
+      if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
+      return undefined;
+    });
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const input = container.querySelector("[data-testid='settings-llmOpenaiApiKeySet']")!;
+    const saveBtn = container.querySelector("[data-testid='settings-llmOpenaiApiKeySet-save']")!;
+    fireEvent.change(input, { target: { value: "sk-test" } });
+    await act(async () => {
+      fireEvent.click(saveBtn);
+      expect(usePreferencesStore.getState().llmOpenaiApiKeySet).toBe(true);
+    });
+    expect(usePreferencesStore.getState().llmOpenaiApiKeySet).toBe(false);
+  });
+
+  it("password delete optimistically updates store and rolls back on IPC failure", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "delete_api_key") throw new Error("keychain locked");
+      if (cmd === "has_api_key") return true;
+      if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
+      return undefined;
+    });
+    usePreferencesStore.setState({ llmOpenaiApiKeySet: true });
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const clearBtn = container.querySelector("[data-testid='settings-llmOpenaiApiKeySet-clear']")!;
+    await act(async () => {
+      fireEvent.click(clearBtn);
+      expect(usePreferencesStore.getState().llmOpenaiApiKeySet).toBe(false);
+    });
+    expect(usePreferencesStore.getState().llmOpenaiApiKeySet).toBe(true);
+  });
+
+  // --- Textarea whitespace preservation ---
+
+  it("textarea preserves leading/trailing whitespace on commit", async () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const ta = container.querySelector("[data-testid='settings-llmSystemPrompt']") as HTMLTextAreaElement;
+    fireEvent.change(ta, { target: { value: "\n  Hello World  \n" } });
+    fireEvent.blur(ta);
+    expect(usePreferencesStore.getState().llmSystemPrompt).toBe("\n  Hello World  \n");
+    await vi.waitFor(() => {
+      expect(invokeCalls).toContainEqual({
+        cmd: "set_preference",
+        args: { key: "llm.systemPrompt", value: "\n  Hello World  \n" },
+      });
+    });
   });
 
   it("re-opening modal resets to form view", async () => {

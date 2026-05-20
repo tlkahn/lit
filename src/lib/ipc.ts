@@ -184,6 +184,24 @@ export async function setPreferencesRaw(json: string): Promise<void> {
   return invoke<void>("set_preferences_raw", { json });
 }
 
+// Credential commands
+
+export async function setApiKey(provider: string, key: string): Promise<void> {
+  return invoke<void>("set_api_key", { provider, key });
+}
+
+export async function getApiKey(provider: string): Promise<string> {
+  return invoke<string>("get_api_key", { provider });
+}
+
+export async function hasApiKey(provider: string): Promise<boolean> {
+  return invoke<boolean>("has_api_key", { provider });
+}
+
+export async function deleteApiKey(provider: string): Promise<void> {
+  return invoke<void>("delete_api_key", { provider });
+}
+
 // Crossref commands
 
 export interface ResolvedCitation {

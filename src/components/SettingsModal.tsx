@@ -2,12 +2,15 @@ import { useEffect, useCallback, useRef, useState, useMemo } from "react";
 import { flushSync } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
 import { usePreferencesStore, type PreferencesState } from "../stores/preferences";
-import { setPreference, getPreferencesRaw, setPreferencesRaw } from "../lib/ipc";
+import { setPreference, getPreferencesRaw, setPreferencesRaw, setApiKey, deleteApiKey, hasApiKey } from "../lib/ipc";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { SegmentedControl } from "./SegmentedControl";
 import { ToggleSwitch } from "./ToggleSwitch";
 import { SettingsTextInput } from "./SettingsTextInput";
 import { SettingsDropdown } from "./SettingsDropdown";
+import { SettingsPasswordInput } from "./SettingsPasswordInput";
+import { SettingsTextArea } from "./SettingsTextArea";
+import { SettingsSlider } from "./SettingsSlider";
 import { HighlightedText } from "./HighlightedText";
 import { SettingsJsonEditor } from "./SettingsJsonEditor";
 import { CATEGORIES, SETTINGS_REGISTRY, STORE_FIELDS, filterSettings, type Category, type SettingEntry, type FilteredSetting, type PreferenceField } from "../lib/settingsRegistry";
@@ -61,7 +64,7 @@ function renderControl(params: RenderControlParams) {
           label={label}
           testId={entry.testId}
           value={prefs[entry.storeField] as string}
-          options={entry.options!}
+          options={entry.options}
           onChange={(v) => setRegistryPref(entry.storeField, entry.jsonKey, v)}
         />
       );
@@ -81,7 +84,7 @@ function renderControl(params: RenderControlParams) {
         />
       );
     case "dropdown": {
-      const opts = dynamicOptions[entry.storeField] ?? [];
+      const opts = dynamicOptions[entry.storeField] ?? entry.options ?? [];
       const raw = prefs[entry.storeField];
       const value = raw == null ? "" : String(raw);
       return (
@@ -99,10 +102,59 @@ function renderControl(params: RenderControlParams) {
         />
       );
     }
+    case "password":
+      return (
+        <SettingsPasswordInput
+          key={entry.storeField}
+          label={label}
+          testId={entry.testId}
+          hasKey={prefs[entry.storeField] as boolean}
+          onSave={(v) => {
+            usePreferencesStore.setState({ [entry.storeField]: true } as Partial<PreferencesState>);
+            setApiKey(entry.provider, v).catch(() => {
+              usePreferencesStore.setState({ [entry.storeField]: false } as Partial<PreferencesState>);
+            });
+          }}
+          onDelete={() => {
+            usePreferencesStore.setState({ [entry.storeField]: false } as Partial<PreferencesState>);
+            deleteApiKey(entry.provider).catch(() => {
+              usePreferencesStore.setState({ [entry.storeField]: true } as Partial<PreferencesState>);
+            });
+          }}
+        />
+      );
+    case "textarea":
+      return (
+        <SettingsTextArea
+          key={entry.storeField}
+          label={label}
+          testId={entry.testId}
+          value={localTextValues[entry.storeField] ?? ""}
+          onChange={(v) => setLocalTextValues((prev) => ({ ...prev, [entry.storeField]: v }))}
+          onCommit={() => {
+            const raw = localTextValues[entry.storeField] ?? "";
+            const val = entry.nullable && raw.trim() === "" ? null : raw;
+            setRegistryPref(entry.storeField, entry.jsonKey, val);
+          }}
+        />
+      );
+    case "slider":
+      return (
+        <SettingsSlider
+          key={entry.storeField}
+          label={label}
+          testId={entry.testId}
+          value={prefs[entry.storeField] as number}
+          min={entry.min}
+          max={entry.max}
+          step={entry.step}
+          onChange={(v) => setRegistryPref(entry.storeField, entry.jsonKey, v)}
+        />
+      );
   }
 }
 
-const textEntries = SETTINGS_REGISTRY.filter((e) => e.controlType === "text");
+const textEntries = SETTINGS_REGISTRY.filter((e) => e.controlType === "text" || e.controlType === "textarea");
 const nullableDropdownEntries = SETTINGS_REGISTRY.filter(
   (e) => e.controlType === "dropdown" && e.nullable,
 );
@@ -129,6 +181,18 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
       }
     }
   }, [prefs, dynamicOptions]);
+
+  useEffect(() => {
+    if (!open) return;
+    const passwordEntries = SETTINGS_REGISTRY.filter(
+      (e): e is Extract<SettingEntry, { controlType: "password" }> => e.controlType === "password",
+    );
+    for (const entry of passwordEntries) {
+      hasApiKey(entry.provider).then((has) => {
+        usePreferencesStore.setState({ [entry.storeField]: has } as Partial<PreferencesState>);
+      });
+    }
+  }, [open]);
 
   const dialogRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);

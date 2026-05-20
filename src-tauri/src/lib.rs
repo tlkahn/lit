@@ -14,6 +14,7 @@ pub mod seed;
 pub mod socket;
 pub mod workspace;
 
+use commands::credential::{CredentialStore, KeychainStore};
 use commands::graph::GraphRegistry;
 use commands::license::LicenseManager;
 use commands::workspace::{PendingCols, PendingFiles, PendingLines, PendingWorkspaces, WorkspaceRegistry};
@@ -115,6 +116,7 @@ pub fn run() {
         .manage(Arc::new(GraphRegistry::new()))
         .manage(Arc::new(commands::graph::GraphBuildState::new()))
         .manage(Arc::new(seed::SeedState::new()))
+        .manage(Arc::new(KeychainStore) as Arc<dyn CredentialStore>)
         .manage(BibCache::new())
         .manage(commands::llm::LlmState::new())
         .setup(move |app| {
@@ -332,6 +334,10 @@ pub fn run() {
             commands::license::activate_license,
             commands::license::check_online_validation,
             commands::license::sync_license_menu,
+            commands::credential::set_api_key,
+            commands::credential::get_api_key,
+            commands::credential::has_api_key,
+            commands::credential::delete_api_key,
             commands::llm::llm_prompt_streaming,
             commands::llm::llm_cancel,
         ])
