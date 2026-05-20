@@ -26,6 +26,9 @@ export interface SettingEntry {
   options?: { value: string; label: string }[];
   nullable?: boolean;
   provider?: string;
+  min?: number;
+  max?: number;
+  step?: number;
 }
 
 export const SETTINGS_REGISTRY: SettingEntry[] = [
@@ -229,6 +232,9 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
     jsonKey: "llm.temperature",
     controlType: "slider",
     testId: "settings-llmTemperature",
+    min: 0,
+    max: 2,
+    step: 0.1,
   },
   // Experimental
   {

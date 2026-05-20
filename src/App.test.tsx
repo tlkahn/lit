@@ -86,6 +86,8 @@ describe("App", () => {
           return null;
         case "get_license_status":
           return { state: "trial", days_remaining: 12 };
+        case "has_api_key":
+          return false;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
