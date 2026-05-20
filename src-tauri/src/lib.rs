@@ -326,6 +326,7 @@ pub fn run() {
             commands::pdf_viewer::pdf_close,
             commands::annotation::parse_annotations,
             commands::annotation::resolve_annotation_scope,
+            commands::annotation::resolve_annotation_scope_with_mode,
             commands::annotation::search_annotations,
             commands::annotation::list_annotations,
             commands::export::export_data,

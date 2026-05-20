@@ -352,7 +352,7 @@ pub fn utf16_offset_to_line(content: &str, utf16_offset: usize) -> u32 {
 }
 
 pub fn extract_annotations(content: &str) -> Vec<super::types::IndexableAnnotation> {
-    use crate::annotation::types::{AnnotationType, Certainty, Scope};
+    use crate::annotation::types::{AnnotationType, Certainty, Scope, ScopeKind};
 
     let parsed = crate::annotation::parser::parse_annotations(content);
     parsed
@@ -365,6 +365,7 @@ pub fn extract_annotations(content: &str) -> Vec<super::types::IndexableAnnotati
                 AnnotationType::CrossRef => "crossref",
                 AnnotationType::Apparatus => "apparatus",
                 AnnotationType::Translation => "translation",
+                AnnotationType::Llm => "llm",
                 AnnotationType::Bare => "bare",
             }
             .to_string();
@@ -382,6 +383,17 @@ pub fn extract_annotations(content: &str) -> Vec<super::types::IndexableAnnotati
                 Scope::Page(n) => ("page".to_string(), n.to_string()),
                 Scope::Sentence(n) => ("sentence".to_string(), n.to_string()),
                 Scope::Anchor(s) => ("anchor".to_string(), s.clone()),
+                Scope::Document => ("document".to_string(), String::new()),
+                Scope::Section => ("section".to_string(), String::new()),
+                Scope::Asymmetric { unit, before, after } => {
+                    let unit_str = match unit {
+                        ScopeKind::Word => "word",
+                        ScopeKind::Sentence => "sentence",
+                        ScopeKind::Paragraph => "paragraph",
+                        ScopeKind::Page => "page",
+                    };
+                    (format!("asymmetric_{unit_str}"), format!("{before}:{after}"))
+                }
             };
 
             let source_line = utf16_offset_to_line(content, ann.char_start);
@@ -965,5 +977,37 @@ mod tests {
     fn extract_annotations_empty() {
         let result = extract_annotations("");
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn extract_annotations_llm_type() {
+        let content = "Some text %%! llm | summarize %% more";
+        let result = extract_annotations(content);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].annotation_type, "llm");
+    }
+
+    #[test]
+    fn extract_annotations_document_scope() {
+        let content = r"%%! llm \d | summarize %%";
+        let result = extract_annotations(content);
+        assert_eq!(result[0].scope_kind, "document");
+        assert_eq!(result[0].scope_value, "");
+    }
+
+    #[test]
+    fn extract_annotations_section_scope() {
+        let content = r"%%! n: \h | section note %%";
+        let result = extract_annotations(content);
+        assert_eq!(result[0].scope_kind, "section");
+        assert_eq!(result[0].scope_value, "");
+    }
+
+    #[test]
+    fn extract_annotations_asymmetric_scope() {
+        let content = r"%%! n 3\p1 | asymmetric note %%";
+        let result = extract_annotations(content);
+        assert_eq!(result[0].scope_kind, "asymmetric_paragraph");
+        assert_eq!(result[0].scope_value, "3:1");
     }
 }

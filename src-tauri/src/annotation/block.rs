@@ -240,4 +240,36 @@ mod tests {
         assert!(!is_block_form("no separator here"));
         assert!(!is_block_form("text --- inline"));
     }
+
+    #[test]
+    fn block_llm_type() {
+        let inner = "llm\n\\p\n---\nAI content analysis.";
+        let ann = parse_block(inner);
+        assert_eq!(ann.annotation_type, AnnotationType::Llm);
+        assert_eq!(ann.scope, Scope::Paragraph(1));
+        assert_eq!(ann.body, Some("AI content analysis.".to_string()));
+    }
+
+    #[test]
+    fn block_document_scope() {
+        let inner = "llm\n\\d\n---\nSummarize the whole document.";
+        let ann = parse_block(inner);
+        assert_eq!(ann.scope, Scope::Document);
+    }
+
+    #[test]
+    fn block_section_scope() {
+        let inner = "n\n\\h\n---\nSection-level note.";
+        let ann = parse_block(inner);
+        assert_eq!(ann.scope, Scope::Section);
+    }
+
+    #[test]
+    fn block_asymmetric_paragraph_scope() {
+        let inner = "n\n3\\p1\n---\nAsymmetric note.";
+        let ann = parse_block(inner);
+        assert_eq!(ann.scope, Scope::Asymmetric {
+            unit: ScopeKind::Paragraph, before: 3, after: 1,
+        });
+    }
 }

@@ -11,7 +11,7 @@ static ANCHOR_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 static SCOPE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(_{1,}|\\p(?:p+|_{1,})?|\\f(?:f+|_{1,})?|\\s(?:s+|_{1,})?)\s").unwrap()
+    Regex::new(r"^(_{1,}|\\p(?:p+|_{1,})?|\\f(?:f+|_{1,})?|\\s(?:s+|_{1,})?|\\d|\\h|\d+\\[psf]\d+|\d+_\d+)\s").unwrap()
 });
 
 pub fn parse_compact(inner: &str) -> Annotation {
@@ -21,7 +21,7 @@ pub fn parse_compact(inner: &str) -> Annotation {
     let mut scope = Scope::Sentence(1);
     let mut is_structured = false;
 
-    let type_keywords = ["todo", "app", "cf", "tr", "n", "q"];
+    let type_keywords = ["todo", "app", "llm", "cf", "tr", "n", "q"];
     for &kw in &type_keywords {
         if remaining.starts_with(kw) {
             let after = &remaining[kw.len()..];
@@ -337,5 +337,58 @@ mod tests {
         let a = parse_compact(r"n: \s___ | note");
         let b = parse_compact(r"n: \sss | note");
         assert_eq!(a.scope, b.scope);
+    }
+
+    #[test]
+    fn llm_type_compact() {
+        let ann = parse_compact("llm | AI summary of passage");
+        assert_eq!(ann.annotation_type, AnnotationType::Llm);
+        assert_eq!(ann.body, Some("AI summary of passage".to_string()));
+    }
+
+    #[test]
+    fn llm_with_scope_and_certainty() {
+        let ann = parse_compact(r"llm! \p | summarize this section");
+        assert_eq!(ann.annotation_type, AnnotationType::Llm);
+        assert_eq!(ann.certainty, Certainty::Firm);
+        assert_eq!(ann.scope, Scope::Paragraph(1));
+    }
+
+    #[test]
+    fn document_scope_compact() {
+        let ann = parse_compact(r"llm \d | summarize entire document");
+        assert_eq!(ann.scope, Scope::Document);
+        assert_eq!(ann.body, Some("summarize entire document".to_string()));
+    }
+
+    #[test]
+    fn section_scope_compact() {
+        let ann = parse_compact(r"n: \h | section-level note");
+        assert_eq!(ann.scope, Scope::Section);
+        assert_eq!(ann.body, Some("section-level note".to_string()));
+    }
+
+    #[test]
+    fn asymmetric_paragraph_scope_compact() {
+        let ann = parse_compact(r"n 3\p1 | three before one after");
+        assert_eq!(ann.scope, Scope::Asymmetric {
+            unit: ScopeKind::Paragraph, before: 3, after: 1,
+        });
+        assert_eq!(ann.body, Some("three before one after".to_string()));
+    }
+
+    #[test]
+    fn asymmetric_word_scope_compact() {
+        let ann = parse_compact("n 3_1 | asymmetric words");
+        assert_eq!(ann.scope, Scope::Asymmetric {
+            unit: ScopeKind::Word, before: 3, after: 1,
+        });
+    }
+
+    #[test]
+    fn existing_types_still_parse() {
+        assert_eq!(parse_compact("n | note").annotation_type, AnnotationType::Note);
+        assert_eq!(parse_compact("todo | task").annotation_type, AnnotationType::Todo);
+        assert_eq!(parse_compact("tr | translate").annotation_type, AnnotationType::Translation);
     }
 }

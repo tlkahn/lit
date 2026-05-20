@@ -189,4 +189,50 @@ mod tests {
         assert!(ann.body.as_ref().unwrap().contains("line one"));
         assert!(ann.body.as_ref().unwrap().contains("line two"));
     }
+
+    #[test]
+    fn compact_llm_document_scope() {
+        let ann = parse_one(r"%%! llm \d | summarize the document %%");
+        assert_eq!(ann.annotation_type, AnnotationType::Llm);
+        assert_eq!(ann.scope, Scope::Document);
+        assert_eq!(ann.body, Some("summarize the document".to_string()));
+    }
+
+    #[test]
+    fn compact_llm_section_scope() {
+        let ann = parse_one(r"%%! llm \h | summarize this section %%");
+        assert_eq!(ann.annotation_type, AnnotationType::Llm);
+        assert_eq!(ann.scope, Scope::Section);
+    }
+
+    #[test]
+    fn compact_asymmetric_paragraph() {
+        let ann = parse_one(r"%%! n 3\p1 | asymmetric %%");
+        assert_eq!(ann.scope, Scope::Asymmetric {
+            unit: ScopeKind::Paragraph, before: 3, after: 1,
+        });
+    }
+
+    #[test]
+    fn compact_asymmetric_word() {
+        let ann = parse_one("%%! n 2_3 | words %%");
+        assert_eq!(ann.scope, Scope::Asymmetric {
+            unit: ScopeKind::Word, before: 2, after: 3,
+        });
+    }
+
+    #[test]
+    fn block_llm_section() {
+        let ann = parse_one("%%!\nllm\n\\h\n---\nAI section summary.\n%%");
+        assert_eq!(ann.annotation_type, AnnotationType::Llm);
+        assert_eq!(ann.scope, Scope::Section);
+    }
+
+    #[test]
+    fn block_asymmetric_sentence() {
+        let ann = parse_one("%%!\nn\n2\\s1\n---\nNote body.\n%%");
+        assert_eq!(ann.scope, Scope::Asymmetric {
+            unit: ScopeKind::Sentence, before: 2, after: 1,
+        });
+    }
 }
