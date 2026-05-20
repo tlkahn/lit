@@ -1,6 +1,7 @@
 pub mod annotation;
 pub mod app_info;
 pub mod cli;
+pub mod credential;
 pub mod crossref;
 pub mod export;
 pub mod external_editor;
