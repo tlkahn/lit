@@ -52,7 +52,7 @@ pub fn build_prompt(
 }
 
 pub fn estimate_tokens(text: &str) -> usize {
-    (text.len() + 3) / 4
+    (text.chars().count() + 3) / 4
 }
 
 const DEFAULT_CONTEXT_WINDOW: usize = 128_000;
@@ -96,12 +96,22 @@ pub fn apply_token_budget(prompt: Prompt, model: &str) -> (Prompt, Option<Trunca
 
     let original_tokens = estimate_tokens(&prompt.text);
     let text = &prompt.text;
-    let truncated = if text.len() > text_budget_chars {
-        let trim_total = text.len() - text_budget_chars;
+    let char_count = text.chars().count();
+    let truncated = if char_count > text_budget_chars {
+        let trim_total = char_count - text_budget_chars;
         let trim_each = trim_total / 2;
-        let start = trim_each;
-        let end = text.len() - trim_each;
-        text[start..end].to_string()
+
+        let start_byte = text.char_indices()
+            .nth(trim_each)
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        let end_char_idx = char_count - trim_each;
+        let end_byte = text.char_indices()
+            .nth(end_char_idx)
+            .map(|(i, _)| i)
+            .unwrap_or(text.len());
+
+        text[start_byte..end_byte].to_string()
     } else {
         text.clone()
     };
@@ -497,6 +507,41 @@ data: [DONE]\n\n";
         assert!(events.contains(&LlmEvent::Chunk { text: "Hello".into() }));
         assert!(events.contains(&LlmEvent::Chunk { text: " world".into() }));
         assert!(events.contains(&LlmEvent::Done));
+    }
+
+    #[test]
+    fn estimate_tokens_cjk() {
+        let count = estimate_tokens("你好世界");
+        assert!(count >= 1 && count <= 2, "got {count}");
+    }
+
+    #[test]
+    fn apply_token_budget_cjk_no_panic() {
+        let cjk_text = "你好".repeat(300_000);
+        let prompt = Prompt::new(&cjk_text);
+        let (result, trunc) = apply_token_budget(prompt, "gpt-4o");
+        assert!(result.text.len() < cjk_text.len());
+        let info = trunc.expect("should have truncation info");
+        assert!(info.kept_tokens < info.original_tokens);
+    }
+
+    #[test]
+    fn apply_token_budget_cjk_preserves_center() {
+        let cjk_text = "你好".repeat(300_000);
+        let prompt = Prompt::new(&cjk_text);
+        let (result, _) = apply_token_budget(prompt, "gpt-4o");
+        let char_count = cjk_text.chars().count();
+        let center_char = char_count / 2;
+        let check_start: String = cjk_text.chars().skip(center_char - 2).take(4).collect();
+        assert!(result.text.contains(&check_start));
+    }
+
+    #[test]
+    fn apply_token_budget_mixed_script_no_panic() {
+        let mixed = "Hello你好World世界".repeat(50_000);
+        let prompt = Prompt::new(&mixed);
+        let (result, _) = apply_token_budget(prompt, "gpt-4o");
+        assert!(result.text.len() < mixed.len());
     }
 
     #[tokio::test]

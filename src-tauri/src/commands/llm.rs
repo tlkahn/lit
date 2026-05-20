@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tokio::task::JoinHandle;
 
 use serde::Deserialize;
@@ -8,16 +8,23 @@ use tauri::{Emitter, Window};
 use crate::llm::{self, ChatMessage, LlmEvent};
 
 pub struct LlmState {
-    active: Mutex<Option<JoinHandle<()>>>,
+    active: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
 impl LlmState {
     pub fn new() -> Self {
         Self {
-            active: Mutex::new(None),
+            active: Arc::new(Mutex::new(None)),
         }
     }
 
+    pub fn clone_ref(&self) -> Self {
+        Self {
+            active: Arc::clone(&self.active),
+        }
+    }
+
+    #[allow(dead_code)]
     pub fn has_active_task(&self) -> bool {
         self.active.lock().unwrap().is_some()
     }
@@ -81,6 +88,7 @@ pub async fn llm_prompt_streaming(
     let api_key = llm::resolve_api_key(args.api_key.as_deref(), env_var_name);
 
     let model = args.model.clone();
+    let state_ref = state.clone_ref();
     let handle = tokio::spawn(async move {
         let stream_result = provider
             .execute(&model, &prompt, api_key.as_deref(), true)
@@ -122,6 +130,8 @@ pub async fn llm_prompt_streaming(
                 );
             }
         }
+
+        state_ref.clear();
     });
 
     state.set_active(handle);
@@ -178,5 +188,20 @@ mod tests {
         state.set_active(handle);
         state.clear();
         assert!(!state.has_active_task());
+    }
+
+    #[tokio::test]
+    async fn state_auto_clears_after_task_completes() {
+        let state = LlmState::new();
+        let state_ref = state.clone_ref();
+        let handle = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            state_ref.clear();
+        });
+        state.set_active(handle);
+        assert!(state.has_active_task());
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(!state.has_active_task(), "state should auto-clear after task completes");
     }
 }
