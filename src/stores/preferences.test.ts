@@ -693,4 +693,91 @@ describe("PreferencesStore", () => {
 
     expect(usePreferencesStore.getState().sidebarVisible).toBe(false);
   });
+
+  describe("llm type-specific prompts", () => {
+    it("defaults llmPromptLlm to non-empty string", () => {
+      const state = usePreferencesStore.getState();
+      expect(state.llmPromptLlm).toBeTruthy();
+    });
+
+    it("defaults all 7 prompt fields to non-empty strings", () => {
+      const state = usePreferencesStore.getState();
+      expect(state.llmPromptLlm).toBeTruthy();
+      expect(state.llmPromptTodo).toBeTruthy();
+      expect(state.llmPromptTr).toBeTruthy();
+      expect(state.llmPromptQ).toBeTruthy();
+      expect(state.llmPromptN).toBeTruthy();
+      expect(state.llmPromptCf).toBeTruthy();
+      expect(state.llmPromptApp).toBeTruthy();
+    });
+
+    it("maps llm.prompts.* from IPC", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "get_preferences") {
+          return {
+            "workbench.colorTheme": null,
+            "workbench.darkMode": "auto",
+            "workbench.sideBar.location": "left",
+            "llm.prompts.llm": "Custom llm prompt",
+            "llm.prompts.q": "Custom question prompt",
+          };
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      mockListen();
+
+      await usePreferencesStore.getState().loadPreferences();
+      expect(usePreferencesStore.getState().llmPromptLlm).toBe("Custom llm prompt");
+      expect(usePreferencesStore.getState().llmPromptQ).toBe("Custom question prompt");
+    });
+
+    it("uses defaults when llm.prompts.* keys are missing from IPC", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "get_preferences") {
+          return {
+            "workbench.colorTheme": null,
+            "workbench.darkMode": "auto",
+            "workbench.sideBar.location": "left",
+          };
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      mockListen();
+
+      await usePreferencesStore.getState().loadPreferences();
+      const state = usePreferencesStore.getState();
+      expect(state.llmPromptLlm).toContain("instruction");
+      expect(state.llmPromptTodo).toContain("task");
+      expect(state.llmPromptTr).toContain("Translate");
+      expect(state.llmPromptQ).toContain("question");
+      expect(state.llmPromptN).toContain("note");
+      expect(state.llmPromptCf).toContain("cross-reference");
+      expect(state.llmPromptApp).toContain("commentary");
+    });
+
+    it("updates prompts on preferences://changed event", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "get_preferences") {
+          return {
+            "workbench.colorTheme": null,
+            "workbench.darkMode": "auto",
+            "workbench.sideBar.location": "left",
+          };
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      mockListen();
+
+      await usePreferencesStore.getState().loadPreferences();
+
+      emitMockEvent("preferences://changed", {
+        "workbench.colorTheme": null,
+        "workbench.darkMode": "auto",
+        "workbench.sideBar.location": "left",
+        "llm.prompts.llm": "Updated prompt",
+      });
+
+      expect(usePreferencesStore.getState().llmPromptLlm).toBe("Updated prompt");
+    });
+  });
 });

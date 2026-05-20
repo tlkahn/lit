@@ -7,8 +7,8 @@ import {
 } from "./settingsRegistry";
 
 describe("SETTINGS_REGISTRY", () => {
-  it("has 22 entries", () => {
-    expect(SETTINGS_REGISTRY).toHaveLength(22);
+  it("has 29 entries", () => {
+    expect(SETTINGS_REGISTRY).toHaveLength(29);
   });
 
   it("every entry has required fields defined", () => {
@@ -51,6 +51,25 @@ describe("SETTINGS_REGISTRY", () => {
     expect(entry).toBeDefined();
     expect(entry!.controlType).toBe("textarea");
   });
+
+  it("llmPromptLlm entry exists with controlType 'textarea'", () => {
+    const entry = SETTINGS_REGISTRY.find((e) => e.storeField === "llmPromptLlm");
+    expect(entry).toBeDefined();
+    expect(entry!.controlType).toBe("textarea");
+    expect(entry!.category).toBe("LLM");
+  });
+
+  it("all 7 type-specific prompt entries exist", () => {
+    const promptFields = [
+      "llmPromptLlm", "llmPromptTodo", "llmPromptTr",
+      "llmPromptQ", "llmPromptN", "llmPromptCf", "llmPromptApp",
+    ];
+    for (const field of promptFields) {
+      const entry = SETTINGS_REGISTRY.find((e) => e.storeField === field);
+      expect(entry, `missing entry for ${field}`).toBeDefined();
+      expect(entry!.controlType).toBe("textarea");
+    }
+  });
 });
 
 describe("CATEGORIES", () => {
@@ -75,7 +94,7 @@ describe("groupByCategory", () => {
     expect(grouped.get("Editor")).toHaveLength(3);
     expect(grouped.get("Cross-references")).toHaveLength(3);
     expect(grouped.get("Annotations")).toHaveLength(4);
-    expect(grouped.get("LLM")).toHaveLength(7);
+    expect(grouped.get("LLM")).toHaveLength(14);
     expect(grouped.get("Experimental")).toHaveLength(1);
     expect(grouped.get("Keyboard Shortcuts")).toHaveLength(0);
   });
@@ -99,7 +118,7 @@ describe("filterSettings", () => {
 
   it("returns all 22 entries with empty indices for empty query", () => {
     const results = filterSettings(SETTINGS_REGISTRY, "");
-    expect(results).toHaveLength(22);
+    expect(results).toHaveLength(29);
     for (const r of results) {
       expect(r.indices).toEqual([]);
     }

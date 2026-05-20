@@ -3,6 +3,7 @@ import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { PillWidget, CalloutWidget, MarkerWidget, toggleAnnotationFoldEffect, annotationFoldField } from "./annotationWidgets";
 import type { Annotation } from "../../lib/ipc";
+import { useModalLockStore } from "../../stores/modalLock";
 
 vi.mock("../../lib/ipc", () => ({
   parseAnnotations: vi.fn(async () => []),
@@ -20,6 +21,7 @@ const mockHandleLeave = handleAnnotationLeave as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  useModalLockStore.setState({ llmLocked: false });
 });
 
 function makeEditorView(doc = "hello world"): EditorView {
@@ -305,7 +307,9 @@ describe("MarkerWidget", () => {
     const view = makeEditorView();
     const w = new MarkerWidget(makeAnnotation({ annotation_type: "note", certainty: "neutral" }));
     const dom = w.toDOM(view);
-    expect(dom.textContent).toBe("N");
+    expect(dom.textContent).toContain("N");
+    expect(dom.textContent).not.toContain("?");
+    expect(dom.textContent).not.toContain("!");
     view.destroy();
   });
 
@@ -426,5 +430,113 @@ describe("MarkerWidget", () => {
     expect(mockHandleLeave).toHaveBeenCalledOnce();
     expect(mockHandleLeave).toHaveBeenCalledWith(view);
     view.destroy();
+  });
+});
+
+describe("fire button", () => {
+  describe("PillWidget", () => {
+    it("renders .cm-annotation-fire-btn with ▶ for question type", () => {
+      const view = makeEditorView();
+      const w = new PillWidget(makeAnnotation({ annotation_type: "question", body: "why?" }));
+      const dom = w.toDOM(view);
+      const btn = dom.querySelector(".cm-annotation-fire-btn");
+      expect(btn).toBeTruthy();
+      expect(btn!.textContent).toBe("▶");
+      view.destroy();
+    });
+
+    it("does NOT render fire button for bare type", () => {
+      const view = makeEditorView();
+      const w = new PillWidget(makeAnnotation({ annotation_type: "bare" }));
+      const dom = w.toDOM(view);
+      expect(dom.querySelector(".cm-annotation-fire-btn")).toBeNull();
+      view.destroy();
+    });
+
+    it("fire button click dispatches lit:fire-annotation, NOT lit:open-annotation-builder", () => {
+      const view = makeEditorView();
+      const ann = makeAnnotation({ annotation_type: "llm", body: "explain" });
+      const w = new PillWidget(ann);
+      const dom = w.toDOM(view);
+      const btn = dom.querySelector(".cm-annotation-fire-btn")! as HTMLElement;
+
+      const fireSpy = vi.fn();
+      const editSpy = vi.fn();
+      window.addEventListener("lit:fire-annotation", fireSpy);
+      window.addEventListener("lit:open-annotation-builder", editSpy);
+      btn.click();
+      expect(fireSpy).toHaveBeenCalledTimes(1);
+      const event = fireSpy.mock.calls[0]![0] as CustomEvent;
+      expect(event.detail.annotation).toBe(ann);
+      expect(editSpy).not.toHaveBeenCalled();
+      window.removeEventListener("lit:fire-annotation", fireSpy);
+      window.removeEventListener("lit:open-annotation-builder", editSpy);
+      view.destroy();
+    });
+
+    it("fire button has .cm-annotation-fire-disabled when llmLocked", () => {
+      useModalLockStore.setState({ llmLocked: true });
+      const view = makeEditorView();
+      const w = new PillWidget(makeAnnotation({ annotation_type: "note", body: "test" }));
+      const dom = w.toDOM(view);
+      const btn = dom.querySelector(".cm-annotation-fire-btn");
+      expect(btn!.classList.contains("cm-annotation-fire-disabled")).toBe(true);
+      view.destroy();
+    });
+  });
+
+  describe("MarkerWidget", () => {
+    it("renders .cm-annotation-fire-btn for note type", () => {
+      const view = makeEditorView();
+      const w = new MarkerWidget(makeAnnotation({ annotation_type: "note" }));
+      const dom = w.toDOM(view);
+      expect(dom.querySelector(".cm-annotation-fire-btn")).toBeTruthy();
+      view.destroy();
+    });
+
+    it("does NOT render fire button for bare type", () => {
+      const view = makeEditorView();
+      const w = new MarkerWidget(makeAnnotation({ annotation_type: "bare" }));
+      const dom = w.toDOM(view);
+      expect(dom.querySelector(".cm-annotation-fire-btn")).toBeNull();
+      view.destroy();
+    });
+
+    it("fire button has .cm-annotation-fire-disabled when llmLocked", () => {
+      useModalLockStore.setState({ llmLocked: true });
+      const view = makeEditorView();
+      const w = new MarkerWidget(makeAnnotation({ annotation_type: "todo" }));
+      const dom = w.toDOM(view);
+      const btn = dom.querySelector(".cm-annotation-fire-btn");
+      expect(btn!.classList.contains("cm-annotation-fire-disabled")).toBe(true);
+      view.destroy();
+    });
+  });
+
+  describe("CalloutWidget", () => {
+    it("renders .cm-annotation-fire-btn in header for question type", () => {
+      const ann = makeAnnotation({ form: "block", annotation_type: "question", body: "why?" });
+      const w = new CalloutWidget(ann, false, 0);
+      const dom = w.toDOM(null as unknown as EditorView);
+      const btn = dom.querySelector(".cm-annotation-callout-header .cm-annotation-fire-btn");
+      expect(btn).toBeTruthy();
+      expect(btn!.textContent).toBe("▶");
+    });
+
+    it("does NOT render fire button for bare type", () => {
+      const ann = makeAnnotation({ form: "block", annotation_type: "bare" });
+      const w = new CalloutWidget(ann, false, 0);
+      const dom = w.toDOM(null as unknown as EditorView);
+      expect(dom.querySelector(".cm-annotation-fire-btn")).toBeNull();
+    });
+
+    it("fire button has .cm-annotation-fire-disabled when llmLocked", () => {
+      useModalLockStore.setState({ llmLocked: true });
+      const ann = makeAnnotation({ form: "block", annotation_type: "crossref", body: "cf" });
+      const w = new CalloutWidget(ann, false, 0);
+      const dom = w.toDOM(null as unknown as EditorView);
+      const btn = dom.querySelector(".cm-annotation-fire-btn");
+      expect(btn!.classList.contains("cm-annotation-fire-disabled")).toBe(true);
+    });
   });
 });

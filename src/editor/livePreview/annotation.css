@@ -176,6 +176,43 @@
   background: rgba(158, 158, 158, 0.05);
 }
 
+/* Fire button */
+.cm-annotation-fire-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 0.7em;
+  opacity: 0.6;
+  padding: 0 2px;
+  transition: opacity 0.15s ease;
+}
+
+.cm-annotation-fire-btn:hover {
+  opacity: 1;
+}
+
+.cm-annotation-fire-disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* LLM type colors */
+.cm-annotation-pill[data-annotation-type="llm"] {
+  background: rgba(255, 193, 7, 0.15);
+  color: rgb(255, 193, 7);
+}
+
+.cm-annotation-marker[data-annotation-type="llm"] {
+  color: rgb(255, 193, 7);
+}
+
+.cm-annotation-callout[data-annotation-type="llm"] {
+  border-inline-start-color: rgba(255, 193, 7, 0.6);
+  background: rgba(255, 193, 7, 0.05);
+}
+
 /* Scope highlight */
 .scope-highlight {
   background: rgba(68, 138, 255, 0.12);

@@ -28,6 +28,13 @@ export interface PreferencesState {
   llmAnthropicBaseUrl: string;
   llmSystemPrompt: string;
   llmTemperature: number;
+  llmPromptLlm: string;
+  llmPromptTodo: string;
+  llmPromptTr: string;
+  llmPromptQ: string;
+  llmPromptN: string;
+  llmPromptCf: string;
+  llmPromptApp: string;
   llmOpenaiApiKeySet: boolean;
   llmAnthropicApiKeySet: boolean;
   loaded: boolean;
@@ -77,6 +84,13 @@ function mapPreferences(prefs: Preferences) {
     llmAnthropicBaseUrl: (prefs["llm.anthropic.baseUrl"] as string) ?? "",
     llmSystemPrompt: (prefs["llm.systemPrompt"] as string) ?? "",
     llmTemperature: (prefs["llm.temperature"] as number) ?? 0.7,
+    llmPromptLlm: (prefs["llm.prompts.llm"] as string) ?? "Execute the following instruction using the provided context.",
+    llmPromptTodo: (prefs["llm.prompts.todo"] as string) ?? "Complete the following task using the provided context.",
+    llmPromptTr: (prefs["llm.prompts.tr"] as string) ?? "Translate the following text. If a hint is provided, follow it.",
+    llmPromptQ: (prefs["llm.prompts.q"] as string) ?? "Answer the following question about the provided context.",
+    llmPromptN: (prefs["llm.prompts.n"] as string) ?? "Elaborate on the following note given the surrounding context.",
+    llmPromptCf: (prefs["llm.prompts.cf"] as string) ?? "Explain the connection described in the following cross-reference.",
+    llmPromptApp: (prefs["llm.prompts.app"] as string) ?? "Provide critical commentary on the following text.",
   };
 }
 
@@ -101,6 +115,13 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   llmAnthropicBaseUrl: "",
   llmSystemPrompt: "",
   llmTemperature: 0.7,
+  llmPromptLlm: "Execute the following instruction using the provided context.",
+  llmPromptTodo: "Complete the following task using the provided context.",
+  llmPromptTr: "Translate the following text. If a hint is provided, follow it.",
+  llmPromptQ: "Answer the following question about the provided context.",
+  llmPromptN: "Elaborate on the following note given the surrounding context.",
+  llmPromptCf: "Explain the connection described in the following cross-reference.",
+  llmPromptApp: "Provide critical commentary on the following text.",
   llmOpenaiApiKeySet: false,
   llmAnthropicApiKeySet: false,
   loaded: false,

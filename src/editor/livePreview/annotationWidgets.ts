@@ -2,11 +2,40 @@ import { type EditorView, WidgetType } from "@codemirror/view";
 import { StateEffect, StateField, type Transaction } from "@codemirror/state";
 import type { Annotation } from "../../lib/ipc";
 import type { AnnotationBuilderEventDetail } from "../../lib/annotationDsl";
+import { canFire } from "../../lib/fireClassification";
+import { useModalLockStore } from "../../stores/modalLock";
 import { handleAnnotationHover, handleAnnotationLeave } from "./annotationHover";
 import { TYPE_ICON, certaintyClass, certaintyMark, truncateBody } from "./annotationConstants";
 import "./annotation.css";
 
 export { certaintyClass, certaintyMark };
+
+export interface FireAnnotationEventDetail {
+  annotation: Annotation;
+}
+
+export function createFireButton(ann: Annotation): HTMLSpanElement | null {
+  if (!canFire(ann.annotation_type)) return null;
+
+  const btn = document.createElement("span");
+  btn.className = "cm-annotation-fire-btn";
+
+  if (useModalLockStore.getState().llmLocked) {
+    btn.classList.add("cm-annotation-fire-disabled");
+  }
+
+  btn.textContent = "▶";
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    window.dispatchEvent(
+      new CustomEvent<FireAnnotationEventDetail>("lit:fire-annotation", {
+        detail: { annotation: ann },
+      }),
+    );
+  };
+  return btn;
+}
 
 function dispatchEditEvent(ann: Annotation): void {
   window.dispatchEvent(
@@ -63,6 +92,8 @@ export class PillWidget extends WidgetType {
       e.preventDefault();
       dispatchEditEvent(this.annotation);
     };
+    const fireBtn = createFireButton(this.annotation);
+    if (fireBtn) pill.appendChild(fireBtn);
     return pill;
   }
 
@@ -109,6 +140,8 @@ export class MarkerWidget extends WidgetType {
         );
       }
     };
+    const fireBtn = createFireButton(ann);
+    if (fireBtn) sup.appendChild(fireBtn);
     return sup;
   }
 
@@ -218,6 +251,9 @@ export class CalloutWidget extends WidgetType {
       date.textContent = ann.date;
       header.appendChild(date);
     }
+
+    const fireBtn = createFireButton(ann);
+    if (fireBtn) header.appendChild(fireBtn);
 
     const arrow = document.createElement("span");
     arrow.className = "cm-annotation-fold-icon";
