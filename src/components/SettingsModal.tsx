@@ -64,7 +64,7 @@ function renderControl(params: RenderControlParams) {
           label={label}
           testId={entry.testId}
           value={prefs[entry.storeField] as string}
-          options={entry.options!}
+          options={entry.options}
           onChange={(v) => setRegistryPref(entry.storeField, entry.jsonKey, v)}
         />
       );
@@ -110,13 +110,15 @@ function renderControl(params: RenderControlParams) {
           testId={entry.testId}
           hasKey={prefs[entry.storeField] as boolean}
           onSave={(v) => {
-            setApiKey(entry.provider!, v).then(() => {
-              usePreferencesStore.setState({ [entry.storeField]: true } as Partial<PreferencesState>);
+            usePreferencesStore.setState({ [entry.storeField]: true } as Partial<PreferencesState>);
+            setApiKey(entry.provider, v).catch(() => {
+              usePreferencesStore.setState({ [entry.storeField]: false } as Partial<PreferencesState>);
             });
           }}
           onDelete={() => {
-            deleteApiKey(entry.provider!).then(() => {
-              usePreferencesStore.setState({ [entry.storeField]: false } as Partial<PreferencesState>);
+            usePreferencesStore.setState({ [entry.storeField]: false } as Partial<PreferencesState>);
+            deleteApiKey(entry.provider).catch(() => {
+              usePreferencesStore.setState({ [entry.storeField]: true } as Partial<PreferencesState>);
             });
           }}
         />
@@ -131,7 +133,7 @@ function renderControl(params: RenderControlParams) {
           onChange={(v) => setLocalTextValues((prev) => ({ ...prev, [entry.storeField]: v }))}
           onCommit={() => {
             const raw = localTextValues[entry.storeField] ?? "";
-            const val = entry.nullable && raw.trim() === "" ? null : raw.trim();
+            const val = entry.nullable && raw.trim() === "" ? null : raw;
             setRegistryPref(entry.storeField, entry.jsonKey, val);
           }}
         />
@@ -143,9 +145,9 @@ function renderControl(params: RenderControlParams) {
           label={label}
           testId={entry.testId}
           value={prefs[entry.storeField] as number}
-          min={entry.min!}
-          max={entry.max!}
-          step={entry.step!}
+          min={entry.min}
+          max={entry.max}
+          step={entry.step}
           onChange={(v) => setRegistryPref(entry.storeField, entry.jsonKey, v)}
         />
       );
@@ -182,9 +184,11 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
 
   useEffect(() => {
     if (!open) return;
-    const passwordEntries = SETTINGS_REGISTRY.filter((e) => e.controlType === "password");
+    const passwordEntries = SETTINGS_REGISTRY.filter(
+      (e): e is Extract<SettingEntry, { controlType: "password" }> => e.controlType === "password",
+    );
     for (const entry of passwordEntries) {
-      hasApiKey(entry.provider!).then((has) => {
+      hasApiKey(entry.provider).then((has) => {
         usePreferencesStore.setState({ [entry.storeField]: has } as Partial<PreferencesState>);
       });
     }

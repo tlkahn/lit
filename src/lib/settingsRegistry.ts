@@ -13,23 +13,26 @@ export const CATEGORIES = [
 
 export type Category = (typeof CATEGORIES)[number];
 
-type ControlType = "toggle" | "segmented" | "text" | "dropdown" | "password" | "textarea" | "slider";
 export type PreferenceField = Exclude<keyof PreferencesState, "loaded" | "loadPreferences">;
 
-export interface SettingEntry {
+interface SettingEntryBase {
   category: Category;
   label: string;
   storeField: PreferenceField;
   jsonKey: string;
-  controlType: ControlType;
   testId: string;
-  options?: { value: string; label: string }[];
   nullable?: boolean;
-  provider?: string;
-  min?: number;
-  max?: number;
-  step?: number;
 }
+
+interface ToggleEntry extends SettingEntryBase { controlType: "toggle"; }
+interface SegmentedEntry extends SettingEntryBase { controlType: "segmented"; options: { value: string; label: string }[]; }
+interface TextEntry extends SettingEntryBase { controlType: "text"; }
+interface TextAreaEntry extends SettingEntryBase { controlType: "textarea"; }
+interface DropdownEntry extends SettingEntryBase { controlType: "dropdown"; options?: { value: string; label: string }[]; }
+interface PasswordEntry extends SettingEntryBase { controlType: "password"; provider: string; }
+interface SliderEntry extends SettingEntryBase { controlType: "slider"; min: number; max: number; step: number; }
+
+export type SettingEntry = ToggleEntry | SegmentedEntry | TextEntry | TextAreaEntry | DropdownEntry | PasswordEntry | SliderEntry;
 
 export const SETTINGS_REGISTRY: SettingEntry[] = [
   // Appearance
