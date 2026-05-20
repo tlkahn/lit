@@ -23,6 +23,13 @@ export interface PreferencesState {
   annotationScopeHighlight: boolean;
   annotationDefaultLang: string;
   annotationDisplayMode: AnnotationDisplayMode;
+  llmModel: string;
+  llmOpenaiBaseUrl: string;
+  llmAnthropicBaseUrl: string;
+  llmSystemPrompt: string;
+  llmTemperature: number;
+  llmOpenaiApiKeySet: boolean;
+  llmAnthropicApiKeySet: boolean;
   loaded: boolean;
   loadPreferences: () => Promise<void>;
 }
@@ -65,6 +72,11 @@ function mapPreferences(prefs: Preferences) {
     annotationScopeHighlight: (prefs["annotations.scopeHighlight"] as boolean) ?? true,
     annotationDefaultLang: (prefs["annotations.defaultLang"] as string) ?? "en",
     annotationDisplayMode: applyAnnotationDisplayMode(prefs["annotations.displayMode"]),
+    llmModel: (prefs["llm.model"] as string) ?? "claude-sonnet-4-6",
+    llmOpenaiBaseUrl: (prefs["llm.openai.baseUrl"] as string) ?? "",
+    llmAnthropicBaseUrl: (prefs["llm.anthropic.baseUrl"] as string) ?? "",
+    llmSystemPrompt: (prefs["llm.systemPrompt"] as string) ?? "",
+    llmTemperature: (prefs["llm.temperature"] as number) ?? 0.7,
   };
 }
 
@@ -84,6 +96,13 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   annotationScopeHighlight: true,
   annotationDefaultLang: "en",
   annotationDisplayMode: "pill",
+  llmModel: "claude-sonnet-4-6",
+  llmOpenaiBaseUrl: "",
+  llmAnthropicBaseUrl: "",
+  llmSystemPrompt: "",
+  llmTemperature: 0.7,
+  llmOpenaiApiKeySet: false,
+  llmAnthropicApiKeySet: false,
   loaded: false,
 
   loadPreferences: async () => {

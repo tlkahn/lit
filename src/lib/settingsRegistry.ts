@@ -6,13 +6,14 @@ export const CATEGORIES = [
   "Editor",
   "Cross-references",
   "Annotations",
+  "LLM",
   "Experimental",
   "Keyboard Shortcuts",
 ] as const;
 
 export type Category = (typeof CATEGORIES)[number];
 
-type ControlType = "toggle" | "segmented" | "text" | "dropdown";
+type ControlType = "toggle" | "segmented" | "text" | "dropdown" | "password" | "textarea" | "slider";
 export type PreferenceField = Exclude<keyof PreferencesState, "loaded" | "loadPreferences">;
 
 export interface SettingEntry {
@@ -24,6 +25,7 @@ export interface SettingEntry {
   testId: string;
   options?: { value: string; label: string }[];
   nullable?: boolean;
+  provider?: string;
 }
 
 export const SETTINGS_REGISTRY: SettingEntry[] = [
@@ -161,6 +163,72 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
       { value: "pill", label: "Pill" },
       { value: "footnote", label: "Footnote" },
     ],
+  },
+  // LLM
+  {
+    category: "LLM",
+    label: "Model",
+    storeField: "llmModel",
+    jsonKey: "llm.model",
+    controlType: "dropdown",
+    testId: "settings-llmModel",
+    options: [
+      { value: "claude-opus-4-6", label: "Claude Opus" },
+      { value: "claude-sonnet-4-6", label: "Claude Sonnet" },
+      { value: "claude-haiku-4-5", label: "Claude Haiku" },
+      { value: "gpt-4o", label: "GPT-4o" },
+      { value: "gpt-4o-mini", label: "GPT-4o Mini" },
+    ],
+  },
+  {
+    category: "LLM",
+    label: "OpenAI API Key",
+    storeField: "llmOpenaiApiKeySet",
+    jsonKey: "",
+    controlType: "password",
+    testId: "settings-llmOpenaiApiKeySet",
+    provider: "openai",
+  },
+  {
+    category: "LLM",
+    label: "OpenAI Base URL",
+    storeField: "llmOpenaiBaseUrl",
+    jsonKey: "llm.openai.baseUrl",
+    controlType: "text",
+    testId: "settings-llmOpenaiBaseUrl",
+  },
+  {
+    category: "LLM",
+    label: "Anthropic API Key",
+    storeField: "llmAnthropicApiKeySet",
+    jsonKey: "",
+    controlType: "password",
+    testId: "settings-llmAnthropicApiKeySet",
+    provider: "anthropic",
+  },
+  {
+    category: "LLM",
+    label: "Anthropic Base URL",
+    storeField: "llmAnthropicBaseUrl",
+    jsonKey: "llm.anthropic.baseUrl",
+    controlType: "text",
+    testId: "settings-llmAnthropicBaseUrl",
+  },
+  {
+    category: "LLM",
+    label: "System Prompt",
+    storeField: "llmSystemPrompt",
+    jsonKey: "llm.systemPrompt",
+    controlType: "textarea",
+    testId: "settings-llmSystemPrompt",
+  },
+  {
+    category: "LLM",
+    label: "Temperature",
+    storeField: "llmTemperature",
+    jsonKey: "llm.temperature",
+    controlType: "slider",
+    testId: "settings-llmTemperature",
   },
   // Experimental
   {

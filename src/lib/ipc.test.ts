@@ -64,6 +64,10 @@ import {
   activateLicense,
   checkOnlineValidation,
   syncLicenseMenu,
+  setApiKey,
+  getApiKey,
+  hasApiKey,
+  deleteApiKey,
 } from "./ipc";
 
 const sampleMeta = {
@@ -325,6 +329,14 @@ describe("ipc", () => {
           return { action: "skipped", reason: "not_due" };
         case "sync_license_menu":
           return undefined;
+        case "set_api_key":
+          return null;
+        case "get_api_key":
+          return "sk-test123";
+        case "has_api_key":
+          return true;
+        case "delete_api_key":
+          return null;
         case "search_tags":
           return [
             { tag: "rust", count: 5 },
@@ -1057,6 +1069,32 @@ describe("ipc", () => {
     await syncLicenseMenu("trial");
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("sync_license_menu", { licenseState: "trial" });
+  });
+
+  it("setApiKey invokes set_api_key with provider and key", async () => {
+    await setApiKey("openai", "sk-abc123");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("set_api_key", { provider: "openai", key: "sk-abc123" });
+  });
+
+  it("getApiKey invokes get_api_key and returns string", async () => {
+    const key = await getApiKey("openai");
+    expect(key).toBe("sk-test123");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("get_api_key", { provider: "openai" });
+  });
+
+  it("hasApiKey invokes has_api_key and returns boolean", async () => {
+    const result = await hasApiKey("openai");
+    expect(result).toBe(true);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("has_api_key", { provider: "openai" });
+  });
+
+  it("deleteApiKey invokes delete_api_key with provider", async () => {
+    await deleteApiKey("anthropic");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("delete_api_key", { provider: "anthropic" });
   });
 
 });
