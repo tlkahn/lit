@@ -121,7 +121,7 @@ describe("PillWidget", () => {
     const dom = w.toDOM(view);
     dom.dispatchEvent(new Event("mouseenter"));
     expect(mockHandleHover).toHaveBeenCalledOnce();
-    expect(mockHandleHover).toHaveBeenCalledWith(view, ann);
+    expect(mockHandleHover).toHaveBeenCalledWith(view, ann, { altKey: undefined });
     view.destroy();
   });
 
@@ -414,7 +414,7 @@ describe("MarkerWidget", () => {
     const dom = w.toDOM(view);
     dom.dispatchEvent(new Event("mouseenter"));
     expect(mockHandleHover).toHaveBeenCalledOnce();
-    expect(mockHandleHover).toHaveBeenCalledWith(view, ann);
+    expect(mockHandleHover).toHaveBeenCalledWith(view, ann, { altKey: undefined });
     view.destroy();
   });
 

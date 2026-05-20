@@ -612,6 +612,7 @@ export type AnnotationType =
   | "crossref"
   | "apparatus"
   | "translation"
+  | "llm"
   | "bare";
 
 export type Certainty = "tentative" | "firm" | "neutral";
@@ -623,7 +624,14 @@ export type Scope =
   | { kind: "paragraph"; value: number }
   | { kind: "page"; value: number }
   | { kind: "sentence"; value: number }
-  | { kind: "anchor"; value: string };
+  | { kind: "anchor"; value: string }
+  | { kind: "document"; value: 0 }
+  | { kind: "section"; value: 0 }
+  | { kind: "asymmetric"; value: { unit: ScopeKind; before: number; after: number } };
+
+export type ScopeKind = "word" | "sentence" | "paragraph" | "page";
+
+export type ResolutionMode = "backward" | "bidirectional";
 
 export interface Annotation {
   form: AnnotationForm;
@@ -658,6 +666,22 @@ export async function resolveAnnotationScope(
     charStart,
     scope,
     lang,
+  });
+}
+
+export async function resolveAnnotationScopeWithMode(
+  content: string,
+  charStart: number,
+  scope: Scope,
+  lang: string,
+  mode: ResolutionMode,
+): Promise<ScopeRange | null> {
+  return invoke<ScopeRange | null>("resolve_annotation_scope_with_mode", {
+    content,
+    charStart,
+    scope,
+    lang,
+    mode,
   });
 }
 

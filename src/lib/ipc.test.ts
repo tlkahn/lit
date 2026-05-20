@@ -56,6 +56,7 @@ import {
   ensureGraphReady,
   parseAnnotations,
   resolveAnnotationScope,
+  resolveAnnotationScopeWithMode,
   searchAnnotations,
   listAnnotations,
   exportData,
@@ -240,6 +241,11 @@ describe("ipc", () => {
           const a = args as Record<string, unknown> | undefined;
           if ((a?.charStart as number) === 0) return null;
           return { start: 6, end: 11 };
+        }
+        case "resolve_annotation_scope_with_mode": {
+          const a = args as Record<string, unknown> | undefined;
+          if ((a?.charStart as number) === 0) return null;
+          return { start: 2, end: 15 };
         }
         case "search_annotations": {
           const a = args as Record<string, unknown> | undefined;
@@ -961,6 +967,36 @@ describe("ipc", () => {
       0,
       { kind: "words", value: 1 },
       "en",
+    );
+    expect(result).toBeNull();
+  });
+
+  it("resolveAnnotationScopeWithMode calls IPC with mode arg", async () => {
+    const result = await resolveAnnotationScopeWithMode(
+      "hello world %%! llm | explain %%",
+      12,
+      { kind: "sentence", value: 1 },
+      "en",
+      "bidirectional",
+    );
+    expect(result).toEqual({ start: 2, end: 15 });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("resolve_annotation_scope_with_mode", {
+      content: "hello world %%! llm | explain %%",
+      charStart: 12,
+      scope: { kind: "sentence", value: 1 },
+      lang: "en",
+      mode: "bidirectional",
+    });
+  });
+
+  it("resolveAnnotationScopeWithMode returns null when unresolvable", async () => {
+    const result = await resolveAnnotationScopeWithMode(
+      "%%! llm | explain %%",
+      0,
+      { kind: "sentence", value: 1 },
+      "en",
+      "backward",
     );
     expect(result).toBeNull();
   });

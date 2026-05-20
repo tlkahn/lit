@@ -1,6 +1,6 @@
 import type { EditorView } from "@codemirror/view";
 import type { Annotation } from "../../lib/ipc";
-import { resolveAnnotationScope } from "../../lib/ipc";
+import { resolveAnnotationScope, resolveAnnotationScopeWithMode } from "../../lib/ipc";
 import { usePreferencesStore } from "../../stores/preferences";
 import { dispatchScopeHighlight, clearScopeHighlight } from "./scopeHighlight";
 
@@ -16,9 +16,14 @@ function bumpGen(view: EditorView): number {
   return n;
 }
 
+export interface HoverOpts {
+  altKey?: boolean;
+}
+
 export async function handleAnnotationHover(
   view: EditorView,
   annotation: Annotation,
+  opts?: HoverOpts,
 ): Promise<void> {
   const prefs = usePreferencesStore.getState();
   if (!prefs.annotationScopeHighlight) return;
@@ -29,12 +34,22 @@ export async function handleAnnotationHover(
 
   let range: { start: number; end: number } | null;
   try {
-    range = await resolveAnnotationScope(
-      content,
-      annotation.char_start,
-      annotation.scope,
-      lang,
-    );
+    if (opts?.altKey) {
+      range = await resolveAnnotationScopeWithMode(
+        content,
+        annotation.char_start,
+        annotation.scope,
+        lang,
+        "bidirectional",
+      );
+    } else {
+      range = await resolveAnnotationScope(
+        content,
+        annotation.char_start,
+        annotation.scope,
+        lang,
+      );
+    }
   } catch {
     return;
   }

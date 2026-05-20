@@ -12,7 +12,7 @@ interface AnnotationBuilderModalProps {
   selectedText?: string;
 }
 
-type ScopeKind = "none" | "words" | "sentence" | "paragraph" | "page" | "anchor";
+type ScopeKind = "none" | "words" | "sentence" | "paragraph" | "page" | "anchor" | "document" | "section" | "asymmetric";
 
 export function AnnotationBuilderModal({
   onClose,
@@ -57,7 +57,10 @@ export function AnnotationBuilderModal({
 
   const scope: Scope | null = useMemo(() => {
     if (scopeKind === "none") return null;
-    if (scopeKind === "anchor") return { kind: "anchor", value: anchorText || "" };
+    if (scopeKind === "anchor") return { kind: "anchor" as const, value: anchorText || "" };
+    if (scopeKind === "document") return { kind: "document" as const, value: 0 as const };
+    if (scopeKind === "section") return { kind: "section" as const, value: 0 as const };
+    if (scopeKind === "asymmetric") return { kind: "asymmetric" as const, value: { unit: "sentence" as const, before: scopeCount, after: scopeCount } };
     return { kind: scopeKind, value: scopeCount };
   }, [scopeKind, scopeCount, anchorText]);
 

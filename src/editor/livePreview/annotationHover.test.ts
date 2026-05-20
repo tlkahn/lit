@@ -13,10 +13,12 @@ import { usePreferencesStore } from "../../stores/preferences";
 vi.mock("../../lib/ipc", () => ({
   parseAnnotations: vi.fn(async () => []),
   resolveAnnotationScope: vi.fn(),
+  resolveAnnotationScopeWithMode: vi.fn(),
 }));
 
-import { resolveAnnotationScope } from "../../lib/ipc";
+import { resolveAnnotationScope, resolveAnnotationScopeWithMode } from "../../lib/ipc";
 const mockResolve = resolveAnnotationScope as ReturnType<typeof vi.fn>;
+const mockResolveWithMode = resolveAnnotationScopeWithMode as ReturnType<typeof vi.fn>;
 
 function makeView(doc = "hello world"): EditorView {
   const state = EditorState.create({
@@ -126,6 +128,52 @@ describe("annotationHover", () => {
 
     expect(mockResolve).not.toHaveBeenCalled();
     expect(view.state.field(scopeHighlightField)).toBe(Decoration.none);
+    view.destroy();
+  });
+
+  it("alt+hover calls resolveAnnotationScopeWithMode with bidirectional", async () => {
+    usePreferencesStore.setState({ annotationDefaultLang: "en" });
+    const view = makeView();
+    mockResolveWithMode.mockResolvedValue({ start: 0, end: 11 });
+
+    await handleAnnotationHover(view, makeAnnotation(), { altKey: true });
+
+    expect(mockResolveWithMode).toHaveBeenCalledWith(
+      "hello world",
+      6,
+      { kind: "words", value: 2 },
+      "en",
+      "bidirectional",
+    );
+    expect(mockResolve).not.toHaveBeenCalled();
+    const decos = view.state.field(scopeHighlightField);
+    const iter = decos.iter();
+    expect(iter.from).toBe(0);
+    expect(iter.to).toBe(11);
+    view.destroy();
+  });
+
+  it("hover without altKey calls resolveAnnotationScope (backward)", async () => {
+    usePreferencesStore.setState({ annotationDefaultLang: "en" });
+    const view = makeView();
+    mockResolve.mockResolvedValue({ start: 0, end: 5 });
+
+    await handleAnnotationHover(view, makeAnnotation(), { altKey: false });
+
+    expect(mockResolve).toHaveBeenCalled();
+    expect(mockResolveWithMode).not.toHaveBeenCalled();
+    view.destroy();
+  });
+
+  it("hover with no opts calls resolveAnnotationScope (backward)", async () => {
+    usePreferencesStore.setState({ annotationDefaultLang: "en" });
+    const view = makeView();
+    mockResolve.mockResolvedValue({ start: 0, end: 5 });
+
+    await handleAnnotationHover(view, makeAnnotation());
+
+    expect(mockResolve).toHaveBeenCalled();
+    expect(mockResolveWithMode).not.toHaveBeenCalled();
     view.destroy();
   });
 

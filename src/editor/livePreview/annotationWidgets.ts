@@ -57,7 +57,7 @@ export class PillWidget extends WidgetType {
 
   toDOM(view: EditorView): HTMLElement {
     const pill = buildPillDOM(this.annotation);
-    pill.onmouseenter = () => handleAnnotationHover(view, this.annotation);
+    pill.onmouseenter = (e) => handleAnnotationHover(view, this.annotation, { altKey: e.altKey });
     pill.onmouseleave = () => handleAnnotationLeave(view);
     pill.onclick = (e) => {
       e.preventDefault();
@@ -97,7 +97,7 @@ export class MarkerWidget extends WidgetType {
     sup.dataset.annotationType = ann.annotation_type;
     sup.textContent = (TYPE_ICON[ann.annotation_type] ?? "…") + certaintyMark(ann.certainty);
 
-    sup.onmouseenter = () => handleAnnotationHover(view, ann);
+    sup.onmouseenter = (e) => handleAnnotationHover(view, ann, { altKey: e.altKey });
     sup.onmouseleave = () => handleAnnotationLeave(view);
     sup.onclick = (e) => {
       e.preventDefault();
@@ -191,7 +191,7 @@ export class CalloutWidget extends WidgetType {
     if (cert) container.classList.add(cert);
     container.dataset.annotationType = ann.annotation_type;
 
-    container.onmouseenter = () => handleAnnotationHover(view, ann);
+    container.onmouseenter = (e) => handleAnnotationHover(view, ann, { altKey: e.altKey });
     container.onmouseleave = () => handleAnnotationLeave(view);
 
     const header = document.createElement("div");

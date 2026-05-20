@@ -7,6 +7,7 @@ export const TYPE_ICON: Record<AnnotationType, string> = {
   crossref: "→",
   apparatus: "⊕",
   translation: "译",
+  llm: "⚡",
   bare: "…",
 };
 

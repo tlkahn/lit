@@ -551,4 +551,61 @@ describe("annotationToFields", () => {
       expect(generateDsl(annotationToFields(ann))).toBe("%%! n \\s | one sentence %%");
     });
   });
+
+  describe("llm type", () => {
+    it("generates llm compact form", () => {
+      expect(generateDsl(fields({ type: "llm", body: "explain" }))).toBe(
+        "%%! llm | explain %%",
+      );
+    });
+
+    it("generates llm with scope", () => {
+      expect(
+        generateDsl(fields({ type: "llm", scope: { kind: "paragraph", value: 1 }, body: "summarize" })),
+      ).toBe("%%! llm \\p | summarize %%");
+    });
+
+    it("generates llm block form for multiline body", () => {
+      const result = generateDsl(fields({ type: "llm", body: "line1\nline2" }));
+      expect(result).toBe("%%!\nllm\n---\nline1\nline2\n%%");
+    });
+  });
+
+  describe("new scope serialization", () => {
+    it("document scope serializes as \\d", () => {
+      expect(
+        generateDsl(fields({ type: "llm", scope: { kind: "document", value: 0 }, body: "summarize all" })),
+      ).toBe("%%! llm \\d | summarize all %%");
+    });
+
+    it("section scope serializes as \\sec", () => {
+      expect(
+        generateDsl(fields({ type: "note", scope: { kind: "section", value: 0 }, body: "review" })),
+      ).toBe("%%! n \\sec | review %%");
+    });
+
+    it("asymmetric scope serializes with unit and counts", () => {
+      expect(
+        generateDsl(
+          fields({
+            type: "llm",
+            scope: { kind: "asymmetric", value: { unit: "sentence", before: 2, after: 3 } },
+            body: "context",
+          }),
+        ),
+      ).toBe("%%! llm \\s2:3 | context %%");
+    });
+
+    it("asymmetric scope with paragraph unit", () => {
+      expect(
+        generateDsl(
+          fields({
+            type: "llm",
+            scope: { kind: "asymmetric", value: { unit: "paragraph", before: 1, after: 2 } },
+            body: "test",
+          }),
+        ),
+      ).toBe("%%! llm \\p1:2 | test %%");
+    });
+  });
 });

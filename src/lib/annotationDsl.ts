@@ -62,6 +62,7 @@ const TYPE_KEYWORDS: Record<string, string> = {
   crossref: "cf",
   apparatus: "app",
   translation: "tr",
+  llm: "llm",
 };
 
 function serializeType(type: AnnotationType | null): string {
@@ -89,6 +90,15 @@ function serializeScope(scope: Scope | null): string {
     case "anchor": {
       const escaped = scope.value.replace(/"/g, '\\"');
       return `^"${escaped}"`;
+    }
+    case "document":
+      return "\\d";
+    case "section":
+      return "\\sec";
+    case "asymmetric": {
+      const unitMap: Record<string, string> = { word: "w", sentence: "s", paragraph: "p", page: "f" };
+      const u = unitMap[scope.value.unit] ?? "s";
+      return `\\${u}${scope.value.before}:${scope.value.after}`;
     }
   }
 }

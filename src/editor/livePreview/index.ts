@@ -18,6 +18,7 @@ import { createAnnotationInputHandler } from "./annotationInputHandler";
 import { autocompletion } from "@codemirror/autocomplete";
 import { crossrefCompletionSource } from "./crossrefCompletion";
 import { wikilinkCompletionSource } from "./wikilinkCompletion";
+import { annotationCompletionSource } from "./annotationCompletion";
 import { openUrl as defaultOpenUrl } from "@tauri-apps/plugin-opener";
 
 export { frontmatterFacet } from "./crossref";
@@ -50,7 +51,7 @@ export function livePreviewExtension(config?: LivePreviewConfig): Extension {
     citeprocExtension(),
     citationClickExtension(),
     createAnnotationInputHandler(),
-    autocompletion({ override: [crossrefCompletionSource, wikilinkCompletionSource] }),
+    autocompletion({ override: [crossrefCompletionSource, wikilinkCompletionSource, annotationCompletionSource] }),
   ];
   if (config?.resolveImageSrc) {
     exts.push(imageResolverFacet.of(config.resolveImageSrc));
