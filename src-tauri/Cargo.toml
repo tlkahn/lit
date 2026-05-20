@@ -46,7 +46,12 @@ ed25519-dalek = { version = "2", features = ["rand_core"] }
 base64 = "0.22"
 url = "2"
 tauri-plugin-deep-link = "2"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+llm-core = { path = "../../llm-rs/crates/llm-core" }
+llm-openai = { path = "../../llm-rs/crates/llm-openai" }
+llm-anthropic = { path = "../../llm-rs/crates/llm-anthropic" }
+futures = "0.3"
+tokio-stream = "0.1"
 
 [[bin]]
 name = "lit-cli"
@@ -57,3 +62,5 @@ serde_json = "1"
 tempfile = "3"
 tracing-test = { version = "0.2", features = ["no-env-filter"] }
 rand = "0.8"
+wiremock = "0.6"
+tokio = { version = "1", features = ["full", "test-util"] }
