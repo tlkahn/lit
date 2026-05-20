@@ -129,14 +129,7 @@ fn resolve_sentence(content: &str, char_start: usize, n: usize, lang: &str) -> O
         return None;
     }
 
-    let para_byte_start = trimmed.rfind("\n\n").map(|i| i + 2).unwrap_or(0);
-    let paragraph = &trimmed[para_byte_start..];
-
-    if paragraph.trim().is_empty() {
-        return None;
-    }
-
-    let sentences = sentenza::split_sentences(paragraph, lang);
+    let sentences = sentenza::split_sentences(trimmed, lang);
     if sentences.is_empty() {
         return None;
     }
@@ -145,11 +138,11 @@ fn resolve_sentence(content: &str, char_start: usize, n: usize, lang: &str) -> O
     let first_sentence = &sentences[sentences.len() - take];
     let last_sentence = &sentences[sentences.len() - 1];
 
-    let (first_start, _) = ws_flexible_find(paragraph, first_sentence, 0)?;
-    let (_, last_end) = ws_flexible_find(paragraph, last_sentence, first_start)?;
+    let (first_start, _) = ws_flexible_find(trimmed, first_sentence, 0)?;
+    let (_, last_end) = ws_flexible_find(trimmed, last_sentence, first_start)?;
 
-    let scope_start_byte = para_byte_start + first_start;
-    let scope_end_byte = (para_byte_start + last_end).min(trimmed.len());
+    let scope_start_byte = first_start;
+    let scope_end_byte = last_end.min(trimmed.len());
 
     let scope_start_utf16 = utf16_len(&content[..scope_start_byte]);
     let scope_end_utf16 = utf16_len(&content[..scope_end_byte]);
@@ -341,10 +334,7 @@ fn resolve_forward_sentences(content: &str, char_start: usize, n: usize, lang: &
         return None;
     }
 
-    let para_end = trimmed.find("\n\n").unwrap_or(trimmed.len());
-    let paragraph = &trimmed[..para_end];
-
-    let sentences = sentenza::split_sentences(paragraph, lang);
+    let sentences = sentenza::split_sentences(trimmed, lang);
     if sentences.is_empty() {
         return None;
     }
@@ -353,7 +343,7 @@ fn resolve_forward_sentences(content: &str, char_start: usize, n: usize, lang: &
     let target_sentence = &sentences[take - 1];
 
     let trim_offset = text_after.len() - trimmed.len();
-    let (_, sent_end) = ws_flexible_find(paragraph, target_sentence, 0)?;
+    let (_, sent_end) = ws_flexible_find(trimmed, target_sentence, 0)?;
 
     let abs_byte = byte_start + trim_offset + sent_end;
     Some(utf16_len(&content[..abs_byte]))
@@ -854,5 +844,155 @@ mod tests {
         let backward = resolve_scope_range_with_mode(content, cs, &Scope::Words(1), "en", &ResolutionMode::Backward);
         let original = resolve_scope_range(content, cs, &Scope::Words(1), "en");
         assert_eq!(backward, original);
+    }
+
+    // --- Cycle 1: ws_flexible_find handles \n\n ---
+
+    #[test]
+    fn ws_flex_double_newline_in_haystack() {
+        assert_eq!(ws_flexible_find("hello\n\nworld", "hello world", 0), Some((0, 12)));
+    }
+
+    #[test]
+    fn ws_flex_newline_and_spaces_mixed() {
+        assert_eq!(ws_flexible_find("a\n\nb\n\nc", "a b c", 0), Some((0, 7)));
+    }
+
+    // --- Cycle 2: backward sentence crosses paragraph boundary ---
+
+    #[test]
+    fn sentence_crosses_paragraph_boundary_backward() {
+        let content = "First sentence.\n\nSecond sentence.%%! n \\ss | note %%";
+        let char_start = utf16_len(&content[..content.find("%%!").unwrap()]);
+        let result = resolve_scope_range(content, char_start, &Scope::Sentence(2), "en");
+        let range = result.unwrap();
+        assert_eq!(range.start, 0);
+    }
+
+    #[test]
+    fn sentence_one_in_current_para_backward() {
+        let content = "First sentence.\n\nSecond sentence.%%! n \\s | note %%";
+        let char_start = utf16_len(&content[..content.find("%%!").unwrap()]);
+        let result = resolve_scope_range(content, char_start, &Scope::Sentence(1), "en");
+        let range = result.unwrap();
+        let expected_start = utf16_len(&content[..content.find("Second").unwrap()]);
+        assert_eq!(range.start, expected_start);
+    }
+
+    // --- Cycle 3: backward edge cases ---
+
+    #[test]
+    fn sentence_crosses_two_paragraph_boundaries_backward() {
+        let content = "First sentence.\n\nSecond sentence.\n\nThird sentence.%%! n \\sss | note %%";
+        let char_start = utf16_len(&content[..content.find("%%!").unwrap()]);
+        let result = resolve_scope_range(content, char_start, &Scope::Sentence(3), "en");
+        let range = result.unwrap();
+        assert_eq!(range.start, 0);
+    }
+
+    #[test]
+    fn sentence_more_than_available_cross_paragraph_backward() {
+        let content = "First sentence.\n\nSecond sentence.%%! n | note %%";
+        let char_start = utf16_len(&content[..content.find("%%!").unwrap()]);
+        let result = resolve_scope_range(content, char_start, &Scope::Sentence(5), "en");
+        let range = result.unwrap();
+        assert_eq!(range.start, 0);
+    }
+
+    #[test]
+    fn sentence_empty_paragraph_between_content_backward() {
+        let content = "First sentence.\n\n\n\nSecond sentence.%%! n \\ss | note %%";
+        let char_start = utf16_len(&content[..content.find("%%!").unwrap()]);
+        let result = resolve_scope_range(content, char_start, &Scope::Sentence(2), "en");
+        let range = result.unwrap();
+        assert_eq!(range.start, 0);
+    }
+
+    // --- Cycle 4: forward sentence crosses paragraph boundary ---
+
+    #[test]
+    fn forward_sentence_crosses_paragraph_boundary() {
+        let content = "Before. First fwd.\n\nSecond fwd.";
+        let char_start = utf16_len(&content[..content.find(" First").unwrap()]);
+        let result = resolve_scope_range(
+            content,
+            char_start,
+            &Scope::Asymmetric { unit: ScopeKind::Sentence, before: 1, after: 2 },
+            "en",
+        );
+        let range = result.unwrap();
+        assert_eq!(range.end, utf16_len(content));
+    }
+
+    #[test]
+    fn forward_sentence_one_in_current_paragraph() {
+        let content = "Before. First fwd.\n\nSecond fwd.";
+        let char_start = utf16_len(&content[..content.find(" First").unwrap()]);
+        let result = resolve_scope_range(
+            content,
+            char_start,
+            &Scope::Asymmetric { unit: ScopeKind::Sentence, before: 1, after: 1 },
+            "en",
+        );
+        let range = result.unwrap();
+        let expected_end = utf16_len(&content[..content.find("\n\nSecond").unwrap()]);
+        assert_eq!(range.end, expected_end);
+    }
+
+    // --- Cycle 5: forward edge cases ---
+
+    #[test]
+    fn forward_sentence_more_than_available_cross_paragraph() {
+        let content = "Before. First fwd.\n\nSecond fwd.";
+        let char_start = utf16_len(&content[..content.find(" First").unwrap()]);
+        let result = resolve_scope_range(
+            content,
+            char_start,
+            &Scope::Asymmetric { unit: ScopeKind::Sentence, before: 1, after: 5 },
+            "en",
+        );
+        let range = result.unwrap();
+        assert_eq!(range.end, utf16_len(content));
+    }
+
+    #[test]
+    fn forward_sentence_empty_paragraph_between() {
+        let content = "Before. First fwd.\n\n\n\nSecond fwd.";
+        let char_start = utf16_len(&content[..content.find(" First").unwrap()]);
+        let result = resolve_scope_range(
+            content,
+            char_start,
+            &Scope::Asymmetric { unit: ScopeKind::Sentence, before: 1, after: 2 },
+            "en",
+        );
+        let range = result.unwrap();
+        assert_eq!(range.end, utf16_len(content));
+    }
+
+    // --- Cycle 6: bidirectional + CJK ---
+
+    #[test]
+    fn bidirectional_sentence_crosses_paragraphs() {
+        let content = "Sent A.\n\nSent B.\n\nSent C.\n\nSent D.";
+        let char_start = utf16_len(&content[..content.find("\n\nSent C").unwrap()]);
+        let result = resolve_scope_range_with_mode(
+            content,
+            char_start,
+            &Scope::Sentence(2),
+            "en",
+            &ResolutionMode::Bidirectional,
+        );
+        let range = result.unwrap();
+        assert_eq!(range.start, 0);
+        assert_eq!(range.end, utf16_len(content));
+    }
+
+    #[test]
+    fn sentence_crosses_paragraph_boundary_cjk() {
+        let content = "第一句话。\n\n第二句话。%%! n \\ss | note %%";
+        let char_start = utf16_len(&content[..content.find("%%!").unwrap()]);
+        let result = resolve_scope_range(content, char_start, &Scope::Sentence(2), "zh");
+        let range = result.unwrap();
+        assert_eq!(range.start, 0);
     }
 }
