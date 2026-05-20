@@ -77,7 +77,7 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
       focusModeCompartment: focusModeCompartment.current,
       focusModeActive: useFocusModeStore.getState().active,
       editableCompartment: editableCompartment.current,
-      editorLocked: useModalLockStore.getState().locked,
+      editorLocked: useModalLockStore.getState().locked || useModalLockStore.getState().llmLocked,
       mediaThumbnails,
       foldConfig: { enabled: foldingEnabled, showControls: foldingShowControls },
       frontmatter,
@@ -212,13 +212,14 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
   useEffect(() => {
     const v = viewRef.current;
     if (!v) return;
-    let prev = useModalLockStore.getState().locked;
+    let prev = useModalLockStore.getState().locked || useModalLockStore.getState().llmLocked;
     return useModalLockStore.subscribe((s) => {
-      if (s.locked === prev) return;
-      prev = s.locked;
+      const shouldLock = s.locked || s.llmLocked;
+      if (shouldLock === prev) return;
+      prev = shouldLock;
       v.dispatch({
         effects: editableCompartment.current.reconfigure(
-          EditorView.editable.of(!s.locked),
+          EditorView.editable.of(!shouldLock),
         ),
       });
     });
