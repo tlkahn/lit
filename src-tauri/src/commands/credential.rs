@@ -114,14 +114,33 @@ fn account_for_provider(provider: &str) -> Result<&'static str, String> {
     }
 }
 
+fn set_api_key_inner(store: &dyn CredentialStore, provider: &str, key: &str) -> Result<(), String> {
+    let account = account_for_provider(provider)?;
+    store.set(SERVICE_NAME, account, key)
+}
+
+fn get_api_key_inner(store: &dyn CredentialStore, provider: &str) -> Result<String, String> {
+    let account = account_for_provider(provider)?;
+    store.get(SERVICE_NAME, account)
+}
+
+fn has_api_key_inner(store: &dyn CredentialStore, provider: &str) -> Result<bool, String> {
+    let account = account_for_provider(provider)?;
+    Ok(store.has(SERVICE_NAME, account))
+}
+
+fn delete_api_key_inner(store: &dyn CredentialStore, provider: &str) -> Result<(), String> {
+    let account = account_for_provider(provider)?;
+    store.delete(SERVICE_NAME, account)
+}
+
 #[tauri::command]
 pub fn set_api_key(
     provider: String,
     key: String,
     store: tauri::State<'_, std::sync::Arc<dyn CredentialStore>>,
 ) -> Result<(), String> {
-    let account = account_for_provider(&provider)?;
-    store.set(SERVICE_NAME, account, &key)
+    set_api_key_inner(store.as_ref(), &provider, &key)
 }
 
 #[tauri::command]
@@ -129,8 +148,7 @@ pub fn get_api_key(
     provider: String,
     store: tauri::State<'_, std::sync::Arc<dyn CredentialStore>>,
 ) -> Result<String, String> {
-    let account = account_for_provider(&provider)?;
-    store.get(SERVICE_NAME, account)
+    get_api_key_inner(store.as_ref(), &provider)
 }
 
 #[tauri::command]
@@ -138,8 +156,7 @@ pub fn has_api_key(
     provider: String,
     store: tauri::State<'_, std::sync::Arc<dyn CredentialStore>>,
 ) -> Result<bool, String> {
-    let account = account_for_provider(&provider)?;
-    Ok(store.has(SERVICE_NAME, account))
+    has_api_key_inner(store.as_ref(), &provider)
 }
 
 #[tauri::command]
@@ -147,14 +164,12 @@ pub fn delete_api_key(
     provider: String,
     store: tauri::State<'_, std::sync::Arc<dyn CredentialStore>>,
 ) -> Result<(), String> {
-    let account = account_for_provider(&provider)?;
-    store.delete(SERVICE_NAME, account)
+    delete_api_key_inner(store.as_ref(), &provider)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
 
     // --- TDD Cycle 1.1: InMemoryStore ---
 
@@ -203,59 +218,49 @@ mod tests {
         accepts_store(&store);
     }
 
-    // --- TDD Cycle 1.3: Tauri commands ---
-
-    fn make_store() -> Arc<dyn CredentialStore> {
-        Arc::new(InMemoryStore::new())
-    }
+    // --- TDD Cycle 1.3: Tauri commands (via inner functions) ---
 
     #[test]
     fn test_set_api_key_openai() {
-        let store = make_store();
-        store.set(SERVICE_NAME, ACCOUNT_OPENAI, "sk-test").unwrap();
+        let store = InMemoryStore::new();
+        set_api_key_inner(&store, "openai", "sk-test").unwrap();
         assert_eq!(store.get(SERVICE_NAME, ACCOUNT_OPENAI).unwrap(), "sk-test");
     }
 
     #[test]
     fn test_get_api_key_returns_stored_value() {
-        let store = make_store();
+        let store = InMemoryStore::new();
         store.set(SERVICE_NAME, ACCOUNT_OPENAI, "sk-abc").unwrap();
-        assert_eq!(store.get(SERVICE_NAME, ACCOUNT_OPENAI).unwrap(), "sk-abc");
+        assert_eq!(get_api_key_inner(&store, "openai").unwrap(), "sk-abc");
     }
 
     #[test]
     fn test_has_api_key_false() {
-        let store = make_store();
-        assert!(!store.has(SERVICE_NAME, ACCOUNT_OPENAI));
+        let store = InMemoryStore::new();
+        assert_eq!(has_api_key_inner(&store, "openai").unwrap(), false);
     }
 
     #[test]
     fn test_has_api_key_true() {
-        let store = make_store();
+        let store = InMemoryStore::new();
         store.set(SERVICE_NAME, ACCOUNT_ANTHROPIC, "key").unwrap();
-        assert!(store.has(SERVICE_NAME, ACCOUNT_ANTHROPIC));
+        assert_eq!(has_api_key_inner(&store, "anthropic").unwrap(), true);
     }
 
     #[test]
     fn test_delete_api_key() {
-        let store = make_store();
-        store.set(SERVICE_NAME, ACCOUNT_OPENAI, "key").unwrap();
-        store.delete(SERVICE_NAME, ACCOUNT_OPENAI).unwrap();
-        assert!(!store.has(SERVICE_NAME, ACCOUNT_OPENAI));
+        let store = InMemoryStore::new();
+        set_api_key_inner(&store, "openai", "key").unwrap();
+        delete_api_key_inner(&store, "openai").unwrap();
+        assert_eq!(has_api_key_inner(&store, "openai").unwrap(), false);
     }
 
     #[test]
     fn test_invalid_provider_returns_error() {
-        assert!(account_for_provider("invalid").is_err());
-    }
-
-    #[test]
-    fn test_account_for_provider_openai() {
-        assert_eq!(account_for_provider("openai").unwrap(), ACCOUNT_OPENAI);
-    }
-
-    #[test]
-    fn test_account_for_provider_anthropic() {
-        assert_eq!(account_for_provider("anthropic").unwrap(), ACCOUNT_ANTHROPIC);
+        let store = InMemoryStore::new();
+        assert!(set_api_key_inner(&store, "invalid", "key").is_err());
+        assert!(get_api_key_inner(&store, "invalid").is_err());
+        assert!(has_api_key_inner(&store, "invalid").is_err());
+        assert!(delete_api_key_inner(&store, "invalid").is_err());
     }
 }
