@@ -3,6 +3,11 @@ import { render, fireEvent } from "@testing-library/react";
 import { useLlmResponseStore } from "../stores/llmResponse";
 import { LlmResponsePanel, wrapCallout } from "./LlmResponsePanel";
 
+vi.mock("../lib/llmClient", () => ({
+  cancelLlmStream: vi.fn().mockResolvedValue(undefined),
+}));
+import { cancelLlmStream } from "../lib/llmClient";
+
 describe("LlmResponsePanel", () => {
   beforeEach(() => {
     useLlmResponseStore.getState().reset();
@@ -136,5 +141,200 @@ describe("LlmResponsePanel", () => {
     fireEvent.click(container.querySelector("[data-testid='llm-insert-btn']")!);
     expect(handler).not.toHaveBeenCalled();
     window.removeEventListener("lit:llm-insert-response", handler);
+  });
+
+  // --- Concern 4: Stop button ---
+
+  it("shows stop button during streaming", () => {
+    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    expect(container.querySelector("[data-testid='llm-stop-btn']")).toBeTruthy();
+  });
+
+  it("does not show stop button when done", () => {
+    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+    useLlmResponseStore.getState().finishStream();
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    expect(container.querySelector("[data-testid='llm-stop-btn']")).toBeNull();
+  });
+
+  it("does not show stop button when idle", () => {
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    expect(container.querySelector("[data-testid='llm-stop-btn']")).toBeNull();
+  });
+
+  it("calls cancelLlmStream when stop button clicked", () => {
+    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    fireEvent.click(container.querySelector("[data-testid='llm-stop-btn']")!);
+    expect(cancelLlmStream).toHaveBeenCalled();
+  });
+
+  // --- Concern 6: Textarea lifecycle ---
+
+  // 6.1 — Textarea renders in idle state
+  it("shows textarea in idle state", () => {
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    expect(container.querySelector("[data-testid='llm-question-input']")).toBeTruthy();
+  });
+
+  it("does not show question header in idle state", () => {
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    expect(container.querySelector("[data-testid='llm-question']")).toBeNull();
+  });
+
+  // 6.2 — Textarea hidden during streaming, question header shown
+  it("hides textarea during streaming", () => {
+    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "what is X?" });
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    expect(container.querySelector("[data-testid='llm-question-input']")).toBeNull();
+  });
+
+  it("shows question header during streaming", () => {
+    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "what is X?" });
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    const header = container.querySelector("[data-testid='llm-question']");
+    expect(header).toBeTruthy();
+    expect(header!.textContent).toBe("what is X?");
+  });
+
+  // 6.3 — Submit button renders alongside textarea
+  it("shows submit button in idle state", () => {
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    expect(container.querySelector("[data-testid='llm-submit-btn']")).toBeTruthy();
+  });
+
+  // 6.4 — Submit parses prefix and calls onSubmit
+  it("parses prefix and calls onSubmit on submit", () => {
+    const onSubmit = vi.fn();
+    const { container } = render(<LlmResponsePanel contentHeight={300} onSubmit={onSubmit} />);
+    const textarea = container.querySelector("[data-testid='llm-question-input']") as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "/insert summarize" } });
+    fireEvent.click(container.querySelector("[data-testid='llm-submit-btn']")!);
+    expect(onSubmit).toHaveBeenCalledWith(
+      { prefix: "insert", question: "summarize" },
+      expect.objectContaining({ selectionText: "", selectionFrom: 0, selectionTo: 0, filePath: "" }),
+    );
+  });
+
+  // 6.5 — Textarea clears after submit
+  it("clears textarea after submit", () => {
+    const onSubmit = vi.fn();
+    const { container } = render(<LlmResponsePanel contentHeight={300} onSubmit={onSubmit} />);
+    const textarea = container.querySelector("[data-testid='llm-question-input']") as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "hello" } });
+    fireEvent.click(container.querySelector("[data-testid='llm-submit-btn']")!);
+    expect(textarea.value).toBe("");
+  });
+
+  // 6.6 — Cmd+Enter submits
+  it("submits on Cmd+Enter", () => {
+    const onSubmit = vi.fn();
+    const { container } = render(<LlmResponsePanel contentHeight={300} onSubmit={onSubmit} />);
+    const textarea = container.querySelector("[data-testid='llm-question-input']") as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "test question" } });
+    fireEvent.keyDown(textarea, { key: "Enter", metaKey: true });
+    expect(onSubmit).toHaveBeenCalled();
+  });
+
+  it("submits on Ctrl+Enter", () => {
+    const onSubmit = vi.fn();
+    const { container } = render(<LlmResponsePanel contentHeight={300} onSubmit={onSubmit} />);
+    const textarea = container.querySelector("[data-testid='llm-question-input']") as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "test question" } });
+    fireEvent.keyDown(textarea, { key: "Enter", ctrlKey: true });
+    expect(onSubmit).toHaveBeenCalled();
+  });
+
+  // 6.7 — Submit disabled while streaming
+  it("disables submit button while streaming", () => {
+    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    const btn = container.querySelector("[data-testid='llm-submit-btn']");
+    expect(btn).toBeNull();
+  });
+
+  // 6.8 — Fresh textarea below response when done
+  it("shows textarea below response when done", () => {
+    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+    useLlmResponseStore.getState().appendChunk("answer");
+    useLlmResponseStore.getState().finishStream();
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    expect(container.querySelector("[data-testid='llm-question']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='llm-response-text']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='llm-question-input']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='llm-submit-btn']")).toBeTruthy();
+  });
+
+  // --- Concern 3: Raw insert for /insert ---
+
+  // 3.1 — /insert dispatches lit:llm-insert-raw with raw text
+  it("dispatches lit:llm-insert-raw with raw text for /insert prefix", () => {
+    useLlmResponseStore.getState().startStream({ prefix: "insert", question: "summarize" });
+    useLlmResponseStore.getState().appendChunk("summary");
+    useLlmResponseStore.getState().finishStream();
+
+    const rawHandler = vi.fn();
+    const responseHandler = vi.fn();
+    window.addEventListener("lit:llm-insert-raw", rawHandler);
+    window.addEventListener("lit:llm-insert-response", responseHandler);
+
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    fireEvent.click(container.querySelector("[data-testid='llm-insert-btn']")!);
+
+    expect(rawHandler).toHaveBeenCalledTimes(1);
+    expect((rawHandler.mock.calls[0]![0] as CustomEvent).detail.text).toBe("summary");
+    expect(responseHandler).not.toHaveBeenCalled();
+
+    window.removeEventListener("lit:llm-insert-raw", rawHandler);
+    window.removeEventListener("lit:llm-insert-response", responseHandler);
+  });
+
+  // 3.2 — /ask still dispatches callout-wrapped event
+  it("dispatches lit:llm-insert-response with callout for /ask prefix", () => {
+    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+    useLlmResponseStore.getState().appendChunk("answer");
+    useLlmResponseStore.getState().finishStream();
+
+    const rawHandler = vi.fn();
+    const responseHandler = vi.fn();
+    window.addEventListener("lit:llm-insert-raw", rawHandler);
+    window.addEventListener("lit:llm-insert-response", responseHandler);
+
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    fireEvent.click(container.querySelector("[data-testid='llm-insert-btn']")!);
+
+    expect(responseHandler).toHaveBeenCalledTimes(1);
+    expect((responseHandler.mock.calls[0]![0] as CustomEvent).detail.text).toBe("> [!llm]+ Response\n> answer");
+    expect(rawHandler).not.toHaveBeenCalled();
+
+    window.removeEventListener("lit:llm-insert-raw", rawHandler);
+    window.removeEventListener("lit:llm-insert-response", responseHandler);
+  });
+
+  // --- Concern 2: Safe context callback ---
+
+  // 2.3 — Submit works even without editor mounted (default context)
+  it("uses default context when no editor responds to lit:llm-request-context", () => {
+    const onSubmit = vi.fn();
+    const { container } = render(<LlmResponsePanel contentHeight={300} onSubmit={onSubmit} />);
+    const textarea = container.querySelector("[data-testid='llm-question-input']") as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "test" } });
+    fireEvent.click(container.querySelector("[data-testid='llm-submit-btn']")!);
+    expect(onSubmit).toHaveBeenCalledWith(
+      { prefix: "ask", question: "test" },
+      { selectionText: "", selectionFrom: 0, selectionTo: 0, filePath: "" },
+    );
+  });
+
+  // 2.4 — /rewrite without selection shows error
+  it("shows error for /rewrite without selection", () => {
+    const onSubmit = vi.fn();
+    const { container } = render(<LlmResponsePanel contentHeight={300} onSubmit={onSubmit} />);
+    const textarea = container.querySelector("[data-testid='llm-question-input']") as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "/rewrite make it concise" } });
+    fireEvent.click(container.querySelector("[data-testid='llm-submit-btn']")!);
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(container.querySelector("[data-testid='llm-rewrite-error']")).toBeTruthy();
   });
 });

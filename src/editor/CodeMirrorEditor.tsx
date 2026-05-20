@@ -2,6 +2,8 @@ import { useRef, useEffect } from "react";
 import { useCodeMirror } from "./useCodeMirror";
 import { EditorView, type KeyBinding as CM6KeyBinding } from "@codemirror/view";
 import { EditorSelection } from "@codemirror/state";
+import { useWorkspaceStore } from "../stores/workspace";
+import type { EditorContext } from "../types";
 
 interface CodeMirrorEditorProps {
   doc: string;
@@ -55,6 +57,35 @@ export function CodeMirrorEditor({ doc, onChange, onSelectionChange, resolveImag
     const handler = () => view.focus();
     window.addEventListener("lit:request-editor-focus", handler);
     return () => window.removeEventListener("lit:request-editor-focus", handler);
+  }, [view]);
+
+  useEffect(() => {
+    if (!view) return;
+    const handler = (e: Event) => {
+      const { text } = (e as CustomEvent<{ text: string }>).detail;
+      const pos = view.state.selection.main.head;
+      view.dispatch({ changes: { from: pos, insert: text } });
+    };
+    window.addEventListener("lit:llm-insert-raw", handler);
+    return () => window.removeEventListener("lit:llm-insert-raw", handler);
+  }, [view]);
+
+  useEffect(() => {
+    if (!view) return;
+    const handler = (e: Event) => {
+      const { callback } = (e as CustomEvent<{ callback: (ctx: EditorContext) => void }>).detail;
+      const sel = view.state.selection.main;
+      const selectionText = view.state.sliceDoc(sel.from, sel.to);
+      const filePath = useWorkspaceStore.getState().currentPagePath ?? "";
+      callback({
+        selectionText,
+        selectionFrom: sel.from,
+        selectionTo: sel.to,
+        filePath,
+      });
+    };
+    window.addEventListener("lit:llm-request-context", handler);
+    return () => window.removeEventListener("lit:llm-request-context", handler);
   }, [view]);
 
   return (
