@@ -1,13 +1,20 @@
 import { useRef, useEffect } from "react";
+import { marked } from "marked";
+import DOMPurify from "dompurify";
 import { useLlmResponseStore } from "../stores/llmResponse";
 
 interface LlmResponsePanelProps {
   contentHeight?: number;
 }
 
-function wrapCallout(text: string): string {
+export function wrapCallout(text: string): string {
+  if (!text) return "";
   const lines = text.split("\n").map((l) => `> ${l}`);
   return `> [!llm]+ Response\n${lines.join("\n")}`;
+}
+
+function renderMarkdown(text: string): string {
+  return DOMPurify.sanitize(marked.parse(text, { async: false }) as string);
 }
 
 export function LlmResponsePanel({ contentHeight }: LlmResponsePanelProps) {
@@ -51,9 +58,11 @@ export function LlmResponsePanel({ contentHeight }: LlmResponsePanelProps) {
               data-testid="llm-insert-btn"
               className="rounded px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover"
               onClick={() => {
+                const wrapped = wrapCallout(responseText);
+                if (!wrapped) return;
                 window.dispatchEvent(
                   new CustomEvent("lit:llm-insert-response", {
-                    detail: { text: wrapCallout(responseText) },
+                    detail: { text: wrapped },
                   }),
                 );
               }}
@@ -72,13 +81,13 @@ export function LlmResponsePanel({ contentHeight }: LlmResponsePanelProps) {
             {errorMessage}
           </div>
         ) : (
-          <pre
+          <div
             data-testid="llm-response-text"
-            className="whitespace-pre-wrap break-words font-sans text-text-normal"
+            className="prose prose-sm break-words text-text-normal"
           >
-            {responseText}
+            <div dangerouslySetInnerHTML={{ __html: renderMarkdown(responseText) }} />
             {status === "streaming" && <span className="animate-pulse">▍</span>}
-          </pre>
+          </div>
         )}
       </div>
     </div>

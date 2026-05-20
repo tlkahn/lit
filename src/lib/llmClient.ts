@@ -20,29 +20,33 @@ export async function startLlmStream(
     unlisteners.length = 0;
   }
 
-  unlisteners.push(await listen<string>("llm://chunk", (event) => {
-    callbacks.onChunk(event.payload);
-  }));
+  const results = await Promise.all([
+    listen<string>("llm://chunk", (event) => {
+      callbacks.onChunk(event.payload);
+    }),
+    listen("llm://done", () => {
+      callbacks.onDone();
+      cleanup();
+    }),
+    listen<{ message: string; retryable: boolean }>("llm://error", (event) => {
+      callbacks.onError(event.payload);
+      cleanup();
+    }),
+    listen<{ input: number; output: number }>("llm://usage", (event) => {
+      callbacks.onUsage?.(event.payload);
+    }),
+    listen("llm://truncated", (event) => {
+      callbacks.onTruncated?.(event.payload);
+    }),
+  ]);
+  unlisteners.push(...results);
 
-  unlisteners.push(await listen("llm://done", () => {
-    callbacks.onDone();
+  try {
+    await llmPromptStreaming(args);
+  } catch (err) {
     cleanup();
-  }));
-
-  unlisteners.push(await listen<{ message: string; retryable: boolean }>("llm://error", (event) => {
-    callbacks.onError(event.payload);
-    cleanup();
-  }));
-
-  unlisteners.push(await listen<{ input: number; output: number }>("llm://usage", (event) => {
-    callbacks.onUsage?.(event.payload);
-  }));
-
-  unlisteners.push(await listen("llm://truncated", (event) => {
-    callbacks.onTruncated?.(event.payload);
-  }));
-
-  await llmPromptStreaming(args);
+    throw err;
+  }
 }
 
 export async function cancelLlmStream(): Promise<void> {

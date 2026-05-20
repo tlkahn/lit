@@ -100,6 +100,44 @@ describe("llmClient", () => {
     expect(onTruncated).toHaveBeenCalledWith({ dropped: 5 });
   });
 
+  it("cleans up all listeners if llmPromptStreaming throws", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "llm_prompt_streaming") throw new Error("backend unavailable");
+      return null;
+    });
+    const callbacks = { onChunk: vi.fn(), onDone: vi.fn(), onError: vi.fn() };
+    await expect(
+      startLlmStream({ model: "claude-sonnet-4-6", text: "hello" }, callbacks),
+    ).rejects.toThrow("backend unavailable");
+    emitMockEvent("llm://chunk", "stale");
+    emitMockEvent("llm://done", null);
+    expect(callbacks.onChunk).not.toHaveBeenCalled();
+    expect(callbacks.onDone).not.toHaveBeenCalled();
+  });
+
+  it("registers all listeners before calling llmPromptStreaming", async () => {
+    const callOrder: string[] = [];
+    resetListenMock();
+    const { listen } = await import("@tauri-apps/api/event");
+    (listen as ReturnType<typeof vi.fn>).mockImplementation((event: string, callback: unknown) => {
+      callOrder.push(`listen:${event}`);
+      void callback;
+      return Promise.resolve(() => {});
+    });
+    mockInvoke((cmd) => {
+      if (cmd === "llm_prompt_streaming") callOrder.push("invoke");
+      return null;
+    });
+    await startLlmStream(
+      { model: "claude-sonnet-4-6", text: "hello" },
+      { onChunk: vi.fn(), onDone: vi.fn(), onError: vi.fn() },
+    );
+    const invokeIdx = callOrder.indexOf("invoke");
+    const listenCalls = callOrder.filter((e) => e.startsWith("listen:"));
+    expect(listenCalls).toHaveLength(5);
+    expect(invokeIdx).toBe(5);
+  });
+
   it("cancelLlmStream calls llmCancel IPC", async () => {
     await cancelLlmStream();
     const { invoke } = await import("@tauri-apps/api/core");

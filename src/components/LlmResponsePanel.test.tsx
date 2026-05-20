@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent } from "@testing-library/react";
 import { useLlmResponseStore } from "../stores/llmResponse";
-import { LlmResponsePanel } from "./LlmResponsePanel";
+import { LlmResponsePanel, wrapCallout } from "./LlmResponsePanel";
 
 describe("LlmResponsePanel", () => {
   beforeEach(() => {
@@ -92,5 +92,49 @@ describe("LlmResponsePanel", () => {
   it("renders nothing meaningful when idle", () => {
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
     expect(container.querySelector("[data-testid='llm-response-text']")).toBeNull();
+  });
+
+  // Fix 1 — wrapCallout empty text
+  it("returns empty string when text is empty", () => {
+    expect(wrapCallout("")).toBe("");
+  });
+
+  // Fix 4 — Markdown rendering
+  it("renders markdown as HTML", () => {
+    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+    useLlmResponseStore.getState().appendChunk("**bold** text");
+    useLlmResponseStore.getState().finishStream();
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    const el = container.querySelector("[data-testid='llm-response-text']");
+    expect(el?.querySelector("strong")).toBeTruthy();
+    expect(el?.textContent).not.toContain("**");
+  });
+
+  it("sanitizes script tags in response text", () => {
+    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+    useLlmResponseStore.getState().appendChunk('<script>alert("xss")</script>Safe');
+    useLlmResponseStore.getState().finishStream();
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    const el = container.querySelector("[data-testid='llm-response-text']");
+    expect(el?.querySelector("script")).toBeNull();
+    expect(el?.textContent).toContain("Safe");
+  });
+
+  it("shows streaming cursor during streaming after markdown refactor", () => {
+    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+    useLlmResponseStore.getState().appendChunk("partial");
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    expect(container.textContent).toContain("▍");
+  });
+
+  it("does not dispatch insert event when responseText is empty", () => {
+    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+    useLlmResponseStore.getState().finishStream();
+    const handler = vi.fn();
+    window.addEventListener("lit:llm-insert-response", handler);
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    fireEvent.click(container.querySelector("[data-testid='llm-insert-btn']")!);
+    expect(handler).not.toHaveBeenCalled();
+    window.removeEventListener("lit:llm-insert-response", handler);
   });
 });

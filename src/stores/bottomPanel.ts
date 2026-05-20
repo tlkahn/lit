@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { useLlmResponseStore } from "./llmResponse";
 
 export type TabId = "linked" | "unlinked" | "annotations" | "llm-response";
 
@@ -74,13 +75,14 @@ export const useBottomPanelStore = create<BottomPanelState>((set, get) => ({
 
   resetForPage: () => {
     const { activeTab, unfolded } = get();
+    const llmActive = useLlmResponseStore.getState().status !== "idle";
     set({
       unfolded: false,
       linkedCount: null,
       unlinkedCount: null,
       annotationCount: 0,
       hasOpenedAnnotations: false,
-      hasOpenedLlm: false,
+      hasOpenedLlm: llmActive ? get().hasOpenedLlm : false,
       hasOpenedUnlinked: activeTab === "unlinked" && unfolded ? true : false,
     });
   },
