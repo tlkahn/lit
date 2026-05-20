@@ -3,6 +3,7 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { useCursorInfoStore } from "../stores/cursorInfo";
 import { useBottomPanelStore } from "../stores/bottomPanel";
 import { usePreferencesStore } from "../stores/preferences";
+import { useLlmResponseStore } from "../stores/llmResponse";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import { BufferStack } from "./BufferStack";
 import type { TabId } from "../stores/bottomPanel";
@@ -30,6 +31,7 @@ function BottomPanelTabs() {
     (s) => s.experimentalUnlinkedReferences,
   );
   const annotationEnabled = usePreferencesStore((s) => s.annotationEnabled);
+  const llmStatus = useLlmResponseStore((s) => s.status);
 
   if (!hasPage) return null;
 
@@ -59,6 +61,16 @@ function BottomPanelTabs() {
           label="Annotations"
           count={annotationCount}
           active={activeTab === "annotations"}
+          unfolded={unfolded}
+          onClick={handleTabClick}
+        />
+      )}
+      {llmStatus !== "idle" && (
+        <TabButton
+          tab="llm-response"
+          label="LLM"
+          count={null}
+          active={activeTab === "llm-response"}
           unfolded={unfolded}
           onClick={handleTabClick}
         />

@@ -5,6 +5,7 @@ import { mockInvoke } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePreferencesStore } from "../stores/preferences";
 import { useBottomPanelStore } from "../stores/bottomPanel";
+import { useLlmResponseStore } from "../stores/llmResponse";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { annotationDataField, setAnnotationData } from "../editor/livePreview/annotationState";
@@ -703,6 +704,71 @@ describe("BottomPanel", () => {
         });
         expect(tabpanel.style.height).toBe("300px");
       });
+    });
+  });
+
+  describe("LLM response panel integration", () => {
+    beforeEach(() => {
+      useLlmResponseStore.getState().reset();
+    });
+
+    it("renders LlmResponsePanel when activeTab is llm-response and hasOpenedLlm", () => {
+      useLlmResponseStore.getState().startStream({ prefix: "ask", question: "test q" });
+      useLlmResponseStore.getState().appendChunk("streamed text");
+
+      render(<BottomPanel pageId="target.md" />);
+
+      act(() => {
+        useBottomPanelStore.setState({
+          unfolded: true,
+          activeTab: "llm-response",
+          hasOpenedLlm: true,
+        });
+      });
+
+      expect(screen.getByTestId("llm-response-panel")).toBeInTheDocument();
+      expect(screen.getByText("streamed text")).toBeInTheDocument();
+    });
+
+    it("does not mount LlmResponsePanel until hasOpenedLlm is true", () => {
+      useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+      useLlmResponseStore.getState().appendChunk("text");
+
+      render(<BottomPanel pageId="target.md" />);
+
+      act(() => {
+        useBottomPanelStore.setState({
+          unfolded: true,
+          activeTab: "llm-response",
+          hasOpenedLlm: false,
+        });
+      });
+
+      expect(screen.queryByTestId("llm-response-panel")).toBeNull();
+    });
+
+    it("hides LlmResponsePanel via display:none when another tab is active", () => {
+      useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+      useLlmResponseStore.getState().appendChunk("text");
+
+      render(<BottomPanel pageId="target.md" />);
+
+      act(() => {
+        useBottomPanelStore.setState({
+          unfolded: true,
+          activeTab: "llm-response",
+          hasOpenedLlm: true,
+        });
+      });
+
+      const llmWrapper = screen.getByTestId("llm-response-panel").parentElement!;
+      expect(llmWrapper.style.display).not.toBe("none");
+
+      act(() => {
+        useBottomPanelStore.setState({ activeTab: "linked" });
+      });
+
+      expect(llmWrapper.style.display).toBe("none");
     });
   });
 });

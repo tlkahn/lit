@@ -2,6 +2,7 @@ import { useEffect, useCallback, useRef } from "react";
 import { BacklinksPanel } from "./BacklinksPanel";
 import { UnlinkedMentionsPanel } from "./UnlinkedMentionsPanel";
 import { AnnotationPanel } from "./AnnotationPanel";
+import { LlmResponsePanel } from "./LlmResponsePanel";
 import { usePreferencesStore } from "../stores/preferences";
 import { useBottomPanelStore } from "../stores/bottomPanel";
 import { MIN_PANEL_HEIGHT } from "../stores/bottomPanel";
@@ -16,6 +17,7 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
   const panelHeight = useBottomPanelStore((s) => s.panelHeight);
   const hasOpenedUnlinked = useBottomPanelStore((s) => s.hasOpenedUnlinked);
   const hasOpenedAnnotations = useBottomPanelStore((s) => s.hasOpenedAnnotations);
+  const hasOpenedLlm = useBottomPanelStore((s) => s.hasOpenedLlm);
   const setLinkedCount = useBottomPanelStore((s) => s.setLinkedCount);
   const setUnlinkedCount = useBottomPanelStore((s) => s.setUnlinkedCount);
   const setAnnotationCount = useBottomPanelStore((s) => s.setAnnotationCount);
@@ -159,6 +161,11 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
         {annotationEnabled && hasOpenedAnnotations && (
           <div style={{ display: activeTab === "annotations" ? undefined : "none" }}>
             <AnnotationPanel pageId={pageId} onCountChange={setAnnotationCount} contentHeight={panelHeight} />
+          </div>
+        )}
+        {hasOpenedLlm && (
+          <div style={{ display: activeTab === "llm-response" ? undefined : "none" }}>
+            <LlmResponsePanel contentHeight={panelHeight} />
           </div>
         )}
       </div>

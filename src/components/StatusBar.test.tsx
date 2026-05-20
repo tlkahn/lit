@@ -7,6 +7,7 @@ import { usePaneStore } from "../stores/panes";
 import { useCursorInfoStore } from "../stores/cursorInfo";
 import { useBottomPanelStore } from "../stores/bottomPanel";
 import { usePreferencesStore } from "../stores/preferences";
+import { useLlmResponseStore } from "../stores/llmResponse";
 
 beforeEach(() => {
   useWorkspaceStore.setState({
@@ -33,6 +34,7 @@ beforeEach(() => {
     experimentalUnlinkedReferences: true,
     annotationEnabled: true,
   });
+  useLlmResponseStore.getState().reset();
 });
 
 describe("StatusBar", () => {
@@ -351,6 +353,43 @@ describe("StatusBar", () => {
       useBottomPanelStore.setState({ activeTab: "linked", unfolded: false });
       render(<StatusBar />);
       expect(screen.getByTestId("tab-linked")).toHaveAttribute("aria-selected", "false");
+    });
+
+    it("shows LLM tab when llmResponseStore status is not idle", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
+        focusedPaneId: "p1",
+      });
+      useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+      render(<StatusBar />);
+      expect(screen.getByTestId("tab-llm-response")).toBeInTheDocument();
+      expect(screen.getByTestId("tab-llm-response")).toHaveTextContent("LLM");
+    });
+
+    it("hides LLM tab when llmResponseStore status is idle", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
+        focusedPaneId: "p1",
+      });
+      render(<StatusBar />);
+      expect(screen.queryByTestId("tab-llm-response")).toBeNull();
+    });
+
+    it("clicking LLM tab activates llm-response tab", async () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
+        focusedPaneId: "p1",
+      });
+      useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+      render(<StatusBar />);
+      await userEvent.click(screen.getByTestId("tab-llm-response"));
+      const state = useBottomPanelStore.getState();
+      expect(state.activeTab).toBe("llm-response");
+      expect(state.unfolded).toBe(true);
+      expect(state.hasOpenedLlm).toBe(true);
     });
   });
 });
