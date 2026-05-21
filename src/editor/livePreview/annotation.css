@@ -71,6 +71,19 @@
   color: rgb(158, 158, 158);
 }
 
+/* Marker wrapper (when fire button present) */
+.cm-annotation-marker-wrap {
+  display: inline;
+  vertical-align: super;
+  font-size: 0.7em;
+  cursor: pointer;
+}
+
+.cm-annotation-marker-wrap .cm-annotation-marker {
+  font-size: inherit;
+  vertical-align: baseline;
+}
+
 /* Marker (footnote mode superscript) */
 .cm-annotation-marker {
   display: inline;

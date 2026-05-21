@@ -3,7 +3,7 @@ import type { Annotation, AnnotationType } from "./ipc";
 import { resolveAnnotationScopeWithMode } from "./ipc";
 import { startLlmStream } from "./llmClient";
 import { useModalLockStore } from "../stores/modalLock";
-import { usePreferencesStore } from "../stores/preferences";
+import { usePreferencesStore, type PreferencesState } from "../stores/preferences";
 import { useLlmResponseStore } from "../stores/llmResponse";
 
 export interface FireAnnotationArgs {
@@ -11,7 +11,7 @@ export interface FireAnnotationArgs {
   annotation: Annotation;
 }
 
-const PROMPT_FIELD_MAP: Record<string, keyof ReturnType<typeof usePreferencesStore.getState>> = {
+const PROMPT_FIELD_MAP: Partial<Record<AnnotationType, keyof PreferencesState>> = {
   llm: "llmPromptLlm",
   todo: "llmPromptTodo",
   translation: "llmPromptTr",
@@ -60,13 +60,14 @@ export async function fireAnnotation(args: FireAnnotationArgs): Promise<void> {
     if (range) {
       scopeText = doc.slice(range.start, range.end);
     }
-  } catch {
-    // scope resolution failed, proceed with empty scope text
+  } catch (err) {
+    console.warn("Scope resolution failed, proceeding with empty scope:", err);
   }
 
   const system = getTypePrompt(annotation.annotation_type);
   const text = buildFirePrompt(scopeText, annotation.body);
 
+  // TODO(Cycle 9): prefix should be "rewrite" for replacing types, "ask" for persisting types
   useLlmResponseStore.getState().startStream({
     prefix: "ask",
     question: annotation.body ?? "",

@@ -20,6 +20,8 @@ export function createFireButton(ann: Annotation): HTMLSpanElement | null {
   const btn = document.createElement("span");
   btn.className = "cm-annotation-fire-btn";
 
+  // TODO(Cycle 11): llmLocked is read at widget creation time. Cycle 11's firingAnnotationsField
+  // StateField replaces this snapshot check with a reactive CM6 state check.
   if (useModalLockStore.getState().llmLocked) {
     btn.classList.add("cm-annotation-fire-disabled");
   }
@@ -128,9 +130,32 @@ export class MarkerWidget extends WidgetType {
     sup.dataset.annotationType = ann.annotation_type;
     sup.textContent = (TYPE_ICON[ann.annotation_type] ?? "…") + certaintyMark(ann.certainty);
 
-    sup.onmouseenter = (e) => handleAnnotationHover(view, ann, { altKey: e.altKey });
-    sup.onmouseleave = () => handleAnnotationLeave(view);
-    sup.onclick = (e) => {
+    const fireBtn = createFireButton(ann);
+    if (!fireBtn) {
+      sup.onmouseenter = (e) => handleAnnotationHover(view, ann, { altKey: e.altKey });
+      sup.onmouseleave = () => handleAnnotationLeave(view);
+      sup.onclick = (e) => {
+        e.preventDefault();
+        if (e.metaKey || e.ctrlKey) {
+          dispatchEditEvent(ann);
+        } else {
+          window.dispatchEvent(
+            new CustomEvent("lit:show-annotation", { detail: { charStart: ann.char_start } }),
+          );
+        }
+      };
+      return sup;
+    }
+
+    const wrap = document.createElement("span");
+    wrap.className = "cm-annotation-marker-wrap";
+    wrap.appendChild(sup);
+    wrap.appendChild(fireBtn);
+
+    wrap.onmouseenter = (e) => handleAnnotationHover(view, ann, { altKey: e.altKey });
+    wrap.onmouseleave = () => handleAnnotationLeave(view);
+    wrap.onclick = (e) => {
+      if ((e.target as HTMLElement).closest(".cm-annotation-fire-btn")) return;
       e.preventDefault();
       if (e.metaKey || e.ctrlKey) {
         dispatchEditEvent(ann);
@@ -140,9 +165,7 @@ export class MarkerWidget extends WidgetType {
         );
       }
     };
-    const fireBtn = createFireButton(ann);
-    if (fireBtn) sup.appendChild(fireBtn);
-    return sup;
+    return wrap;
   }
 
   eq(other: MarkerWidget): boolean {
@@ -230,7 +253,7 @@ export class CalloutWidget extends WidgetType {
     const header = document.createElement("div");
     header.className = "cm-annotation-callout-header";
     header.onclick = (e) => {
-      if ((e.target as HTMLElement).closest(".cm-annotation-fold-icon")) return;
+      if ((e.target as HTMLElement).closest(".cm-annotation-fold-icon, .cm-annotation-fire-btn")) return;
       e.preventDefault();
       dispatchEditEvent(ann);
     };

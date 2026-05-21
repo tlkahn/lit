@@ -270,9 +270,21 @@ describe("CalloutWidget click → edit event", () => {
 });
 
 describe("MarkerWidget", () => {
-  it("toDOM returns sup.cm-annotation-marker", () => {
+  it("toDOM returns span.cm-annotation-marker-wrap for fireable types", () => {
     const view = makeEditorView();
     const w = new MarkerWidget(makeAnnotation());
+    const dom = w.toDOM(view);
+    expect(dom.tagName).toBe("SPAN");
+    expect(dom.classList.contains("cm-annotation-marker-wrap")).toBe(true);
+    const sup = dom.querySelector("sup");
+    expect(sup).toBeTruthy();
+    expect(sup!.classList.contains("cm-annotation-marker")).toBe(true);
+    view.destroy();
+  });
+
+  it("toDOM returns sup.cm-annotation-marker directly for bare type", () => {
+    const view = makeEditorView();
+    const w = new MarkerWidget(makeAnnotation({ annotation_type: "bare" }));
     const dom = w.toDOM(view);
     expect(dom.tagName).toBe("SUP");
     expect(dom.classList.contains("cm-annotation-marker")).toBe(true);
@@ -283,7 +295,8 @@ describe("MarkerWidget", () => {
     const view = makeEditorView();
     const w = new MarkerWidget(makeAnnotation({ annotation_type: "note" }));
     const dom = w.toDOM(view);
-    expect(dom.textContent).toContain("N");
+    const sup = dom.querySelector("sup") ?? dom;
+    expect(sup.textContent).toContain("N");
     view.destroy();
   });
 
@@ -291,7 +304,8 @@ describe("MarkerWidget", () => {
     const view = makeEditorView();
     const w = new MarkerWidget(makeAnnotation({ certainty: "tentative" }));
     const dom = w.toDOM(view);
-    expect(dom.textContent).toContain("?");
+    const sup = dom.querySelector("sup") ?? dom;
+    expect(sup.textContent).toContain("?");
     view.destroy();
   });
 
@@ -299,7 +313,8 @@ describe("MarkerWidget", () => {
     const view = makeEditorView();
     const w = new MarkerWidget(makeAnnotation({ certainty: "firm" }));
     const dom = w.toDOM(view);
-    expect(dom.textContent).toContain("!");
+    const sup = dom.querySelector("sup") ?? dom;
+    expect(sup.textContent).toContain("!");
     view.destroy();
   });
 
@@ -307,33 +322,37 @@ describe("MarkerWidget", () => {
     const view = makeEditorView();
     const w = new MarkerWidget(makeAnnotation({ annotation_type: "note", certainty: "neutral" }));
     const dom = w.toDOM(view);
-    expect(dom.textContent).toContain("N");
-    expect(dom.textContent).not.toContain("?");
-    expect(dom.textContent).not.toContain("!");
+    const sup = dom.querySelector("sup") ?? dom;
+    expect(sup.textContent).toContain("N");
+    expect(sup.textContent).not.toContain("?");
+    expect(sup.textContent).not.toContain("!");
     view.destroy();
   });
 
-  it("sets data-annotation-type attribute", () => {
+  it("sets data-annotation-type attribute on sup", () => {
     const view = makeEditorView();
     const w = new MarkerWidget(makeAnnotation({ annotation_type: "question" }));
     const dom = w.toDOM(view);
-    expect(dom.dataset.annotationType).toBe("question");
+    const sup = dom.querySelector("sup") ?? dom;
+    expect(sup.dataset.annotationType).toBe("question");
     view.destroy();
   });
 
-  it("adds cm-annotation-tentative class", () => {
+  it("adds cm-annotation-tentative class on sup", () => {
     const view = makeEditorView();
     const w = new MarkerWidget(makeAnnotation({ certainty: "tentative" }));
     const dom = w.toDOM(view);
-    expect(dom.classList.contains("cm-annotation-tentative")).toBe(true);
+    const sup = dom.querySelector("sup") ?? dom;
+    expect(sup.classList.contains("cm-annotation-tentative")).toBe(true);
     view.destroy();
   });
 
-  it("adds cm-annotation-firm class", () => {
+  it("adds cm-annotation-firm class on sup", () => {
     const view = makeEditorView();
     const w = new MarkerWidget(makeAnnotation({ certainty: "firm" }));
     const dom = w.toDOM(view);
-    expect(dom.classList.contains("cm-annotation-firm")).toBe(true);
+    const sup = dom.querySelector("sup") ?? dom;
+    expect(sup.classList.contains("cm-annotation-firm")).toBe(true);
     view.destroy();
   });
 

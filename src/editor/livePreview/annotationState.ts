@@ -7,6 +7,7 @@ import { isCursorOnLine } from "./proximity";
 import { PillWidget, MarkerWidget, CalloutWidget, annotationFoldField } from "./annotationWidgets";
 import { scopeHighlightExtension } from "./scopeHighlight";
 import { escapeAnnotationKeymap } from "./escapeAnnotation";
+import { fireAnnotation } from "../../lib/fireOrchestrator";
 
 export const setDisplayMode = StateEffect.define<AnnotationDisplayMode>();
 
@@ -143,6 +144,27 @@ export function findAnnotationAtCursor(
   return annotations.find((a) => pos >= a.char_start && pos < a.char_end);
 }
 
+const fireAnnotationPlugin = ViewPlugin.fromClass(
+  class {
+    private handler: (e: Event) => void;
+    constructor(private view: EditorView) {
+      this.handler = (e: Event) => {
+        const detail = (e as CustomEvent).detail;
+        if (detail?.annotation) {
+          fireAnnotation({ view: this.view, annotation: detail.annotation });
+        }
+      };
+      window.addEventListener("lit:fire-annotation", this.handler);
+    }
+    update(update: ViewUpdate) {
+      this.view = update.view;
+    }
+    destroy() {
+      window.removeEventListener("lit:fire-annotation", this.handler);
+    }
+  },
+);
+
 export function annotationExtension(): Extension {
   return [
     displayModeField,
@@ -152,5 +174,6 @@ export function annotationExtension(): Extension {
     annotationFoldField,
     scopeHighlightExtension(),
     keymap.of(escapeAnnotationKeymap),
+    fireAnnotationPlugin,
   ];
 }
