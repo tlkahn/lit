@@ -17,6 +17,7 @@ import type { AnnotationBuilderEventDetail } from "../lib/annotationDsl";
 import { canFire } from "../lib/fireClassification";
 import { fireAnnotation } from "../lib/fireOrchestrator";
 import { batchFireReplacingAnnotations } from "../lib/batchFire";
+import { useBottomPanelStore } from "../stores/bottomPanel";
 import type { EditorView } from "@codemirror/view";
 
 function transferDomFocus() {
@@ -222,6 +223,22 @@ function ensureCommandsRegistered() {
     action: () => {
       const view = getCurrentEditorView();
       if (view) batchFireReplacingAnnotations(view);
+    },
+  });
+  registerCommand({
+    id: "app.askQuestion",
+    label: "Ask Question (LLM)",
+    keywords: ["ask", "question", "llm", "chat"],
+    action: () => {
+      useBottomPanelStore.setState({
+        activeTab: "llm-response",
+        unfolded: true,
+        hasOpenedLlm: true,
+      });
+      requestAnimationFrame(() => {
+        const textarea = document.querySelector<HTMLTextAreaElement>("[data-testid='llm-question-input']");
+        textarea?.focus();
+      });
     },
   });
 }

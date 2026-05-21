@@ -341,6 +341,7 @@ pub fn run() {
             commands::credential::delete_api_key,
             commands::llm::llm_prompt_streaming,
             commands::llm::llm_cancel,
+            commands::llm::llm_test_connection,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

@@ -485,6 +485,42 @@ describe("useKeymaps", () => {
     expect(usePaneStore.getState().root.type).toBe("leaf");
   });
 
+  // --- Cycle C1: app.askQuestion command registration ---
+
+  it("app.askQuestion is registered after ensureCommandsRegistered", async () => {
+    await loadHook();
+    expect(hasCommand("app.askQuestion")).toBe(true);
+  });
+
+  it("executing app.askQuestion opens bottom panel with LLM tab", async () => {
+    const { useBottomPanelStore } = await import("../stores/bottomPanel");
+    await loadHook();
+    executeCommand("app.askQuestion");
+    const state = useBottomPanelStore.getState();
+    expect(state.activeTab).toBe("llm-response");
+    expect(state.unfolded).toBe(true);
+    expect(state.hasOpenedLlm).toBe(true);
+  });
+
+  it("app.askQuestion appears in command palette", async () => {
+    await loadHook();
+    const visible = getVisibleCommands("ask");
+    const ids = visible.map((c) => c.id);
+    expect(ids).toContain("app.askQuestion");
+  });
+
+  // --- Cycle C4: Default keybinding for app.fireAnnotation ---
+
+  it("app.fireAnnotation is registered after ensureCommandsRegistered", async () => {
+    await loadHook();
+    expect(hasCommand("app.fireAnnotation")).toBe(true);
+  });
+
+  it("app.batchFireAnnotations is registered after ensureCommandsRegistered", async () => {
+    await loadHook();
+    expect(hasCommand("app.batchFireAnnotations")).toBe(true);
+  });
+
   // --- Cycle 13: Integration smoke test ---
 
   it("split → navigate → close full keyboard flow", async () => {

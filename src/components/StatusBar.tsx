@@ -122,6 +122,7 @@ export function StatusBar() {
   const indexProgress = useWorkspaceStore((s) => s.indexProgress);
   const line = useCursorInfoStore((s) => s.line);
   const col = useCursorInfoStore((s) => s.col);
+  const errorMessage = useLlmResponseStore((s) => s.errorMessage);
 
   if (!workspacePath) return null;
 
@@ -148,6 +149,15 @@ export function StatusBar() {
     <div data-testid="status-bar" className="flex h-6 items-center justify-between bg-bg-primary-alt px-3 text-xs text-text-faint">
       <BufferStack />
       <div className="flex items-center">
+        {errorMessage && (
+          <span
+            data-testid="status-bar-llm-error"
+            className="max-w-[40%] truncate text-text-error"
+            title={errorMessage}
+          >
+            {errorMessage}
+          </span>
+        )}
         <BottomPanelTabs />
         {line > 0 && <span data-testid="status-bar-cursor" className="ml-3">Ln {line}, Col {col}</span>}
       </div>

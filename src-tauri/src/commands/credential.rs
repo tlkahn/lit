@@ -119,7 +119,7 @@ fn set_api_key_inner(store: &dyn CredentialStore, provider: &str, key: &str) -> 
     store.set(SERVICE_NAME, account, key)
 }
 
-fn get_api_key_inner(store: &dyn CredentialStore, provider: &str) -> Result<String, String> {
+pub(crate) fn get_api_key_inner(store: &dyn CredentialStore, provider: &str) -> Result<String, String> {
     let account = account_for_provider(provider)?;
     store.get(SERVICE_NAME, account)
 }

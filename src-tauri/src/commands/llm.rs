@@ -6,6 +6,7 @@ use serde::Deserialize;
 use tauri::{Emitter, Window};
 
 use crate::llm::{self, ChatMessage, LlmEvent};
+use super::credential::{self, CredentialStore};
 
 pub struct LlmState {
     active: Arc<Mutex<Option<JoinHandle<()>>>>,
@@ -144,6 +145,41 @@ pub fn llm_cancel(state: tauri::State<'_, LlmState>) -> Result<(), String> {
     Ok(())
 }
 
+pub async fn test_connection_inner(
+    model: &str,
+    api_key: Option<&str>,
+    base_url: Option<&str>,
+) -> Result<(), String> {
+    let provider = llm::create_provider(model, base_url);
+    let prompt = llm::build_prompt("hi", None, &[], &HashMap::new());
+    let api_key = match api_key {
+        Some(k) => Some(k.to_string()),
+        None => {
+            let env_var = provider.key_env_var();
+            llm::resolve_api_key(None, env_var)
+        }
+    };
+    let _ = provider
+        .execute(model, &prompt, api_key.as_deref(), false)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn llm_test_connection(
+    model: String,
+    base_url: Option<String>,
+    store: tauri::State<'_, Arc<dyn CredentialStore>>,
+) -> Result<(), String> {
+    let provider_name = if model.starts_with("claude-") { "anthropic" } else { "openai" };
+    let keychain_key = credential::get_api_key_inner(store.as_ref(), provider_name).ok();
+    let provider = llm::create_provider(&model, base_url.as_deref());
+    let env_var_name = provider.key_env_var();
+    let api_key = llm::resolve_api_key(keychain_key.as_deref(), env_var_name);
+    test_connection_inner(&model, api_key.as_deref(), base_url.as_deref()).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,6 +224,48 @@ mod tests {
         state.set_active(handle);
         state.clear();
         assert!(!state.has_active_task());
+    }
+
+    #[tokio::test]
+    async fn test_connection_succeeds_with_valid_key() {
+        use wiremock::{MockServer, Mock, ResponseTemplate};
+        use wiremock::matchers::{method, path};
+
+        let server = MockServer::start().await;
+        let body = r#"{"id":"1","object":"chat.completion","model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(body))
+            .mount(&server)
+            .await;
+
+        let result = test_connection_inner("gpt-4o", Some("fake-key"), Some(&server.uri())).await;
+        assert!(result.is_ok(), "expected Ok, got {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_connection_fails_with_invalid_key() {
+        use wiremock::{MockServer, Mock, ResponseTemplate};
+        use wiremock::matchers::{method, path};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(401)
+                    .set_body_string(r#"{"error":{"message":"Invalid API key","type":"invalid_request_error"}}"#),
+            )
+            .mount(&server)
+            .await;
+
+        let result = test_connection_inner("gpt-4o", Some("bad-key"), Some(&server.uri())).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_connection_fails_without_key() {
+        let result = test_connection_inner("gpt-4o", None, Some("http://localhost:1")).await;
+        assert!(result.is_err());
     }
 
     #[tokio::test]

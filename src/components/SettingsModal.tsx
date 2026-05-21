@@ -16,6 +16,7 @@ import { SettingsJsonEditor } from "./SettingsJsonEditor";
 import { CATEGORIES, SETTINGS_REGISTRY, STORE_FIELDS, filterSettings, type Category, type SettingEntry, type FilteredSetting, type PreferenceField } from "../lib/settingsRegistry";
 import { useThemeStore } from "../stores/theme";
 import { KeyboardShortcutsPanel } from "./KeyboardShortcutsPanel";
+import { TestConnectionButton } from "./TestConnectionButton";
 
 interface SettingsModalProps {
   open: boolean;
@@ -435,6 +436,11 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
                         <div className="space-y-3">
                           {results.map(({ entry, indices }) => renderControl({ entry, prefs, localTextValues, setLocalTextValues, matchIndices: indices, dynamicOptions }))}
                         </div>
+                        {cat === "LLM" && (
+                          <div className="mt-3">
+                            <TestConnectionButton model={prefs.llmModel as string} baseUrl={prefs.llmBaseUrl as string | undefined} />
+                          </div>
+                        )}
                       </section>
                     ))
                 )}

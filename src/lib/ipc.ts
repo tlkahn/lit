@@ -232,6 +232,16 @@ export async function llmCancel(): Promise<void> {
   return invoke<void>("llm_cancel");
 }
 
+export async function testLlmConnection(
+  model: string,
+  baseUrl?: string,
+): Promise<void> {
+  return invoke<void>("llm_test_connection", {
+    model,
+    baseUrl: baseUrl ?? null,
+  });
+}
+
 // Crossref commands
 
 export interface ResolvedCitation {

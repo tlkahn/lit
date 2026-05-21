@@ -71,6 +71,7 @@ import {
   deleteApiKey,
   llmPromptStreaming,
   llmCancel,
+  testLlmConnection,
 } from "./ipc";
 
 const sampleMeta = {
@@ -348,6 +349,8 @@ describe("ipc", () => {
         case "llm_prompt_streaming":
           return null;
         case "llm_cancel":
+          return null;
+        case "llm_test_connection":
           return null;
         case "search_tags":
           return [
@@ -1183,6 +1186,24 @@ describe("ipc", () => {
     await llmCancel();
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("llm_cancel");
+  });
+
+  it("testLlmConnection invokes llm_test_connection with model and baseUrl", async () => {
+    await testLlmConnection("gpt-4o", "https://api.example.com");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("llm_test_connection", {
+      model: "gpt-4o",
+      baseUrl: "https://api.example.com",
+    });
+  });
+
+  it("testLlmConnection sends null baseUrl when omitted", async () => {
+    await testLlmConnection("claude-sonnet-4-6");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("llm_test_connection", {
+      model: "claude-sonnet-4-6",
+      baseUrl: null,
+    });
   });
 
 });

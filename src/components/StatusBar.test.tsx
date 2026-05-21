@@ -392,4 +392,44 @@ describe("StatusBar", () => {
       expect(state.hasOpenedLlm).toBe(true);
     });
   });
+
+  describe("LLM error display", () => {
+    it("shows error message when llmResponse store has an error", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
+        focusedPaneId: "p1",
+      });
+      useLlmResponseStore.getState().setError("Invalid API key");
+      render(<StatusBar />);
+      const errorEl = screen.getByTestId("status-bar-llm-error");
+      expect(errorEl).toBeInTheDocument();
+      expect(errorEl).toHaveTextContent("Invalid API key");
+    });
+
+    it("does NOT show error when errorMessage is empty", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
+        focusedPaneId: "p1",
+      });
+      render(<StatusBar />);
+      expect(screen.queryByTestId("status-bar-llm-error")).toBeNull();
+    });
+
+    it("error clears when next LLM action starts", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
+        focusedPaneId: "p1",
+      });
+      useLlmResponseStore.getState().setError("Network failure");
+      const { rerender } = render(<StatusBar />);
+      expect(screen.getByTestId("status-bar-llm-error")).toBeInTheDocument();
+
+      useLlmResponseStore.getState().startStream({ prefix: "ask", question: "retry" });
+      rerender(<StatusBar />);
+      expect(screen.queryByTestId("status-bar-llm-error")).toBeNull();
+    });
+  });
 });
