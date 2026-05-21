@@ -22,7 +22,7 @@ export function insertCompanionAnnotation(
     changes: {
       from: sourceAnnotation.char_end,
       to: sourceAnnotation.char_end,
-      insert: " " + dsl,
+      insert: "\n\n" + dsl,
     },
   });
 }
