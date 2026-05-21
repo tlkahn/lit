@@ -67,6 +67,36 @@ describe("horizontal rule theme spec", () => {
   });
 });
 
+describe("strikethrough theme spec", () => {
+  it("livePreviewThemeSpec contains .cm-preview-strikethrough key", () => {
+    expect(livePreviewThemeSpec[".cm-preview-strikethrough"]).toBeDefined();
+  });
+
+  it(".cm-preview-strikethrough has line-through text decoration", () => {
+    const rule = livePreviewThemeSpec[".cm-preview-strikethrough"] as Record<string, string>;
+    expect(rule.textDecoration).toBe("line-through");
+  });
+});
+
+describe("blockquote theme spec", () => {
+  it("livePreviewThemeSpec contains .cm-blockquote key", () => {
+    expect(livePreviewThemeSpec[".cm-blockquote"]).toBeDefined();
+  });
+
+  it(".cm-blockquote has border-inline-start", () => {
+    const rule = livePreviewThemeSpec[".cm-blockquote"] as Record<string, string>;
+    expect(rule.borderInlineStart).toBeDefined();
+  });
+
+  it("overrides lezer quote styling in blockquote lines", () => {
+    expect(livePreviewThemeSpec["& .cm-line.cm-blockquote span"]).toBeDefined();
+  });
+
+  it("preserves italic inside blockquote", () => {
+    expect(livePreviewThemeSpec["& .cm-line.cm-blockquote .cm-preview-italic"]).toBeDefined();
+  });
+});
+
 describe("crossref theme spec", () => {
   it("exports livePreviewThemeSpec as an object", () => {
     expect(typeof livePreviewThemeSpec).toBe("object");

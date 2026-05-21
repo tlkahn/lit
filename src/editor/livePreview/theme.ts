@@ -33,10 +33,33 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
     backgroundColor: "var(--code-background)",
     borderRadius: "0 0 4px 4px",
   },
+  ".cm-preview-strikethrough": {
+    textDecoration: "line-through",
+  },
+
   ".cm-preview-wikilink": {
     color: "var(--color-purple, var(--text-accent))",
     textDecoration: "underline",
     cursor: "pointer",
+  },
+
+  // Blockquotes
+  ".cm-blockquote": {
+    borderInlineStart: "3px solid var(--text-faint)",
+    padding: "2px 8px",
+  },
+  "& .cm-line.cm-blockquote span": {
+    color: "inherit !important",
+    fontStyle: "normal !important",
+  },
+  "& .cm-line.cm-blockquote .cm-preview-link": {
+    color: "var(--text-accent) !important",
+  },
+  "& .cm-line.cm-blockquote .cm-preview-wikilink": {
+    color: "var(--color-purple, var(--text-accent)) !important",
+  },
+  "& .cm-line.cm-blockquote .cm-preview-italic": {
+    fontStyle: "italic !important",
   },
 
   // Callouts — base

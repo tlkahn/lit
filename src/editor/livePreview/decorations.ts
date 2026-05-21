@@ -26,6 +26,7 @@ const cursorSensitiveNodeNames = new Set([
   "StrongEmphasis", "Emphasis", "Image", "Link", "WikiLink",
   "FencedCode", "Blockquote", "InlineCode", "InlineMath",
   "InlineComment", "BlockComment", "HorizontalRule", "DisplayMath",
+  "Strikethrough",
 ]);
 
 export function buildDecorations(view: EditorView): BuildDecorationsResult {
@@ -57,6 +58,10 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
           addEmphasisDecos(state, node.from, node.to, "cm-preview-italic", node.node, decos);
           return false;
         }
+        if (node.name === "Strikethrough") {
+          addStrikethroughDecos(state, node.from, node.to, node.node, decos);
+          return false;
+        }
         if (node.name === "Image") {
           addImageDecos(state, node.from, node.to, node.node, decos);
           return false;
@@ -74,7 +79,12 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
           return false;
         }
         if (node.name === "Blockquote") {
-          addCalloutDecos(state, node.from, node.to, node.node, decos);
+          const firstLine = state.doc.lineAt(node.from);
+          if (parseCalloutType(firstLine.text)) {
+            addCalloutDecos(state, node.from, node.to, node.node, decos);
+          } else {
+            addBlockquoteDecos(state, node.from, node.to, decos);
+          }
         }
         if (node.name === "InlineCode") {
           addInlineCodeDecos(state, node.from, node.to, node.node, decos);
@@ -141,6 +151,8 @@ function processInlineChildren(
       addImageDecos(state, child.from, child.to, child, decos);
     } else if (child.name === "InlineComment") {
       addInlineCommentDecos(state, child.from, child.to, decos);
+    } else if (child.name === "Strikethrough") {
+      addStrikethroughDecos(state, child.from, child.to, child, decos);
     }
   }
 }
@@ -200,6 +212,63 @@ function addEmphasisDecos(
   }
 
   processInlineChildren(state, node, decos);
+}
+
+function addStrikethroughDecos(
+  state: EditorState,
+  from: number,
+  to: number,
+  node: ReturnType<typeof syntaxTree>["topNode"],
+  decos: { from: number; to: number; deco: Decoration }[],
+) {
+  if (isCursorInRange(state, from, to)) return;
+
+  const marks = node.getChildren("StrikethroughMark");
+  let contentFrom = from;
+  let contentTo = to;
+
+  for (const mark of marks) {
+    if (mark.from >= from && mark.to <= to) {
+      decos.push({ from: mark.from, to: mark.to, deco: Decoration.replace({}) });
+      if (mark.from === from) contentFrom = mark.to;
+      if (mark.to === to) contentTo = mark.from;
+    }
+  }
+
+  if (contentFrom < contentTo) {
+    decos.push({ from: contentFrom, to: contentTo, deco: Decoration.mark({ class: "cm-preview-strikethrough" }) });
+  }
+
+  processInlineChildren(state, node, decos);
+}
+
+function addBlockquoteDecos(
+  state: EditorState,
+  from: number,
+  to: number,
+  decos: { from: number; to: number; deco: Decoration }[],
+) {
+  if (isCursorOnLine(state, from, to)) return;
+
+  const firstLine = state.doc.lineAt(from);
+  const lastLine = state.doc.lineAt(to);
+
+  for (let lineNum = firstLine.number; lineNum <= lastLine.number; lineNum++) {
+    const line = state.doc.line(lineNum);
+    decos.push({
+      from: line.from,
+      to: line.from,
+      deco: Decoration.line({ class: "cm-blockquote" }),
+    });
+    const quoteMarkMatch = line.text.match(/^(\s*>)\s?/);
+    if (quoteMarkMatch) {
+      decos.push({
+        from: line.from,
+        to: line.from + quoteMarkMatch[0].length,
+        deco: Decoration.replace({}),
+      });
+    }
+  }
 }
 
 function addImageDecos(
