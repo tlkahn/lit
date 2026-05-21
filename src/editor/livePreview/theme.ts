@@ -324,6 +324,29 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
     backgroundRepeat: "no-repeat",
   },
 
+  // Footnotes
+  ".cm-footnote-ref": {
+    color: "var(--text-accent)",
+    cursor: "pointer",
+    fontSize: "0.75em",
+    verticalAlign: "super",
+  },
+  ".cm-footnote-ref:hover": {
+    textDecoration: "underline",
+  },
+  ".cm-footnote-tooltip": {
+    backgroundColor: "var(--background-primary, #fff)",
+    border: "1px solid var(--background-modifier-border, #e0e0e0)",
+    borderRadius: "6px",
+    padding: "8px 12px",
+    maxWidth: "400px",
+    boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+    fontSize: "0.9em",
+  },
+  ".cm-footnote-tooltip p": {
+    margin: "0",
+  },
+
   ".cm-preview-mermaid-error": {
     color: "var(--text-error, #e53e3e)",
     fontStyle: "italic",

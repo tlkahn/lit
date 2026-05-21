@@ -243,6 +243,21 @@ describe("createExtensions", () => {
     expect(names).toContain("BlockComment");
   });
 
+  it("parses FootnoteRef and FootnoteDef nodes", () => {
+    const exts = createExtensions(makeConfig());
+    const state = EditorState.create({
+      doc: "See [^1] here.\n\n[^1]: Definition text",
+      extensions: exts,
+    });
+    const tree = syntaxTree(state);
+    const names: string[] = [];
+    tree.iterate({ enter: (node) => { names.push(node.name); } });
+    expect(names).toContain("FootnoteRef");
+    expect(names).toContain("FootnoteRefMark");
+    expect(names).toContain("FootnoteDef");
+    expect(names).toContain("FootnoteDefMark");
+  });
+
   it("editor is editable when editorLocked is false", () => {
     const exts = createExtensions(makeConfig({ editorLocked: false }));
     const state = EditorState.create({ doc: "hello", extensions: exts });
