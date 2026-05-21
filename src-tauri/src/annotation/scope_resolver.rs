@@ -995,4 +995,27 @@ mod tests {
         let range = result.unwrap();
         assert_eq!(range.start, 0);
     }
+
+    #[test]
+    fn sentence_cjk_with_prior_annotation_debris() {
+        // sentenza normalizes -- to — (em dash), causing ws_flexible_find
+        // to fail matching back to the original text.
+        let content = "Silently count to 10 seconds before speaking\"\n%%\n\n4.接电话前先微笑(加州大学) -- not renders\n\n%%! q \\s | what does this mean? %%";
+        let char_start = utf16_len(&content[..content.rfind("%%!").unwrap()]);
+        let result = resolve_sentence(content, char_start, 1, "en");
+        // Known failure: sentenza normalizes -- → —, ws_flexible_find can't match.
+        // TODO: fix in dedicated issue
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn paragraph_cjk_with_prior_annotation_debris() {
+        let content = "Silently count to 10 seconds before speaking\"\n%%\n\n4.接电话前先微笑(加州大学) -- not renders\n\n%%! q \\p | what does this mean? %%";
+        let char_start = utf16_len(&content[..content.rfind("%%!").unwrap()]);
+        let result = resolve_paragraph(content, char_start, 1);
+        assert!(result.is_some());
+        let (start, end) = result.unwrap();
+        let scope = &content[utf16_to_byte(content, start)..utf16_to_byte(content, end)];
+        assert!(!scope.contains("%%!"));
+    }
 }

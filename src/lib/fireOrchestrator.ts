@@ -29,6 +29,14 @@ export function getTypePrompt(annotationType: AnnotationType): string {
   return (usePreferencesStore.getState()[field] as string) ?? "";
 }
 
+export function stripAnnotations(text: string): string {
+  return text
+    .replace(/%%![\s\S]*?%%/g, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{2,}/g, "\n")
+    .trim();
+}
+
 export function buildFirePrompt(scopeText: string, body: string | null): string {
   const parts: string[] = [];
   if (scopeText) parts.push(scopeText);
@@ -61,7 +69,7 @@ export async function fireAnnotation(args: FireAnnotationArgs): Promise<void> {
       "bidirectional",
     );
     if (range) {
-      scopeText = doc.slice(range.start, range.end);
+      scopeText = stripAnnotations(doc.slice(range.start, range.end));
     }
   } catch (err) {
     console.warn("Scope resolution failed, proceeding with empty scope:", err);
