@@ -4,7 +4,8 @@ import { syntaxTree } from "@codemirror/language";
 import { parseAnnotations, type Annotation } from "../../lib/ipc";
 import { type AnnotationDisplayMode } from "../../stores/preferences";
 import { isCursorOnLine } from "./proximity";
-import { PillWidget, MarkerWidget, CalloutWidget, annotationFoldField, firingAnnotationsField } from "./annotationWidgets";
+import { PillWidget, MarkerWidget, CalloutWidget, annotationFoldField, firingAnnotationsField, llmLockedField, setLlmLockedEffect } from "./annotationWidgets";
+import { useModalLockStore } from "../../stores/modalLock";
 import { scopeHighlightExtension } from "./scopeHighlight";
 import { escapeAnnotationKeymap } from "./escapeAnnotation";
 import { fireAnnotation } from "../../lib/fireOrchestrator";
@@ -88,12 +89,13 @@ function findAnnotationForRange(
 }
 
 export const annotationDecorationProvider = EditorView.decorations.compute(
-  [annotationDataField, annotationFoldField, firingAnnotationsField, displayModeField, "selection"],
+  [annotationDataField, annotationFoldField, firingAnnotationsField, displayModeField, llmLockedField, "selection"],
   (state) => {
     const annotations = state.field(annotationDataField);
     if (annotations.length === 0) return Decoration.none;
     const mode = state.field(displayModeField);
     const firingSet = state.field(firingAnnotationsField, false) ?? new Set<number>();
+    const llmLocked = state.field(llmLockedField, false) ?? false;
 
     const docLen = state.doc.length;
     const decos: { from: number; to: number; deco: Decoration }[] = [];
@@ -121,11 +123,11 @@ export const annotationDecorationProvider = EditorView.decorations.compute(
             from,
             to,
             deco: Decoration.replace({
-              widget: new CalloutWidget(ann, isCollapsed, from, isFiring),
+              widget: new CalloutWidget(ann, isCollapsed, from, isFiring, llmLocked),
             }),
           });
         } else {
-          const widget = mode === "footnote" ? new MarkerWidget(ann, isFiring) : new PillWidget(ann, isFiring);
+          const widget = mode === "footnote" ? new MarkerWidget(ann, isFiring, llmLocked) : new PillWidget(ann, isFiring, llmLocked);
           decos.push({
             from,
             to,
@@ -189,6 +191,27 @@ const companionInsertPlugin = ViewPlugin.fromClass(
   },
 );
 
+const llmLockBridgePlugin = ViewPlugin.fromClass(
+  class {
+    private unsub: () => void;
+    constructor(private view: EditorView) {
+      const initial = useModalLockStore.getState().llmLocked;
+      if (initial) this.view.dispatch({ effects: setLlmLockedEffect.of(true) });
+      this.unsub = useModalLockStore.subscribe((s) => {
+        if (s.llmLocked !== this.view.state.field(llmLockedField)) {
+          this.view.dispatch({ effects: setLlmLockedEffect.of(s.llmLocked) });
+        }
+      });
+    }
+    update(update: ViewUpdate) {
+      this.view = update.view;
+    }
+    destroy() {
+      this.unsub();
+    }
+  },
+);
+
 export function annotationExtension(): Extension {
   return [
     displayModeField,
@@ -197,6 +220,8 @@ export function annotationExtension(): Extension {
     annotationDecorationProvider,
     annotationFoldField,
     firingAnnotationsField,
+    llmLockedField,
+    llmLockBridgePlugin,
     scopeHighlightExtension(),
     keymap.of(escapeAnnotationKeymap),
     fireAnnotationPlugin,

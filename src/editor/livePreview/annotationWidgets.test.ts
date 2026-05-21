@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { PillWidget, CalloutWidget, MarkerWidget, toggleAnnotationFoldEffect, annotationFoldField, firingAnnotationsField, setFiringAnnotation, clearFiringAnnotation, createFireButton } from "./annotationWidgets";
+import { PillWidget, CalloutWidget, MarkerWidget, toggleAnnotationFoldEffect, annotationFoldField, firingAnnotationsField, setFiringAnnotation, clearFiringAnnotation, createFireButton, llmLockedField, setLlmLockedEffect } from "./annotationWidgets";
 import type { Annotation } from "../../lib/ipc";
 import { useModalLockStore } from "../../stores/modalLock";
 
@@ -494,9 +494,8 @@ describe("fire button", () => {
     });
 
     it("fire button has .cm-annotation-fire-disabled when llmLocked", () => {
-      useModalLockStore.setState({ llmLocked: true });
       const view = makeEditorView();
-      const w = new PillWidget(makeAnnotation({ annotation_type: "note", body: "test" }));
+      const w = new PillWidget(makeAnnotation({ annotation_type: "note", body: "test" }), false, true);
       const dom = w.toDOM(view);
       const btn = dom.querySelector(".cm-annotation-fire-btn");
       expect(btn!.classList.contains("cm-annotation-fire-disabled")).toBe(true);
@@ -522,9 +521,8 @@ describe("fire button", () => {
     });
 
     it("fire button has .cm-annotation-fire-disabled when llmLocked", () => {
-      useModalLockStore.setState({ llmLocked: true });
       const view = makeEditorView();
-      const w = new MarkerWidget(makeAnnotation({ annotation_type: "todo" }));
+      const w = new MarkerWidget(makeAnnotation({ annotation_type: "todo" }), false, true);
       const dom = w.toDOM(view);
       const btn = dom.querySelector(".cm-annotation-fire-btn");
       expect(btn!.classList.contains("cm-annotation-fire-disabled")).toBe(true);
@@ -550,9 +548,8 @@ describe("fire button", () => {
     });
 
     it("fire button has .cm-annotation-fire-disabled when llmLocked", () => {
-      useModalLockStore.setState({ llmLocked: true });
       const ann = makeAnnotation({ form: "block", annotation_type: "crossref", body: "cf" });
-      const w = new CalloutWidget(ann, false, 0);
+      const w = new CalloutWidget(ann, false, 0, false, true);
       const dom = w.toDOM(null as unknown as EditorView);
       const btn = dom.querySelector(".cm-annotation-fire-btn");
       expect(btn!.classList.contains("cm-annotation-fire-disabled")).toBe(true);
@@ -652,5 +649,56 @@ describe("spinner rendering", () => {
     const a = new CalloutWidget(ann, false, 0, false);
     const b = new CalloutWidget(ann, false, 0, true);
     expect(a.eq(b)).toBe(false);
+  });
+});
+
+describe("llmLockedField", () => {
+  it("initial state is false", () => {
+    const state = EditorState.create({ extensions: [llmLockedField] });
+    expect(state.field(llmLockedField)).toBe(false);
+  });
+
+  it("setLlmLockedEffect.of(true) updates field to true", () => {
+    const state = EditorState.create({ extensions: [llmLockedField] });
+    const tr = state.update({ effects: setLlmLockedEffect.of(true) });
+    expect(tr.state.field(llmLockedField)).toBe(true);
+  });
+
+  it("setLlmLockedEffect.of(false) updates field back to false", () => {
+    const state = EditorState.create({ extensions: [llmLockedField] });
+    const tr1 = state.update({ effects: setLlmLockedEffect.of(true) });
+    const tr2 = tr1.state.update({ effects: setLlmLockedEffect.of(false) });
+    expect(tr2.state.field(llmLockedField)).toBe(false);
+  });
+});
+
+describe("createFireButton llmLocked param", () => {
+  it("adds disabled class when llmLocked param is true (store is false)", () => {
+    useModalLockStore.setState({ llmLocked: false });
+    const btn = createFireButton(makeAnnotation({ annotation_type: "note" }), false, true);
+    expect(btn!.classList.contains("cm-annotation-fire-disabled")).toBe(true);
+  });
+
+  it("no disabled class when llmLocked param is false (store is true)", () => {
+    useModalLockStore.setState({ llmLocked: true });
+    const btn = createFireButton(makeAnnotation({ annotation_type: "note" }), false, false);
+    expect(btn!.classList.contains("cm-annotation-fire-disabled")).toBe(false);
+  });
+});
+
+describe("widget eq with llmLocked", () => {
+  it("PillWidget eq returns false when llmLocked differs", () => {
+    const ann = makeAnnotation();
+    expect(new PillWidget(ann, false, false).eq(new PillWidget(ann, false, true))).toBe(false);
+  });
+
+  it("MarkerWidget eq returns false when llmLocked differs", () => {
+    const ann = makeAnnotation();
+    expect(new MarkerWidget(ann, false, false).eq(new MarkerWidget(ann, false, true))).toBe(false);
+  });
+
+  it("CalloutWidget eq returns false when llmLocked differs", () => {
+    const ann = makeAnnotation();
+    expect(new CalloutWidget(ann, false, 0, false, false).eq(new CalloutWidget(ann, false, 0, false, true))).toBe(false);
   });
 });

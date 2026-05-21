@@ -3,7 +3,6 @@ import { StateEffect, StateField, type Transaction } from "@codemirror/state";
 import type { Annotation } from "../../lib/ipc";
 import type { AnnotationBuilderEventDetail } from "../../lib/annotationDsl";
 import { canFire } from "../../lib/fireClassification";
-import { useModalLockStore } from "../../stores/modalLock";
 import { handleAnnotationHover, handleAnnotationLeave } from "./annotationHover";
 import { TYPE_ICON, certaintyClass, certaintyMark, truncateBody } from "./annotationConstants";
 import "./annotation.css";
@@ -44,9 +43,23 @@ export const firingAnnotationsField = StateField.define<Set<number>>({
   },
 });
 
+// --- LLM locked state (reactive bridge) ---
+
+export const setLlmLockedEffect = StateEffect.define<boolean>();
+
+export const llmLockedField = StateField.define<boolean>({
+  create: () => false,
+  update(value, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(setLlmLockedEffect)) return effect.value;
+    }
+    return value;
+  },
+});
+
 // --- Fire button ---
 
-export function createFireButton(ann: Annotation, isFiring?: boolean): HTMLSpanElement | null {
+export function createFireButton(ann: Annotation, isFiring?: boolean, llmLocked?: boolean): HTMLSpanElement | null {
   if (!canFire(ann.annotation_type)) return null;
 
   const btn = document.createElement("span");
@@ -57,7 +70,7 @@ export function createFireButton(ann: Annotation, isFiring?: boolean): HTMLSpanE
     return btn;
   }
 
-  if (useModalLockStore.getState().llmLocked) {
+  if (llmLocked) {
     btn.classList.add("cm-annotation-fire-disabled");
   }
 
@@ -120,6 +133,7 @@ export class PillWidget extends WidgetType {
   constructor(
     readonly annotation: Annotation,
     readonly isFiring: boolean = false,
+    readonly llmLocked: boolean = false,
   ) {
     super();
   }
@@ -132,7 +146,7 @@ export class PillWidget extends WidgetType {
       e.preventDefault();
       dispatchEditEvent(this.annotation);
     };
-    const fireBtn = createFireButton(this.annotation, this.isFiring);
+    const fireBtn = createFireButton(this.annotation, this.isFiring, this.llmLocked);
     if (fireBtn) pill.appendChild(fireBtn);
     return pill;
   }
@@ -142,7 +156,8 @@ export class PillWidget extends WidgetType {
       this.annotation.original === other.annotation.original &&
       this.annotation.char_start === other.annotation.char_start &&
       this.annotation.char_end === other.annotation.char_end &&
-      this.isFiring === other.isFiring
+      this.isFiring === other.isFiring &&
+      this.llmLocked === other.llmLocked
     );
   }
 
@@ -159,6 +174,7 @@ export class MarkerWidget extends WidgetType {
   constructor(
     readonly annotation: Annotation,
     readonly isFiring: boolean = false,
+    readonly llmLocked: boolean = false,
   ) {
     super();
   }
@@ -172,7 +188,7 @@ export class MarkerWidget extends WidgetType {
     sup.dataset.annotationType = ann.annotation_type;
     sup.textContent = (TYPE_ICON[ann.annotation_type] ?? "…") + certaintyMark(ann.certainty);
 
-    const fireBtn = createFireButton(ann, this.isFiring);
+    const fireBtn = createFireButton(ann, this.isFiring, this.llmLocked);
     if (!fireBtn) {
       sup.onmouseenter = (e) => handleAnnotationHover(view, ann, { altKey: e.altKey });
       sup.onmouseleave = () => handleAnnotationLeave(view);
@@ -215,7 +231,8 @@ export class MarkerWidget extends WidgetType {
       this.annotation.original === other.annotation.original &&
       this.annotation.char_start === other.annotation.char_start &&
       this.annotation.char_end === other.annotation.char_end &&
-      this.isFiring === other.isFiring
+      this.isFiring === other.isFiring &&
+      this.llmLocked === other.llmLocked
     );
   }
 
@@ -278,6 +295,7 @@ export class CalloutWidget extends WidgetType {
     readonly isCollapsed: boolean,
     readonly pos: number,
     readonly isFiring: boolean = false,
+    readonly llmLocked: boolean = false,
   ) {
     super();
   }
@@ -319,7 +337,7 @@ export class CalloutWidget extends WidgetType {
       header.appendChild(date);
     }
 
-    const fireBtn = createFireButton(ann, this.isFiring);
+    const fireBtn = createFireButton(ann, this.isFiring, this.llmLocked);
     if (fireBtn) header.appendChild(fireBtn);
 
     const arrow = document.createElement("span");
@@ -350,7 +368,8 @@ export class CalloutWidget extends WidgetType {
       this.annotation.char_start === other.annotation.char_start &&
       this.annotation.char_end === other.annotation.char_end &&
       this.isCollapsed === other.isCollapsed &&
-      this.isFiring === other.isFiring
+      this.isFiring === other.isFiring &&
+      this.llmLocked === other.llmLocked
     );
   }
 

@@ -18,12 +18,14 @@ import {
   PillWidget,
   CalloutWidget,
   MarkerWidget,
+  llmLockedField,
 } from "./annotationWidgets";
 import { Annotation as AnnotationGrammar } from "../markdown/annotation";
 import { Comment as CommentGrammar } from "../markdown/comment";
 import type { Annotation } from "../../lib/ipc";
 import { parseAnnotations } from "../../lib/ipc";
 import { type AnnotationDisplayMode } from "../../stores/preferences";
+import { useModalLockStore } from "../../stores/modalLock";
 
 vi.mock("../../lib/ipc", () => ({
   parseAnnotations: vi.fn(async () => []),
@@ -644,10 +646,10 @@ describe("findAnnotationAtCursor", () => {
 });
 
 describe("annotationExtension", () => {
-  it("returns array with 10 extensions", () => {
+  it("returns array with 12 extensions", () => {
     const ext = annotationExtension();
     expect(Array.isArray(ext)).toBe(true);
-    expect((ext as unknown[]).length).toBe(10);
+    expect((ext as unknown[]).length).toBe(12);
   });
 
   it("includes annotationDataField", () => {
@@ -658,5 +660,47 @@ describe("annotationExtension", () => {
   it("includes annotationFoldField", () => {
     const ext = annotationExtension() as unknown[];
     expect(ext).toContain(annotationFoldField);
+  });
+
+  it("includes llmLockedField", () => {
+    const ext = annotationExtension() as unknown[];
+    expect(ext).toContain(llmLockedField);
+  });
+});
+
+describe("llmLockBridgePlugin", () => {
+  beforeEach(() => {
+    useModalLockStore.setState({ llmLocked: false });
+  });
+
+  it("sets llmLockedField when store.llmLocked changes to true", () => {
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+    useModalLockStore.getState().setLlmLocked(true);
+    expect(view.state.field(llmLockedField)).toBe(true);
+    view.destroy();
+  });
+
+  it("sets llmLockedField=false when store.llmLocked goes false", () => {
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+    useModalLockStore.getState().setLlmLocked(true);
+    expect(view.state.field(llmLockedField)).toBe(true);
+    useModalLockStore.getState().setLlmLocked(false);
+    expect(view.state.field(llmLockedField)).toBe(false);
+    view.destroy();
+  });
+
+  it("unsubscribes on destroy (no throw)", () => {
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+    view.destroy();
+    expect(() => useModalLockStore.getState().setLlmLocked(true)).not.toThrow();
   });
 });
