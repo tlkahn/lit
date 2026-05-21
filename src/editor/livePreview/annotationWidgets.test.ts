@@ -492,7 +492,7 @@ describe("fire button", () => {
       view.destroy();
     });
 
-    it("fire button click dispatches lit:fire-annotation, NOT lit:open-annotation-builder", () => {
+    it("fire button mousedown dispatches lit:fire-annotation, NOT lit:open-annotation-builder", () => {
       const view = makeEditorView();
       const ann = makeAnnotation({ annotation_type: "llm", body: "explain" });
       const w = new PillWidget(ann);
@@ -503,13 +503,28 @@ describe("fire button", () => {
       const editSpy = vi.fn();
       window.addEventListener("lit:fire-annotation", fireSpy);
       window.addEventListener("lit:open-annotation-builder", editSpy);
-      btn.click();
+      btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
       expect(fireSpy).toHaveBeenCalledTimes(1);
       const event = fireSpy.mock.calls[0]![0] as CustomEvent;
       expect(event.detail.annotation).toBe(ann);
       expect(editSpy).not.toHaveBeenCalled();
       window.removeEventListener("lit:fire-annotation", fireSpy);
       window.removeEventListener("lit:open-annotation-builder", editSpy);
+      view.destroy();
+    });
+
+    it("fire button mousedown calls preventDefault and stopPropagation", () => {
+      const view = makeEditorView();
+      const ann = makeAnnotation({ annotation_type: "llm", body: "explain" });
+      const w = new PillWidget(ann);
+      const dom = w.toDOM(view);
+      const btn = dom.querySelector(".cm-annotation-fire-btn")! as HTMLElement;
+
+      const event = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+      const stopSpy = vi.spyOn(event, "stopPropagation");
+      btn.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+      expect(stopSpy).toHaveBeenCalled();
       view.destroy();
     });
 

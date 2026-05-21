@@ -75,7 +75,7 @@ export function createFireButton(ann: Annotation, isFiring?: boolean, llmLocked?
   }
 
   btn.textContent = "▶";
-  btn.onclick = (e) => {
+  btn.onmousedown = (e) => {
     e.stopPropagation();
     e.preventDefault();
     window.dispatchEvent(
