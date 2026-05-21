@@ -3,6 +3,10 @@ import { BacklinksPanel } from "./BacklinksPanel";
 import { UnlinkedMentionsPanel } from "./UnlinkedMentionsPanel";
 import { AnnotationPanel } from "./AnnotationPanel";
 import { LlmResponsePanel } from "./LlmResponsePanel";
+import { handleQuestionSubmit } from "../lib/llmOrchestrator";
+import { formatLlmPrompt } from "../lib/promptFormatter";
+import type { ParsedInput } from "../lib/promptFormatter";
+import type { EditorContext } from "../types";
 import { usePreferencesStore } from "../stores/preferences";
 import { useBottomPanelStore } from "../stores/bottomPanel";
 import { MIN_PANEL_HEIGHT } from "../stores/bottomPanel";
@@ -24,6 +28,28 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
   const setPanelHeight = useBottomPanelStore((s) => s.setPanelHeight);
 
   const annotationEnabled = usePreferencesStore((s) => s.annotationEnabled);
+  const llmModel = usePreferencesStore((s) => s.llmModel);
+  const llmSystemPrompt = usePreferencesStore((s) => s.llmSystemPrompt);
+
+  const handleLlmSubmit = useCallback(
+    (parsed: ParsedInput, context: EditorContext) => {
+      const text = formatLlmPrompt({
+        question: parsed.question,
+        context: context.selectionText,
+        filePath: context.filePath,
+      });
+      handleQuestionSubmit({
+        prefix: parsed.prefix,
+        question: parsed.question,
+        model: llmModel,
+        text,
+        system: llmSystemPrompt || undefined,
+        selectionFrom: context.selectionFrom,
+        selectionTo: context.selectionTo,
+      });
+    },
+    [llmModel, llmSystemPrompt],
+  );
 
   const panelRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -165,7 +191,7 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
         )}
         {hasOpenedLlm && (
           <div style={{ display: activeTab === "llm-response" ? undefined : "none" }}>
-            <LlmResponsePanel contentHeight={panelHeight} />
+            <LlmResponsePanel contentHeight={panelHeight} onSubmit={handleLlmSubmit} />
           </div>
         )}
       </div>

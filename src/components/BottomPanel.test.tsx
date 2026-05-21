@@ -6,6 +6,8 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { usePreferencesStore } from "../stores/preferences";
 import { useBottomPanelStore } from "../stores/bottomPanel";
 import { useLlmResponseStore } from "../stores/llmResponse";
+import { handleQuestionSubmit } from "../lib/llmOrchestrator";
+import { formatLlmPrompt } from "../lib/promptFormatter";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { annotationDataField, setAnnotationData } from "../editor/livePreview/annotationState";
@@ -18,6 +20,18 @@ vi.mock("../lib/ipc", async (importOriginal) => {
     ...orig,
     parseAnnotations: vi.fn(async () => []),
     resolveAnnotationScope: vi.fn(async () => null),
+  };
+});
+
+vi.mock("../lib/llmOrchestrator", () => ({
+  handleQuestionSubmit: vi.fn(() => Promise.resolve()),
+}));
+
+vi.mock("../lib/promptFormatter", async (importOriginal) => {
+  const orig = await importOriginal() as Record<string, unknown>;
+  return {
+    ...orig,
+    formatLlmPrompt: vi.fn(orig.formatLlmPrompt as (...args: unknown[]) => unknown),
   };
 });
 
@@ -710,6 +724,8 @@ describe("BottomPanel", () => {
   describe("LLM response panel integration", () => {
     beforeEach(() => {
       useLlmResponseStore.getState().reset();
+      vi.mocked(handleQuestionSubmit).mockClear();
+      vi.mocked(formatLlmPrompt).mockClear();
     });
 
     it("renders LlmResponsePanel when activeTab is llm-response and hasOpenedLlm", () => {
@@ -769,6 +785,128 @@ describe("BottomPanel", () => {
       });
 
       expect(llmWrapper.style.display).toBe("none");
+    });
+
+    function openLlmPanel() {
+      act(() => {
+        useBottomPanelStore.setState({
+          unfolded: true,
+          activeTab: "llm-response",
+          hasOpenedLlm: true,
+        });
+      });
+    }
+
+    async function submitQuestion(question: string) {
+      const input = screen.getByTestId("llm-question-input");
+      fireEvent.change(input, { target: { value: question } });
+      const btn = screen.getByTestId("llm-submit-btn");
+      fireEvent.click(btn);
+      await act(async () => {});
+    }
+
+    it("passes onSubmit to LlmResponsePanel so question submit reaches the orchestrator", async () => {
+      render(<BottomPanel pageId="target.md" />);
+      openLlmPanel();
+      await submitQuestion("what is this?");
+      expect(handleQuestionSubmit).toHaveBeenCalled();
+    });
+
+    it("reads llmModel from preferences and passes it to handleQuestionSubmit", async () => {
+      usePreferencesStore.setState({ llmModel: "gpt-4o" });
+      render(<BottomPanel pageId="target.md" />);
+      openLlmPanel();
+      await submitQuestion("test");
+      expect(handleQuestionSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ model: "gpt-4o" }),
+      );
+    });
+
+    it("reads llmSystemPrompt from preferences and passes it as system arg", async () => {
+      usePreferencesStore.setState({ llmSystemPrompt: "You are a scholar." });
+      render(<BottomPanel pageId="target.md" />);
+      openLlmPanel();
+      await submitQuestion("test");
+      expect(handleQuestionSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ system: "You are a scholar." }),
+      );
+    });
+
+    it("passes system as undefined when llmSystemPrompt is empty", async () => {
+      usePreferencesStore.setState({ llmSystemPrompt: "" });
+      render(<BottomPanel pageId="target.md" />);
+      openLlmPanel();
+      await submitQuestion("test");
+      expect(handleQuestionSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ system: undefined }),
+      );
+    });
+
+    it("calls formatLlmPrompt with question, selection context, and filePath", async () => {
+      const handler = (e: Event) => {
+        const { callback } = (e as CustomEvent).detail;
+        callback({
+          selectionText: "selected text",
+          selectionFrom: 5,
+          selectionTo: 18,
+          filePath: "notes/test.md",
+        });
+      };
+      window.addEventListener("lit:llm-request-context", handler);
+
+      render(<BottomPanel pageId="target.md" />);
+      openLlmPanel();
+      await submitQuestion("explain this");
+
+      expect(formatLlmPrompt).toHaveBeenCalledWith({
+        question: "explain this",
+        context: "selected text",
+        filePath: "notes/test.md",
+      });
+
+      window.removeEventListener("lit:llm-request-context", handler);
+    });
+
+    it("passes formatted text from formatLlmPrompt to handleQuestionSubmit", async () => {
+      vi.mocked(formatLlmPrompt).mockReturnValue("formatted prompt text");
+      render(<BottomPanel pageId="target.md" />);
+      openLlmPanel();
+      await submitQuestion("test");
+      expect(handleQuestionSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "formatted prompt text" }),
+      );
+    });
+
+    it("forwards selectionFrom and selectionTo from editor context", async () => {
+      const handler = (e: Event) => {
+        const { callback } = (e as CustomEvent).detail;
+        callback({
+          selectionText: "sel",
+          selectionFrom: 10,
+          selectionTo: 13,
+          filePath: "a.md",
+        });
+      };
+      window.addEventListener("lit:llm-request-context", handler);
+
+      render(<BottomPanel pageId="target.md" />);
+      openLlmPanel();
+      await submitQuestion("test");
+
+      expect(handleQuestionSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ selectionFrom: 10, selectionTo: 13 }),
+      );
+
+      window.removeEventListener("lit:llm-request-context", handler);
+    });
+
+    it("forwards parsed prefix (e.g. /insert) to handleQuestionSubmit", async () => {
+      render(<BottomPanel pageId="target.md" />);
+      openLlmPanel();
+      await submitQuestion("/insert summarize");
+      expect(handleQuestionSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ prefix: "insert", question: "summarize" }),
+      );
     });
   });
 });
