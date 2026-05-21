@@ -133,7 +133,7 @@ describe("BlockAnnotation parser", () => {
     expect(annotations[1]!.to).toBe(ann2End);
   });
 
-  it("multi-line block annotation directly after paragraph (no blank line)", () => {
+  it("multi-line block annotation directly after paragraph (no blank line) is absorbed", () => {
     const doc = [
       "4.接电话前先微笑(加州大学)",
       "%%!",
@@ -143,8 +143,10 @@ describe("BlockAnnotation parser", () => {
       "%%",
     ].join("\n");
     const nodes = parseNodes(doc);
+    // Without a blank line, the paragraph absorbs the %%! line;
+    // multi-line annotations can't be parsed inline, so no node is created.
     const ba = nodes.find((n) => n.name === "BlockAnnotation");
-    expect(ba).toBeDefined();
+    expect(ba).toBeUndefined();
   });
 
   it("single-line annotation directly after paragraph (no blank line)", () => {
@@ -176,8 +178,11 @@ describe("BlockAnnotation parser", () => {
       "%%",
     ].join("\n");
     const nodes = parseNodes(doc);
-    const annotations = nodes.filter((n) => n.name === "BlockAnnotation");
-    expect(annotations).toHaveLength(2);
+    // First annotation is inline (part of paragraph), second is a block
+    const inline = nodes.filter((n) => n.name === "InlineAnnotation");
+    const block = nodes.filter((n) => n.name === "BlockAnnotation");
+    expect(inline).toHaveLength(1);
+    expect(block).toHaveLength(1);
   });
 
   it("real-world: two annotation groups with trailing spaces (user bug report)", () => {
@@ -213,8 +218,10 @@ describe("BlockAnnotation parser", () => {
       "%%",
     ].join("\n");
     const nodes = parseNodes(doc);
-    const annotations = nodes.filter((n) => n.name === "BlockAnnotation");
-    // Should find 4 annotations: 2 single-line + 2 multi-line
-    expect(annotations).toHaveLength(4);
+    const inline = nodes.filter((n) => n.name === "InlineAnnotation");
+    const block = nodes.filter((n) => n.name === "BlockAnnotation");
+    // First single-line is inline (no blank line before it), rest are blocks
+    expect(inline).toHaveLength(1);
+    expect(block).toHaveLength(3);
   });
 });

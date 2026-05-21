@@ -39,9 +39,6 @@ export const Annotation: MarkdownConfig = {
     {
       name: "BlockAnnotation",
       before: "BlockComment",
-      endLeaf(_cx, line) {
-        return /^%%!/.test(line.text);
-      },
       parse(cx, line) {
         if (!/^%%!/.test(line.text)) return false;
 
