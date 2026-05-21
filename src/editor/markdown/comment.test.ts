@@ -99,4 +99,13 @@ describe("BlockComment parser", () => {
     const bc = nodes.find((n) => n.name === "BlockComment");
     expect(bc).toBeDefined();
   });
+
+  it("single-line block comment with trailing whitespace", () => {
+    const doc = "%%content%% ";
+    const nodes = parseNodes(doc);
+    const bc = nodes.find((n) => n.name === "BlockComment");
+    expect(bc).toBeDefined();
+    expect(bc!.from).toBe(0);
+    expect(bc!.to).toBe(doc.trimEnd().length);
+  });
 });

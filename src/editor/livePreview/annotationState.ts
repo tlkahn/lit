@@ -1,6 +1,6 @@
 import { type Extension, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, type ViewUpdate, keymap } from "@codemirror/view";
-import { syntaxTree } from "@codemirror/language";
+import { syntaxTree, ensureSyntaxTree } from "@codemirror/language";
 import { parseAnnotations, type Annotation } from "../../lib/ipc";
 import { type AnnotationDisplayMode } from "../../stores/preferences";
 import { isCursorOnLine } from "./proximity";
@@ -100,7 +100,8 @@ export const annotationDecorationProvider = EditorView.decorations.compute(
     const docLen = state.doc.length;
     const decos: { from: number; to: number; deco: Decoration }[] = [];
 
-    syntaxTree(state).iterate({
+    const tree = ensureSyntaxTree(state, docLen, 200) ?? syntaxTree(state);
+    tree.iterate({
       enter: (node) => {
         if (node.name !== "InlineAnnotation" && node.name !== "BlockAnnotation") return;
 
