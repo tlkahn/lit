@@ -337,4 +337,103 @@ describe("LlmResponsePanel", () => {
     expect(onSubmit).not.toHaveBeenCalled();
     expect(container.querySelector("[data-testid='llm-rewrite-error']")).toBeTruthy();
   });
+
+  // --- Cycle 10: Insert as companion button ---
+
+  it("shows 'Insert as companion' button when fireSourceAnnotation is set and status is done", () => {
+    const ann = {
+      form: "compact" as const,
+      annotation_type: "question" as const,
+      certainty: "neutral" as const,
+      scope: { kind: "sentence" as const, value: 1 },
+      body: "why?",
+      date: null,
+      is_structured: true,
+      char_start: 0,
+      char_end: 14,
+      original: "%%!q | why? %%",
+    };
+    useLlmResponseStore.getState().startStream({
+      prefix: "ask",
+      question: "why?",
+      fireSourceAnnotation: ann,
+    });
+    useLlmResponseStore.getState().appendChunk("the answer");
+    useLlmResponseStore.getState().finishStream();
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    expect(container.querySelector("[data-testid='llm-companion-btn']")).toBeTruthy();
+  });
+
+  it("does not show companion button when fireSourceAnnotation is null", () => {
+    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+    useLlmResponseStore.getState().appendChunk("response");
+    useLlmResponseStore.getState().finishStream();
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    expect(container.querySelector("[data-testid='llm-companion-btn']")).toBeNull();
+  });
+
+  it("clicking companion button dispatches lit:insert-companion-annotation event", () => {
+    const ann = {
+      form: "compact" as const,
+      annotation_type: "question" as const,
+      certainty: "neutral" as const,
+      scope: { kind: "sentence" as const, value: 1 },
+      body: "why?",
+      date: null,
+      is_structured: true,
+      char_start: 0,
+      char_end: 14,
+      original: "%%!q | why? %%",
+    };
+    useLlmResponseStore.getState().startStream({
+      prefix: "ask",
+      question: "why?",
+      fireSourceAnnotation: ann,
+    });
+    useLlmResponseStore.getState().appendChunk("the answer");
+    useLlmResponseStore.getState().finishStream();
+
+    const handler = vi.fn();
+    window.addEventListener("lit:insert-companion-annotation", handler);
+
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    fireEvent.click(container.querySelector("[data-testid='llm-companion-btn']")!);
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    const detail = (handler.mock.calls[0]![0] as CustomEvent).detail;
+    expect(detail.sourceAnnotation).toBe(ann);
+    expect(detail.responseText).toBe("the answer");
+
+    window.removeEventListener("lit:insert-companion-annotation", handler);
+  });
+
+  it("does not dispatch companion event when responseText is empty", () => {
+    const ann = {
+      form: "compact" as const,
+      annotation_type: "question" as const,
+      certainty: "neutral" as const,
+      scope: { kind: "sentence" as const, value: 1 },
+      body: "why?",
+      date: null,
+      is_structured: true,
+      char_start: 0,
+      char_end: 14,
+      original: "%%!q | why? %%",
+    };
+    useLlmResponseStore.getState().startStream({
+      prefix: "ask",
+      question: "why?",
+      fireSourceAnnotation: ann,
+    });
+    useLlmResponseStore.getState().finishStream();
+
+    const handler = vi.fn();
+    window.addEventListener("lit:insert-companion-annotation", handler);
+
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    fireEvent.click(container.querySelector("[data-testid='llm-companion-btn']")!);
+
+    expect(handler).not.toHaveBeenCalled();
+    window.removeEventListener("lit:insert-companion-annotation", handler);
+  });
 });

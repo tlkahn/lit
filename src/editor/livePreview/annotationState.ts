@@ -4,10 +4,11 @@ import { syntaxTree } from "@codemirror/language";
 import { parseAnnotations, type Annotation } from "../../lib/ipc";
 import { type AnnotationDisplayMode } from "../../stores/preferences";
 import { isCursorOnLine } from "./proximity";
-import { PillWidget, MarkerWidget, CalloutWidget, annotationFoldField } from "./annotationWidgets";
+import { PillWidget, MarkerWidget, CalloutWidget, annotationFoldField, firingAnnotationsField } from "./annotationWidgets";
 import { scopeHighlightExtension } from "./scopeHighlight";
 import { escapeAnnotationKeymap } from "./escapeAnnotation";
 import { fireAnnotation } from "../../lib/fireOrchestrator";
+import { insertCompanionAnnotation } from "../../lib/companionInsert";
 
 export const setDisplayMode = StateEffect.define<AnnotationDisplayMode>();
 
@@ -87,11 +88,12 @@ function findAnnotationForRange(
 }
 
 export const annotationDecorationProvider = EditorView.decorations.compute(
-  [annotationDataField, annotationFoldField, displayModeField, "selection"],
+  [annotationDataField, annotationFoldField, firingAnnotationsField, displayModeField, "selection"],
   (state) => {
     const annotations = state.field(annotationDataField);
     if (annotations.length === 0) return Decoration.none;
     const mode = state.field(displayModeField);
+    const firingSet = state.field(firingAnnotationsField, false) ?? new Set<number>();
 
     const docLen = state.doc.length;
     const decos: { from: number; to: number; deco: Decoration }[] = [];
@@ -110,6 +112,7 @@ export const annotationDecorationProvider = EditorView.decorations.compute(
 
         const text = state.doc.sliceString(from, to);
         const isMultiLine = text.includes("\n");
+        const isFiring = firingSet.has(from);
 
         if (node.name === "BlockAnnotation" && isMultiLine) {
           const foldState = state.field(annotationFoldField, false);
@@ -118,11 +121,11 @@ export const annotationDecorationProvider = EditorView.decorations.compute(
             from,
             to,
             deco: Decoration.replace({
-              widget: new CalloutWidget(ann, isCollapsed, from),
+              widget: new CalloutWidget(ann, isCollapsed, from, isFiring),
             }),
           });
         } else {
-          const widget = mode === "footnote" ? new MarkerWidget(ann) : new PillWidget(ann);
+          const widget = mode === "footnote" ? new MarkerWidget(ann, isFiring) : new PillWidget(ann, isFiring);
           decos.push({
             from,
             to,
@@ -165,6 +168,27 @@ const fireAnnotationPlugin = ViewPlugin.fromClass(
   },
 );
 
+const companionInsertPlugin = ViewPlugin.fromClass(
+  class {
+    private handler: (e: Event) => void;
+    constructor(private view: EditorView) {
+      this.handler = (e: Event) => {
+        const detail = (e as CustomEvent).detail;
+        if (detail?.sourceAnnotation && detail?.responseText) {
+          insertCompanionAnnotation(this.view, detail.sourceAnnotation, detail.responseText);
+        }
+      };
+      window.addEventListener("lit:insert-companion-annotation", this.handler);
+    }
+    update(update: ViewUpdate) {
+      this.view = update.view;
+    }
+    destroy() {
+      window.removeEventListener("lit:insert-companion-annotation", this.handler);
+    }
+  },
+);
+
 export function annotationExtension(): Extension {
   return [
     displayModeField,
@@ -172,8 +196,10 @@ export function annotationExtension(): Extension {
     annotationPlugin,
     annotationDecorationProvider,
     annotationFoldField,
+    firingAnnotationsField,
     scopeHighlightExtension(),
     keymap.of(escapeAnnotationKeymap),
     fireAnnotationPlugin,
+    companionInsertPlugin,
   ];
 }

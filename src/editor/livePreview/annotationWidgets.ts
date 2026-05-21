@@ -14,14 +14,49 @@ export interface FireAnnotationEventDetail {
   annotation: Annotation;
 }
 
-export function createFireButton(ann: Annotation): HTMLSpanElement | null {
+// --- Firing annotations state (Cycle 11) ---
+
+export const setFiringAnnotation = StateEffect.define<number>();
+export const clearFiringAnnotation = StateEffect.define<number>();
+
+export const firingAnnotationsField = StateField.define<Set<number>>({
+  create() {
+    return new Set();
+  },
+  update(value, tr) {
+    let result = value;
+    if (tr.docChanged) {
+      result = new Set<number>();
+      for (const pos of value) {
+        result.add(tr.changes.mapPos(pos, 1));
+      }
+    }
+    for (const effect of tr.effects) {
+      if (effect.is(setFiringAnnotation)) {
+        if (result === value) result = new Set(value);
+        result.add(effect.value);
+      } else if (effect.is(clearFiringAnnotation)) {
+        if (result === value) result = new Set(value);
+        result.delete(effect.value);
+      }
+    }
+    return result;
+  },
+});
+
+// --- Fire button ---
+
+export function createFireButton(ann: Annotation, isFiring?: boolean): HTMLSpanElement | null {
   if (!canFire(ann.annotation_type)) return null;
 
   const btn = document.createElement("span");
   btn.className = "cm-annotation-fire-btn";
 
-  // TODO(Cycle 11): llmLocked is read at widget creation time. Cycle 11's firingAnnotationsField
-  // StateField replaces this snapshot check with a reactive CM6 state check.
+  if (isFiring) {
+    btn.classList.add("cm-annotation-spinner");
+    return btn;
+  }
+
   if (useModalLockStore.getState().llmLocked) {
     btn.classList.add("cm-annotation-fire-disabled");
   }
@@ -82,7 +117,10 @@ function buildPillDOM(ann: Annotation): HTMLSpanElement {
 }
 
 export class PillWidget extends WidgetType {
-  constructor(readonly annotation: Annotation) {
+  constructor(
+    readonly annotation: Annotation,
+    readonly isFiring: boolean = false,
+  ) {
     super();
   }
 
@@ -94,7 +132,7 @@ export class PillWidget extends WidgetType {
       e.preventDefault();
       dispatchEditEvent(this.annotation);
     };
-    const fireBtn = createFireButton(this.annotation);
+    const fireBtn = createFireButton(this.annotation, this.isFiring);
     if (fireBtn) pill.appendChild(fireBtn);
     return pill;
   }
@@ -103,7 +141,8 @@ export class PillWidget extends WidgetType {
     return (
       this.annotation.original === other.annotation.original &&
       this.annotation.char_start === other.annotation.char_start &&
-      this.annotation.char_end === other.annotation.char_end
+      this.annotation.char_end === other.annotation.char_end &&
+      this.isFiring === other.isFiring
     );
   }
 
@@ -117,7 +156,10 @@ export class PillWidget extends WidgetType {
 }
 
 export class MarkerWidget extends WidgetType {
-  constructor(readonly annotation: Annotation) {
+  constructor(
+    readonly annotation: Annotation,
+    readonly isFiring: boolean = false,
+  ) {
     super();
   }
 
@@ -130,7 +172,7 @@ export class MarkerWidget extends WidgetType {
     sup.dataset.annotationType = ann.annotation_type;
     sup.textContent = (TYPE_ICON[ann.annotation_type] ?? "…") + certaintyMark(ann.certainty);
 
-    const fireBtn = createFireButton(ann);
+    const fireBtn = createFireButton(ann, this.isFiring);
     if (!fireBtn) {
       sup.onmouseenter = (e) => handleAnnotationHover(view, ann, { altKey: e.altKey });
       sup.onmouseleave = () => handleAnnotationLeave(view);
@@ -172,7 +214,8 @@ export class MarkerWidget extends WidgetType {
     return (
       this.annotation.original === other.annotation.original &&
       this.annotation.char_start === other.annotation.char_start &&
-      this.annotation.char_end === other.annotation.char_end
+      this.annotation.char_end === other.annotation.char_end &&
+      this.isFiring === other.isFiring
     );
   }
 
@@ -234,6 +277,7 @@ export class CalloutWidget extends WidgetType {
     readonly annotation: Annotation,
     readonly isCollapsed: boolean,
     readonly pos: number,
+    readonly isFiring: boolean = false,
   ) {
     super();
   }
@@ -275,7 +319,7 @@ export class CalloutWidget extends WidgetType {
       header.appendChild(date);
     }
 
-    const fireBtn = createFireButton(ann);
+    const fireBtn = createFireButton(ann, this.isFiring);
     if (fireBtn) header.appendChild(fireBtn);
 
     const arrow = document.createElement("span");
@@ -305,7 +349,8 @@ export class CalloutWidget extends WidgetType {
       this.annotation.original === other.annotation.original &&
       this.annotation.char_start === other.annotation.char_start &&
       this.annotation.char_end === other.annotation.char_end &&
-      this.isCollapsed === other.isCollapsed
+      this.isCollapsed === other.isCollapsed &&
+      this.isFiring === other.isFiring
     );
   }
 

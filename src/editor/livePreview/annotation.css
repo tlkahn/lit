@@ -211,6 +211,26 @@
   pointer-events: none;
 }
 
+/* Spinner (firing state) */
+@keyframes cm-annotation-spin {
+  to { transform: rotate(360deg); }
+}
+
+.cm-annotation-spinner {
+  pointer-events: none;
+}
+
+.cm-annotation-spinner::after {
+  content: "";
+  display: inline-block;
+  width: 0.6em;
+  height: 0.6em;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: cm-annotation-spin 0.6s linear infinite;
+}
+
 /* LLM type colors */
 .cm-annotation-pill[data-annotation-type="llm"] {
   background: rgba(255, 193, 7, 0.15);

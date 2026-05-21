@@ -5,6 +5,7 @@ import type { Annotation } from "./ipc";
 import { useModalLockStore } from "../stores/modalLock";
 import { usePreferencesStore } from "../stores/preferences";
 import { useLlmResponseStore } from "../stores/llmResponse";
+import { firingAnnotationsField } from "../editor/livePreview/annotationWidgets";
 
 vi.mock("./ipc", () => ({
   resolveAnnotationScopeWithMode: vi.fn(async () => null),
@@ -21,9 +22,10 @@ import { fireAnnotation, buildFirePrompt, getTypePrompt } from "./fireOrchestrat
 const mockResolve = resolveAnnotationScopeWithMode as ReturnType<typeof vi.fn>;
 const mockStream = startLlmStream as ReturnType<typeof vi.fn>;
 
-function makeView(doc = "hello world"): EditorView {
+function makeView(doc = "hello world", withFiringField = false): EditorView {
+  const extensions = withFiringField ? [firingAnnotationsField] : [];
   return new EditorView({
-    state: EditorState.create({ doc }),
+    state: EditorState.create({ doc, extensions }),
     parent: document.createElement("div"),
   });
 }
@@ -201,6 +203,128 @@ describe("fireAnnotation", () => {
     await fireAnnotation({ view, annotation: makeAnnotation({ body: "test" }) });
 
     expect(statusDuringCall).toBe("streaming");
+    view.destroy();
+  });
+
+  // --- Cycle 9: Replacing fire behavior ---
+
+  it("uses 'rewrite' prefix for replacing types (llm)", async () => {
+    const view = makeView();
+    await fireAnnotation({ view, annotation: makeAnnotation({ annotation_type: "llm" }) });
+    expect(useLlmResponseStore.getState().prefix).toBe("rewrite");
+    view.destroy();
+  });
+
+  it("uses 'ask' prefix for persisting types (question)", async () => {
+    const view = makeView();
+    await fireAnnotation({ view, annotation: makeAnnotation({ annotation_type: "question" }) });
+    expect(useLlmResponseStore.getState().prefix).toBe("ask");
+    view.destroy();
+  });
+
+  it("replacing type: replaces annotation range with response text on done", async () => {
+    const doc = "hello world";
+    const view = makeView(doc);
+    const ann = makeAnnotation({ annotation_type: "llm", char_start: 0, char_end: 11 });
+
+    mockStream.mockImplementation(async (_args: unknown, callbacks: { onChunk: (t: string) => void; onDone: () => void }) => {
+      callbacks.onChunk("replacement text");
+      callbacks.onDone();
+    });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    expect(view.state.doc.toString()).toBe("replacement text");
+    view.destroy();
+  });
+
+  it("persisting type: does NOT replace document content on done", async () => {
+    const doc = "hello world";
+    const view = makeView(doc);
+    const ann = makeAnnotation({ annotation_type: "question", char_start: 0, char_end: 11 });
+
+    mockStream.mockImplementation(async (_args: unknown, callbacks: { onChunk: (t: string) => void; onDone: () => void }) => {
+      callbacks.onChunk("the answer");
+      callbacks.onDone();
+    });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    expect(view.state.doc.toString()).toBe("hello world");
+    view.destroy();
+  });
+
+  // --- Cycle 10: Persisting fire sets fireSourceAnnotation ---
+
+  it("persisting type: sets fireSourceAnnotation in store", async () => {
+    const view = makeView();
+    const ann = makeAnnotation({ annotation_type: "question" });
+
+    mockStream.mockImplementation(async (_args: unknown, callbacks: { onChunk: (t: string) => void; onDone: () => void }) => {
+      callbacks.onChunk("response");
+      callbacks.onDone();
+    });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    const store = useLlmResponseStore.getState();
+    expect(store.status).toBe("done");
+    expect(store.responseText).toBe("response");
+    expect(store.fireSourceAnnotation).toBe(ann);
+    view.destroy();
+  });
+
+  it("replacing type: does NOT set fireSourceAnnotation", async () => {
+    const view = makeView();
+    const ann = makeAnnotation({ annotation_type: "llm" });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    expect(useLlmResponseStore.getState().fireSourceAnnotation).toBeNull();
+    view.destroy();
+  });
+
+  // --- Cycle 11: Spinner effects ---
+
+  it("dispatches setFiringAnnotation effect before streaming", async () => {
+    const view = makeView("hello world", true);
+    let firingDuringStream = new Set<number>();
+
+    mockStream.mockImplementation(async () => {
+      firingDuringStream = view.state.field(firingAnnotationsField);
+    });
+
+    await fireAnnotation({ view, annotation: makeAnnotation({ char_start: 0 }) });
+
+    expect(firingDuringStream.has(0)).toBe(true);
+    view.destroy();
+  });
+
+  it("dispatches clearFiringAnnotation effect on done", async () => {
+    const view = makeView("hello world", true);
+
+    mockStream.mockImplementation(async (_args: unknown, callbacks: { onDone: () => void }) => {
+      callbacks.onDone();
+    });
+
+    await fireAnnotation({ view, annotation: makeAnnotation({ char_start: 0 }) });
+
+    const firingSet = view.state.field(firingAnnotationsField);
+    expect(firingSet.has(0)).toBe(false);
+    view.destroy();
+  });
+
+  it("dispatches clearFiringAnnotation effect on error", async () => {
+    const view = makeView("hello world", true);
+
+    mockStream.mockImplementation(async (_args: unknown, callbacks: { onError: (e: { message: string; retryable: boolean }) => void }) => {
+      callbacks.onError({ message: "fail", retryable: false });
+    });
+
+    await fireAnnotation({ view, annotation: makeAnnotation({ char_start: 0 }) });
+
+    const firingSet = view.state.field(firingAnnotationsField);
+    expect(firingSet.has(0)).toBe(false);
     view.destroy();
   });
 });

@@ -66,4 +66,59 @@ describe("llmResponse store", () => {
     expect(s.selectionFrom).toBe(10);
     expect(s.selectionTo).toBe(20);
   });
+
+  it("fireSourceAnnotation defaults to null", () => {
+    expect(useLlmResponseStore.getState().fireSourceAnnotation).toBeNull();
+  });
+
+  it("startStream sets fireSourceAnnotation when provided", () => {
+    const ann = {
+      form: "compact" as const,
+      annotation_type: "question" as const,
+      certainty: "neutral" as const,
+      scope: { kind: "sentence" as const, value: 1 },
+      body: "why?",
+      date: null,
+      is_structured: true,
+      char_start: 0,
+      char_end: 10,
+      original: "%%!q | why? %%",
+    };
+    useLlmResponseStore.getState().startStream({
+      prefix: "ask",
+      question: "why?",
+      fireSourceAnnotation: ann,
+    });
+    expect(useLlmResponseStore.getState().fireSourceAnnotation).toBe(ann);
+  });
+
+  it("startStream defaults fireSourceAnnotation to null when not provided", () => {
+    useLlmResponseStore.getState().startStream({
+      prefix: "ask",
+      question: "q",
+    });
+    expect(useLlmResponseStore.getState().fireSourceAnnotation).toBeNull();
+  });
+
+  it("reset clears fireSourceAnnotation", () => {
+    const ann = {
+      form: "compact" as const,
+      annotation_type: "question" as const,
+      certainty: "neutral" as const,
+      scope: { kind: "sentence" as const, value: 1 },
+      body: "why?",
+      date: null,
+      is_structured: true,
+      char_start: 0,
+      char_end: 10,
+      original: "%%!q | why? %%",
+    };
+    useLlmResponseStore.getState().startStream({
+      prefix: "ask",
+      question: "q",
+      fireSourceAnnotation: ann,
+    });
+    useLlmResponseStore.getState().reset();
+    expect(useLlmResponseStore.getState().fireSourceAnnotation).toBeNull();
+  });
 });

@@ -91,6 +91,7 @@ export function LlmResponsePanel({ contentHeight, onSubmit }: LlmResponsePanelPr
   const question = useLlmResponseStore((s) => s.question);
   const responseText = useLlmResponseStore((s) => s.responseText);
   const errorMessage = useLlmResponseStore((s) => s.errorMessage);
+  const fireSourceAnnotation = useLlmResponseStore((s) => s.fireSourceAnnotation);
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -155,6 +156,22 @@ export function LlmResponsePanel({ contentHeight, onSubmit }: LlmResponsePanelPr
             >
               Insert at cursor
             </button>
+            {fireSourceAnnotation && (
+              <button
+                data-testid="llm-companion-btn"
+                className="rounded px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover"
+                onClick={() => {
+                  if (!responseText) return;
+                  window.dispatchEvent(
+                    new CustomEvent("lit:insert-companion-annotation", {
+                      detail: { sourceAnnotation: fireSourceAnnotation, responseText },
+                    }),
+                  );
+                }}
+              >
+                Insert as companion
+              </button>
+            )}
           </div>
         )}
       </div>

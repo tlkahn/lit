@@ -644,10 +644,10 @@ describe("findAnnotationAtCursor", () => {
 });
 
 describe("annotationExtension", () => {
-  it("returns array with 8 extensions", () => {
+  it("returns array with 10 extensions", () => {
     const ext = annotationExtension();
     expect(Array.isArray(ext)).toBe(true);
-    expect((ext as unknown[]).length).toBe(8);
+    expect((ext as unknown[]).length).toBe(10);
   });
 
   it("includes annotationDataField", () => {

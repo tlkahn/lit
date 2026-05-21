@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { PillWidget, CalloutWidget, MarkerWidget, toggleAnnotationFoldEffect, annotationFoldField } from "./annotationWidgets";
+import { PillWidget, CalloutWidget, MarkerWidget, toggleAnnotationFoldEffect, annotationFoldField, firingAnnotationsField, setFiringAnnotation, clearFiringAnnotation, createFireButton } from "./annotationWidgets";
 import type { Annotation } from "../../lib/ipc";
 import { useModalLockStore } from "../../stores/modalLock";
 
@@ -557,5 +557,100 @@ describe("fire button", () => {
       const btn = dom.querySelector(".cm-annotation-fire-btn");
       expect(btn!.classList.contains("cm-annotation-fire-disabled")).toBe(true);
     });
+  });
+});
+
+describe("firingAnnotationsField", () => {
+  it("initial state is an empty Set", () => {
+    const state = EditorState.create({ extensions: [firingAnnotationsField] });
+    const firing = state.field(firingAnnotationsField);
+    expect(firing.size).toBe(0);
+  });
+
+  it("setFiringAnnotation adds to the set", () => {
+    const state = EditorState.create({ doc: "hello", extensions: [firingAnnotationsField] });
+    const tr = state.update({ effects: setFiringAnnotation.of(3) });
+    const firing = tr.state.field(firingAnnotationsField);
+    expect(firing.has(3)).toBe(true);
+  });
+
+  it("clearFiringAnnotation removes from the set", () => {
+    const state = EditorState.create({ doc: "hello", extensions: [firingAnnotationsField] });
+    const tr1 = state.update({ effects: setFiringAnnotation.of(3) });
+    const tr2 = tr1.state.update({ effects: clearFiringAnnotation.of(3) });
+    const firing = tr2.state.field(firingAnnotationsField);
+    expect(firing.has(3)).toBe(false);
+  });
+
+  it("remaps positions on document change", () => {
+    const state = EditorState.create({ doc: "hello world", extensions: [firingAnnotationsField] });
+    const tr1 = state.update({ effects: setFiringAnnotation.of(6) });
+    const tr2 = tr1.state.update({ changes: { from: 0, to: 0, insert: "XX" } });
+    const firing = tr2.state.field(firingAnnotationsField);
+    expect(firing.has(6)).toBe(false);
+    expect(firing.has(8)).toBe(true);
+  });
+});
+
+describe("spinner rendering", () => {
+  it("createFireButton with isFiring=true has cm-annotation-spinner class and no ▶ text", () => {
+    const ann = makeAnnotation({ annotation_type: "note" });
+    const btn = createFireButton(ann, true);
+    expect(btn).toBeTruthy();
+    expect(btn!.classList.contains("cm-annotation-spinner")).toBe(true);
+    expect(btn!.textContent).toBe("");
+  });
+
+  it("createFireButton with isFiring=false has ▶ text", () => {
+    const ann = makeAnnotation({ annotation_type: "note" });
+    const btn = createFireButton(ann, false);
+    expect(btn).toBeTruthy();
+    expect(btn!.textContent).toBe("▶");
+    expect(btn!.classList.contains("cm-annotation-spinner")).toBe(false);
+  });
+
+  it("PillWidget with isFiring=true renders spinner button", () => {
+    const view = makeEditorView();
+    const ann = makeAnnotation({ annotation_type: "note" });
+    const w = new PillWidget(ann, true);
+    const dom = w.toDOM(view);
+    const btn = dom.querySelector(".cm-annotation-fire-btn");
+    expect(btn).toBeTruthy();
+    expect(btn!.classList.contains("cm-annotation-spinner")).toBe(true);
+    view.destroy();
+  });
+
+  it("PillWidget eq returns false when isFiring differs", () => {
+    const ann = makeAnnotation();
+    const a = new PillWidget(ann, false);
+    const b = new PillWidget(ann, true);
+    expect(a.eq(b)).toBe(false);
+  });
+
+  it("MarkerWidget with isFiring=true renders spinner button", () => {
+    const view = makeEditorView();
+    const ann = makeAnnotation({ annotation_type: "note" });
+    const w = new MarkerWidget(ann, true);
+    const dom = w.toDOM(view);
+    const btn = dom.querySelector(".cm-annotation-fire-btn");
+    expect(btn).toBeTruthy();
+    expect(btn!.classList.contains("cm-annotation-spinner")).toBe(true);
+    view.destroy();
+  });
+
+  it("CalloutWidget with isFiring=true renders spinner button", () => {
+    const ann = makeAnnotation({ form: "block", annotation_type: "question", body: "why?" });
+    const w = new CalloutWidget(ann, false, 0, true);
+    const dom = w.toDOM(null as unknown as EditorView);
+    const btn = dom.querySelector(".cm-annotation-fire-btn");
+    expect(btn).toBeTruthy();
+    expect(btn!.classList.contains("cm-annotation-spinner")).toBe(true);
+  });
+
+  it("CalloutWidget eq returns false when isFiring differs", () => {
+    const ann = makeAnnotation();
+    const a = new CalloutWidget(ann, false, 0, false);
+    const b = new CalloutWidget(ann, false, 0, true);
+    expect(a.eq(b)).toBe(false);
   });
 });

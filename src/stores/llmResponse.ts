@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { Annotation } from "../lib/ipc";
 import type { LlmPrefix } from "../lib/promptFormatter";
 
 export interface LlmResponseState {
@@ -9,11 +10,13 @@ export interface LlmResponseState {
   errorMessage: string;
   selectionFrom: number;
   selectionTo: number;
+  fireSourceAnnotation: Annotation | null;
   startStream: (opts: {
     prefix: LlmPrefix;
     question: string;
     selectionFrom?: number;
     selectionTo?: number;
+    fireSourceAnnotation?: Annotation | null;
   }) => void;
   appendChunk: (text: string) => void;
   finishStream: () => void;
@@ -29,6 +32,7 @@ export const useLlmResponseStore = create<LlmResponseState>((set) => ({
   errorMessage: "",
   selectionFrom: 0,
   selectionTo: 0,
+  fireSourceAnnotation: null,
 
   startStream: (opts) =>
     set({
@@ -39,6 +43,7 @@ export const useLlmResponseStore = create<LlmResponseState>((set) => ({
       errorMessage: "",
       selectionFrom: opts.selectionFrom ?? 0,
       selectionTo: opts.selectionTo ?? 0,
+      fireSourceAnnotation: opts.fireSourceAnnotation ?? null,
     }),
 
   appendChunk: (text) =>
@@ -57,5 +62,6 @@ export const useLlmResponseStore = create<LlmResponseState>((set) => ({
       errorMessage: "",
       selectionFrom: 0,
       selectionTo: 0,
+      fireSourceAnnotation: null,
     }),
 }));
