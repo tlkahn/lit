@@ -4,7 +4,7 @@ import { SettingsModal } from "./SettingsModal";
 import { mockInvoke } from "../test/tauri-mock";
 import { usePreferencesStore } from "../stores/preferences";
 import { useThemeStore } from "../stores/theme";
-import { CATEGORIES } from "../lib/settingsRegistry";
+import { CATEGORIES, SETTINGS_REGISTRY } from "../lib/settingsRegistry";
 
 const defaults = {
   darkMode: "auto" as const,
@@ -29,6 +29,13 @@ const defaults = {
   llmAnthropicBaseUrl: "",
   llmSystemPrompt: "",
   llmTemperature: 0.7,
+  llmPromptLlm: "Execute the following instruction using the provided context.",
+  llmPromptTodo: "Complete the following task using the provided context.",
+  llmPromptTr: "Translate the following text. If a hint is provided, follow it.",
+  llmPromptQ: "Answer the following question about the provided context.",
+  llmPromptN: "Elaborate on the following note given the surrounding context.",
+  llmPromptCf: "Explain the connection described in the following cross-reference.",
+  llmPromptApp: "Provide critical commentary on the following text.",
   loaded: true,
 };
 
@@ -1525,6 +1532,132 @@ describe("SettingsModal", () => {
         args: { key: "llm.systemPrompt", value: "\n  Hello World  \n" },
       });
     });
+  });
+
+  // --- Cycle B1: TestConnectionButton receives correct provider-specific base URL ---
+
+  it("Test Connection uses Anthropic base URL for claude model", async () => {
+    usePreferencesStore.setState({
+      llmModel: "claude-sonnet-4-6",
+      llmAnthropicBaseUrl: "https://anthropic.example.com",
+      llmOpenaiBaseUrl: "https://openai.example.com",
+    });
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const btn = container.querySelector("[data-testid='test-connection-btn']")!;
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    await vi.waitFor(() => {
+      expect(invokeCalls).toContainEqual({
+        cmd: "llm_test_connection",
+        args: { model: "claude-sonnet-4-6", baseUrl: "https://anthropic.example.com" },
+      });
+    });
+  });
+
+  it("Test Connection uses OpenAI base URL for gpt model", async () => {
+    usePreferencesStore.setState({
+      llmModel: "gpt-4o",
+      llmAnthropicBaseUrl: "https://anthropic.example.com",
+      llmOpenaiBaseUrl: "https://openai.example.com",
+    });
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const btn = container.querySelector("[data-testid='test-connection-btn']")!;
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    await vi.waitFor(() => {
+      expect(invokeCalls).toContainEqual({
+        cmd: "llm_test_connection",
+        args: { model: "gpt-4o", baseUrl: "https://openai.example.com" },
+      });
+    });
+  });
+
+  it("Test Connection passes null when provider base URL is empty", async () => {
+    usePreferencesStore.setState({
+      llmModel: "claude-sonnet-4-6",
+      llmAnthropicBaseUrl: "",
+      llmOpenaiBaseUrl: "https://openai.example.com",
+    });
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const btn = container.querySelector("[data-testid='test-connection-btn']")!;
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    await vi.waitFor(() => {
+      expect(invokeCalls).toContainEqual({
+        cmd: "llm_test_connection",
+        args: { model: "claude-sonnet-4-6", baseUrl: null },
+      });
+    });
+  });
+
+  // --- Advanced group (collapsible per-type prompts) ---
+
+  it("prompt entries have group 'Advanced' in registry", () => {
+    const promptFields = ["llmPromptLlm", "llmPromptTodo", "llmPromptTr", "llmPromptQ", "llmPromptN", "llmPromptCf", "llmPromptApp"];
+    for (const field of promptFields) {
+      const entry = SETTINGS_REGISTRY.find(e => e.storeField === field);
+      expect(entry).toBeTruthy();
+      expect(entry!.group).toBe("Advanced");
+    }
+  });
+
+  it("LLM category has a collapsed Advanced section", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const advanced = container.querySelector("[data-testid='settings-group-Advanced']");
+    expect(advanced).toBeTruthy();
+    expect(container.querySelector("[data-testid='settings-llmPromptLlm']")).toBeNull();
+  });
+
+  it("clicking Advanced header reveals prompt textareas", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    expect(container.querySelector("[data-testid='settings-llmPromptLlm']")).toBeNull();
+
+    const header = container.querySelector("[data-testid='settings-group-Advanced'] button")!;
+    fireEvent.click(header);
+
+    const promptTestIds = [
+      "settings-llmPromptLlm",
+      "settings-llmPromptTodo",
+      "settings-llmPromptTr",
+      "settings-llmPromptQ",
+      "settings-llmPromptN",
+      "settings-llmPromptCf",
+      "settings-llmPromptApp",
+    ];
+    for (const id of promptTestIds) {
+      expect(container.querySelector(`[data-testid='${id}']`), `missing ${id}`).toBeTruthy();
+    }
+  });
+
+  it("searching 'Translation' shows prompt textarea without expanding Advanced", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "Translation" } });
+
+    expect(container.querySelector("[data-testid='settings-llmPromptTr']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='settings-group-Advanced']")).toBeNull();
+  });
+
+  it("all 7 prompt textareas appear after expanding Advanced", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const header = container.querySelector("[data-testid='settings-group-Advanced'] button")!;
+    fireEvent.click(header);
+
+    const promptTestIds = [
+      "settings-llmPromptLlm",
+      "settings-llmPromptTodo",
+      "settings-llmPromptTr",
+      "settings-llmPromptQ",
+      "settings-llmPromptN",
+      "settings-llmPromptCf",
+      "settings-llmPromptApp",
+    ];
+    for (const id of promptTestIds) {
+      expect(container.querySelector(`[data-testid='${id}']`), `missing ${id}`).toBeTruthy();
+    }
   });
 
   it("re-opening modal resets to form view", async () => {

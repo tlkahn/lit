@@ -22,6 +22,7 @@ interface SettingEntryBase {
   jsonKey: string;
   testId: string;
   nullable?: boolean;
+  group?: string;
 }
 
 interface ToggleEntry extends SettingEntryBase { controlType: "toggle"; }
@@ -246,6 +247,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
     jsonKey: "llm.prompts.llm",
     controlType: "textarea",
     testId: "settings-llmPromptLlm",
+    group: "Advanced",
   },
   {
     category: "LLM",
@@ -254,6 +256,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
     jsonKey: "llm.prompts.todo",
     controlType: "textarea",
     testId: "settings-llmPromptTodo",
+    group: "Advanced",
   },
   {
     category: "LLM",
@@ -262,6 +265,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
     jsonKey: "llm.prompts.tr",
     controlType: "textarea",
     testId: "settings-llmPromptTr",
+    group: "Advanced",
   },
   {
     category: "LLM",
@@ -270,6 +274,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
     jsonKey: "llm.prompts.q",
     controlType: "textarea",
     testId: "settings-llmPromptQ",
+    group: "Advanced",
   },
   {
     category: "LLM",
@@ -278,6 +283,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
     jsonKey: "llm.prompts.n",
     controlType: "textarea",
     testId: "settings-llmPromptN",
+    group: "Advanced",
   },
   {
     category: "LLM",
@@ -286,6 +292,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
     jsonKey: "llm.prompts.cf",
     controlType: "textarea",
     testId: "settings-llmPromptCf",
+    group: "Advanced",
   },
   {
     category: "LLM",
@@ -294,6 +301,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
     jsonKey: "llm.prompts.app",
     controlType: "textarea",
     testId: "settings-llmPromptApp",
+    group: "Advanced",
   },
   // Experimental
   {

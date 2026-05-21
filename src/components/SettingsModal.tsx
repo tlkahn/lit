@@ -204,6 +204,7 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
   const [jsonMode, setJsonMode] = useState(false);
   const [rawJson, setRawJson] = useState("");
   const [jsonError, setJsonError] = useState<string | null>(null);
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
 
   const filteredResults = useMemo(
     () => filterSettings(SETTINGS_REGISTRY, searchQuery),
@@ -430,19 +431,49 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
                 ) : (
                   Array.from(filteredGroups)
                     .filter(([cat, results]) => cat !== "Keyboard Shortcuts" && results.length > 0)
-                    .map(([cat, results], i) => (
-                      <section key={cat} id={`settings-section-${cat}`} className={i > 0 ? "mt-5" : undefined}>
-                        <h3 className="text-sm font-medium text-text-muted mb-3">{cat}</h3>
-                        <div className="space-y-3">
-                          {results.map(({ entry, indices }) => renderControl({ entry, prefs, localTextValues, setLocalTextValues, matchIndices: indices, dynamicOptions }))}
-                        </div>
-                        {cat === "LLM" && (
-                          <div className="mt-3">
-                            <TestConnectionButton model={prefs.llmModel as string} baseUrl={prefs.llmBaseUrl as string | undefined} />
+                    .map(([cat, results], i) => {
+                      const isSearching = searchQuery !== "";
+                      const ungrouped = isSearching ? results : results.filter(({ entry }) => !entry.group);
+                      const grouped = isSearching ? new Map<string, FilteredSetting[]>() : (() => {
+                        const map = new Map<string, FilteredSetting[]>();
+                        for (const r of results) {
+                          if (r.entry.group) {
+                            const arr = map.get(r.entry.group) ?? [];
+                            arr.push(r);
+                            map.set(r.entry.group, arr);
+                          }
+                        }
+                        return map;
+                      })();
+                      return (
+                        <section key={cat} id={`settings-section-${cat}`} className={i > 0 ? "mt-5" : undefined}>
+                          <h3 className="text-sm font-medium text-text-muted mb-3">{cat}</h3>
+                          <div className="space-y-3">
+                            {ungrouped.map(({ entry, indices }) => renderControl({ entry, prefs, localTextValues, setLocalTextValues, matchIndices: indices, dynamicOptions }))}
                           </div>
-                        )}
-                      </section>
-                    ))
+                          {cat === "LLM" && (
+                            <div className="mt-3">
+                              <TestConnectionButton model={prefs.llmModel as string} baseUrl={(prefs.llmModel as string).startsWith("claude-") ? (prefs.llmAnthropicBaseUrl as string) || undefined : (prefs.llmOpenaiBaseUrl as string) || undefined} />
+                            </div>
+                          )}
+                          {Array.from(grouped).map(([groupName, groupResults]) => (
+                            <div key={groupName} data-testid={`settings-group-${groupName}`} className="mt-3">
+                              <button
+                                onClick={() => setExpandedGroups((prev) => ({ ...prev, [groupName]: !prev[groupName] }))}
+                                className="flex items-center gap-1.5 text-sm font-medium text-text-muted hover:text-text-normal"
+                              >
+                                <span className="text-xs">{expandedGroups[groupName] ? "▼" : "▶"}</span> {groupName}
+                              </button>
+                              {expandedGroups[groupName] && (
+                                <div className="space-y-3 mt-2">
+                                  {groupResults.map(({ entry, indices }) => renderControl({ entry, prefs, localTextValues, setLocalTextValues, matchIndices: indices, dynamicOptions }))}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </section>
+                      );
+                    })
                 )}
               </div>
             </>
