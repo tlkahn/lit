@@ -5,7 +5,9 @@ use tokio::task::JoinHandle;
 use serde::Deserialize;
 use tauri::{Emitter, Window};
 
-use crate::llm::{self, ChatMessage, LlmEvent};
+use tracing::{info, debug};
+
+use crate::llm::{self, ChatMessage, LlmEvent, TruncationInfo};
 use super::credential::{self, CredentialStore};
 
 pub struct LlmState {
@@ -63,6 +65,33 @@ pub struct LlmPromptArgs {
     pub api_key: Option<String>,
 }
 
+pub fn log_prompt_info(
+    model: &str,
+    system: Option<&str>,
+    text: &str,
+    message_count: usize,
+    truncation: Option<&TruncationInfo>,
+) {
+    let system_len = system.map_or(0, |s| s.len());
+    let text_len = text.len();
+    let estimated_tokens = llm::estimate_tokens(text)
+        + llm::estimate_tokens(system.unwrap_or(""));
+    let truncated = truncation.is_some();
+
+    info!(
+        %model,
+        system_len,
+        text_len,
+        message_count,
+        estimated_tokens,
+        truncated,
+        "llm prompt"
+    );
+
+    debug!(system_prompt = system.unwrap_or(""), "llm system prompt");
+    debug!(prompt_text = %text, "llm prompt text");
+}
+
 #[tauri::command]
 pub async fn llm_prompt_streaming(
     args: LlmPromptArgs,
@@ -81,6 +110,15 @@ pub async fn llm_prompt_streaming(
     );
 
     let (prompt, truncation) = llm::apply_token_budget(prompt, &args.model);
+
+    log_prompt_info(
+        &args.model,
+        args.system.as_deref(),
+        &prompt.text,
+        args.messages.len(),
+        truncation.as_ref(),
+    );
+
     if let Some(info) = truncation {
         let _ = window.emit("llm://truncated", &info);
     }
@@ -178,6 +216,42 @@ pub async fn llm_test_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tracing_test::traced_test;
+
+    #[traced_test]
+    #[test]
+    fn log_prompt_info_emits_summary() {
+        log_prompt_info("gpt-4o", Some("Be brief"), "Hello world", 2, None);
+        assert!(logs_contain("llm prompt"));
+        assert!(logs_contain("gpt-4o"));
+        assert!(logs_contain("message_count=2"));
+    }
+
+    #[traced_test]
+    #[test]
+    fn log_prompt_debug_emits_full_content() {
+        log_prompt_info("gpt-4o", Some("System instructions"), "Translate this text", 0, None);
+        assert!(logs_contain("System instructions"));
+        assert!(logs_contain("Translate this text"));
+    }
+
+    #[traced_test]
+    #[test]
+    fn log_prompt_info_truncated_field() {
+        let trunc = crate::llm::TruncationInfo {
+            original_tokens: 200_000,
+            kept_tokens: 100_000,
+        };
+        log_prompt_info("gpt-4o", None, "text", 0, Some(&trunc));
+        assert!(logs_contain("truncated=true"));
+    }
+
+    #[traced_test]
+    #[test]
+    fn log_prompt_info_no_truncation() {
+        log_prompt_info("gpt-4o", None, "short text", 0, None);
+        assert!(logs_contain("truncated=false"));
+    }
 
     #[test]
     fn new_state_has_no_active_task() {
