@@ -729,7 +729,7 @@ describe("BottomPanel", () => {
     });
 
     it("renders LlmResponsePanel when activeTab is llm-response and hasOpenedLlm", () => {
-      useLlmResponseStore.getState().startStream({ prefix: "ask", question: "test q" });
+      useLlmResponseStore.getState().startStream({ question: "test q" });
       useLlmResponseStore.getState().appendChunk("streamed text");
 
       render(<BottomPanel pageId="target.md" />);
@@ -747,7 +747,7 @@ describe("BottomPanel", () => {
     });
 
     it("does not mount LlmResponsePanel until hasOpenedLlm is true", () => {
-      useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+      useLlmResponseStore.getState().startStream({ question: "q" });
       useLlmResponseStore.getState().appendChunk("text");
 
       render(<BottomPanel pageId="target.md" />);
@@ -764,7 +764,7 @@ describe("BottomPanel", () => {
     });
 
     it("hides LlmResponsePanel via display:none when another tab is active", () => {
-      useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+      useLlmResponseStore.getState().startStream({ question: "q" });
       useLlmResponseStore.getState().appendChunk("text");
 
       render(<BottomPanel pageId="target.md" />);
@@ -900,13 +900,5 @@ describe("BottomPanel", () => {
       window.removeEventListener("lit:llm-request-context", handler);
     });
 
-    it("forwards parsed prefix (e.g. /insert) to handleQuestionSubmit", async () => {
-      render(<BottomPanel pageId="target.md" />);
-      openLlmPanel();
-      await submitQuestion("/insert summarize");
-      expect(handleQuestionSubmit).toHaveBeenCalledWith(
-        expect.objectContaining({ prefix: "insert", question: "summarize" }),
-      );
-    });
   });
 });

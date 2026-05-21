@@ -208,20 +208,6 @@ describe("fireAnnotation", () => {
 
   // --- Cycle 9: Replacing fire behavior ---
 
-  it("uses 'rewrite' prefix for replacing types (llm)", async () => {
-    const view = makeView();
-    await fireAnnotation({ view, annotation: makeAnnotation({ annotation_type: "llm" }) });
-    expect(useLlmResponseStore.getState().prefix).toBe("rewrite");
-    view.destroy();
-  });
-
-  it("uses 'ask' prefix for persisting types (question)", async () => {
-    const view = makeView();
-    await fireAnnotation({ view, annotation: makeAnnotation({ annotation_type: "question" }) });
-    expect(useLlmResponseStore.getState().prefix).toBe("ask");
-    view.destroy();
-  });
-
   it("replacing type: replaces annotation range with response text on done", async () => {
     const doc = "hello world";
     const view = makeView(doc);

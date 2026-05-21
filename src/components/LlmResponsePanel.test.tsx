@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent } from "@testing-library/react";
 import { useLlmResponseStore } from "../stores/llmResponse";
-import { LlmResponsePanel, wrapCallout } from "./LlmResponsePanel";
+import { LlmResponsePanel } from "./LlmResponsePanel";
 
 vi.mock("../lib/llmClient", () => ({
   cancelLlmStream: vi.fn().mockResolvedValue(undefined),
@@ -15,30 +15,29 @@ describe("LlmResponsePanel", () => {
 
   // Cycle 6.1 — Renders streaming text
   it("renders streaming response text", () => {
-    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "test" });
+    useLlmResponseStore.getState().startStream({ question: "test" });
     useLlmResponseStore.getState().appendChunk("hello world");
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
     expect(container.textContent).toContain("hello world");
   });
 
   it("shows question header while streaming", () => {
-    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "summarize this" });
+    useLlmResponseStore.getState().startStream({ question: "summarize this" });
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
     expect(container.textContent).toContain("summarize this");
   });
 
   // Cycle 6.2 — Shows action buttons when done
   it("shows action buttons when status is done", () => {
-    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+    useLlmResponseStore.getState().startStream({ question: "q" });
     useLlmResponseStore.getState().appendChunk("response text");
     useLlmResponseStore.getState().finishStream();
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
     expect(container.querySelector("[data-testid='llm-copy-btn']")).toBeTruthy();
-    expect(container.querySelector("[data-testid='llm-insert-btn']")).toBeTruthy();
   });
 
   it("does not show action buttons while streaming", () => {
-    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+    useLlmResponseStore.getState().startStream({ question: "q" });
     useLlmResponseStore.getState().appendChunk("partial");
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
     expect(container.querySelector("[data-testid='llm-copy-btn']")).toBeNull();
@@ -50,7 +49,7 @@ describe("LlmResponsePanel", () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.assign(navigator, { clipboard: { writeText } });
 
-    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+    useLlmResponseStore.getState().startStream({ question: "q" });
     useLlmResponseStore.getState().appendChunk("copy me");
     useLlmResponseStore.getState().finishStream();
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
@@ -58,35 +57,16 @@ describe("LlmResponsePanel", () => {
     expect(writeText).toHaveBeenCalledWith("copy me");
   });
 
-  // Cycle 6.4 — Insert at cursor button
-  it("dispatches lit:llm-insert-response with callout-wrapped text on Insert click", () => {
-    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
-    useLlmResponseStore.getState().appendChunk("line1\nline2");
-    useLlmResponseStore.getState().finishStream();
-
-    const handler = vi.fn();
-    window.addEventListener("lit:llm-insert-response", handler);
-
-    const { container } = render(<LlmResponsePanel contentHeight={300} />);
-    fireEvent.click(container.querySelector("[data-testid='llm-insert-btn']")!);
-
-    expect(handler).toHaveBeenCalledTimes(1);
-    const detail = (handler.mock.calls[0]![0] as CustomEvent).detail;
-    expect(detail.text).toBe("> [!llm]+ Response\n> line1\n> line2");
-
-    window.removeEventListener("lit:llm-insert-response", handler);
-  });
-
   // Cycle 6.5 — Error state
   it("renders error message when status is error", () => {
-    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+    useLlmResponseStore.getState().startStream({ question: "q" });
     useLlmResponseStore.getState().setError("something broke");
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
     expect(container.textContent).toContain("something broke");
   });
 
   it("does not show action buttons on error", () => {
-    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+    useLlmResponseStore.getState().startStream({ question: "q" });
     useLlmResponseStore.getState().setError("fail");
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
     expect(container.querySelector("[data-testid='llm-copy-btn']")).toBeNull();
@@ -99,14 +79,9 @@ describe("LlmResponsePanel", () => {
     expect(container.querySelector("[data-testid='llm-response-text']")).toBeNull();
   });
 
-  // Fix 1 — wrapCallout empty text
-  it("returns empty string when text is empty", () => {
-    expect(wrapCallout("")).toBe("");
-  });
-
   // Fix 4 — Markdown rendering
   it("renders markdown as HTML", () => {
-    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+    useLlmResponseStore.getState().startStream({ question: "q" });
     useLlmResponseStore.getState().appendChunk("**bold** text");
     useLlmResponseStore.getState().finishStream();
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
@@ -116,7 +91,7 @@ describe("LlmResponsePanel", () => {
   });
 
   it("sanitizes script tags in response text", () => {
-    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+    useLlmResponseStore.getState().startStream({ question: "q" });
     useLlmResponseStore.getState().appendChunk('<script>alert("xss")</script>Safe');
     useLlmResponseStore.getState().finishStream();
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
@@ -126,33 +101,22 @@ describe("LlmResponsePanel", () => {
   });
 
   it("shows streaming cursor during streaming after markdown refactor", () => {
-    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+    useLlmResponseStore.getState().startStream({ question: "q" });
     useLlmResponseStore.getState().appendChunk("partial");
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
     expect(container.textContent).toContain("▍");
   });
 
-  it("does not dispatch insert event when responseText is empty", () => {
-    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
-    useLlmResponseStore.getState().finishStream();
-    const handler = vi.fn();
-    window.addEventListener("lit:llm-insert-response", handler);
-    const { container } = render(<LlmResponsePanel contentHeight={300} />);
-    fireEvent.click(container.querySelector("[data-testid='llm-insert-btn']")!);
-    expect(handler).not.toHaveBeenCalled();
-    window.removeEventListener("lit:llm-insert-response", handler);
-  });
-
   // --- Concern 4: Stop button ---
 
   it("shows stop button during streaming", () => {
-    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+    useLlmResponseStore.getState().startStream({ question: "q" });
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
     expect(container.querySelector("[data-testid='llm-stop-btn']")).toBeTruthy();
   });
 
   it("does not show stop button when done", () => {
-    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+    useLlmResponseStore.getState().startStream({ question: "q" });
     useLlmResponseStore.getState().finishStream();
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
     expect(container.querySelector("[data-testid='llm-stop-btn']")).toBeNull();
@@ -164,7 +128,7 @@ describe("LlmResponsePanel", () => {
   });
 
   it("calls cancelLlmStream when stop button clicked", () => {
-    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+    useLlmResponseStore.getState().startStream({ question: "q" });
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
     fireEvent.click(container.querySelector("[data-testid='llm-stop-btn']")!);
     expect(cancelLlmStream).toHaveBeenCalled();
@@ -172,7 +136,6 @@ describe("LlmResponsePanel", () => {
 
   // --- Concern 6: Textarea lifecycle ---
 
-  // 6.1 — Textarea renders in idle state
   it("shows textarea in idle state", () => {
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
     expect(container.querySelector("[data-testid='llm-question-input']")).toBeTruthy();
@@ -183,41 +146,38 @@ describe("LlmResponsePanel", () => {
     expect(container.querySelector("[data-testid='llm-question']")).toBeNull();
   });
 
-  // 6.2 — Textarea hidden during streaming, question header shown
   it("hides textarea during streaming", () => {
-    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "what is X?" });
+    useLlmResponseStore.getState().startStream({ question: "what is X?" });
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
     expect(container.querySelector("[data-testid='llm-question-input']")).toBeNull();
   });
 
   it("shows question header during streaming", () => {
-    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "what is X?" });
+    useLlmResponseStore.getState().startStream({ question: "what is X?" });
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
     const header = container.querySelector("[data-testid='llm-question']");
     expect(header).toBeTruthy();
     expect(header!.textContent).toBe("what is X?");
   });
 
-  // 6.3 — Submit button renders alongside textarea
   it("shows submit button in idle state", () => {
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
     expect(container.querySelector("[data-testid='llm-submit-btn']")).toBeTruthy();
   });
 
-  // 6.4 — Submit parses prefix and calls onSubmit
-  it("parses prefix and calls onSubmit on submit", () => {
+  // Submit calls onSubmit with plain question string
+  it("calls onSubmit with plain question string", () => {
     const onSubmit = vi.fn();
     const { container } = render(<LlmResponsePanel contentHeight={300} onSubmit={onSubmit} />);
     const textarea = container.querySelector("[data-testid='llm-question-input']") as HTMLTextAreaElement;
-    fireEvent.change(textarea, { target: { value: "/insert summarize" } });
+    fireEvent.change(textarea, { target: { value: "summarize" } });
     fireEvent.click(container.querySelector("[data-testid='llm-submit-btn']")!);
     expect(onSubmit).toHaveBeenCalledWith(
-      { prefix: "insert", question: "summarize" },
+      "summarize",
       expect.objectContaining({ selectionText: "", selectionFrom: 0, selectionTo: 0, filePath: "" }),
     );
   });
 
-  // 6.5 — Textarea clears after submit
   it("clears textarea after submit", () => {
     const onSubmit = vi.fn();
     const { container } = render(<LlmResponsePanel contentHeight={300} onSubmit={onSubmit} />);
@@ -227,14 +187,13 @@ describe("LlmResponsePanel", () => {
     expect(textarea.value).toBe("");
   });
 
-  // 6.6 — Cmd+Enter submits
   it("submits on Cmd+Enter", () => {
     const onSubmit = vi.fn();
     const { container } = render(<LlmResponsePanel contentHeight={300} onSubmit={onSubmit} />);
     const textarea = container.querySelector("[data-testid='llm-question-input']") as HTMLTextAreaElement;
     fireEvent.change(textarea, { target: { value: "test question" } });
     fireEvent.keyDown(textarea, { key: "Enter", metaKey: true });
-    expect(onSubmit).toHaveBeenCalled();
+    expect(onSubmit).toHaveBeenCalledWith("test question", expect.objectContaining({ selectionText: "" }));
   });
 
   it("submits on Ctrl+Enter", () => {
@@ -243,20 +202,18 @@ describe("LlmResponsePanel", () => {
     const textarea = container.querySelector("[data-testid='llm-question-input']") as HTMLTextAreaElement;
     fireEvent.change(textarea, { target: { value: "test question" } });
     fireEvent.keyDown(textarea, { key: "Enter", ctrlKey: true });
-    expect(onSubmit).toHaveBeenCalled();
+    expect(onSubmit).toHaveBeenCalledWith("test question", expect.objectContaining({ selectionText: "" }));
   });
 
-  // 6.7 — Submit disabled while streaming
   it("disables submit button while streaming", () => {
-    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+    useLlmResponseStore.getState().startStream({ question: "q" });
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
     const btn = container.querySelector("[data-testid='llm-submit-btn']");
     expect(btn).toBeNull();
   });
 
-  // 6.8 — Fresh textarea below response when done
   it("shows textarea below response when done", () => {
-    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+    useLlmResponseStore.getState().startStream({ question: "q" });
     useLlmResponseStore.getState().appendChunk("answer");
     useLlmResponseStore.getState().finishStream();
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
@@ -266,55 +223,98 @@ describe("LlmResponsePanel", () => {
     expect(container.querySelector("[data-testid='llm-submit-btn']")).toBeTruthy();
   });
 
-  // --- Concern 3: Raw insert for /insert ---
+  // --- Selection-aware buttons ---
 
-  // 3.1 — /insert dispatches lit:llm-insert-raw with raw text
-  it("dispatches lit:llm-insert-raw with raw text for /insert prefix", () => {
-    useLlmResponseStore.getState().startStream({ prefix: "insert", question: "summarize" });
-    useLlmResponseStore.getState().appendChunk("summary");
+  it("shows 'Insert at cursor' when no selection", () => {
+    useLlmResponseStore.getState().startStream({ question: "q", selectionFrom: 0, selectionTo: 0 });
+    useLlmResponseStore.getState().appendChunk("response");
+    useLlmResponseStore.getState().finishStream();
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    expect(container.querySelector("[data-testid='llm-insert-btn']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='llm-replace-btn']")).toBeNull();
+  });
+
+  it("shows 'Replace selection' when had selection", () => {
+    useLlmResponseStore.getState().startStream({ question: "q", selectionFrom: 10, selectionTo: 20 });
+    useLlmResponseStore.getState().appendChunk("response");
+    useLlmResponseStore.getState().finishStream();
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    expect(container.querySelector("[data-testid='llm-replace-btn']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='llm-insert-btn']")).toBeNull();
+  });
+
+  it("Insert at cursor dispatches lit:llm-insert-raw with raw text", () => {
+    useLlmResponseStore.getState().startStream({ question: "q", selectionFrom: 0, selectionTo: 0 });
+    useLlmResponseStore.getState().appendChunk("response");
     useLlmResponseStore.getState().finishStream();
 
-    const rawHandler = vi.fn();
-    const responseHandler = vi.fn();
-    window.addEventListener("lit:llm-insert-raw", rawHandler);
-    window.addEventListener("lit:llm-insert-response", responseHandler);
+    const handler = vi.fn();
+    window.addEventListener("lit:llm-insert-raw", handler);
 
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
     fireEvent.click(container.querySelector("[data-testid='llm-insert-btn']")!);
 
-    expect(rawHandler).toHaveBeenCalledTimes(1);
-    expect((rawHandler.mock.calls[0]![0] as CustomEvent).detail.text).toBe("summary");
-    expect(responseHandler).not.toHaveBeenCalled();
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect((handler.mock.calls[0]![0] as CustomEvent).detail.text).toBe("response");
 
-    window.removeEventListener("lit:llm-insert-raw", rawHandler);
-    window.removeEventListener("lit:llm-insert-response", responseHandler);
+    window.removeEventListener("lit:llm-insert-raw", handler);
   });
 
-  // 3.2 — /ask still dispatches callout-wrapped event
-  it("dispatches lit:llm-insert-response with callout for /ask prefix", () => {
-    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
-    useLlmResponseStore.getState().appendChunk("answer");
+  it("Replace selection dispatches lit:llm-replace-selection", () => {
+    useLlmResponseStore.getState().startStream({ question: "q", selectionFrom: 10, selectionTo: 20 });
+    useLlmResponseStore.getState().appendChunk("new");
     useLlmResponseStore.getState().finishStream();
 
-    const rawHandler = vi.fn();
-    const responseHandler = vi.fn();
-    window.addEventListener("lit:llm-insert-raw", rawHandler);
-    window.addEventListener("lit:llm-insert-response", responseHandler);
+    const handler = vi.fn();
+    window.addEventListener("lit:llm-replace-selection", handler);
+
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    fireEvent.click(container.querySelector("[data-testid='llm-replace-btn']")!);
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    const detail = (handler.mock.calls[0]![0] as CustomEvent).detail;
+    expect(detail).toEqual({ text: "new", from: 10, to: 20 });
+
+    window.removeEventListener("lit:llm-replace-selection", handler);
+  });
+
+  it("does not dispatch insert when responseText empty (no selection)", () => {
+    useLlmResponseStore.getState().startStream({ question: "q", selectionFrom: 0, selectionTo: 0 });
+    useLlmResponseStore.getState().finishStream();
+
+    const handler = vi.fn();
+    window.addEventListener("lit:llm-insert-raw", handler);
 
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
     fireEvent.click(container.querySelector("[data-testid='llm-insert-btn']")!);
 
-    expect(responseHandler).toHaveBeenCalledTimes(1);
-    expect((responseHandler.mock.calls[0]![0] as CustomEvent).detail.text).toBe("> [!llm]+ Response\n> answer");
-    expect(rawHandler).not.toHaveBeenCalled();
-
-    window.removeEventListener("lit:llm-insert-raw", rawHandler);
-    window.removeEventListener("lit:llm-insert-response", responseHandler);
+    expect(handler).not.toHaveBeenCalled();
+    window.removeEventListener("lit:llm-insert-raw", handler);
   });
 
-  // --- Concern 2: Safe context callback ---
+  it("does not dispatch replace when responseText empty (with selection)", () => {
+    useLlmResponseStore.getState().startStream({ question: "q", selectionFrom: 10, selectionTo: 20 });
+    useLlmResponseStore.getState().finishStream();
 
-  // 2.3 — Submit works even without editor mounted (default context)
+    const handler = vi.fn();
+    window.addEventListener("lit:llm-replace-selection", handler);
+
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    fireEvent.click(container.querySelector("[data-testid='llm-replace-btn']")!);
+
+    expect(handler).not.toHaveBeenCalled();
+    window.removeEventListener("lit:llm-replace-selection", handler);
+  });
+
+  it("placeholder does not mention /insert or /rewrite", () => {
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    const textarea = container.querySelector("[data-testid='llm-question-input']") as HTMLTextAreaElement;
+    expect(textarea.placeholder).not.toContain("/insert");
+    expect(textarea.placeholder).not.toContain("/rewrite");
+  });
+
+  // --- Default context ---
+
   it("uses default context when no editor responds to lit:llm-request-context", () => {
     const onSubmit = vi.fn();
     const { container } = render(<LlmResponsePanel contentHeight={300} onSubmit={onSubmit} />);
@@ -322,20 +322,9 @@ describe("LlmResponsePanel", () => {
     fireEvent.change(textarea, { target: { value: "test" } });
     fireEvent.click(container.querySelector("[data-testid='llm-submit-btn']")!);
     expect(onSubmit).toHaveBeenCalledWith(
-      { prefix: "ask", question: "test" },
+      "test",
       { selectionText: "", selectionFrom: 0, selectionTo: 0, filePath: "" },
     );
-  });
-
-  // 2.4 — /rewrite without selection shows error
-  it("shows error for /rewrite without selection", () => {
-    const onSubmit = vi.fn();
-    const { container } = render(<LlmResponsePanel contentHeight={300} onSubmit={onSubmit} />);
-    const textarea = container.querySelector("[data-testid='llm-question-input']") as HTMLTextAreaElement;
-    fireEvent.change(textarea, { target: { value: "/rewrite make it concise" } });
-    fireEvent.click(container.querySelector("[data-testid='llm-submit-btn']")!);
-    expect(onSubmit).not.toHaveBeenCalled();
-    expect(container.querySelector("[data-testid='llm-rewrite-error']")).toBeTruthy();
   });
 
   // --- Cycle 10: Insert as companion button ---
@@ -354,7 +343,6 @@ describe("LlmResponsePanel", () => {
       original: "%%!q | why? %%",
     };
     useLlmResponseStore.getState().startStream({
-      prefix: "ask",
       question: "why?",
       fireSourceAnnotation: ann,
     });
@@ -365,7 +353,7 @@ describe("LlmResponsePanel", () => {
   });
 
   it("does not show companion button when fireSourceAnnotation is null", () => {
-    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+    useLlmResponseStore.getState().startStream({ question: "q" });
     useLlmResponseStore.getState().appendChunk("response");
     useLlmResponseStore.getState().finishStream();
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
@@ -386,7 +374,6 @@ describe("LlmResponsePanel", () => {
       original: "%%!q | why? %%",
     };
     useLlmResponseStore.getState().startStream({
-      prefix: "ask",
       question: "why?",
       fireSourceAnnotation: ann,
     });
@@ -421,7 +408,6 @@ describe("LlmResponsePanel", () => {
       original: "%%!q | why? %%",
     };
     useLlmResponseStore.getState().startStream({
-      prefix: "ask",
       question: "why?",
       fireSourceAnnotation: ann,
     });

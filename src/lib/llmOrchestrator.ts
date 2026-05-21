@@ -1,10 +1,8 @@
 import { startLlmStream, cancelLlmStream } from "./llmClient";
 import { useModalLockStore } from "../stores/modalLock";
 import { useLlmResponseStore } from "../stores/llmResponse";
-import type { LlmPrefix } from "./promptFormatter";
 
 export interface QuestionSubmitArgs {
-  prefix: LlmPrefix;
   question: string;
   model: string;
   text: string;
@@ -18,7 +16,6 @@ export async function handleQuestionSubmit(args: QuestionSubmitArgs): Promise<vo
 
   useModalLockStore.getState().setLlmLocked(true);
   useLlmResponseStore.getState().startStream({
-    prefix: args.prefix,
     question: args.question,
     selectionFrom: args.selectionFrom,
     selectionTo: args.selectionTo,

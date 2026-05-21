@@ -73,6 +73,16 @@ export function CodeMirrorEditor({ doc, onChange, onSelectionChange, resolveImag
   useEffect(() => {
     if (!view) return;
     const handler = (e: Event) => {
+      const { text, from, to } = (e as CustomEvent<{ text: string; from: number; to: number }>).detail;
+      view.dispatch({ changes: { from, to, insert: text } });
+    };
+    window.addEventListener("lit:llm-replace-selection", handler);
+    return () => window.removeEventListener("lit:llm-replace-selection", handler);
+  }, [view]);
+
+  useEffect(() => {
+    if (!view) return;
+    const handler = (e: Event) => {
       const { callback } = (e as CustomEvent<{ callback: (ctx: EditorContext) => void }>).detail;
       const sel = view.state.selection.main;
       const selectionText = view.state.sliceDoc(sel.from, sel.to);

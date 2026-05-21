@@ -1,10 +1,8 @@
 import { create } from "zustand";
 import type { Annotation } from "../lib/ipc";
-import type { LlmPrefix } from "../lib/promptFormatter";
 
 export interface LlmResponseState {
   status: "idle" | "streaming" | "done" | "error";
-  prefix: LlmPrefix;
   question: string;
   responseText: string;
   errorMessage: string;
@@ -12,7 +10,6 @@ export interface LlmResponseState {
   selectionTo: number;
   fireSourceAnnotation: Annotation | null;
   startStream: (opts: {
-    prefix: LlmPrefix;
     question: string;
     selectionFrom?: number;
     selectionTo?: number;
@@ -26,7 +23,6 @@ export interface LlmResponseState {
 
 export const useLlmResponseStore = create<LlmResponseState>((set) => ({
   status: "idle",
-  prefix: "ask",
   question: "",
   responseText: "",
   errorMessage: "",
@@ -37,7 +33,6 @@ export const useLlmResponseStore = create<LlmResponseState>((set) => ({
   startStream: (opts) =>
     set({
       status: "streaming",
-      prefix: opts.prefix,
       question: opts.question,
       responseText: "",
       errorMessage: "",
@@ -56,7 +51,6 @@ export const useLlmResponseStore = create<LlmResponseState>((set) => ({
   reset: () =>
     set({
       status: "idle",
-      prefix: "ask",
       question: "",
       responseText: "",
       errorMessage: "",

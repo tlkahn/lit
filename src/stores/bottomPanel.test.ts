@@ -18,14 +18,14 @@ describe("bottomPanel resetForPage", () => {
   });
 
   it("preserves hasOpenedLlm when llmResponse status is streaming", () => {
-    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+    useLlmResponseStore.getState().startStream({ question: "q" });
     useBottomPanelStore.setState({ hasOpenedLlm: true });
     useBottomPanelStore.getState().resetForPage();
     expect(useBottomPanelStore.getState().hasOpenedLlm).toBe(true);
   });
 
   it("preserves hasOpenedLlm when llmResponse status is done", () => {
-    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+    useLlmResponseStore.getState().startStream({ question: "q" });
     useLlmResponseStore.getState().finishStream();
     useBottomPanelStore.setState({ hasOpenedLlm: true });
     useBottomPanelStore.getState().resetForPage();
@@ -33,7 +33,7 @@ describe("bottomPanel resetForPage", () => {
   });
 
   it("preserves hasOpenedLlm when llmResponse status is error", () => {
-    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+    useLlmResponseStore.getState().startStream({ question: "q" });
     useLlmResponseStore.getState().setError("fail");
     useBottomPanelStore.setState({ hasOpenedLlm: true });
     useBottomPanelStore.getState().resetForPage();
@@ -47,7 +47,7 @@ describe("bottomPanel resetForPage", () => {
   });
 
   it("still resets counts and annotations when LLM is streaming", () => {
-    useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+    useLlmResponseStore.getState().startStream({ question: "q" });
     useBottomPanelStore.setState({
       hasOpenedLlm: true,
       annotationCount: 3,

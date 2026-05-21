@@ -5,7 +5,6 @@ import { AnnotationPanel } from "./AnnotationPanel";
 import { LlmResponsePanel } from "./LlmResponsePanel";
 import { handleQuestionSubmit } from "../lib/llmOrchestrator";
 import { formatLlmPrompt } from "../lib/promptFormatter";
-import type { ParsedInput } from "../lib/promptFormatter";
 import type { EditorContext } from "../types";
 import { usePreferencesStore } from "../stores/preferences";
 import { useBottomPanelStore } from "../stores/bottomPanel";
@@ -32,15 +31,14 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
   const llmSystemPrompt = usePreferencesStore((s) => s.llmSystemPrompt);
 
   const handleLlmSubmit = useCallback(
-    (parsed: ParsedInput, context: EditorContext) => {
+    (question: string, context: EditorContext) => {
       const text = formatLlmPrompt({
-        question: parsed.question,
+        question,
         context: context.selectionText,
         filePath: context.filePath,
       });
       handleQuestionSubmit({
-        prefix: parsed.prefix,
-        question: parsed.question,
+        question,
         model: llmModel,
         text,
         system: llmSystemPrompt || undefined,

@@ -267,4 +267,39 @@ describe("CodeMirrorEditor", () => {
     );
     expect(spy).not.toHaveBeenCalled();
   });
+
+  // --- lit:llm-replace-selection listener ---
+
+  it("replaces text range on lit:llm-replace-selection", () => {
+    let capturedRef: React.RefObject<EditorView | null> = { current: null };
+    function Wrapper() {
+      const ref = useRef<EditorView | null>(null);
+      capturedRef = ref;
+      return <CodeMirrorEditor doc="hello world" viewRef={ref} />;
+    }
+    render(<Wrapper />);
+    const view = capturedRef.current!;
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("lit:llm-replace-selection", {
+          detail: { text: "goodbye", from: 0, to: 5 },
+        }),
+      );
+    });
+
+    expect(view.state.doc.toString()).toBe("goodbye world");
+  });
+
+  it("cleans up lit:llm-replace-selection listener on unmount", () => {
+    const { unmount } = render(<CodeMirrorEditor doc="hello" />);
+    unmount();
+    expect(() => {
+      window.dispatchEvent(
+        new CustomEvent("lit:llm-replace-selection", {
+          detail: { text: "bye", from: 0, to: 5 },
+        }),
+      );
+    }).not.toThrow();
+  });
 });

@@ -27,7 +27,6 @@ describe("llmOrchestrator", () => {
     const { startLlmStream } = await import("./llmClient");
 
     await handleQuestionSubmit({
-      prefix: "ask",
       question: "test",
       model: "claude-sonnet-4-6",
       text: "doc content",
@@ -41,7 +40,6 @@ describe("llmOrchestrator", () => {
     (startLlmStream as ReturnType<typeof vi.fn>).mockImplementation(() => Promise.resolve());
 
     await handleQuestionSubmit({
-      prefix: "ask",
       question: "test",
       model: "claude-sonnet-4-6",
       text: "doc content",
@@ -61,7 +59,6 @@ describe("llmOrchestrator", () => {
     );
 
     await handleQuestionSubmit({
-      prefix: "ask",
       question: "test",
       model: "claude-sonnet-4-6",
       text: "doc content",
@@ -83,7 +80,6 @@ describe("llmOrchestrator", () => {
     );
 
     await handleQuestionSubmit({
-      prefix: "ask",
       question: "test",
       model: "claude-sonnet-4-6",
       text: "doc content",
@@ -98,7 +94,6 @@ describe("llmOrchestrator", () => {
     (startLlmStream as ReturnType<typeof vi.fn>).mockImplementation(() => Promise.resolve());
 
     await handleQuestionSubmit({
-      prefix: "ask",
       question: "test",
       model: "claude-sonnet-4-6",
       text: "doc content",

@@ -361,7 +361,7 @@ describe("StatusBar", () => {
         root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
         focusedPaneId: "p1",
       });
-      useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+      useLlmResponseStore.getState().startStream({ question: "q" });
       render(<StatusBar />);
       expect(screen.getByTestId("tab-llm-response")).toBeInTheDocument();
       expect(screen.getByTestId("tab-llm-response")).toHaveTextContent("LLM");
@@ -383,7 +383,7 @@ describe("StatusBar", () => {
         root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
         focusedPaneId: "p1",
       });
-      useLlmResponseStore.getState().startStream({ prefix: "ask", question: "q" });
+      useLlmResponseStore.getState().startStream({ question: "q" });
       render(<StatusBar />);
       await userEvent.click(screen.getByTestId("tab-llm-response"));
       const state = useBottomPanelStore.getState();
@@ -427,7 +427,7 @@ describe("StatusBar", () => {
       const { rerender } = render(<StatusBar />);
       expect(screen.getByTestId("status-bar-llm-error")).toBeInTheDocument();
 
-      useLlmResponseStore.getState().startStream({ prefix: "ask", question: "retry" });
+      useLlmResponseStore.getState().startStream({ question: "retry" });
       rerender(<StatusBar />);
       expect(screen.queryByTestId("status-bar-llm-error")).toBeNull();
     });

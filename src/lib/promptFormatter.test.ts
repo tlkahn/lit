@@ -1,31 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parsePrefix, formatLlmPrompt } from "./promptFormatter";
-
-describe("parsePrefix", () => {
-  it("bare question returns ask prefix", () => {
-    expect(parsePrefix("hello")).toEqual({ prefix: "ask", question: "hello" });
-  });
-
-  it("/ask prefix extracts question", () => {
-    expect(parsePrefix("/ask what is this")).toEqual({ prefix: "ask", question: "what is this" });
-  });
-
-  it("/insert prefix extracts question", () => {
-    expect(parsePrefix("/insert summarize")).toEqual({ prefix: "insert", question: "summarize" });
-  });
-
-  it("/rewrite prefix extracts question", () => {
-    expect(parsePrefix("/rewrite improve")).toEqual({ prefix: "rewrite", question: "improve" });
-  });
-
-  it("unknown prefix treated as bare question", () => {
-    expect(parsePrefix("/unknown foo")).toEqual({ prefix: "ask", question: "/unknown foo" });
-  });
-
-  it("empty string returns ask with empty question", () => {
-    expect(parsePrefix("")).toEqual({ prefix: "ask", question: "" });
-  });
-});
+import { formatLlmPrompt } from "./promptFormatter";
 
 describe("formatLlmPrompt", () => {
   it("question only", () => {

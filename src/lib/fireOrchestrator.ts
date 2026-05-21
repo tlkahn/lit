@@ -70,10 +70,8 @@ export async function fireAnnotation(args: FireAnnotationArgs): Promise<void> {
   const system = getTypePrompt(annotation.annotation_type);
   const text = buildFirePrompt(scopeText, annotation.body);
   const fireType = classifyFireType(annotation.annotation_type);
-  const prefix = fireType === "replacing" ? "rewrite" : "ask";
 
   useLlmResponseStore.getState().startStream({
-    prefix,
     question: annotation.body ?? "",
     fireSourceAnnotation: fireType === "persisting" ? annotation : undefined,
   });

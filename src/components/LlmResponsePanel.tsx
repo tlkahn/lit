@@ -3,18 +3,11 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { useLlmResponseStore } from "../stores/llmResponse";
 import { cancelLlmStream } from "../lib/llmClient";
-import { parsePrefix, type ParsedInput } from "../lib/promptFormatter";
 import { DEFAULT_EDITOR_CONTEXT, type EditorContext } from "../types";
 
 interface LlmResponsePanelProps {
   contentHeight?: number;
-  onSubmit?: (parsed: ParsedInput, context: EditorContext) => void;
-}
-
-export function wrapCallout(text: string): string {
-  if (!text) return "";
-  const lines = text.split("\n").map((l) => `> ${l}`);
-  return `> [!llm]+ Response\n${lines.join("\n")}`;
+  onSubmit?: (question: string, context: EditorContext) => void;
 }
 
 function renderMarkdown(text: string): string {
@@ -32,22 +25,15 @@ export function requestEditorContext(): EditorContext {
 }
 
 function QuestionInput({ onSubmit, disabled }: {
-  onSubmit?: (parsed: ParsedInput, context: EditorContext) => void;
+  onSubmit?: (question: string, context: EditorContext) => void;
   disabled?: boolean;
 }) {
   const [value, setValue] = useState("");
-  const [error, setError] = useState("");
 
   const handleSubmit = () => {
     if (!value.trim() || !onSubmit) return;
-    setError("");
-    const parsed = parsePrefix(value);
     const context = requestEditorContext();
-    if (parsed.prefix === "rewrite" && context.selectionFrom === context.selectionTo) {
-      setError("Select text in the editor before using /rewrite");
-      return;
-    }
-    onSubmit(parsed, context);
+    onSubmit(value.trim(), context);
     setValue("");
   };
 
@@ -59,7 +45,7 @@ function QuestionInput({ onSubmit, disabled }: {
           className="flex-1 resize-none rounded border border-divider bg-bg-primary px-2 py-1 text-sm"
           rows={2}
           value={value}
-          onChange={(e) => { setValue(e.target.value); setError(""); }}
+          onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => {
             if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
               e.preventDefault();
@@ -68,7 +54,7 @@ function QuestionInput({ onSubmit, disabled }: {
             }
           }}
           disabled={disabled}
-          placeholder="Ask a question... (/insert, /rewrite)"
+          placeholder="Ask a question..."
         />
         <button
           data-testid="llm-submit-btn"
@@ -79,20 +65,20 @@ function QuestionInput({ onSubmit, disabled }: {
           Ask
         </button>
       </div>
-      {error && (
-        <span data-testid="llm-rewrite-error" className="text-xs text-text-error">{error}</span>
-      )}
     </div>
   );
 }
 
 export function LlmResponsePanel({ contentHeight, onSubmit }: LlmResponsePanelProps) {
   const status = useLlmResponseStore((s) => s.status);
-  const prefix = useLlmResponseStore((s) => s.prefix);
   const question = useLlmResponseStore((s) => s.question);
   const responseText = useLlmResponseStore((s) => s.responseText);
   const errorMessage = useLlmResponseStore((s) => s.errorMessage);
+  const selectionFrom = useLlmResponseStore((s) => s.selectionFrom);
+  const selectionTo = useLlmResponseStore((s) => s.selectionTo);
   const fireSourceAnnotation = useLlmResponseStore((s) => s.fireSourceAnnotation);
+
+  const hadSelection = selectionFrom !== selectionTo;
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -138,25 +124,35 @@ export function LlmResponsePanel({ contentHeight, onSubmit }: LlmResponsePanelPr
             >
               Copy
             </button>
-            <button
-              data-testid="llm-insert-btn"
-              className="rounded px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover"
-              onClick={() => {
-                if (!responseText) return;
-                if (prefix === "insert") {
+            {hadSelection ? (
+              <button
+                data-testid="llm-replace-btn"
+                className="rounded px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover"
+                onClick={() => {
+                  if (!responseText) return;
+                  window.dispatchEvent(
+                    new CustomEvent("lit:llm-replace-selection", {
+                      detail: { text: responseText, from: selectionFrom, to: selectionTo },
+                    }),
+                  );
+                }}
+              >
+                Replace selection
+              </button>
+            ) : (
+              <button
+                data-testid="llm-insert-btn"
+                className="rounded px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover"
+                onClick={() => {
+                  if (!responseText) return;
                   window.dispatchEvent(
                     new CustomEvent("lit:llm-insert-raw", { detail: { text: responseText } }),
                   );
-                } else {
-                  const wrapped = wrapCallout(responseText);
-                  window.dispatchEvent(
-                    new CustomEvent("lit:llm-insert-response", { detail: { text: wrapped } }),
-                  );
-                }
-              }}
-            >
-              Insert at cursor
-            </button>
+                }}
+              >
+                Insert at cursor
+              </button>
+            )}
             {fireSourceAnnotation && (
               <button
                 data-testid="llm-companion-btn"
