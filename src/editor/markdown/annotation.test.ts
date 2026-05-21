@@ -2,8 +2,13 @@ import { describe, it, expect } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { markdown } from "@codemirror/lang-markdown";
 import { syntaxTree } from "@codemirror/language";
+import { GFM } from "@lezer/markdown";
 import { Annotation } from "./annotation";
 import { Comment } from "./comment";
+import { WikiLink } from "./wikilink";
+import { Frontmatter, FrontmatterYamlWrap } from "./frontmatter";
+import { Math } from "./math";
+import { Footnote } from "./footnote";
 
 function parseNodes(doc: string) {
   const state = EditorState.create({
@@ -133,7 +138,7 @@ describe("BlockAnnotation parser", () => {
     expect(annotations[1]!.to).toBe(ann2End);
   });
 
-  it("multi-line block annotation directly after paragraph (no blank line) is absorbed", () => {
+  it("multi-line block annotation directly after paragraph (no blank line) renders", () => {
     const doc = [
       "4.接电话前先微笑(加州大学)",
       "%%!",
@@ -143,17 +148,42 @@ describe("BlockAnnotation parser", () => {
       "%%",
     ].join("\n");
     const nodes = parseNodes(doc);
-    // Without a blank line, the paragraph absorbs the %%! line;
-    // multi-line annotations can't be parsed inline, so no node is created.
     const ba = nodes.find((n) => n.name === "BlockAnnotation");
-    expect(ba).toBeUndefined();
+    expect(ba).toBeDefined();
   });
 
-  it("single-line annotation directly after paragraph (no blank line)", () => {
+  it("single-line annotation directly after paragraph (no blank line) stays inline", () => {
     const doc = "some paragraph text\n%%! q \\s | note %%";
     const nodes = parseNodes(doc);
-    const ba = nodes.find((n) => n.name === "BlockAnnotation" || n.name === "InlineAnnotation");
-    expect(ba).toBeDefined();
+    const inline = nodes.find((n) => n.name === "InlineAnnotation");
+    const block = nodes.find((n) => n.name === "BlockAnnotation");
+    expect(inline).toBeDefined();
+    expect(block).toBeUndefined();
+  });
+
+  it("minimal single-line annotation after paragraph stays inline", () => {
+    const doc = "paragraph\n%%! x %%";
+    const nodes = parseNodes(doc);
+    const inline = nodes.find((n) => n.name === "InlineAnnotation");
+    const block = nodes.find((n) => n.name === "BlockAnnotation");
+    expect(inline).toBeDefined();
+    expect(block).toBeUndefined();
+  });
+
+  it("single-line annotation with trailing whitespace after paragraph stays inline", () => {
+    const doc = "paragraph\n%%! content %%   ";
+    const nodes = parseNodes(doc);
+    const inline = nodes.find((n) => n.name === "InlineAnnotation");
+    const block = nodes.find((n) => n.name === "BlockAnnotation");
+    expect(inline).toBeDefined();
+    expect(block).toBeUndefined();
+  });
+
+  it("%%! with closing %% and extra text does not end leaf", () => {
+    const doc = "paragraph\n%%! note %% some trailing text";
+    const nodes = parseNodes(doc);
+    const block = nodes.find((n) => n.name === "BlockAnnotation");
+    expect(block).toBeUndefined();
   });
 
   it("single-line annotation with trailing whitespace", () => {
@@ -223,5 +253,45 @@ describe("BlockAnnotation parser", () => {
     // First single-line is inline (no blank line before it), rest are blocks
     expect(inline).toHaveLength(1);
     expect(block).toHaveLength(3);
+  });
+
+  it("block annotation after paragraph renders with full extension set (GFM, Frontmatter, etc.)", () => {
+    const allExtensions = [GFM, WikiLink, Frontmatter, FrontmatterYamlWrap, Math, Comment, Annotation, Footnote];
+    const doc = [
+      "---",
+      "title: test",
+      "---",
+      "3.生气时先默数10秒再说话(卡耐基基金会)",
+      "",
+      "%%!",
+      "n",
+      "\\s",
+      "---",
+      "## Translation & Explanation",
+      "",
+      "**Chinese text:** 生气时先默数10秒再说话",
+      "%%",
+      "",
+      "4.接电话前先微笑(加州大学)",
+      "%%!",
+      "n",
+      "---",
+      "## Translation and Explanation",
+      "",
+      "body text",
+      "%%",
+    ].join("\n");
+    const state = EditorState.create({
+      doc,
+      extensions: [markdown({ extensions: allExtensions })],
+    });
+    const nodes: { name: string; from: number; to: number }[] = [];
+    syntaxTree(state).iterate({
+      enter: (node) => {
+        nodes.push({ name: node.name, from: node.from, to: node.to });
+      },
+    });
+    const blocks = nodes.filter((n) => n.name === "BlockAnnotation");
+    expect(blocks).toHaveLength(2);
   });
 });
