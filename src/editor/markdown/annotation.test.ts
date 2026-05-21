@@ -102,4 +102,126 @@ describe("BlockAnnotation parser", () => {
     const ba = nodes.find((n) => n.name === "BlockAnnotation");
     expect(ba).toBeDefined();
   });
+
+  it("two standalone single-line annotations separated by paragraphs", () => {
+    const doc = [
+      "3.生气时先默数10秒再说话(卡耐基基金会)",
+      "",
+      "%%! q \\s | what does this mean? %%",
+      "",
+      "4.接电话前先微笑(加州大学)",
+      "",
+      "%%! q \\s | what does this mean? %%",
+    ].join("\n");
+    const nodes = parseNodes(doc);
+    const annotations = nodes.filter((n) => n.name === "BlockAnnotation");
+    expect(annotations).toHaveLength(2);
+
+    // Verify positions match expected offsets
+    const line1 = "3.生气时先默数10秒再说话(卡耐基基金会)";
+    const annText = "%%! q \\s | what does this mean? %%";
+    const line2 = "4.接电话前先微笑(加州大学)";
+    // first annotation starts after line1 + \n + \n
+    const ann1Start = line1.length + 1 + 1;
+    const ann1End = ann1Start + annText.length;
+    expect(annotations[0]!.from).toBe(ann1Start);
+    expect(annotations[0]!.to).toBe(ann1End);
+    // second annotation starts after ann1End + \n + \n + line2 + \n + \n
+    const ann2Start = ann1End + 1 + 1 + line2.length + 1 + 1;
+    const ann2End = ann2Start + annText.length;
+    expect(annotations[1]!.from).toBe(ann2Start);
+    expect(annotations[1]!.to).toBe(ann2End);
+  });
+
+  it("multi-line block annotation directly after paragraph (no blank line) is absorbed", () => {
+    const doc = [
+      "4.接电话前先微笑(加州大学)",
+      "%%!",
+      "n",
+      "---",
+      "body text",
+      "%%",
+    ].join("\n");
+    const nodes = parseNodes(doc);
+    // Without a blank line, the paragraph absorbs the %%! line;
+    // multi-line annotations can't be parsed inline, so no node is created.
+    const ba = nodes.find((n) => n.name === "BlockAnnotation");
+    expect(ba).toBeUndefined();
+  });
+
+  it("single-line annotation directly after paragraph (no blank line)", () => {
+    const doc = "some paragraph text\n%%! q \\s | note %%";
+    const nodes = parseNodes(doc);
+    const ba = nodes.find((n) => n.name === "BlockAnnotation" || n.name === "InlineAnnotation");
+    expect(ba).toBeDefined();
+  });
+
+  it("single-line annotation with trailing whitespace", () => {
+    const doc = "%%! q \\s | what does this mean? %% ";
+    const nodes = parseNodes(doc);
+    const ba = nodes.find((n) => n.name === "BlockAnnotation");
+    expect(ba).toBeDefined();
+    expect(ba!.from).toBe(0);
+    // node should exclude trailing whitespace
+    expect(ba!.to).toBe(doc.trimEnd().length);
+  });
+
+  it("trailing-space annotation after paragraph does not swallow subsequent block annotation", () => {
+    const doc = [
+      "3.生气时先默数10秒再说话(卡耐基基金会)",
+      "%%! q \\s | what does this mean? %% ",
+      "",
+      "%%!",
+      "n",
+      "---",
+      "body text",
+      "%%",
+    ].join("\n");
+    const nodes = parseNodes(doc);
+    // First annotation is inline (part of paragraph), second is a block
+    const inline = nodes.filter((n) => n.name === "InlineAnnotation");
+    const block = nodes.filter((n) => n.name === "BlockAnnotation");
+    expect(inline).toHaveLength(1);
+    expect(block).toHaveLength(1);
+  });
+
+  it("real-world: two annotation groups with trailing spaces (user bug report)", () => {
+    const doc = [
+      "3.生气时先默数10秒再说话(卡耐基基金会) -- renders",
+      "%%! q \\s | what does this mean? %% ",
+      "",
+      "%%!",
+      "n",
+      "---",
+      "## Translation & Explanation",
+      "",
+      "**Chinese text:** 生气时先默数10秒再说话",
+      "",
+      "**Translation:**",
+      '> "When angry, silently count to 10 seconds before speaking"',
+      "%%",
+      "",
+      "4.接电话前先微笑(加州大学) -- not renders",
+      "",
+      "%%! q \\s | what does this mean? %% ",
+      "",
+      "%%!",
+      "n",
+      "---",
+      "## Translation and Explanation",
+      "",
+      '**"接电话前先微笑"** (jiē diànhuà qián xiān wēixiào)',
+      "",
+      "This is a **Chinese phrase** that translates to:",
+      "",
+      "...",
+      "%%",
+    ].join("\n");
+    const nodes = parseNodes(doc);
+    const inline = nodes.filter((n) => n.name === "InlineAnnotation");
+    const block = nodes.filter((n) => n.name === "BlockAnnotation");
+    // First single-line is inline (no blank line before it), rest are blocks
+    expect(inline).toHaveLength(1);
+    expect(block).toHaveLength(3);
+  });
 });

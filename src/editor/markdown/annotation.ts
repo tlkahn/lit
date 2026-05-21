@@ -44,9 +44,10 @@ export const Annotation: MarkdownConfig = {
 
         const start = cx.lineStart;
 
-        // Single-line: %%!content%%
-        if (line.text.length > 3 && line.text.endsWith("%%")) {
-          const end = cx.lineStart + line.text.length;
+        // Single-line: %%!content%% (trailing whitespace tolerated)
+        const trimmed = line.text.trimEnd();
+        if (trimmed.length > 3 && trimmed.endsWith("%%")) {
+          const end = cx.lineStart + trimmed.length;
           cx.nextLine();
           cx.addElement(cx.elt("BlockAnnotation", start, end));
           return true;

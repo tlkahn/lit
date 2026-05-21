@@ -42,8 +42,9 @@ export const Comment: MarkdownConfig = {
 
         const start = cx.lineStart;
 
-        if (line.text.length > 2 && line.text.endsWith("%%")) {
-          const end = cx.lineStart + line.text.length;
+        const trimmed = line.text.trimEnd();
+        if (trimmed.length > 2 && trimmed.endsWith("%%")) {
+          const end = cx.lineStart + trimmed.length;
           cx.nextLine();
           cx.addElement(cx.elt("BlockComment", start, end));
           return true;
