@@ -1,6 +1,14 @@
 use super::scanner::utf16_len;
 use super::types::{ResolutionMode, Scope, ScopeKind, ScopeRange};
 
+fn split_sentences(text: &str, lang: &str) -> Vec<String> {
+    sentencex::segment(lang, text)
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
 pub fn resolve_scope_range(
     content: &str,
     char_start: usize,
@@ -129,7 +137,7 @@ fn resolve_sentence(content: &str, char_start: usize, n: usize, lang: &str) -> O
         return None;
     }
 
-    let sentences = sentenza::split_sentences(trimmed, lang);
+    let sentences = split_sentences(trimmed, lang);
     if sentences.is_empty() {
         return None;
     }
@@ -334,7 +342,7 @@ fn resolve_forward_sentences(content: &str, char_start: usize, n: usize, lang: &
         return None;
     }
 
-    let sentences = sentenza::split_sentences(trimmed, lang);
+    let sentences = split_sentences(trimmed, lang);
     if sentences.is_empty() {
         return None;
     }
@@ -998,14 +1006,10 @@ mod tests {
 
     #[test]
     fn sentence_cjk_with_prior_annotation_debris() {
-        // sentenza normalizes -- to — (em dash), causing ws_flexible_find
-        // to fail matching back to the original text.
         let content = "Silently count to 10 seconds before speaking\"\n%%\n\n4.接电话前先微笑(加州大学) -- not renders\n\n%%! q \\s | what does this mean? %%";
         let char_start = utf16_len(&content[..content.rfind("%%!").unwrap()]);
         let result = resolve_sentence(content, char_start, 1, "en");
-        // Known failure: sentenza normalizes -- → —, ws_flexible_find can't match.
-        // TODO: fix in dedicated issue
-        assert!(result.is_none());
+        assert!(result.is_some());
     }
 
     #[test]
@@ -1017,5 +1021,28 @@ mod tests {
         let (start, end) = result.unwrap();
         let scope = &content[utf16_to_byte(content, start)..utf16_to_byte(content, end)];
         assert!(!scope.contains("%%!"));
+    }
+
+    #[test]
+    fn forward_sentence_with_dashes_in_text() {
+        let content = "Before. First -- important. After that.";
+        let char_start = utf16_len(&content[..content.find(" First").unwrap()]);
+        let result = resolve_scope_range(
+            content,
+            char_start,
+            &Scope::Asymmetric { unit: ScopeKind::Sentence, before: 1, after: 1 },
+            "en",
+        );
+        let range = result.unwrap();
+        let expected_end = utf16_len(&content[..content.find(" After").unwrap()]);
+        assert_eq!(range.end, expected_end);
+    }
+
+    #[test]
+    fn sentence_with_double_comma_resolves() {
+        let content = "First sentence. Second,, important sentence.%%! n \\s | note %%";
+        let char_start = utf16_len(&content[..content.find("%%!").unwrap()]);
+        let result = resolve_scope_range(content, char_start, &Scope::Sentence(1), "en");
+        assert!(result.is_some());
     }
 }
