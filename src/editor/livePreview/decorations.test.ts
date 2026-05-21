@@ -1160,6 +1160,177 @@ describe("buildBlockReplacements — block comments", () => {
   });
 });
 
+describe("buildDecorations — strikethrough", () => {
+  it("hides ~~ markers and applies strikethrough class", () => {
+    const doc = "~~deleted~~ text\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const replaces = decos.filter((d) => d.type === "replace");
+    expect(replaces.some((d) => d.from === 0 && d.to === 2)).toBe(true);
+    expect(replaces.some((d) => d.from === 9 && d.to === 11)).toBe(true);
+    const strike = decos.find((d) => d.class === "cm-preview-strikethrough");
+    expect(strike).toBeDefined();
+    expect(strike!.from).toBe(2);
+    expect(strike!.to).toBe(9);
+    view.destroy();
+  });
+
+  it("does not decorate when cursor is inside strikethrough", () => {
+    const view = makeView("~~deleted~~ text", 5);
+    const decos = collectDecos(view);
+    const strikeDecos = decos.filter(
+      (d) => d.class === "cm-preview-strikethrough" || (d.type === "replace" && d.from <= 11),
+    );
+    expect(strikeDecos).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("keeps decorations on other strikethrough when cursor is in one", () => {
+    const doc = "~~alpha~~ and ~~beta~~";
+    const view = makeView(doc, 3); // cursor inside ~~alpha~~
+    const decos = collectDecos(view);
+    const strikes = decos.filter((d) => d.class === "cm-preview-strikethrough");
+    expect(strikes).toHaveLength(1);
+    expect(strikes[0]!.from).toBe(16);
+    expect(strikes[0]!.to).toBe(20);
+    view.destroy();
+  });
+
+  it("coexists with bold on same line", () => {
+    const doc = "**bold** and ~~deleted~~\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.find((d) => d.class === "cm-preview-bold")).toBeDefined();
+    expect(decos.find((d) => d.class === "cm-preview-strikethrough")).toBeDefined();
+    view.destroy();
+  });
+
+  it("renders inside headings", () => {
+    const doc = "## ~~deleted~~ title\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.find((d) => d.class === "cm-preview-h2")).toBeDefined();
+    expect(decos.find((d) => d.class === "cm-preview-strikethrough")).toBeDefined();
+    view.destroy();
+  });
+
+  it("renders inside emphasis", () => {
+    const doc = "*~~deleted~~*\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.find((d) => d.class === "cm-preview-italic")).toBeDefined();
+    expect(decos.find((d) => d.class === "cm-preview-strikethrough")).toBeDefined();
+    view.destroy();
+  });
+
+  it("marks line as cursor-sensitive", () => {
+    const doc = "plain\n~~deleted~~\nmore";
+    const view = makeView(doc, 0);
+    const { cursorSensitiveLines } = buildDecorations(view);
+    expect(cursorSensitiveLines.has(2)).toBe(true);
+    view.destroy();
+  });
+});
+
+describe("buildDecorations — blockquotes", () => {
+  it("applies line class and hides quote mark on regular blockquote", () => {
+    const doc = "> Quoted text\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const lineDeco = decos.find((d) => d.class === "cm-blockquote");
+    expect(lineDeco).toBeDefined();
+    const quoteReplace = decos.find((d) => d.type === "replace" && d.from === 0 && d.to === 2);
+    expect(quoteReplace).toBeDefined();
+    view.destroy();
+  });
+
+  it("does not decorate when cursor is on blockquote line", () => {
+    const doc = "> Quoted text\n\nother";
+    const view = makeView(doc, 5);
+    const decos = collectDecos(view);
+    const bqDecos = decos.filter((d) => d.class === "cm-blockquote");
+    expect(bqDecos).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("decorates all lines in multi-line blockquote", () => {
+    const doc = "> Line one\n> Line two\n> Line three\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const lineDecos = decos.filter((d) => d.class === "cm-blockquote");
+    expect(lineDecos).toHaveLength(3);
+    const replaces = decos.filter((d) => d.type === "replace" && !d.widget);
+    expect(replaces).toHaveLength(3);
+    view.destroy();
+  });
+
+  it("suppresses all decorations when cursor is on any line of multi-line blockquote", () => {
+    const doc = "> Line one\n> Line two\n> Line three\n\nother";
+    const view = makeView(doc, 15); // cursor on line 2
+    const decos = collectDecos(view);
+    const bqDecos = decos.filter((d) => d.class === "cm-blockquote");
+    expect(bqDecos).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("allows inline elements inside blockquote", () => {
+    const doc = "> Some **bold** and *italic* text\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.find((d) => d.class === "cm-blockquote")).toBeDefined();
+    expect(decos.find((d) => d.class === "cm-preview-bold")).toBeDefined();
+    expect(decos.find((d) => d.class === "cm-preview-italic")).toBeDefined();
+    view.destroy();
+  });
+
+  it("does not apply callout classes to regular blockquotes (regression)", () => {
+    const doc = "> Normal quote\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const calloutDecos = decos.filter((d) => d.class?.includes("cm-callout"));
+    expect(calloutDecos).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("handles blockquote with empty continuation line", () => {
+    const doc = "> First\n> \n> Third\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const lineDecos = decos.filter((d) => d.class === "cm-blockquote");
+    expect(lineDecos).toHaveLength(3);
+    view.destroy();
+  });
+});
+
+describe("buildDecorations — strikethrough inside blockquote/callout", () => {
+  it("renders strikethrough inside blockquote", () => {
+    const doc = "> Some ~~deleted~~ text\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.find((d) => d.class === "cm-blockquote")).toBeDefined();
+    expect(decos.find((d) => d.class === "cm-preview-strikethrough")).toBeDefined();
+    view.destroy();
+  });
+
+  it("renders strikethrough inside callout", () => {
+    const doc = "> [!note]\n> Some ~~deleted~~ text\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.find((d) => d.class?.includes("cm-callout"))).toBeDefined();
+    expect(decos.find((d) => d.class === "cm-preview-strikethrough")).toBeDefined();
+    view.destroy();
+  });
+
+  it("handles nested blockquotes", () => {
+    const doc = "> Outer\n>> Inner\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const bqDecos = decos.filter((d) => d.class === "cm-blockquote");
+    expect(bqDecos.length).toBeGreaterThanOrEqual(2);
+    view.destroy();
+  });
+});
+
 describe("buildDecorations — cursorSensitiveLines", () => {
   it("includes heading lines", () => {
     const doc = "plain\n## Heading\nmore";
