@@ -35,6 +35,7 @@
   --color-destructive: var(--color-red);
   --color-nav-active-bg: var(--nav-item-background-active);
   --color-nav-active-text: var(--nav-item-color-active);
+  --color-text-success: var(--color-green);
   --color-toggle-active: #34C759;
 }
 

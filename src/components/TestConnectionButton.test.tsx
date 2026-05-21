@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TestConnectionButton } from "./TestConnectionButton";
 
@@ -63,5 +63,59 @@ describe("TestConnectionButton", () => {
     await userEvent.click(screen.getByTestId("test-connection-btn"));
 
     expect(testLlmConnection).toHaveBeenCalledWith("gpt-4o", "https://custom.api");
+  });
+
+  it("success status uses text-text-success theme class, not hardcoded green", async () => {
+    const { testLlmConnection } = await import("../lib/ipc");
+    (testLlmConnection as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    render(<TestConnectionButton model="gpt-4o" />);
+    await userEvent.click(screen.getByTestId("test-connection-btn"));
+
+    await waitFor(() => {
+      const status = screen.getByTestId("test-connection-status");
+      expect(status.className).toContain("text-text-success");
+      expect(status.className).not.toMatch(/text-green-\d+/);
+    });
+  });
+
+  it("auto-dismisses success status after 3 seconds", async () => {
+    vi.useFakeTimers();
+    const { testLlmConnection } = await import("../lib/ipc");
+    (testLlmConnection as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    render(<TestConnectionButton model="gpt-4o" />);
+    await act(async () => {
+      screen.getByTestId("test-connection-btn").click();
+    });
+
+    expect(screen.getByTestId("test-connection-status")).toHaveTextContent("Connected");
+
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+
+    expect(screen.queryByTestId("test-connection-status")).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it("does not auto-dismiss error status", async () => {
+    vi.useFakeTimers();
+    const { testLlmConnection } = await import("../lib/ipc");
+    (testLlmConnection as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Bad key"));
+
+    render(<TestConnectionButton model="gpt-4o" />);
+    await act(async () => {
+      screen.getByTestId("test-connection-btn").click();
+    });
+
+    expect(screen.getByTestId("test-connection-status")).toHaveTextContent("Bad key");
+
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+
+    expect(screen.getByTestId("test-connection-status")).toHaveTextContent("Bad key");
+    vi.useRealTimers();
   });
 });

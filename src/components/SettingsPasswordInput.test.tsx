@@ -84,4 +84,13 @@ describe("SettingsPasswordInput", () => {
     );
     expect(container.querySelector("[data-testid='test-pw-clear']")).toBeNull();
   });
+
+  it("'Key saved' badge uses text-text-success theme class, not hardcoded green", () => {
+    const { container } = render(
+      <SettingsPasswordInput testId="test-pw" hasKey={true} onSave={vi.fn()} onDelete={vi.fn()} />,
+    );
+    const badge = container.querySelector("[data-testid='test-pw-saved']")!;
+    expect(badge.className).toContain("text-text-success");
+    expect(badge.className).not.toMatch(/text-green-\d+/);
+  });
 });

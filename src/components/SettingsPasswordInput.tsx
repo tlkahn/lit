@@ -22,7 +22,7 @@ export function SettingsPasswordInput({ testId, label, hasKey, onSave, onDelete 
       {label && <span className="text-sm text-text-normal">{label}</span>}
       <div className="flex items-center gap-2">
         {hasKey && (
-          <span data-testid={`${testId}-saved`} className="text-xs text-green-500">
+          <span data-testid={`${testId}-saved`} className="text-xs text-text-success">
             Key saved
           </span>
         )}

@@ -63,6 +63,7 @@ function QuestionInput({ onSubmit, disabled }: {
           onKeyDown={(e) => {
             if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
               e.preventDefault();
+              e.stopPropagation();
               handleSubmit();
             }
           }}

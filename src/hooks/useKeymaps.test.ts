@@ -521,6 +521,32 @@ describe("useKeymaps", () => {
     expect(hasCommand("app.batchFireAnnotations")).toBe(true);
   });
 
+  // --- Cycle B4: when guard on global keydown handler ---
+
+  it("Mod-Enter does not fire app.fireAnnotation when no editor is focused", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_keymaps") {
+        return [
+          { key: "Mod-Enter", command: "app.fireAnnotation", when: "editorFocus" },
+        ];
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    const { result } = await loadHook();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const preventDefault = vi.fn();
+    const event = new KeyboardEvent("keydown", {
+      key: "Enter",
+      metaKey: true,
+      bubbles: true,
+    });
+    Object.defineProperty(event, "preventDefault", { value: preventDefault });
+    document.dispatchEvent(event);
+
+    expect(preventDefault).not.toHaveBeenCalled();
+  });
+
   // --- Cycle 13: Integration smoke test ---
 
   it("split → navigate → close full keyboard flow", async () => {

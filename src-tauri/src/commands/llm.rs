@@ -151,16 +151,11 @@ pub async fn test_connection_inner(
     base_url: Option<&str>,
 ) -> Result<(), String> {
     let provider = llm::create_provider(model, base_url);
-    let prompt = llm::build_prompt("hi", None, &[], &HashMap::new());
-    let api_key = match api_key {
-        Some(k) => Some(k.to_string()),
-        None => {
-            let env_var = provider.key_env_var();
-            llm::resolve_api_key(None, env_var)
-        }
-    };
+    let mut options = HashMap::new();
+    options.insert("max_tokens".into(), serde_json::json!(1));
+    let prompt = llm::build_prompt("hi", None, &[], &options);
     let _ = provider
-        .execute(model, &prompt, api_key.as_deref(), false)
+        .execute(model, &prompt, api_key, false)
         .await
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -266,6 +261,52 @@ mod tests {
     async fn test_connection_fails_without_key() {
         let result = test_connection_inner("gpt-4o", None, Some("http://localhost:1")).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_connection_inner_does_not_resolve_env_var() {
+        use wiremock::{MockServer, Mock, ResponseTemplate};
+        use wiremock::matchers::{method, path};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r#"{"id":"1","object":"chat.completion","model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#,
+            ))
+            .mount(&server)
+            .await;
+
+        std::env::set_var("OPENAI_API_KEY", "env-key-should-not-be-used");
+        let result = test_connection_inner("gpt-4o", None, Some(&server.uri())).await;
+        std::env::remove_var("OPENAI_API_KEY");
+
+        // With api_key=None and no env fallback, the call should fail (no key provided)
+        assert!(result.is_err(), "expected error when api_key is None, but got Ok — inner function should not resolve env vars");
+
+        let received = server.received_requests().await.unwrap();
+        assert_eq!(received.len(), 0, "no requests should reach the server when api_key is None");
+    }
+
+    #[tokio::test]
+    async fn test_connection_sends_max_tokens_1() {
+        use wiremock::{MockServer, Mock, ResponseTemplate};
+        use wiremock::matchers::{method, path};
+
+        let server = MockServer::start().await;
+        let body = r#"{"id":"1","object":"chat.completion","model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(body))
+            .mount(&server)
+            .await;
+
+        let _ = test_connection_inner("gpt-4o", Some("fake-key"), Some(&server.uri())).await;
+
+        let received = server.received_requests().await.unwrap();
+        assert_eq!(received.len(), 1);
+        let req_body: serde_json::Value = serde_json::from_slice(&received[0].body).unwrap();
+        assert_eq!(req_body["max_tokens"], 1, "test_connection should send max_tokens=1 to minimize token usage");
     }
 
     #[tokio::test]

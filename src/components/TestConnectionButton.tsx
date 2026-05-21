@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { testLlmConnection } from "../lib/ipc";
 
 interface TestConnectionButtonProps {
@@ -9,6 +9,12 @@ interface TestConnectionButtonProps {
 export function TestConnectionButton({ model, baseUrl }: TestConnectionButtonProps) {
   const [status, setStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
+
+  useEffect(() => {
+    if (status !== "success") return;
+    const timer = setTimeout(() => setStatus("idle"), 3000);
+    return () => clearTimeout(timer);
+  }, [status]);
 
   async function handleClick() {
     setStatus("testing");
@@ -33,7 +39,7 @@ export function TestConnectionButton({ model, baseUrl }: TestConnectionButtonPro
         {status === "testing" ? "Testing..." : "Test Connection"}
       </button>
       {status === "success" && (
-        <span data-testid="test-connection-status" className="text-sm text-green-600">
+        <span data-testid="test-connection-status" className="text-sm text-text-success">
           Connected
         </span>
       )}
