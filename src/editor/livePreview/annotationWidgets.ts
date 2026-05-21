@@ -161,8 +161,8 @@ export class PillWidget extends WidgetType {
     );
   }
 
-  ignoreEvent(): boolean {
-    return false;
+  ignoreEvent(event: Event): boolean {
+    return event.type === "mousedown";
   }
 
   get estimatedHeight(): number {
@@ -236,8 +236,8 @@ export class MarkerWidget extends WidgetType {
     );
   }
 
-  ignoreEvent(): boolean {
-    return false;
+  ignoreEvent(event: Event): boolean {
+    return event.type === "mousedown";
   }
 
   get estimatedHeight(): number {

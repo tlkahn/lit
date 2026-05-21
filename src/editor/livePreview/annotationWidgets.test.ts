@@ -111,9 +111,14 @@ describe("PillWidget", () => {
     expect(w.estimatedHeight).toBeGreaterThan(0);
   });
 
-  it("ignoreEvent returns false", () => {
+  it("ignoreEvent returns true for mousedown", () => {
     const w = new PillWidget(makeAnnotation());
-    expect(w.ignoreEvent()).toBe(false);
+    expect(w.ignoreEvent(new MouseEvent("mousedown"))).toBe(true);
+  });
+
+  it("ignoreEvent returns false for click", () => {
+    const w = new PillWidget(makeAnnotation());
+    expect(w.ignoreEvent(new MouseEvent("click"))).toBe(false);
   });
 
   it("mouseenter triggers handleAnnotationHover with (view, annotation)", () => {
@@ -209,6 +214,16 @@ describe("CalloutWidget", () => {
     const expanded = new CalloutWidget(ann, false, 0);
     const collapsed = new CalloutWidget(ann, true, 0);
     expect(expanded.estimatedHeight).toBeGreaterThan(collapsed.estimatedHeight);
+  });
+
+  it("ignoreEvent returns true for mousedown", () => {
+    const w = new CalloutWidget(makeAnnotation(), false, 0);
+    expect(w.ignoreEvent(new MouseEvent("mousedown"))).toBe(true);
+  });
+
+  it("ignoreEvent returns false for click", () => {
+    const w = new CalloutWidget(makeAnnotation(), false, 0);
+    expect(w.ignoreEvent(new MouseEvent("click"))).toBe(false);
   });
 });
 
@@ -368,9 +383,14 @@ describe("MarkerWidget", () => {
     expect(a.eq(b)).toBe(false);
   });
 
-  it("ignoreEvent returns false", () => {
+  it("ignoreEvent returns true for mousedown", () => {
     const w = new MarkerWidget(makeAnnotation());
-    expect(w.ignoreEvent()).toBe(false);
+    expect(w.ignoreEvent(new MouseEvent("mousedown"))).toBe(true);
+  });
+
+  it("ignoreEvent returns false for click", () => {
+    const w = new MarkerWidget(makeAnnotation());
+    expect(w.ignoreEvent(new MouseEvent("click"))).toBe(false);
   });
 
   it("estimatedHeight returns 14", () => {
