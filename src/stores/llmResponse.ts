@@ -6,13 +6,9 @@ export interface LlmResponseState {
   question: string;
   responseText: string;
   errorMessage: string;
-  selectionFrom: number;
-  selectionTo: number;
   fireSourceAnnotation: Annotation | null;
   startStream: (opts: {
     question: string;
-    selectionFrom?: number;
-    selectionTo?: number;
     fireSourceAnnotation?: Annotation | null;
   }) => void;
   appendChunk: (text: string) => void;
@@ -26,8 +22,6 @@ export const useLlmResponseStore = create<LlmResponseState>((set) => ({
   question: "",
   responseText: "",
   errorMessage: "",
-  selectionFrom: 0,
-  selectionTo: 0,
   fireSourceAnnotation: null,
 
   startStream: (opts) =>
@@ -36,8 +30,6 @@ export const useLlmResponseStore = create<LlmResponseState>((set) => ({
       question: opts.question,
       responseText: "",
       errorMessage: "",
-      selectionFrom: opts.selectionFrom ?? 0,
-      selectionTo: opts.selectionTo ?? 0,
       fireSourceAnnotation: opts.fireSourceAnnotation ?? null,
     }),
 
@@ -54,8 +46,6 @@ export const useLlmResponseStore = create<LlmResponseState>((set) => ({
       question: "",
       responseText: "",
       errorMessage: "",
-      selectionFrom: 0,
-      selectionTo: 0,
       fireSourceAnnotation: null,
     }),
 }));

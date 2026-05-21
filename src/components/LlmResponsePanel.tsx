@@ -2,6 +2,7 @@ import { useRef, useEffect, useState } from "react";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { useLlmResponseStore } from "../stores/llmResponse";
+import { useEditorSelectionStore } from "../stores/editorSelection";
 import { cancelLlmStream } from "../lib/llmClient";
 import { DEFAULT_EDITOR_CONTEXT, type EditorContext } from "../types";
 
@@ -74,11 +75,11 @@ export function LlmResponsePanel({ contentHeight, onSubmit }: LlmResponsePanelPr
   const question = useLlmResponseStore((s) => s.question);
   const responseText = useLlmResponseStore((s) => s.responseText);
   const errorMessage = useLlmResponseStore((s) => s.errorMessage);
-  const selectionFrom = useLlmResponseStore((s) => s.selectionFrom);
-  const selectionTo = useLlmResponseStore((s) => s.selectionTo);
   const fireSourceAnnotation = useLlmResponseStore((s) => s.fireSourceAnnotation);
 
-  const hadSelection = selectionFrom !== selectionTo;
+  const editorFrom = useEditorSelectionStore((s) => s.from);
+  const editorTo = useEditorSelectionStore((s) => s.to);
+  const hadSelection = editorFrom !== editorTo;
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -131,9 +132,7 @@ export function LlmResponsePanel({ contentHeight, onSubmit }: LlmResponsePanelPr
                 onClick={() => {
                   if (!responseText) return;
                   window.dispatchEvent(
-                    new CustomEvent("lit:llm-replace-selection", {
-                      detail: { text: responseText, from: selectionFrom, to: selectionTo },
-                    }),
+                    new CustomEvent("lit:llm-insert-raw", { detail: { text: responseText } }),
                   );
                 }}
               >

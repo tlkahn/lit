@@ -877,28 +877,5 @@ describe("BottomPanel", () => {
       );
     });
 
-    it("forwards selectionFrom and selectionTo from editor context", async () => {
-      const handler = (e: Event) => {
-        const { callback } = (e as CustomEvent).detail;
-        callback({
-          selectionText: "sel",
-          selectionFrom: 10,
-          selectionTo: 13,
-          filePath: "a.md",
-        });
-      };
-      window.addEventListener("lit:llm-request-context", handler);
-
-      render(<BottomPanel pageId="target.md" />);
-      openLlmPanel();
-      await submitQuestion("test");
-
-      expect(handleQuestionSubmit).toHaveBeenCalledWith(
-        expect.objectContaining({ selectionFrom: 10, selectionTo: 13 }),
-      );
-
-      window.removeEventListener("lit:llm-request-context", handler);
-    });
-
   });
 });

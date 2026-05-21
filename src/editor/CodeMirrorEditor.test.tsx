@@ -268,9 +268,9 @@ describe("CodeMirrorEditor", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  // --- lit:llm-replace-selection listener ---
+  // --- lit:llm-insert-raw replaces current selection ---
 
-  it("replaces text range on lit:llm-replace-selection", () => {
+  it("replaces current selection on lit:llm-insert-raw", () => {
     let capturedRef: React.RefObject<EditorView | null> = { current: null };
     function Wrapper() {
       const ref = useRef<EditorView | null>(null);
@@ -281,25 +281,15 @@ describe("CodeMirrorEditor", () => {
     const view = capturedRef.current!;
 
     act(() => {
+      view.dispatch({ selection: { anchor: 0, head: 5 } });
+    });
+
+    act(() => {
       window.dispatchEvent(
-        new CustomEvent("lit:llm-replace-selection", {
-          detail: { text: "goodbye", from: 0, to: 5 },
-        }),
+        new CustomEvent("lit:llm-insert-raw", { detail: { text: "goodbye" } }),
       );
     });
 
     expect(view.state.doc.toString()).toBe("goodbye world");
-  });
-
-  it("cleans up lit:llm-replace-selection listener on unmount", () => {
-    const { unmount } = render(<CodeMirrorEditor doc="hello" />);
-    unmount();
-    expect(() => {
-      window.dispatchEvent(
-        new CustomEvent("lit:llm-replace-selection", {
-          detail: { text: "bye", from: 0, to: 5 },
-        }),
-      );
-    }).not.toThrow();
   });
 });

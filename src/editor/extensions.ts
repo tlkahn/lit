@@ -12,6 +12,7 @@ import { foldExtension, type FoldConfig } from "./fold";
 import { focusModeExtension } from "./focusMode";
 import { annotationExtension } from "./livePreview/annotationState";
 import { jumpHistoryExtension } from "./jumpHistory";
+import { useEditorSelectionStore } from "../stores/editorSelection";
 import { WikiLink } from "./markdown/wikilink";
 import { Frontmatter, FrontmatterYamlWrap } from "./markdown/frontmatter";
 import { Math } from "./markdown/math";
@@ -82,6 +83,10 @@ export function createExtensions(config: ExtensionConfig): Extension[] {
     EditorView.updateListener.of((update) => {
       if (update.docChanged && config.onChange) {
         config.onChange(update.state.doc.toString());
+      }
+      if (update.selectionSet) {
+        const sel = update.state.selection.main;
+        useEditorSelectionStore.getState().setSelection(sel.from, sel.to);
       }
       if (update.view.hasFocus && (update.selectionSet || update.focusChanged) && config.onSelectionChange) {
         const pos = update.state.selection.main.head;

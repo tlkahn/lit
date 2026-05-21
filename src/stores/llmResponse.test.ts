@@ -52,17 +52,6 @@ describe("llmResponse store", () => {
     expect(s.question).toBe("");
   });
 
-  it("startStream with selection range", () => {
-    useLlmResponseStore.getState().startStream({
-      question: "improve",
-      selectionFrom: 10,
-      selectionTo: 20,
-    });
-    const s = useLlmResponseStore.getState();
-    expect(s.selectionFrom).toBe(10);
-    expect(s.selectionTo).toBe(20);
-  });
-
   it("fireSourceAnnotation defaults to null", () => {
     expect(useLlmResponseStore.getState().fireSourceAnnotation).toBeNull();
   });

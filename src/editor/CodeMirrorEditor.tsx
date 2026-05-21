@@ -63,21 +63,11 @@ export function CodeMirrorEditor({ doc, onChange, onSelectionChange, resolveImag
     if (!view) return;
     const handler = (e: Event) => {
       const { text } = (e as CustomEvent<{ text: string }>).detail;
-      const pos = view.state.selection.main.head;
-      view.dispatch({ changes: { from: pos, insert: text } });
+      view.dispatch(view.state.replaceSelection(text));
+      view.focus();
     };
     window.addEventListener("lit:llm-insert-raw", handler);
     return () => window.removeEventListener("lit:llm-insert-raw", handler);
-  }, [view]);
-
-  useEffect(() => {
-    if (!view) return;
-    const handler = (e: Event) => {
-      const { text, from, to } = (e as CustomEvent<{ text: string; from: number; to: number }>).detail;
-      view.dispatch({ changes: { from, to, insert: text } });
-    };
-    window.addEventListener("lit:llm-replace-selection", handler);
-    return () => window.removeEventListener("lit:llm-replace-selection", handler);
   }, [view]);
 
   useEffect(() => {

@@ -7,8 +7,6 @@ export interface QuestionSubmitArgs {
   model: string;
   text: string;
   system?: string;
-  selectionFrom?: number;
-  selectionTo?: number;
 }
 
 export async function handleQuestionSubmit(args: QuestionSubmitArgs): Promise<void> {
@@ -17,8 +15,6 @@ export async function handleQuestionSubmit(args: QuestionSubmitArgs): Promise<vo
   useModalLockStore.getState().setLlmLocked(true);
   useLlmResponseStore.getState().startStream({
     question: args.question,
-    selectionFrom: args.selectionFrom,
-    selectionTo: args.selectionTo,
   });
 
   await startLlmStream(

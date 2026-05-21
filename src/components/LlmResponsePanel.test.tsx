@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, fireEvent } from "@testing-library/react";
+import { render, fireEvent, act } from "@testing-library/react";
 import { useLlmResponseStore } from "../stores/llmResponse";
+import { useEditorSelectionStore } from "../stores/editorSelection";
 import { LlmResponsePanel } from "./LlmResponsePanel";
 
 vi.mock("../lib/llmClient", () => ({
@@ -11,6 +12,7 @@ import { cancelLlmStream } from "../lib/llmClient";
 describe("LlmResponsePanel", () => {
   beforeEach(() => {
     useLlmResponseStore.getState().reset();
+    useEditorSelectionStore.setState({ from: 0, to: 0 });
   });
 
   // Cycle 6.1 — Renders streaming text
@@ -226,7 +228,8 @@ describe("LlmResponsePanel", () => {
   // --- Selection-aware buttons ---
 
   it("shows 'Insert at cursor' when no selection", () => {
-    useLlmResponseStore.getState().startStream({ question: "q", selectionFrom: 0, selectionTo: 0 });
+    useEditorSelectionStore.setState({ from: 0, to: 0 });
+    useLlmResponseStore.getState().startStream({ question: "q" });
     useLlmResponseStore.getState().appendChunk("response");
     useLlmResponseStore.getState().finishStream();
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
@@ -234,8 +237,9 @@ describe("LlmResponsePanel", () => {
     expect(container.querySelector("[data-testid='llm-replace-btn']")).toBeNull();
   });
 
-  it("shows 'Replace selection' when had selection", () => {
-    useLlmResponseStore.getState().startStream({ question: "q", selectionFrom: 10, selectionTo: 20 });
+  it("shows 'Replace selection' when editor has selection", () => {
+    useEditorSelectionStore.setState({ from: 10, to: 20 });
+    useLlmResponseStore.getState().startStream({ question: "q" });
     useLlmResponseStore.getState().appendChunk("response");
     useLlmResponseStore.getState().finishStream();
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
@@ -243,8 +247,26 @@ describe("LlmResponsePanel", () => {
     expect(container.querySelector("[data-testid='llm-insert-btn']")).toBeNull();
   });
 
+  it("dynamically toggles button when editor selection changes", () => {
+    useEditorSelectionStore.setState({ from: 0, to: 0 });
+    useLlmResponseStore.getState().startStream({ question: "q" });
+    useLlmResponseStore.getState().appendChunk("response");
+    useLlmResponseStore.getState().finishStream();
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    expect(container.querySelector("[data-testid='llm-insert-btn']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='llm-replace-btn']")).toBeNull();
+
+    act(() => { useEditorSelectionStore.setState({ from: 5, to: 15 }); });
+    expect(container.querySelector("[data-testid='llm-replace-btn']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='llm-insert-btn']")).toBeNull();
+
+    act(() => { useEditorSelectionStore.setState({ from: 3, to: 3 }); });
+    expect(container.querySelector("[data-testid='llm-insert-btn']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='llm-replace-btn']")).toBeNull();
+  });
+
   it("Insert at cursor dispatches lit:llm-insert-raw with raw text", () => {
-    useLlmResponseStore.getState().startStream({ question: "q", selectionFrom: 0, selectionTo: 0 });
+    useLlmResponseStore.getState().startStream({ question: "q" });
     useLlmResponseStore.getState().appendChunk("response");
     useLlmResponseStore.getState().finishStream();
 
@@ -260,26 +282,26 @@ describe("LlmResponsePanel", () => {
     window.removeEventListener("lit:llm-insert-raw", handler);
   });
 
-  it("Replace selection dispatches lit:llm-replace-selection", () => {
-    useLlmResponseStore.getState().startStream({ question: "q", selectionFrom: 10, selectionTo: 20 });
+  it("Replace selection dispatches lit:llm-insert-raw", () => {
+    useEditorSelectionStore.setState({ from: 10, to: 20 });
+    useLlmResponseStore.getState().startStream({ question: "q" });
     useLlmResponseStore.getState().appendChunk("new");
     useLlmResponseStore.getState().finishStream();
 
     const handler = vi.fn();
-    window.addEventListener("lit:llm-replace-selection", handler);
+    window.addEventListener("lit:llm-insert-raw", handler);
 
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
     fireEvent.click(container.querySelector("[data-testid='llm-replace-btn']")!);
 
     expect(handler).toHaveBeenCalledTimes(1);
-    const detail = (handler.mock.calls[0]![0] as CustomEvent).detail;
-    expect(detail).toEqual({ text: "new", from: 10, to: 20 });
+    expect((handler.mock.calls[0]![0] as CustomEvent).detail.text).toBe("new");
 
-    window.removeEventListener("lit:llm-replace-selection", handler);
+    window.removeEventListener("lit:llm-insert-raw", handler);
   });
 
   it("does not dispatch insert when responseText empty (no selection)", () => {
-    useLlmResponseStore.getState().startStream({ question: "q", selectionFrom: 0, selectionTo: 0 });
+    useLlmResponseStore.getState().startStream({ question: "q" });
     useLlmResponseStore.getState().finishStream();
 
     const handler = vi.fn();
@@ -292,18 +314,19 @@ describe("LlmResponsePanel", () => {
     window.removeEventListener("lit:llm-insert-raw", handler);
   });
 
-  it("does not dispatch replace when responseText empty (with selection)", () => {
-    useLlmResponseStore.getState().startStream({ question: "q", selectionFrom: 10, selectionTo: 20 });
+  it("does not dispatch insert when responseText empty (with selection)", () => {
+    useEditorSelectionStore.setState({ from: 10, to: 20 });
+    useLlmResponseStore.getState().startStream({ question: "q" });
     useLlmResponseStore.getState().finishStream();
 
     const handler = vi.fn();
-    window.addEventListener("lit:llm-replace-selection", handler);
+    window.addEventListener("lit:llm-insert-raw", handler);
 
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
     fireEvent.click(container.querySelector("[data-testid='llm-replace-btn']")!);
 
     expect(handler).not.toHaveBeenCalled();
-    window.removeEventListener("lit:llm-replace-selection", handler);
+    window.removeEventListener("lit:llm-insert-raw", handler);
   });
 
   it("placeholder does not mention /insert or /rewrite", () => {

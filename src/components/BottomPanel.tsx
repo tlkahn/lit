@@ -42,8 +42,6 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
         model: llmModel,
         text,
         system: llmSystemPrompt || undefined,
-        selectionFrom: context.selectionFrom,
-        selectionTo: context.selectionTo,
       });
     },
     [llmModel, llmSystemPrompt],
