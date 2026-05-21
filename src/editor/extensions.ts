@@ -18,6 +18,7 @@ import { Frontmatter, FrontmatterYamlWrap } from "./markdown/frontmatter";
 import { Math } from "./markdown/math";
 import { Comment } from "./markdown/comment";
 import { Annotation } from "./markdown/annotation";
+import { Footnote } from "./markdown/footnote";
 
 export interface ExtensionConfig {
   theme: "light" | "dark";
@@ -49,7 +50,7 @@ export interface ExtensionConfig {
 export function createExtensions(config: ExtensionConfig): Extension[] {
   return [
     markdown({
-      extensions: [GFM, WikiLink, Frontmatter, FrontmatterYamlWrap, Math, Comment, Annotation],
+      extensions: [GFM, WikiLink, Frontmatter, FrontmatterYamlWrap, Math, Comment, Annotation, Footnote],
       codeLanguages: languages,
     }),
     config.themeCompartment.of(getThemeExtension(config.theme)),

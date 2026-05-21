@@ -19,6 +19,7 @@ import { autocompletion } from "@codemirror/autocomplete";
 import { crossrefCompletionSource } from "./crossrefCompletion";
 import { wikilinkCompletionSource } from "./wikilinkCompletion";
 import { annotationCompletionSource } from "./annotationCompletion";
+import { footnoteTooltipExtension } from "./footnoteTooltip";
 import { openUrl as defaultOpenUrl } from "@tauri-apps/plugin-opener";
 
 export { frontmatterFacet } from "./crossref";
@@ -52,6 +53,7 @@ export function livePreviewExtension(config?: LivePreviewConfig): Extension {
     citationClickExtension(),
     createAnnotationInputHandler(),
     autocompletion({ override: [crossrefCompletionSource, wikilinkCompletionSource, annotationCompletionSource] }),
+    footnoteTooltipExtension(),
   ];
   if (config?.resolveImageSrc) {
     exts.push(imageResolverFacet.of(config.resolveImageSrc));

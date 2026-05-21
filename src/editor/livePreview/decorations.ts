@@ -3,6 +3,8 @@ import { Decoration, type DecorationSet, type EditorView } from "@codemirror/vie
 import { syntaxTree } from "@codemirror/language";
 import { isCursorOnLine, isCursorInRange } from "./proximity";
 import { ImageWidget, CalloutHeaderWidget, InlineMathWidget, DisplayMathWidget, EditableTableWidget, MermaidWidget, HorizontalRuleWidget } from "./widgets";
+import { FootnoteRefWidget } from "./footnoteWidgets";
+import { buildFootnoteMap, type FootnoteMap } from "./footnoteNumbering";
 import { imageResolverFacet } from "./imageResolver";
 import { mediaThumbnailsFacet } from "./mediaThumbnails";
 import { parseCalloutType, calloutFoldField } from "./callout";
@@ -26,7 +28,7 @@ const cursorSensitiveNodeNames = new Set([
   "StrongEmphasis", "Emphasis", "Image", "Link", "WikiLink",
   "FencedCode", "Blockquote", "InlineCode", "InlineMath",
   "InlineComment", "BlockComment", "HorizontalRule", "DisplayMath",
-  "Strikethrough",
+  "Strikethrough", "FootnoteRef", "FootnoteDef",
 ]);
 
 export function buildDecorations(view: EditorView): BuildDecorationsResult {
@@ -34,6 +36,7 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
   const { state } = view;
   const decos: { from: number; to: number; deco: Decoration }[] = [];
   const cursorSensitiveLines = new Set<number>();
+  const footnoteMap = buildFootnoteMap(state);
 
   for (const { from, to } of view.visibleRanges) {
     syntaxTree(state).iterate({
@@ -47,19 +50,19 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
         }
         const cls = headingClass[node.name];
         if (cls) {
-          addHeadingDecos(state, node.from, node.to, cls, node.node, decos);
+          addHeadingDecos(state, node.from, node.to, cls, node.node, decos, footnoteMap);
           return false;
         }
         if (node.name === "StrongEmphasis") {
-          addEmphasisDecos(state, node.from, node.to, "cm-preview-bold", node.node, decos);
+          addEmphasisDecos(state, node.from, node.to, "cm-preview-bold", node.node, decos, footnoteMap);
           return false;
         }
         if (node.name === "Emphasis") {
-          addEmphasisDecos(state, node.from, node.to, "cm-preview-italic", node.node, decos);
+          addEmphasisDecos(state, node.from, node.to, "cm-preview-italic", node.node, decos, footnoteMap);
           return false;
         }
         if (node.name === "Strikethrough") {
-          addStrikethroughDecos(state, node.from, node.to, node.node, decos);
+          addStrikethroughDecos(state, node.from, node.to, node.node, decos, footnoteMap);
           return false;
         }
         if (node.name === "Image") {
@@ -108,6 +111,10 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
           addHorizontalRuleDecos(state, node.from, node.to, decos);
           return false;
         }
+        if (node.name === "FootnoteRef") {
+          addFootnoteRefDecos(state, node.from, node.to, node.node, footnoteMap, decos);
+          return false;
+        }
         if (node.name === "DisplayMath") {
           // Multi-line display math must be handled by a StateField (line-break-crossing replace).
           // Single-line $$...$$ is fine here.
@@ -133,12 +140,13 @@ function processInlineChildren(
   state: EditorState,
   node: ReturnType<typeof syntaxTree>["topNode"],
   decos: { from: number; to: number; deco: Decoration }[],
+  footnoteMap?: FootnoteMap,
 ) {
   for (let child = node.firstChild; child; child = child.nextSibling) {
     if (child.name === "Emphasis") {
-      addEmphasisDecos(state, child.from, child.to, "cm-preview-italic", child, decos);
+      addEmphasisDecos(state, child.from, child.to, "cm-preview-italic", child, decos, footnoteMap);
     } else if (child.name === "StrongEmphasis") {
-      addEmphasisDecos(state, child.from, child.to, "cm-preview-bold", child, decos);
+      addEmphasisDecos(state, child.from, child.to, "cm-preview-bold", child, decos, footnoteMap);
     } else if (child.name === "WikiLink") {
       addWikilinkDecos(state, child.from, child.to, child, decos);
     } else if (child.name === "Link") {
@@ -152,7 +160,9 @@ function processInlineChildren(
     } else if (child.name === "InlineComment") {
       addInlineCommentDecos(state, child.from, child.to, decos);
     } else if (child.name === "Strikethrough") {
-      addStrikethroughDecos(state, child.from, child.to, child, decos);
+      addStrikethroughDecos(state, child.from, child.to, child, decos, footnoteMap);
+    } else if (child.name === "FootnoteRef" && footnoteMap) {
+      addFootnoteRefDecos(state, child.from, child.to, child, footnoteMap, decos);
     }
   }
 }
@@ -164,6 +174,7 @@ function addHeadingDecos(
   cls: string,
   node: ReturnType<typeof syntaxTree>["topNode"],
   decos: { from: number; to: number; deco: Decoration }[],
+  footnoteMap?: FootnoteMap,
 ) {
   if (isCursorOnLine(state, from, to)) return;
 
@@ -182,7 +193,7 @@ function addHeadingDecos(
     decos.push({ from: contentFrom, to, deco: Decoration.mark({ class: cls }) });
   }
 
-  processInlineChildren(state, node, decos);
+  processInlineChildren(state, node, decos, footnoteMap);
 }
 
 function addEmphasisDecos(
@@ -192,6 +203,7 @@ function addEmphasisDecos(
   cls: string,
   node: ReturnType<typeof syntaxTree>["topNode"],
   decos: { from: number; to: number; deco: Decoration }[],
+  footnoteMap?: FootnoteMap,
 ) {
   if (isCursorInRange(state, from, to)) return;
 
@@ -211,7 +223,7 @@ function addEmphasisDecos(
     decos.push({ from: contentFrom, to: contentTo, deco: Decoration.mark({ class: cls }) });
   }
 
-  processInlineChildren(state, node, decos);
+  processInlineChildren(state, node, decos, footnoteMap);
 }
 
 function addStrikethroughDecos(
@@ -220,6 +232,7 @@ function addStrikethroughDecos(
   to: number,
   node: ReturnType<typeof syntaxTree>["topNode"],
   decos: { from: number; to: number; deco: Decoration }[],
+  footnoteMap?: FootnoteMap,
 ) {
   if (isCursorInRange(state, from, to)) return;
 
@@ -239,7 +252,32 @@ function addStrikethroughDecos(
     decos.push({ from: contentFrom, to: contentTo, deco: Decoration.mark({ class: "cm-preview-strikethrough" }) });
   }
 
-  processInlineChildren(state, node, decos);
+  processInlineChildren(state, node, decos, footnoteMap);
+}
+
+function addFootnoteRefDecos(
+  state: EditorState,
+  from: number,
+  to: number,
+  node: ReturnType<typeof syntaxTree>["topNode"],
+  footnoteMap: FootnoteMap,
+  decos: { from: number; to: number; deco: Decoration }[],
+) {
+  if (isCursorInRange(state, from, to)) return;
+
+  const marks = node.getChildren("FootnoteRefMark");
+  if (marks.length < 2) return;
+
+  const label = state.doc.sliceString(marks[0]!.to, marks[1]!.from);
+  const num = footnoteMap.labelToNumber.get(label) ?? 0;
+  const defPos = footnoteMap.defPositions.get(label);
+  const targetDefPos = defPos ? defPos.from : null;
+
+  decos.push({
+    from,
+    to,
+    deco: Decoration.replace({ widget: new FootnoteRefWidget(label, num, targetDefPos) }),
+  });
 }
 
 function addBlockquoteDecos(
@@ -596,6 +634,15 @@ export function buildBlockReplacements(state: EditorState): BlockReplacementStat
             });
           }
         }
+      }
+      if (node.name === "FootnoteDef") {
+        if (!isCursorOnLine(state, node.from, node.to)) {
+          decos.push({ from: node.from, to: node.to, deco: Decoration.replace({}) });
+        }
+        cursorSensitiveRanges.push({
+          fromLine: state.doc.lineAt(node.from).number,
+          toLine: state.doc.lineAt(node.to).number,
+        });
       }
     },
   });

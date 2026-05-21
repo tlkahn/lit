@@ -7,6 +7,7 @@ import { buildDecorations, buildBlockReplacements, filterContainedDecorations } 
 import { WikiLink } from "../markdown/wikilink";
 import { Math as MathExt } from "../markdown/math";
 import { Comment as CommentExt } from "../markdown/comment";
+import { Footnote } from "../markdown/footnote";
 import { calloutFoldField } from "./callout";
 import { mediaThumbnailsFacet } from "./mediaThumbnails";
 import { Decoration } from "@codemirror/view";
@@ -36,7 +37,7 @@ function makeView(doc: string, cursor: number): EditorView {
     doc,
     selection: { anchor: cursor },
     extensions: [
-      markdown({ extensions: [GFM, WikiLink, MathExt, CommentExt] }),
+      markdown({ extensions: [GFM, WikiLink, MathExt, CommentExt, Footnote] }),
       calloutFoldField,
     ],
   });
@@ -1506,5 +1507,138 @@ describe("filterContainedDecorations", () => {
     const starHide2 = decos.find((d) => d.type === "replace" && !d.widget && d.from === 17 && d.to === 19);
     expect(starHide2).toBeDefined();
     view.destroy();
+  });
+});
+
+describe("buildDecorations — footnote references", () => {
+  it("[^1] replaced with widget when cursor is elsewhere", () => {
+    const doc = "See [^1] here.\n\n[^1]: Def";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const widget = decos.find((d) => d.widget && d.from === 4 && d.to === 8);
+    expect(widget).toBeDefined();
+    view.destroy();
+  });
+
+  it("raw [^1] shown when cursor is inside the ref", () => {
+    const doc = "See [^1] here.\n\n[^1]: Def";
+    const view = makeView(doc, 6);
+    const decos = collectDecos(view);
+    const widget = decos.find((d) => d.widget && d.from === 4 && d.to === 8);
+    expect(widget).toBeUndefined();
+    view.destroy();
+  });
+
+  it("correct number from first-reference order", () => {
+    const doc = "See [^b] and [^a].\n\n[^a]: A\n[^b]: B";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const widgets = decos.filter((d) => d.widget && d.from < 20);
+    expect(widgets).toHaveLength(2);
+    view.destroy();
+  });
+
+  it("works inside emphasis (processInlineChildren)", () => {
+    const doc = "*text[^1]*\n\n[^1]: Def";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const widget = decos.find((d) => d.widget && d.from === 5 && d.to === 9);
+    expect(widget).toBeDefined();
+    view.destroy();
+  });
+
+  it("multiple refs to same label show same number", () => {
+    const doc = "See [^x] and [^x].\n\n[^x]: X def";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const widgets = decos.filter((d) => d.widget && d.from < 20);
+    expect(widgets).toHaveLength(2);
+    view.destroy();
+  });
+});
+
+describe("buildBlockReplacements — footnote definitions", () => {
+  it("FootnoteDef block is hidden when cursor is elsewhere", () => {
+    const doc = "Text\n\n[^1]: Def text";
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: 2 },
+      extensions: [
+        markdown({ extensions: [GFM, WikiLink, MathExt, CommentExt, Footnote] }),
+        calloutFoldField,
+      ],
+    });
+    const { decos } = buildBlockReplacements(state);
+    const iter = decos.iter();
+    const found: { from: number; to: number }[] = [];
+    while (iter.value) {
+      found.push({ from: iter.from, to: iter.to });
+      iter.next();
+    }
+    const defReplace = found.find((d) => d.from === 6 && d.to === doc.length);
+    expect(defReplace).toBeDefined();
+  });
+
+  it("FootnoteDef block shown raw when cursor is on that line", () => {
+    const doc = "Text\n\n[^1]: Def text";
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: 10 },
+      extensions: [
+        markdown({ extensions: [GFM, WikiLink, MathExt, CommentExt, Footnote] }),
+        calloutFoldField,
+      ],
+    });
+    const { decos } = buildBlockReplacements(state);
+    const iter = decos.iter();
+    const found: { from: number; to: number }[] = [];
+    while (iter.value) {
+      found.push({ from: iter.from, to: iter.to });
+      iter.next();
+    }
+    const defReplace = found.find((d) => d.from === 6);
+    expect(defReplace).toBeUndefined();
+  });
+
+  it("multi-line definition hidden as single block", () => {
+    const doc = "Text\n\n[^1]: First line\n    Continuation";
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: 2 },
+      extensions: [
+        markdown({ extensions: [GFM, WikiLink, MathExt, CommentExt, Footnote] }),
+        calloutFoldField,
+      ],
+    });
+    const { decos } = buildBlockReplacements(state);
+    const iter = decos.iter();
+    const found: { from: number; to: number }[] = [];
+    while (iter.value) {
+      found.push({ from: iter.from, to: iter.to });
+      iter.next();
+    }
+    const defReplace = found.find((d) => d.from === 6 && d.to === doc.length);
+    expect(defReplace).toBeDefined();
+  });
+
+  it("multiple consecutive defs each hidden independently", () => {
+    const doc = "Text\n\n[^1]: First\n[^2]: Second";
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: 2 },
+      extensions: [
+        markdown({ extensions: [GFM, WikiLink, MathExt, CommentExt, Footnote] }),
+        calloutFoldField,
+      ],
+    });
+    const { decos } = buildBlockReplacements(state);
+    const iter = decos.iter();
+    const found: { from: number; to: number }[] = [];
+    while (iter.value) {
+      found.push({ from: iter.from, to: iter.to });
+      iter.next();
+    }
+    const defReplaces = found.filter((d) => d.from >= 6);
+    expect(defReplaces.length).toBeGreaterThanOrEqual(2);
   });
 });
