@@ -230,15 +230,15 @@ function ensureCommandsRegistered() {
     label: "Ask Question (LLM)",
     keywords: ["ask", "question", "llm", "chat"],
     action: () => {
-      useBottomPanelStore.setState({
-        activeTab: "llm-response",
-        unfolded: true,
-        hasOpenedLlm: true,
-      });
-      requestAnimationFrame(() => {
-        const textarea = document.querySelector<HTMLTextAreaElement>("[data-testid='llm-question-input']");
-        textarea?.focus();
-      });
+      const { unfolded, activeTab } = useBottomPanelStore.getState();
+      useBottomPanelStore.getState().handleTabClick("llm-response");
+      const opening = !unfolded || activeTab !== "llm-response";
+      if (opening) {
+        requestAnimationFrame(() => {
+          const textarea = document.querySelector<HTMLTextAreaElement>("[data-testid='llm-question-input']");
+          textarea?.focus();
+        });
+      }
     },
   });
 }

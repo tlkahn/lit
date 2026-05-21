@@ -11,6 +11,7 @@ import {
 import { usePreferencesStore } from "../stores/preferences";
 import { usePaneStore, createInitialState, collectLeaves, type PaneSplit, type PaneLeaf, type PaneNode } from "../stores/panes";
 import { registerPaneView, _resetForTesting as resetEditorViewRef } from "../lib/editorViewRef";
+import { useBottomPanelStore } from "../stores/bottomPanel";
 import type { EditorView } from "@codemirror/view";
 
 function makeTwoLeafState(): { root: PaneNode; focusedPaneId: string } {
@@ -31,6 +32,7 @@ describe("useKeymaps", () => {
     _clear();
     resetEditorViewRef();
     usePaneStore.setState(createInitialState());
+    useBottomPanelStore.setState({ activeTab: "linked", unfolded: false, hasOpenedLlm: false });
     mockInvoke((cmd) => {
       if (cmd === "get_keymaps") {
         return [
@@ -493,13 +495,29 @@ describe("useKeymaps", () => {
   });
 
   it("executing app.askQuestion opens bottom panel with LLM tab", async () => {
-    const { useBottomPanelStore } = await import("../stores/bottomPanel");
     await loadHook();
     executeCommand("app.askQuestion");
     const state = useBottomPanelStore.getState();
     expect(state.activeTab).toBe("llm-response");
     expect(state.unfolded).toBe(true);
     expect(state.hasOpenedLlm).toBe(true);
+  });
+
+  it("executing app.askQuestion toggles LLM tab closed when already open", async () => {
+    await loadHook();
+    executeCommand("app.askQuestion");
+    expect(useBottomPanelStore.getState().unfolded).toBe(true);
+    executeCommand("app.askQuestion");
+    expect(useBottomPanelStore.getState().unfolded).toBe(false);
+  });
+
+  it("executing app.askQuestion switches to LLM tab from another tab", async () => {
+    useBottomPanelStore.setState({ activeTab: "linked", unfolded: true });
+    await loadHook();
+    executeCommand("app.askQuestion");
+    const state = useBottomPanelStore.getState();
+    expect(state.activeTab).toBe("llm-response");
+    expect(state.unfolded).toBe(true);
   });
 
   it("app.askQuestion appears in command palette", async () => {
