@@ -31,6 +31,7 @@ function BottomPanelTabs() {
     (s) => s.experimentalUnlinkedReferences,
   );
   const annotationEnabled = usePreferencesStore((s) => s.annotationEnabled);
+  const hasOpenedLlm = useBottomPanelStore((s) => s.hasOpenedLlm);
   const llmStatus = useLlmResponseStore((s) => s.status);
 
   if (!hasPage) return null;
@@ -65,7 +66,7 @@ function BottomPanelTabs() {
           onClick={handleTabClick}
         />
       )}
-      {llmStatus !== "idle" && (
+      {(llmStatus !== "idle" || hasOpenedLlm) && (
         <TabButton
           tab="llm-response"
           label="LLM"

@@ -25,11 +25,20 @@ export function requestEditorContext(): EditorContext {
   return context;
 }
 
-function QuestionInput({ onSubmit, disabled }: {
+function QuestionInput({ onSubmit, disabled, autoFocus }: {
   onSubmit?: (question: string, context: EditorContext) => void;
   disabled?: boolean;
+  autoFocus?: boolean;
 }) {
   const [value, setValue] = useState("");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = el.scrollHeight + "px";
+  }, [value]);
 
   const handleSubmit = () => {
     if (!value.trim() || !onSubmit) return;
@@ -39,12 +48,13 @@ function QuestionInput({ onSubmit, disabled }: {
   };
 
   return (
-    <div className="flex flex-col gap-1 px-3 py-2">
-      <div className="flex gap-1">
+    <div className="flex items-end gap-1 px-3 py-2">
         <textarea
+          ref={textareaRef}
           data-testid="llm-question-input"
-          className="flex-1 resize-none rounded border border-divider bg-bg-primary px-2 py-1 text-sm"
-          rows={2}
+          className="flex-1 resize-none rounded border border-divider bg-bg-primary px-2 py-1 text-sm outline-none focus:border-accent"
+          style={{ overflow: "hidden" }}
+          rows={1}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => {
@@ -55,17 +65,17 @@ function QuestionInput({ onSubmit, disabled }: {
             }
           }}
           disabled={disabled}
+          autoFocus={autoFocus}
           placeholder="Ask a question..."
         />
         <button
           data-testid="llm-submit-btn"
-          className="rounded bg-bg-accent px-3 py-1 text-xs text-text-on-accent hover:bg-bg-accent-hover"
+          className="rounded border border-transparent bg-interactive-accent px-3 py-1 text-sm text-text-on-accent hover:bg-interactive-accent-hover disabled:opacity-50"
           onClick={handleSubmit}
           disabled={disabled}
         >
           Ask
         </button>
-      </div>
     </div>
   );
 }
@@ -91,7 +101,7 @@ export function LlmResponsePanel({ contentHeight, onSubmit }: LlmResponsePanelPr
 
   if (status === "idle") {
     return (
-      <div data-testid="llm-response-panel" className="flex flex-col" style={{ height: contentHeight }}>
+      <div data-testid="llm-response-panel" className="flex flex-col justify-end" style={{ height: contentHeight }}>
         <QuestionInput onSubmit={onSubmit} />
       </div>
     );
@@ -190,7 +200,7 @@ export function LlmResponsePanel({ contentHeight, onSubmit }: LlmResponsePanelPr
         )}
       </div>
       {status === "done" && (
-        <QuestionInput onSubmit={onSubmit} />
+        <QuestionInput onSubmit={onSubmit} autoFocus />
       )}
     </div>
   );

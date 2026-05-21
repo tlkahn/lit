@@ -225,6 +225,21 @@ describe("LlmResponsePanel", () => {
     expect(container.querySelector("[data-testid='llm-submit-btn']")).toBeTruthy();
   });
 
+  it("textarea is focused after streaming completes", () => {
+    useLlmResponseStore.getState().startStream({ question: "q" });
+    useLlmResponseStore.getState().appendChunk("answer");
+    useLlmResponseStore.getState().finishStream();
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    const textarea = container.querySelector("[data-testid='llm-question-input']") as HTMLTextAreaElement;
+    expect(document.activeElement).toBe(textarea);
+  });
+
+  it("textarea is not auto-focused in idle state", () => {
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    const textarea = container.querySelector("[data-testid='llm-question-input']") as HTMLTextAreaElement;
+    expect(document.activeElement).not.toBe(textarea);
+  });
+
   // --- Selection-aware buttons ---
 
   it("shows 'Insert at cursor' when no selection", () => {
@@ -327,6 +342,33 @@ describe("LlmResponsePanel", () => {
 
     expect(handler).not.toHaveBeenCalled();
     window.removeEventListener("lit:llm-insert-raw", handler);
+  });
+
+  // --- Styling & layout ---
+
+  it("submit button has accent background class", () => {
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    const btn = container.querySelector("[data-testid='llm-submit-btn']") as HTMLElement;
+    expect(btn.className).toContain("bg-interactive-accent");
+  });
+
+  it("textarea defaults to one row", () => {
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    const textarea = container.querySelector("[data-testid='llm-question-input']") as HTMLTextAreaElement;
+    expect(textarea.rows).toBe(1);
+  });
+
+  it("input is pinned to the bottom of the panel in idle state", () => {
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    const panel = container.querySelector("[data-testid='llm-response-panel']") as HTMLElement;
+    expect(panel.className).toContain("justify-end");
+  });
+
+  it("input wrapper aligns button to bottom of textarea", () => {
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    const textarea = container.querySelector("[data-testid='llm-question-input']") as HTMLElement;
+    const wrapper = textarea.parentElement!;
+    expect(wrapper.className).toContain("items-end");
   });
 
   it("placeholder does not mention /insert or /rewrite", () => {
