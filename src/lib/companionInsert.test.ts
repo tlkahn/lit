@@ -53,8 +53,9 @@ describe("insertCompanionAnnotation", () => {
 
     const result = view.state.doc.toString();
     expect(result.slice(0, 20)).toBe("hello %%!q | why? %%");
-    expect(result.slice(20)).toContain("%%!");
-    expect(result.slice(20)).toContain("The answer.");
+    expect(result.slice(20, 22)).toBe("\n\n");
+    expect(result.slice(22)).toContain("%%!");
+    expect(result.slice(22)).toContain("The answer.");
 
     view.destroy();
   });
