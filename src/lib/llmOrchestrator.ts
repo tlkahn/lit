@@ -34,6 +34,7 @@ export async function handleQuestionSubmit(args: QuestionSubmitArgs): Promise<vo
 }
 
 export async function cancelStream(): Promise<void> {
+  useLlmResponseStore.getState().stopStream();
   useModalLockStore.getState().setLlmLocked(false);
   await cancelLlmStream();
 }

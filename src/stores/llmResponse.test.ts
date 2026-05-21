@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { useLlmResponseStore } from "./llmResponse";
+import { useLlmResponseStore, STOP_INDICATOR } from "./llmResponse";
 
 describe("llmResponse store", () => {
   beforeEach(() => {
@@ -81,6 +81,29 @@ describe("llmResponse store", () => {
       question: "q",
     });
     expect(useLlmResponseStore.getState().fireSourceAnnotation).toBeNull();
+  });
+
+  it("stopStream sets status to done and preserves accumulated text", () => {
+    useLlmResponseStore.getState().startStream({ question: "q" });
+    useLlmResponseStore.getState().appendChunk("partial response");
+    useLlmResponseStore.getState().stopStream();
+    const s = useLlmResponseStore.getState();
+    expect(s.status).toBe("done");
+    expect(s.responseText).toContain("partial response");
+  });
+
+  it("stopStream appends stopped indicator to responseText", () => {
+    useLlmResponseStore.getState().startStream({ question: "q" });
+    useLlmResponseStore.getState().appendChunk("partial");
+    useLlmResponseStore.getState().stopStream();
+    expect(useLlmResponseStore.getState().responseText).toBe("partial" + STOP_INDICATOR);
+  });
+
+  it("stopStream works when responseText is empty", () => {
+    useLlmResponseStore.getState().startStream({ question: "q" });
+    useLlmResponseStore.getState().stopStream();
+    expect(useLlmResponseStore.getState().responseText).toBe(STOP_INDICATOR);
+    expect(useLlmResponseStore.getState().status).toBe("done");
   });
 
   it("reset clears fireSourceAnnotation", () => {

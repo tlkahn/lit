@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mockInvoke, mockListen, resetListenMock } from "../test/tauri-mock";
 import { useModalLockStore } from "../stores/modalLock";
-import { useLlmResponseStore } from "../stores/llmResponse";
+import { useLlmResponseStore, STOP_INDICATOR } from "../stores/llmResponse";
 import { handleQuestionSubmit } from "./llmOrchestrator";
 import type { LlmStreamCallbacks } from "./llmClient";
 
@@ -106,5 +106,42 @@ describe("llmOrchestrator", () => {
 
     expect(cancelLlmStream).toHaveBeenCalled();
     expect(useModalLockStore.getState().llmLocked).toBe(false);
+  });
+
+  it("cancel transitions store status to done", async () => {
+    const { startLlmStream } = await import("./llmClient");
+    (startLlmStream as ReturnType<typeof vi.fn>).mockImplementation(() => Promise.resolve());
+
+    await handleQuestionSubmit({
+      question: "test",
+      model: "claude-sonnet-4-6",
+      text: "doc content",
+    });
+
+    useLlmResponseStore.getState().appendChunk("partial");
+    expect(useLlmResponseStore.getState().status).toBe("streaming");
+
+    const { cancelStream } = await import("./llmOrchestrator");
+    await cancelStream();
+
+    expect(useLlmResponseStore.getState().status).toBe("done");
+  });
+
+  it("cancel preserves partial response text with stopped indicator", async () => {
+    const { startLlmStream } = await import("./llmClient");
+    (startLlmStream as ReturnType<typeof vi.fn>).mockImplementation(() => Promise.resolve());
+
+    await handleQuestionSubmit({
+      question: "test",
+      model: "claude-sonnet-4-6",
+      text: "doc content",
+    });
+
+    useLlmResponseStore.getState().appendChunk("partial response");
+
+    const { cancelStream } = await import("./llmOrchestrator");
+    await cancelStream();
+
+    expect(useLlmResponseStore.getState().responseText).toBe("partial response" + STOP_INDICATOR);
   });
 });

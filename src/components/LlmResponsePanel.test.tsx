@@ -4,10 +4,10 @@ import { useLlmResponseStore } from "../stores/llmResponse";
 import { useEditorSelectionStore } from "../stores/editorSelection";
 import { LlmResponsePanel } from "./LlmResponsePanel";
 
-vi.mock("../lib/llmClient", () => ({
-  cancelLlmStream: vi.fn().mockResolvedValue(undefined),
+vi.mock("../lib/llmOrchestrator", () => ({
+  cancelStream: vi.fn().mockResolvedValue(undefined),
 }));
-import { cancelLlmStream } from "../lib/llmClient";
+import { cancelStream } from "../lib/llmOrchestrator";
 
 describe("LlmResponsePanel", () => {
   beforeEach(() => {
@@ -129,11 +129,23 @@ describe("LlmResponsePanel", () => {
     expect(container.querySelector("[data-testid='llm-stop-btn']")).toBeNull();
   });
 
-  it("calls cancelLlmStream when stop button clicked", () => {
+  it("calls cancelStream from orchestrator when stop button clicked", () => {
     useLlmResponseStore.getState().startStream({ question: "q" });
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
     fireEvent.click(container.querySelector("[data-testid='llm-stop-btn']")!);
-    expect(cancelLlmStream).toHaveBeenCalled();
+    expect(cancelStream).toHaveBeenCalled();
+  });
+
+  it("shows done-state UI after stopStream", () => {
+    useLlmResponseStore.getState().startStream({ question: "q" });
+    useLlmResponseStore.getState().appendChunk("partial response");
+    useLlmResponseStore.getState().stopStream();
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    expect(container.querySelector("[data-testid='llm-stop-btn']")).toBeNull();
+    expect(container.querySelector("[data-testid='llm-question-input']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='llm-copy-btn']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='llm-insert-btn']")).toBeTruthy();
+    expect(container.textContent).toContain("[Stopped]");
   });
 
   // --- Concern 6: Textarea lifecycle ---

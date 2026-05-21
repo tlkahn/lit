@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import type { Annotation } from "../lib/ipc";
 
+export const STOP_INDICATOR = "\n\n**[Stopped]**";
+
 export interface LlmResponseState {
   status: "idle" | "streaming" | "done" | "error";
   question: string;
@@ -13,6 +15,7 @@ export interface LlmResponseState {
   }) => void;
   appendChunk: (text: string) => void;
   finishStream: () => void;
+  stopStream: () => void;
   setError: (msg: string) => void;
   reset: () => void;
 }
@@ -37,6 +40,9 @@ export const useLlmResponseStore = create<LlmResponseState>((set) => ({
     set((s) => ({ responseText: s.responseText + text })),
 
   finishStream: () => set({ status: "done" }),
+
+  stopStream: () =>
+    set((s) => ({ status: "done", responseText: s.responseText + STOP_INDICATOR })),
 
   setError: (msg) => set({ status: "error", errorMessage: msg }),
 

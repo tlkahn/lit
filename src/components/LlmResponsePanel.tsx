@@ -3,7 +3,7 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { useLlmResponseStore } from "../stores/llmResponse";
 import { useEditorSelectionStore } from "../stores/editorSelection";
-import { cancelLlmStream } from "../lib/llmClient";
+import { cancelStream } from "../lib/llmOrchestrator";
 import { DEFAULT_EDITOR_CONTEXT, type EditorContext } from "../types";
 
 interface LlmResponsePanelProps {
@@ -121,7 +121,7 @@ export function LlmResponsePanel({ contentHeight, onSubmit }: LlmResponsePanelPr
           <button
             data-testid="llm-stop-btn"
             className="rounded px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover"
-            onClick={() => cancelLlmStream()}
+            onClick={() => cancelStream()}
           >
             Stop
           </button>
