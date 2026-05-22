@@ -763,7 +763,8 @@ mod tests {
         assert!(json.get("nodes").is_some());
         assert!(json.get("edges").is_some());
         assert!(json.get("pagerank").is_some());
-        assert!(json.get("positions").is_some());
+        assert!(json.get("positions_2d").is_some());
+        assert!(json.get("positions_3d").is_some());
     }
 
     #[test]

@@ -26,7 +26,8 @@ pub struct SubgraphBundle {
     #[serde(flatten)]
     pub subgraph: SubgraphResult,
     pub pagerank: HashMap<String, f64>,
-    pub positions: HashMap<String, Position>,
+    pub positions_2d: HashMap<String, Position>,
+    pub positions_3d: HashMap<String, Position>,
 }
 
 pub struct KnowledgeGraph {

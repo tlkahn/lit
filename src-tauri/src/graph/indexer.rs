@@ -786,11 +786,13 @@ impl GraphIndex {
     ) -> Result<SubgraphBundle, GraphError> {
         let subgraph = self.subgraph(seeds, depth, directed)?;
         let pagerank = self.pagerank()?;
-        let positions = self.get_positions();
+        let positions_2d = self.get_positions_2d();
+        let positions_3d = self.get_positions_3d();
         Ok(SubgraphBundle {
             subgraph,
             pagerank,
-            positions,
+            positions_2d,
+            positions_3d,
         })
     }
 
@@ -3605,6 +3607,21 @@ mod tests {
         gi.clear_positions_2d().unwrap();
         assert!(gi.get_positions_2d().is_empty());
         assert_eq!(gi.get_positions_3d().len(), 3);
+    }
+
+    #[test]
+    fn subgraph_bundle_includes_both_position_dimensions() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "[[b]]\n[[c]]").unwrap();
+        std::fs::write(dir.path().join("b.md"), "[[c]]").unwrap();
+        std::fs::write(dir.path().join("c.md"), "leaf").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        gi.compute_layout_background(&crate::graph::layout::LayoutSettings::default());
+        gi.compute_layout_3d_background(&crate::graph::layout3d::Layout3dSettings::default());
+        let bundle = gi.subgraph_bundle(&[], 0, false).unwrap();
+        assert!(!bundle.positions_2d.is_empty(), "positions_2d should be populated");
+        assert!(!bundle.positions_3d.is_empty(), "positions_3d should be populated");
+        assert_eq!(bundle.positions_2d.len(), bundle.positions_3d.len());
     }
 
     #[test]
