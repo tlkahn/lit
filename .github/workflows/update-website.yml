@@ -10,6 +10,9 @@ on:
         description: 'Release tag to update website for (e.g. v0.1.0)'
         required: true
 
+env:
+  LLM_VERSION: v0.11
+
 jobs:
   update-website:
     runs-on: ubuntu-latest
@@ -84,11 +87,15 @@ jobs:
           echo "download_url=$DOWNLOAD_URL" >> "$GITHUB_OUTPUT"
           echo "download_label=$DOWNLOAD_LABEL" >> "$GITHUB_OUTPUT"
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
       - name: Install llm CLI
-        run: cargo install llm-cmd
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download "$LLM_VERSION" --repo tlkahn/llm-rs \
+            --pattern "llm-${LLM_VERSION}-linux-x86_64-musl.tar.gz" --dir /tmp/llm
+          tar xzf /tmp/llm/llm-${LLM_VERSION}-linux-x86_64-musl.tar.gz -C /tmp/llm
+          cp /tmp/llm/llm /usr/local/bin/llm
+          chmod +x /usr/local/bin/llm
 
       - name: Generate release notes
         env:
@@ -137,7 +144,8 @@ jobs:
           grep -q "$VERSION" website/hugo.toml || { echo "::error::Version not found in hugo.toml"; exit 1; }
           echo "Verified: tag $TAG and version $VERSION present in website files"
 
-      - name: Commit and push
+      - name: Commit locally
+        id: commit
         run: |
           cd website
           git config user.name "github-actions[bot]"
@@ -146,22 +154,26 @@ jobs:
           git rm -r --cached content/releases/ 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "No changes to commit — website already up to date"
-            exit 0
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            git commit -m "Update download button and release notes for ${{ steps.tag.outputs.tag }}"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
-          git commit -m "Update download button and release notes for ${{ steps.tag.outputs.tag }}"
-          git push
 
       - name: Install Hugo
+        if: steps.commit.outputs.changed == 'true'
         uses: peaceiris/actions-hugo@v3
         with:
           hugo-version: 'latest'
           extended: true
 
       - name: Build Hugo site
+        if: steps.commit.outputs.changed == 'true'
         run: hugo --minify
         working-directory: website
 
       - name: Verify releases page
+        if: steps.commit.outputs.changed == 'true'
         run: |
           if [ ! -f website/public/releases/index.html ]; then
             echo "::error::Releases page not found in Hugo output"
@@ -169,10 +181,16 @@ jobs:
           fi
           echo "Verified: /releases/ page exists in build output"
 
+      - name: Push website repo
+        if: steps.commit.outputs.changed == 'true'
+        run: git -C website push
+
       - name: Sync to S3
+        if: steps.commit.outputs.changed == 'true'
         run: aws s3 sync website/public/ s3://${{ steps.bucket.outputs.name }} --delete --exclude "releases/*.dmg"
 
       - name: Invalidate CloudFront
+        if: steps.commit.outputs.changed == 'true'
         run: |
           DIST_ID=$(aws cloudfront list-distributions \
             --query "DistributionList.Items[?Aliases.Items[0]=='lit.solar'].Id" \

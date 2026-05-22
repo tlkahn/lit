@@ -5,6 +5,9 @@ on:
     types: [published]
   workflow_dispatch:
 
+env:
+  LLM_VERSION: v0.11
+
 jobs:
   build-macos:
     runs-on: macos-latest
@@ -14,6 +17,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: tlkahn/llm-rs
+          path: ../llm-rs
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
@@ -28,10 +35,14 @@ jobs:
       - name: Fetch libpdfium
         run: bash scripts/fetch-pdfium.sh
       - name: Install and stage llm binary
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cargo install llm-cmd --target aarch64-apple-darwin --root ./llm-install
+          gh release download "$LLM_VERSION" --repo tlkahn/llm-rs \
+            --pattern "llm-${LLM_VERSION}-macos-universal.tar.gz" --dir /tmp/llm
+          tar xzf /tmp/llm/llm-${LLM_VERSION}-macos-universal.tar.gz -C /tmp/llm
           mkdir -p src-tauri/binaries
-          cp ./llm-install/bin/llm src-tauri/binaries/llm-aarch64-apple-darwin
+          cp /tmp/llm/llm src-tauri/binaries/llm-aarch64-apple-darwin
       - name: Pre-build lit-cli
         working-directory: src-tauri
         env:
@@ -48,7 +59,7 @@ jobs:
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
-          echo $APPLE_CERTIFICATE | base64 --decode > certificate.p12
+          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
