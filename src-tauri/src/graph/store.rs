@@ -7,7 +7,7 @@ use tracing::{debug, info};
 use super::error::GraphError;
 use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, IndexableAnnotation, LinkEntry, ParsedNode, Stats, TagPageResult, TagSearchResult};
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 9;
+pub const CURRENT_SCHEMA_VERSION: i64 = 10;
 
 fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rusqlite::Error> {
     Ok(AnnotationSearchResult {
@@ -216,6 +216,25 @@ impl Store {
             )?;
         }
 
+        if version < 10 {
+            info!(from = version, to = 10, "migrating schema: composite PK (node_id, layout_type) on node_positions");
+            self.conn.execute_batch(
+                "CREATE TABLE node_positions_new (
+                    node_id TEXT NOT NULL,
+                    layout_type TEXT NOT NULL DEFAULT '2d',
+                    x REAL NOT NULL,
+                    y REAL NOT NULL,
+                    z REAL NOT NULL DEFAULT 0.0,
+                    PRIMARY KEY (node_id, layout_type)
+                );
+                INSERT INTO node_positions_new (node_id, layout_type, x, y, z)
+                    SELECT node_id, '2d', x, y, z FROM node_positions;
+                DROP TABLE node_positions;
+                ALTER TABLE node_positions_new RENAME TO node_positions;
+                UPDATE meta SET value = '10' WHERE key = 'schema_version';"
+            )?;
+        }
+
         Ok(())
     }
 
@@ -305,24 +324,39 @@ impl Store {
     // --- Positions ---
 
     pub fn save_positions(&self, positions: &HashMap<String, super::types::Position>) -> Result<(), GraphError> {
+        self.save_positions_typed(positions, "2d")
+    }
+
+    pub fn load_positions(&self) -> Result<HashMap<String, super::types::Position>, GraphError> {
+        self.load_positions_typed("2d")
+    }
+
+    pub fn clear_positions(&self) -> Result<(), GraphError> {
+        self.clear_positions_typed("2d")
+    }
+
+    pub fn save_positions_typed(&self, positions: &HashMap<String, super::types::Position>, layout_type: &str) -> Result<(), GraphError> {
         let tx = self.conn.unchecked_transaction()?;
-        tx.execute_batch("DELETE FROM node_positions")?;
+        tx.execute(
+            "DELETE FROM node_positions WHERE layout_type = ?1",
+            [layout_type],
+        )?;
         let mut stmt = tx.prepare(
-            "INSERT INTO node_positions(node_id, x, y, z) VALUES (?1, ?2, ?3, ?4)"
+            "INSERT INTO node_positions(node_id, layout_type, x, y, z) VALUES (?1, ?2, ?3, ?4, ?5)"
         )?;
         for (id, pos) in positions {
-            stmt.execute(rusqlite::params![id, pos.x, pos.y, pos.z])?;
+            stmt.execute(rusqlite::params![id, layout_type, pos.x, pos.y, pos.z])?;
         }
         drop(stmt);
         tx.commit()?;
         Ok(())
     }
 
-    pub fn load_positions(&self) -> Result<HashMap<String, super::types::Position>, GraphError> {
+    pub fn load_positions_typed(&self, layout_type: &str) -> Result<HashMap<String, super::types::Position>, GraphError> {
         let mut stmt = self.conn.prepare(
-            "SELECT node_id, x, y, z FROM node_positions"
+            "SELECT node_id, x, y, z FROM node_positions WHERE layout_type = ?1"
         )?;
-        let map = stmt.query_map([], |row| {
+        let map = stmt.query_map([layout_type], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 super::types::Position { x: row.get(1)?, y: row.get(2)?, z: row.get(3)? },
@@ -331,8 +365,11 @@ impl Store {
         Ok(map)
     }
 
-    pub fn clear_positions(&self) -> Result<(), GraphError> {
-        self.conn.execute("DELETE FROM node_positions", [])?;
+    pub fn clear_positions_typed(&self, layout_type: &str) -> Result<(), GraphError> {
+        self.conn.execute(
+            "DELETE FROM node_positions WHERE layout_type = ?1",
+            [layout_type],
+        )?;
         Ok(())
     }
 
@@ -989,11 +1026,11 @@ mod tests {
         let db_path = dir.path().join("test.db");
         {
             let store = Store::open(&db_path).unwrap();
-            assert_eq!(store.schema_version().unwrap(), 9);
+            assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
         }
         {
             let store = Store::open(&db_path).unwrap();
-            assert_eq!(store.schema_version().unwrap(), 9);
+            assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
         }
     }
 
@@ -1023,7 +1060,7 @@ mod tests {
     #[test]
     fn schema_version_readable_via_get_meta() {
         let store = Store::open_memory().unwrap();
-        assert_eq!(store.get_meta("schema_version").unwrap(), Some("9".into()));
+        assert_eq!(store.get_meta("schema_version").unwrap(), Some("10".into()));
     }
 
     // --- Phase 5: Node CRUD ---
@@ -1730,7 +1767,7 @@ mod tests {
         }
 
         let store = Store::open(&db_path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 9);
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
 
         let tags_text: String = store
             .conn
@@ -1777,7 +1814,7 @@ mod tests {
         }
 
         let store = Store::open(&db_path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 9);
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
 
         let raw_edges = store.all_raw_edges().unwrap();
         assert_eq!(raw_edges.len(), 1);
@@ -1828,7 +1865,7 @@ mod tests {
         }
 
         let store = Store::open(&db_path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 9);
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
 
         let fts_count: i64 = store
             .conn
@@ -2001,8 +2038,8 @@ mod tests {
     // --- Cycle 2: Schema v6 ---
 
     #[test]
-    fn schema_version_is_nine() {
-        assert_eq!(CURRENT_SCHEMA_VERSION, 9);
+    fn schema_version_is_ten() {
+        assert_eq!(CURRENT_SCHEMA_VERSION, 10);
     }
 
     #[test]
@@ -2062,7 +2099,7 @@ mod tests {
         }
 
         let store = Store::open(&db_path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 9);
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
 
         use super::super::types::Position;
         let loaded = store.load_positions().unwrap();
@@ -2124,7 +2161,7 @@ mod tests {
         }
 
         let store = Store::open(&db_path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 9);
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
         let ann_count: i64 = store
             .conn
             .query_row(
@@ -2528,7 +2565,7 @@ mod tests {
         }
 
         let store = Store::open(&db_path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 9);
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
 
         let results = store.search_annotations("丝绸之路", None, 10).unwrap();
         assert_eq!(results.len(), 1);
@@ -2754,5 +2791,172 @@ mod tests {
         store.clear_positions().unwrap();
         let loaded = store.load_positions().unwrap();
         assert!(loaded.is_empty());
+    }
+
+    // --- Cycle 2a: Typed position store ---
+
+    #[test]
+    fn save_positions_2d_stores_with_layout_type() {
+        use super::super::types::Position;
+        let store = Store::open_memory().unwrap();
+        let mut positions = HashMap::new();
+        positions.insert("A".to_string(), Position { x: 1.0, y: 2.0, z: 0.0 });
+        positions.insert("B".to_string(), Position { x: 3.0, y: 4.0, z: 0.0 });
+        store.save_positions_typed(&positions, "2d").unwrap();
+
+        let loaded = store.load_positions_typed("2d").unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded["A"], Position { x: 1.0, y: 2.0, z: 0.0 });
+        assert_eq!(loaded["B"], Position { x: 3.0, y: 4.0, z: 0.0 });
+    }
+
+    #[test]
+    fn save_positions_3d_stores_separately() {
+        use super::super::types::Position;
+        let store = Store::open_memory().unwrap();
+
+        let mut pos_2d = HashMap::new();
+        pos_2d.insert("A".to_string(), Position { x: 1.0, y: 2.0, z: 0.0 });
+        store.save_positions_typed(&pos_2d, "2d").unwrap();
+
+        let mut pos_3d = HashMap::new();
+        pos_3d.insert("A".to_string(), Position { x: 10.0, y: 20.0, z: 30.0 });
+        store.save_positions_typed(&pos_3d, "3d").unwrap();
+
+        let loaded_2d = store.load_positions_typed("2d").unwrap();
+        assert_eq!(loaded_2d["A"], Position { x: 1.0, y: 2.0, z: 0.0 });
+
+        let loaded_3d = store.load_positions_typed("3d").unwrap();
+        assert_eq!(loaded_3d["A"], Position { x: 10.0, y: 20.0, z: 30.0 });
+    }
+
+    #[test]
+    fn clear_positions_typed_only_clears_given_type() {
+        use super::super::types::Position;
+        let store = Store::open_memory().unwrap();
+
+        let mut pos_2d = HashMap::new();
+        pos_2d.insert("A".to_string(), Position { x: 1.0, y: 2.0, z: 0.0 });
+        store.save_positions_typed(&pos_2d, "2d").unwrap();
+
+        let mut pos_3d = HashMap::new();
+        pos_3d.insert("A".to_string(), Position { x: 10.0, y: 20.0, z: 30.0 });
+        store.save_positions_typed(&pos_3d, "3d").unwrap();
+
+        store.clear_positions_typed("3d").unwrap();
+
+        let loaded_2d = store.load_positions_typed("2d").unwrap();
+        assert_eq!(loaded_2d.len(), 1, "2d positions should be preserved");
+        assert_eq!(loaded_2d["A"], Position { x: 1.0, y: 2.0, z: 0.0 });
+
+        let loaded_3d = store.load_positions_typed("3d").unwrap();
+        assert!(loaded_3d.is_empty(), "3d positions should be cleared");
+    }
+
+    // --- Cycle 2b: v9 → v10 migration + backward compat ---
+
+    #[test]
+    fn v9_to_v10_migration_preserves_existing_as_2d() {
+        use super::super::types::Position;
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
+            conn.execute_batch(
+                "CREATE TABLE nodes (
+                    id TEXT PRIMARY KEY, title TEXT, first_paragraph TEXT,
+                    frontmatter JSON, mtime INTEGER, is_stub INTEGER DEFAULT 0,
+                    tags_text TEXT DEFAULT ''
+                );
+                CREATE TABLE tags (node_id TEXT, tag TEXT);
+                CREATE TABLE aliases (node_id TEXT, alias TEXT);
+                CREATE TABLE edges (source TEXT, target TEXT, context TEXT, raw_target TEXT DEFAULT '', source_line INTEGER DEFAULT 0);
+                CREATE TABLE sync (path TEXT PRIMARY KEY, mtime INTEGER);
+                CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+                CREATE TABLE annotations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    node_id TEXT NOT NULL, annotation_type TEXT NOT NULL,
+                    certainty TEXT NOT NULL, body TEXT, date TEXT,
+                    source_line INTEGER NOT NULL, char_start INTEGER NOT NULL, char_end INTEGER NOT NULL,
+                    scope_kind TEXT NOT NULL, scope_value TEXT NOT NULL
+                );
+                CREATE VIRTUAL TABLE annotations_fts USING fts5(
+                    body, node_id UNINDEXED, annotation_type UNINDEXED,
+                    tokenize = 'trigram case_sensitive 0'
+                );
+                CREATE TABLE node_positions (
+                    node_id TEXT PRIMARY KEY,
+                    x REAL NOT NULL,
+                    y REAL NOT NULL,
+                    z REAL NOT NULL DEFAULT 0.0
+                );
+                INSERT INTO meta(key, value) VALUES ('schema_version', '9');
+                INSERT INTO node_positions(node_id, x, y, z) VALUES ('a.md', 10.0, 20.0, 0.0);
+                INSERT INTO node_positions(node_id, x, y, z) VALUES ('b.md', 30.0, 40.0, 5.0);",
+            ).unwrap();
+        }
+
+        let store = Store::open(&db_path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+
+        let loaded = store.load_positions_typed("2d").unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded["a.md"], Position { x: 10.0, y: 20.0, z: 0.0 });
+        assert_eq!(loaded["b.md"], Position { x: 30.0, y: 40.0, z: 5.0 });
+
+        let loaded_3d = store.load_positions_typed("3d").unwrap();
+        assert!(loaded_3d.is_empty(), "no 3d positions should exist after migration");
+    }
+
+    #[test]
+    fn backward_compat_save_load_clear_delegate_to_2d() {
+        use super::super::types::Position;
+        let store = Store::open_memory().unwrap();
+
+        let mut positions = HashMap::new();
+        positions.insert("A".to_string(), Position { x: 1.0, y: 2.0, z: 0.0 });
+        store.save_positions(&positions).unwrap();
+
+        let loaded_via_typed = store.load_positions_typed("2d").unwrap();
+        assert_eq!(loaded_via_typed["A"], Position { x: 1.0, y: 2.0, z: 0.0 });
+
+        let loaded_via_compat = store.load_positions().unwrap();
+        assert_eq!(loaded_via_compat["A"], Position { x: 1.0, y: 2.0, z: 0.0 });
+
+        let mut pos_3d = HashMap::new();
+        pos_3d.insert("A".to_string(), Position { x: 10.0, y: 20.0, z: 30.0 });
+        store.save_positions_typed(&pos_3d, "3d").unwrap();
+
+        store.clear_positions().unwrap();
+
+        let loaded_3d = store.load_positions_typed("3d").unwrap();
+        assert_eq!(loaded_3d.len(), 1, "clear_positions should only clear 2d");
+
+        let loaded_2d = store.load_positions().unwrap();
+        assert!(loaded_2d.is_empty(), "2d should be cleared");
+    }
+
+    #[test]
+    fn delete_node_removes_positions_for_all_layout_types() {
+        use super::super::types::Position;
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("A", "Alpha", &[], json!({})), 1).unwrap();
+
+        let mut pos_2d = HashMap::new();
+        pos_2d.insert("A".to_string(), Position { x: 1.0, y: 2.0, z: 0.0 });
+        store.save_positions_typed(&pos_2d, "2d").unwrap();
+
+        let mut pos_3d = HashMap::new();
+        pos_3d.insert("A".to_string(), Position { x: 10.0, y: 20.0, z: 30.0 });
+        store.save_positions_typed(&pos_3d, "3d").unwrap();
+
+        store.delete_node("A").unwrap();
+
+        let loaded_2d = store.load_positions_typed("2d").unwrap();
+        assert!(!loaded_2d.contains_key("A"), "2d position should be removed");
+        let loaded_3d = store.load_positions_typed("3d").unwrap();
+        assert!(!loaded_3d.contains_key("A"), "3d position should be removed");
     }
 }

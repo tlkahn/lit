@@ -11,17 +11,12 @@ use super::knowledge::GraphNode;
 const EPSILON: f64 = 1e-10;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Layout3dSettings {
-    #[serde(default = "default_epochs")]
     pub epochs: usize,
-    #[serde(default = "default_epsilon")]
     pub epsilon: f64,
-    #[serde(default)]
     pub random_seed: Option<u64>,
 }
-
-fn default_epochs() -> usize { 30 }
-fn default_epsilon() -> f64 { 0.01 }
 
 impl Default for Layout3dSettings {
     fn default() -> Self {
@@ -348,6 +343,14 @@ mod tests {
         let json = r#"{"epochs":50,"epsilon":0.05,"random_seed":null}"#;
         let s: Layout3dSettings = serde_json::from_str(json).unwrap();
         assert_eq!(s.epochs, 50);
+        assert!(s.random_seed.is_none());
+    }
+
+    #[test]
+    fn settings_deserializes_from_empty_json() {
+        let s: Layout3dSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(s.epochs, 30);
+        assert_eq!(s.epsilon, 0.01);
         assert!(s.random_seed.is_none());
     }
 
