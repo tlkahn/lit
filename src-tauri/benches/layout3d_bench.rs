@@ -20,7 +20,10 @@ fn make_random_graph(n: usize, m: usize, seed: u64) -> DiGraph<GraphNode, ()> {
             })
         })
         .collect();
-    for _ in 0..m {
+    for i in 0..n - 1 {
+        g.add_edge(indices[i], indices[i + 1], ());
+    }
+    for _ in 0..m.saturating_sub(n - 1) {
         let a = rng.gen_range(0..n);
         let b = rng.gen_range(0..n);
         if a != b {

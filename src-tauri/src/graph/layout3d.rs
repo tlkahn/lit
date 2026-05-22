@@ -165,6 +165,13 @@ fn compute_shortest_paths(graph: &DiGraph<GraphNode, ()>) -> (Vec<Vec<u32>>, Vec
     (dists, indices)
 }
 
+/// Build stress terms from the distance matrix.
+///
+/// For small graphs (n ≤ SPARSE_THRESHOLD) every pair gets a term — stress is exact.
+/// For large graphs, only k-nearest-neighbor pairs are included (sparse terms) so
+/// the SGD and stress calculation run in O(n·k) instead of O(n²). Reported stress
+/// for large graphs is therefore a *partial* metric over the sampled pairs and is
+/// not directly comparable to small-graph stress values.
 fn build_terms(dists: &[Vec<u32>]) -> Vec<StressTerm> {
     let n = dists.len();
     if n <= SPARSE_THRESHOLD {
@@ -919,7 +926,7 @@ mod tests {
         let g = make_graph(&["a", "b", "c"], &[(0, 1), (1, 2), (0, 2)]);
         let s = Layout3dSettings { epochs: 30, ..Default::default() };
         let result = compute_layout_3d(&g, None, &s);
-        assert!(result.stress >= 0.0, "stress should be non-negative");
+        assert!(result.stress > 0.0, "stress should be positive for a non-trivial graph");
     }
 
     #[test]
@@ -1013,6 +1020,39 @@ mod tests {
         assert_eq!(dists[idx["n0"]][idx["n127"]], 127);
         assert_eq!(dists[idx["n128"]][idx["n255"]], 127);
         assert_eq!(dists[idx["n0"]][idx["n128"]], 128);
+    }
+
+    #[test]
+    #[ignore]
+    fn compute_layout_3d_sparse_quality() {
+        let n = 1200;
+        let ids: Vec<String> = (0..n).map(|i| format!("n{i}")).collect();
+        let id_refs: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+        let mut edges: Vec<(usize, usize)> = Vec::new();
+        for i in 0..n - 1 { edges.push((i, i + 1)); }
+        let mut rng = Xorshift64::new(42);
+        for _ in 0..2000 {
+            let a = rng.next_bounded(n as u64) as usize;
+            let b = rng.next_bounded(n as u64) as usize;
+            if a != b { edges.push((a, b)); }
+        }
+        let g = make_graph(&id_refs, &edges);
+        let s = Layout3dSettings { epochs: 50, ..Default::default() };
+        let r = compute_layout_3d(&g, None, &s);
+
+        let dist = |a: &str, b: &str| {
+            let (ax, ay, az) = r.positions[a];
+            let (bx, by, bz) = r.positions[b];
+            ((ax - bx).powi(2) + (ay - by).powi(2) + (az - bz).powi(2)).sqrt()
+        };
+
+        let adj_dist = dist("n0", "n1");
+        let far_dist = dist("n0", "n600");
+        assert!(
+            adj_dist < far_dist,
+            "adjacent should be closer: adj={adj_dist:.4}, far={far_dist:.4}"
+        );
+        assert!(r.stress > 0.0, "stress should be positive for a non-trivial graph");
     }
 
     #[test]

@@ -1083,10 +1083,10 @@ impl GraphIndex {
         self.layout_in_progress.store(false, Ordering::SeqCst);
     }
 
-    pub fn compute_layout_3d_background(&self, settings: &super::layout3d::Layout3dSettings) -> f64 {
+    pub fn compute_layout_3d_background(&self, settings: &super::layout3d::Layout3dSettings) -> Option<f64> {
         use std::sync::atomic::Ordering;
         if self.layout_3d_in_progress.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
-            return 0.0;
+            return None;
         }
         let graph = self.knowledge.lock().unwrap().graph_clone();
         let existing_tuples: HashMap<String, (f64, f64, f64)> = {
@@ -1135,7 +1135,7 @@ impl GraphIndex {
             Err(e) => tracing::warn!(error = %e, "failed to lock store for 3D position save"),
         }
         self.layout_3d_in_progress.store(false, Ordering::SeqCst);
-        stress
+        Some(stress)
     }
 }
 
