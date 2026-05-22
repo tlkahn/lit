@@ -38,6 +38,7 @@ import {
   linkUnlinkedMention,
   rebuildGraphIndex,
   resetGraphLayout,
+  computeLayout3d,
   searchTags,
   listPagesByTag,
   resolveWikilink,
@@ -417,6 +418,8 @@ describe("ipc", () => {
           return "Rebuilt: 5 nodes, 3 edges, 1 stubs";
         case "reset_graph_layout":
           return undefined;
+        case "compute_layout_3d":
+          return undefined;
         case "get_pagerank": {
           const a = args as Record<string, unknown> | undefined;
           if (a?.n != null) {
@@ -697,6 +700,20 @@ describe("ipc", () => {
     await resetGraphLayout();
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("reset_graph_layout");
+  });
+
+  it("computeLayout3d calls correct command with no settings", async () => {
+    await computeLayout3d();
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("compute_layout_3d", { settings: null });
+  });
+
+  it("computeLayout3d calls with custom settings", async () => {
+    await computeLayout3d({ epochs: 50, epsilon: 0.05 });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("compute_layout_3d", {
+      settings: { epochs: 50, epsilon: 0.05 },
+    });
   });
 
   it("getPagerank returns full scores map", async () => {

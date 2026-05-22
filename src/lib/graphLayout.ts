@@ -83,6 +83,7 @@ export function applyPositions(graph: Graph, positions: Record<string, { x: numb
     if (pos) {
       graph.setNodeAttribute(node, "x", pos.x);
       graph.setNodeAttribute(node, "y", pos.y);
+      graph.setNodeAttribute(node, "z", pos.z);
       positionedNodes.add(node);
     }
   });

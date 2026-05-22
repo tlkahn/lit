@@ -455,6 +455,16 @@ export async function resetGraphLayout(): Promise<void> {
   return invoke<void>("reset_graph_layout");
 }
 
+export interface Layout3dSettings {
+  epochs?: number;
+  epsilon?: number;
+  random_seed?: number | null;
+}
+
+export async function computeLayout3d(settings?: Layout3dSettings): Promise<void> {
+  return invoke<void>("compute_layout_3d", { settings: settings ?? null });
+}
+
 export async function getPagerank(): Promise<Record<string, number>>;
 export async function getPagerank(n: number): Promise<[string, number][]>;
 export async function getPagerank(n?: number) {

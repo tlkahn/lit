@@ -239,6 +239,34 @@ pub fn spawn_layout(gi: Arc<GraphIndex>, handle: tauri::AppHandle) {
     });
 }
 
+pub fn spawn_layout_3d(gi: Arc<GraphIndex>, handle: tauri::AppHandle, settings: crate::graph::layout3d::Layout3dSettings) {
+    tauri::async_runtime::spawn_blocking(move || {
+        gi.compute_layout_3d_background(&settings);
+        let _ = handle.emit("lit:layout-3d-ready", ());
+    });
+}
+
+#[tauri::command]
+pub fn compute_layout_3d(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<GraphRegistry>>,
+    app_handle: tauri::AppHandle,
+    settings: Option<crate::graph::layout3d::Layout3dSettings>,
+) -> Result<(), String> {
+    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+    let gi = {
+        let indices = graph_state.indices.lock().unwrap();
+        Arc::clone(
+            indices
+                .get(&root)
+                .ok_or_else(|| "No graph index for this workspace".to_string())?,
+        )
+    };
+    spawn_layout_3d(gi, app_handle, settings.unwrap_or_default());
+    Ok(())
+}
+
 #[tauri::command]
 pub fn get_pagerank(
     window: tauri::Window,
@@ -995,6 +1023,20 @@ mod tests {
         assert!(!build_state.is_in_progress(&dir.path().to_path_buf()));
         let indices = graph_reg.indices.lock().unwrap();
         assert!(indices.contains_key(&dir.path().to_path_buf()));
+    }
+
+    #[test]
+    fn cmd_compute_layout_3d_runs_layout() {
+        use crate::graph::layout3d::Layout3dSettings;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
+        std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        gi.compute_layout_3d_background(&Layout3dSettings::default());
+        let positions = gi.get_positions();
+        assert_eq!(positions.len(), 2);
+        let has_nonzero_z = positions.values().any(|p| p.z != 0.0);
+        assert!(has_nonzero_z, "3D layout should produce non-zero z");
     }
 
     #[test]

@@ -564,6 +564,7 @@ pub struct GraphIndex {
     workspace_root: std::path::PathBuf,
     positions: Mutex<HashMap<String, Position>>,
     layout_in_progress: AtomicBool,
+    layout_3d_in_progress: AtomicBool,
 }
 
 impl GraphIndex {
@@ -592,6 +593,7 @@ impl GraphIndex {
             workspace_root,
             positions: Mutex::new(positions),
             layout_in_progress: AtomicBool::new(false),
+            layout_3d_in_progress: AtomicBool::new(false),
         }))
     }
 
@@ -678,6 +680,7 @@ impl GraphIndex {
             workspace_root,
             positions: Mutex::new(positions),
             layout_in_progress: AtomicBool::new(false),
+            layout_3d_in_progress: AtomicBool::new(false),
         })
     }
 
@@ -1038,6 +1041,53 @@ impl GraphIndex {
             Err(e) => tracing::warn!(error = %e, "failed to lock store for position save"),
         }
         self.layout_in_progress.store(false, Ordering::SeqCst);
+    }
+
+    pub fn compute_layout_3d_background(&self, settings: &super::layout3d::Layout3dSettings) {
+        use std::sync::atomic::Ordering;
+        if self.layout_3d_in_progress.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+            return;
+        }
+        let graph = self.knowledge.lock().unwrap().graph_clone();
+        let existing_tuples: HashMap<String, (f64, f64, f64)> = {
+            let p = self.positions.lock().unwrap();
+            p.iter().map(|(k, v)| (k.clone(), (v.x, v.y, v.z))).collect()
+        };
+        let needs_z_jitter = !existing_tuples.is_empty()
+            && existing_tuples.values().all(|&(_, _, z)| z == 0.0);
+        let jittered: HashMap<String, (f64, f64, f64)>;
+        let existing_ref = if existing_tuples.is_empty() {
+            None
+        } else if needs_z_jitter {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            jittered = existing_tuples.iter().map(|(k, &(x, y, _))| {
+                let mut h = DefaultHasher::new();
+                k.hash(&mut h);
+                let bits = h.finish();
+                let z = ((bits as f64) / (u64::MAX as f64) - 0.5) * 2.0;
+                (k.clone(), (x, y, z))
+            }).collect();
+            Some(&jittered)
+        } else {
+            Some(&existing_tuples)
+        };
+        let raw = super::layout3d::compute_layout_3d(&graph, existing_ref, settings);
+        let result: HashMap<String, Position> = raw.into_iter()
+            .map(|(k, (x, y, z))| (k, Position { x, y, z }))
+            .collect();
+        {
+            let mut pos = self.positions.lock().unwrap();
+            *pos = result.clone();
+        }
+        match self.store.lock() {
+            Ok(store) => match store.save_positions(&result) {
+                Ok(()) => tracing::debug!("3D layout positions saved"),
+                Err(e) => tracing::warn!(error = %e, "failed to save 3D layout positions"),
+            },
+            Err(e) => tracing::warn!(error = %e, "failed to lock store for 3D position save"),
+        }
+        self.layout_3d_in_progress.store(false, Ordering::SeqCst);
     }
 }
 
@@ -3387,5 +3437,59 @@ mod tests {
         for (_id, pos) in &positions {
             assert_eq!(pos.z, 0.0, "2D layout should always produce z=0");
         }
+    }
+
+    // --- 3D Layout positions ---
+
+    #[test]
+    fn compute_layout_3d_populates_positions() {
+        use crate::graph::layout3d::Layout3dSettings;
+        let dir = create_workspace();
+        let gi = build_graph_with_nodes(&dir);
+        gi.compute_layout_3d_background(&Layout3dSettings::default());
+        let positions = gi.get_positions();
+        assert_eq!(positions.len(), 3);
+        let has_nonzero_z = positions.values().any(|p| p.z != 0.0);
+        assert!(has_nonzero_z, "at least one node should have non-zero z");
+    }
+
+    #[test]
+    fn compute_layout_3d_persists_to_store() {
+        use crate::graph::layout3d::Layout3dSettings;
+        let dir = create_workspace();
+        let gi = build_graph_with_nodes(&dir);
+        gi.compute_layout_3d_background(&Layout3dSettings::default());
+        let gi2 = GraphIndex::load_from_store(dir.path().to_path_buf()).unwrap().unwrap();
+        let reloaded = gi2.get_positions();
+        assert_eq!(reloaded.len(), 3);
+        let has_nonzero_z = reloaded.values().any(|p| p.z != 0.0);
+        assert!(has_nonzero_z, "reloaded positions should have non-zero z");
+    }
+
+    #[test]
+    fn compute_layout_3d_warm_start_jitters_z() {
+        use crate::graph::layout3d::Layout3dSettings;
+        let dir = create_workspace();
+        let gi = build_graph_with_nodes(&dir);
+        gi.compute_layout_background(&crate::graph::layout::LayoutSettings::default());
+        let pos_2d = gi.get_positions();
+        assert!(pos_2d.values().all(|p| p.z == 0.0), "2D layout should have z=0");
+        gi.compute_layout_3d_background(&Layout3dSettings::default());
+        let pos_3d = gi.get_positions();
+        assert_eq!(pos_3d.len(), 3);
+        let has_nonzero_z = pos_3d.values().any(|p| p.z != 0.0);
+        assert!(has_nonzero_z, "3D layout from 2D warm-start should produce non-zero z");
+    }
+
+    #[test]
+    fn compute_layout_3d_guard_prevents_concurrent() {
+        use crate::graph::layout3d::Layout3dSettings;
+        use std::sync::atomic::Ordering;
+        let dir = create_workspace();
+        let gi = build_graph_with_nodes(&dir);
+        gi.layout_3d_in_progress.store(true, Ordering::SeqCst);
+        gi.compute_layout_3d_background(&Layout3dSettings::default());
+        let positions = gi.get_positions();
+        assert!(positions.is_empty(), "should skip layout when guard is set");
     }
 }

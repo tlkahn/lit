@@ -4,17 +4,24 @@ use std::hash::{Hash, Hasher};
 use std::collections::VecDeque;
 
 use petgraph::graph::{DiGraph, NodeIndex};
+use serde::{Serialize, Deserialize};
 
 use super::knowledge::GraphNode;
 
 const EPSILON: f64 = 1e-10;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Layout3dSettings {
+    #[serde(default = "default_epochs")]
     pub epochs: usize,
+    #[serde(default = "default_epsilon")]
     pub epsilon: f64,
+    #[serde(default)]
     pub random_seed: Option<u64>,
 }
+
+fn default_epochs() -> usize { 30 }
+fn default_epsilon() -> f64 { 0.01 }
 
 impl Default for Layout3dSettings {
     fn default() -> Self {
@@ -324,6 +331,33 @@ mod tests {
         let s2 = s.clone();
         assert_eq!(s2.epochs, s.epochs);
         let _ = format!("{:?}", s);
+    }
+
+    #[test]
+    fn settings_serializes_and_deserializes() {
+        let s = Layout3dSettings { epochs: 50, epsilon: 0.05, random_seed: Some(42) };
+        let json = serde_json::to_string(&s).unwrap();
+        let s2: Layout3dSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(s2.epochs, 50);
+        assert_eq!(s2.epsilon, 0.05);
+        assert_eq!(s2.random_seed, Some(42));
+    }
+
+    #[test]
+    fn settings_deserializes_with_null_seed() {
+        let json = r#"{"epochs":50,"epsilon":0.05,"random_seed":null}"#;
+        let s: Layout3dSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(s.epochs, 50);
+        assert!(s.random_seed.is_none());
+    }
+
+    #[test]
+    fn settings_deserializes_partial_with_defaults() {
+        let json = r#"{"epochs":50}"#;
+        let s: Layout3dSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(s.epochs, 50);
+        assert_eq!(s.epsilon, 0.01);
+        assert!(s.random_seed.is_none());
     }
 
     #[test]

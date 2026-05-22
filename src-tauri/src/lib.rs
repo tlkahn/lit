@@ -319,6 +319,7 @@ pub fn run() {
             commands::graph::ensure_graph_ready,
             commands::graph::get_graph_positions,
             commands::graph::reset_graph_layout,
+            commands::graph::compute_layout_3d,
             commands::workspace::get_startup_context,
             commands::pdf_viewer::pdf_open,
             commands::pdf_viewer::pdf_render_page,

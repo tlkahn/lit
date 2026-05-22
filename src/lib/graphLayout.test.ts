@@ -219,6 +219,14 @@ describe("graphLayout", () => {
       return buildGraph({ subgraph: sub, pagerank: {}, accentColor: "#7c3aed", stubColor: "#999" });
     }
 
+    it("applyPositions stores z coordinate on nodes", () => {
+      const graph = makeGraph();
+      applyPositions(graph, { "a.md": { x: 10, y: 20, z: 5 }, "b.md": { x: 30, y: 40, z: -3 }, "c.md": { x: 50, y: 60, z: 0 } });
+      expect(graph.getNodeAttribute("a.md", "z")).toBe(5);
+      expect(graph.getNodeAttribute("b.md", "z")).toBe(-3);
+      expect(graph.getNodeAttribute("c.md", "z")).toBe(0);
+    });
+
     it("applies exact positions for nodes present in the map", () => {
       const graph = makeGraph();
       applyPositions(graph, { "a.md": { x: 10, y: 20, z: 0 }, "b.md": { x: 30, y: 40, z: 0 }, "c.md": { x: 50, y: 60, z: 0 } });
