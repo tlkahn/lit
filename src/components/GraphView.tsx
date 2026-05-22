@@ -194,7 +194,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
 
         if (cancelled || !containerRef.current) return;
 
-        const rustPositions = subgraph.positions ?? null;
+        const rustPositions = subgraph.positions_2d ?? null;
 
         if (rustPositions && Object.keys(rustPositions).length > 0) {
           applyPositions(graph, rustPositions);

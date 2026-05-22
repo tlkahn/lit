@@ -400,7 +400,8 @@ describe("ipc", () => {
             ],
             edges: [["a.md", "b.md"]],
             pagerank: { "a.md": 0.4, "b.md": 0.6 },
-            positions: {},
+            positions_2d: {},
+            positions_3d: {},
           };
         case "resolve_wikilink": {
           const a = args as Record<string, unknown> | undefined;
@@ -835,7 +836,7 @@ describe("ipc", () => {
     expect(result.nodes).toHaveLength(2);
     expect(result.edges).toHaveLength(1);
     expect(result.pagerank).toEqual({ "a.md": 0.4, "b.md": 0.6 });
-    expect(result.positions).toEqual({});
+    expect(result.positions_2d).toEqual({});
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: ["a.md", "b.md"], depth: 1, directed: null });
   });
@@ -844,11 +845,17 @@ describe("ipc", () => {
     const result = await getFullSubgraph();
     expect(result.nodes).toHaveLength(2);
     expect(result.pagerank).toEqual({ "a.md": 0.4, "b.md": 0.6 });
-    expect(result.positions).toEqual({});
+    expect(result.positions_2d).toEqual({});
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", {
       seeds: [], depth: 0, directed: null,
     });
+  });
+
+  it("getGraphSubgraph returns positions_2d and positions_3d", async () => {
+    const result = await getGraphSubgraph(["a.md", "b.md"], 1);
+    expect(result.positions_2d).toEqual({});
+    expect(result.positions_3d).toEqual({});
   });
 
   it("getUnlinkedMentions returns mention entries", async () => {
