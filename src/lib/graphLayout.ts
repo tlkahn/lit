@@ -75,7 +75,7 @@ export function buildGraph(options: GraphBuildOptions): Graph {
   return graph;
 }
 
-export function applyPositions(graph: Graph, positions: Record<string, { x: number; y: number }>): void {
+export function applyPositions(graph: Graph, positions: Record<string, { x: number; y: number; z: number }>): void {
   const positionedNodes = new Set<string>();
 
   graph.forEachNode((node: string) => {

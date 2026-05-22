@@ -221,7 +221,7 @@ describe("graphLayout", () => {
 
     it("applies exact positions for nodes present in the map", () => {
       const graph = makeGraph();
-      applyPositions(graph, { "a.md": { x: 10, y: 20 }, "b.md": { x: 30, y: 40 }, "c.md": { x: 50, y: 60 } });
+      applyPositions(graph, { "a.md": { x: 10, y: 20, z: 0 }, "b.md": { x: 30, y: 40, z: 0 }, "c.md": { x: 50, y: 60, z: 0 } });
       expect(graph.getNodeAttribute("a.md", "x")).toBe(10);
       expect(graph.getNodeAttribute("a.md", "y")).toBe(20);
       expect(graph.getNodeAttribute("b.md", "x")).toBe(30);
@@ -241,7 +241,7 @@ describe("graphLayout", () => {
 
     it("places uncached node near centroid of its positioned neighbors", () => {
       const graph = makeGraph([["a.md", "c.md"], ["b.md", "c.md"]]);
-      applyPositions(graph, { "a.md": { x: 100, y: 100 }, "b.md": { x: 200, y: 200 } });
+      applyPositions(graph, { "a.md": { x: 100, y: 100, z: 0 }, "b.md": { x: 200, y: 200, z: 0 } });
       const cx = graph.getNodeAttribute("c.md", "x") as number;
       const cy = graph.getNodeAttribute("c.md", "y") as number;
       expect(cx).toBeGreaterThanOrEqual(135);
@@ -254,7 +254,7 @@ describe("graphLayout", () => {
       const graph = makeGraph();
       const origX = graph.getNodeAttribute("c.md", "x") as number;
       const origY = graph.getNodeAttribute("c.md", "y") as number;
-      applyPositions(graph, { "a.md": { x: 10, y: 20 } });
+      applyPositions(graph, { "a.md": { x: 10, y: 20, z: 0 } });
       // b.md and c.md are not in positions and have no edges to positioned nodes
       expect(graph.getNodeAttribute("c.md", "x")).toBe(origX);
       expect(graph.getNodeAttribute("c.md", "y")).toBe(origY);
@@ -262,7 +262,7 @@ describe("graphLayout", () => {
 
     it("mixed scenario — cached, uncached-with-neighbor, uncached-isolated", () => {
       const graph = makeGraph([["a.md", "b.md"]]);
-      applyPositions(graph, { "a.md": { x: 500, y: 500 } });
+      applyPositions(graph, { "a.md": { x: 500, y: 500, z: 0 } });
       // a.md: cached — exact position
       expect(graph.getNodeAttribute("a.md", "x")).toBe(500);
       expect(graph.getNodeAttribute("a.md", "y")).toBe(500);

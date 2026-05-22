@@ -112,6 +112,8 @@ pub struct TagPageResult {
 pub struct Position {
     pub x: f64,
     pub y: f64,
+    #[serde(default)]
+    pub z: f64,
 }
 
 pub fn extract_aliases(fm: &serde_json::Value) -> Vec<String> {
@@ -347,5 +349,22 @@ mod tests {
         let json_str = serde_json::to_string(&asr).expect("serialize");
         let back: AnnotationSearchResult = serde_json::from_str(&json_str).expect("deserialize");
         assert_eq!(back, asr);
+    }
+
+    #[test]
+    fn position_round_trip_with_z() {
+        let pos = Position { x: 1.0, y: 2.0, z: 3.0 };
+        let json_str = serde_json::to_string(&pos).expect("serialize");
+        let back: Position = serde_json::from_str(&json_str).expect("deserialize");
+        assert_eq!(back, pos);
+    }
+
+    #[test]
+    fn position_deserializes_without_z_defaults_to_zero() {
+        let json_str = r#"{"x":1.0,"y":2.0}"#;
+        let pos: Position = serde_json::from_str(json_str).expect("deserialize");
+        assert_eq!(pos.z, 0.0);
+        assert_eq!(pos.x, 1.0);
+        assert_eq!(pos.y, 2.0);
     }
 }

@@ -7,7 +7,7 @@ use tracing::{debug, info};
 use super::error::GraphError;
 use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, IndexableAnnotation, LinkEntry, ParsedNode, Stats, TagPageResult, TagSearchResult};
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 8;
+pub const CURRENT_SCHEMA_VERSION: i64 = 9;
 
 fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rusqlite::Error> {
     Ok(AnnotationSearchResult {
@@ -106,7 +106,10 @@ impl Store {
                  DROP TABLE IF EXISTS aliases;
                  DROP TABLE IF EXISTS edges;
                  DROP TABLE IF EXISTS sync;
-                 DROP TABLE IF EXISTS meta;"
+                 DROP TABLE IF EXISTS meta;
+                 DROP TABLE IF EXISTS annotations_fts;
+                 DROP TABLE IF EXISTS annotations;
+                 DROP TABLE IF EXISTS node_positions;"
             )?;
             return self.migrate();
         }
@@ -205,6 +208,14 @@ impl Store {
             )?;
         }
 
+        if version < 9 {
+            info!(from = version, to = 9, "migrating schema: adding z column to node_positions");
+            self.conn.execute_batch(
+                "ALTER TABLE node_positions ADD COLUMN z REAL NOT NULL DEFAULT 0.0;
+                 UPDATE meta SET value = '9' WHERE key = 'schema_version';"
+            )?;
+        }
+
         Ok(())
     }
 
@@ -297,10 +308,10 @@ impl Store {
         let tx = self.conn.unchecked_transaction()?;
         tx.execute_batch("DELETE FROM node_positions")?;
         let mut stmt = tx.prepare(
-            "INSERT INTO node_positions(node_id, x, y) VALUES (?1, ?2, ?3)"
+            "INSERT INTO node_positions(node_id, x, y, z) VALUES (?1, ?2, ?3, ?4)"
         )?;
         for (id, pos) in positions {
-            stmt.execute(rusqlite::params![id, pos.x, pos.y])?;
+            stmt.execute(rusqlite::params![id, pos.x, pos.y, pos.z])?;
         }
         drop(stmt);
         tx.commit()?;
@@ -309,12 +320,12 @@ impl Store {
 
     pub fn load_positions(&self) -> Result<HashMap<String, super::types::Position>, GraphError> {
         let mut stmt = self.conn.prepare(
-            "SELECT node_id, x, y FROM node_positions"
+            "SELECT node_id, x, y, z FROM node_positions"
         )?;
         let map = stmt.query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
-                super::types::Position { x: row.get(1)?, y: row.get(2)? },
+                super::types::Position { x: row.get(1)?, y: row.get(2)?, z: row.get(3)? },
             ))
         })?.filter_map(|r| r.ok()).collect();
         Ok(map)
@@ -978,11 +989,11 @@ mod tests {
         let db_path = dir.path().join("test.db");
         {
             let store = Store::open(&db_path).unwrap();
-            assert_eq!(store.schema_version().unwrap(), 8);
+            assert_eq!(store.schema_version().unwrap(), 9);
         }
         {
             let store = Store::open(&db_path).unwrap();
-            assert_eq!(store.schema_version().unwrap(), 8);
+            assert_eq!(store.schema_version().unwrap(), 9);
         }
     }
 
@@ -1012,7 +1023,7 @@ mod tests {
     #[test]
     fn schema_version_readable_via_get_meta() {
         let store = Store::open_memory().unwrap();
-        assert_eq!(store.get_meta("schema_version").unwrap(), Some("8".into()));
+        assert_eq!(store.get_meta("schema_version").unwrap(), Some("9".into()));
     }
 
     // --- Phase 5: Node CRUD ---
@@ -1719,7 +1730,7 @@ mod tests {
         }
 
         let store = Store::open(&db_path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 8);
+        assert_eq!(store.schema_version().unwrap(), 9);
 
         let tags_text: String = store
             .conn
@@ -1766,7 +1777,7 @@ mod tests {
         }
 
         let store = Store::open(&db_path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 8);
+        assert_eq!(store.schema_version().unwrap(), 9);
 
         let raw_edges = store.all_raw_edges().unwrap();
         assert_eq!(raw_edges.len(), 1);
@@ -1817,7 +1828,7 @@ mod tests {
         }
 
         let store = Store::open(&db_path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 8);
+        assert_eq!(store.schema_version().unwrap(), 9);
 
         let fts_count: i64 = store
             .conn
@@ -1990,8 +2001,73 @@ mod tests {
     // --- Cycle 2: Schema v6 ---
 
     #[test]
-    fn schema_version_is_eight() {
-        assert_eq!(CURRENT_SCHEMA_VERSION, 8);
+    fn schema_version_is_nine() {
+        assert_eq!(CURRENT_SCHEMA_VERSION, 9);
+    }
+
+    #[test]
+    fn node_positions_has_z_column() {
+        let store = Store::open_memory().unwrap();
+        store.conn.execute(
+            "INSERT INTO node_positions(node_id, x, y, z) VALUES ('test', 1.0, 2.0, 3.0)",
+            [],
+        ).unwrap();
+        let z: f64 = store.conn.query_row(
+            "SELECT z FROM node_positions WHERE node_id = 'test'",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(z, 3.0);
+    }
+
+    #[test]
+    fn v8_to_v9_migration_preserves_positions_with_z_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
+            conn.execute_batch(
+                "CREATE TABLE nodes (
+                    id TEXT PRIMARY KEY, title TEXT, first_paragraph TEXT,
+                    frontmatter JSON, mtime INTEGER, is_stub INTEGER DEFAULT 0,
+                    tags_text TEXT DEFAULT ''
+                );
+                CREATE TABLE tags (node_id TEXT, tag TEXT);
+                CREATE TABLE aliases (node_id TEXT, alias TEXT);
+                CREATE TABLE edges (source TEXT, target TEXT, context TEXT, raw_target TEXT DEFAULT '', source_line INTEGER DEFAULT 0);
+                CREATE TABLE sync (path TEXT PRIMARY KEY, mtime INTEGER);
+                CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+                CREATE TABLE annotations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    node_id TEXT NOT NULL, annotation_type TEXT NOT NULL,
+                    certainty TEXT NOT NULL, body TEXT, date TEXT,
+                    source_line INTEGER NOT NULL, char_start INTEGER NOT NULL, char_end INTEGER NOT NULL,
+                    scope_kind TEXT NOT NULL, scope_value TEXT NOT NULL
+                );
+                CREATE VIRTUAL TABLE annotations_fts USING fts5(
+                    body, node_id UNINDEXED, annotation_type UNINDEXED,
+                    tokenize = 'trigram case_sensitive 0'
+                );
+                CREATE TABLE node_positions (
+                    node_id TEXT PRIMARY KEY,
+                    x REAL NOT NULL,
+                    y REAL NOT NULL
+                );
+                INSERT INTO meta(key, value) VALUES ('schema_version', '8');
+                INSERT INTO node_positions(node_id, x, y) VALUES ('a.md', 10.0, 20.0);
+                INSERT INTO node_positions(node_id, x, y) VALUES ('b.md', 30.0, 40.0);",
+            ).unwrap();
+        }
+
+        let store = Store::open(&db_path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), 9);
+
+        use super::super::types::Position;
+        let loaded = store.load_positions().unwrap();
+        assert_eq!(loaded["a.md"], Position { x: 10.0, y: 20.0, z: 0.0 });
+        assert_eq!(loaded["b.md"], Position { x: 30.0, y: 40.0, z: 0.0 });
     }
 
     #[test]
@@ -2048,7 +2124,7 @@ mod tests {
         }
 
         let store = Store::open(&db_path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 8);
+        assert_eq!(store.schema_version().unwrap(), 9);
         let ann_count: i64 = store
             .conn
             .query_row(
@@ -2452,7 +2528,7 @@ mod tests {
         }
 
         let store = Store::open(&db_path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 8);
+        assert_eq!(store.schema_version().unwrap(), 9);
 
         let results = store.search_annotations("丝绸之路", None, 10).unwrap();
         assert_eq!(results.len(), 1);
@@ -2581,13 +2657,13 @@ mod tests {
         use super::super::types::Position;
         let store = Store::open_memory().unwrap();
         let mut positions = HashMap::new();
-        positions.insert("A".to_string(), Position { x: 1.0, y: 2.0 });
-        positions.insert("B".to_string(), Position { x: 3.0, y: 4.0 });
+        positions.insert("A".to_string(), Position { x: 1.0, y: 2.0, z: 0.0 });
+        positions.insert("B".to_string(), Position { x: 3.0, y: 4.0, z: 0.0 });
         store.save_positions(&positions).unwrap();
         let loaded = store.load_positions().unwrap();
         assert_eq!(loaded.len(), 2);
-        assert_eq!(loaded["A"], Position { x: 1.0, y: 2.0 });
-        assert_eq!(loaded["B"], Position { x: 3.0, y: 4.0 });
+        assert_eq!(loaded["A"], Position { x: 1.0, y: 2.0, z: 0.0 });
+        assert_eq!(loaded["B"], Position { x: 3.0, y: 4.0, z: 0.0 });
     }
 
     #[test]
@@ -2602,7 +2678,7 @@ mod tests {
         use super::super::types::Position;
         let store = Store::open_memory().unwrap();
         let mut positions = HashMap::new();
-        positions.insert("X".to_string(), Position { x: 5.0, y: 6.0 });
+        positions.insert("X".to_string(), Position { x: 5.0, y: 6.0, z: 0.0 });
         store.save_positions(&positions).unwrap();
         store.clear_positions().unwrap();
         let loaded = store.load_positions().unwrap();
@@ -2614,15 +2690,15 @@ mod tests {
         use super::super::types::Position;
         let store = Store::open_memory().unwrap();
         let mut p1 = HashMap::new();
-        p1.insert("A".to_string(), Position { x: 1.0, y: 2.0 });
+        p1.insert("A".to_string(), Position { x: 1.0, y: 2.0, z: 0.0 });
         store.save_positions(&p1).unwrap();
         let mut p2 = HashMap::new();
-        p2.insert("A".to_string(), Position { x: 10.0, y: 20.0 });
-        p2.insert("C".to_string(), Position { x: 30.0, y: 40.0 });
+        p2.insert("A".to_string(), Position { x: 10.0, y: 20.0, z: 0.0 });
+        p2.insert("C".to_string(), Position { x: 30.0, y: 40.0, z: 0.0 });
         store.save_positions(&p2).unwrap();
         let loaded = store.load_positions().unwrap();
-        assert_eq!(loaded["A"], Position { x: 10.0, y: 20.0 });
-        assert_eq!(loaded["C"], Position { x: 30.0, y: 40.0 });
+        assert_eq!(loaded["A"], Position { x: 10.0, y: 20.0, z: 0.0 });
+        assert_eq!(loaded["C"], Position { x: 30.0, y: 40.0, z: 0.0 });
     }
 
     #[test]
@@ -2631,10 +2707,52 @@ mod tests {
         let store = Store::open_memory().unwrap();
         store.upsert_node(&make_node("A", "Alpha", &[], json!({})), 1).unwrap();
         let mut positions = HashMap::new();
-        positions.insert("A".to_string(), Position { x: 1.0, y: 2.0 });
+        positions.insert("A".to_string(), Position { x: 1.0, y: 2.0, z: 0.0 });
         store.save_positions(&positions).unwrap();
         store.delete_node("A").unwrap();
         let loaded = store.load_positions().unwrap();
         assert!(!loaded.contains_key("A"));
+    }
+
+    #[test]
+    fn save_positions_persists_z() {
+        use super::super::types::Position;
+        let store = Store::open_memory().unwrap();
+        let mut positions = HashMap::new();
+        positions.insert("A".to_string(), Position { x: 1.0, y: 2.0, z: 5.0 });
+        positions.insert("B".to_string(), Position { x: 3.0, y: 4.0, z: -1.5 });
+        store.save_positions(&positions).unwrap();
+        let z_a: f64 = store.conn.query_row(
+            "SELECT z FROM node_positions WHERE node_id = 'A'", [], |row| row.get(0),
+        ).unwrap();
+        let z_b: f64 = store.conn.query_row(
+            "SELECT z FROM node_positions WHERE node_id = 'B'", [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(z_a, 5.0);
+        assert_eq!(z_b, -1.5);
+    }
+
+    #[test]
+    fn load_positions_reads_z() {
+        use super::super::types::Position;
+        let store = Store::open_memory().unwrap();
+        store.conn.execute(
+            "INSERT INTO node_positions(node_id, x, y, z) VALUES ('Z', 1.0, 2.0, 7.5)",
+            [],
+        ).unwrap();
+        let loaded = store.load_positions().unwrap();
+        assert_eq!(loaded["Z"], Position { x: 1.0, y: 2.0, z: 7.5 });
+    }
+
+    #[test]
+    fn clear_positions_works_with_z_values() {
+        use super::super::types::Position;
+        let store = Store::open_memory().unwrap();
+        let mut positions = HashMap::new();
+        positions.insert("A".to_string(), Position { x: 1.0, y: 2.0, z: 9.0 });
+        store.save_positions(&positions).unwrap();
+        store.clear_positions().unwrap();
+        let loaded = store.load_positions().unwrap();
+        assert!(loaded.is_empty());
     }
 }

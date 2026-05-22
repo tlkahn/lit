@@ -361,7 +361,7 @@ export interface SubgraphResult {
   nodes: GraphNode[];
   edges: [string, string][];
   pagerank?: Record<string, number>;
-  positions?: Record<string, { x: number; y: number }>;
+  positions?: Record<string, { x: number; y: number; z: number }>;
 }
 
 export interface GraphStats {
@@ -512,8 +512,8 @@ export async function listPagesByTag(tag: string, limit?: number): Promise<TagPa
   return invoke<TagPageResult[]>("list_pages_by_tag", { tag, limit: limit ?? null });
 }
 
-export async function getGraphPositions(): Promise<Record<string, { x: number; y: number }>> {
-  return invoke<Record<string, { x: number; y: number }>>("get_graph_positions");
+export async function getGraphPositions(): Promise<Record<string, { x: number; y: number; z: number }>> {
+  return invoke<Record<string, { x: number; y: number; z: number }>>("get_graph_positions");
 }
 
 export async function ensureGraphReady(path: string): Promise<void> {

@@ -1024,7 +1024,7 @@ impl GraphIndex {
         let existing_ref = if existing_tuples.is_empty() { None } else { Some(&existing_tuples) };
         let raw = super::layout::compute_layout(&graph, existing_ref, settings);
         let result: HashMap<String, Position> = raw.into_iter()
-            .map(|(k, (x, y))| (k, Position { x, y }))
+            .map(|(k, (x, y))| (k, Position { x, y, z: 0.0 }))
             .collect();
         {
             let mut pos = self.positions.lock().unwrap();
@@ -3373,5 +3373,19 @@ mod tests {
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         gi.compute_layout_background(&crate::graph::layout::LayoutSettings::default());
         assert!(logs_contain("layout positions saved"));
+    }
+
+    #[test]
+    #[traced_test]
+    fn compute_layout_sets_z_to_zero() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "[[b]]");
+        write_md(dir.path(), "b.md", "target");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        gi.compute_layout_background(&crate::graph::layout::LayoutSettings::default());
+        let positions = gi.get_positions();
+        for (_id, pos) in &positions {
+            assert_eq!(pos.z, 0.0, "2D layout should always produce z=0");
+        }
     }
 }
