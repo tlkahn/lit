@@ -246,8 +246,8 @@ pub fn spawn_layout(gi: Arc<GraphIndex>, handle: tauri::AppHandle) {
 
 pub fn spawn_layout_3d(gi: Arc<GraphIndex>, handle: tauri::AppHandle, settings: crate::graph::layout3d::Layout3dSettings) {
     tauri::async_runtime::spawn_blocking(move || {
-        gi.compute_layout_3d_background(&settings);
-        let _ = handle.emit("lit:layout-3d-ready", ());
+        let stress = gi.compute_layout_3d_background(&settings);
+        let _ = handle.emit("lit:layout-3d-ready", serde_json::json!({ "stress": stress }));
     });
 }
 

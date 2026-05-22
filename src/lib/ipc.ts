@@ -462,6 +462,10 @@ export interface Layout3dSettings {
   random_seed?: number | null;
 }
 
+export interface Layout3dReadyPayload {
+  stress: number;
+}
+
 export async function computeLayout3d(settings?: Layout3dSettings): Promise<void> {
   return invoke<void>("compute_layout_3d", { settings: settings ?? null });
 }

@@ -64,3 +64,8 @@ tracing-test = { version = "0.2", features = ["no-env-filter"] }
 rand = "0.8"
 wiremock = "0.6"
 tokio = { version = "1", features = ["full", "test-util"] }
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "layout3d_bench"
+harness = false

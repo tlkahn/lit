@@ -1083,10 +1083,10 @@ impl GraphIndex {
         self.layout_in_progress.store(false, Ordering::SeqCst);
     }
 
-    pub fn compute_layout_3d_background(&self, settings: &super::layout3d::Layout3dSettings) {
+    pub fn compute_layout_3d_background(&self, settings: &super::layout3d::Layout3dSettings) -> f64 {
         use std::sync::atomic::Ordering;
         if self.layout_3d_in_progress.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
-            return;
+            return 0.0;
         }
         let graph = self.knowledge.lock().unwrap().graph_clone();
         let existing_tuples: HashMap<String, (f64, f64, f64)> = {
@@ -1117,8 +1117,10 @@ impl GraphIndex {
         } else {
             Some(&existing_tuples)
         };
-        let raw = super::layout3d::compute_layout_3d(&graph, existing_ref, settings);
-        let result: HashMap<String, Position> = raw.into_iter()
+        let layout_result = super::layout3d::compute_layout_3d(&graph, existing_ref, settings);
+        let stress = layout_result.stress;
+        tracing::debug!(stress, "3D layout stress");
+        let result: HashMap<String, Position> = layout_result.positions.into_iter()
             .map(|(k, (x, y, z))| (k, Position { x, y, z }))
             .collect();
         {
@@ -1133,6 +1135,7 @@ impl GraphIndex {
             Err(e) => tracing::warn!(error = %e, "failed to lock store for 3D position save"),
         }
         self.layout_3d_in_progress.store(false, Ordering::SeqCst);
+        stress
     }
 }
 

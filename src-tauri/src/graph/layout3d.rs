@@ -1,5 +1,5 @@
 use std::collections::hash_map::DefaultHasher;
-use std::collections::HashMap;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::collections::VecDeque;
 
@@ -9,6 +9,15 @@ use serde::{Serialize, Deserialize};
 use super::knowledge::GraphNode;
 
 const EPSILON: f64 = 1e-10;
+const PAR_THRESHOLD_3D: usize = 256;
+const SPARSE_THRESHOLD: usize = 1000;
+const NEAREST_K: usize = 50;
+
+#[derive(Clone, Debug)]
+pub struct Layout3dResult {
+    pub positions: HashMap<String, (f64, f64, f64)>,
+    pub stress: f64,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -76,7 +85,7 @@ fn compute_shortest_paths(graph: &DiGraph<GraphNode, ()>) -> (Vec<Vec<u32>>, Vec
     let idx_of: HashMap<NodeIndex, usize> = indices.iter().enumerate().map(|(i, &ni)| (ni, i)).collect();
 
     let mut adj: Vec<Vec<usize>> = vec![vec![]; n];
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::new();
     for edge in graph.edge_indices() {
         if let Some((s, t)) = graph.edge_endpoints(edge) {
             let si = idx_of[&s];
@@ -90,34 +99,65 @@ fn compute_shortest_paths(graph: &DiGraph<GraphNode, ()>) -> (Vec<Vec<u32>>, Vec
     }
 
     let mut dists = vec![vec![u32::MAX; n]; n];
-    for i in 0..n {
-        dists[i][i] = 0;
+
+    let bfs_from = |i: usize, row: &mut Vec<u32>| {
+        row[i] = 0;
         let mut queue = VecDeque::new();
         queue.push_back(i);
         while let Some(cur) = queue.pop_front() {
             for &neighbor in &adj[cur] {
-                if dists[i][neighbor] == u32::MAX {
-                    dists[i][neighbor] = dists[i][cur] + 1;
+                if row[neighbor] == u32::MAX {
+                    row[neighbor] = row[cur] + 1;
                     queue.push_back(neighbor);
                 }
             }
         }
-    }
+    };
 
-    let mut max_finite: u32 = 0;
-    for row in &dists {
-        for &d in row {
-            if d != u32::MAX && d > max_finite {
-                max_finite = d;
-            }
+    if n >= PAR_THRESHOLD_3D {
+        use rayon::prelude::*;
+        dists.par_iter_mut().enumerate().for_each(|(i, row)| {
+            bfs_from(i, row);
+        });
+    } else {
+        for i in 0..n {
+            bfs_from(i, &mut dists[i]);
         }
     }
 
+    let max_finite: u32 = if n >= PAR_THRESHOLD_3D {
+        use rayon::prelude::*;
+        dists.par_iter()
+            .map(|row| row.iter().filter(|&&d| d != u32::MAX).copied().max().unwrap_or(0))
+            .reduce(|| 0, |a, b| a.max(b))
+    } else {
+        let mut m: u32 = 0;
+        for row in &dists {
+            for &d in row {
+                if d != u32::MAX && d > m {
+                    m = d;
+                }
+            }
+        }
+        m
+    };
+
     let fallback = if max_finite == 0 { 1 } else { max_finite + 1 };
-    for row in dists.iter_mut() {
-        for d in row.iter_mut() {
-            if *d == u32::MAX {
-                *d = fallback;
+    if n >= PAR_THRESHOLD_3D {
+        use rayon::prelude::*;
+        dists.par_iter_mut().for_each(|row| {
+            for d in row.iter_mut() {
+                if *d == u32::MAX {
+                    *d = fallback;
+                }
+            }
+        });
+    } else {
+        for row in dists.iter_mut() {
+            for d in row.iter_mut() {
+                if *d == u32::MAX {
+                    *d = fallback;
+                }
             }
         }
     }
@@ -127,14 +167,46 @@ fn compute_shortest_paths(graph: &DiGraph<GraphNode, ()>) -> (Vec<Vec<u32>>, Vec
 
 fn build_terms(dists: &[Vec<u32>]) -> Vec<StressTerm> {
     let n = dists.len();
-    let mut terms = Vec::with_capacity(n * (n - 1) / 2);
+    if n <= SPARSE_THRESHOLD {
+        let mut terms = Vec::with_capacity(n * (n - 1) / 2);
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let d = dists[i][j] as f64;
+                let w = 1.0 / (d * d);
+                terms.push(StressTerm { i, j, d, w });
+            }
+        }
+        return terms;
+    }
+
+    let k = NEAREST_K.min(n - 1);
+    let mut included: HashSet<(usize, usize)> = HashSet::new();
     for i in 0..n {
-        for j in (i + 1)..n {
-            let d = dists[i][j] as f64;
-            let w = 1.0 / (d * d);
-            terms.push(StressTerm { i, j, d, w });
+        let mut heap: BinaryHeap<(u32, usize)> = BinaryHeap::new();
+        for j in 0..n {
+            if j == i { continue; }
+            let d = dists[i][j];
+            if heap.len() < k {
+                heap.push((d, j));
+            } else if let Some(&(max_d, _)) = heap.peek() {
+                if d < max_d {
+                    heap.pop();
+                    heap.push((d, j));
+                }
+            }
+        }
+        for (_, j) in heap {
+            let (a, b) = if i < j { (i, j) } else { (j, i) };
+            included.insert((a, b));
         }
     }
+
+    let mut terms: Vec<StressTerm> = included.into_iter().map(|(i, j)| {
+        let d = dists[i][j] as f64;
+        let w = 1.0 / (d * d);
+        StressTerm { i, j, d, w }
+    }).collect();
+    terms.sort_unstable_by(|a, b| (a.i, a.j).cmp(&(b.i, b.j)));
     terms
 }
 
@@ -249,10 +321,10 @@ pub fn compute_layout_3d(
     graph: &DiGraph<GraphNode, ()>,
     existing: Option<&HashMap<String, (f64, f64, f64)>>,
     settings: &Layout3dSettings,
-) -> HashMap<String, (f64, f64, f64)> {
+) -> Layout3dResult {
     let node_count = graph.node_count();
     if node_count == 0 {
-        return HashMap::new();
+        return Layout3dResult { positions: HashMap::new(), stress: 0.0 };
     }
 
     let node_indices: Vec<NodeIndex> = graph.node_indices().collect();
@@ -269,6 +341,7 @@ pub fn compute_layout_3d(
         pos[i * 3 + 2] = z;
     }
 
+    let mut stress = 0.0;
     if settings.epochs > 0 && node_count > 1 {
         let (dists, _) = compute_shortest_paths(graph);
         let terms = build_terms(&dists);
@@ -279,13 +352,17 @@ pub fn compute_layout_3d(
         for &eta in &schedule {
             sgd_epoch(&mut pos, &terms, eta, &mut rng);
         }
+
+        stress = calculate_stress_3d(&pos, &terms);
     }
 
-    id_list
+    let positions = id_list
         .into_iter()
         .enumerate()
         .map(|(i, id)| (id, (pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2])))
-        .collect()
+        .collect();
+
+    Layout3dResult { positions, stress }
 }
 
 #[cfg(test)]
@@ -693,18 +770,28 @@ mod tests {
     }
 
     #[test]
+    fn layout_3d_result_is_clone_debug() {
+        let r = Layout3dResult { positions: HashMap::new(), stress: 0.0 };
+        let r2 = r.clone();
+        assert_eq!(r2.stress, 0.0);
+        let _ = format!("{:?}", r);
+    }
+
+    #[test]
     fn compute_layout_3d_empty_graph() {
         let g: DiGraph<GraphNode, ()> = DiGraph::new();
         let result = compute_layout_3d(&g, None, &Layout3dSettings::default());
-        assert!(result.is_empty());
+        assert!(result.positions.is_empty());
+        assert_eq!(result.stress, 0.0);
     }
 
     #[test]
     fn compute_layout_3d_single_node() {
         let g = make_graph(&["solo"], &[]);
         let result = compute_layout_3d(&g, None, &Layout3dSettings::default());
-        assert_eq!(result.len(), 1);
-        let (x, y, z) = result["solo"];
+        assert_eq!(result.positions.len(), 1);
+        assert_eq!(result.stress, 0.0);
+        let (x, y, z) = result.positions["solo"];
         assert!(x.is_finite());
         assert!(y.is_finite());
         assert!(z.is_finite());
@@ -717,7 +804,7 @@ mod tests {
         let r1 = compute_layout_3d(&g, None, &s);
         let r2 = compute_layout_3d(&g, None, &s);
         for id in ["a", "b", "c"] {
-            assert_eq!(r1[id], r2[id], "node {id} differs between runs");
+            assert_eq!(r1.positions[id], r2.positions[id], "node {id} differs between runs");
         }
     }
 
@@ -728,8 +815,8 @@ mod tests {
         let r = compute_layout_3d(&g, None, &s);
 
         let dist = |a: &str, b: &str| {
-            let (ax, ay, az) = r[a];
-            let (bx, by, bz) = r[b];
+            let (ax, ay, az) = r.positions[a];
+            let (bx, by, bz) = r.positions[b];
             ((ax - bx).powi(2) + (ay - by).powi(2) + (az - bz).powi(2)).sqrt()
         };
 
@@ -751,8 +838,8 @@ mod tests {
         let r = compute_layout_3d(&g, None, &s);
 
         let dist = |a: &str, b: &str| {
-            let (ax, ay, az) = r[a];
-            let (bx, by, bz) = r[b];
+            let (ax, ay, az) = r.positions[a];
+            let (bx, by, bz) = r.positions[b];
             ((ax - bx).powi(2) + (ay - by).powi(2) + (az - bz).powi(2)).sqrt()
         };
 
@@ -768,8 +855,8 @@ mod tests {
     fn compute_layout_3d_disconnected_finite() {
         let g = make_graph(&["a", "b", "c", "d"], &[(0, 1), (2, 3)]);
         let result = compute_layout_3d(&g, None, &Layout3dSettings::default());
-        assert_eq!(result.len(), 4);
-        for (_, (x, y, z)) in &result {
+        assert_eq!(result.positions.len(), 4);
+        for (_, (x, y, z)) in &result.positions {
             assert!(x.is_finite());
             assert!(y.is_finite());
             assert!(z.is_finite());
@@ -785,8 +872,9 @@ mod tests {
         ].into_iter().collect();
         let s = Layout3dSettings { epochs: 0, ..Default::default() };
         let result = compute_layout_3d(&g, Some(&existing), &s);
-        assert_eq!(result["a"], (1.0, 2.0, 3.0));
-        assert_eq!(result["b"], (4.0, 5.0, 6.0));
+        assert_eq!(result.positions["a"], (1.0, 2.0, 3.0));
+        assert_eq!(result.positions["b"], (4.0, 5.0, 6.0));
+        assert_eq!(result.stress, 0.0);
     }
 
     #[test]
@@ -798,7 +886,7 @@ mod tests {
         let s = Layout3dSettings { epochs: 30, ..Default::default() };
         let r = compute_layout_3d(&g, None, &s);
 
-        let z_vals: Vec<f64> = r.values().map(|&(_, _, z)| z).collect();
+        let z_vals: Vec<f64> = r.positions.values().map(|&(_, _, z)| z).collect();
         let z_mean = z_vals.iter().sum::<f64>() / z_vals.len() as f64;
         let z_var = z_vals.iter().map(|z| (z - z_mean).powi(2)).sum::<f64>() / z_vals.len() as f64;
         assert!(z_var > 0.0, "z dimension should have nonzero variance, got {z_var}");
@@ -811,19 +899,34 @@ mod tests {
         let s2 = Layout3dSettings { epochs: 10, random_seed: Some(222), ..Default::default() };
         let r1 = compute_layout_3d(&g, None, &s1);
         let r2 = compute_layout_3d(&g, None, &s2);
-        assert_ne!(r1["a"], r2["a"], "different seeds should produce different layouts");
+        assert_ne!(r1.positions["a"], r2.positions["a"], "different seeds should produce different layouts");
     }
 
     #[test]
     fn compute_layout_3d_all_isolated() {
         let g = make_graph(&["a", "b", "c"], &[]);
         let result = compute_layout_3d(&g, None, &Layout3dSettings::default());
-        assert_eq!(result.len(), 3);
-        for (_, (x, y, z)) in &result {
+        assert_eq!(result.positions.len(), 3);
+        for (_, (x, y, z)) in &result.positions {
             assert!(x.is_finite());
             assert!(y.is_finite());
             assert!(z.is_finite());
         }
+    }
+
+    #[test]
+    fn compute_layout_3d_reports_nonzero_stress() {
+        let g = make_graph(&["a", "b", "c"], &[(0, 1), (1, 2), (0, 2)]);
+        let s = Layout3dSettings { epochs: 30, ..Default::default() };
+        let result = compute_layout_3d(&g, None, &s);
+        assert!(result.stress >= 0.0, "stress should be non-negative");
+    }
+
+    #[test]
+    fn compute_layout_3d_single_node_zero_stress() {
+        let g = make_graph(&["solo"], &[]);
+        let result = compute_layout_3d(&g, None, &Layout3dSettings::default());
+        assert_eq!(result.stress, 0.0);
     }
 
     #[test]
@@ -875,6 +978,65 @@ mod tests {
         ].into_iter().collect();
         let warm = compute_layout_3d(&g, Some(&custom), &s);
 
-        assert_ne!(cold["a"], warm["a"]);
+        assert_ne!(cold.positions["a"], warm.positions["a"]);
+    }
+
+    // --- Rayon parallel BFS tests ---
+
+    #[test]
+    fn shortest_paths_large_graph_parallel() {
+        let n = 300;
+        let ids: Vec<String> = (0..n).map(|i| format!("n{i}")).collect();
+        let id_refs: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+        let edges: Vec<(usize, usize)> = (0..n - 1).map(|i| (i, i + 1)).collect();
+        let g = make_graph(&id_refs, &edges);
+        let (dists, indices) = compute_shortest_paths(&g);
+        let idx: HashMap<String, usize> = indices.iter().enumerate()
+            .map(|(i, &ni)| (g[ni].id.clone(), i)).collect();
+        assert_eq!(dists[idx["n0"]][idx["n299"]], 299);
+        assert_eq!(dists[idx["n0"]][idx["n0"]], 0);
+        assert_eq!(dists[idx["n149"]][idx["n150"]], 1);
+    }
+
+    #[test]
+    fn shortest_paths_large_disconnected_parallel() {
+        let n = 256;
+        let ids: Vec<String> = (0..n).map(|i| format!("n{i}")).collect();
+        let id_refs: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+        let mut edges: Vec<(usize, usize)> = Vec::new();
+        for i in 0..127 { edges.push((i, i + 1)); }
+        for i in 128..255 { edges.push((i, i + 1)); }
+        let g = make_graph(&id_refs, &edges);
+        let (dists, indices) = compute_shortest_paths(&g);
+        let idx: HashMap<String, usize> = indices.iter().enumerate()
+            .map(|(i, &ni)| (g[ni].id.clone(), i)).collect();
+        assert_eq!(dists[idx["n0"]][idx["n127"]], 127);
+        assert_eq!(dists[idx["n128"]][idx["n255"]], 127);
+        assert_eq!(dists[idx["n0"]][idx["n128"]], 128);
+    }
+
+    #[test]
+    #[ignore]
+    fn layout_3d_10k_under_2s() {
+        let n = 10_000;
+        let ids: Vec<String> = (0..n).map(|i| format!("n{i}")).collect();
+        let id_refs: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+        let mut edges = Vec::new();
+        let mut rng = Xorshift64::new(42);
+        for i in 0..n - 1 { edges.push((i, i + 1)); }
+        for _ in 0..20_000 {
+            let a = rng.next_bounded(n as u64) as usize;
+            let b = rng.next_bounded(n as u64) as usize;
+            if a != b { edges.push((a, b)); }
+        }
+        let g = make_graph(&id_refs, &edges);
+        let settings = Layout3dSettings::default();
+        let start = std::time::Instant::now();
+        let _result = compute_layout_3d(&g, None, &settings);
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "10k layout took {elapsed:?}, expected < 2s"
+        );
     }
 }
