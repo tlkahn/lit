@@ -166,7 +166,7 @@ describe("useKeymaps", () => {
 
     const event = new KeyboardEvent("keydown", {
       key: "g",
-      metaKey: true,
+      ctrlKey: true,
       shiftKey: true,
     });
     document.dispatchEvent(event);
@@ -299,7 +299,7 @@ describe("useKeymaps", () => {
 
     const event = new KeyboardEvent("keydown", {
       key: "m",
-      metaKey: true,
+      ctrlKey: true,
       shiftKey: true,
     });
     document.dispatchEvent(event);
@@ -459,7 +459,7 @@ describe("useKeymaps", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     usePaneStore.setState(createInitialState());
 
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "d", metaKey: true }));
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "d", ctrlKey: true }));
 
     expect(usePaneStore.getState().root.type).toBe("split");
   });
@@ -563,6 +563,27 @@ describe("useKeymaps", () => {
     document.dispatchEvent(event);
 
     expect(preventDefault).not.toHaveBeenCalled();
+  });
+
+  // --- Ctrl vs Cmd distinction (Mac) ---
+
+  it("Ctrl+D must not trigger Mod-d binding on Mac (pane.splitRight)", async () => {
+    const { platform } = await import("./useKeymaps");
+    const originalIsMac = platform.isMac;
+    platform.isMac = true;
+    try {
+      const { result } = await loadHook();
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      usePaneStore.setState(createInitialState());
+
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "d", ctrlKey: true, bubbles: true }),
+      );
+
+      expect(usePaneStore.getState().root.type).toBe("leaf");
+    } finally {
+      platform.isMac = originalIsMac;
+    }
   });
 
   // --- Cycle 13: Integration smoke test ---

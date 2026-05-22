@@ -243,9 +243,19 @@ function ensureCommandsRegistered() {
   });
 }
 
+export const platform = {
+  isMac: /Mac|iPhone|iPad|iPod/.test(navigator.platform),
+};
+
 function keyStringFromEvent(e: KeyboardEvent): string {
   const parts: string[] = [];
-  if (e.metaKey || e.ctrlKey) parts.push("Mod");
+  if (platform.isMac) {
+    if (e.metaKey) parts.push("Mod");
+    if (e.ctrlKey) parts.push("Ctrl");
+  } else {
+    if (e.ctrlKey) parts.push("Mod");
+    if (e.metaKey) parts.push("Meta");
+  }
   if (e.shiftKey) parts.push("Shift");
   if (e.altKey) parts.push("Alt");
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { EditorState, Compartment } from "@codemirror/state";
-import { EditorView, keymap } from "@codemirror/view";
+import { EditorView, keymap, runScopeHandlers } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { defaultKeymap, historyKeymap, undo } from "@codemirror/commands";
 import {
@@ -449,6 +449,163 @@ describe("search & replace", () => {
     expect(view.state.selection.ranges[1]!.from).toBe(8);
     expect(view.state.selection.ranges[1]!.to).toBe(11);
 
+    view.destroy();
+    parent.remove();
+  });
+
+  it("keymapCompartment reconfigure with full user bindings must not collapse multi-selection", () => {
+    _clear();
+    registerHandler("editor.selectNextOccurrence", (...args: unknown[]) => selectNextOccurrence(args[0] as EditorView));
+    const { editorBindings } = resolveKeymaps([{ key: "Ctrl-g", command: "editor.selectNextOccurrence" }]);
+
+    const keymapCompartment = new Compartment();
+    const config = makeConfig();
+    config.keymapCompartment = keymapCompartment;
+    const exts = createExtensions({ ...config, keymapBindings: editorBindings });
+    const state = EditorState.create({ doc: "foo bar foo baz foo", extensions: exts });
+    const parent = document.createElement("div");
+    document.body.appendChild(parent);
+    const view = new EditorView({ state, parent });
+
+    view.dispatch({ selection: { anchor: 1 } });
+    selectNextOccurrence(view);
+    selectNextOccurrence(view);
+    expect(view.state.selection.ranges.length).toBe(2);
+
+    view.dispatch({
+      effects: keymapCompartment.reconfigure(
+        keymap.of([...editorBindings, ...defaultKeymap, ...historyKeymap]),
+      ),
+    });
+
+    selectNextOccurrence(view);
+    expect(view.state.selection.ranges.length).toBe(3);
+
+    _clear();
+    view.destroy();
+    parent.remove();
+  });
+
+  it("searchKeymap findNext does not intercept user Ctrl-g binding", () => {
+    _clear();
+    registerHandler("editor.selectNextOccurrence", (...args: unknown[]) => selectNextOccurrence(args[0] as EditorView));
+    const { editorBindings } = resolveKeymaps([{ key: "Ctrl-g", command: "editor.selectNextOccurrence" }]);
+
+    const keymapCompartment = new Compartment();
+    const config = makeConfig();
+    config.keymapCompartment = keymapCompartment;
+    const exts = createExtensions({ ...config, keymapBindings: editorBindings });
+    const state = EditorState.create({ doc: "foo bar foo baz foo", extensions: exts });
+    const parent = document.createElement("div");
+    document.body.appendChild(parent);
+    const view = new EditorView({ state, parent });
+
+    view.dispatch({ selection: { anchor: 1 } });
+
+    const pressCtrlG = () => runScopeHandlers(
+      view,
+      new KeyboardEvent("keydown", { key: "g", ctrlKey: true, bubbles: true }),
+      "editor",
+    );
+
+    pressCtrlG();
+    expect(view.state.selection.main.from).toBe(0);
+    expect(view.state.selection.main.to).toBe(3);
+
+    pressCtrlG();
+    expect(view.state.selection.ranges.length).toBe(2);
+
+    _clear();
+    view.destroy();
+    parent.remove();
+  });
+
+  it("repeated Ctrl-g via runScopeHandlers builds multi-selection", () => {
+    _clear();
+    registerHandler("editor.selectNextOccurrence", (...args: unknown[]) => selectNextOccurrence(args[0] as EditorView));
+    const { editorBindings } = resolveKeymaps([{ key: "Ctrl-g", command: "editor.selectNextOccurrence" }]);
+
+    const keymapCompartment = new Compartment();
+    const config = makeConfig();
+    config.keymapCompartment = keymapCompartment;
+    const exts = createExtensions({ ...config, keymapBindings: editorBindings });
+    const state = EditorState.create({ doc: "foo bar foo baz foo", extensions: exts });
+    const parent = document.createElement("div");
+    document.body.appendChild(parent);
+    const view = new EditorView({ state, parent });
+
+    view.dispatch({ selection: { anchor: 1 } });
+
+    const pressCtrlG = () => runScopeHandlers(
+      view,
+      new KeyboardEvent("keydown", { key: "g", ctrlKey: true, bubbles: true }),
+      "editor",
+    );
+
+    const first = pressCtrlG();
+    expect(first).toBe(true);
+    expect(view.state.selection.ranges.length).toBe(1);
+    expect(view.state.selection.main.from).toBe(0);
+    expect(view.state.selection.main.to).toBe(3);
+
+    const second = pressCtrlG();
+    expect(second).toBe(true);
+    expect(view.state.selection.ranges.length).toBe(2);
+
+    const third = pressCtrlG();
+    expect(third).toBe(true);
+    expect(view.state.selection.ranges.length).toBe(3);
+
+    _clear();
+    view.destroy();
+    parent.remove();
+  });
+
+  it("repeated Ctrl-g builds multi-selection even with keymapCompartment reconfigure between presses", () => {
+    _clear();
+    registerHandler("editor.selectNextOccurrence", (...args: unknown[]) => selectNextOccurrence(args[0] as EditorView));
+    const { editorBindings } = resolveKeymaps([{ key: "Ctrl-g", command: "editor.selectNextOccurrence" }]);
+
+    const keymapCompartment = new Compartment();
+    const config = makeConfig();
+    config.keymapCompartment = keymapCompartment;
+    const exts = createExtensions({ ...config, keymapBindings: editorBindings });
+    const state = EditorState.create({ doc: "foo bar foo baz foo", extensions: exts });
+    const parent = document.createElement("div");
+    document.body.appendChild(parent);
+    const view = new EditorView({ state, parent });
+
+    view.dispatch({ selection: { anchor: 1 } });
+
+    const pressCtrlG = () => runScopeHandlers(
+      view,
+      new KeyboardEvent("keydown", { key: "g", ctrlKey: true, bubbles: true }),
+      "editor",
+    );
+
+    pressCtrlG();
+    expect(view.state.selection.ranges.length).toBe(1);
+    expect(view.state.selection.main.from).toBe(0);
+
+    view.dispatch({
+      effects: keymapCompartment.reconfigure(
+        keymap.of([...editorBindings, ...defaultKeymap, ...historyKeymap]),
+      ),
+    });
+
+    pressCtrlG();
+    expect(view.state.selection.ranges.length).toBe(2);
+
+    view.dispatch({
+      effects: keymapCompartment.reconfigure(
+        keymap.of([...editorBindings, ...defaultKeymap, ...historyKeymap]),
+      ),
+    });
+
+    pressCtrlG();
+    expect(view.state.selection.ranges.length).toBe(3);
+
+    _clear();
     view.destroy();
     parent.remove();
   });

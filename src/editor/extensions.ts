@@ -68,7 +68,6 @@ export function createExtensions(config: ExtensionConfig): Extension[] {
     EditorState.allowMultipleSelections.of(true),
     history(),
     search(),
-    keymap.of(searchKeymap),
     searchTheme,
     Prec.highest(keymap.of([
       { key: "Enter", run: enterInList },
@@ -78,6 +77,7 @@ export function createExtensions(config: ExtensionConfig): Extension[] {
     config.keymapCompartment.of(
       keymap.of([...(config.keymapBindings ?? []), ...defaultKeymap, ...historyKeymap]),
     ),
+    keymap.of(searchKeymap),
     jumpHistoryExtension(),
     drawSelection(),
     EditorView.lineWrapping,
