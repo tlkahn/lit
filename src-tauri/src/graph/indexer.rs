@@ -1031,6 +1031,20 @@ impl GraphIndex {
         })?.clear_positions_typed("2d")
     }
 
+    pub fn get_positions_typed(&self, layout_type: Option<&str>) -> HashMap<String, Position> {
+        match layout_type.unwrap_or("2d") {
+            "3d" => self.get_positions_3d(),
+            _ => self.get_positions_2d(),
+        }
+    }
+
+    pub fn clear_positions_typed(&self, layout_type: Option<&str>) -> Result<(), GraphError> {
+        match layout_type.unwrap_or("2d") {
+            "3d" => self.clear_positions_3d(),
+            _ => self.clear_positions_2d(),
+        }
+    }
+
     pub fn clear_positions_3d(&self) -> Result<(), GraphError> {
         self.positions_3d.lock().unwrap().clear();
         self.store.lock().map_err(|e| {

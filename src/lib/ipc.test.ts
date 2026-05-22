@@ -699,7 +699,13 @@ describe("ipc", () => {
   it("resetGraphLayout calls correct command", async () => {
     await resetGraphLayout();
     const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("reset_graph_layout");
+    expect(invoke).toHaveBeenCalledWith("reset_graph_layout", { layoutType: null });
+  });
+
+  it("resetGraphLayout passes layoutType when provided", async () => {
+    await resetGraphLayout("3d");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("reset_graph_layout", { layoutType: "3d" });
   });
 
   it("computeLayout3d calls correct command with no settings", async () => {
@@ -878,6 +884,15 @@ describe("ipc", () => {
     const positions = await getGraphPositions();
     expect(positions["page-1"]).toEqual({ x: 1.0, y: 2.0, z: 0.0 });
     expect(positions["page-2"]).toEqual({ x: 3.0, y: 4.0, z: 0.0 });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("get_graph_positions", { layoutType: null });
+  });
+
+  it("getGraphPositions passes layoutType when provided", async () => {
+    const positions = await getGraphPositions("3d");
+    expect(positions["page-1"]).toEqual({ x: 1.0, y: 2.0, z: 0.0 });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("get_graph_positions", { layoutType: "3d" });
   });
 
   it("pdfOpen calls pdf_open with path", async () => {

@@ -133,9 +133,10 @@ pub fn get_graph_positions(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
     graph_state: State<Arc<GraphRegistry>>,
+    layout_type: Option<String>,
 ) -> Result<HashMap<String, Position>, String> {
     with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
-        Ok(gi.get_positions())
+        Ok(gi.get_positions_typed(layout_type.as_deref()))
     })
 }
 
@@ -220,9 +221,10 @@ pub fn reset_graph_layout(
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
     graph_state: State<Arc<GraphRegistry>>,
     app_handle: tauri::AppHandle,
+    layout_type: Option<String>,
 ) -> Result<(), String> {
     with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
-        gi.clear_positions()
+        gi.clear_positions_typed(layout_type.as_deref())
     })?;
     let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
     let gi = graph_state.indices.lock().unwrap().get(&root).cloned();
@@ -1064,5 +1066,61 @@ mod tests {
             },
         );
         assert_eq!(layout_count.load(Ordering::SeqCst), 1);
+    }
+
+    // --- get_graph_positions / reset_graph_layout with layout_type ---
+
+    #[test]
+    fn get_positions_typed_defaults_to_2d() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
+        std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        gi.compute_layout_background(&crate::graph::layout::LayoutSettings::default());
+        let positions = gi.get_positions_typed(None);
+        assert_eq!(positions.len(), 2);
+        assert!(positions.values().all(|p| p.z == 0.0));
+    }
+
+    #[test]
+    fn get_positions_typed_returns_3d() {
+        use crate::graph::layout3d::Layout3dSettings;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
+        std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        gi.compute_layout_3d_background(&Layout3dSettings::default());
+        let positions = gi.get_positions_typed(Some("3d"));
+        assert_eq!(positions.len(), 2);
+        let has_nonzero_z = positions.values().any(|p| p.z != 0.0);
+        assert!(has_nonzero_z, "3D positions should have non-zero z");
+    }
+
+    #[test]
+    fn clear_positions_typed_clears_only_2d() {
+        use crate::graph::layout3d::Layout3dSettings;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
+        std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        gi.compute_layout_background(&crate::graph::layout::LayoutSettings::default());
+        gi.compute_layout_3d_background(&Layout3dSettings::default());
+        gi.clear_positions_typed(None).unwrap();
+        assert!(gi.get_positions_2d().is_empty());
+        assert_eq!(gi.get_positions_3d().len(), 2);
+    }
+
+    #[test]
+    fn clear_positions_typed_clears_only_3d() {
+        use crate::graph::layout3d::Layout3dSettings;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
+        std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        gi.compute_layout_background(&crate::graph::layout::LayoutSettings::default());
+        gi.compute_layout_3d_background(&Layout3dSettings::default());
+        gi.clear_positions_typed(Some("3d")).unwrap();
+        assert_eq!(gi.get_positions_2d().len(), 2);
+        assert!(gi.get_positions_3d().is_empty());
     }
 }

@@ -451,8 +451,8 @@ export async function rebuildGraphIndex(): Promise<string> {
   return invoke<string>("rebuild_graph_index");
 }
 
-export async function resetGraphLayout(): Promise<void> {
-  return invoke<void>("reset_graph_layout");
+export async function resetGraphLayout(layoutType?: string): Promise<void> {
+  return invoke<void>("reset_graph_layout", { layoutType: layoutType ?? null });
 }
 
 export interface Layout3dSettings {
@@ -522,8 +522,8 @@ export async function listPagesByTag(tag: string, limit?: number): Promise<TagPa
   return invoke<TagPageResult[]>("list_pages_by_tag", { tag, limit: limit ?? null });
 }
 
-export async function getGraphPositions(): Promise<Record<string, { x: number; y: number; z: number }>> {
-  return invoke<Record<string, { x: number; y: number; z: number }>>("get_graph_positions");
+export async function getGraphPositions(layoutType?: string): Promise<Record<string, { x: number; y: number; z: number }>> {
+  return invoke<Record<string, { x: number; y: number; z: number }>>("get_graph_positions", { layoutType: layoutType ?? null });
 }
 
 export async function ensureGraphReady(path: string): Promise<void> {
