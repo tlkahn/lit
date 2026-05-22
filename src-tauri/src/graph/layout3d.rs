@@ -1079,4 +1079,272 @@ mod tests {
             "10k layout took {elapsed:?}, expected < 2s"
         );
     }
+
+    #[test]
+    #[ignore]
+    fn smoke_test_3d_visualize() {
+        // --- Build a multi-cluster graph ---
+        let mut all_ids: Vec<String> = Vec::new();
+        let mut all_edges: Vec<(usize, usize)> = Vec::new();
+        let mut cluster_map: Vec<usize> = Vec::new(); // cluster index per node
+
+        let cluster_sizes = [15, 12, 10, 8, 5];
+        let mut rng = Xorshift64::new(123);
+        let mut offset = 0usize;
+
+        for (ci, &size) in cluster_sizes.iter().enumerate() {
+            for i in 0..size {
+                all_ids.push(format!("c{ci}_n{i}"));
+                cluster_map.push(ci);
+            }
+            // Ring within cluster
+            for i in 0..size {
+                all_edges.push((offset + i, offset + (i + 1) % size));
+            }
+            // Random internal chords
+            let extra = size * 2 / 3;
+            for _ in 0..extra {
+                let a = rng.next_bounded(size as u64) as usize;
+                let b = rng.next_bounded(size as u64) as usize;
+                if a != b {
+                    all_edges.push((offset + a, offset + b));
+                }
+            }
+            offset += size;
+        }
+
+        // Bridge edges between clusters
+        let bridges = [(0, 1), (1, 2), (2, 3), (3, 4), (0, 3), (1, 4)];
+        let mut cum = vec![0usize];
+        for &s in &cluster_sizes {
+            cum.push(cum.last().unwrap() + s);
+        }
+        for &(ca, cb) in &bridges {
+            let a = cum[ca] + rng.next_bounded(cluster_sizes[ca] as u64) as usize;
+            let b = cum[cb] + rng.next_bounded(cluster_sizes[cb] as u64) as usize;
+            all_edges.push((a, b));
+        }
+
+        // 3 isolated nodes
+        for i in 0..3 {
+            all_ids.push(format!("isolated_{i}"));
+            cluster_map.push(cluster_sizes.len());
+        }
+
+        let id_refs: Vec<&str> = all_ids.iter().map(|s| s.as_str()).collect();
+        let graph = make_graph(&id_refs, &all_edges);
+
+        // --- Compute 3D layout ---
+        let settings = Layout3dSettings {
+            epochs: 30,
+            epsilon: 0.01,
+            random_seed: Some(42),
+        };
+        let result = compute_layout_3d(&graph, None, &settings);
+
+        // --- Build JSON payload ---
+        let nodes_json: Vec<String> = all_ids
+            .iter()
+            .enumerate()
+            .map(|(i, id)| {
+                let (x, y, z) = result.positions[id];
+                let c = cluster_map[i];
+                format!(r#"{{"id":"{}","x":{:.4},"y":{:.4},"z":{:.4},"cluster":{}}}"#, id, x, y, z, c)
+            })
+            .collect();
+
+        let edges_json: Vec<String> = all_edges
+            .iter()
+            .map(|&(s, t)| format!(r#"{{"source":"{}","target":"{}"}}"#, all_ids[s], all_ids[t]))
+            .collect();
+
+        let data_json = format!(
+            r#"{{"nodes":[{}],"edges":[{}],"stress":{:.6},"nodeCount":{},"edgeCount":{}}}"#,
+            nodes_json.join(","),
+            edges_json.join(","),
+            result.stress,
+            all_ids.len(),
+            all_edges.len(),
+        );
+
+        // --- Generate HTML ---
+        let html = format!(r##"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>3D Layout Smoke Test</title>
+<style>
+  body {{ margin: 0; overflow: hidden; background: #0a0a0f; font-family: system-ui, sans-serif; }}
+  #info {{
+    position: absolute; top: 12px; left: 12px;
+    color: #aab; font-size: 13px; line-height: 1.6;
+    background: rgba(10,10,20,0.85); padding: 10px 14px; border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.08);
+  }}
+  #info b {{ color: #dde; }}
+  #tooltip {{
+    position: absolute; display: none;
+    background: rgba(20,20,40,0.92); color: #fff;
+    padding: 5px 10px; border-radius: 4px; font-size: 12px;
+    pointer-events: none; border: 1px solid rgba(255,255,255,0.15);
+  }}
+</style>
+</head>
+<body>
+<div id="info"></div>
+<div id="tooltip"></div>
+<script type="importmap">
+{{
+  "imports": {{
+    "three": "https://unpkg.com/three@0.164.1/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.164.1/examples/jsm/"
+  }}
+}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import {{ OrbitControls }} from 'three/addons/controls/OrbitControls.js';
+
+const DATA = {data_json};
+
+const COLORS = [
+  0x4fc3f7, // blue
+  0xef5350, // red
+  0x66bb6a, // green
+  0xffa726, // orange
+  0xab47bc, // purple
+  0x78909c, // grey (isolated)
+];
+
+const info = document.getElementById('info');
+info.innerHTML = `<b>3D Layout Smoke Test</b><br>`
+  + `Nodes: ${{DATA.nodeCount}} &nbsp; Edges: ${{DATA.edgeCount}}<br>`
+  + `Stress: ${{DATA.stress.toFixed(4)}}<br>`
+  + `<span style="color:#667">drag to orbit · scroll to zoom</span>`;
+
+const tooltip = document.getElementById('tooltip');
+
+// --- Scene setup ---
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 10000);
+const renderer = new THREE.WebGLRenderer({{ antialias: true }});
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.12;
+
+// --- Compute bounding box and center ---
+let cx = 0, cy = 0, cz = 0;
+for (const n of DATA.nodes) {{ cx += n.x; cy += n.y; cz += n.z; }}
+cx /= DATA.nodes.length; cy /= DATA.nodes.length; cz /= DATA.nodes.length;
+
+let maxR = 0;
+for (const n of DATA.nodes) {{
+  const r = Math.sqrt((n.x-cx)**2 + (n.y-cy)**2 + (n.z-cz)**2);
+  if (r > maxR) maxR = r;
+}}
+const scale = 100 / Math.max(maxR, 1);
+
+// --- Edges ---
+const edgeGeo = new THREE.BufferGeometry();
+const edgePositions = [];
+const posById = {{}};
+for (const n of DATA.nodes) {{
+  posById[n.id] = [(n.x-cx)*scale, (n.y-cy)*scale, (n.z-cz)*scale];
+}}
+for (const e of DATA.edges) {{
+  const s = posById[e.source], t = posById[e.target];
+  if (s && t) {{ edgePositions.push(...s, ...t); }}
+}}
+edgeGeo.setAttribute('position', new THREE.Float32BufferAttribute(edgePositions, 3));
+const edgeMat = new THREE.LineBasicMaterial({{ color: 0x334455, transparent: true, opacity: 0.5 }});
+scene.add(new THREE.LineSegments(edgeGeo, edgeMat));
+
+// --- Nodes ---
+const sphereGeo = new THREE.SphereGeometry(1.2, 16, 12);
+const nodeMeshes = [];
+for (const n of DATA.nodes) {{
+  const color = COLORS[n.cluster % COLORS.length];
+  const mat = new THREE.MeshStandardMaterial({{ color, roughness: 0.5, metalness: 0.3 }});
+  const mesh = new THREE.Mesh(sphereGeo, mat);
+  const p = posById[n.id];
+  mesh.position.set(p[0], p[1], p[2]);
+  mesh.userData = n;
+  scene.add(mesh);
+  nodeMeshes.push(mesh);
+}}
+
+// --- Lights ---
+scene.add(new THREE.AmbientLight(0x445566, 1.5));
+const dir = new THREE.DirectionalLight(0xffffff, 1.2);
+dir.position.set(50, 80, 60);
+scene.add(dir);
+
+// --- Camera ---
+camera.position.set(0, 0, 200);
+controls.target.set(0, 0, 0);
+controls.update();
+
+// --- Hover tooltip via raycasting ---
+const raycaster = new THREE.Raycaster();
+raycaster.params.Mesh = {{ threshold: 0.5 }};
+const mouse = new THREE.Vector2();
+let hoveredMesh = null;
+
+renderer.domElement.addEventListener('pointermove', (e) => {{
+  mouse.x = (e.clientX / innerWidth) * 2 - 1;
+  mouse.y = -(e.clientY / innerHeight) * 2 + 1;
+  raycaster.setFromCamera(mouse, camera);
+  const hits = raycaster.intersectObjects(nodeMeshes);
+  if (hits.length > 0) {{
+    const mesh = hits[0].object;
+    if (hoveredMesh !== mesh) {{
+      if (hoveredMesh) hoveredMesh.material.emissive.setHex(0);
+      hoveredMesh = mesh;
+      hoveredMesh.material.emissive.setHex(0x222222);
+    }}
+    const n = mesh.userData;
+    tooltip.style.display = 'block';
+    tooltip.style.left = (e.clientX + 12) + 'px';
+    tooltip.style.top = (e.clientY - 8) + 'px';
+    tooltip.textContent = `${{n.id}}  cluster=${{n.cluster}}  (${{n.x.toFixed(1)}}, ${{n.y.toFixed(1)}}, ${{n.z.toFixed(1)}})`;
+  }} else {{
+    if (hoveredMesh) {{ hoveredMesh.material.emissive.setHex(0); hoveredMesh = null; }}
+    tooltip.style.display = 'none';
+  }}
+}});
+
+// --- Resize ---
+addEventListener('resize', () => {{
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+}});
+
+// --- Animate ---
+function animate() {{
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}}
+animate();
+</script>
+</body>
+</html>"##);
+
+        // --- Write to file ---
+        let out_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target");
+        std::fs::create_dir_all(&out_dir).unwrap();
+        let path = out_dir.join("layout3d_smoke.html");
+        std::fs::write(&path, html).unwrap();
+
+        println!("\n=== 3D Layout Smoke Test ===");
+        println!("Nodes: {}  Edges: {}", all_ids.len(), all_edges.len());
+        println!("Stress: {:.4}", result.stress);
+        println!("Written: {}", path.display());
+        println!("Open:    open {}", path.display());
+    }
 }
