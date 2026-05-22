@@ -54,7 +54,13 @@ impl Xorshift64 {
     }
 
     fn next_bounded(&mut self, n: u64) -> u64 {
-        self.next() % n
+        let threshold = n.wrapping_neg() % n;
+        loop {
+            let x = self.next();
+            if x >= threshold {
+                return x % n;
+            }
+        }
     }
 }
 
@@ -68,12 +74,16 @@ fn compute_shortest_paths(graph: &DiGraph<GraphNode, ()>) -> (Vec<Vec<u32>>, Vec
     let idx_of: HashMap<NodeIndex, usize> = indices.iter().enumerate().map(|(i, &ni)| (ni, i)).collect();
 
     let mut adj: Vec<Vec<usize>> = vec![vec![]; n];
+    let mut seen = std::collections::HashSet::new();
     for edge in graph.edge_indices() {
         if let Some((s, t)) = graph.edge_endpoints(edge) {
             let si = idx_of[&s];
             let ti = idx_of[&t];
-            adj[si].push(ti);
-            adj[ti].push(si);
+            let key = if si <= ti { (si, ti) } else { (ti, si) };
+            if seen.insert(key) {
+                adj[si].push(ti);
+                adj[ti].push(si);
+            }
         }
     }
 
@@ -223,9 +233,11 @@ fn hash_position_3d(id: &str) -> (f64, f64, f64) {
 }
 
 fn derive_seed(graph: &DiGraph<GraphNode, ()>) -> u64 {
+    let mut ids: Vec<&str> = graph.node_indices().map(|ni| graph[ni].id.as_str()).collect();
+    ids.sort_unstable();
     let mut h = DefaultHasher::new();
-    for ni in graph.node_indices() {
-        graph[ni].id.hash(&mut h);
+    for id in ids {
+        id.hash(&mut h);
     }
     let s = h.finish();
     if s == 0 { 1 } else { s }
@@ -241,8 +253,7 @@ pub fn compute_layout_3d(
         return HashMap::new();
     }
 
-    let (dists, node_indices) = compute_shortest_paths(graph);
-
+    let node_indices: Vec<NodeIndex> = graph.node_indices().collect();
     let id_list: Vec<String> = node_indices.iter().map(|&ni| graph[ni].id.clone()).collect();
 
     let mut pos = vec![0.0_f64; node_count * 3];
@@ -257,6 +268,7 @@ pub fn compute_layout_3d(
     }
 
     if settings.epochs > 0 && node_count > 1 {
+        let (dists, _) = compute_shortest_paths(graph);
         let terms = build_terms(&dists);
         let schedule = compute_schedule(&terms, settings.epochs, settings.epsilon);
         let seed = settings.random_seed.unwrap_or_else(|| derive_seed(graph));
@@ -775,5 +787,57 @@ mod tests {
             assert!(y.is_finite());
             assert!(z.is_finite());
         }
+    }
+
+    #[test]
+    fn shortest_paths_bidirectional_no_duplicates() {
+        let mut g = DiGraph::new();
+        let a = g.add_node(GraphNode { id: "a".into(), title: "a".into(), is_stub: false });
+        let b = g.add_node(GraphNode { id: "b".into(), title: "b".into(), is_stub: false });
+        let c = g.add_node(GraphNode { id: "c".into(), title: "c".into(), is_stub: false });
+        g.add_edge(a, b, ());
+        g.add_edge(b, a, ());
+        g.add_edge(b, c, ());
+        g.add_edge(c, b, ());
+
+        let (dists, indices) = compute_shortest_paths(&g);
+        let idx: HashMap<String, usize> = indices.iter().enumerate()
+            .map(|(i, &ni)| (g[ni].id.clone(), i)).collect();
+
+        assert_eq!(dists[idx["a"]][idx["b"]], 1);
+        assert_eq!(dists[idx["a"]][idx["c"]], 2);
+        assert_eq!(dists[idx["b"]][idx["c"]], 1);
+    }
+
+    #[test]
+    fn derive_seed_order_independent() {
+        let mut g1 = DiGraph::new();
+        g1.add_node(GraphNode { id: "alpha".into(), title: "alpha".into(), is_stub: false });
+        g1.add_node(GraphNode { id: "beta".into(), title: "beta".into(), is_stub: false });
+        g1.add_node(GraphNode { id: "gamma".into(), title: "gamma".into(), is_stub: false });
+
+        let mut g2 = DiGraph::new();
+        g2.add_node(GraphNode { id: "gamma".into(), title: "gamma".into(), is_stub: false });
+        g2.add_node(GraphNode { id: "alpha".into(), title: "alpha".into(), is_stub: false });
+        g2.add_node(GraphNode { id: "beta".into(), title: "beta".into(), is_stub: false });
+
+        assert_eq!(derive_seed(&g1), derive_seed(&g2));
+    }
+
+    #[test]
+    fn compute_layout_3d_warm_start_uses_existing_positions() {
+        let g = make_graph(&["a", "b", "c"], &[(0, 1), (1, 2), (0, 2)]);
+        let s = Layout3dSettings { epochs: 10, ..Default::default() };
+
+        let cold = compute_layout_3d(&g, None, &s);
+
+        let custom: HashMap<String, (f64, f64, f64)> = [
+            ("a".into(), (100.0, 0.0, 0.0)),
+            ("b".into(), (0.0, 100.0, 0.0)),
+            ("c".into(), (0.0, 0.0, 100.0)),
+        ].into_iter().collect();
+        let warm = compute_layout_3d(&g, Some(&custom), &s);
+
+        assert_ne!(cold["a"], warm["a"]);
     }
 }
