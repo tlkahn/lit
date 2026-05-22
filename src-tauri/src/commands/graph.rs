@@ -1033,7 +1033,7 @@ mod tests {
         std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         gi.compute_layout_3d_background(&Layout3dSettings::default());
-        let positions = gi.get_positions();
+        let positions = gi.get_positions_3d();
         assert_eq!(positions.len(), 2);
         let has_nonzero_z = positions.values().any(|p| p.z != 0.0);
         assert!(has_nonzero_z, "3D layout should produce non-zero z");
