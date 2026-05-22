@@ -7,7 +7,7 @@ use tracing::{debug, info};
 use super::error::GraphError;
 use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, IndexableAnnotation, LinkEntry, ParsedNode, Stats, TagPageResult, TagSearchResult};
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 10;
+pub const CURRENT_SCHEMA_VERSION: i64 = 11;
 
 fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rusqlite::Error> {
     Ok(AnnotationSearchResult {
@@ -235,6 +235,14 @@ impl Store {
             )?;
         }
 
+        if version < 11 {
+            info!(from = version, to = 11, "migrating schema: secondary index on node_positions(layout_type)");
+            self.conn.execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_node_positions_layout_type ON node_positions(layout_type);
+                 UPDATE meta SET value = '11' WHERE key = 'schema_version';"
+            )?;
+        }
+
         Ok(())
     }
 
@@ -335,6 +343,9 @@ impl Store {
         self.clear_positions_typed("2d")
     }
 
+    // Uses unchecked_transaction because Store is !Send/!Sync and single-threaded,
+    // but bypasses Rust's compile-time single-transaction guarantee. Revisit if
+    // Store ever becomes shared across threads.
     pub fn save_positions_typed(&self, positions: &HashMap<String, super::types::Position>, layout_type: &str) -> Result<(), GraphError> {
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
@@ -1060,7 +1071,7 @@ mod tests {
     #[test]
     fn schema_version_readable_via_get_meta() {
         let store = Store::open_memory().unwrap();
-        assert_eq!(store.get_meta("schema_version").unwrap(), Some("10".into()));
+        assert_eq!(store.get_meta("schema_version").unwrap(), Some("11".into()));
     }
 
     // --- Phase 5: Node CRUD ---
@@ -2038,8 +2049,8 @@ mod tests {
     // --- Cycle 2: Schema v6 ---
 
     #[test]
-    fn schema_version_is_ten() {
-        assert_eq!(CURRENT_SCHEMA_VERSION, 10);
+    fn schema_version_is_eleven() {
+        assert_eq!(CURRENT_SCHEMA_VERSION, 11);
     }
 
     #[test]
@@ -2958,5 +2969,78 @@ mod tests {
         assert!(!loaded_2d.contains_key("A"), "2d position should be removed");
         let loaded_3d = store.load_positions_typed("3d").unwrap();
         assert!(!loaded_3d.contains_key("A"), "3d position should be removed");
+    }
+
+    // --- Cycle 1 & 3: v11 secondary index on layout_type ---
+
+    #[test]
+    fn node_positions_has_layout_type_index() {
+        let store = Store::open_memory().unwrap();
+        let count: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_node_positions_layout_type' AND tbl_name='node_positions'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "idx_node_positions_layout_type should exist");
+    }
+
+    #[test]
+    fn v10_to_v11_migration_adds_layout_type_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
+            conn.execute_batch(
+                "CREATE TABLE nodes (
+                    id TEXT PRIMARY KEY, title TEXT, first_paragraph TEXT,
+                    frontmatter JSON, mtime INTEGER, is_stub INTEGER DEFAULT 0,
+                    tags_text TEXT DEFAULT ''
+                );
+                CREATE TABLE tags (node_id TEXT, tag TEXT);
+                CREATE TABLE aliases (node_id TEXT, alias TEXT);
+                CREATE TABLE edges (source TEXT, target TEXT, context TEXT, raw_target TEXT DEFAULT '', source_line INTEGER DEFAULT 0);
+                CREATE TABLE sync (path TEXT PRIMARY KEY, mtime INTEGER);
+                CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+                CREATE TABLE annotations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    node_id TEXT NOT NULL, annotation_type TEXT NOT NULL,
+                    certainty TEXT NOT NULL, body TEXT, date TEXT,
+                    source_line INTEGER NOT NULL, char_start INTEGER NOT NULL, char_end INTEGER NOT NULL,
+                    scope_kind TEXT NOT NULL, scope_value TEXT NOT NULL
+                );
+                CREATE VIRTUAL TABLE annotations_fts USING fts5(
+                    body, node_id UNINDEXED, annotation_type UNINDEXED,
+                    tokenize = 'trigram case_sensitive 0'
+                );
+                CREATE TABLE node_positions (
+                    node_id TEXT NOT NULL,
+                    layout_type TEXT NOT NULL DEFAULT '2d',
+                    x REAL NOT NULL,
+                    y REAL NOT NULL,
+                    z REAL NOT NULL DEFAULT 0.0,
+                    PRIMARY KEY (node_id, layout_type)
+                );
+                INSERT INTO meta(key, value) VALUES ('schema_version', '10');
+                INSERT INTO node_positions(node_id, layout_type, x, y, z) VALUES ('a.md', '2d', 1.0, 2.0, 0.0);",
+            ).unwrap();
+        }
+
+        let store = Store::open(&db_path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+
+        let idx_count: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_node_positions_layout_type'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(idx_count, 1, "index should be created by v11 migration");
     }
 }
