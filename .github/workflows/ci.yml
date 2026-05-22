@@ -31,10 +31,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
-        with:
-          repository: tlkahn/llm-rs
-          path: ../llm-rs
+      - name: Clone llm-rs
+        run: git clone --depth 1 https://github.com/tlkahn/llm-rs.git ../llm-rs
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
         with:
