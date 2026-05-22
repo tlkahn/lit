@@ -66,7 +66,7 @@ describe("GraphView", () => {
             ],
             edges: [["a.md", "b.md"]],
             pagerank: { "a.md": 0.4, "b.md": 0.6 },
-            positions: {},
+            positions_2d: {},
           };
         case "get_graph_positions":
           return {};
@@ -228,7 +228,7 @@ describe("GraphView", () => {
 
   it("positions come from Rust IPC, not localStorage", async () => {
     localStorage.setItem("lit-graph-pos:/test/ws:full", JSON.stringify({
-      positions: { "a.md": { x: 999, y: 999 }, "b.md": { x: 999, y: 999 } },
+      positions_2d: { "a.md": { x: 999, y: 999 }, "b.md": { x: 999, y: 999 } },
       timestamp: Date.now(),
     }));
 
@@ -242,7 +242,7 @@ describe("GraphView", () => {
             ],
             edges: [["a.md", "b.md"]],
             pagerank: { "a.md": 0.4, "b.md": 0.6 },
-            positions: { "a.md": { x: 42, y: 42 }, "b.md": { x: 42, y: 42 } },
+            positions_2d: { "a.md": { x: 42, y: 42 }, "b.md": { x: 42, y: 42 } },
           };
         default:
           throw new Error(`Unknown command: ${cmd}`);
@@ -276,7 +276,7 @@ describe("GraphView", () => {
             ],
             edges: [["a.md", "b.md"]],
             pagerank: { "a.md": 0.4, "b.md": 0.6 },
-            positions: {},
+            positions_2d: {},
           };
         case "get_graph_positions":
           posCallCount++;
@@ -1166,7 +1166,7 @@ describe("GraphView", () => {
               ],
               edges: [["a.md", "b.md"]],
               pagerank: { "a.md": 0.4, "b.md": 0.6 },
-              positions: {},
+              positions_2d: {},
             };
           }
           return {
@@ -1177,7 +1177,7 @@ describe("GraphView", () => {
             ],
             edges: [["a.md", "b.md"], ["a.md", "c.md"]],
             pagerank: { "a.md": 0.4, "b.md": 0.3, "c.md": 0.3 },
-            positions: {},
+            positions_2d: {},
           };
         default:
           throw new Error(`Unknown command: ${cmd}`);
@@ -1214,7 +1214,7 @@ describe("GraphView", () => {
             ],
             edges: [["a.md", "b.md"]],
             pagerank: { "a.md": 0.4, "b.md": 0.6 },
-            positions: {},
+            positions_2d: {},
           };
         default:
           throw new Error(`Unknown command: ${cmd}`);
@@ -1253,7 +1253,7 @@ describe("GraphView", () => {
               ],
               edges: [["a.md", "b.md"]],
               pagerank: { "a.md": 0.4, "b.md": 0.6 },
-              positions: {},
+              positions_2d: {},
             };
           }
           return {
@@ -1264,7 +1264,7 @@ describe("GraphView", () => {
             ],
             edges: [["a.md", "b.md"], ["b.md", "d.md"]],
             pagerank: { "a.md": 0.4, "b.md": 0.3, "d.md": 0.3 },
-            positions: {},
+            positions_2d: {},
           };
         default:
           throw new Error(`Unknown command: ${cmd}`);
@@ -1309,7 +1309,7 @@ describe("GraphView", () => {
             ],
             edges: [["a.md", "b.md"]],
             pagerank: { "a.md": 0.4, "b.md": 0.6 },
-            positions: { "a.md": { x: 500, y: 500 } },
+            positions_2d: { "a.md": { x: 500, y: 500 } },
           };
         default:
           throw new Error(`Unknown command: ${cmd}`);
@@ -1346,7 +1346,7 @@ describe("GraphView", () => {
             ],
             edges: [["a.md", "b.md"]],
             pagerank: { "a.md": 0.4, "b.md": 0.6 },
-            positions: {},
+            positions_2d: {},
           };
         case "get_graph_positions":
           return { "a.md": { x: 300, y: 300 } };
@@ -1398,7 +1398,7 @@ describe("GraphView", () => {
               ],
               edges: [["a.md", "b.md"]],
               pagerank: { "a.md": 0.4, "b.md": 0.6 },
-              positions: {},
+              positions_2d: {},
             };
           }
           return new Promise((resolve) => { resolveIpcHolder.fn = resolve; });
@@ -1439,7 +1439,7 @@ describe("GraphView", () => {
       ],
       edges: [["a.md", "b.md"]],
       pagerank: { "a.md": 0.4, "b.md": 0.6 },
-      positions: {},
+      positions_2d: {},
     });
 
     resetListenMock();
