@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 import { BottomPanel } from "./BottomPanel";
-import { mockInvoke } from "../test/tauri-mock";
+import { getBacklinks, getUnlinkedMentions } from "../lib/ipc";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePreferencesStore } from "../stores/preferences";
 import { useBottomPanelStore } from "../stores/bottomPanel";
@@ -18,6 +18,8 @@ vi.mock("../lib/ipc", async (importOriginal) => {
   const orig = await importOriginal() as Record<string, unknown>;
   return {
     ...orig,
+    getBacklinks: vi.fn(async () => []),
+    getUnlinkedMentions: vi.fn(async () => []),
     parseAnnotations: vi.fn(async () => []),
     resolveAnnotationScope: vi.fn(async () => null),
   };
@@ -71,7 +73,7 @@ beforeEach(() => {
   useWorkspaceStore.setState({
     workspacePath: "/test",
     currentPagePath: "target.md",
-    graphReady: true,
+    graphReady: false,
   });
   usePreferencesStore.setState({ experimentalUnlinkedReferences: true });
   useBottomPanelStore.setState({
@@ -84,11 +86,8 @@ beforeEach(() => {
     hasOpenedUnlinked: false,
     hasOpenedAnnotations: false,
   });
-  mockInvoke((cmd) => {
-    if (cmd === "get_backlinks") return [];
-    if (cmd === "get_unlinked_mentions") return [];
-    throw new Error(`Unknown command: ${cmd}`);
-  });
+  vi.mocked(getBacklinks).mockResolvedValue([]);
+  vi.mocked(getUnlinkedMentions).mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -105,13 +104,10 @@ describe("BottomPanel", () => {
   });
 
   it("renders backlinks content when unfolded via store", async () => {
-    mockInvoke((cmd) => {
-      if (cmd === "get_backlinks") return [];
-      if (cmd === "get_unlinked_mentions") return [];
-      throw new Error(`Unknown command: ${cmd}`);
+    useWorkspaceStore.setState({ graphReady: true });
+    await act(async () => {
+      render(<BottomPanel pageId="target.md" />);
     });
-
-    render(<BottomPanel pageId="target.md" />);
 
     act(() => {
       useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
@@ -147,13 +143,10 @@ describe("BottomPanel", () => {
 
   describe("content rendering", () => {
     it("shows linked content when activeTab is linked", async () => {
-      mockInvoke((cmd) => {
-        if (cmd === "get_backlinks") return [];
-        if (cmd === "get_unlinked_mentions") return [];
-        throw new Error(`Unknown command: ${cmd}`);
+      useWorkspaceStore.setState({ graphReady: true });
+      await act(async () => {
+        render(<BottomPanel pageId="target.md" />);
       });
-
-      render(<BottomPanel pageId="target.md" />);
 
       act(() => {
         useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
@@ -165,15 +158,11 @@ describe("BottomPanel", () => {
     });
 
     it("shows unlinked content when activeTab is unlinked and hasOpenedUnlinked", async () => {
-      mockInvoke((cmd) => {
-        if (cmd === "get_backlinks") return [];
-        if (cmd === "get_unlinked_mentions") return [];
-        throw new Error(`Unknown command: ${cmd}`);
+      await act(async () => {
+        render(<BottomPanel pageId="target.md" />);
       });
 
-      render(<BottomPanel pageId="target.md" />);
-
-      act(() => {
+      await act(async () => {
         useBottomPanelStore.setState({
           unfolded: true,
           activeTab: "unlinked",
@@ -208,15 +197,7 @@ describe("BottomPanel", () => {
 
   describe("lazy mounting", () => {
     it("does not mount UnlinkedMentionsPanel until hasOpenedUnlinked is true", async () => {
-      let fetchCount = 0;
-      mockInvoke((cmd) => {
-        if (cmd === "get_backlinks") return [];
-        if (cmd === "get_unlinked_mentions") {
-          fetchCount++;
-          return [];
-        }
-        throw new Error(`Unknown command: ${cmd}`);
-      });
+      vi.mocked(getUnlinkedMentions).mockClear();
 
       render(<BottomPanel pageId="target.md" />);
 
@@ -224,16 +205,15 @@ describe("BottomPanel", () => {
         useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
       });
 
-      // Allow any pending effects to settle
       await act(async () => {});
-      expect(fetchCount).toBe(0);
+      expect(getUnlinkedMentions).not.toHaveBeenCalled();
 
-      act(() => {
+      await act(async () => {
         useBottomPanelStore.setState({ activeTab: "unlinked", hasOpenedUnlinked: true });
       });
 
       await waitFor(() => {
-        expect(fetchCount).toBeGreaterThan(0);
+        expect(getUnlinkedMentions).toHaveBeenCalled();
       });
     });
 
@@ -269,9 +249,9 @@ describe("BottomPanel", () => {
       expect(tabpanel).toHaveAttribute("aria-labelledby", "bp-tab-linked");
     });
 
-    it("switching activeTab updates aria-labelledby", () => {
+    it("switching activeTab updates aria-labelledby", async () => {
       render(<BottomPanel pageId="target.md" />);
-      act(() => {
+      await act(async () => {
         useBottomPanelStore.setState({
           unfolded: true,
           activeTab: "unlinked",
@@ -288,13 +268,13 @@ describe("BottomPanel", () => {
     const unlinkedEntry = { source_id: "b.md", source_title: "B", context: "ctx", source_line: 1, matched_text: "target" };
 
     it("each panel has its own scroll container", async () => {
-      mockInvoke((cmd) => {
-        if (cmd === "get_backlinks") return [backlinkEntry];
-        if (cmd === "get_unlinked_mentions") return [unlinkedEntry];
-        throw new Error(`Unknown command: ${cmd}`);
-      });
+      vi.mocked(getBacklinks).mockResolvedValue([backlinkEntry]);
+      vi.mocked(getUnlinkedMentions).mockResolvedValue([unlinkedEntry]);
+      useWorkspaceStore.setState({ graphReady: true });
 
-      render(<BottomPanel pageId="target.md" />);
+      await act(async () => {
+        render(<BottomPanel pageId="target.md" />);
+      });
 
       act(() => {
         useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
@@ -303,7 +283,7 @@ describe("BottomPanel", () => {
         expect(screen.getByTestId("backlinks-scroll-container")).toBeInTheDocument();
       });
 
-      act(() => {
+      await act(async () => {
         useBottomPanelStore.setState({ activeTab: "unlinked", hasOpenedUnlinked: true });
       });
       await waitFor(() => {
@@ -323,15 +303,14 @@ describe("BottomPanel", () => {
     });
 
     it("passes contentHeight equal to panelHeight to panels", async () => {
-      mockInvoke((cmd) => {
-        if (cmd === "get_backlinks") return [
-          { source_id: "a.md", source_title: "A", context: "ctx", source_line: 1 },
-        ];
-        if (cmd === "get_unlinked_mentions") return [];
-        throw new Error(`Unknown command: ${cmd}`);
-      });
+      vi.mocked(getBacklinks).mockResolvedValue([
+        { source_id: "a.md", source_title: "A", context: "ctx", source_line: 1 },
+      ]);
+      useWorkspaceStore.setState({ graphReady: true });
 
-      render(<BottomPanel pageId="target.md" />);
+      await act(async () => {
+        render(<BottomPanel pageId="target.md" />);
+      });
       act(() => {
         useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
       });
@@ -654,14 +633,14 @@ describe("BottomPanel", () => {
 
     describe("ref-based drag optimization", () => {
       it("child contentHeight does NOT update during drag, only on mouseUp", async () => {
-        const backlinkEntry = { source_id: "a.md", source_title: "A", context: "ctx", source_line: 1 };
-        mockInvoke((cmd) => {
-          if (cmd === "get_backlinks") return [backlinkEntry];
-          if (cmd === "get_unlinked_mentions") return [];
-          throw new Error(`Unknown command: ${cmd}`);
-        });
+        vi.mocked(getBacklinks).mockResolvedValue([
+          { source_id: "a.md", source_title: "A", context: "ctx", source_line: 1 },
+        ]);
+        useWorkspaceStore.setState({ graphReady: true });
 
-        render(<BottomPanel pageId="target.md" />);
+        await act(async () => {
+          render(<BottomPanel pageId="target.md" />);
+        });
         act(() => {
           useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
         });
