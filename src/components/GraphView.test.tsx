@@ -39,8 +39,13 @@ vi.mock("@react-three/fiber", () => ({
   Canvas: ({ children }: { children: React.ReactNode }) => (
     <div data-testid="r3f-canvas">{children}</div>
   ),
+  useThree: () => ({
+    camera: { position: { set: vi.fn(), x: 0, y: 0, z: 0 }, lookAt: vi.fn(), fov: 75 },
+  }),
 }));
-vi.mock("@react-three/drei", () => ({}));
+vi.mock("@react-three/drei", () => ({
+  OrbitControls: vi.fn(() => null),
+}));
 
 let rafQueue: Map<number, FrameRequestCallback> = new Map();
 let nextRafId = 1;
@@ -1693,7 +1698,7 @@ describe("GraphView", () => {
     expect(mockCameraAnimatedReset).toHaveBeenCalled();
   });
 
-  it("reset zoom in 3D mode is a no-op", async () => {
+  it("reset zoom in 3D mode does not call sigma reset", async () => {
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView />);
     await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
@@ -1702,5 +1707,14 @@ describe("GraphView", () => {
     mockCameraAnimatedReset.mockClear();
     await userEvent.click(screen.getByRole("button", { name: "Reset zoom" }));
     expect(mockCameraAnimatedReset).not.toHaveBeenCalled();
+  });
+
+  it("switching to 3D passes real data to GraphView3D", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await userEvent.click(screen.getByRole("button", { name: "3D" }));
+    await waitFor(() => { expect(screen.getByTestId("graph-view-3d")).toBeTruthy(); });
   });
 });

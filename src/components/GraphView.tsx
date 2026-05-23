@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback, lazy, Suspense } from "react";
 import { getFullSubgraph, getGraphSubgraph, getGraphPositions } from "../lib/ipc";
 import type { SubgraphResult } from "../lib/ipc";
+import type { CameraControllerHandle } from "./CameraController";
 import { listen } from "@tauri-apps/api/event";
 import { buildGraph, resolveThemeColors, applyPositions } from "../lib/graphLayout";
 import { getQualitySettings, getTierSettings, type TierSettings } from "../lib/qualityTiers";
@@ -66,6 +67,9 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   const [dimension, setDimension] = useState<"2d" | "3d">("2d");
   const dimensionRef = useRef<"2d" | "3d">("2d");
   dimensionRef.current = dimension;
+  const subgraphRef = useRef<SubgraphResult | null>(null);
+  const pagerankRef = useRef<Record<string, number>>({});
+  const resetZoom3DRef = useRef<CameraControllerHandle | null>(null);
   const [contextMenu, setContextMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null);
   const contextMenuOpenRef = useRef(false);
   useEffect(() => { contextMenuOpenRef.current = contextMenu !== null; }, [contextMenu]);
@@ -89,7 +93,10 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   }, [contextMenu]);
 
   const handleResetZoom = useCallback(() => {
-    if (dimensionRef.current !== "2d") return;
+    if (dimensionRef.current === "3d") {
+      resetZoom3DRef.current?.resetCamera();
+      return;
+    }
     const sigma = sigmaRef.current as { getCamera: () => { animatedReset: () => void } } | null;
     sigma?.getCamera().animatedReset();
   }, []);
@@ -166,6 +173,8 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
           subgraph = await getFullSubgraph();
         }
         const pagerank = subgraph.pagerank ?? {};
+        subgraphRef.current = subgraph;
+        pagerankRef.current = pagerank;
         if (perf) {
           const ipcMs = performance.now() - t0;
           const payloadSize = JSON.stringify(subgraph).length;
@@ -399,6 +408,8 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
           subgraph = await getFullSubgraph();
         }
         const pagerank = subgraph.pagerank ?? {};
+        subgraphRef.current = subgraph;
+        pagerankRef.current = pagerank;
         const diff = computeDiff(graph, subgraph);
 
         if (isDiffEmpty(diff)) return;
@@ -528,12 +539,15 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
       />
       {dimension === "3d" && (
         <Suspense fallback={null}>
-          {/* TODO(Phase 2): pass real subgraph data, positions_3d, and callbacks */}
           <LazyGraphView3D
-            nodes={[]}
-            edges={[]}
-            positions={{}}
-            pagerank={{}}
+            nodes={subgraphRef.current?.nodes ?? []}
+            edges={subgraphRef.current?.edges ?? []}
+            positions={subgraphRef.current?.positions_3d ?? {}}
+            pagerank={pagerankRef.current}
+            seedId={mode === "local" ? (activePageId ?? undefined) : undefined}
+            onNavigate={onNavigate}
+            onContextMenu={(info) => setContextMenu(info)}
+            onResetZoom={resetZoom3DRef}
           />
         </Suspense>
       )}
