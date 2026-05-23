@@ -35,6 +35,21 @@ describe("CameraController", () => {
     expect(typeof ref.current!.flyTo).toBe("function");
   });
 
+  it("resetCamera via ref resets camera position", () => {
+    const ref = createRef<CameraControllerHandle>();
+    render(
+      <CameraController
+        ref={ref}
+        positions={{ a: { x: 5, y: 5, z: 5 } }}
+      />,
+    );
+    mockCamera.position.set.mockClear();
+    mockCamera.lookAt.mockClear();
+    ref.current!.resetCamera();
+    expect(mockCamera.position.set).toHaveBeenCalled();
+    expect(mockCamera.lookAt).toHaveBeenCalled();
+  });
+
   it("sets camera position on mount with positions", () => {
     render(
       <CameraController

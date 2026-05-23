@@ -1,4 +1,4 @@
-import { useRef, useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { Canvas } from "@react-three/fiber";
 import type { GraphNode } from "../lib/ipc";
 import { resolveThemeColors } from "../lib/graphLayout";
@@ -29,7 +29,14 @@ export function GraphView3D({
   seedId,
   onResetZoom,
 }: GraphView3DProps) {
-  const cameraRef = useRef<CameraControllerHandle>(null);
+  const cameraCallbackRef = useCallback(
+    (handle: CameraControllerHandle | null) => {
+      if (onResetZoom) {
+        (onResetZoom as React.MutableRefObject<CameraControllerHandle | null>).current = handle;
+      }
+    },
+    [onResetZoom],
+  );
 
   const colors = useMemo(() => resolveThemeColors(), []);
   const tierSettings = useMemo(() => get3DQualitySettings(nodes.length), [nodes.length]);
@@ -46,14 +53,10 @@ export function GraphView3D({
     return (r + g + b) / 3 < 128;
   }, []);
 
-  if (onResetZoom) {
-    (onResetZoom as React.MutableRefObject<CameraControllerHandle | null>).current = cameraRef.current;
-  }
-
   return (
     <div data-testid="graph-view-3d" style={{ position: "absolute", inset: 0 }}>
       <Canvas>
-        <CameraController positions={positions} ref={cameraRef} />
+        <CameraController positions={positions} ref={cameraCallbackRef} />
         <SceneLighting isDark={isDark} />
         <GraphNodes3D
           nodes={nodes}

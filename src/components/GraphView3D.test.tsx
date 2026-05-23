@@ -81,6 +81,14 @@ describe("GraphView3D", () => {
     expect(screen.getByTestId("graph-view-3d")).toBeTruthy();
   });
 
+  it("populates onResetZoom ref with CameraControllerHandle after render", () => {
+    const ref = { current: null } as React.MutableRefObject<CameraControllerHandle | null>;
+    render(<GraphView3D {...defaults} onResetZoom={ref} />);
+    expect(ref.current).not.toBeNull();
+    expect(typeof ref.current!.resetCamera).toBe("function");
+    expect(typeof ref.current!.flyTo).toBe("function");
+  });
+
   it("accepts all optional callbacks", () => {
     const ref = { current: null };
     render(
