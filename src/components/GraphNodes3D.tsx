@@ -11,6 +11,7 @@ export interface GraphNodes3DProps {
   stubColor: string;
   seedId?: string;
   sphereSegments: [number, number];
+  meshRef?: React.RefObject<InstancedMesh | null>;
 }
 
 export function GraphNodes3D({
@@ -21,8 +22,10 @@ export function GraphNodes3D({
   stubColor,
   seedId,
   sphereSegments,
+  meshRef: externalMeshRef,
 }: GraphNodes3DProps) {
-  const meshRef = useRef<InstancedMesh>(null);
+  const internalRef = useRef<InstancedMesh>(null);
+  const meshRef = externalMeshRef ?? internalRef;
 
   const matrices = useMemo(
     () => buildInstanceMatrices(nodes, positions, pagerank),

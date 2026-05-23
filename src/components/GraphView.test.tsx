@@ -41,7 +41,16 @@ vi.mock("@react-three/fiber", () => ({
   ),
   useThree: () => ({
     camera: { position: { set: vi.fn(), x: 0, y: 0, z: 0 }, lookAt: vi.fn(), fov: 75 },
+    gl: {
+      domElement: {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      },
+    },
+    pointer: { x: 0, y: 0 },
+    size: { width: 800, height: 600 },
   }),
+  useFrame: vi.fn(),
 }));
 vi.mock("@react-three/drei", () => ({
   OrbitControls: vi.fn(() => null),

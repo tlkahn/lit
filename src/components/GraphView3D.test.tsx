@@ -17,7 +17,18 @@ vi.mock("@react-three/fiber", () => ({
   Canvas: ({ children }: { children: React.ReactNode }) => (
     <div data-testid="r3f-canvas">{children}</div>
   ),
-  useThree: () => ({ camera: mockCamera }),
+  useThree: () => ({
+    camera: mockCamera,
+    gl: {
+      domElement: {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      },
+    },
+    pointer: { x: 0, y: 0 },
+    size: { width: 800, height: 600 },
+  }),
+  useFrame: vi.fn(),
 }));
 vi.mock("@react-three/drei", () => ({
   OrbitControls: vi.fn(() => null),

@@ -52,6 +52,19 @@ describe("GraphNodes3D", () => {
     expect(colors.length).toBe(nodes.length * 3);
   });
 
+  it("accepts external meshRef prop", () => {
+    const meshRef = { current: null };
+    const props = {
+      ...defaultProps,
+      nodes: [{ id: "a", title: "A", is_stub: false }],
+      positions: { a: { x: 0, y: 0, z: 0 } },
+      pagerank: { a: 0.5 },
+      meshRef,
+    };
+    const { container } = render(<GraphNodes3D {...props} />);
+    expect(container).toBeTruthy();
+  });
+
   it("accepts different sphereSegments without error", () => {
     const props = {
       ...defaultProps,

@@ -1,4 +1,4 @@
-import { Color } from "three";
+import { Color, Vector3 } from "three";
 import { computeNodeSize, MIN_SIZE, SEED_COLOR } from "./graphLayout";
 import type { GraphNode } from "./ipc";
 
@@ -115,6 +115,64 @@ export function buildInstanceColors(
   }
 
   return arr;
+}
+
+export function buildNeighborSet(
+  edges: [string, string][],
+  nodeId: string,
+): Set<string> {
+  const neighbors = new Set<string>();
+  for (const [src, tgt] of edges) {
+    if (src === nodeId && tgt !== nodeId) neighbors.add(tgt);
+    if (tgt === nodeId && src !== nodeId) neighbors.add(src);
+  }
+  return neighbors;
+}
+
+const HOVER_COLOR = "#ffffff";
+
+export function buildHighlightColors(
+  nodes: GraphNode[],
+  hoveredId: string,
+  neighbors: Set<string>,
+  accentColor: string,
+  _stubColor: string,
+  dimColor: string,
+  seedId?: string,
+): Float32Array {
+  const arr = new Float32Array(nodes.length * 3);
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i]!;
+    let hex: string;
+    if (node.id === hoveredId) {
+      hex = seedId != null && node.id === seedId ? SEED_COLOR : HOVER_COLOR;
+    } else if (neighbors.has(node.id)) {
+      hex = accentColor;
+    } else {
+      hex = dimColor;
+    }
+    tmpColor.set(hex);
+    const off = i * 3;
+    arr[off] = tmpColor.r;
+    arr[off + 1] = tmpColor.g;
+    arr[off + 2] = tmpColor.b;
+  }
+  return arr;
+}
+
+const tmpVec = new Vector3();
+
+export function projectToScreen(
+  pos3d: { x: number; y: number; z: number },
+  camera: Parameters<Vector3["project"]>[0],
+  canvasSize: { width: number; height: number },
+): { x: number; y: number } {
+  tmpVec.set(pos3d.x, pos3d.y, pos3d.z);
+  tmpVec.project(camera);
+  return {
+    x: (tmpVec.x + 1) * 0.5 * canvasSize.width,
+    y: (-tmpVec.y + 1) * 0.5 * canvasSize.height,
+  };
 }
 
 export function buildEdgePositions(

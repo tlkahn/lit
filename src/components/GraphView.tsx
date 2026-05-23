@@ -546,6 +546,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
             pagerank={pagerankRef.current}
             seedId={mode === "local" ? (activePageId ?? undefined) : undefined}
             onNavigate={onNavigate}
+            onHover={(info) => setTooltip(info)}
             onContextMenu={(info) => setContextMenu(info)}
             onResetZoom={resetZoom3DRef}
           />

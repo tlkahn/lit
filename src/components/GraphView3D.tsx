@@ -1,5 +1,6 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { Canvas } from "@react-three/fiber";
+import type { InstancedMesh } from "three";
 import type { GraphNode } from "../lib/ipc";
 import { resolveThemeColors } from "../lib/graphLayout";
 import { get3DQualitySettings } from "../lib/qualityTiers3D";
@@ -9,6 +10,7 @@ import type { CameraControllerHandle } from "./CameraController";
 import { SceneLighting } from "./SceneLighting";
 import { GraphNodes3D } from "./GraphNodes3D";
 import { GraphEdges3D } from "./GraphEdges3D";
+import { GraphInteraction3D } from "./GraphInteraction3D";
 
 export interface GraphView3DProps {
   nodes: GraphNode[];
@@ -28,9 +30,13 @@ export function GraphView3D({
   positions,
   pagerank,
   seedId,
-  // Phase 3: onNavigate, onHover, onContextMenu (raycasting interaction)
+  onNavigate,
+  onHover,
+  onContextMenu,
   onResetZoom,
 }: GraphView3DProps) {
+  const meshRef = useRef<InstancedMesh>(null);
+
   const cameraCallbackRef = useCallback(
     (handle: CameraControllerHandle | null) => {
       if (onResetZoom) {
@@ -70,12 +76,28 @@ export function GraphView3D({
           stubColor={colors.stubColor}
           seedId={seedId}
           sphereSegments={[tierSettings.sphereWidthSegments, tierSettings.sphereHeightSegments]}
+          meshRef={meshRef}
         />
         <GraphEdges3D
           edges={edges}
           positions={positions}
           edgeColor={colors.edgeColor}
           opacity={tierSettings.edgeOpacity}
+        />
+        <GraphInteraction3D
+          meshRef={meshRef}
+          nodes={nodes}
+          edges={edges}
+          positions={positions}
+          accentColor={colors.accentColor}
+          stubColor={colors.stubColor}
+          dimColor={colors.dimColor}
+          seedId={seedId}
+          raycastStrategy={tierSettings.raycastStrategy}
+          raycastThrottleMs={tierSettings.raycastThrottleMs}
+          onNavigate={onNavigate}
+          onHover={onHover}
+          onContextMenu={onContextMenu}
         />
       </Canvas>
     </div>

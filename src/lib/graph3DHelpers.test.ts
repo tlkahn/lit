@@ -1,14 +1,17 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   computeBoundingSphere,
   computeCameraDistance,
   buildInstanceMatrices,
   buildInstanceColors,
   buildEdgePositions,
+  buildNeighborSet,
+  buildHighlightColors,
+  projectToScreen,
   SIZE_SCALE_3D,
 } from "./graph3DHelpers";
 import { computeNodeSize, MIN_SIZE, SEED_COLOR } from "./graphLayout";
-import { Color } from "three";
+import { Color, Vector3, PerspectiveCamera } from "three";
 
 describe("computeBoundingSphere", () => {
   it("returns zero sphere for empty positions", () => {
@@ -222,5 +225,144 @@ describe("buildEdgePositions", () => {
     const edges: [string, string][] = [["x", "y"]];
     const p = buildEdgePositions(edges, {});
     expect(p.length).toBe(0);
+  });
+});
+
+describe("buildNeighborSet", () => {
+  it("returns neighbors for a node with edges", () => {
+    const edges: [string, string][] = [["a", "b"], ["a", "c"]];
+    const s = buildNeighborSet(edges, "a");
+    expect(s).toEqual(new Set(["b", "c"]));
+  });
+
+  it("finds neighbors bidirectionally", () => {
+    const edges: [string, string][] = [["a", "b"], ["c", "a"]];
+    const s = buildNeighborSet(edges, "a");
+    expect(s).toEqual(new Set(["b", "c"]));
+  });
+
+  it("returns empty set for empty edges", () => {
+    const s = buildNeighborSet([], "a");
+    expect(s.size).toBe(0);
+  });
+
+  it("returns empty set for node not in edges", () => {
+    const edges: [string, string][] = [["a", "b"]];
+    const s = buildNeighborSet(edges, "z");
+    expect(s.size).toBe(0);
+  });
+
+  it("excludes the node itself from its neighbor set", () => {
+    const edges: [string, string][] = [["a", "a"], ["a", "b"]];
+    const s = buildNeighborSet(edges, "a");
+    expect(s.has("a")).toBe(false);
+    expect(s).toEqual(new Set(["b"]));
+  });
+});
+
+describe("buildHighlightColors", () => {
+  const accent = "#0969da";
+  const stub = "#818b98";
+  const dim = "#d1d9e0";
+  const nodes = [
+    { id: "a", title: "A", is_stub: false },
+    { id: "b", title: "B", is_stub: false },
+    { id: "c", title: "C", is_stub: true },
+  ];
+
+  it("assigns white to hovered node", () => {
+    const neighbors = new Set(["b"]);
+    const c = buildHighlightColors(nodes, "a", neighbors, accent, stub, dim);
+    const white = new Color("#ffffff");
+    expect(c[0]).toBeCloseTo(white.r);
+    expect(c[1]).toBeCloseTo(white.g);
+    expect(c[2]).toBeCloseTo(white.b);
+  });
+
+  it("assigns accent to neighbor nodes", () => {
+    const neighbors = new Set(["b"]);
+    const c = buildHighlightColors(nodes, "a", neighbors, accent, stub, dim);
+    const accentC = new Color(accent);
+    expect(c[3]).toBeCloseTo(accentC.r);
+    expect(c[4]).toBeCloseTo(accentC.g);
+    expect(c[5]).toBeCloseTo(accentC.b);
+  });
+
+  it("assigns dim to non-hovered non-neighbor nodes", () => {
+    const neighbors = new Set(["b"]);
+    const c = buildHighlightColors(nodes, "a", neighbors, accent, stub, dim);
+    const dimC = new Color(dim);
+    expect(c[6]).toBeCloseTo(dimC.r);
+    expect(c[7]).toBeCloseTo(dimC.g);
+    expect(c[8]).toBeCloseTo(dimC.b);
+  });
+
+  it("assigns seed color to hovered seed node", () => {
+    const neighbors = new Set<string>();
+    const c = buildHighlightColors(nodes, "a", neighbors, accent, stub, dim, "a");
+    const seedC = new Color(SEED_COLOR);
+    expect(c[0]).toBeCloseTo(seedC.r);
+    expect(c[1]).toBeCloseTo(seedC.g);
+    expect(c[2]).toBeCloseTo(seedC.b);
+  });
+
+  it("handles empty nodes array", () => {
+    const c = buildHighlightColors([], "a", new Set(), accent, stub, dim);
+    expect(c.length).toBe(0);
+  });
+
+  it("handles isolated hover (no neighbors)", () => {
+    const nodes2 = [{ id: "a", title: "A", is_stub: false }];
+    const c = buildHighlightColors(nodes2, "a", new Set(), accent, stub, dim);
+    const white = new Color("#ffffff");
+    expect(c[0]).toBeCloseTo(white.r);
+    expect(c.length).toBe(3);
+  });
+});
+
+describe("projectToScreen", () => {
+  const cam = new PerspectiveCamera(75, 800 / 600, 0.1, 1000);
+
+  function withProjectSpy(ndcX: number, ndcY: number, fn: () => void) {
+    const spy = vi.spyOn(Vector3.prototype, "project").mockImplementation(function (this: Vector3) {
+      this.x = ndcX;
+      this.y = ndcY;
+      this.z = 0;
+      return this;
+    });
+    fn();
+    spy.mockRestore();
+  }
+
+  it("maps NDC center (0,0) to canvas center", () => {
+    withProjectSpy(0, 0, () => {
+      const result = projectToScreen({ x: 0, y: 0, z: 0 }, cam, { width: 800, height: 600 });
+      expect(result.x).toBeCloseTo(400);
+      expect(result.y).toBeCloseTo(300);
+    });
+  });
+
+  it("maps NDC top-left (-1,1) to canvas (0,0)", () => {
+    withProjectSpy(-1, 1, () => {
+      const result = projectToScreen({ x: 0, y: 0, z: 0 }, cam, { width: 800, height: 600 });
+      expect(result.x).toBeCloseTo(0);
+      expect(result.y).toBeCloseTo(0);
+    });
+  });
+
+  it("maps NDC bottom-right (1,-1) to canvas (w,h)", () => {
+    withProjectSpy(1, -1, () => {
+      const result = projectToScreen({ x: 0, y: 0, z: 0 }, cam, { width: 800, height: 600 });
+      expect(result.x).toBeCloseTo(800);
+      expect(result.y).toBeCloseTo(600);
+    });
+  });
+
+  it("handles off-screen positions", () => {
+    withProjectSpy(2, -3, () => {
+      const result = projectToScreen({ x: 0, y: 0, z: 0 }, cam, { width: 800, height: 600 });
+      expect(result.x).toBeCloseTo(1200);
+      expect(result.y).toBeCloseTo(1200);
+    });
   });
 });
