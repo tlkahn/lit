@@ -1,0 +1,6 @@
+[project]
+name = "fa2-demo"
+version = "0.1.0"
+description = "Visualize FA2 layout output from Rust"
+requires-python = ">=3.12"
+dependencies = ["matplotlib"]

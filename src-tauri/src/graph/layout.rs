@@ -1517,4 +1517,76 @@ mod tests {
             elapsed.as_secs_f64()
         );
     }
+
+    #[test]
+    fn dump_fa2_demo_layouts() {
+        use serde_json::{json, Value};
+
+        let n_connected = 80;
+        let n_isolate_core = 30;
+        let n_isolates = 50;
+
+        // --- Graph 1: well-connected (each node links to 3 earlier neighbors) ---
+        let ids1: Vec<String> = (0..n_connected).map(|i| format!("n{i}")).collect();
+        let id_refs1: Vec<&str> = ids1.iter().map(|s| s.as_str()).collect();
+        let mut edges1 = Vec::new();
+        for i in 1..n_connected {
+            for j in 0..3.min(i) {
+                let target = (i * 7 + j * 13) % i; // pseudo-random but deterministic
+                edges1.push((i, target));
+            }
+        }
+        let g1 = make_graph(&id_refs1, &edges1);
+
+        // --- Graph 2: small core + many isolates ---
+        let n_total = n_isolate_core + n_isolates;
+        let ids2: Vec<String> = (0..n_total).map(|i| format!("n{i}")).collect();
+        let id_refs2: Vec<&str> = ids2.iter().map(|s| s.as_str()).collect();
+        let mut edges2 = Vec::new();
+        for i in 1..n_isolate_core {
+            for j in 0..2.min(i) {
+                let target = (i * 7 + j * 13) % i;
+                edges2.push((i, target));
+            }
+        }
+        let g2 = make_graph(&id_refs2, &edges2);
+
+        let settings = LayoutSettings {
+            iterations_cold: 500,
+            ..Default::default()
+        };
+
+        let pos1 = compute_layout(&g1, None, &settings);
+        let pos2 = compute_layout(&g2, None, &settings);
+
+        let to_json = |positions: &HashMap<String, (f64, f64)>,
+                       edges: &[(usize, usize)],
+                       ids: &[String]|
+         -> Value {
+            let nodes: Vec<Value> = ids
+                .iter()
+                .enumerate()
+                .map(|(i, id)| {
+                    let (x, y) = positions[id];
+                    let degree = edges.iter().filter(|(s, t)| *s == i || *t == i).count();
+                    json!({"id": id, "x": x, "y": y, "degree": degree})
+                })
+                .collect();
+            let edge_list: Vec<Value> = edges
+                .iter()
+                .map(|(s, t)| json!({"source": ids[*s], "target": ids[*t]}))
+                .collect();
+            json!({"nodes": nodes, "edges": edge_list})
+        };
+
+        let output = json!({
+            "well_connected": to_json(&pos1, &edges1, &ids1),
+            "with_isolates": to_json(&pos2, &edges2, &ids2),
+        });
+
+        let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let out_path = project_root.join("scripts").join("fa2_demo_data.json");
+        std::fs::write(&out_path, serde_json::to_string_pretty(&output).unwrap()).unwrap();
+        eprintln!("Wrote FA2 demo data to {}", out_path.display());
+    }
 }

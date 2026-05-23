@@ -56,6 +56,13 @@ test-vault-*/
 # playwright-cli
 .playwright-cli
 
+# scripts/ Python (uv)
+scripts/.venv/
+scripts/.python-version
+scripts/uv.lock
+scripts/fa2_demo_data.json
+scripts/fa2_demo.png
+
 # Playwright E2E
 test-results/
 playwright-report/
