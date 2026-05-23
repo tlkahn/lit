@@ -2,7 +2,6 @@ import { useState } from "react";
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import Graph from "graphology";
 import { GraphSearch, getMatchingNodes, type GraphSearchProps } from "./GraphSearch";
 
 function StatefulSearch(props: Omit<GraphSearchProps, "query" | "onQueryChange"> & { onQueryChange?: (q: string) => void }) {
@@ -95,21 +94,23 @@ describe("GraphSearch", () => {
 });
 
 describe("getMatchingNodes", () => {
-  it("returns matching node IDs by case-insensitive substring on label", () => {
-    const g = new Graph();
-    g.addNode("a.md", { label: "Alpha" });
-    g.addNode("b.md", { label: "Beta" });
-    g.addNode("c.md", { label: "alphabet" });
+  it("returns matching node IDs by case-insensitive substring on title", () => {
+    const nodes = [
+      { id: "a.md", title: "Alpha", is_stub: false },
+      { id: "b.md", title: "Beta", is_stub: false },
+      { id: "c.md", title: "alphabet", is_stub: false },
+    ];
 
-    expect(getMatchingNodes(g, "alph")).toEqual(["a.md", "c.md"]);
-    expect(getMatchingNodes(g, "BETA")).toEqual(["b.md"]);
-    expect(getMatchingNodes(g, "xyz")).toEqual([]);
+    expect(getMatchingNodes(nodes, "alph")).toEqual(["a.md", "c.md"]);
+    expect(getMatchingNodes(nodes, "BETA")).toEqual(["b.md"]);
+    expect(getMatchingNodes(nodes, "xyz")).toEqual([]);
   });
 
   it("returns empty array for empty query", () => {
-    const g = new Graph();
-    g.addNode("a.md", { label: "Alpha" });
+    const nodes = [
+      { id: "a.md", title: "Alpha", is_stub: false },
+    ];
 
-    expect(getMatchingNodes(g, "")).toEqual([]);
+    expect(getMatchingNodes(nodes, "")).toEqual([]);
   });
 });

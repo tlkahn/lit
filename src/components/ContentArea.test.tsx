@@ -97,6 +97,7 @@ beforeEach(() => {
     if (cmd === "get_graph_subgraph") return { nodes: [], edges: [] };
     if (cmd === "get_pagerank") return {};
     if (cmd === "get_graph_positions") return {};
+    if (cmd === "compute_layout_3d") return undefined;
     if (cmd === "acknowledge_file_hash") return null;
     throw new Error(`Unknown command: ${cmd}`);
   });
