@@ -51,7 +51,7 @@ export function GraphNodes3D({
   if (nodes.length === 0) return null;
 
   return (
-    <instancedMesh ref={meshRef} args={[undefined, undefined, nodes.length]}>
+    <instancedMesh ref={meshRef as React.RefObject<InstancedMesh>} args={[undefined, undefined, nodes.length]}>
       <sphereGeometry args={[1, sphereSegments[0], sphereSegments[1]]} />
       <meshStandardMaterial vertexColors />
     </instancedMesh>

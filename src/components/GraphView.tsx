@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback, lazy, Suspense } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useCallback, lazy, Suspense } from "react";
 import { getFullSubgraph, getGraphSubgraph, getGraphPositions, computeLayout3d } from "../lib/ipc";
 import type { SubgraphResult } from "../lib/ipc";
 import type { CameraControllerHandle } from "./CameraController";
@@ -390,12 +390,17 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   }, [visible, mode, activePageId]);
 
   const dimensionMountedRef = useRef(false);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!dimensionMountedRef.current) {
       dimensionMountedRef.current = true;
       return;
     }
-    if (dimension === "2d") {
+    if (dimension === "3d") {
+      if (sigmaRef.current) {
+        (sigmaRef.current as { kill: () => void }).kill();
+        sigmaRef.current = null;
+      }
+    } else if (dimension === "2d") {
       if (sigmaRef.current) {
         (sigmaRef.current as { refresh: () => void }).refresh();
       } else {

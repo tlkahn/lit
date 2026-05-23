@@ -1688,16 +1688,36 @@ describe("GraphView", () => {
     expect(screen.queryByTestId("graph-view-3d")).toBeNull();
   });
 
-  it("Sigma refreshes after round-trip 3D → 2D", async () => {
+  it("kills Sigma when switching from 2D to 3D", async () => {
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView />);
     await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
-
+    mockSigmaKill.mockClear();
     await userEvent.click(screen.getByRole("button", { name: "3D" }));
-    mockSigmaRefresh.mockClear();
-    await userEvent.click(screen.getByRole("button", { name: "2D" }));
+    expect(mockSigmaKill).toHaveBeenCalledTimes(1);
+  });
 
-    expect(mockSigmaRefresh).toHaveBeenCalled();
+  it("reinits Sigma after round-trip 3D → 2D (Sigma killed on 3D switch)", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+    await userEvent.click(screen.getByRole("button", { name: "3D" }));
+    expect(mockSigmaKill).toHaveBeenCalled();
+    mockSigmaOn.mockClear();
+    await userEvent.click(screen.getByRole("button", { name: "2D" }));
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+  });
+
+  it("does not double-kill Sigma on 3D switch then unmount", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    const { unmount } = render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+    mockSigmaKill.mockClear();
+    await userEvent.click(screen.getByRole("button", { name: "3D" }));
+    expect(mockSigmaKill).toHaveBeenCalledTimes(1);
+    mockSigmaKill.mockClear();
+    unmount();
+    expect(mockSigmaKill).not.toHaveBeenCalled();
   });
 
   it("reset zoom in 2D mode calls sigma camera reset", async () => {
