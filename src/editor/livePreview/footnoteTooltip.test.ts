@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { markdown } from "@codemirror/lang-markdown";
+import { ensureSyntaxTree } from "@codemirror/language";
 import { Footnote } from "../markdown/footnote";
 import { buildFootnoteMap } from "./footnoteNumbering";
 import { getFootnoteDefBody, renderFootnoteBody, footnoteTooltipSource } from "./footnoteTooltip";
@@ -24,7 +25,9 @@ function makeView(doc: string, cursor = 0): EditorView {
     selection: { anchor: cursor },
     extensions: [markdown({ extensions: [Footnote] })],
   });
-  return new EditorView({ state, parent: document.createElement("div") });
+  const view = new EditorView({ state, parent: document.createElement("div") });
+  ensureSyntaxTree(view.state, view.state.doc.length);
+  return view;
 }
 
 describe("getFootnoteDefBody", () => {
