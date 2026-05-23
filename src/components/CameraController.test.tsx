@@ -50,6 +50,20 @@ describe("CameraController", () => {
     expect(mockCamera.lookAt).toHaveBeenCalled();
   });
 
+  it("resetCamera uses latest positions after rerender", () => {
+    const ref = createRef<CameraControllerHandle>();
+    const { rerender } = render(
+      <CameraController ref={ref} positions={{ a: { x: 0, y: 0, z: 0 } }} />,
+    );
+    rerender(
+      <CameraController ref={ref} positions={{ a: { x: 99, y: 99, z: 99 } }} />,
+    );
+    mockCamera.position.set.mockClear();
+    ref.current!.resetCamera();
+    const call = mockCamera.position.set.mock.calls[0]!;
+    expect(call[0]).toBeCloseTo(99);
+  });
+
   it("sets camera position on mount with positions", () => {
     render(
       <CameraController

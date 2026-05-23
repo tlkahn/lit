@@ -3,6 +3,7 @@ import { Canvas } from "@react-three/fiber";
 import type { GraphNode } from "../lib/ipc";
 import { resolveThemeColors } from "../lib/graphLayout";
 import { get3DQualitySettings } from "../lib/qualityTiers3D";
+import { useThemeStore } from "../stores/theme";
 import { CameraController } from "./CameraController";
 import type { CameraControllerHandle } from "./CameraController";
 import { SceneLighting } from "./SceneLighting";
@@ -27,6 +28,7 @@ export function GraphView3D({
   positions,
   pagerank,
   seedId,
+  // Phase 3: onNavigate, onHover, onContextMenu (raycasting interaction)
   onResetZoom,
 }: GraphView3DProps) {
   const cameraCallbackRef = useCallback(
@@ -38,7 +40,9 @@ export function GraphView3D({
     [onResetZoom],
   );
 
-  const colors = useMemo(() => resolveThemeColors(), []);
+  const activeThemeId = useThemeStore((s) => s.activeThemeId);
+
+  const colors = useMemo(() => resolveThemeColors(), [activeThemeId]);
   const tierSettings = useMemo(() => get3DQualitySettings(nodes.length), [nodes.length]);
 
   const isDark = useMemo(() => {
@@ -51,7 +55,7 @@ export function GraphView3D({
     const g = parseInt(bg.slice(3, 5), 16);
     const b = parseInt(bg.slice(5, 7), 16);
     return (r + g + b) / 3 < 128;
-  }, []);
+  }, [activeThemeId]);
 
   return (
     <div data-testid="graph-view-3d" style={{ position: "absolute", inset: 0 }}>

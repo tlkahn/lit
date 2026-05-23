@@ -1,5 +1,5 @@
 import { Color } from "three";
-import { computeNodeSize, SEED_COLOR } from "./graphLayout";
+import { computeNodeSize, MIN_SIZE, SEED_COLOR } from "./graphLayout";
 import type { GraphNode } from "./ipc";
 
 export const SIZE_SCALE_3D = 0.02;
@@ -56,14 +56,15 @@ export function buildInstanceMatrices(
   positions: Record<string, { x: number; y: number; z: number }>,
   pagerank: Record<string, number>,
 ): Float32Array {
-  const maxPr = Math.max(0, ...Object.values(pagerank));
+  const prValues = Object.values(pagerank);
+  const maxPr = prValues.length > 0 ? Math.max(0, ...prValues) : 0;
   const arr = new Float32Array(nodes.length * 16);
 
   for (let i = 0; i < nodes.length; i++) {
     const node = nodes[i]!;
     const pos = positions[node.id];
     const pr = pagerank[node.id] ?? 0;
-    const size = computeNodeSize(pr, maxPr) * SIZE_SCALE_3D;
+    const size = (maxPr <= 0 ? MIN_SIZE : computeNodeSize(pr, maxPr)) * SIZE_SCALE_3D;
     const x = pos?.x ?? 0;
     const y = pos?.y ?? 0;
     const z = pos?.z ?? 0;
@@ -91,6 +92,7 @@ export function buildInstanceMatrices(
   return arr;
 }
 
+// Single-threaded scratch instance — not safe for concurrent/worker use.
 const tmpColor = new Color();
 
 export function buildInstanceColors(

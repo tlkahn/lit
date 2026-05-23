@@ -1,9 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, act } from "@testing-library/react";
 import { GraphView3D } from "./GraphView3D";
 import type { GraphView3DProps } from "./GraphView3D";
 import { createRef } from "react";
 import type { CameraControllerHandle } from "./CameraController";
+import * as graphLayout from "../lib/graphLayout";
+import { useThemeStore } from "../stores/theme";
 
 const mockCamera = {
   position: { set: vi.fn(), x: 0, y: 0, z: 0 },
@@ -106,5 +108,18 @@ describe("GraphView3D", () => {
       />,
     );
     expect(screen.getByTestId("graph-view-3d")).toBeTruthy();
+  });
+
+  it("recomputes colors when theme changes", () => {
+    const spy = vi.spyOn(graphLayout, "resolveThemeColors");
+    render(<GraphView3D {...defaults} />);
+    const callCount = spy.mock.calls.length;
+
+    act(() => {
+      useThemeStore.setState({ activeThemeId: "dark-theme" });
+    });
+
+    expect(spy.mock.calls.length).toBeGreaterThan(callCount);
+    spy.mockRestore();
   });
 });

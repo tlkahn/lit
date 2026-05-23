@@ -7,7 +7,7 @@ import {
   buildEdgePositions,
   SIZE_SCALE_3D,
 } from "./graph3DHelpers";
-import { computeNodeSize, SEED_COLOR } from "./graphLayout";
+import { computeNodeSize, MIN_SIZE, SEED_COLOR } from "./graphLayout";
 import { Color } from "three";
 
 describe("computeBoundingSphere", () => {
@@ -93,6 +93,22 @@ describe("buildInstanceMatrices", () => {
     expect(m[0]).toBeCloseTo(expectedSize);
     expect(m[5]).toBeCloseTo(expectedSize);
     expect(m[10]).toBeCloseTo(expectedSize);
+  });
+
+  it("uses uniform MIN_SIZE scale when pagerank is empty", () => {
+    const nodes = [
+      { id: "a", title: "A", is_stub: false },
+      { id: "b", title: "B", is_stub: false },
+    ];
+    const m = buildInstanceMatrices(
+      nodes,
+      { a: { x: 0, y: 0, z: 0 }, b: { x: 1, y: 1, z: 1 } },
+      {},
+    );
+    const expectedSize = MIN_SIZE * SIZE_SCALE_3D;
+    expect(m[0]).toBeCloseTo(expectedSize);
+    expect(m[16]).toBeCloseTo(expectedSize);
+    expect(m[0]).toBe(m[16]);
   });
 
   it("uses origin for missing position", () => {

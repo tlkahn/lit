@@ -1,4 +1,4 @@
-import { forwardRef, useImperativeHandle, useEffect, useRef } from "react";
+import { forwardRef, useCallback, useImperativeHandle, useEffect, useRef } from "react";
 import { useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import { computeBoundingSphere, computeCameraDistance } from "../lib/graph3DHelpers";
@@ -17,7 +17,7 @@ export const CameraController = forwardRef<CameraControllerHandle, CameraControl
     const { camera } = useThree();
     const controlsRef = useRef<import("three-stdlib").OrbitControls>(null);
 
-    const fitCamera = () => {
+    const fitCamera = useCallback(() => {
       const { center, radius } = computeBoundingSphere(positions);
       const fov = (camera as { fov?: number }).fov ?? 75;
       const dist = computeCameraDistance(radius, fov);
@@ -29,11 +29,11 @@ export const CameraController = forwardRef<CameraControllerHandle, CameraControl
         controlsRef.current.target.set(center.x, center.y, center.z);
         controlsRef.current.update();
       }
-    };
+    }, [positions, camera]);
 
     useEffect(() => {
       fitCamera();
-    }, [positions]);
+    }, [fitCamera]);
 
     useImperativeHandle(ref, () => ({
       resetCamera: () => fitCamera(),
@@ -45,7 +45,7 @@ export const CameraController = forwardRef<CameraControllerHandle, CameraControl
           controlsRef.current.update();
         }
       },
-    }));
+    }), [fitCamera, camera]);
 
     return (
       <OrbitControls ref={controlsRef} enableDamping dampingFactor={0.1} />
