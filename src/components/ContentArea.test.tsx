@@ -21,6 +21,12 @@ vi.mock("sigma", () => ({
 vi.mock("@sigma/node-border", () => ({
   createNodeBorderProgram: () => class {},
 }));
+vi.mock("@react-three/fiber", () => ({
+  Canvas: ({ children }: { children: React.ReactNode }) => (
+    <div data-testid="r3f-canvas">{children}</div>
+  ),
+}));
+vi.mock("@react-three/drei", () => ({}));
 
 import { globalJumpTracker } from "../editor/jumpTracker";
 

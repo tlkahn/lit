@@ -35,6 +35,13 @@ vi.mock("@sigma/node-border", () => ({
   createNodeBorderProgram: () => class MockProgram {},
 }));
 
+vi.mock("@react-three/fiber", () => ({
+  Canvas: ({ children }: { children: React.ReactNode }) => (
+    <div data-testid="r3f-canvas">{children}</div>
+  ),
+}));
+vi.mock("@react-three/drei", () => ({}));
+
 let rafQueue: Map<number, FrameRequestCallback> = new Map();
 let nextRafId = 1;
 const flushRAF = () => {
@@ -1617,5 +1624,83 @@ describe("GraphView", () => {
     });
 
     expect(onExit).toHaveBeenCalledTimes(1);
+  });
+
+  // --- Dimension toggle (2D/3D) ---
+
+  it("defaults to 2D — Sigma canvas visible, no graph-view-3d in DOM", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const canvas = screen.getByTestId("graph-canvas");
+    expect(canvas.style.display).not.toBe("none");
+    expect(screen.queryByTestId("graph-view-3d")).toBeNull();
+  });
+
+  it("toolbar renders 2D/3D toggle buttons", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    expect(screen.getByRole("button", { name: "2D" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "3D" })).toBeTruthy();
+  });
+
+  it("switching to 3D hides Sigma, shows GraphView3D", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await userEvent.click(screen.getByRole("button", { name: "3D" }));
+
+    const canvas = screen.getByTestId("graph-canvas");
+    expect(canvas.style.display).toBe("none");
+    expect(screen.getByTestId("graph-view-3d")).toBeTruthy();
+  });
+
+  it("switching back to 2D shows Sigma, unmounts GraphView3D", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await userEvent.click(screen.getByRole("button", { name: "3D" }));
+    expect(screen.getByTestId("graph-view-3d")).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: "2D" }));
+    const canvas = screen.getByTestId("graph-canvas");
+    expect(canvas.style.display).not.toBe("none");
+    expect(screen.queryByTestId("graph-view-3d")).toBeNull();
+  });
+
+  it("Sigma refreshes after round-trip 3D → 2D", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await userEvent.click(screen.getByRole("button", { name: "3D" }));
+    mockSigmaRefresh.mockClear();
+    await userEvent.click(screen.getByRole("button", { name: "2D" }));
+
+    expect(mockSigmaRefresh).toHaveBeenCalled();
+  });
+
+  it("reset zoom in 2D mode calls sigma camera reset", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    mockCameraAnimatedReset.mockClear();
+    await userEvent.click(screen.getByRole("button", { name: "Reset zoom" }));
+    expect(mockCameraAnimatedReset).toHaveBeenCalled();
+  });
+
+  it("reset zoom in 3D mode is a no-op", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await userEvent.click(screen.getByRole("button", { name: "3D" }));
+    mockCameraAnimatedReset.mockClear();
+    await userEvent.click(screen.getByRole("button", { name: "Reset zoom" }));
+    expect(mockCameraAnimatedReset).not.toHaveBeenCalled();
   });
 });

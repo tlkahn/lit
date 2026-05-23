@@ -102,6 +102,45 @@ describe("GraphToolbar", () => {
     });
   });
 
+  describe("dimension toggle", () => {
+    it("renders 2D and 3D toggle buttons when dimension and onDimensionChange are provided", () => {
+      render(<GraphToolbar {...defaults} dimension="2d" onDimensionChange={vi.fn()} />);
+      expect(screen.getByRole("button", { name: "2D" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "3D" })).toBeTruthy();
+    });
+
+    it("active dimension button has aria-pressed=true", () => {
+      render(<GraphToolbar {...defaults} dimension="2d" onDimensionChange={vi.fn()} />);
+      expect(screen.getByRole("button", { name: "2D" }).getAttribute("aria-pressed")).toBe("true");
+      expect(screen.getByRole("button", { name: "3D" }).getAttribute("aria-pressed")).toBe("false");
+    });
+
+    it("clicking '3D' calls onDimensionChange('3d')", async () => {
+      const onDimensionChange = vi.fn();
+      render(<GraphToolbar {...defaults} dimension="2d" onDimensionChange={onDimensionChange} />);
+      await userEvent.click(screen.getByRole("button", { name: "3D" }));
+      expect(onDimensionChange).toHaveBeenCalledWith("3d");
+    });
+
+    it("clicking '2D' calls onDimensionChange('2d')", async () => {
+      const onDimensionChange = vi.fn();
+      render(<GraphToolbar {...defaults} dimension="3d" onDimensionChange={onDimensionChange} />);
+      await userEvent.click(screen.getByRole("button", { name: "2D" }));
+      expect(onDimensionChange).toHaveBeenCalledWith("2d");
+    });
+
+    it("a visual separator exists between dimension group and mode group", () => {
+      const { container } = render(<GraphToolbar {...defaults} dimension="2d" onDimensionChange={vi.fn()} />);
+      expect(container.querySelector(".graph-toolbar-separator")).toBeTruthy();
+    });
+
+    it("dimension toggle is omitted when onDimensionChange is not provided", () => {
+      render(<GraphToolbar {...defaults} />);
+      expect(screen.queryByRole("button", { name: "2D" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "3D" })).toBeNull();
+    });
+  });
+
   describe("search button", () => {
     it("renders a search button with aria-label 'Search graph'", () => {
       render(<GraphToolbar {...defaults} onSearch={vi.fn()} />);

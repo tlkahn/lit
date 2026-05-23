@@ -10,6 +10,7 @@ import { isPerfEnabled, perfTable, type PerfEntry } from "../lib/perf";
 import { GraphToolbar } from "./GraphToolbar";
 import { GraphTooltip } from "./GraphTooltip";
 import { GraphSearch, getMatchingNodes } from "./GraphSearch";
+import { GraphView3D } from "./GraphView3D";
 import "./GraphSearch.css";
 import "./GraphView.css";
 
@@ -60,6 +61,9 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   const [searchQuery, setSearchQuery] = useState("");
   const [searchMatches, setSearchMatches] = useState<string[]>([]);
   const [graphStats, setGraphStats] = useState<{ nodes: number; edges: number } | null>(null);
+  const [dimension, setDimension] = useState<"2d" | "3d">("2d");
+  const dimensionRef = useRef<"2d" | "3d">("2d");
+  dimensionRef.current = dimension;
   const [contextMenu, setContextMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null);
   const contextMenuOpenRef = useRef(false);
   useEffect(() => { contextMenuOpenRef.current = contextMenu !== null; }, [contextMenu]);
@@ -83,6 +87,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   }, [contextMenu]);
 
   const handleResetZoom = useCallback(() => {
+    if (dimensionRef.current !== "2d") return;
     const sigma = sigmaRef.current as { getCamera: () => { animatedReset: () => void } } | null;
     sigma?.getCamera().animatedReset();
   }, []);
@@ -364,6 +369,12 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   }, [visible, mode, activePageId]);
 
   useEffect(() => {
+    if (dimension === "2d") {
+      (sigmaRef.current as { refresh: () => void } | null)?.refresh();
+    }
+  }, [dimension]);
+
+  useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     listen("lit:graph-updated", async () => {
@@ -485,8 +496,10 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         mode={mode}
         depth={depth}
         localDisabled={!activePageId}
+        dimension={dimension}
         onModeChange={setMode}
         onDepthChange={setDepth}
+        onDimensionChange={setDimension}
         onResetZoom={handleResetZoom}
         onSearch={() => setSearchOpen(true)}
       />
@@ -503,9 +516,17 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
       <div
         ref={containerRef}
         data-testid="graph-canvas"
-        style={{ position: "absolute", inset: 0, cursor: "grab" }}
+        style={{ position: "absolute", inset: 0, cursor: "grab", display: dimension === "3d" ? "none" : undefined }}
         onContextMenu={(e) => e.preventDefault()}
       />
+      {dimension === "3d" && (
+        <GraphView3D
+          nodes={[]}
+          edges={[]}
+          positions={{}}
+          pagerank={{}}
+        />
+      )}
       {contextMenu && onExportNetwork && (
         <div
           data-graph-context-menu

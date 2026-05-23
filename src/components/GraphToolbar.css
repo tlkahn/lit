@@ -45,6 +45,12 @@
   color: var(--text-faint, #999);
 }
 
+.graph-toolbar-separator {
+  width: 1px;
+  height: 16px;
+  background: var(--background-modifier-border, #ddd);
+}
+
 .graph-toolbar-btn.active,
 .graph-toolbar-btn[aria-pressed="true"] {
   background: var(--interactive-accent, #7c3aed);
