@@ -42,6 +42,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   visibleRef.current = visible;
   const lastRenderedSeedRef = useRef<string | null>(null);
   const pendingRefreshRef = useRef(false);
+  const pendingThemeUpdateRef = useRef(false);
   const diffInProgressRef = useRef(false);
   const modeRef = useRef(initialMode ?? "full");
   const depthRef = useRef(2);
@@ -355,6 +356,9 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
     } else {
       if (mode === "local" && activePageId !== lastRenderedSeedRef.current) {
         setReinitTrigger((c) => c + 1);
+      } else if (pendingThemeUpdateRef.current) {
+        applyTheme();
+        pendingThemeUpdateRef.current = false;
       } else {
         (sigmaRef.current as { refresh: () => void } | null)?.refresh();
       }
@@ -435,7 +439,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
 
   const activeThemeId = useThemeStore((s) => s.activeThemeId);
 
-  useEffect(() => {
+  const applyTheme = () => {
     const graph = graphRef.current as import("graphology").default | null;
     const sigma = sigmaRef.current as { refresh: () => void; setSetting: (key: string, value: unknown) => void } | null;
     if (!graph || !sigma) return;
@@ -448,6 +452,15 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
     sigma.setSetting("defaultEdgeColor", edgeColor);
     sigma.setSetting("labelColor", { color: labelColor });
     sigma.refresh();
+  };
+
+  useEffect(() => {
+    if (!graphRef.current || !sigmaRef.current) return;
+    if (!visible) {
+      pendingThemeUpdateRef.current = true;
+      return;
+    }
+    applyTheme();
   }, [activeThemeId]);
 
   const handleContainerKeyDown = useCallback((e: React.KeyboardEvent) => {

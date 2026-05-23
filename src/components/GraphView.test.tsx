@@ -1614,6 +1614,77 @@ describe("GraphView", () => {
     expect(onExit).not.toHaveBeenCalled();
   });
 
+  // --- Theme change while hidden (deferred update) ---
+
+  it("theme change while hidden does not call sigma.refresh or setSetting", async () => {
+    const { useThemeStore } = await import("../stores/theme");
+    const GraphView = (await import("./GraphView")).default;
+    const { rerender } = render(<GraphView visible={true} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await act(async () => { rerender(<GraphView visible={false} />); });
+    mockSigmaRefresh.mockClear();
+    mockSigmaSetSetting.mockClear();
+
+    await act(async () => {
+      useThemeStore.setState({ activeThemeId: "hidden-theme" });
+    });
+
+    expect(mockSigmaRefresh).not.toHaveBeenCalled();
+    expect(mockSigmaSetSetting).not.toHaveBeenCalled();
+  });
+
+  it("deferred theme update is applied when graph becomes visible", async () => {
+    document.documentElement.style.setProperty("--text-faint", "#aabbcc");
+    document.documentElement.style.setProperty("--text-normal", "#ddeeff");
+
+    const { useThemeStore } = await import("../stores/theme");
+    const GraphView = (await import("./GraphView")).default;
+    const { rerender } = render(<GraphView visible={true} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await act(async () => { rerender(<GraphView visible={false} />); });
+
+    await act(async () => {
+      useThemeStore.setState({ activeThemeId: "deferred-theme" });
+    });
+
+    mockSigmaRefresh.mockClear();
+    mockSigmaSetSetting.mockClear();
+
+    await act(async () => { rerender(<GraphView visible={true} />); });
+
+    expect(mockSigmaSetSetting).toHaveBeenCalledWith("defaultEdgeColor", "#aabbcc");
+    expect(mockSigmaSetSetting).toHaveBeenCalledWith("labelColor", { color: "#ddeeff" });
+    expect(mockSigmaRefresh).toHaveBeenCalled();
+
+    document.documentElement.style.removeProperty("--text-faint");
+    document.documentElement.style.removeProperty("--text-normal");
+  });
+
+  it("multiple theme changes while hidden produce single deferred update", async () => {
+    const { useThemeStore } = await import("../stores/theme");
+    const GraphView = (await import("./GraphView")).default;
+    const { rerender } = render(<GraphView visible={true} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await act(async () => { rerender(<GraphView visible={false} />); });
+
+    await act(async () => {
+      useThemeStore.setState({ activeThemeId: "theme-a" });
+    });
+    await act(async () => {
+      useThemeStore.setState({ activeThemeId: "theme-b" });
+    });
+
+    mockSigmaRefresh.mockClear();
+
+    await act(async () => { rerender(<GraphView visible={true} />); });
+
+    const refreshCount = mockSigmaRefresh.mock.calls.length;
+    expect(refreshCount).toBe(1);
+  });
+
   it("Escape after context menu dismissed calls onExit", async () => {
     const onExit = vi.fn();
     const GraphView = (await import("./GraphView")).default;
