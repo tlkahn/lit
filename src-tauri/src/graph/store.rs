@@ -331,18 +331,6 @@ impl Store {
 
     // --- Positions ---
 
-    pub fn save_positions(&self, positions: &HashMap<String, super::types::Position>) -> Result<(), GraphError> {
-        self.save_positions_typed(positions, "2d")
-    }
-
-    pub fn load_positions(&self) -> Result<HashMap<String, super::types::Position>, GraphError> {
-        self.load_positions_typed("2d")
-    }
-
-    pub fn clear_positions(&self) -> Result<(), GraphError> {
-        self.clear_positions_typed("2d")
-    }
-
     // Uses unchecked_transaction because Store is !Send/!Sync and single-threaded,
     // but bypasses Rust's compile-time single-transaction guarantee. Revisit if
     // Store ever becomes shared across threads.
@@ -2113,7 +2101,7 @@ mod tests {
         assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
 
         use super::super::types::Position;
-        let loaded = store.load_positions().unwrap();
+        let loaded = store.load_positions_typed("2d").unwrap();
         assert_eq!(loaded["a.md"], Position { x: 10.0, y: 20.0, z: 0.0 });
         assert_eq!(loaded["b.md"], Position { x: 30.0, y: 40.0, z: 0.0 });
     }
@@ -2701,127 +2689,6 @@ mod tests {
     // --- Positions ---
 
     #[test]
-    fn save_and_load_positions() {
-        use super::super::types::Position;
-        let store = Store::open_memory().unwrap();
-        let mut positions = HashMap::new();
-        positions.insert("A".to_string(), Position { x: 1.0, y: 2.0, z: 0.0 });
-        positions.insert("B".to_string(), Position { x: 3.0, y: 4.0, z: 0.0 });
-        store.save_positions(&positions).unwrap();
-        let loaded = store.load_positions().unwrap();
-        assert_eq!(loaded.len(), 2);
-        assert_eq!(loaded["A"], Position { x: 1.0, y: 2.0, z: 0.0 });
-        assert_eq!(loaded["B"], Position { x: 3.0, y: 4.0, z: 0.0 });
-    }
-
-    #[test]
-    fn load_positions_empty() {
-        let store = Store::open_memory().unwrap();
-        let loaded = store.load_positions().unwrap();
-        assert!(loaded.is_empty());
-    }
-
-    #[test]
-    fn clear_positions() {
-        use super::super::types::Position;
-        let store = Store::open_memory().unwrap();
-        let mut positions = HashMap::new();
-        positions.insert("X".to_string(), Position { x: 5.0, y: 6.0, z: 0.0 });
-        store.save_positions(&positions).unwrap();
-        store.clear_positions().unwrap();
-        let loaded = store.load_positions().unwrap();
-        assert!(loaded.is_empty());
-    }
-
-    #[test]
-    fn save_positions_overwrites() {
-        use super::super::types::Position;
-        let store = Store::open_memory().unwrap();
-        let mut p1 = HashMap::new();
-        p1.insert("A".to_string(), Position { x: 1.0, y: 2.0, z: 0.0 });
-        store.save_positions(&p1).unwrap();
-        let mut p2 = HashMap::new();
-        p2.insert("A".to_string(), Position { x: 10.0, y: 20.0, z: 0.0 });
-        p2.insert("C".to_string(), Position { x: 30.0, y: 40.0, z: 0.0 });
-        store.save_positions(&p2).unwrap();
-        let loaded = store.load_positions().unwrap();
-        assert_eq!(loaded["A"], Position { x: 10.0, y: 20.0, z: 0.0 });
-        assert_eq!(loaded["C"], Position { x: 30.0, y: 40.0, z: 0.0 });
-    }
-
-    #[test]
-    fn delete_node_removes_positions() {
-        use super::super::types::Position;
-        let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("A", "Alpha", &[], json!({})), 1).unwrap();
-        let mut positions = HashMap::new();
-        positions.insert("A".to_string(), Position { x: 1.0, y: 2.0, z: 0.0 });
-        store.save_positions(&positions).unwrap();
-        store.delete_node("A").unwrap();
-        let loaded = store.load_positions().unwrap();
-        assert!(!loaded.contains_key("A"));
-    }
-
-    #[test]
-    fn save_positions_persists_z() {
-        use super::super::types::Position;
-        let store = Store::open_memory().unwrap();
-        let mut positions = HashMap::new();
-        positions.insert("A".to_string(), Position { x: 1.0, y: 2.0, z: 5.0 });
-        positions.insert("B".to_string(), Position { x: 3.0, y: 4.0, z: -1.5 });
-        store.save_positions(&positions).unwrap();
-        let z_a: f64 = store.conn.query_row(
-            "SELECT z FROM node_positions WHERE node_id = 'A'", [], |row| row.get(0),
-        ).unwrap();
-        let z_b: f64 = store.conn.query_row(
-            "SELECT z FROM node_positions WHERE node_id = 'B'", [], |row| row.get(0),
-        ).unwrap();
-        assert_eq!(z_a, 5.0);
-        assert_eq!(z_b, -1.5);
-    }
-
-    #[test]
-    fn load_positions_reads_z() {
-        use super::super::types::Position;
-        let store = Store::open_memory().unwrap();
-        store.conn.execute(
-            "INSERT INTO node_positions(node_id, x, y, z) VALUES ('Z', 1.0, 2.0, 7.5)",
-            [],
-        ).unwrap();
-        let loaded = store.load_positions().unwrap();
-        assert_eq!(loaded["Z"], Position { x: 1.0, y: 2.0, z: 7.5 });
-    }
-
-    #[test]
-    fn clear_positions_works_with_z_values() {
-        use super::super::types::Position;
-        let store = Store::open_memory().unwrap();
-        let mut positions = HashMap::new();
-        positions.insert("A".to_string(), Position { x: 1.0, y: 2.0, z: 9.0 });
-        store.save_positions(&positions).unwrap();
-        store.clear_positions().unwrap();
-        let loaded = store.load_positions().unwrap();
-        assert!(loaded.is_empty());
-    }
-
-    // --- Cycle 2a: Typed position store ---
-
-    #[test]
-    fn save_positions_2d_stores_with_layout_type() {
-        use super::super::types::Position;
-        let store = Store::open_memory().unwrap();
-        let mut positions = HashMap::new();
-        positions.insert("A".to_string(), Position { x: 1.0, y: 2.0, z: 0.0 });
-        positions.insert("B".to_string(), Position { x: 3.0, y: 4.0, z: 0.0 });
-        store.save_positions_typed(&positions, "2d").unwrap();
-
-        let loaded = store.load_positions_typed("2d").unwrap();
-        assert_eq!(loaded.len(), 2);
-        assert_eq!(loaded["A"], Position { x: 1.0, y: 2.0, z: 0.0 });
-        assert_eq!(loaded["B"], Position { x: 3.0, y: 4.0, z: 0.0 });
-    }
-
-    #[test]
     fn save_positions_3d_stores_separately() {
         use super::super::types::Position;
         let store = Store::open_memory().unwrap();
@@ -2919,34 +2786,6 @@ mod tests {
 
         let loaded_3d = store.load_positions_typed("3d").unwrap();
         assert!(loaded_3d.is_empty(), "no 3d positions should exist after migration");
-    }
-
-    #[test]
-    fn backward_compat_save_load_clear_delegate_to_2d() {
-        use super::super::types::Position;
-        let store = Store::open_memory().unwrap();
-
-        let mut positions = HashMap::new();
-        positions.insert("A".to_string(), Position { x: 1.0, y: 2.0, z: 0.0 });
-        store.save_positions(&positions).unwrap();
-
-        let loaded_via_typed = store.load_positions_typed("2d").unwrap();
-        assert_eq!(loaded_via_typed["A"], Position { x: 1.0, y: 2.0, z: 0.0 });
-
-        let loaded_via_compat = store.load_positions().unwrap();
-        assert_eq!(loaded_via_compat["A"], Position { x: 1.0, y: 2.0, z: 0.0 });
-
-        let mut pos_3d = HashMap::new();
-        pos_3d.insert("A".to_string(), Position { x: 10.0, y: 20.0, z: 30.0 });
-        store.save_positions_typed(&pos_3d, "3d").unwrap();
-
-        store.clear_positions().unwrap();
-
-        let loaded_3d = store.load_positions_typed("3d").unwrap();
-        assert_eq!(loaded_3d.len(), 1, "clear_positions should only clear 2d");
-
-        let loaded_2d = store.load_positions().unwrap();
-        assert!(loaded_2d.is_empty(), "2d should be cleared");
     }
 
     #[test]

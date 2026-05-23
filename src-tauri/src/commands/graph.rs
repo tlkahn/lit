@@ -123,7 +123,7 @@ pub fn rebuild_graph_index(
     let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
     let gi = graph_state.indices.lock().unwrap().get(&root).cloned();
     if let Some(gi) = gi {
-        spawn_layout(gi, app_handle.clone());
+        spawn_layout(gi, app_handle.clone(), crate::graph::layout3d::Layout3dSettings::default());
     }
     Ok(msg)
 }
@@ -211,7 +211,7 @@ pub(crate) fn initialize_graph_index(
         ann_enabled,
         move |p| { let _ = emit_handle.emit("lit:index-progress", &p); },
         |_gi| { let _ = layout_handle.emit("lit:graph-updated", ()); },
-        |gi| spawn_layout(gi, handle),
+        |gi| spawn_layout(gi, handle, crate::graph::layout3d::Layout3dSettings::default()),
     );
 }
 
@@ -229,25 +229,15 @@ pub fn reset_graph_layout(
     let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
     let gi = graph_state.indices.lock().unwrap().get(&root).cloned();
     if let Some(gi) = gi {
-        match layout_type.as_deref() {
-            Some("3d") => spawn_layout_3d(gi, app_handle, crate::graph::layout3d::Layout3dSettings::default()),
-            _ => spawn_layout(gi, app_handle),
-        }
+        spawn_layout(gi, app_handle, crate::graph::layout3d::Layout3dSettings::default());
     }
     Ok(())
 }
 
-pub fn spawn_layout(gi: Arc<GraphIndex>, handle: tauri::AppHandle) {
+pub fn spawn_layout(gi: Arc<GraphIndex>, handle: tauri::AppHandle, settings: crate::graph::layout3d::Layout3dSettings) {
     tauri::async_runtime::spawn_blocking(move || {
-        gi.compute_layout_background(&crate::graph::layout::LayoutSettings::default());
-        let _ = handle.emit("lit:layout-ready", ());
-    });
-}
-
-pub fn spawn_layout_3d(gi: Arc<GraphIndex>, handle: tauri::AppHandle, settings: crate::graph::layout3d::Layout3dSettings) {
-    tauri::async_runtime::spawn_blocking(move || {
-        if let Some(stress) = gi.compute_layout_3d_background(&settings) {
-            let _ = handle.emit("lit:layout-3d-ready", serde_json::json!({ "stress": stress }));
+        if let Some(stress) = gi.compute_layout_background(&settings) {
+            let _ = handle.emit("lit:layout-ready", serde_json::json!({ "stress": stress }));
         }
     });
 }
@@ -269,7 +259,7 @@ pub fn compute_layout_3d(
                 .ok_or_else(|| "No graph index for this workspace".to_string())?,
         )
     };
-    spawn_layout_3d(gi, app_handle, settings.unwrap_or_default());
+    spawn_layout(gi, app_handle, settings.unwrap_or_default());
     Ok(())
 }
 
@@ -767,8 +757,7 @@ mod tests {
         assert!(json.get("nodes").is_some());
         assert!(json.get("edges").is_some());
         assert!(json.get("pagerank").is_some());
-        assert!(json.get("positions_2d").is_some());
-        assert!(json.get("positions_3d").is_some());
+        assert!(json.get("positions").is_some());
     }
 
     #[test]
@@ -1033,17 +1022,17 @@ mod tests {
     }
 
     #[test]
-    fn cmd_compute_layout_3d_runs_layout() {
+    fn cmd_compute_layout_runs_layout() {
         use crate::graph::layout3d::Layout3dSettings;
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
         std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
-        gi.compute_layout_3d_background(&Layout3dSettings::default());
-        let positions = gi.get_positions_3d();
+        gi.compute_layout_background(&Layout3dSettings::default());
+        let positions = gi.get_positions();
         assert_eq!(positions.len(), 2);
         let has_nonzero_z = positions.values().any(|p| p.z != 0.0);
-        assert!(has_nonzero_z, "3D layout should produce non-zero z");
+        assert!(has_nonzero_z, "layout should produce non-zero z");
     }
 
     #[test]
@@ -1073,79 +1062,34 @@ mod tests {
         assert_eq!(layout_count.load(Ordering::SeqCst), 1);
     }
 
-    // --- get_graph_positions / reset_graph_layout with layout_type ---
-
     #[test]
-    fn get_positions_typed_defaults_to_2d() {
+    fn get_positions_returns_layout() {
+        use crate::graph::layout3d::Layout3dSettings;
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
         std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
-        gi.compute_layout_background(&crate::graph::layout::LayoutSettings::default());
+        gi.compute_layout_background(&Layout3dSettings::default());
         let positions = gi.get_positions_typed(None);
         assert_eq!(positions.len(), 2);
-        assert!(positions.values().all(|p| p.z == 0.0));
-    }
-
-    #[test]
-    fn get_positions_typed_returns_3d() {
-        use crate::graph::layout3d::Layout3dSettings;
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
-        std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
-        gi.compute_layout_3d_background(&Layout3dSettings::default());
-        let positions = gi.get_positions_typed(Some("3d"));
-        assert_eq!(positions.len(), 2);
         let has_nonzero_z = positions.values().any(|p| p.z != 0.0);
-        assert!(has_nonzero_z, "3D positions should have non-zero z");
+        assert!(has_nonzero_z, "positions should have non-zero z");
     }
 
     #[test]
-    fn clear_positions_typed_clears_only_2d() {
+    fn reset_layout_clears_and_recomputes() {
         use crate::graph::layout3d::Layout3dSettings;
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
         std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
-        gi.compute_layout_background(&crate::graph::layout::LayoutSettings::default());
-        gi.compute_layout_3d_background(&Layout3dSettings::default());
-        gi.clear_positions_typed(None).unwrap();
-        assert!(gi.get_positions_2d().is_empty());
-        assert_eq!(gi.get_positions_3d().len(), 2);
-    }
-
-    #[test]
-    fn clear_positions_typed_clears_only_3d() {
-        use crate::graph::layout3d::Layout3dSettings;
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
-        std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
-        gi.compute_layout_background(&crate::graph::layout::LayoutSettings::default());
-        gi.compute_layout_3d_background(&Layout3dSettings::default());
-        gi.clear_positions_typed(Some("3d")).unwrap();
-        assert_eq!(gi.get_positions_2d().len(), 2);
-        assert!(gi.get_positions_3d().is_empty());
-    }
-
-    #[test]
-    fn reset_3d_layout_clears_and_recomputes() {
-        use crate::graph::layout3d::Layout3dSettings;
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
-        std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
-        gi.compute_layout_background(&crate::graph::layout::LayoutSettings::default());
-        gi.compute_layout_3d_background(&Layout3dSettings::default());
-        assert_eq!(gi.get_positions_2d().len(), 2);
-        assert_eq!(gi.get_positions_3d().len(), 2);
-        gi.clear_positions_typed(Some("3d")).unwrap();
-        assert!(gi.get_positions_3d().is_empty());
-        gi.compute_layout_3d_background(&Layout3dSettings::default());
-        assert_eq!(gi.get_positions_2d().len(), 2);
-        assert_eq!(gi.get_positions_3d().len(), 2);
-        let has_nonzero_z = gi.get_positions_3d().values().any(|p| p.z != 0.0);
-        assert!(has_nonzero_z, "3D layout should produce non-zero z after reset");
+        gi.compute_layout_background(&Layout3dSettings::default());
+        assert_eq!(gi.get_positions().len(), 2);
+        gi.clear_positions().unwrap();
+        assert!(gi.get_positions().is_empty());
+        gi.compute_layout_background(&Layout3dSettings::default());
+        assert_eq!(gi.get_positions().len(), 2);
+        let has_nonzero_z = gi.get_positions().values().any(|p| p.z != 0.0);
+        assert!(has_nonzero_z, "layout should produce non-zero z after reset");
     }
 }
