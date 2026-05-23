@@ -129,14 +129,12 @@ export function buildNeighborSet(
   return neighbors;
 }
 
-const HOVER_COLOR = "#ffffff";
-
 export function buildHighlightColors(
   nodes: GraphNode[],
   hoveredId: string,
   neighbors: Set<string>,
   accentColor: string,
-  _stubColor: string,
+  hoverColor: string,
   dimColor: string,
   seedId?: string,
 ): Float32Array {
@@ -145,7 +143,7 @@ export function buildHighlightColors(
     const node = nodes[i]!;
     let hex: string;
     if (node.id === hoveredId) {
-      hex = seedId != null && node.id === seedId ? SEED_COLOR : HOVER_COLOR;
+      hex = seedId != null && node.id === seedId ? SEED_COLOR : hoverColor;
     } else if (neighbors.has(node.id)) {
       hex = accentColor;
     } else {

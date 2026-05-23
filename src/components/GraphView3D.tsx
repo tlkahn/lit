@@ -63,6 +63,8 @@ export function GraphView3D({
     return (r + g + b) / 3 < 128;
   }, [activeThemeId]);
 
+  const hoverColor = isDark ? "#ffffff" : "#1f2328";
+
   return (
     <div data-testid="graph-view-3d" style={{ position: "absolute", inset: 0 }}>
       <Canvas>
@@ -91,6 +93,7 @@ export function GraphView3D({
           positions={positions}
           accentColor={colors.accentColor}
           stubColor={colors.stubColor}
+          hoverColor={hoverColor}
           dimColor={colors.dimColor}
           seedId={seedId}
           raycastStrategy={tierSettings.raycastStrategy}

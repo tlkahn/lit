@@ -262,7 +262,7 @@ describe("buildNeighborSet", () => {
 
 describe("buildHighlightColors", () => {
   const accent = "#0969da";
-  const stub = "#818b98";
+  const hoverColor = "#ffffff";
   const dim = "#d1d9e0";
   const nodes = [
     { id: "a", title: "A", is_stub: false },
@@ -270,18 +270,27 @@ describe("buildHighlightColors", () => {
     { id: "c", title: "C", is_stub: true },
   ];
 
-  it("assigns white to hovered node", () => {
+  it("assigns hoverColor to hovered node", () => {
     const neighbors = new Set(["b"]);
-    const c = buildHighlightColors(nodes, "a", neighbors, accent, stub, dim);
-    const white = new Color("#ffffff");
-    expect(c[0]).toBeCloseTo(white.r);
-    expect(c[1]).toBeCloseTo(white.g);
-    expect(c[2]).toBeCloseTo(white.b);
+    const c = buildHighlightColors(nodes, "a", neighbors, accent, hoverColor, dim);
+    const expected = new Color(hoverColor);
+    expect(c[0]).toBeCloseTo(expected.r);
+    expect(c[1]).toBeCloseTo(expected.g);
+    expect(c[2]).toBeCloseTo(expected.b);
+  });
+
+  it("assigns custom hoverColor to hovered node", () => {
+    const neighbors = new Set(["b"]);
+    const c = buildHighlightColors(nodes, "a", neighbors, accent, "#ff0000", dim);
+    const expected = new Color("#ff0000");
+    expect(c[0]).toBeCloseTo(expected.r);
+    expect(c[1]).toBeCloseTo(expected.g);
+    expect(c[2]).toBeCloseTo(expected.b);
   });
 
   it("assigns accent to neighbor nodes", () => {
     const neighbors = new Set(["b"]);
-    const c = buildHighlightColors(nodes, "a", neighbors, accent, stub, dim);
+    const c = buildHighlightColors(nodes, "a", neighbors, accent, hoverColor, dim);
     const accentC = new Color(accent);
     expect(c[3]).toBeCloseTo(accentC.r);
     expect(c[4]).toBeCloseTo(accentC.g);
@@ -290,7 +299,7 @@ describe("buildHighlightColors", () => {
 
   it("assigns dim to non-hovered non-neighbor nodes", () => {
     const neighbors = new Set(["b"]);
-    const c = buildHighlightColors(nodes, "a", neighbors, accent, stub, dim);
+    const c = buildHighlightColors(nodes, "a", neighbors, accent, hoverColor, dim);
     const dimC = new Color(dim);
     expect(c[6]).toBeCloseTo(dimC.r);
     expect(c[7]).toBeCloseTo(dimC.g);
@@ -299,7 +308,7 @@ describe("buildHighlightColors", () => {
 
   it("assigns seed color to hovered seed node", () => {
     const neighbors = new Set<string>();
-    const c = buildHighlightColors(nodes, "a", neighbors, accent, stub, dim, "a");
+    const c = buildHighlightColors(nodes, "a", neighbors, accent, hoverColor, dim, "a");
     const seedC = new Color(SEED_COLOR);
     expect(c[0]).toBeCloseTo(seedC.r);
     expect(c[1]).toBeCloseTo(seedC.g);
@@ -307,15 +316,15 @@ describe("buildHighlightColors", () => {
   });
 
   it("handles empty nodes array", () => {
-    const c = buildHighlightColors([], "a", new Set(), accent, stub, dim);
+    const c = buildHighlightColors([], "a", new Set(), accent, hoverColor, dim);
     expect(c.length).toBe(0);
   });
 
   it("handles isolated hover (no neighbors)", () => {
     const nodes2 = [{ id: "a", title: "A", is_stub: false }];
-    const c = buildHighlightColors(nodes2, "a", new Set(), accent, stub, dim);
-    const white = new Color("#ffffff");
-    expect(c[0]).toBeCloseTo(white.r);
+    const c = buildHighlightColors(nodes2, "a", new Set(), accent, hoverColor, dim);
+    const expected = new Color(hoverColor);
+    expect(c[0]).toBeCloseTo(expected.r);
     expect(c.length).toBe(3);
   });
 });

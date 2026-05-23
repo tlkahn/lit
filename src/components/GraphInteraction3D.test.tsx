@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render } from "@testing-library/react";
 import { GraphInteraction3D } from "./GraphInteraction3D";
 import type { GraphInteraction3DProps } from "./GraphInteraction3D";
+import { Raycaster } from "three";
 
 let capturedFrameCallback: ((state: unknown, delta: number) => void) | null = null;
 
@@ -9,6 +10,7 @@ const mockGl = {
   domElement: {
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
+    style: { cursor: "" },
   },
 };
 
@@ -39,6 +41,7 @@ describe("GraphInteraction3D", () => {
     positions: {},
     accentColor: "#0969da",
     stubColor: "#818b98",
+    hoverColor: "#ffffff",
     dimColor: "#d1d9e0",
     raycastStrategy: "per-frame",
     raycastThrottleMs: 0,
@@ -157,5 +160,98 @@ describe("GraphInteraction3D", () => {
     render(<GraphInteraction3D {...defaultProps} />);
     expect(capturedFrameCallback).toBeTruthy();
     expect(() => capturedFrameCallback!(null, 0.016)).not.toThrow();
+  });
+
+  it("fires onHover with pointer-derived screen coords on hit", () => {
+    const onHover = vi.fn();
+    const stubMesh = {} as never;
+    const intersectSpy = vi.spyOn(Raycaster.prototype, "intersectObject").mockReturnValue([
+      { instanceId: 0, distance: 1, point: { x: 0, y: 0, z: 0 }, object: {} } as never,
+    ]);
+    const setFromCameraSpy = vi.spyOn(Raycaster.prototype, "setFromCamera").mockImplementation(() => {});
+
+    mockPointer.x = 0.5;
+    mockPointer.y = -0.25;
+
+    render(
+      <GraphInteraction3D
+        {...defaultProps}
+        meshRef={{ current: stubMesh }}
+        nodes={[{ id: "a", title: "A", is_stub: false }]}
+        edges={[]}
+        positions={{ a: { x: 0, y: 0, z: 0 } }}
+        onHover={onHover}
+      />,
+    );
+
+    capturedFrameCallback!(null, 0.016);
+
+    expect(onHover).toHaveBeenCalledWith(
+      expect.objectContaining({
+        visible: true,
+        x: (0.5 + 1) * 0.5 * 800 + 10,
+        y: (0.25 + 1) * 0.5 * 600 + 10,
+        title: "A",
+        connections: 0,
+      }),
+    );
+
+    intersectSpy.mockRestore();
+    setFromCameraSpy.mockRestore();
+    mockPointer.x = 0;
+    mockPointer.y = 0;
+  });
+
+  it("sets cursor to pointer on hover hit", () => {
+    const stubMesh = {} as never;
+    const intersectSpy = vi.spyOn(Raycaster.prototype, "intersectObject").mockReturnValue([
+      { instanceId: 0, distance: 1, point: { x: 0, y: 0, z: 0 }, object: {} } as never,
+    ]);
+    const setFromCameraSpy = vi.spyOn(Raycaster.prototype, "setFromCamera").mockImplementation(() => {});
+
+    mockGl.domElement.style.cursor = "";
+
+    render(
+      <GraphInteraction3D
+        {...defaultProps}
+        meshRef={{ current: stubMesh }}
+        nodes={[{ id: "a", title: "A", is_stub: false }]}
+        edges={[]}
+        positions={{ a: { x: 0, y: 0, z: 0 } }}
+      />,
+    );
+
+    capturedFrameCallback!(null, 0.016);
+    expect(mockGl.domElement.style.cursor).toBe("pointer");
+
+    intersectSpy.mockRestore();
+    setFromCameraSpy.mockRestore();
+  });
+
+  it("reverts cursor to grab on unhover", () => {
+    const stubMesh = {} as never;
+    const intersectSpy = vi.spyOn(Raycaster.prototype, "intersectObject").mockReturnValue([
+      { instanceId: 0, distance: 1, point: { x: 0, y: 0, z: 0 }, object: {} } as never,
+    ]);
+    const setFromCameraSpy = vi.spyOn(Raycaster.prototype, "setFromCamera").mockImplementation(() => {});
+
+    render(
+      <GraphInteraction3D
+        {...defaultProps}
+        meshRef={{ current: stubMesh }}
+        nodes={[{ id: "a", title: "A", is_stub: false }]}
+        edges={[]}
+        positions={{ a: { x: 0, y: 0, z: 0 } }}
+      />,
+    );
+
+    capturedFrameCallback!(null, 0.016);
+
+    intersectSpy.mockReturnValue([]);
+    capturedFrameCallback!(null, 0.016);
+    expect(mockGl.domElement.style.cursor).toBe("grab");
+
+    intersectSpy.mockRestore();
+    setFromCameraSpy.mockRestore();
   });
 });

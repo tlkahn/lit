@@ -6,7 +6,6 @@ import {
   buildNeighborSet,
   buildHighlightColors,
   buildInstanceColors,
-  projectToScreen,
 } from "../lib/graph3DHelpers";
 
 export interface GraphInteraction3DProps {
@@ -16,6 +15,7 @@ export interface GraphInteraction3DProps {
   positions: Record<string, { x: number; y: number; z: number }>;
   accentColor: string;
   stubColor: string;
+  hoverColor: string;
   dimColor: string;
   seedId?: string;
   raycastStrategy: "per-frame" | "throttled";
@@ -29,9 +29,9 @@ export function GraphInteraction3D({
   meshRef,
   nodes,
   edges,
-  positions,
   accentColor,
   stubColor,
+  hoverColor,
   dimColor,
   seedId,
   raycastStrategy,
@@ -46,6 +46,8 @@ export function GraphInteraction3D({
   const lastRaycastTime = useRef(0);
   const downInstanceRef = useRef<number | null>(null);
 
+  const nodesRef = useRef(nodes);
+  nodesRef.current = nodes;
   const onNavigateRef = useRef(onNavigate);
   onNavigateRef.current = onNavigate;
   const onHoverRef = useRef(onHover);
@@ -59,24 +61,23 @@ export function GraphInteraction3D({
   );
 
   const setHighlight = useCallback(
-    (instanceId: number) => {
+    (instanceId: number, neighbors: Set<string>) => {
       const mesh = meshRef.current;
       if (!mesh || nodes.length === 0) return;
       const node = nodes[instanceId];
       if (!node) return;
 
-      const neighbors = buildNeighborSet(edges, node.id);
-      const colors = buildHighlightColors(nodes, node.id, neighbors, accentColor, stubColor, dimColor, seedId);
+      const colors = buildHighlightColors(nodes, node.id, neighbors, accentColor, hoverColor, dimColor, seedId);
       mesh.instanceColor = new InstancedBufferAttribute(colors, 3);
       mesh.instanceColor.needsUpdate = true;
     },
-    [meshRef, nodes, edges, accentColor, stubColor, dimColor, seedId],
+    [meshRef, nodes, edges, accentColor, hoverColor, dimColor, seedId],
   );
 
   const clearHighlight = useCallback(() => {
     const mesh = meshRef.current;
     if (!mesh || nodes.length === 0) return;
-    mesh.instanceColor = new InstancedBufferAttribute(new Float32Array(baseColors), 3);
+    mesh.instanceColor = new InstancedBufferAttribute(baseColors, 3);
     mesh.instanceColor.needsUpdate = true;
   }, [meshRef, nodes.length, baseColors]);
 
@@ -97,27 +98,27 @@ export function GraphInteraction3D({
       const instanceId = hits[0]!.instanceId!;
       if (hoveredRef.current !== instanceId) {
         hoveredRef.current = instanceId;
-        setHighlight(instanceId);
-
         const node = nodes[instanceId];
+        const neighbors = node ? buildNeighborSet(edges, node.id) : new Set<string>();
+        setHighlight(instanceId, neighbors);
+        gl.domElement.style.cursor = "pointer";
+
         if (node && onHoverRef.current) {
-          const pos = positions[node.id];
-          if (pos) {
-            const screen = projectToScreen(pos, camera as never, size);
-            const neighbors = buildNeighborSet(edges, node.id);
-            onHoverRef.current({
-              visible: true,
-              x: screen.x,
-              y: screen.y,
-              title: node.title,
-              connections: neighbors.size,
-            });
-          }
+          const sx = (pointer.x + 1) * 0.5 * size.width + 10;
+          const sy = (-pointer.y + 1) * 0.5 * size.height + 10;
+          onHoverRef.current({
+            visible: true,
+            x: sx,
+            y: sy,
+            title: node.title,
+            connections: neighbors.size,
+          });
         }
       }
     } else if (hoveredRef.current !== null) {
       hoveredRef.current = null;
       clearHighlight();
+      gl.domElement.style.cursor = "grab";
       if (onHoverRef.current) {
         onHoverRef.current({ visible: false, x: 0, y: 0, title: "", connections: 0 });
       }
@@ -136,7 +137,7 @@ export function GraphInteraction3D({
         downInstanceRef.current !== null &&
         downInstanceRef.current === hoveredRef.current
       ) {
-        const node = nodes[downInstanceRef.current];
+        const node = nodesRef.current[downInstanceRef.current];
         if (node && onNavigateRef.current) {
           onNavigateRef.current(node.id);
         }
@@ -146,7 +147,7 @@ export function GraphInteraction3D({
 
     const onCtxMenu = (e: Event) => {
       if (hoveredRef.current !== null) {
-        const node = nodes[hoveredRef.current];
+        const node = nodesRef.current[hoveredRef.current];
         const me = e as MouseEvent;
         if (node && onContextMenuRef.current) {
           e.preventDefault();
@@ -168,7 +169,7 @@ export function GraphInteraction3D({
       el.removeEventListener("pointerup", onPointerUp);
       el.removeEventListener("contextmenu", onCtxMenu);
     };
-  }, [gl, nodes]);
+  }, [gl]);
 
   return null;
 }
