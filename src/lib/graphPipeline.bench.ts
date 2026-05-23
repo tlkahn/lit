@@ -31,17 +31,17 @@ describe("JSON parse (simulates localStorage read)", () => {
 
 describe("buildGraph (Graphology construction)", () => {
   for (const size of SIZES) {
-    const { subgraph, pagerank } = datasets[size];
+    const { subgraph } = datasets[size];
     bench(`${size.toLocaleString()} nodes`, () => {
-      buildGraph({ subgraph, pagerank, accentColor: "#0969da", stubColor: "#818b98" });
+      buildGraph({ subgraph, accentColor: "#0969da", stubColor: "#818b98" });
     });
   }
 });
 
 describe("computeDiff (no changes — best case)", () => {
   for (const size of SIZES) {
-    const { subgraph, pagerank } = datasets[size];
-    const graph = buildGraph({ subgraph, pagerank, accentColor: "#0969da", stubColor: "#818b98" });
+    const { subgraph } = datasets[size];
+    const graph = buildGraph({ subgraph, accentColor: "#0969da", stubColor: "#818b98" });
     bench(`${size.toLocaleString()} nodes`, () => {
       const diff = computeDiff(graph, subgraph);
       isDiffEmpty(diff);
@@ -51,8 +51,8 @@ describe("computeDiff (no changes — best case)", () => {
 
 describe("computeDiff (5% nodes added)", () => {
   for (const size of SIZES) {
-    const { subgraph, pagerank } = datasets[size];
-    const graph = buildGraph({ subgraph, pagerank, accentColor: "#0969da", stubColor: "#818b98" });
+    const { subgraph } = datasets[size];
+    const graph = buildGraph({ subgraph, accentColor: "#0969da", stubColor: "#818b98" });
     const added = Math.round(size * 0.05);
     const mutated = {
       nodes: [
@@ -96,7 +96,7 @@ describe("applyDiff (5% nodes added)", () => {
     for (let i = 0; i < added; i++) mutatedPagerank[`new-${i}`] = 0.001;
 
     bench(`${size.toLocaleString()} nodes + ${added} new`, () => {
-      const graph = buildGraph({ subgraph, pagerank, accentColor: "#0969da", stubColor: "#818b98" });
+      const graph = buildGraph({ subgraph, accentColor: "#0969da", stubColor: "#818b98" });
       const diff = computeDiff(graph, mutated);
       applyDiff(graph, diff, mutatedPagerank, "#0969da", "#818b98");
     });
@@ -105,8 +105,8 @@ describe("applyDiff (5% nodes added)", () => {
 
 describe("position cache: serialize + deserialize positions", () => {
   for (const size of SIZES) {
-    const { subgraph, pagerank } = datasets[size];
-    const graph = buildGraph({ subgraph, pagerank, accentColor: "#0969da", stubColor: "#818b98" });
+    const { subgraph } = datasets[size];
+    const graph = buildGraph({ subgraph, accentColor: "#0969da", stubColor: "#818b98" });
     const positions: Record<string, { x: number; y: number }> = {};
     graph.forEachNode((node, attrs) => {
       positions[node] = { x: attrs.x as number, y: attrs.y as number };

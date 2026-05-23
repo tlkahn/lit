@@ -10,9 +10,9 @@ const datasets = Object.fromEntries(
 
 describe("buildGraph", () => {
   for (const size of SIZES) {
-    const { subgraph, pagerank } = datasets[size];
+    const { subgraph } = datasets[size];
     bench(`${size.toLocaleString()} nodes`, () => {
-      buildGraph({ subgraph, pagerank, accentColor: "#0969da", stubColor: "#818b98" });
+      buildGraph({ subgraph, accentColor: "#0969da", stubColor: "#818b98" });
     });
   }
 });

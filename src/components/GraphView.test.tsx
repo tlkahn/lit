@@ -423,7 +423,13 @@ describe("GraphView", () => {
     expect(leaveNodeHandler).toBeDefined();
     act(() => { leaveNodeHandler!(); });
 
-    expect(mockSigmaSetSetting).toHaveBeenCalledWith("nodeReducer", null);
+    const nodeReducerCall = mockSigmaSetSetting.mock.calls.find(
+      (call) => call[0] === "nodeReducer" && typeof call[1] === "function",
+    );
+    expect(nodeReducerCall).toBeDefined();
+    const reducer = nodeReducerCall![1] as (n: string, attrs: Record<string, unknown>) => Record<string, unknown>;
+    const result = reducer("any", { color: "#fff", label: "Test" });
+    expect(result.label).toBeNull();
     expect(mockSigmaSetSetting).toHaveBeenCalledWith("edgeReducer", null);
   });
 
@@ -436,9 +442,16 @@ describe("GraphView", () => {
       (call) => call[0] === "clickStage",
     )?.[1];
     expect(clickStageHandler).toBeDefined();
+    mockSigmaSetSetting.mockClear();
     act(() => { clickStageHandler!(); });
 
-    expect(mockSigmaSetSetting).toHaveBeenCalledWith("nodeReducer", null);
+    const nodeReducerCall = mockSigmaSetSetting.mock.calls.find(
+      (call) => call[0] === "nodeReducer" && typeof call[1] === "function",
+    );
+    expect(nodeReducerCall).toBeDefined();
+    const reducer = nodeReducerCall![1] as (n: string, attrs: Record<string, unknown>) => Record<string, unknown>;
+    const result = reducer("any", { color: "#fff", label: "Test" });
+    expect(result.label).toBeNull();
     expect(mockSigmaSetSetting).toHaveBeenCalledWith("edgeReducer", null);
   });
 
@@ -661,7 +674,13 @@ describe("GraphView", () => {
     });
     // Second Escape closes search
 
-    expect(mockSigmaSetSetting).toHaveBeenCalledWith("nodeReducer", null);
+    const nodeReducerCall = mockSigmaSetSetting.mock.calls.find(
+      (call) => call[0] === "nodeReducer" && typeof call[1] === "function",
+    );
+    expect(nodeReducerCall).toBeDefined();
+    const reducer = nodeReducerCall![1] as (n: string, attrs: Record<string, unknown>) => Record<string, unknown>;
+    const result = reducer("any", { color: "#fff", label: "Test" });
+    expect(result.label).toBeNull();
     expect(mockSigmaSetSetting).toHaveBeenCalledWith("edgeReducer", null);
   });
 
@@ -779,6 +798,7 @@ describe("GraphView", () => {
     const enterNodeHandler = mockSigmaOn.mock.calls.find(
       (call) => call[0] === "enterNode",
     )?.[1];
+    mockSigmaSetSetting.mockClear();
     act(() => { enterNodeHandler!({ node: "a.md", event: { x: 0, y: 0 } }); });
 
     const nodeReducerCall = mockSigmaSetSetting.mock.calls.find(

@@ -1,11 +1,10 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { buildGraph, computeNodeSize, resolveThemeColors, applyPositions, MIN_SIZE, MAX_SIZE, SEED_COLOR } from "./graphLayout";
+import { buildGraph, resolveThemeColors, applyPositions, NODE_SIZE, SEED_COLOR } from "./graphLayout";
 import type { SubgraphResult } from "./ipc";
 
 describe("graphLayout", () => {
   describe("buildGraph", () => {
     const defaults = {
-      pagerank: {} as Record<string, number>,
       accentColor: "#7c3aed",
       stubColor: "#999",
     };
@@ -24,7 +23,7 @@ describe("graphLayout", () => {
         nodes: [{ id: "a.md", title: "Alpha", is_stub: false }],
         edges: [],
       };
-      const graph = buildGraph({ subgraph, pagerank: { "a.md": 0.5 }, accentColor: "#7c3aed", stubColor: "#999" });
+      const graph = buildGraph({ subgraph, accentColor: "#7c3aed", stubColor: "#999" });
       const attrs = graph.getNodeAttributes("a.md");
       expect(attrs.label).toBe("Alpha");
       expect(attrs.color).toBe("#7c3aed");
@@ -39,31 +38,23 @@ describe("graphLayout", () => {
         nodes: [{ id: "s.md", title: "Stub", is_stub: true }],
         edges: [],
       };
-      const graph = buildGraph({ subgraph, pagerank: { "s.md": 0.9 }, accentColor: "#7c3aed", stubColor: "#999" });
+      const graph = buildGraph({ subgraph, accentColor: "#7c3aed", stubColor: "#999" });
       const attrs = graph.getNodeAttributes("s.md");
       expect(attrs.type).toBe("hollow");
       expect(attrs.color).toBe("#999");
     });
 
-    it("stub always gets MIN_SIZE regardless of pagerank", () => {
-      const subgraph: SubgraphResult = {
-        nodes: [{ id: "s.md", title: "Stub", is_stub: true }],
-        edges: [],
-      };
-      const graph = buildGraph({ subgraph, pagerank: { "s.md": 1.0 }, accentColor: "#7c3aed", stubColor: "#999" });
-      expect(graph.getNodeAttributes("s.md").size).toBe(MIN_SIZE);
-    });
-
-    it("higher pagerank produces larger size", () => {
+    it("all nodes get uniform NODE_SIZE", () => {
       const subgraph: SubgraphResult = {
         nodes: [
           { id: "a.md", title: "A", is_stub: false },
-          { id: "b.md", title: "B", is_stub: false },
+          { id: "s.md", title: "Stub", is_stub: true },
         ],
         edges: [],
       };
-      const graph = buildGraph({ subgraph, pagerank: { "a.md": 0.1, "b.md": 0.9 }, accentColor: "#7c3aed", stubColor: "#999" });
-      expect(graph.getNodeAttributes("b.md").size).toBeGreaterThan(graph.getNodeAttributes("a.md").size);
+      const graph = buildGraph({ subgraph, accentColor: "#7c3aed", stubColor: "#999" });
+      expect(graph.getNodeAttributes("a.md").size).toBe(NODE_SIZE);
+      expect(graph.getNodeAttributes("s.md").size).toBe(NODE_SIZE);
     });
 
     it("edges added between existing nodes with size 1", () => {
@@ -96,7 +87,7 @@ describe("graphLayout", () => {
         ],
         edges: [],
       };
-      const graph = buildGraph({ subgraph, pagerank: { "a.md": 0.5, "b.md": 0.5 }, accentColor: "#7c3aed", stubColor: "#999", seedId: "a.md" });
+      const graph = buildGraph({ subgraph, accentColor: "#7c3aed", stubColor: "#999", seedId: "a.md" });
       const seedAttrs = graph.getNodeAttributes("a.md");
       expect(seedAttrs.color).toBe(SEED_COLOR);
       expect(seedAttrs.type).toBe("seed");
@@ -105,14 +96,13 @@ describe("graphLayout", () => {
       expect(otherAttrs.type).toBe("filled");
     });
 
-    it("seed node is larger than the same node without seed", () => {
+    it("seed node has same size as other nodes", () => {
       const subgraph: SubgraphResult = {
         nodes: [{ id: "a.md", title: "A", is_stub: false }],
         edges: [],
       };
-      const withSeed = buildGraph({ subgraph, pagerank: { "a.md": 0.5 }, accentColor: "#7c3aed", stubColor: "#999", seedId: "a.md" });
-      const withoutSeed = buildGraph({ subgraph, pagerank: { "a.md": 0.5 }, accentColor: "#7c3aed", stubColor: "#999" });
-      expect(withSeed.getNodeAttributes("a.md").size).toBeGreaterThan(withoutSeed.getNodeAttributes("a.md").size);
+      const graph = buildGraph({ subgraph, accentColor: "#7c3aed", stubColor: "#999", seedId: "a.md" });
+      expect(graph.getNodeAttributes("a.md").size).toBe(NODE_SIZE);
     });
 
     it("no seedId means all nodes use normal attributes", () => {
@@ -120,7 +110,7 @@ describe("graphLayout", () => {
         nodes: [{ id: "a.md", title: "A", is_stub: false }],
         edges: [],
       };
-      const graph = buildGraph({ subgraph, pagerank: { "a.md": 0.5 }, accentColor: "#7c3aed", stubColor: "#999" });
+      const graph = buildGraph({ subgraph, accentColor: "#7c3aed", stubColor: "#999" });
       expect(graph.getNodeAttributes("a.md").type).toBe("filled");
       expect(graph.getNodeAttributes("a.md").color).toBe("#7c3aed");
     });
@@ -135,22 +125,6 @@ describe("graphLayout", () => {
       };
       const graph = buildGraph({ subgraph, ...defaults });
       expect(graph.size).toBe(1);
-    });
-  });
-
-  describe("computeNodeSize", () => {
-    it("zero pagerank returns MIN_SIZE", () => {
-      expect(computeNodeSize(0, 0.5)).toBe(MIN_SIZE);
-    });
-
-    it("max pagerank returns MAX_SIZE", () => {
-      expect(computeNodeSize(0.5, 0.5)).toBeCloseTo(MAX_SIZE, 1);
-    });
-
-    it("result is between MIN_SIZE and MAX_SIZE", () => {
-      const size = computeNodeSize(0.3, 1.0);
-      expect(size).toBeGreaterThanOrEqual(MIN_SIZE);
-      expect(size).toBeLessThanOrEqual(MAX_SIZE);
     });
   });
 
@@ -216,7 +190,7 @@ describe("graphLayout", () => {
         ],
         edges,
       };
-      return buildGraph({ subgraph: sub, pagerank: {}, accentColor: "#7c3aed", stubColor: "#999" });
+      return buildGraph({ subgraph: sub, accentColor: "#7c3aed", stubColor: "#999" });
     }
 
     it("applies exact positions for nodes present in the map", () => {

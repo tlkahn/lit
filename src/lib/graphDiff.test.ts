@@ -261,28 +261,6 @@ describe("applyDiff", () => {
     expect(graph.hasUndirectedEdge("a.md", "b.md")).toBe(false);
   });
 
-  it("recalculates node sizes from new pagerank", () => {
-    const graph = new Graph();
-    graph.addNode("a.md", { label: "A", color: "#0969da", type: "filled", size: 10, x: 50, y: 50 });
-
-    const oldSize = graph.getNodeAttribute("a.md", "size") as number;
-
-    const diff = {
-      addedNodes: [],
-      removedNodes: [],
-      updatedNodes: [],
-      addedEdges: [] as [string, string][],
-      removedEdges: [] as [string, string][],
-      isMajorChange: false,
-    };
-
-    applyDiff(graph, diff, { "a.md": 0.99 }, "#0969da", "#818b98");
-
-    const newSize = graph.getNodeAttribute("a.md", "size") as number;
-    expect(newSize).not.toBe(oldSize);
-    expect(newSize).toBeGreaterThan(oldSize);
-  });
-
   it("positions new nodes near their existing neighbors", () => {
     const graph = new Graph();
     graph.addNode("a.md", { label: "A", color: "#0969da", type: "filled", size: 10, x: 50, y: 50 });

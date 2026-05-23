@@ -1,6 +1,6 @@
 import type Graph from "graphology";
 import type { SubgraphResult, GraphNode } from "./ipc";
-import { computeNodeSize, MIN_SIZE } from "./graphLayout";
+import { NODE_SIZE } from "./graphLayout";
 
 export interface GraphDiff {
   addedNodes: GraphNode[];
@@ -87,15 +87,11 @@ export function isDiffEmpty(diff: GraphDiff): boolean {
 export function applyDiff(
   graph: Graph,
   diff: GraphDiff,
-  pagerank: Record<string, number>,
+  _pagerank: Record<string, number>,
   accentColor: string,
   stubColor: string,
 ): void {
-  const maxPr = Math.max(0, ...Object.values(pagerank));
-
   for (const node of diff.addedNodes) {
-    const pr = pagerank[node.id] ?? 0;
-    const size = node.is_stub ? MIN_SIZE : computeNodeSize(pr, maxPr);
 
     let x = Math.random() * 100;
     let y = Math.random() * 100;
@@ -118,7 +114,7 @@ export function applyDiff(
       label: node.title,
       color: node.is_stub ? stubColor : accentColor,
       type: node.is_stub ? "hollow" : "filled",
-      size,
+      size: NODE_SIZE,
       x,
       y,
     });
@@ -143,13 +139,4 @@ export function applyDiff(
     if (edge) graph.dropEdge(edge);
   }
 
-  graph.forEachNode((node: string) => {
-    const pr = pagerank[node] ?? 0;
-    const attrs = graph.getNodeAttributes(node);
-    const isStub = attrs.type === "hollow";
-    const newSize = isStub ? MIN_SIZE : computeNodeSize(pr, maxPr);
-    if (attrs.size !== newSize) {
-      graph.setNodeAttribute(node, "size", newSize);
-    }
-  });
 }

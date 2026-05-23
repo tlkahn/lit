@@ -30,6 +30,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   const rafIdRef = useRef<number>(0);
   const pendingPosRef = useRef<{ x: number; y: number } | null>(null);
   const dimColorRef = useRef("#d1d9e0");
+  const defaultNodeReducer = useCallback((_n: string, attrs: Record<string, unknown>) => ({ ...attrs, label: null }), []);
   const tierSettingsRef = useRef<TierSettings>(getTierSettings("medium"));
   const onNavigateRef = useRef(onNavigate);
   onNavigateRef.current = onNavigate;
@@ -94,7 +95,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
     if (!graph || !sigma) return;
     if (!query) {
       setSearchMatches([]);
-      sigma.setSetting("nodeReducer", null);
+      sigma.setSetting("nodeReducer", defaultNodeReducer);
       sigma.setSetting("edgeReducer",
         tierSettingsRef.current.defaultEdgesHidden
           ? (_e: string, attrs: Record<string, unknown>) => ({ ...attrs, hidden: true })
@@ -127,14 +128,14 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
     setSearchMatches([]);
     const sigma = sigmaRef.current as { setSetting: (key: string, value: unknown) => void } | null;
     if (sigma) {
-      sigma.setSetting("nodeReducer", null);
+      sigma.setSetting("nodeReducer", defaultNodeReducer);
       sigma.setSetting("edgeReducer",
         tierSettingsRef.current.defaultEdgesHidden
           ? (_e: string, attrs: Record<string, unknown>) => ({ ...attrs, hidden: true })
           : null
       );
     }
-  }, []);
+  }, [defaultNodeReducer]);
 
   const handleSearchNavigate = useCallback((nodeId: string) => {
     onNavigateRef.current?.(nodeId);
@@ -158,7 +159,6 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         } else {
           subgraph = await getFullSubgraph();
         }
-        const pagerank = subgraph.pagerank ?? {};
         if (perf) {
           const ipcMs = performance.now() - t0;
           const payloadSize = JSON.stringify(subgraph).length;
@@ -172,7 +172,6 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         t0 = perf ? performance.now() : 0;
         const graph = buildGraph({
           subgraph,
-          pagerank,
           accentColor,
           stubColor,
           seedId: mode === "local" ? (activePageId ?? undefined) : undefined,
@@ -228,8 +227,10 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
           sigma.setSetting("edgeReducer", (_e: string, attrs: Record<string, unknown>) => ({ ...attrs, hidden: true }));
         }
 
+        sigma.setSetting("nodeReducer", defaultNodeReducer);
+
         const restoreDefaultReducers = () => {
-          sigma.setSetting("nodeReducer", null);
+          sigma.setSetting("nodeReducer", defaultNodeReducer);
           sigma.setSetting("edgeReducer",
             tierSettingsRef.current.defaultEdgesHidden
               ? (_e: string, attrs: Record<string, unknown>) => ({ ...attrs, hidden: true })
@@ -260,7 +261,8 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
           neighbors.add(node);
 
           sigma.setSetting("nodeReducer", (_n: string, attrs: Record<string, unknown>) => {
-            if (neighbors.has(_n)) return attrs;
+            if (_n === node) return attrs;
+            if (neighbors.has(_n)) return { ...attrs, label: null };
             return { ...attrs, color: dimColorRef.current, label: null };
           });
           sigma.setSetting("edgeReducer", (_e: string, attrs: Record<string, unknown>) => {
