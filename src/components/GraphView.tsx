@@ -4,6 +4,7 @@ import type { SubgraphResult } from "../lib/ipc";
 import { listen } from "@tauri-apps/api/event";
 import { buildGraph, resolveThemeColors, applyPositions } from "../lib/graphLayout";
 import { getQualitySettings, getTierSettings, type TierSettings } from "../lib/qualityTiers";
+import { createNudgeController, type NudgeController } from "../lib/graphNudge";
 import { useThemeStore } from "../stores/theme";
 import { computeDiff, applyDiff, isDiffEmpty } from "../lib/graphDiff";
 import { isPerfEnabled, perfTable, type PerfEntry } from "../lib/perf";
@@ -27,6 +28,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   const sigmaRef = useRef<unknown>(null);
   const graphRef = useRef<unknown>(null);
   const hoveredNodeRef = useRef<string | null>(null);
+  const nudgeRef = useRef<NudgeController | null>(null);
   const rafIdRef = useRef<number>(0);
   const pendingPosRef = useRef<{ x: number; y: number } | null>(null);
   const dimColorRef = useRef("#d1d9e0");
@@ -224,6 +226,10 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         sigmaRef.current = sigma;
         graphRef.current = graph;
 
+        if (tierSettings.tier === "small" || tierSettings.tier === "medium") {
+          nudgeRef.current = createNudgeController(graph, () => sigma.refresh());
+        }
+
         if (tierSettingsRef.current.defaultEdgesHidden) {
           sigma.setSetting("edgeReducer", (_e: string, attrs: Record<string, unknown>) => ({ ...attrs, hidden: true }));
         }
@@ -258,6 +264,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
 
         sigma.on("enterNode", ({ node, event }) => {
           hoveredNodeRef.current = node;
+          nudgeRef.current?.enter(node);
           const neighbors = new Set(graph.neighbors(node));
           neighbors.add(node);
 
@@ -306,6 +313,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
 
         sigma.on("leaveNode", () => {
           hoveredNodeRef.current = null;
+          nudgeRef.current?.leave();
           cancelAnimationFrame(rafIdRef.current);
           rafIdRef.current = 0;
           pendingPosRef.current = null;
@@ -342,6 +350,8 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
       cancelAnimationFrame(rafIdRef.current);
       rafIdRef.current = 0;
       pendingPosRef.current = null;
+      nudgeRef.current?.dispose();
+      nudgeRef.current = null;
       if (sigmaRef.current) {
         (sigmaRef.current as { kill: () => void }).kill();
         sigmaRef.current = null;
