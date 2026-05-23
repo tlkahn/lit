@@ -2,7 +2,6 @@ import { useState, useRef, useEffect, useMemo, useDeferredValue, useCallback, me
 import { createPortal } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useWorkspaceStore } from "../stores/workspace";
-import { getNextUntitledName } from "../lib/naming";
 import { openInExternalEditor, setPreference } from "../lib/ipc";
 import { localeFilter } from "../lib/localeSearch";
 import { useSidebarTab } from "../hooks/useSidebarTab";
@@ -222,7 +221,6 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
   const pages = useWorkspaceStore((s) => s.pages);
   const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
   const selectPage = useWorkspaceStore((s) => s.selectPage);
-  const createPageAction = useWorkspaceStore((s) => s.createPage);
   const renamePageAction = useWorkspaceStore((s) => s.renamePage);
   const deletePageAction = useWorkspaceStore((s) => s.deletePage);
   const { tab, setTab } = useSidebarTab();
@@ -247,11 +245,6 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
     estimateSize: () => 28,
     overscan: 10,
   });
-
-  const handleNewPage = () => {
-    const name = getNextUntitledName(pages);
-    createPageAction(name);
-  };
 
   const handleMenuClose = useCallback(() => setMenuPath(null), []);
   const handleRenameCancel = useCallback(() => setRenamingPath(null), []);
@@ -392,15 +385,6 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
       ) : (
         <Outline />
       )}
-      <div className="flex h-8 shrink-0 items-center bg-bg-primary-alt px-4 shadow-[0_-2px_4px_rgba(0,0,0,0.08)]">
-        <button
-          onClick={handleNewPage}
-          className="flex h-full items-center px-3 text-sm text-text-muted hover:text-text-normal"
-          aria-label="New page"
-        >
-          + New Page
-        </button>
-      </div>
       {sidebarMenu && createPortal(
         <div
           ref={sidebarMenuRef}

@@ -51,7 +51,11 @@ describe("Sidebar tabs", () => {
   it("Files tab is active by default", () => {
     render(<Sidebar />);
     expect(screen.getByLabelText("Search pages")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "New page" })).toBeInTheDocument();
+  });
+
+  it("does not render a 'New page' button (moved to StatusBar)", () => {
+    render(<Sidebar />);
+    expect(screen.queryByRole("button", { name: "New page" })).not.toBeInTheDocument();
   });
 
   it("clicking Outline switches to outline; clicking Files switches back", async () => {
@@ -80,64 +84,6 @@ describe("Sidebar tabs", () => {
     await user.click(screen.getByText("Outline"));
     expect(screen.queryByLabelText("Search pages")).not.toBeInTheDocument();
     expect(screen.getByText("Hello")).toBeInTheDocument();
-  });
-});
-
-describe("Sidebar instant create", () => {
-  it("clicking + invokes create_page with 'Untitled' (no prompt)", async () => {
-    const promptSpy = vi.spyOn(window, "prompt");
-    const user = userEvent.setup();
-
-    render(<Sidebar />);
-    await user.click(screen.getByRole("button", { name: "New page" }));
-
-    const state = useWorkspaceStore.getState();
-    expect(state.pages).toHaveLength(1);
-    expect(state.pages[0]!.title).toBe("Untitled");
-    expect(promptSpy).not.toHaveBeenCalled();
-    promptSpy.mockRestore();
-  });
-
-  it("uses 'Untitled 1' when 'Untitled' exists in store", async () => {
-    useWorkspaceStore.setState({
-      pages: [
-        {
-          title: "Untitled",
-          relative_path: "Untitled.md",
-          frontmatter: {},
-          created_at: 1000,
-          modified_at: 1000,
-          file_type: 'markdown' as const,
-        },
-      ],
-    });
-
-    const user = userEvent.setup();
-    render(<Sidebar />);
-    await user.click(screen.getByRole("button", { name: "New page" }));
-
-    const state = useWorkspaceStore.getState();
-    const newPage = state.pages.find((p) => p.title === "Untitled 1");
-    expect(newPage).toBeTruthy();
-  });
-
-  it("auto-selects the new page after creation", async () => {
-    const user = userEvent.setup();
-    render(<Sidebar />);
-    await user.click(screen.getByRole("button", { name: "New page" }));
-
-    expect(useWorkspaceStore.getState().currentPagePath).toBe("Untitled.md");
-  });
-
-  it("does not call window.prompt", async () => {
-    const promptSpy = vi.spyOn(window, "prompt");
-    const user = userEvent.setup();
-
-    render(<Sidebar />);
-    await user.click(screen.getByRole("button", { name: "New page" }));
-
-    expect(promptSpy).not.toHaveBeenCalled();
-    promptSpy.mockRestore();
   });
 });
 

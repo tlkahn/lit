@@ -5,6 +5,7 @@ import { useBottomPanelStore } from "../stores/bottomPanel";
 import { usePreferencesStore } from "../stores/preferences";
 import { useLlmResponseStore } from "../stores/llmResponse";
 import { usePaneStore, findLeaf } from "../stores/panes";
+import { getNextUntitledName } from "../lib/naming";
 import { BufferStack } from "./BufferStack";
 import type { TabId } from "../stores/bottomPanel";
 
@@ -121,9 +122,26 @@ export function StatusBar() {
   const graphReady = useWorkspaceStore((s) => s.graphReady);
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const indexProgress = useWorkspaceStore((s) => s.indexProgress);
+  const pages = useWorkspaceStore((s) => s.pages);
+  const createPage = useWorkspaceStore((s) => s.createPage);
   const line = useCursorInfoStore((s) => s.line);
   const col = useCursorInfoStore((s) => s.col);
   const errorMessage = useLlmResponseStore((s) => s.errorMessage);
+
+  const handleNewPage = () => {
+    const name = getNextUntitledName(pages);
+    createPage(name);
+  };
+
+  const newPageButton = (
+    <button
+      onClick={handleNewPage}
+      className="flex items-center px-1 text-text-muted hover:text-text-normal"
+      aria-label="New page"
+    >
+      <span className="nerd-font" aria-hidden="true">{''}</span>
+    </button>
+  );
 
   if (!workspacePath) return null;
 
@@ -134,7 +152,10 @@ export function StatusBar() {
 
     return (
       <div data-testid="status-bar" className="flex h-6 items-center justify-between bg-bg-primary-alt px-3 text-xs text-text-faint">
-        <span>{label}</span>
+        <div className="flex items-center gap-2">
+          {newPageButton}
+          <span>{label}</span>
+        </div>
         <div className="h-1.5 w-24 overflow-hidden rounded-full bg-bg-hover">
           <div
             data-testid="status-bar-fill"
@@ -148,7 +169,10 @@ export function StatusBar() {
 
   return (
     <div data-testid="status-bar" className="flex h-6 items-center justify-between bg-bg-primary-alt px-3 text-xs text-text-faint">
-      <BufferStack />
+      <div className="flex items-center">
+        {newPageButton}
+        <BufferStack />
+      </div>
       <div className="flex items-center">
         {errorMessage && (
           <span

@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { mockInvoke } from "../test/tauri-mock";
 import { StatusBar } from "./StatusBar";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePaneStore } from "../stores/panes";
@@ -402,6 +403,97 @@ describe("StatusBar", () => {
       expect(state.activeTab).toBe("llm-response");
       expect(state.unfolded).toBe(true);
       expect(state.hasOpenedLlm).toBe(true);
+    });
+  });
+
+  describe("StatusBar new page button", () => {
+    beforeEach(() => {
+      mockInvoke((cmd, args) => {
+        if (cmd === "create_page") {
+          const name = (args as Record<string, unknown>)?.name as string;
+          return {
+            title: name,
+            relative_path: `${name}.md`,
+            frontmatter: {},
+            created_at: 1000,
+            modified_at: 1000,
+            file_type: "markdown" as const,
+          };
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+    });
+
+    it("renders a 'New page' button when graphReady is true", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      render(<StatusBar />);
+      expect(screen.getByRole("button", { name: "New page" })).toBeInTheDocument();
+    });
+
+    it("renders a 'New page' button when graphReady is false (indexing)", () => {
+      useWorkspaceStore.setState({
+        workspacePath: "/test",
+        graphReady: false,
+        indexProgress: { phase: "parsing", current: 3, total: 10 },
+      });
+      render(<StatusBar />);
+      expect(screen.getByRole("button", { name: "New page" })).toBeInTheDocument();
+    });
+
+    it("clicking the button creates a new page named 'Untitled'", async () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true, pages: [] });
+      render(<StatusBar />);
+      await userEvent.click(screen.getByRole("button", { name: "New page" }));
+      const state = useWorkspaceStore.getState();
+      expect(state.pages).toHaveLength(1);
+      expect(state.pages[0]!.title).toBe("Untitled");
+    });
+
+    it("uses 'Untitled 1' when 'Untitled' already exists", async () => {
+      useWorkspaceStore.setState({
+        workspacePath: "/test",
+        graphReady: true,
+        pages: [
+          {
+            title: "Untitled",
+            relative_path: "Untitled.md",
+            frontmatter: {},
+            created_at: 1000,
+            modified_at: 1000,
+            file_type: "markdown" as const,
+          },
+        ],
+      });
+      render(<StatusBar />);
+      await userEvent.click(screen.getByRole("button", { name: "New page" }));
+      const state = useWorkspaceStore.getState();
+      const newPage = state.pages.find((p) => p.title === "Untitled 1");
+      expect(newPage).toBeTruthy();
+    });
+
+    it("auto-selects the new page after creation", async () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true, pages: [] });
+      render(<StatusBar />);
+      await userEvent.click(screen.getByRole("button", { name: "New page" }));
+      expect(useWorkspaceStore.getState().currentPagePath).toBe("Untitled.md");
+    });
+
+    it("does not call window.prompt", async () => {
+      const promptSpy = vi.spyOn(window, "prompt");
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true, pages: [] });
+      render(<StatusBar />);
+      await userEvent.click(screen.getByRole("button", { name: "New page" }));
+      expect(promptSpy).not.toHaveBeenCalled();
+      promptSpy.mockRestore();
+    });
+
+    it("button displays nerd font glyph U+F0FE with .nerd-font class", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      render(<StatusBar />);
+      const btn = screen.getByRole("button", { name: "New page" });
+      const glyph = btn.querySelector(".nerd-font");
+      expect(glyph).toBeTruthy();
+      expect(glyph!.textContent).toBe("");
     });
   });
 
