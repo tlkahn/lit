@@ -267,6 +267,11 @@ function keyStringFromEvent(e: KeyboardEvent): string {
   return parts.join("-");
 }
 
+function normalizeBindingForPlatform(key: string): string {
+  if (platform.isMac) return key;
+  return key.replace(/^Ctrl(?=-)/, "Mod").replace(/-Ctrl(?=-)/, "-Mod");
+}
+
 export function useKeymaps(): {
   editorBindings: CM6KeyBinding[];
   loading: boolean;
@@ -317,7 +322,7 @@ export function useKeymaps(): {
     const handler = (e: KeyboardEvent) => {
       const pressed = keyStringFromEvent(e);
       for (const binding of appBindingsRef.current) {
-        if (binding.key === pressed) {
+        if (normalizeBindingForPlatform(binding.key) === pressed) {
           if (binding.when === "editorFocus" && getCurrentEditorView() == null) continue;
           e.preventDefault();
           executeCommand(binding.command);

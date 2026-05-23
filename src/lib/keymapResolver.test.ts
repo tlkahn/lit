@@ -79,6 +79,14 @@ describe("keymaps/default.json", () => {
     expect(entry?.key).toBe("Ctrl-g");
   });
 
+  it("panel.toggleBottom is bound to Ctrl-` (not Mod-`)", () => {
+    const entry = defaultKeymaps.find(
+      (b: { key: string; command: string }) =>
+        b.command === "panel.toggleBottom",
+    );
+    expect(entry?.key).toBe("Ctrl-`");
+  });
+
   it("contains pane keybindings in default.json", () => {
     const find = (cmd: string) =>
       defaultKeymaps.find((b: { key: string; command: string }) => b.command === cmd);

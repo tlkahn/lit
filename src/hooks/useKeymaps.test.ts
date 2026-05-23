@@ -49,6 +49,7 @@ describe("useKeymaps", () => {
           { key: "Mod-Alt-ArrowRight", command: "pane.focusNext" },
           { key: "Mod-Alt-ArrowLeft", command: "pane.focusPrev" },
           { key: "Ctrl-g", command: "editor.selectNextOccurrence", when: "editorFocus" },
+          { key: "Ctrl-`", command: "panel.toggleBottom" },
         ];
       }
       throw new Error(`Unknown command: ${cmd}`);
@@ -581,6 +582,74 @@ describe("useKeymaps", () => {
       );
 
       expect(usePaneStore.getState().root.type).toBe("leaf");
+    } finally {
+      platform.isMac = originalIsMac;
+    }
+  });
+
+  // --- Ctrl+` toggle bottom panel (platform-aware) ---
+
+  it("Ctrl+` on Mac triggers panel.toggleBottom", async () => {
+    const { platform } = await import("./useKeymaps");
+    const originalIsMac = platform.isMac;
+    platform.isMac = true;
+    try {
+      const { result } = await loadHook();
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      const listener = vi.fn();
+      window.addEventListener("lit:toggle-bottom-panel", listener);
+
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "`", ctrlKey: true, bubbles: true }),
+      );
+
+      window.removeEventListener("lit:toggle-bottom-panel", listener);
+      expect(listener).toHaveBeenCalledTimes(1);
+    } finally {
+      platform.isMac = originalIsMac;
+    }
+  });
+
+  it("Cmd+` on Mac does NOT trigger panel.toggleBottom", async () => {
+    const { platform } = await import("./useKeymaps");
+    const originalIsMac = platform.isMac;
+    platform.isMac = true;
+    try {
+      const { result } = await loadHook();
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      const listener = vi.fn();
+      window.addEventListener("lit:toggle-bottom-panel", listener);
+
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "`", metaKey: true, bubbles: true }),
+      );
+
+      window.removeEventListener("lit:toggle-bottom-panel", listener);
+      expect(listener).not.toHaveBeenCalled();
+    } finally {
+      platform.isMac = originalIsMac;
+    }
+  });
+
+  it("Ctrl+` on non-Mac triggers panel.toggleBottom", async () => {
+    const { platform } = await import("./useKeymaps");
+    const originalIsMac = platform.isMac;
+    platform.isMac = false;
+    try {
+      const { result } = await loadHook();
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      const listener = vi.fn();
+      window.addEventListener("lit:toggle-bottom-panel", listener);
+
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "`", ctrlKey: true, bubbles: true }),
+      );
+
+      window.removeEventListener("lit:toggle-bottom-panel", listener);
+      expect(listener).toHaveBeenCalledTimes(1);
     } finally {
       platform.isMac = originalIsMac;
     }
