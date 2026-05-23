@@ -88,9 +88,12 @@ describe("GraphView", () => {
             edges: [["a.md", "b.md"]],
             pagerank: { "a.md": 0.4, "b.md": 0.6 },
             positions_2d: {},
+            positions_3d: {},
           };
         case "get_graph_positions":
           return {};
+        case "compute_layout_3d":
+          return undefined;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -1725,5 +1728,226 @@ describe("GraphView", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "3D" }));
     await waitFor(() => { expect(screen.getByTestId("graph-view-3d")).toBeTruthy(); });
+  });
+
+  // --- Bug 1: Sigma crash on hidden container in 3D mode ---
+
+  it("does not create Sigma when dimension is 3d (no crash on hidden container)", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    const { rerender } = render(<GraphView visible={true} activePageId="a.md" initialMode="local" />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    // Switch to 3D
+    await userEvent.click(screen.getByRole("button", { name: "3D" }));
+    await waitFor(() => { expect(screen.getByTestId("graph-view-3d")).toBeTruthy(); });
+
+    // Simulate navigate-away-and-back: hide, change activePageId, show
+    mockSigmaKill.mockClear();
+    mockSigmaOn.mockClear();
+    await act(async () => {
+      rerender(<GraphView visible={false} activePageId="b.md" initialMode="local" />);
+    });
+    await act(async () => {
+      rerender(<GraphView visible={true} activePageId="b.md" initialMode="local" />);
+    });
+
+    // Wait for reinit to complete
+    await waitFor(() => {
+      expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+    });
+
+    // Sigma should NOT have been created (we're in 3D mode)
+    expect(mockSigmaOn).not.toHaveBeenCalled();
+
+    // aria-label should show node/edge counts
+    const container = screen.getByTestId("graph-view");
+    expect(container.getAttribute("aria-label")).toContain("2 nodes");
+    expect(container.getAttribute("aria-label")).toContain("1 edge");
+  });
+
+  it("switching from 3D to 2D triggers reinit when Sigma was skipped", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    const { rerender } = render(<GraphView visible={true} activePageId="a.md" initialMode="local" />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    // Switch to 3D
+    await userEvent.click(screen.getByRole("button", { name: "3D" }));
+    await waitFor(() => { expect(screen.getByTestId("graph-view-3d")).toBeTruthy(); });
+
+    // Simulate navigate-away-and-back in 3D mode (sigma gets skipped on reinit)
+    mockSigmaKill.mockClear();
+    mockSigmaOn.mockClear();
+    await act(async () => {
+      rerender(<GraphView visible={false} activePageId="b.md" initialMode="local" />);
+    });
+    await act(async () => {
+      rerender(<GraphView visible={true} activePageId="b.md" initialMode="local" />);
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+    });
+    expect(mockSigmaOn).not.toHaveBeenCalled();
+
+    // Switch back to 2D — should create Sigma
+    mockSigmaOn.mockClear();
+    await userEvent.click(screen.getByRole("button", { name: "2D" }));
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+  });
+
+  it("init() creates Sigma normally when dimension is 2d", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    // Sigma should be created in the default 2D mode
+    expect(mockSigmaOn).toHaveBeenCalledWith("clickNode", expect.any(Function));
+  });
+
+  // --- Bug 2: Empty 3D positions ---
+
+  it("switching to 3D calls computeLayout3d when positions_3d is empty", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    (invoke as unknown as ReturnType<typeof vi.fn>).mockClear();
+
+    await userEvent.click(screen.getByRole("button", { name: "3D" }));
+    await waitFor(() => { expect(screen.getByTestId("graph-view-3d")).toBeTruthy(); });
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("compute_layout_3d", { settings: null });
+    });
+  });
+
+  it("switching to 3D skips computeLayout3d when positions_3d is populated", async () => {
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [
+              { id: "a.md", title: "A", is_stub: false },
+              { id: "b.md", title: "B", is_stub: false },
+            ],
+            edges: [["a.md", "b.md"]],
+            pagerank: { "a.md": 0.4, "b.md": 0.6 },
+            positions_2d: {},
+            positions_3d: { "a.md": { x: 1, y: 2, z: 3 }, "b.md": { x: 4, y: 5, z: 6 } },
+          };
+        case "get_graph_positions":
+          return {};
+        case "compute_layout_3d":
+          return undefined;
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    (invoke as unknown as ReturnType<typeof vi.fn>).mockClear();
+
+    await userEvent.click(screen.getByRole("button", { name: "3D" }));
+    await waitFor(() => { expect(screen.getByTestId("graph-view-3d")).toBeTruthy(); });
+
+    // Give a tick for effects to fire
+    await act(async () => {});
+
+    expect(invoke).not.toHaveBeenCalledWith("compute_layout_3d", expect.anything());
+  });
+
+  it("lit:layout-3d-ready fetches 3D positions and updates GraphView3D", async () => {
+    mockListen();
+    mockInvoke((cmd, args) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [
+              { id: "a.md", title: "A", is_stub: false },
+              { id: "b.md", title: "B", is_stub: false },
+            ],
+            edges: [["a.md", "b.md"]],
+            pagerank: { "a.md": 0.4, "b.md": 0.6 },
+            positions_2d: {},
+            positions_3d: {},
+          };
+        case "get_graph_positions": {
+          const a = args as Record<string, unknown> | undefined;
+          if (a?.layoutType === "3d") {
+            return { "a.md": { x: 10, y: 20, z: 30 }, "b.md": { x: 40, y: 50, z: 60 } };
+          }
+          return {};
+        }
+        case "compute_layout_3d":
+          return undefined;
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await userEvent.click(screen.getByRole("button", { name: "3D" }));
+    await waitFor(() => { expect(screen.getByTestId("graph-view-3d")).toBeTruthy(); });
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    (invoke as unknown as ReturnType<typeof vi.fn>).mockClear();
+
+    await act(async () => {
+      emitMockEvent("lit:layout-3d-ready", {});
+    });
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("get_graph_positions", { layoutType: "3d" });
+    });
+
+    // 3D view should still be rendered
+    expect(screen.getByTestId("graph-view-3d")).toBeTruthy();
+
+    resetListenMock();
+  });
+
+  it("3D view receives pre-populated positions_3d from subgraph on init", async () => {
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [
+              { id: "a.md", title: "A", is_stub: false },
+              { id: "b.md", title: "B", is_stub: false },
+            ],
+            edges: [["a.md", "b.md"]],
+            pagerank: { "a.md": 0.4, "b.md": 0.6 },
+            positions_2d: {},
+            positions_3d: { "a.md": { x: 1, y: 2, z: 3 }, "b.md": { x: 4, y: 5, z: 6 } },
+          };
+        case "get_graph_positions":
+          return {};
+        case "compute_layout_3d":
+          return undefined;
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await userEvent.click(screen.getByRole("button", { name: "3D" }));
+    await waitFor(() => { expect(screen.getByTestId("graph-view-3d")).toBeTruthy(); });
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    // compute_layout_3d should not have been called since positions exist
+    const computeCalls = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c: unknown[]) => c[0] === "compute_layout_3d",
+    );
+    expect(computeCalls.length).toBe(0);
   });
 });

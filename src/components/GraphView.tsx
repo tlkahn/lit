@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback, lazy, Suspense } from "react";
-import { getFullSubgraph, getGraphSubgraph, getGraphPositions } from "../lib/ipc";
+import { getFullSubgraph, getGraphSubgraph, getGraphPositions, computeLayout3d } from "../lib/ipc";
 import type { SubgraphResult } from "../lib/ipc";
 import type { CameraControllerHandle } from "./CameraController";
 import { listen } from "@tauri-apps/api/event";
@@ -70,6 +70,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   const subgraphRef = useRef<SubgraphResult | null>(null);
   const pagerankRef = useRef<Record<string, number>>({});
   const resetZoom3DRef = useRef<CameraControllerHandle | null>(null);
+  const [positions3D, setPositions3D] = useState<Record<string, { x: number; y: number; z: number }>>({});
   const [contextMenu, setContextMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null);
   const contextMenuOpenRef = useRef(false);
   useEffect(() => { contextMenuOpenRef.current = contextMenu !== null; }, [contextMenu]);
@@ -175,6 +176,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         const pagerank = subgraph.pagerank ?? {};
         subgraphRef.current = subgraph;
         pagerankRef.current = pagerank;
+        setPositions3D(subgraph.positions_3d ?? {});
         if (perf) {
           const ipcMs = performance.now() - t0;
           const payloadSize = JSON.stringify(subgraph).length;
@@ -204,6 +206,14 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         }
 
         if (!containerRef.current || cancelled) return;
+
+        if (dimensionRef.current === "3d") {
+          setGraphStats({ nodes: graph.order, edges: graph.size });
+          lastRenderedSeedRef.current = mode === "local" ? (activePageId ?? null) : null;
+          graphRef.current = graph;
+          setLoading(false);
+          return;
+        }
 
         const { default: Sigma } = await import("sigma");
         const { createNodeBorderProgram } = await import("@sigma/node-border");
@@ -386,9 +396,40 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
       return;
     }
     if (dimension === "2d") {
-      (sigmaRef.current as { refresh: () => void } | null)?.refresh();
+      if (sigmaRef.current) {
+        (sigmaRef.current as { refresh: () => void }).refresh();
+      } else {
+        setReinitTrigger((c) => c + 1);
+      }
     }
   }, [dimension]);
+
+  useEffect(() => {
+    if (dimension === "3d" && subgraphRef.current && Object.keys(subgraphRef.current.positions_3d ?? {}).length === 0) {
+      computeLayout3d();
+    }
+  }, [dimension]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    listen("lit:layout-3d-ready", async () => {
+      try {
+        const positions = await getGraphPositions("3d");
+        if (positions && Object.keys(positions).length > 0) {
+          setPositions3D(positions);
+          if (subgraphRef.current) {
+            subgraphRef.current.positions_3d = positions;
+          }
+        }
+      } catch {
+        // 3D positions not available
+      }
+    }).then((fn) => {
+      if (cancelled) { fn(); } else { unlisten = fn; }
+    });
+    return () => { cancelled = true; unlisten?.(); };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -542,7 +583,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
           <LazyGraphView3D
             nodes={subgraphRef.current?.nodes ?? []}
             edges={subgraphRef.current?.edges ?? []}
-            positions={subgraphRef.current?.positions_3d ?? {}}
+            positions={positions3D}
             pagerank={pagerankRef.current}
             seedId={mode === "local" ? (activePageId ?? undefined) : undefined}
             onNavigate={onNavigate}
