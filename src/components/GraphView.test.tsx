@@ -1654,7 +1654,7 @@ describe("GraphView", () => {
 
     const canvas = screen.getByTestId("graph-canvas");
     expect(canvas.style.display).toBe("none");
-    expect(screen.getByTestId("graph-view-3d")).toBeTruthy();
+    await waitFor(() => { expect(screen.getByTestId("graph-view-3d")).toBeTruthy(); });
   });
 
   it("switching back to 2D shows Sigma, unmounts GraphView3D", async () => {
@@ -1663,7 +1663,7 @@ describe("GraphView", () => {
     await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
 
     await userEvent.click(screen.getByRole("button", { name: "3D" }));
-    expect(screen.getByTestId("graph-view-3d")).toBeTruthy();
+    await waitFor(() => { expect(screen.getByTestId("graph-view-3d")).toBeTruthy(); });
 
     await userEvent.click(screen.getByRole("button", { name: "2D" }));
     const canvas = screen.getByTestId("graph-canvas");

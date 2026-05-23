@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, lazy, Suspense } from "react";
 import { getFullSubgraph, getGraphSubgraph, getGraphPositions } from "../lib/ipc";
 import type { SubgraphResult } from "../lib/ipc";
 import { listen } from "@tauri-apps/api/event";
@@ -10,7 +10,9 @@ import { isPerfEnabled, perfTable, type PerfEntry } from "../lib/perf";
 import { GraphToolbar } from "./GraphToolbar";
 import { GraphTooltip } from "./GraphTooltip";
 import { GraphSearch, getMatchingNodes } from "./GraphSearch";
-import { GraphView3D } from "./GraphView3D";
+const LazyGraphView3D = lazy(() =>
+  import("./GraphView3D").then(m => ({ default: m.GraphView3D }))
+);
 import "./GraphSearch.css";
 import "./GraphView.css";
 
@@ -368,7 +370,12 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
     }
   }, [visible, mode, activePageId]);
 
+  const dimensionMountedRef = useRef(false);
   useEffect(() => {
+    if (!dimensionMountedRef.current) {
+      dimensionMountedRef.current = true;
+      return;
+    }
     if (dimension === "2d") {
       (sigmaRef.current as { refresh: () => void } | null)?.refresh();
     }
@@ -520,12 +527,15 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         onContextMenu={(e) => e.preventDefault()}
       />
       {dimension === "3d" && (
-        <GraphView3D
-          nodes={[]}
-          edges={[]}
-          positions={{}}
-          pagerank={{}}
-        />
+        <Suspense fallback={null}>
+          {/* TODO(Phase 2): pass real subgraph data, positions_3d, and callbacks */}
+          <LazyGraphView3D
+            nodes={[]}
+            edges={[]}
+            positions={{}}
+            pagerank={{}}
+          />
+        </Suspense>
       )}
       {contextMenu && onExportNetwork && (
         <div
