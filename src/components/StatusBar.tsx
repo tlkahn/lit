@@ -32,51 +32,48 @@ function BottomPanelTabs() {
     (s) => s.experimentalUnlinkedReferences,
   );
   const annotationEnabled = usePreferencesStore((s) => s.annotationEnabled);
-  const hasOpenedLlm = useBottomPanelStore((s) => s.hasOpenedLlm);
-  const llmStatus = useLlmResponseStore((s) => s.status);
-
-  if (!hasPage) return null;
-
   return (
     <div className="flex items-center" data-testid="bottom-panel-tabs">
+      {hasPage && (
+        <>
+          <TabButton
+            tab="linked"
+            label="Linked References"
+            count={linkedCount}
+            active={activeTab === "linked"}
+            unfolded={unfolded}
+            onClick={handleTabClick}
+          />
+          {experimentalUnlinkedReferences && (
+            <TabButton
+              tab="unlinked"
+              label="Unlinked References"
+              count={unlinkedCount}
+              active={activeTab === "unlinked"}
+              unfolded={unfolded}
+              onClick={handleTabClick}
+            />
+          )}
+          {annotationEnabled && annotationCount > 0 && (
+            <TabButton
+              tab="annotations"
+              label="Annotations"
+              count={annotationCount}
+              active={activeTab === "annotations"}
+              unfolded={unfolded}
+              onClick={handleTabClick}
+            />
+          )}
+        </>
+      )}
       <TabButton
-        tab="linked"
-        label="Linked References"
-        count={linkedCount}
-        active={activeTab === "linked"}
+        tab="llm-response"
+        label="LLM"
+        count={null}
+        active={activeTab === "llm-response"}
         unfolded={unfolded}
         onClick={handleTabClick}
       />
-      {experimentalUnlinkedReferences && (
-        <TabButton
-          tab="unlinked"
-          label="Unlinked References"
-          count={unlinkedCount}
-          active={activeTab === "unlinked"}
-          unfolded={unfolded}
-          onClick={handleTabClick}
-        />
-      )}
-      {annotationEnabled && annotationCount > 0 && (
-        <TabButton
-          tab="annotations"
-          label="Annotations"
-          count={annotationCount}
-          active={activeTab === "annotations"}
-          unfolded={unfolded}
-          onClick={handleTabClick}
-        />
-      )}
-      {(llmStatus !== "idle" || hasOpenedLlm) && (
-        <TabButton
-          tab="llm-response"
-          label="LLM"
-          count={null}
-          active={activeTab === "llm-response"}
-          unfolded={unfolded}
-          onClick={handleTabClick}
-        />
-      )}
     </div>
   );
 }

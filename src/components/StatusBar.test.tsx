@@ -214,14 +214,18 @@ describe("StatusBar", () => {
       expect(screen.getByTestId("tab-linked")).toBeInTheDocument();
     });
 
-    it("tab buttons hidden when no page is open", () => {
+    it("hides page-dependent tabs but shows LLM tab when no page is open", () => {
       useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
       usePaneStore.setState({
         root: { type: "leaf", id: "p1", pagePath: null },
         focusedPaneId: "p1",
       });
       render(<StatusBar />);
-      expect(screen.queryByTestId("bottom-panel-tabs")).toBeNull();
+      expect(screen.getByTestId("bottom-panel-tabs")).toBeInTheDocument();
+      expect(screen.queryByTestId("tab-linked")).toBeNull();
+      expect(screen.queryByTestId("tab-unlinked")).toBeNull();
+      expect(screen.queryByTestId("tab-annotations")).toBeNull();
+      expect(screen.getByTestId("tab-llm-response")).toBeInTheDocument();
     });
 
     it("tab buttons hidden during indexing", () => {
@@ -368,24 +372,13 @@ describe("StatusBar", () => {
       expect(screen.getByTestId("tab-llm-response")).toHaveTextContent("LLM");
     });
 
-    it("hides LLM tab when llmResponseStore status is idle and hasOpenedLlm is false", () => {
+    it("shows LLM tab unconditionally regardless of llm status or hasOpenedLlm", () => {
       useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
       usePaneStore.setState({
         root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
         focusedPaneId: "p1",
       });
       useBottomPanelStore.setState({ hasOpenedLlm: false });
-      render(<StatusBar />);
-      expect(screen.queryByTestId("tab-llm-response")).toBeNull();
-    });
-
-    it("shows LLM tab when hasOpenedLlm is true even if status is idle", () => {
-      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
-      usePaneStore.setState({
-        root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
-        focusedPaneId: "p1",
-      });
-      useBottomPanelStore.setState({ hasOpenedLlm: true });
       render(<StatusBar />);
       expect(screen.getByTestId("tab-llm-response")).toBeInTheDocument();
     });

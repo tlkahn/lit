@@ -11,7 +11,7 @@ import { useBottomPanelStore } from "../stores/bottomPanel";
 import { MIN_PANEL_HEIGHT } from "../stores/bottomPanel";
 
 interface BottomPanelProps {
-  pageId: string;
+  pageId?: string;
 }
 
 export function BottomPanel({ pageId }: BottomPanelProps) {
@@ -172,15 +172,17 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
         className="overflow-hidden"
         style={{ height: panelHeight }}
       >
-        <div style={{ display: activeTab === "linked" ? undefined : "none" }}>
-          <BacklinksPanel pageId={pageId} onCountChange={setLinkedCount} contentHeight={panelHeight} />
-        </div>
-        {hasOpenedUnlinked && (
+        {pageId && (
+          <div style={{ display: activeTab === "linked" ? undefined : "none" }}>
+            <BacklinksPanel pageId={pageId} onCountChange={setLinkedCount} contentHeight={panelHeight} />
+          </div>
+        )}
+        {pageId && hasOpenedUnlinked && (
           <div style={{ display: activeTab === "unlinked" ? undefined : "none" }}>
             <UnlinkedMentionsPanel pageId={pageId} onCountChange={setUnlinkedCount} contentHeight={panelHeight} />
           </div>
         )}
-        {annotationEnabled && hasOpenedAnnotations && (
+        {pageId && annotationEnabled && hasOpenedAnnotations && (
           <div style={{ display: activeTab === "annotations" ? undefined : "none" }}>
             <AnnotationPanel pageId={pageId} onCountChange={setAnnotationCount} contentHeight={panelHeight} />
           </div>

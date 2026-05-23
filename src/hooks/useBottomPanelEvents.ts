@@ -138,6 +138,11 @@ export function useBottomPanelEvents() {
         lastPagePath = currentPage;
         if (currentPage !== null) {
           useBottomPanelStore.getState().resetForPage();
+        } else {
+          const { activeTab, unfolded } = useBottomPanelStore.getState();
+          if (unfolded && activeTab !== "llm-response") {
+            useBottomPanelStore.setState({ unfolded: false });
+          }
         }
       }
     });

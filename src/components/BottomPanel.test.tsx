@@ -103,6 +103,25 @@ describe("BottomPanel", () => {
     expect(panel.style.height).toBe("0px");
   });
 
+  it("renders without pageId — only LLM panel mounts, no Backlinks", () => {
+    useLlmResponseStore.getState().startStream({ question: "test" });
+    useLlmResponseStore.getState().appendChunk("response text");
+
+    render(<BottomPanel />);
+
+    act(() => {
+      useBottomPanelStore.setState({
+        unfolded: true,
+        activeTab: "llm-response",
+        hasOpenedLlm: true,
+      });
+    });
+
+    expect(screen.getByTestId("llm-response-panel")).toBeInTheDocument();
+    expect(screen.getByText("response text")).toBeInTheDocument();
+    expect(screen.queryByText("No other pages link to this page")).toBeNull();
+  });
+
   it("renders backlinks content when unfolded via store", async () => {
     useWorkspaceStore.setState({ graphReady: true });
     await act(async () => {

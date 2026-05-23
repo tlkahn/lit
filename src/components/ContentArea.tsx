@@ -311,12 +311,15 @@ export function ContentArea({ onExportNetwork }: { onExportNetwork?: (nodeId: st
   if (!currentPanePage && !isMultiPane) {
     return (
       <main
-        className="flex flex-1 items-center justify-center bg-bg-primary-alt"
+        className="flex min-h-0 flex-1 flex-col bg-bg-primary-alt"
         data-testid="empty-state"
       >
-        <p className="text-text-faint">
-          Select a page to start editing
-        </p>
+        <div className="flex flex-1 items-center justify-center">
+          <p className="text-text-faint">
+            Select a page to start editing
+          </p>
+        </div>
+        <BottomPanel />
       </main>
     );
   }
@@ -516,7 +519,7 @@ export function ContentArea({ onExportNetwork }: { onExportNetwork?: (nodeId: st
           </Suspense>
         </div>
       )}
-      {currentPanePage && <BottomPanel pageId={currentPanePage} />}
+      <BottomPanel pageId={currentPanePage ?? undefined} />
     </main>
   );
 }

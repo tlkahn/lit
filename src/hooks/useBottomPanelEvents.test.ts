@@ -397,5 +397,33 @@ describe("useBottomPanelEvents", () => {
 
       expect(useBottomPanelStore.getState().unfolded).toBe(false);
     });
+
+    it("folds panel when page becomes null and active tab is page-dependent", () => {
+      useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+      renderHook(() => useBottomPanelEvents());
+
+      act(() => {
+        usePaneStore.setState({
+          root: { type: "leaf", id: "p1", pagePath: null },
+          focusedPaneId: "p1",
+        });
+      });
+
+      expect(useBottomPanelStore.getState().unfolded).toBe(false);
+    });
+
+    it("stays open when page becomes null and active tab is llm-response", () => {
+      useBottomPanelStore.setState({ unfolded: true, activeTab: "llm-response", hasOpenedLlm: true });
+      renderHook(() => useBottomPanelEvents());
+
+      act(() => {
+        usePaneStore.setState({
+          root: { type: "leaf", id: "p1", pagePath: null },
+          focusedPaneId: "p1",
+        });
+      });
+
+      expect(useBottomPanelStore.getState().unfolded).toBe(true);
+    });
   });
 });
