@@ -1,12 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState, useCallback, lazy, Suspense } from "react";
+import { useEffect, useRef, useState, useCallback, lazy, Suspense } from "react";
 import { getFullSubgraph, getGraphSubgraph, getGraphPositions, computeLayout3d } from "../lib/ipc";
 import type { SubgraphResult } from "../lib/ipc";
 import type { CameraControllerHandle } from "./CameraController";
 import { listen } from "@tauri-apps/api/event";
-import { buildGraph, resolveThemeColors, applyPositions } from "../lib/graphLayout";
-import { getQualitySettings, getTierSettings, type TierSettings } from "../lib/qualityTiers";
-import { useThemeStore } from "../stores/theme";
-import { computeDiff, applyDiff, isDiffEmpty } from "../lib/graphDiff";
 import { isPerfEnabled, perfTable, type PerfEntry } from "../lib/perf";
 import { GraphToolbar } from "./GraphToolbar";
 import { GraphTooltip } from "./GraphTooltip";
@@ -27,14 +23,6 @@ export interface GraphViewProps {
 }
 
 export default function GraphView({ activePageId, initialMode, visible = true, onNavigate, onExit, onExportNetwork }: GraphViewProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const sigmaRef = useRef<unknown>(null);
-  const graphRef = useRef<unknown>(null);
-  const hoveredNodeRef = useRef<string | null>(null);
-  const rafIdRef = useRef<number>(0);
-  const pendingPosRef = useRef<{ x: number; y: number } | null>(null);
-  const dimColorRef = useRef("#d1d9e0");
-  const tierSettingsRef = useRef<TierSettings>(getTierSettings("medium"));
   const onNavigateRef = useRef(onNavigate);
   onNavigateRef.current = onNavigate;
   const onExitRef = useRef(onExit);
@@ -44,12 +32,12 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
   const lastRenderedSeedRef = useRef<string | null>(null);
-  const pendingRefreshRef = useRef(false);
-  const diffInProgressRef = useRef(false);
   const modeRef = useRef(initialMode ?? "full");
   const depthRef = useRef(2);
   const activePageIdRef = useRef(activePageId);
   activePageIdRef.current = activePageId;
+  const resetZoom3DRef = useRef<CameraControllerHandle | null>(null);
+
   const [reinitTrigger, setReinitTrigger] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -64,13 +52,9 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   const [searchQuery, setSearchQuery] = useState("");
   const [searchMatches, setSearchMatches] = useState<string[]>([]);
   const [graphStats, setGraphStats] = useState<{ nodes: number; edges: number } | null>(null);
-  const [dimension, setDimension] = useState<"2d" | "3d">("2d");
-  const dimensionRef = useRef<"2d" | "3d">("2d");
-  dimensionRef.current = dimension;
   const subgraphRef = useRef<SubgraphResult | null>(null);
   const pagerankRef = useRef<Record<string, number>>({});
-  const resetZoom3DRef = useRef<CameraControllerHandle | null>(null);
-  const [positions3D, setPositions3D] = useState<Record<string, { x: number; y: number; z: number }>>({});
+  const [positions, setPositions] = useState<Record<string, { x: number; y: number; z: number }>>({});
   const [contextMenu, setContextMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null);
   const contextMenuOpenRef = useRef(false);
   useEffect(() => { contextMenuOpenRef.current = contextMenu !== null; }, [contextMenu]);
@@ -94,61 +78,25 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   }, [contextMenu]);
 
   const handleResetZoom = useCallback(() => {
-    if (dimensionRef.current === "3d") {
-      resetZoom3DRef.current?.resetCamera();
-      return;
-    }
-    const sigma = sigmaRef.current as { getCamera: () => { animatedReset: () => void } } | null;
-    sigma?.getCamera().animatedReset();
+    resetZoom3DRef.current?.resetCamera();
   }, []);
 
   const handleSearchQueryChange = useCallback((query: string) => {
     setSearchQuery(query);
-    const graph = graphRef.current as import("graphology").default | null;
-    const sigma = sigmaRef.current as { setSetting: (key: string, value: unknown) => void; getCamera: () => { animate: (state: Record<string, number>) => void }; getNodeDisplayData: (node: string) => { x: number; y: number } | undefined } | null;
-    if (!graph || !sigma) return;
+    const nodes = subgraphRef.current?.nodes;
+    if (!nodes) return;
     if (!query) {
       setSearchMatches([]);
-      sigma.setSetting("nodeReducer", null);
-      sigma.setSetting("edgeReducer",
-        tierSettingsRef.current.defaultEdgesHidden
-          ? (_e: string, attrs: Record<string, unknown>) => ({ ...attrs, hidden: true })
-          : null
-      );
       return;
     }
-    const matches = getMatchingNodes(graph, query);
+    const matches = getMatchingNodes(nodes, query);
     setSearchMatches(matches);
-    const matchSet = new Set(matches);
-    sigma.setSetting("nodeReducer", (_n: string, attrs: Record<string, unknown>) => {
-      if (matchSet.has(_n)) return { ...attrs, highlighted: true };
-      return { ...attrs, color: dimColorRef.current, label: null };
-    });
-    sigma.setSetting("edgeReducer", (_e: string, attrs: Record<string, unknown>) => {
-      const src = graph.source(_e);
-      const tgt = graph.target(_e);
-      if (matchSet.has(src) || matchSet.has(tgt)) return attrs;
-      return { ...attrs, hidden: true };
-    });
-    if (matches.length === 1) {
-      const pos = sigma.getNodeDisplayData(matches[0]!);
-      if (pos) sigma.getCamera().animate({ x: pos.x, y: pos.y, ratio: 0.5 });
-    }
   }, []);
 
   const handleSearchClose = useCallback(() => {
     setSearchOpen(false);
     setSearchQuery("");
     setSearchMatches([]);
-    const sigma = sigmaRef.current as { setSetting: (key: string, value: unknown) => void } | null;
-    if (sigma) {
-      sigma.setSetting("nodeReducer", null);
-      sigma.setSetting("edgeReducer",
-        tierSettingsRef.current.defaultEdgesHidden
-          ? (_e: string, attrs: Record<string, unknown>) => ({ ...attrs, hidden: true })
-          : null
-      );
-    }
   }, []);
 
   const handleSearchNavigate = useCallback((nodeId: string) => {
@@ -166,7 +114,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         const perf = isPerfEnabled();
         const perfEntries: PerfEntry[] = [];
 
-        let t0 = perf ? performance.now() : 0;
+        const t0 = perf ? performance.now() : 0;
         let subgraph: SubgraphResult;
         if (mode === "local" && activePageId) {
           subgraph = await getGraphSubgraph([activePageId], depth);
@@ -176,7 +124,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         const pagerank = subgraph.pagerank ?? {};
         subgraphRef.current = subgraph;
         pagerankRef.current = pagerank;
-        setPositions3D(subgraph.positions_3d ?? {});
+        setPositions(subgraph.positions ?? {});
         if (perf) {
           const ipcMs = performance.now() - t0;
           const payloadSize = JSON.stringify(subgraph).length;
@@ -185,169 +133,15 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
 
         if (cancelled) return;
 
-        const { accentColor, stubColor, dimColor } = resolveThemeColors();
-        dimColorRef.current = dimColor;
-        t0 = perf ? performance.now() : 0;
-        const graph = buildGraph({
-          subgraph,
-          pagerank,
-          accentColor,
-          stubColor,
-          seedId: mode === "local" ? (activePageId ?? undefined) : undefined,
-        });
-        if (perf) {
-          perfEntries.push({ label: "Graphology build", value: performance.now() - t0, detail: `${graph.order} nodes, ${graph.size} edges` });
+        if (Object.keys(subgraph.positions ?? {}).length === 0) {
+          computeLayout3d();
         }
-
-        const tierSettings = getQualitySettings(graph.order);
-        tierSettingsRef.current = tierSettings;
-        if (perf) {
-          perfEntries.push({ label: "Quality tier", value: graph.order, detail: tierSettings.tier });
-        }
-
-        if (!containerRef.current || cancelled) return;
-
-        if (dimensionRef.current === "3d") {
-          setGraphStats({ nodes: graph.order, edges: graph.size });
-          lastRenderedSeedRef.current = mode === "local" ? (activePageId ?? null) : null;
-          graphRef.current = graph;
-          setLoading(false);
-          return;
-        }
-
-        const { default: Sigma } = await import("sigma");
-        const { createNodeBorderProgram } = await import("@sigma/node-border");
-
-        if (cancelled || !containerRef.current) return;
-
-        const rustPositions = subgraph.positions_2d ?? null;
-
-        if (rustPositions && Object.keys(rustPositions).length > 0) {
-          applyPositions(graph, rustPositions);
-        }
-
-        const filledProgram = createNodeBorderProgram({
-          borders: [{ size: { value: 0.15, mode: "relative" }, color: { attribute: "color" } }],
-        });
-        const hollowProgram = createNodeBorderProgram({
-          borders: [
-            { size: { value: 0.15, mode: "relative" }, color: { attribute: "color" } },
-            { size: { fill: true }, color: { transparent: true } },
-          ],
-        });
-        const seedProgram = createNodeBorderProgram({
-          borders: [{ size: { value: 0.3, mode: "relative" }, color: { attribute: "color" } }],
-        });
-
-        const sigmaT0 = perf ? performance.now() : 0;
-        const sigma = new Sigma(graph, containerRef.current, {
-          nodeProgramClasses: { filled: filledProgram, hollow: hollowProgram, seed: seedProgram },
-          hideEdgesOnMove: tierSettings.hideEdgesOnMove,
-          hideLabelsOnMove: tierSettings.hideLabelsOnMove,
-          labelRenderedSizeThreshold: tierSettings.labelRenderedSizeThreshold,
-          enableEdgeEvents: tierSettings.enableEdgeEvents,
-        });
-        sigmaRef.current = sigma;
-        graphRef.current = graph;
-
-        if (tierSettingsRef.current.defaultEdgesHidden) {
-          sigma.setSetting("edgeReducer", (_e: string, attrs: Record<string, unknown>) => ({ ...attrs, hidden: true }));
-        }
-
-        const restoreDefaultReducers = () => {
-          sigma.setSetting("nodeReducer", null);
-          sigma.setSetting("edgeReducer",
-            tierSettingsRef.current.defaultEdgesHidden
-              ? (_e: string, attrs: Record<string, unknown>) => ({ ...attrs, hidden: true })
-              : null
-          );
-        };
-
-        if (perf) {
-          sigma.on("afterRender", function onFirstRender() {
-            perfEntries.push({ label: "Sigma first paint", value: performance.now() - sigmaT0 });
-            sigma.off("afterRender", onFirstRender);
-          });
-        }
-
-        sigma.on("clickNode", ({ node }) => {
-          onNavigateRef.current?.(node);
-        });
-
-        sigma.on("rightClickNode", ({ node, event }) => {
-          const mouseEvent = event as { original?: MouseEvent; x?: number; y?: number } | undefined;
-          if (mouseEvent?.original) mouseEvent.original.preventDefault();
-          setContextMenu({ nodeId: node, x: mouseEvent?.x ?? 0, y: mouseEvent?.y ?? 0 });
-        });
-
-        sigma.on("enterNode", ({ node, event }) => {
-          hoveredNodeRef.current = node;
-          const neighbors = new Set(graph.neighbors(node));
-          neighbors.add(node);
-
-          sigma.setSetting("nodeReducer", (_n: string, attrs: Record<string, unknown>) => {
-            if (neighbors.has(_n)) return attrs;
-            return { ...attrs, color: dimColorRef.current, label: null };
-          });
-          sigma.setSetting("edgeReducer", (_e: string, attrs: Record<string, unknown>) => {
-            const src = graph.source(_e);
-            const tgt = graph.target(_e);
-            if (neighbors.has(src) && neighbors.has(tgt)) return attrs;
-            return { ...attrs, hidden: true };
-          });
-
-          if (containerRef.current) {
-            containerRef.current.style.cursor = "pointer";
-          }
-
-          const mouseEvent = event as { x?: number; y?: number } | undefined;
-          setTooltip({
-            visible: true,
-            x: (mouseEvent?.x ?? 0) + 10,
-            y: (mouseEvent?.y ?? 0) + 10,
-            title: (graph.getNodeAttribute(node, "label") as string) || node,
-            connections: graph.degree(node),
-          });
-        });
-
-        sigma.on("moveBody", ({ event }) => {
-          if (hoveredNodeRef.current) {
-            const mouseEvent = event as { x?: number; y?: number } | undefined;
-            pendingPosRef.current = { x: (mouseEvent?.x ?? 0) + 10, y: (mouseEvent?.y ?? 0) + 10 };
-            if (!rafIdRef.current) {
-              rafIdRef.current = requestAnimationFrame(() => {
-                rafIdRef.current = 0;
-                const pos = pendingPosRef.current;
-                pendingPosRef.current = null;
-                if (pos) {
-                  setTooltip((t) => ({ ...t, ...pos }));
-                }
-              });
-            }
-          }
-        });
-
-        sigma.on("leaveNode", () => {
-          hoveredNodeRef.current = null;
-          cancelAnimationFrame(rafIdRef.current);
-          rafIdRef.current = 0;
-          pendingPosRef.current = null;
-          restoreDefaultReducers();
-          if (containerRef.current) {
-            containerRef.current.style.cursor = "grab";
-          }
-          setTooltip((t) => ({ ...t, visible: false }));
-        });
-
-        sigma.on("clickStage", () => {
-          restoreDefaultReducers();
-        });
 
         if (perf) {
           perfTable("graph-init", perfEntries);
         }
 
-        setGraphStats({ nodes: graph.order, edges: graph.size });
+        setGraphStats({ nodes: subgraph.nodes.length, edges: subgraph.edges.length });
         lastRenderedSeedRef.current = mode === "local" ? (activePageId ?? null) : null;
         setLoading(false);
       } catch (e) {
@@ -362,73 +156,29 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
 
     return () => {
       cancelled = true;
-      cancelAnimationFrame(rafIdRef.current);
-      rafIdRef.current = 0;
-      pendingPosRef.current = null;
-      if (sigmaRef.current) {
-        (sigmaRef.current as { kill: () => void }).kill();
-        sigmaRef.current = null;
-      }
-      graphRef.current = null;
     };
   }, [mode, depth, mode === "local" ? activePageId : null, reinitTrigger]);
 
   useEffect(() => {
-    if (!visible) {
-      // no-op when hidden; sigma stays alive
-    } else {
-      if (mode === "local" && activePageId !== lastRenderedSeedRef.current) {
-        setReinitTrigger((c) => c + 1);
-      } else {
-        (sigmaRef.current as { refresh: () => void } | null)?.refresh();
-      }
-      if (pendingRefreshRef.current) {
-        (sigmaRef.current as { refresh: () => void } | null)?.refresh();
-        pendingRefreshRef.current = false;
-      }
+    if (visible && mode === "local" && activePageId !== lastRenderedSeedRef.current) {
+      setReinitTrigger((c) => c + 1);
     }
   }, [visible, mode, activePageId]);
-
-  const dimensionMountedRef = useRef(false);
-  useLayoutEffect(() => {
-    if (!dimensionMountedRef.current) {
-      dimensionMountedRef.current = true;
-      return;
-    }
-    if (dimension === "3d") {
-      if (sigmaRef.current) {
-        (sigmaRef.current as { kill: () => void }).kill();
-        sigmaRef.current = null;
-      }
-    } else if (dimension === "2d") {
-      if (sigmaRef.current) {
-        (sigmaRef.current as { refresh: () => void }).refresh();
-      } else {
-        setReinitTrigger((c) => c + 1);
-      }
-    }
-  }, [dimension]);
-
-  useEffect(() => {
-    if (dimension === "3d" && subgraphRef.current && Object.keys(subgraphRef.current.positions_3d ?? {}).length === 0) {
-      computeLayout3d();
-    }
-  }, [dimension]);
 
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
-    listen("lit:layout-3d-ready", async () => {
+    listen("lit:layout-ready", async () => {
       try {
-        const positions = await getGraphPositions("3d");
-        if (positions && Object.keys(positions).length > 0) {
-          setPositions3D(positions);
+        const pos = await getGraphPositions();
+        if (pos && Object.keys(pos).length > 0) {
+          setPositions(pos);
           if (subgraphRef.current) {
-            subgraphRef.current.positions_3d = positions;
+            subgraphRef.current.positions = pos;
           }
         }
       } catch {
-        // 3D positions not available
+        // positions not available
       }
     }).then((fn) => {
       if (cancelled) { fn(); } else { unlisten = fn; }
@@ -440,12 +190,6 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     listen("lit:graph-updated", async () => {
-      const graph = graphRef.current as import("graphology").default | null;
-      const sigma = sigmaRef.current as { refresh: () => void } | null;
-      if (!graph || !sigma) return;
-      if (diffInProgressRef.current) return;
-      diffInProgressRef.current = true;
-
       try {
         let subgraph: SubgraphResult;
         if (modeRef.current === "local" && activePageIdRef.current) {
@@ -453,75 +197,18 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         } else {
           subgraph = await getFullSubgraph();
         }
-        const pagerank = subgraph.pagerank ?? {};
         subgraphRef.current = subgraph;
-        pagerankRef.current = pagerank;
-        const diff = computeDiff(graph, subgraph);
-
-        if (isDiffEmpty(diff)) return;
-
-        if (diff.isMajorChange) {
-          setReinitTrigger((c) => c + 1);
-          return;
-        }
-
-        const { accentColor, stubColor } = resolveThemeColors();
-        applyDiff(graph, diff, pagerank, accentColor, stubColor);
-        setGraphStats({ nodes: graph.order, edges: graph.size });
-
-        if (visibleRef.current) {
-          sigma.refresh();
-        } else {
-          pendingRefreshRef.current = true;
-        }
-      } finally {
-        diffInProgressRef.current = false;
-      }
-    }).then((fn) => {
-      if (cancelled) { fn(); } else { unlisten = fn; }
-    });
-    return () => { cancelled = true; unlisten?.(); };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
-    listen("lit:layout-ready", async () => {
-      const graph = graphRef.current as import("graphology").default | null;
-      const sigma = sigmaRef.current as { refresh: () => void; getCamera: () => { animatedReset: () => void } } | null;
-      if (!graph || !sigma) return;
-      try {
-        const positions = await getGraphPositions();
-        if (positions && Object.keys(positions).length > 0) {
-          applyPositions(graph, positions);
-          sigma.refresh();
-          sigma.getCamera().animatedReset();
-        }
+        pagerankRef.current = subgraph.pagerank ?? {};
+        setPositions(subgraph.positions ?? {});
+        setGraphStats({ nodes: subgraph.nodes.length, edges: subgraph.edges.length });
       } catch {
-        // Rust positions not available
+        // update failed silently
       }
     }).then((fn) => {
       if (cancelled) { fn(); } else { unlisten = fn; }
     });
     return () => { cancelled = true; unlisten?.(); };
   }, []);
-
-  const activeThemeId = useThemeStore((s) => s.activeThemeId);
-
-  useEffect(() => {
-    const graph = graphRef.current as import("graphology").default | null;
-    const sigma = sigmaRef.current as { refresh: () => void; setSetting: (key: string, value: unknown) => void } | null;
-    if (!graph || !sigma) return;
-    const { accentColor, stubColor, dimColor, edgeColor, labelColor } = resolveThemeColors();
-    dimColorRef.current = dimColor;
-    graph.forEachNode((node: string, attrs: Record<string, unknown>) => {
-      if (attrs.type === "seed") return;
-      graph.setNodeAttribute(node, "color", attrs.type === "hollow" ? stubColor : accentColor);
-    });
-    sigma.setSetting("defaultEdgeColor", edgeColor);
-    sigma.setSetting("labelColor", { color: labelColor });
-    sigma.refresh();
-  }, [activeThemeId]);
 
   const handleContainerKeyDown = useCallback((e: React.KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "f") {
@@ -560,10 +247,8 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         mode={mode}
         depth={depth}
         localDisabled={!activePageId}
-        dimension={dimension}
         onModeChange={setMode}
         onDepthChange={setDepth}
-        onDimensionChange={setDimension}
         onResetZoom={handleResetZoom}
         onSearch={() => setSearchOpen(true)}
       />
@@ -577,27 +262,19 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         onClose={handleSearchClose}
       />
       <GraphTooltip {...tooltip} />
-      <div
-        ref={containerRef}
-        data-testid="graph-canvas"
-        style={{ position: "absolute", inset: 0, cursor: "grab", display: dimension === "3d" ? "none" : undefined }}
-        onContextMenu={(e) => e.preventDefault()}
-      />
-      {dimension === "3d" && (
-        <Suspense fallback={null}>
-          <LazyGraphView3D
-            nodes={subgraphRef.current?.nodes ?? []}
-            edges={subgraphRef.current?.edges ?? []}
-            positions={positions3D}
-            pagerank={pagerankRef.current}
-            seedId={mode === "local" ? (activePageId ?? undefined) : undefined}
-            onNavigate={onNavigate}
-            onHover={(info) => setTooltip(info)}
-            onContextMenu={(info) => setContextMenu(info)}
-            onResetZoom={resetZoom3DRef}
-          />
-        </Suspense>
-      )}
+      <Suspense fallback={null}>
+        <LazyGraphView3D
+          nodes={subgraphRef.current?.nodes ?? []}
+          edges={subgraphRef.current?.edges ?? []}
+          positions={positions}
+          pagerank={pagerankRef.current}
+          seedId={mode === "local" ? (activePageId ?? undefined) : undefined}
+          onNavigate={onNavigate}
+          onHover={(info) => setTooltip(info)}
+          onContextMenu={(info) => setContextMenu(info)}
+          onResetZoom={resetZoom3DRef}
+        />
+      </Suspense>
       {contextMenu && onExportNetwork && (
         <div
           data-graph-context-menu

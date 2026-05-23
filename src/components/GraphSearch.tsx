@@ -1,14 +1,13 @@
 import { useEffect, useRef } from "react";
-import type Graph from "graphology";
+import type { GraphNode } from "../lib/ipc";
 
-export function getMatchingNodes(graph: Graph, query: string): string[] {
+export function getMatchingNodes(nodes: GraphNode[], query: string): string[] {
   if (!query) return [];
   const lower = query.toLowerCase();
   const matches: string[] = [];
-  graph.forEachNode((node: string, attrs: Record<string, unknown>) => {
-    const label = (attrs.label as string) ?? "";
-    if (label.toLowerCase().includes(lower)) matches.push(node);
-  });
+  for (const node of nodes) {
+    if (node.title.toLowerCase().includes(lower)) matches.push(node.id);
+  }
   return matches;
 }
 

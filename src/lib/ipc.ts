@@ -361,8 +361,7 @@ export interface SubgraphResult {
   nodes: GraphNode[];
   edges: [string, string][];
   pagerank?: Record<string, number>;
-  positions_2d?: Record<string, { x: number; y: number; z: number }>;
-  positions_3d?: Record<string, { x: number; y: number; z: number }>;
+  positions?: Record<string, { x: number; y: number; z: number }>;
 }
 
 export interface GraphStats {

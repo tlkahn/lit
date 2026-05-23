@@ -1,6 +1,3 @@
-import Graph from "graphology";
-import type { SubgraphResult } from "./ipc";
-
 const DEFAULT_ACCENT = "#0969da";
 const DEFAULT_STUB = "#818b98";
 const DEFAULT_DIM = "#d1d9e0";
@@ -36,69 +33,3 @@ export function computeNodeSize(pr: number, maxPr: number): number {
 }
 
 export const SEED_COLOR = "#f59e0b";
-
-export interface GraphBuildOptions {
-  subgraph: SubgraphResult;
-  pagerank: Record<string, number>;
-  accentColor: string;
-  stubColor: string;
-  seedId?: string;
-}
-
-export function buildGraph(options: GraphBuildOptions): Graph {
-  const { subgraph, pagerank, accentColor, stubColor, seedId } = options;
-  const graph = new Graph();
-
-  if (subgraph.nodes.length === 0) return graph;
-
-  const maxPr = Math.max(0, ...Object.values(pagerank));
-
-  for (const node of subgraph.nodes) {
-    const pr = pagerank[node.id] ?? 0;
-    const size = node.is_stub ? MIN_SIZE : computeNodeSize(pr, maxPr);
-    const isSeed = seedId != null && node.id === seedId;
-    graph.addNode(node.id, {
-      label: node.title,
-      color: isSeed ? SEED_COLOR : node.is_stub ? stubColor : accentColor,
-      type: isSeed ? "seed" : node.is_stub ? "hollow" : "filled",
-      size: isSeed ? Math.max(size * 1.3, size + 4) : size,
-      x: Math.random() * 100,
-      y: Math.random() * 100,
-    });
-  }
-
-  for (const [source, target] of subgraph.edges) {
-    if (!graph.hasNode(source) || !graph.hasNode(target)) continue;
-    graph.mergeUndirectedEdge(source, target, { size: 1 });
-  }
-
-  return graph;
-}
-
-export function applyPositions(graph: Graph, positions: Record<string, { x: number; y: number; z: number }>): void {
-  const positionedNodes = new Set<string>();
-
-  graph.forEachNode((node: string) => {
-    const pos = positions[node];
-    if (pos) {
-      graph.setNodeAttribute(node, "x", pos.x);
-      graph.setNodeAttribute(node, "y", pos.y);
-      graph.setNodeAttribute(node, "z", pos.z);
-      positionedNodes.add(node);
-    }
-  });
-
-  graph.forEachNode((node: string) => {
-    if (positionedNodes.has(node)) return;
-    const neighbors = graph.neighbors(node);
-    const positioned = neighbors.filter((n) => positionedNodes.has(n));
-    if (positioned.length === 0) return;
-    let sx = 0, sy = 0;
-    for (const n of positioned) {
-      sx += graph.getNodeAttribute(n, "x") as number;
-      sy += graph.getNodeAttribute(n, "y") as number;
-    }
-    graph.setNodeAttribute(node, "x", sx / positioned.length + (Math.random() - 0.5) * 20);
-    graph.setNodeAttribute(node, "y", sy / positioned.length + (Math.random() - 0.5) * 20);
-  });
-}
