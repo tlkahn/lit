@@ -1024,3 +1024,38 @@ mod tests {
         assert_eq!(layout_count.load(Ordering::SeqCst), 1);
     }
 }
+
+#[tauri::command]
+pub fn rewrite_links(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<GraphRegistry>>,
+    registry: State<Arc<crate::workspace::write_hash::WriteHashRegistry>>,
+    app_handle: tauri::AppHandle,
+    redirects: Vec<crate::graph::rewriter::LinkRedirect>,
+) -> Result<crate::graph::rewriter::RewriteSummary, String> {
+    let root =
+        crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+
+    let summary =
+        crate::graph::rewriter::rewrite_links_in_vault(&root, &redirects).map_err(|e| e.to_string())?;
+
+    // Update WriteHashRegistry and reindex for each modified file
+    let gi = {
+        let indices = graph_state.indices.lock().unwrap();
+        indices.get(&root).cloned()
+    };
+    let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
+
+    for file_result in &summary.files_modified {
+        let full_path = root.join(&file_result.relative_path);
+        if let Ok(content) = std::fs::read_to_string(&full_path) {
+            registry.record(&full_path, &content);
+        }
+        if let Some(ref gi) = gi {
+            let _ = gi.reindex_file(&file_result.relative_path, ann_enabled);
+        }
+    }
+
+    Ok(summary)
+}

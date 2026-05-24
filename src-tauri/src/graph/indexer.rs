@@ -124,7 +124,7 @@ impl ReverseStemIndex {
     }
 }
 
-fn normalize_stem(target: &str) -> String {
+pub(crate) fn normalize_stem(target: &str) -> String {
     let stripped = target.strip_suffix(".md").unwrap_or(target);
     let basename = stripped.rsplit('/').next().unwrap_or(stripped);
     basename.to_lowercase()
