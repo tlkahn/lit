@@ -41,8 +41,11 @@ pub fn plan_merge(docs: &[MergeInput]) -> MergePlan {
         if i > 0 {
             body.push('\n');
         }
-        body.push_str(&format!("## {}\n\n", doc.title));
+        body.push_str("## ");
+        body.push_str(&doc.title);
+        body.push('\n');
         if !doc.body.is_empty() {
+            body.push('\n');
             body.push_str(&demote_headings(&doc.body, 1));
             body.push('\n');
         }
@@ -175,6 +178,20 @@ mod tests {
     // ── Section B: Edge cases ──
 
     #[test]
+    fn merge_empty_body_consistent_spacing() {
+        let result = plan_merge(&[
+            input("A", "content A"),
+            input("Empty", ""),
+            input("C", "content C"),
+        ]);
+        assert!(
+            !result.body.contains("\n\n\n"),
+            "body should not contain triple newlines: {:?}",
+            result.body
+        );
+    }
+
+    #[test]
     fn merge_deeply_nested_heading_clamped() {
         let body = "##### H5\n\n###### H6";
         let result = plan_merge(&[input("Doc", body)]);
@@ -194,8 +211,9 @@ mod tests {
     fn merge_crlf_body() {
         let body = "Line one\r\nLine two\r\n## Heading\r\nMore text";
         let result = plan_merge(&[input("Doc", body)]);
+        assert!(!result.body.contains('\r'), "CRLF should be normalized to LF");
+        assert!(result.body.contains("### Heading"), "heading should be demoted");
         assert!(result.body.contains("Line one"));
-        assert!(result.body.contains("Line two"));
         assert!(result.body.contains("More text"));
     }
 
