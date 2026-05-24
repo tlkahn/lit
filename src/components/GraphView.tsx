@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { getFullSubgraph, getGraphSubgraph, getGraphPositions } from "../lib/ipc";
-import type { SubgraphResult } from "../lib/ipc";
+import { getFullSubgraph, getGraphSubgraph, getGraphPositions, readPage, previewSplit } from "../lib/ipc";
+import type { SubgraphResult, PageContent, MergePlan, SplitPlan } from "../lib/ipc";
 import { listen } from "@tauri-apps/api/event";
 import { buildGraph, resolveThemeColors, applyPositions } from "../lib/graphLayout";
 import { getQualitySettings, getTierSettings, type TierSettings } from "../lib/qualityTiers";
@@ -12,6 +12,8 @@ import { isPerfEnabled, perfTable, type PerfEntry } from "../lib/perf";
 import { GraphToolbar } from "./GraphToolbar";
 import { GraphTooltip } from "./GraphTooltip";
 import { GraphSearch, getMatchingNodes } from "./GraphSearch";
+import { MergePreviewDialog } from "./MergePreviewDialog";
+import { SplitPreviewDialog } from "./SplitPreviewDialog";
 import "./GraphSearch.css";
 import "./GraphView.css";
 
@@ -22,9 +24,11 @@ export interface GraphViewProps {
   onNavigate?: (pageId: string) => void;
   onExit?: () => void;
   onExportNetwork?: (nodeId: string) => void;
+  onMergeConfirm?: (plan: MergePlan, ordering: number[], docs: PageContent[]) => void;
+  onSplitConfirm?: (originalPath: string, plan: SplitPlan) => void;
 }
 
-export default function GraphView({ activePageId, initialMode, visible = true, onNavigate, onExit, onExportNetwork }: GraphViewProps) {
+export default function GraphView({ activePageId, initialMode, visible = true, onNavigate, onExit, onExportNetwork, onMergeConfirm, onSplitConfirm }: GraphViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sigmaRef = useRef<unknown>(null);
   const graphRef = useRef<unknown>(null);
@@ -47,6 +51,10 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   onExitRef.current = onExit;
   const onExportNetworkRef = useRef(onExportNetwork);
   onExportNetworkRef.current = onExportNetwork;
+  const onMergeConfirmRef = useRef(onMergeConfirm);
+  onMergeConfirmRef.current = onMergeConfirm;
+  const onSplitConfirmRef = useRef(onSplitConfirm);
+  onSplitConfirmRef.current = onSplitConfirm;
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
   const lastRenderedSeedRef = useRef<string | null>(null);
@@ -76,11 +84,26 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   useEffect(() => { contextMenuOpenRef.current = contextMenu !== null; }, [contextMenu]);
   const selectionCount = useGraphSelectionStore((s) => s.selectedNodes.length);
   const unsubSelectionRef = useRef<(() => void) | null>(null);
+  const [splitCheck, setSplitCheck] = useState<{ loading: boolean; hasHeadings: boolean; content: PageContent | null }>({ loading: false, hasHeadings: false, content: null });
+  const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
+  const [mergeDialogDocs, setMergeDialogDocs] = useState<PageContent[]>([]);
+  const [splitDialogOpen, setSplitDialogOpen] = useState(false);
+  const [splitDialogPlan, setSplitDialogPlan] = useState<SplitPlan | null>(null);
+  const [splitDialogPath, setSplitDialogPath] = useState("");
   const [lassoState, setLassoState] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null);
   const lassoRef = useRef<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null);
 
   useEffect(() => {
     if (!contextMenu) return;
+    setSplitCheck({ loading: true, hasHeadings: false, content: null });
+    let cancelled = false;
+    readPage(contextMenu.nodeId).then((page) => {
+      if (cancelled) return;
+      const hasHeadings = /^#{2,}\s/m.test(page.body);
+      setSplitCheck({ loading: false, hasHeadings, content: page });
+    }).catch(() => {
+      if (!cancelled) setSplitCheck({ loading: false, hasHeadings: false, content: null });
+    });
     const handleClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
       if (target.closest?.("[data-graph-context-menu]")) return;
@@ -92,6 +115,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
     document.addEventListener("pointerdown", handleClick);
     document.addEventListener("keydown", handleKey);
     return () => {
+      cancelled = true;
       document.removeEventListener("pointerdown", handleClick);
       document.removeEventListener("keydown", handleKey);
     };
@@ -647,22 +671,87 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
           }}
         />
       )}
-      {contextMenu && onExportNetwork && (
+      {contextMenu && (onExportNetwork || onMergeConfirm || onSplitConfirm) && (
         <div
           data-graph-context-menu
           className="fixed z-50 min-w-[160px] select-none rounded-lg border border-border/40 bg-bg-primary/80 p-1 shadow-xl shadow-black/20 backdrop-blur-xl backdrop-saturate-150 dark:border-border/10 dark:bg-bg-primary/70"
           style={{ left: contextMenu.x, top: contextMenu.y }}
         >
-          <button
-            className="block w-full rounded-md px-3 py-1 text-start text-[13px] text-text-normal hover:bg-interactive-accent hover:text-text-on-accent"
-            onClick={() => {
-              onExportNetworkRef.current?.(contextMenu.nodeId);
-              setContextMenu(null);
-            }}
-          >
-            Export Local Network…
-          </button>
+          {selectionCount >= 2 && onMergeConfirm && (
+            <button
+              data-testid="ctx-merge-btn"
+              className="block w-full rounded-md px-3 py-1 text-start text-[13px] text-text-normal hover:bg-interactive-accent hover:text-text-on-accent"
+              onClick={() => {
+                const selectedNodes = useGraphSelectionStore.getState().selectedNodes;
+                setContextMenu(null);
+                Promise.all(selectedNodes.map((id) => readPage(id))).then((docs) => {
+                  setMergeDialogDocs(docs);
+                  setMergeDialogOpen(true);
+                });
+              }}
+            >
+              {`Merge ${selectionCount} documents`}
+            </button>
+          )}
+          {onSplitConfirm && (
+            <button
+              data-testid="ctx-split-btn"
+              className="block w-full rounded-md px-3 py-1 text-start text-[13px] text-text-normal hover:bg-interactive-accent hover:text-text-on-accent disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-text-normal"
+              disabled={splitCheck.loading || !splitCheck.hasHeadings}
+              title={!splitCheck.loading && !splitCheck.hasHeadings ? "Document has no headings — cannot split" : undefined}
+              onClick={() => {
+                if (!splitCheck.content) return;
+                const nodeId = contextMenu.nodeId;
+                setContextMenu(null);
+                previewSplit(splitCheck.content.body, splitCheck.content.meta.title, splitCheck.content.meta.frontmatter).then((plan) => {
+                  setSplitDialogPlan(plan);
+                  setSplitDialogPath(nodeId);
+                  setSplitDialogOpen(true);
+                });
+              }}
+            >
+              Split document
+            </button>
+          )}
+          {(onMergeConfirm || onSplitConfirm) && onExportNetwork && (
+            <div data-testid="ctx-divider" className="my-1 border-t border-border/40" />
+          )}
+          {onExportNetwork && (
+            <button
+              data-testid="ctx-export-btn"
+              className="block w-full rounded-md px-3 py-1 text-start text-[13px] text-text-normal hover:bg-interactive-accent hover:text-text-on-accent"
+              onClick={() => {
+                onExportNetworkRef.current?.(contextMenu.nodeId);
+                setContextMenu(null);
+              }}
+            >
+              Export Local Network…
+            </button>
+          )}
         </div>
+      )}
+      {mergeDialogOpen && (
+        <MergePreviewDialog
+          open={mergeDialogOpen}
+          docs={mergeDialogDocs}
+          onConfirm={(plan, ordering) => {
+            onMergeConfirmRef.current?.(plan, ordering, mergeDialogDocs);
+            setMergeDialogOpen(false);
+          }}
+          onCancel={() => setMergeDialogOpen(false)}
+        />
+      )}
+      {splitDialogOpen && splitDialogPlan && (
+        <SplitPreviewDialog
+          open={splitDialogOpen}
+          plan={splitDialogPlan}
+          originalPath={splitDialogPath}
+          onConfirm={() => {
+            onSplitConfirmRef.current?.(splitDialogPath, splitDialogPlan);
+            setSplitDialogOpen(false);
+          }}
+          onCancel={() => setSplitDialogOpen(false)}
+        />
       )}
     </div>
   );
