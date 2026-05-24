@@ -8,6 +8,7 @@ import { useSidebarTab } from "../hooks/useSidebarTab";
 import { useFlatTree, type FolderNode } from "../hooks/useFlatTree";
 import { useSidebarSort } from "../hooks/useSidebarSort";
 import { Outline } from "./Outline";
+import { TrashPanel } from "./TrashPanel";
 import { SortDropdown } from "./SortDropdown";
 import type { PageMeta } from "../lib/ipc";
 
@@ -205,7 +206,7 @@ const PageItem = memo(function PageItem({
             }}
             className="block w-full rounded-md px-3 py-1 text-start text-[13px] text-text-error hover:bg-destructive hover:text-text-on-accent"
           >
-            Delete
+            Move to Trash
           </button>
         </div>,
         document.body,
@@ -255,9 +256,7 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
   }, [renamePageAction]);
 
   const handleDelete = useCallback((path: string) => {
-    if (window.confirm(`Delete "${path}"?`)) {
-      deletePageAction(path);
-    }
+    deletePageAction(path);
   }, [deletePageAction]);
 
   const [sidebarMenu, setSidebarMenu] = useState<{ x: number; y: number } | null>(null);
@@ -310,6 +309,16 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
           }`}
         >
           Outline
+        </button>
+        <button
+          onClick={() => setTab("trash")}
+          className={`flex-1 px-3 py-2 text-sm font-medium ${
+            tab === "trash"
+              ? "border-b-2 border-interactive-accent text-text-normal"
+              : "text-text-faint hover:text-text-muted"
+          }`}
+        >
+          Trash
         </button>
       </div>
       {tab === "files" ? (
@@ -382,8 +391,10 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
             </div>
           </div>
         </>
-      ) : (
+      ) : tab === "outline" ? (
         <Outline />
+      ) : (
+        <TrashPanel />
       )}
       {sidebarMenu && createPortal(
         <div

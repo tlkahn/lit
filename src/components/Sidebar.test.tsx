@@ -349,7 +349,7 @@ describe("Sidebar virtualization", () => {
     await user.pointer({ keys: "[MouseRight]", target: pageButton });
 
     expect(screen.getByText("Rename")).toBeInTheDocument();
-    expect(screen.getByText("Delete")).toBeInTheDocument();
+    expect(screen.getByText("Move to Trash")).toBeInTheDocument();
     expect(screen.getByText("Open in External Editor")).toBeInTheDocument();
   });
 });
@@ -499,9 +499,9 @@ describe("context menu theme-aware colors", () => {
     }
   });
 
-  it("Delete uses hover:bg-destructive, not hover:bg-red-500", () => {
+  it("Move to Trash uses hover:bg-destructive, not hover:bg-red-500", () => {
     openMenu();
-    const del = screen.getByText("Delete");
+    const del = screen.getByText("Move to Trash");
     expect(del.className).toContain("hover:bg-destructive");
     expect(del.className).not.toContain("hover:bg-red-500");
   });
