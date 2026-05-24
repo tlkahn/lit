@@ -17,6 +17,7 @@ pub struct SplitPlan {
 struct FenceTracker {
     in_fence: bool,
     fence_char: u8,
+    fence_len: usize,
 }
 
 impl FenceTracker {
@@ -24,6 +25,7 @@ impl FenceTracker {
         Self {
             in_fence: false,
             fence_char: 0,
+            fence_len: 0,
         }
     }
 
@@ -36,7 +38,11 @@ impl FenceTracker {
                 if !self.in_fence {
                     self.in_fence = true;
                     self.fence_char = ch;
-                } else if ch == self.fence_char {
+                    self.fence_len = run;
+                } else if ch == self.fence_char
+                    && run >= self.fence_len
+                    && trimmed.bytes().all(|b| b == ch || b == b' ')
+                {
                     self.in_fence = false;
                 }
             }
@@ -48,7 +54,27 @@ impl FenceTracker {
     }
 }
 
-fn parse_heading(trimmed: &str) -> Option<(usize, &str)> {
+fn strip_atx_closing(text: &str) -> &str {
+    if !text.ends_with('#') {
+        return text;
+    }
+    let without = text.trim_end_matches('#');
+    if without.is_empty() {
+        return "";
+    }
+    if without.ends_with(' ') {
+        without.trim_end()
+    } else {
+        text
+    }
+}
+
+fn parse_heading(line: &str) -> Option<(usize, &str)> {
+    let indent = line.bytes().take_while(|&b| b == b' ').count();
+    if indent >= 4 {
+        return None;
+    }
+    let trimmed = &line[indent..];
     let bytes = trimmed.as_bytes();
     if bytes.first() != Some(&b'#') {
         return None;
@@ -57,7 +83,7 @@ fn parse_heading(trimmed: &str) -> Option<(usize, &str)> {
     if hash_count > 6 || hash_count >= trimmed.len() || bytes[hash_count] != b' ' {
         return None;
     }
-    let text = trimmed[hash_count + 1..].trim();
+    let text = strip_atx_closing(trimmed[hash_count + 1..].trim());
     if text.is_empty() {
         return None;
     }
@@ -85,7 +111,7 @@ pub fn demote_headings(body: &str, levels: u8) -> String {
             continue;
         }
 
-        match parse_heading(trimmed) {
+        match parse_heading(line) {
             Some((hash_count, _)) => {
                 let new_level = (hash_count + levels as usize).min(6);
                 let leading_ws = &line[..line.len() - trimmed.len()];
@@ -168,7 +194,7 @@ fn detect_split_level(content: &str) -> u8 {
             continue;
         }
 
-        if let Some((hash_count, _)) = parse_heading(trimmed) {
+        if let Some((hash_count, _)) = parse_heading(line) {
             let level = hash_count as u8;
             if min_level == 0 || level < min_level {
                 min_level = level;
@@ -190,9 +216,11 @@ fn split_at_heading_level(content: &str, level: u8) -> Vec<(Option<String>, Stri
         fence.update(trimmed);
 
         if !fence.inside() {
-            if let Some((hash_count, text)) = parse_heading(trimmed) {
+            if let Some((hash_count, text)) = parse_heading(line) {
                 if hash_count == level as usize {
-                    sections.push((current_title, current_body));
+                    if current_title.is_some() || !current_body.is_empty() {
+                        sections.push((current_title, current_body));
+                    }
                     current_title = Some(text.to_string());
                     current_body = String::new();
                     continue;
@@ -204,13 +232,8 @@ fn split_at_heading_level(content: &str, level: u8) -> Vec<(Option<String>, Stri
         current_body.push('\n');
     }
 
-    sections.push((current_title, current_body));
-
-    if sections
-        .first()
-        .map_or(false, |(t, b)| t.is_none() && b.is_empty())
-    {
-        sections.remove(0);
+    if current_title.is_some() || !current_body.is_empty() {
+        sections.push((current_title, current_body));
     }
 
     sections
@@ -485,5 +508,168 @@ mod tests {
         let plan = plan_split(content, "Doc", &fm);
 
         assert_eq!(plan.sections[0].title, "Spaced Title");
+    }
+
+    // ── Cycle 1: FenceTracker fence-length tracking ─────────────
+
+    #[test]
+    fn fence_tracker_ignores_short_closing_fence() {
+        let mut ft = FenceTracker::new();
+        ft.update("`````");
+        assert!(ft.inside());
+        ft.update("```");
+        assert!(ft.inside());
+    }
+
+    #[test]
+    fn fence_tracker_closes_with_longer_fence() {
+        let mut ft = FenceTracker::new();
+        ft.update("```");
+        assert!(ft.inside());
+        ft.update("``````");
+        assert!(!ft.inside());
+    }
+
+    #[test]
+    fn demote_skips_nested_backticks_in_long_fence() {
+        let body = "`````\n```\n## heading\n```\n`````\n## real\n";
+        let result = demote_headings(body, 1);
+        assert!(result.contains("## heading"));
+        assert!(result.contains("### real"));
+    }
+
+    // ── Cycle 2: ATX closing sequences ──────────────────────────
+
+    #[test]
+    fn parse_heading_strips_atx_closing() {
+        assert_eq!(parse_heading("## Title ##"), Some((2, "Title")));
+    }
+
+    #[test]
+    fn parse_heading_strips_atx_closing_different_count() {
+        assert_eq!(parse_heading("## Title ####"), Some((2, "Title")));
+    }
+
+    #[test]
+    fn parse_heading_closing_must_be_preceded_by_space() {
+        assert_eq!(parse_heading("## Title##"), Some((2, "Title##")));
+    }
+
+    #[test]
+    fn parse_heading_only_hashes_after_opening() {
+        assert_eq!(parse_heading("## ##"), None);
+    }
+
+    // ── Cycle 3: Indentation depth check ────────────────────────
+
+    #[test]
+    fn parse_heading_rejects_4_space_indent() {
+        assert_eq!(parse_heading("    ## Heading"), None);
+    }
+
+    #[test]
+    fn parse_heading_accepts_3_space_indent() {
+        assert_eq!(parse_heading("   ## Heading"), Some((2, "Heading")));
+    }
+
+    #[test]
+    fn detect_split_level_ignores_indented_code_heading() {
+        let content = "    ## Indented\n## Real\n";
+        assert_eq!(detect_split_level(content), 2);
+    }
+
+    #[test]
+    fn split_ignores_4_space_indented_heading() {
+        let content = "## Section\n    ## Indented\nBody.\n";
+        let fm = IndexMap::new();
+        let plan = plan_split(content, "Doc", &fm);
+
+        assert_eq!(plan.sections.len(), 1);
+        assert!(plan.sections[0].body.contains("    ## Indented"));
+    }
+
+    // ── Cycle 4: Sentinel-then-remove elimination ───────────────
+
+    #[test]
+    fn split_content_starting_with_heading_no_empty_preamble() {
+        let content = "## First\nBody.\n## Second\nBody.\n";
+        let fm = IndexMap::new();
+        let plan = plan_split(content, "Doc", &fm);
+
+        assert!(plan.preamble.is_none());
+        assert_eq!(plan.sections.len(), 2);
+    }
+
+    #[test]
+    fn split_whitespace_only_before_heading_becomes_preamble() {
+        let content = "  \n\n## Section\nBody.\n";
+        let fm = IndexMap::new();
+        let plan = plan_split(content, "Doc", &fm);
+
+        assert!(plan.preamble.is_some());
+        assert_eq!(plan.sections.len(), 1);
+    }
+
+    // ── Cycle 5: Edge case test coverage ────────────────────────
+
+    #[test]
+    fn split_nested_fence_backticks_not_closed_by_shorter() {
+        let content = "## Real\n`````\n```\n## Fake\n```\n`````\n## Also Real\n";
+        let fm = IndexMap::new();
+        let plan = plan_split(content, "Doc", &fm);
+
+        assert_eq!(plan.sections.len(), 2);
+        assert_eq!(plan.sections[0].title, "Real");
+        assert!(plan.sections[0].body.contains("## Fake"));
+        assert_eq!(plan.sections[1].title, "Also Real");
+    }
+
+    #[test]
+    fn split_nested_tilde_fence_not_closed_by_shorter() {
+        let content = "## Real\n~~~~~\n~~~\n## Fake\n~~~\n~~~~~\n## Also Real\n";
+        let fm = IndexMap::new();
+        let plan = plan_split(content, "Doc", &fm);
+
+        assert_eq!(plan.sections.len(), 2);
+        assert_eq!(plan.sections[0].title, "Real");
+        assert!(plan.sections[0].body.contains("## Fake"));
+        assert_eq!(plan.sections[1].title, "Also Real");
+    }
+
+    #[test]
+    fn split_content_without_trailing_newline() {
+        let content = "## A\nBody A.\n## B\nBody B";
+        let fm = IndexMap::new();
+        let plan = plan_split(content, "Doc", &fm);
+
+        assert_eq!(plan.sections.len(), 2);
+        assert_eq!(plan.sections[0].title, "A");
+        assert_eq!(plan.sections[1].title, "B");
+        assert_eq!(plan.sections[1].body, "Body B\n");
+    }
+
+    #[test]
+    fn demote_content_without_trailing_newline() {
+        let body = "## A\nText";
+        let result = demote_headings(body, 1);
+        assert_eq!(result, "### A\nText");
+    }
+
+    #[test]
+    fn split_crlf_line_endings() {
+        let content = "## A\r\nBody A.\r\n## B\r\nBody B.\r\n";
+        let fm = IndexMap::new();
+        let plan = plan_split(content, "Doc", &fm);
+
+        assert_eq!(plan.sections.len(), 2);
+        assert_eq!(plan.sections[0].title, "A");
+        assert_eq!(plan.sections[1].title, "B");
+    }
+
+    #[test]
+    fn demote_crlf_line_endings() {
+        let body = "## A\r\nText\r\n";
+        let result = demote_headings(body, 1);
+        assert!(result.contains("### A"));
     }
 }
