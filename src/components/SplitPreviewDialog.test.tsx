@@ -61,6 +61,15 @@ describe("SplitPreviewDialog", () => {
     expect(computeOutputPath("deep/path/File.md", "Title")).toBe("deep/path/Title.md");
   });
 
+  it("computeOutputPath sanitizes path-unsafe characters", () => {
+    expect(computeOutputPath("notes/Doc.md", "Pro/Con Analysis")).toBe("notes/Pro_Con Analysis.md");
+    expect(computeOutputPath("notes/Doc.md", 'File: "quotes"')).toBe('notes/File_ _quotes_.md');
+    expect(computeOutputPath("notes/Doc.md", "A*B?C")).toBe("notes/A_B_C.md");
+    expect(computeOutputPath("notes/Doc.md", "back\\slash")).toBe("notes/back_slash.md");
+    expect(computeOutputPath("notes/Doc.md", "pipe|char")).toBe("notes/pipe_char.md");
+    expect(computeOutputPath("notes/Doc.md", "<angle>")).toBe("notes/_angle_.md");
+  });
+
   it("confirm button calls onConfirm", () => {
     const onConfirm = vi.fn();
     const { container } = render(
@@ -80,6 +89,29 @@ describe("SplitPreviewDialog", () => {
 
     fireEvent.keyDown(document, { key: "Escape" });
     expect(onCancel).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows warning when duplicate output paths exist", () => {
+    const plan: SplitPlan = {
+      preamble: null,
+      sections: [
+        { title: "Notes", body: "First notes section.", frontmatter: {} },
+        { title: "Notes", body: "Second notes section.", frontmatter: {} },
+      ],
+    };
+    const { container } = render(
+      <SplitPreviewDialog open={true} plan={plan} originalPath="docs/File.md" onConfirm={vi.fn()} onCancel={vi.fn()} />,
+    );
+    const warning = container.querySelector("[data-testid='split-duplicate-path-warning']");
+    expect(warning).toBeTruthy();
+    expect(warning!.textContent).toContain("Notes");
+  });
+
+  it("no warning when all output paths are unique", () => {
+    const { container } = render(
+      <SplitPreviewDialog open={true} plan={planWithoutPreamble} originalPath="notes/Doc.md" onConfirm={vi.fn()} onCancel={vi.fn()} />,
+    );
+    expect(container.querySelector("[data-testid='split-duplicate-path-warning']")).toBeNull();
   });
 
   it("file icon rendered for each item", () => {
