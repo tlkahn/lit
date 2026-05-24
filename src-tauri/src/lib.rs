@@ -7,6 +7,7 @@ pub mod llm;
 pub mod export;
 pub mod external_editor;
 pub mod graph;
+pub mod oplog;
 pub mod license;
 mod menu;
 pub mod preferences;
@@ -17,6 +18,7 @@ pub mod workspace;
 use commands::credential::{CredentialStore, KeychainStore};
 use commands::graph::GraphRegistry;
 use commands::license::LicenseManager;
+use commands::oplog::OpLogRegistry;
 use commands::workspace::{PendingCols, PendingFiles, PendingLines, PendingWorkspaces, WorkspaceRegistry};
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use std::collections::HashMap;
@@ -117,6 +119,7 @@ pub fn run() {
         .manage(Arc::new(commands::graph::GraphBuildState::new()))
         .manage(Arc::new(seed::SeedState::new()))
         .manage(Arc::new(KeychainStore) as Arc<dyn CredentialStore>)
+        .manage(Arc::new(OpLogRegistry::new()))
         .manage(BibCache::new())
         .manage(commands::llm::LlmState::new())
         .setup(move |app| {
@@ -347,6 +350,9 @@ pub fn run() {
             commands::llm::llm_prompt_streaming,
             commands::llm::llm_cancel,
             commands::llm::llm_test_connection,
+            commands::oplog::undo_last_operation,
+            commands::oplog::list_undo_history,
+            commands::oplog::can_undo,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

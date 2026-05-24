@@ -77,6 +77,9 @@ import {
   llmPromptStreaming,
   llmCancel,
   testLlmConnection,
+  undoLastOperation,
+  listUndoHistory,
+  canUndo,
 } from "./ipc";
 
 const sampleMeta = {
@@ -373,6 +376,31 @@ describe("ipc", () => {
           return null;
         case "llm_test_connection":
           return null;
+        case "undo_last_operation":
+          return "Create 'Test Page'";
+        case "list_undo_history": {
+          const a = args as Record<string, unknown> | undefined;
+          return [
+            {
+              id: 1,
+              op_type: "create_page",
+              description: "Create 'Alpha'",
+              created_at: 1700000000000,
+            },
+            ...(a?.limit === 1
+              ? []
+              : [
+                  {
+                    id: 2,
+                    op_type: "delete_page",
+                    description: "Delete 'Beta'",
+                    created_at: 1700000001000,
+                  },
+                ]),
+          ];
+        }
+        case "can_undo":
+          return true;
         case "search_tags":
           return [
             { tag: "rust", count: 5 },
@@ -1260,6 +1288,35 @@ describe("ipc", () => {
     await emptyTrash();
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("empty_trash");
+  });
+
+  it("undoLastOperation calls undo_last_operation", async () => {
+    const description = await undoLastOperation();
+    expect(description).toBe("Create 'Test Page'");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("undo_last_operation");
+  });
+
+  it("listUndoHistory calls with limit", async () => {
+    const history = await listUndoHistory(1);
+    expect(history).toHaveLength(1);
+    expect(history[0]!.op_type).toBe("create_page");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("list_undo_history", { limit: 1 });
+  });
+
+  it("listUndoHistory sends null limit when omitted", async () => {
+    const history = await listUndoHistory();
+    expect(history).toHaveLength(2);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("list_undo_history", { limit: null });
+  });
+
+  it("canUndo returns boolean", async () => {
+    const result = await canUndo();
+    expect(result).toBe(true);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("can_undo");
   });
 
 });
