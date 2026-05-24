@@ -81,6 +81,9 @@ import {
   listUndoHistory,
   canUndo,
   rewriteVaultLinks,
+  previewMerge,
+  previewSplit,
+  suggestMergeTitle,
 } from "./ipc";
 
 const sampleMeta = {
@@ -411,6 +414,28 @@ describe("ipc", () => {
             ],
             total_links_changed: 3,
           };
+        case "preview_merge": {
+          const a = args as Record<string, unknown> | undefined;
+          const docs = a?.docs as Array<{ title: string; body: string; frontmatter: Record<string, unknown> }>;
+          return {
+            title: docs.map((d) => d.title).join(" + "),
+            body: docs.map((d) => `## ${d.title}\n\n${d.body}\n`).join("\n"),
+            frontmatter: {},
+            source_titles: docs.map((d) => d.title),
+          };
+        }
+        case "preview_split": {
+          const a = args as Record<string, unknown> | undefined;
+          return {
+            preamble: null,
+            sections: [
+              { title: "Section 1", body: "body 1", frontmatter: a?.frontmatter ?? {} },
+              { title: "Section 2", body: "body 2", frontmatter: a?.frontmatter ?? {} },
+            ],
+          };
+        }
+        case "suggest_merge_title":
+          throw new Error("LLM not configured");
         case "search_tags":
           return [
             { tag: "rust", count: 5 },
@@ -1340,6 +1365,35 @@ describe("ipc", () => {
     expect(invoke).toHaveBeenCalledWith("rewrite_vault_links", {
       redirects: [{ old_target: "OldPage", new_target: "NewPage" }],
     });
+  });
+
+  it("previewMerge invokes preview_merge and returns MergePlan", async () => {
+    const docs = [
+      { title: "A", body: "Hello A", frontmatter: {} },
+      { title: "B", body: "Hello B", frontmatter: {} },
+    ];
+    const plan = await previewMerge(docs);
+    expect(plan.title).toBe("A + B");
+    expect(plan.source_titles).toEqual(["A", "B"]);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("preview_merge", { docs });
+  });
+
+  it("previewSplit invokes preview_split and returns SplitPlan", async () => {
+    const plan = await previewSplit("## A\nBody.\n## B\nBody.", "Doc", { status: "draft" });
+    expect(plan.sections).toHaveLength(2);
+    expect(plan.sections[0]!.title).toBe("Section 1");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("preview_split", {
+      content: "## A\nBody.\n## B\nBody.",
+      title: "Doc",
+      frontmatter: { status: "draft" },
+    });
+  });
+
+  it("suggestMergeTitle returns null on failure", async () => {
+    const result = await suggestMergeTitle(["A", "B"], "merged body");
+    expect(result).toBeNull();
   });
 
 });
