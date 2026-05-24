@@ -1025,6 +1025,7 @@ mod tests {
     }
 }
 
+// TODO: consider deprecating in favor of rewrite_vault_links (page.rs), which records OpLog actions
 #[tauri::command]
 pub fn rewrite_links(
     window: tauri::Window,

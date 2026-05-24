@@ -135,6 +135,94 @@ fn walk_md_files_for_rewrite(root: &Path) -> Vec<String> {
     files
 }
 
+#[derive(Debug, Clone)]
+pub struct PlannedRewrite {
+    pub relative_path: String,
+    pub before_content: String,
+    pub after_content: String,
+    pub links_changed: usize,
+}
+
+pub struct PlannedVaultRewrite {
+    pub files_scanned: usize,
+    pub rewrites: Vec<PlannedRewrite>,
+}
+
+pub fn plan_vault_rewrites(
+    root: &Path,
+    redirects: &[LinkRedirect],
+) -> Result<PlannedVaultRewrite, String> {
+    let map = build_redirect_map(redirects);
+    if map.is_empty() {
+        return Ok(PlannedVaultRewrite {
+            files_scanned: 0,
+            rewrites: vec![],
+        });
+    }
+
+    let md_files = walk_md_files_for_rewrite(root);
+    let files_scanned = md_files.len();
+    let mut rewrites = Vec::new();
+
+    for rel_path in &md_files {
+        let full_path = root.join(rel_path);
+        let original = std::fs::read_to_string(&full_path)
+            .map_err(|e| format!("Failed to read {}: {}", rel_path, e))?;
+        let (rewritten, count) = rewrite_body(&original, &map);
+        if count > 0 {
+            rewrites.push(PlannedRewrite {
+                relative_path: rel_path.clone(),
+                before_content: original,
+                after_content: rewritten,
+                links_changed: count,
+            });
+        }
+    }
+
+    Ok(PlannedVaultRewrite {
+        files_scanned,
+        rewrites,
+    })
+}
+
+pub fn apply_planned_rewrites(
+    root: &Path,
+    planned: &PlannedVaultRewrite,
+) -> Result<RewriteSummary, String> {
+    let mut written: Vec<(&str, &str)> = Vec::new();
+
+    for pr in &planned.rewrites {
+        let full_path = root.join(&pr.relative_path);
+        match std::fs::write(&full_path, &pr.after_content) {
+            Ok(()) => {
+                written.push((&pr.relative_path, &pr.before_content));
+            }
+            Err(e) => {
+                for (written_path, orig) in &written {
+                    let _ = std::fs::write(root.join(written_path), orig);
+                }
+                return Err(format!("Failed to write {}: {}", pr.relative_path, e));
+            }
+        }
+    }
+
+    let files_modified: Vec<FileRewriteResult> = planned
+        .rewrites
+        .iter()
+        .map(|pr| FileRewriteResult {
+            relative_path: pr.relative_path.clone(),
+            links_changed: pr.links_changed,
+        })
+        .collect();
+    let total_links_changed = files_modified.iter().map(|f| f.links_changed).sum();
+
+    Ok(RewriteSummary {
+        files_scanned: planned.files_scanned,
+        files_modified,
+        total_links_changed,
+    })
+}
+
 pub fn rewrite_links_in_vault(
     root: &Path,
     redirects: &[LinkRedirect],
@@ -607,5 +695,126 @@ mod tests {
         assert!(err.contains("fail.md"), "Error should mention the failed path: {}", err);
 
         fs::set_permissions(&fail_path, fs::Permissions::from_mode(0o644)).unwrap();
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase D: plan_vault_rewrites — collect changes without writing
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn plan_vault_rewrites_collects_before_after() {
+        let tmp = TempDir::new().unwrap();
+        write_file(tmp.path(), "note.md", "Link to [[OldPage]].");
+        let redirects = vec![LinkRedirect {
+            old_target: "OldPage".into(),
+            new_target: "NewPage".into(),
+        }];
+        let planned = plan_vault_rewrites(tmp.path(), &redirects).unwrap();
+        assert_eq!(planned.files_scanned, 1);
+        assert_eq!(planned.rewrites.len(), 1);
+        assert_eq!(planned.rewrites[0].before_content, "Link to [[OldPage]].");
+        assert_eq!(planned.rewrites[0].after_content, "Link to [[NewPage]].");
+        assert_eq!(planned.rewrites[0].links_changed, 1);
+        // File on disk is NOT modified
+        assert_eq!(read_file(tmp.path(), "note.md"), "Link to [[OldPage]].");
+    }
+
+    #[test]
+    fn plan_vault_rewrites_empty_redirects() {
+        let tmp = TempDir::new().unwrap();
+        write_file(tmp.path(), "note.md", "[[OldPage]]");
+        let planned = plan_vault_rewrites(tmp.path(), &[]).unwrap();
+        assert_eq!(planned.files_scanned, 0);
+        assert!(planned.rewrites.is_empty());
+    }
+
+    #[test]
+    fn plan_vault_rewrites_no_matching_links() {
+        let tmp = TempDir::new().unwrap();
+        write_file(tmp.path(), "note.md", "[[Other]]");
+        let redirects = vec![LinkRedirect {
+            old_target: "OldPage".into(),
+            new_target: "NewPage".into(),
+        }];
+        let planned = plan_vault_rewrites(tmp.path(), &redirects).unwrap();
+        assert_eq!(planned.files_scanned, 1);
+        assert!(planned.rewrites.is_empty());
+    }
+
+    #[test]
+    fn plan_vault_rewrites_tracks_files_scanned() {
+        let tmp = TempDir::new().unwrap();
+        write_file(tmp.path(), "a.md", "[[OldPage]]");
+        write_file(tmp.path(), "b.md", "[[Other]]");
+        write_file(tmp.path(), "c.md", "No links.");
+        let redirects = vec![LinkRedirect {
+            old_target: "OldPage".into(),
+            new_target: "NewPage".into(),
+        }];
+        let planned = plan_vault_rewrites(tmp.path(), &redirects).unwrap();
+        assert_eq!(planned.files_scanned, 3);
+        assert_eq!(planned.rewrites.len(), 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase E: apply_planned_rewrites — write planned changes to disk
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn apply_planned_rewrites_writes_to_disk() {
+        let tmp = TempDir::new().unwrap();
+        write_file(tmp.path(), "note.md", "Link to [[OldPage]].");
+        let redirects = vec![LinkRedirect {
+            old_target: "OldPage".into(),
+            new_target: "NewPage".into(),
+        }];
+        let planned = plan_vault_rewrites(tmp.path(), &redirects).unwrap();
+        let summary = apply_planned_rewrites(tmp.path(), &planned).unwrap();
+        assert_eq!(summary.files_scanned, 1);
+        assert_eq!(summary.files_modified.len(), 1);
+        assert_eq!(summary.total_links_changed, 1);
+        assert_eq!(read_file(tmp.path(), "note.md"), "Link to [[NewPage]].");
+    }
+
+    #[test]
+    fn apply_planned_rewrites_returns_correct_summary() {
+        let tmp = TempDir::new().unwrap();
+        write_file(tmp.path(), "a.md", "[[OldPage]] and [[OldPage]]");
+        write_file(tmp.path(), "b.md", "[[OldPage]]");
+        let redirects = vec![LinkRedirect {
+            old_target: "OldPage".into(),
+            new_target: "NewPage".into(),
+        }];
+        let planned = plan_vault_rewrites(tmp.path(), &redirects).unwrap();
+        let summary = apply_planned_rewrites(tmp.path(), &planned).unwrap();
+        assert_eq!(summary.files_modified.len(), 2);
+        assert_eq!(summary.total_links_changed, 3);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apply_planned_rewrites_rollback_on_failure() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = TempDir::new().unwrap();
+        write_file(tmp.path(), "a.md", "[[OldPage]]");
+        write_file(tmp.path(), "b.md", "[[OldPage]]");
+
+        let redirects = vec![LinkRedirect {
+            old_target: "OldPage".into(),
+            new_target: "NewPage".into(),
+        }];
+        let planned = plan_vault_rewrites(tmp.path(), &redirects).unwrap();
+
+        // Make b.md read-only so the write fails
+        let b_path = tmp.path().join("b.md");
+        fs::set_permissions(&b_path, fs::Permissions::from_mode(0o444)).unwrap();
+
+        let result = apply_planned_rewrites(tmp.path(), &planned);
+        assert!(result.is_err());
+        // a.md should be rolled back
+        assert_eq!(read_file(tmp.path(), "a.md"), "[[OldPage]]");
+
+        fs::set_permissions(&b_path, fs::Permissions::from_mode(0o644)).unwrap();
     }
 }

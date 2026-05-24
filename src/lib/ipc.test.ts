@@ -80,6 +80,7 @@ import {
   undoLastOperation,
   listUndoHistory,
   canUndo,
+  rewriteVaultLinks,
 } from "./ipc";
 
 const sampleMeta = {
@@ -401,6 +402,15 @@ describe("ipc", () => {
         }
         case "can_undo":
           return true;
+        case "rewrite_vault_links":
+          return {
+            files_scanned: 3,
+            files_modified: [
+              { relative_path: "a.md", links_changed: 1 },
+              { relative_path: "b.md", links_changed: 2 },
+            ],
+            total_links_changed: 3,
+          };
         case "search_tags":
           return [
             { tag: "rust", count: 5 },
@@ -1317,6 +1327,19 @@ describe("ipc", () => {
     expect(result).toBe(true);
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("can_undo");
+  });
+
+  it("rewriteVaultLinks sends snake_case redirects", async () => {
+    const summary = await rewriteVaultLinks([
+      { oldTarget: "OldPage", newTarget: "NewPage" },
+    ]);
+    expect(summary.files_scanned).toBe(3);
+    expect(summary.total_links_changed).toBe(3);
+    expect(summary.files_modified).toHaveLength(2);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("rewrite_vault_links", {
+      redirects: [{ old_target: "OldPage", new_target: "NewPage" }],
+    });
   });
 
 });

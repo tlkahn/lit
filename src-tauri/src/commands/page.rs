@@ -141,6 +141,71 @@ pub fn delete_page(
 }
 
 #[tauri::command]
+pub fn rewrite_vault_links(
+    window: tauri::Window,
+    workspace_state: State<WorkspaceRegistry>,
+    graph_state: State<Arc<GraphRegistry>>,
+    registry: State<Arc<WriteHashRegistry>>,
+    oplog_state: State<Arc<OpLogRegistry>>,
+    app_handle: tauri::AppHandle,
+    redirects: Vec<crate::graph::rewriter::LinkRedirect>,
+) -> Result<crate::graph::rewriter::RewriteSummary, String> {
+    let root = get_workspace_root(&workspace_state, window.label())?;
+
+    let planned = crate::graph::rewriter::plan_vault_rewrites(&root, &redirects)?;
+    if planned.rewrites.is_empty() {
+        return Ok(crate::graph::rewriter::RewriteSummary {
+            files_scanned: planned.files_scanned,
+            files_modified: vec![],
+            total_links_changed: 0,
+        });
+    }
+
+    let summary = crate::graph::rewriter::apply_planned_rewrites(&root, &planned)?;
+
+    let gi = {
+        let indices = graph_state.indices.lock().unwrap();
+        indices.get(&root).cloned()
+    };
+    let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
+
+    for pr in &planned.rewrites {
+        let full_path = root.join(&pr.relative_path);
+        if let Ok(content) = std::fs::read_to_string(&full_path) {
+            registry.record(&full_path, &content);
+        }
+        if let Some(ref gi) = gi {
+            let _ = gi.reindex_file(&pr.relative_path, ann_enabled);
+        }
+    }
+
+    if let Ok(oplog) = oplog_state.get_oplog(&root) {
+        let store = oplog.lock().unwrap();
+        let actions: Vec<Action> = planned
+            .rewrites
+            .iter()
+            .enumerate()
+            .map(|(i, pr)| Action {
+                seq: i as i64,
+                action_type: "modify_file".into(),
+                path: pr.relative_path.clone(),
+                old_path: None,
+                before_content: Some(pr.before_content.clone()),
+                after_content: Some(pr.after_content.clone()),
+            })
+            .collect();
+        let desc = format!(
+            "Rewrite {} link(s) in {} file(s)",
+            summary.total_links_changed,
+            summary.files_modified.len()
+        );
+        let _ = store.record_operation("rewrite_vault_links", &desc, &actions);
+    }
+
+    Ok(summary)
+}
+
+#[tauri::command]
 pub fn acknowledge_file_hash(
     relative_path: String,
     window: tauri::Window,
@@ -149,4 +214,91 @@ pub fn acknowledge_file_hash(
 ) -> Result<(), String> {
     let root = get_workspace_root(&state, window.label())?;
     ops::acknowledge_file_hash(&root, &relative_path, &registry).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::graph::rewriter::{plan_vault_rewrites, apply_planned_rewrites, LinkRedirect};
+    use crate::oplog::store::{OpLogStore, Action};
+
+    fn write_file(dir: &std::path::Path, rel: &str, content: &str) {
+        let path = dir.join(rel);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, content).unwrap();
+    }
+
+    #[test]
+    fn rewrite_vault_links_records_oplog_modify_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_file(tmp.path(), "a.md", "[[OldPage]]");
+        write_file(tmp.path(), "b.md", "[[OldPage]] and [[OldPage]]");
+
+        let redirects = vec![LinkRedirect {
+            old_target: "OldPage".into(),
+            new_target: "NewPage".into(),
+        }];
+        let planned = plan_vault_rewrites(tmp.path(), &redirects).unwrap();
+        let summary = apply_planned_rewrites(tmp.path(), &planned).unwrap();
+
+        let store = OpLogStore::open_memory().unwrap();
+        let actions: Vec<Action> = planned
+            .rewrites
+            .iter()
+            .enumerate()
+            .map(|(i, pr)| Action {
+                seq: i as i64,
+                action_type: "modify_file".into(),
+                path: pr.relative_path.clone(),
+                old_path: None,
+                before_content: Some(pr.before_content.clone()),
+                after_content: Some(pr.after_content.clone()),
+            })
+            .collect();
+        let desc = format!(
+            "Rewrite {} link(s) in {} file(s)",
+            summary.total_links_changed,
+            summary.files_modified.len()
+        );
+        store
+            .record_operation("rewrite_vault_links", &desc, &actions)
+            .unwrap();
+
+        let op = store.pop_latest().unwrap();
+        assert_eq!(op.op_type, "rewrite_vault_links");
+        assert_eq!(op.description, "Rewrite 3 link(s) in 2 file(s)");
+        assert_eq!(op.actions.len(), 2);
+        for action in &op.actions {
+            assert_eq!(action.action_type, "modify_file");
+            assert!(action.before_content.is_some());
+            assert!(action.after_content.is_some());
+        }
+    }
+
+    #[test]
+    fn rewrite_vault_links_no_op_no_oplog_entry() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_file(tmp.path(), "a.md", "[[Other]]");
+
+        let redirects = vec![LinkRedirect {
+            old_target: "OldPage".into(),
+            new_target: "NewPage".into(),
+        }];
+        let planned = plan_vault_rewrites(tmp.path(), &redirects).unwrap();
+        assert!(planned.rewrites.is_empty());
+
+        let store = OpLogStore::open_memory().unwrap();
+        assert!(store.latest_operation().unwrap().is_none());
+    }
+
+    #[test]
+    fn rewrite_vault_links_empty_redirects_no_op() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_file(tmp.path(), "a.md", "[[OldPage]]");
+
+        let planned = plan_vault_rewrites(tmp.path(), &[]).unwrap();
+        assert_eq!(planned.files_scanned, 0);
+        assert!(planned.rewrites.is_empty());
+    }
 }

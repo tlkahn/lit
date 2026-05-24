@@ -538,6 +538,15 @@ export async function rewriteLinks(redirects: LinkRedirect[]): Promise<RewriteSu
   });
 }
 
+export async function rewriteVaultLinks(redirects: LinkRedirect[]): Promise<RewriteSummary> {
+  return invoke<RewriteSummary>("rewrite_vault_links", {
+    redirects: redirects.map((r) => ({
+      old_target: r.oldTarget,
+      new_target: r.newTarget,
+    })),
+  });
+}
+
 // Index progress
 
 export type IndexPhase = "scanning" | "parsing" | "resolving" | "diffing" | "building";
