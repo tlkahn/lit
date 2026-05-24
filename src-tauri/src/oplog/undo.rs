@@ -46,6 +46,8 @@ pub fn execute_undo(
                     }
                     if current_path.exists() {
                         fs::rename(&current_path, &original_path)?;
+                        let content = fs::read_to_string(&original_path).unwrap_or_default();
+                        write_hash_registry.record(&original_path, &content);
                     }
                 }
             }
@@ -231,6 +233,27 @@ mod tests {
             fs::read_to_string(dir.path().join("deep/nested/dir/page.md")).unwrap(),
             "nested content"
         );
+    }
+
+    #[test]
+    fn undo_rename_updates_write_hash_registry() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("new-name.md"), "rename content").unwrap();
+        let registry = WriteHashRegistry::new();
+
+        let op = make_operation(vec![Action {
+            seq: 0,
+            action_type: "rename_file".into(),
+            path: "new-name.md".into(),
+            old_path: Some("old-name.md".into()),
+            before_content: None,
+            after_content: None,
+        }]);
+
+        execute_undo(dir.path(), &op, &registry).unwrap();
+
+        let original_path = dir.path().join("old-name.md");
+        assert!(registry.check(&original_path, "rename content"));
     }
 
     #[test]
