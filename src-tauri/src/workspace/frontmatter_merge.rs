@@ -29,12 +29,14 @@ fn merge_values(key: &str, existing: &Value, incoming: &Value) -> Value {
         return incoming.clone();
     }
 
-    let is_array_key = key == "tags" || matches!(existing, Value::Sequence(_)) || matches!(incoming, Value::Sequence(_));
+    let is_array_key = key == "tags"
+        || key == "aliases"
+        || matches!(existing, Value::Sequence(_))
+        || matches!(incoming, Value::Sequence(_));
 
     if is_array_key {
         let mut items: Vec<Value> = match existing {
             Value::Sequence(seq) => seq.clone(),
-            Value::Null => vec![],
             other => vec![other.clone()],
         };
 
@@ -46,7 +48,6 @@ fn merge_values(key: &str, existing: &Value, incoming: &Value) -> Value {
                     }
                 }
             }
-            Value::Null => {}
             other => {
                 if !items.contains(other) {
                     items.push(other.clone());
@@ -315,6 +316,25 @@ mod tests {
 
     // 22
     #[test]
+    fn merge_null_absent_then_real() {
+        let a = make_fm(&[]);
+        let b = make_fm(&[("a", Value::Null)]);
+        let c = make_fm(&[("a", sv("hi"))]);
+        let result = merge_frontmatter(&[a, b, c]);
+        assert_eq!(result.get("a"), Some(&sv("hi")));
+    }
+
+    // 23
+    #[test]
+    fn merge_aliases_agreement_wraps_array() {
+        let a = make_fm(&[("aliases", sv("foo"))]);
+        let b = make_fm(&[("aliases", sv("foo"))]);
+        let result = merge_frontmatter(&[a, b]);
+        assert_eq!(result.get("aliases"), Some(&make_tags(&["foo"])));
+    }
+
+    // 24
+    #[test]
     fn merge_mapping_agreement() {
         let mut map = serde_yaml::Mapping::new();
         map.insert(Value::String("key".into()), Value::String("value".into()));
@@ -326,7 +346,7 @@ mod tests {
         assert_eq!(result.get("nested"), Some(&mapping));
     }
 
-    // 23
+    // 25
     #[test]
     fn merge_mapping_conflict() {
         let mut map1 = serde_yaml::Mapping::new();
@@ -346,7 +366,7 @@ mod tests {
         );
     }
 
-    // 24
+    // 26
     #[test]
     fn merge_bool_values_agreement() {
         let a = make_fm(&[("published", Value::Bool(true))]);
@@ -355,7 +375,7 @@ mod tests {
         assert_eq!(result.get("published"), Some(&Value::Bool(true)));
     }
 
-    // 25
+    // 27
     #[test]
     fn merge_bool_values_conflict() {
         let a = make_fm(&[("published", Value::Bool(true))]);
@@ -370,7 +390,7 @@ mod tests {
         );
     }
 
-    // 26
+    // 28
     #[test]
     fn merge_number_values() {
         let n1 = Value::Number(serde_yaml::Number::from(1));
@@ -384,7 +404,7 @@ mod tests {
         );
     }
 
-    // 27
+    // 29
     #[test]
     fn merge_many_sources() {
         let s1 = make_fm(&[
