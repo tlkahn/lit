@@ -816,3 +816,52 @@ export async function listAnnotations(
     limit: limit ?? null,
   });
 }
+
+// Merge/Split preview commands
+
+export interface MergeInput {
+  title: string;
+  body: string;
+  frontmatter: Record<string, unknown>;
+}
+
+export interface MergePlan {
+  title: string;
+  body: string;
+  frontmatter: Record<string, unknown>;
+  source_titles: string[];
+}
+
+export async function previewMerge(docs: MergeInput[]): Promise<MergePlan> {
+  return invoke<MergePlan>("preview_merge", { docs });
+}
+
+export interface SplitChunk {
+  title: string;
+  body: string;
+  frontmatter: Record<string, unknown>;
+}
+
+export interface SplitPlan {
+  preamble: SplitChunk | null;
+  sections: SplitChunk[];
+}
+
+export async function previewSplit(
+  content: string,
+  title: string,
+  frontmatter: Record<string, unknown>,
+): Promise<SplitPlan> {
+  return invoke<SplitPlan>("preview_split", { content, title, frontmatter });
+}
+
+export async function suggestMergeTitle(
+  sourceTitles: string[],
+  mergedBody: string,
+): Promise<string | null> {
+  try {
+    return await invoke<string>("suggest_merge_title", { sourceTitles, mergedBody });
+  } catch {
+    return null;
+  }
+}

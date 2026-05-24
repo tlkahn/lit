@@ -355,6 +355,8 @@ pub fn run() {
             commands::oplog::undo_last_operation,
             commands::oplog::list_undo_history,
             commands::oplog::can_undo,
+            commands::merge_split::preview_merge,
+            commands::merge_split::preview_split,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

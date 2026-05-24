@@ -15,4 +15,5 @@ pub mod trash;
 pub mod llm;
 pub mod oplog;
 pub mod pdf_viewer;
+pub mod merge_split;
 pub mod workspace;
