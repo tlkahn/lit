@@ -2336,4 +2336,622 @@ describe("GraphView", () => {
 
     expect(mockSigmaSetSetting).toHaveBeenCalledWith("enableCameraPanning", true);
   });
+
+  // --- Phase 3B: Context Menu Extensions (Merge & Split) ---
+
+  it("merge item visible with 2+ selected nodes", async () => {
+    useGraphSelectionStore.setState({ selectedNodes: ["a.md", "b.md"], selectionMode: "click" });
+
+    const GraphView = (await import("./GraphView")).default;
+    const { container } = render(<GraphView onExportNetwork={vi.fn()} onMergeConfirm={vi.fn()} onSplitConfirm={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    act(() => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    const mergeBtn = container.querySelector("[data-testid='ctx-merge-btn']");
+    expect(mergeBtn).toBeTruthy();
+    expect(mergeBtn!.textContent).toBe("Merge 2 documents");
+  });
+
+  it("merge item hidden with <2 selected nodes", async () => {
+    useGraphSelectionStore.setState({ selectedNodes: [], selectionMode: "none" });
+
+    const GraphView = (await import("./GraphView")).default;
+    const { container } = render(<GraphView onExportNetwork={vi.fn()} onMergeConfirm={vi.fn()} onSplitConfirm={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    act(() => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    expect(container.querySelector("[data-testid='ctx-merge-btn']")).toBeNull();
+
+    // Also test with 1 selected
+    useGraphSelectionStore.setState({ selectedNodes: ["a.md"], selectionMode: "click" });
+    act(() => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+    expect(container.querySelector("[data-testid='ctx-merge-btn']")).toBeNull();
+  });
+
+  it("dynamic merge count with 3 selected nodes", async () => {
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [
+              { id: "a.md", title: "A", is_stub: false },
+              { id: "b.md", title: "B", is_stub: false },
+              { id: "c.md", title: "C", is_stub: false },
+            ],
+            edges: [["a.md", "b.md"], ["b.md", "c.md"]],
+            pagerank: { "a.md": 0.3, "b.md": 0.4, "c.md": 0.3 },
+            positions: {},
+          };
+        case "read_page":
+          return { meta: { title: "X", relative_path: "x.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "text", raw_yaml: "" };
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+    useGraphSelectionStore.setState({ selectedNodes: ["a.md", "b.md", "c.md"], selectionMode: "click" });
+
+    const GraphView = (await import("./GraphView")).default;
+    const { container } = render(<GraphView onExportNetwork={vi.fn()} onMergeConfirm={vi.fn()} onSplitConfirm={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    act(() => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    const mergeBtn = container.querySelector("[data-testid='ctx-merge-btn']");
+    expect(mergeBtn!.textContent).toBe("Merge 3 documents");
+  });
+
+  it("split item always present in context menu", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    const { container } = render(<GraphView onExportNetwork={vi.fn()} onMergeConfirm={vi.fn()} onSplitConfirm={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    act(() => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    const splitBtn = container.querySelector("[data-testid='ctx-split-btn']");
+    expect(splitBtn).toBeTruthy();
+    expect(splitBtn!.textContent).toBe("Split document");
+  });
+
+  it("export network still present alongside merge and split items", async () => {
+    useGraphSelectionStore.setState({ selectedNodes: ["a.md", "b.md"], selectionMode: "click" });
+
+    const GraphView = (await import("./GraphView")).default;
+    const { container } = render(<GraphView onExportNetwork={vi.fn()} onMergeConfirm={vi.fn()} onSplitConfirm={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    act(() => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    expect(container.querySelector("[data-testid='ctx-merge-btn']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='ctx-split-btn']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='ctx-export-btn']")).toBeTruthy();
+  });
+
+  it("split disabled while checking headings", async () => {
+    let resolveReadPage: ((v: unknown) => void) | null = null;
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [
+              { id: "a.md", title: "A", is_stub: false },
+              { id: "b.md", title: "B", is_stub: false },
+            ],
+            edges: [["a.md", "b.md"]],
+            pagerank: { "a.md": 0.4, "b.md": 0.6 },
+            positions: {},
+          };
+        case "read_page":
+          return new Promise((resolve) => { resolveReadPage = resolve; });
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    const { container } = render(<GraphView onExportNetwork={vi.fn()} onMergeConfirm={vi.fn()} onSplitConfirm={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    act(() => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    const splitBtn = container.querySelector("[data-testid='ctx-split-btn']") as HTMLButtonElement;
+    expect(splitBtn.disabled).toBe(true);
+
+    // Resolve to avoid dangling promise
+    await act(async () => {
+      resolveReadPage?.({ meta: { title: "A", relative_path: "a.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "## Heading\ncontent", raw_yaml: "" });
+    });
+  });
+
+  it("split enabled when doc has headings", async () => {
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [
+              { id: "a.md", title: "A", is_stub: false },
+              { id: "b.md", title: "B", is_stub: false },
+            ],
+            edges: [["a.md", "b.md"]],
+            pagerank: { "a.md": 0.4, "b.md": 0.6 },
+            positions: {},
+          };
+        case "read_page":
+          return { meta: { title: "A", relative_path: "a.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "## Heading\ncontent", raw_yaml: "" };
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    const { container } = render(<GraphView onExportNetwork={vi.fn()} onMergeConfirm={vi.fn()} onSplitConfirm={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    act(() => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    await waitFor(() => {
+      const splitBtn = container.querySelector("[data-testid='ctx-split-btn']") as HTMLButtonElement;
+      expect(splitBtn.disabled).toBe(false);
+    });
+  });
+
+  it("split greyed out with tooltip when no headings", async () => {
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [
+              { id: "a.md", title: "A", is_stub: false },
+              { id: "b.md", title: "B", is_stub: false },
+            ],
+            edges: [["a.md", "b.md"]],
+            pagerank: { "a.md": 0.4, "b.md": 0.6 },
+            positions: {},
+          };
+        case "read_page":
+          return { meta: { title: "A", relative_path: "a.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "just text, no headings", raw_yaml: "" };
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    const { container } = render(<GraphView onExportNetwork={vi.fn()} onMergeConfirm={vi.fn()} onSplitConfirm={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    act(() => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    await waitFor(() => {
+      const splitBtn = container.querySelector("[data-testid='ctx-split-btn']") as HTMLButtonElement;
+      expect(splitBtn.disabled).toBe(true);
+      expect(splitBtn.getAttribute("title")).toContain("no headings");
+    });
+  });
+
+  it("click merge → readPage for each selected node → open MergePreviewDialog", async () => {
+    const readPageCalls: string[] = [];
+    mockInvoke((cmd, args) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [
+              { id: "a.md", title: "A", is_stub: false },
+              { id: "b.md", title: "B", is_stub: false },
+            ],
+            edges: [["a.md", "b.md"]],
+            pagerank: { "a.md": 0.4, "b.md": 0.6 },
+            positions: {},
+          };
+        case "read_page": {
+          const path = (args as { relativePath: string }).relativePath;
+          readPageCalls.push(path);
+          return { meta: { title: path === "a.md" ? "A" : "B", relative_path: path, frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "content", raw_yaml: "" };
+        }
+        case "preview_merge":
+          return { title: "Merged", body: "merged body", frontmatter: {}, source_titles: ["A", "B"] };
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+    useGraphSelectionStore.setState({ selectedNodes: ["a.md", "b.md"], selectionMode: "click" });
+
+    const GraphView = (await import("./GraphView")).default;
+    const { container } = render(<GraphView onExportNetwork={vi.fn()} onMergeConfirm={vi.fn()} onSplitConfirm={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    act(() => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    const mergeBtn = container.querySelector("[data-testid='ctx-merge-btn']") as HTMLButtonElement;
+    await act(async () => {
+      fireEvent.click(mergeBtn);
+    });
+
+    expect(readPageCalls).toContain("a.md");
+    expect(readPageCalls).toContain("b.md");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("merge-preview-dialog")).toBeTruthy();
+    });
+  });
+
+  it("click split → previewSplit → open SplitPreviewDialog", async () => {
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [
+              { id: "a.md", title: "A", is_stub: false },
+              { id: "b.md", title: "B", is_stub: false },
+            ],
+            edges: [["a.md", "b.md"]],
+            pagerank: { "a.md": 0.4, "b.md": 0.6 },
+            positions: {},
+          };
+        case "read_page":
+          return { meta: { title: "A", relative_path: "a.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "## Heading\ncontent", raw_yaml: "" };
+        case "preview_split":
+          return { preamble: null, sections: [{ title: "Heading", body: "content", frontmatter: {} }] };
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    const { container } = render(<GraphView onExportNetwork={vi.fn()} onMergeConfirm={vi.fn()} onSplitConfirm={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    act(() => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    await waitFor(() => {
+      const splitBtn = container.querySelector("[data-testid='ctx-split-btn']") as HTMLButtonElement;
+      expect(splitBtn.disabled).toBe(false);
+    });
+
+    const splitBtn = container.querySelector("[data-testid='ctx-split-btn']") as HTMLButtonElement;
+    await act(async () => {
+      fireEvent.click(splitBtn);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("split-preview-dialog")).toBeTruthy();
+    });
+  });
+
+  it("context menu dismisses when merge action clicked", async () => {
+    mockInvoke((cmd, args) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [
+              { id: "a.md", title: "A", is_stub: false },
+              { id: "b.md", title: "B", is_stub: false },
+            ],
+            edges: [["a.md", "b.md"]],
+            pagerank: { "a.md": 0.4, "b.md": 0.6 },
+            positions: {},
+          };
+        case "read_page": {
+          const path = (args as { relativePath: string }).relativePath;
+          return { meta: { title: path === "a.md" ? "A" : "B", relative_path: path, frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "content", raw_yaml: "" };
+        }
+        case "preview_merge":
+          return { title: "Merged", body: "merged body", frontmatter: {}, source_titles: ["A", "B"] };
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+    useGraphSelectionStore.setState({ selectedNodes: ["a.md", "b.md"], selectionMode: "click" });
+
+    const GraphView = (await import("./GraphView")).default;
+    const { container } = render(<GraphView onExportNetwork={vi.fn()} onMergeConfirm={vi.fn()} onSplitConfirm={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    act(() => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    expect(container.querySelector("[data-graph-context-menu]")).toBeTruthy();
+
+    const mergeBtn = container.querySelector("[data-testid='ctx-merge-btn']") as HTMLButtonElement;
+    await act(async () => {
+      fireEvent.click(mergeBtn);
+    });
+
+    expect(container.querySelector("[data-graph-context-menu]")).toBeNull();
+  });
+
+  it("merge dialog confirm fires onMergeConfirm callback prop", async () => {
+    mockInvoke((cmd, args) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [
+              { id: "a.md", title: "A", is_stub: false },
+              { id: "b.md", title: "B", is_stub: false },
+            ],
+            edges: [["a.md", "b.md"]],
+            pagerank: { "a.md": 0.4, "b.md": 0.6 },
+            positions: {},
+          };
+        case "read_page": {
+          const path = (args as { relativePath: string }).relativePath;
+          return { meta: { title: path === "a.md" ? "A" : "B", relative_path: path, frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "content", raw_yaml: "" };
+        }
+        case "preview_merge":
+          return { title: "Merged", body: "merged body", frontmatter: {}, source_titles: ["A", "B"] };
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+    useGraphSelectionStore.setState({ selectedNodes: ["a.md", "b.md"], selectionMode: "click" });
+
+    const onMergeConfirm = vi.fn();
+    const GraphView = (await import("./GraphView")).default;
+    const { container } = render(<GraphView onExportNetwork={vi.fn()} onMergeConfirm={onMergeConfirm} onSplitConfirm={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    act(() => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    const mergeBtn = container.querySelector("[data-testid='ctx-merge-btn']") as HTMLButtonElement;
+    await act(async () => {
+      fireEvent.click(mergeBtn);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("merge-preview-dialog")).toBeTruthy();
+    });
+
+    const confirmBtn = screen.getByTestId("merge-confirm-btn");
+    await act(async () => {
+      fireEvent.click(confirmBtn);
+    });
+
+    expect(onMergeConfirm).toHaveBeenCalledWith(
+      expect.objectContaining({ body: "merged body" }),
+      expect.any(Array),
+      expect.any(Array),
+    );
+  });
+
+  it("split dialog confirm fires onSplitConfirm callback prop", async () => {
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [
+              { id: "a.md", title: "A", is_stub: false },
+              { id: "b.md", title: "B", is_stub: false },
+            ],
+            edges: [["a.md", "b.md"]],
+            pagerank: { "a.md": 0.4, "b.md": 0.6 },
+            positions: {},
+          };
+        case "read_page":
+          return { meta: { title: "A", relative_path: "a.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "## Heading\ncontent", raw_yaml: "" };
+        case "preview_split":
+          return { preamble: null, sections: [{ title: "Heading", body: "content", frontmatter: {} }] };
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const onSplitConfirm = vi.fn();
+    const GraphView = (await import("./GraphView")).default;
+    const { container } = render(<GraphView onExportNetwork={vi.fn()} onMergeConfirm={vi.fn()} onSplitConfirm={onSplitConfirm} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    act(() => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    await waitFor(() => {
+      const splitBtn = container.querySelector("[data-testid='ctx-split-btn']") as HTMLButtonElement;
+      expect(splitBtn.disabled).toBe(false);
+    });
+
+    const splitBtn = container.querySelector("[data-testid='ctx-split-btn']") as HTMLButtonElement;
+    await act(async () => {
+      fireEvent.click(splitBtn);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("split-preview-dialog")).toBeTruthy();
+    });
+
+    const confirmBtn = screen.getByTestId("split-confirm-btn");
+    await act(async () => {
+      fireEvent.click(confirmBtn);
+    });
+
+    expect(onSplitConfirm).toHaveBeenCalledWith("a.md", expect.objectContaining({ sections: expect.any(Array) }));
+  });
+
+  it("cancel merge dialog resets state", async () => {
+    mockInvoke((cmd, args) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [
+              { id: "a.md", title: "A", is_stub: false },
+              { id: "b.md", title: "B", is_stub: false },
+            ],
+            edges: [["a.md", "b.md"]],
+            pagerank: { "a.md": 0.4, "b.md": 0.6 },
+            positions: {},
+          };
+        case "read_page": {
+          const path = (args as { relativePath: string }).relativePath;
+          return { meta: { title: path === "a.md" ? "A" : "B", relative_path: path, frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "content", raw_yaml: "" };
+        }
+        case "preview_merge":
+          return { title: "Merged", body: "merged body", frontmatter: {}, source_titles: ["A", "B"] };
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+    useGraphSelectionStore.setState({ selectedNodes: ["a.md", "b.md"], selectionMode: "click" });
+
+    const GraphView = (await import("./GraphView")).default;
+    const { container } = render(<GraphView onExportNetwork={vi.fn()} onMergeConfirm={vi.fn()} onSplitConfirm={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    act(() => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    const mergeBtn = container.querySelector("[data-testid='ctx-merge-btn']") as HTMLButtonElement;
+    await act(async () => {
+      fireEvent.click(mergeBtn);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("merge-preview-dialog")).toBeTruthy();
+    });
+
+    const cancelBtn = screen.getByTestId("merge-cancel-btn");
+    await act(async () => {
+      fireEvent.click(cancelBtn);
+    });
+
+    expect(screen.queryByTestId("merge-preview-dialog")).toBeNull();
+  });
+
+  it("cancel split dialog resets state", async () => {
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [
+              { id: "a.md", title: "A", is_stub: false },
+              { id: "b.md", title: "B", is_stub: false },
+            ],
+            edges: [["a.md", "b.md"]],
+            pagerank: { "a.md": 0.4, "b.md": 0.6 },
+            positions: {},
+          };
+        case "read_page":
+          return { meta: { title: "A", relative_path: "a.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "## Heading\ncontent", raw_yaml: "" };
+        case "preview_split":
+          return { preamble: null, sections: [{ title: "Heading", body: "content", frontmatter: {} }] };
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    const { container } = render(<GraphView onExportNetwork={vi.fn()} onMergeConfirm={vi.fn()} onSplitConfirm={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    act(() => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    await waitFor(() => {
+      const splitBtn = container.querySelector("[data-testid='ctx-split-btn']") as HTMLButtonElement;
+      expect(splitBtn.disabled).toBe(false);
+    });
+
+    const splitBtn = container.querySelector("[data-testid='ctx-split-btn']") as HTMLButtonElement;
+    await act(async () => {
+      fireEvent.click(splitBtn);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("split-preview-dialog")).toBeTruthy();
+    });
+
+    const cancelBtn = screen.getByTestId("split-cancel-btn");
+    await act(async () => {
+      fireEvent.click(cancelBtn);
+    });
+
+    expect(screen.queryByTestId("split-preview-dialog")).toBeNull();
+  });
+
+  it("visual separator exists between operation items and export", async () => {
+    useGraphSelectionStore.setState({ selectedNodes: ["a.md", "b.md"], selectionMode: "click" });
+
+    const GraphView = (await import("./GraphView")).default;
+    const { container } = render(<GraphView onExportNetwork={vi.fn()} onMergeConfirm={vi.fn()} onSplitConfirm={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    act(() => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    expect(container.querySelector("[data-testid='ctx-divider']")).toBeTruthy();
+  });
 });
