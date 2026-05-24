@@ -122,6 +122,8 @@ export function MergePreviewDialog({
       const plan = await previewMerge(orderedDocs);
       plan.title = title;
       onConfirm(plan, ordering);
+    } catch {
+      // IPC failure — silently recover
     } finally {
       setConfirming(false);
     }

@@ -3,6 +3,17 @@ export interface ConflictInfo {
   values: unknown[];
 }
 
+function stableStringify(value: unknown): string {
+  if (value === null || value === undefined) return JSON.stringify(value);
+  if (Array.isArray(value)) return "[" + value.map(stableStringify).join(",") + "]";
+  if (typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    const sorted = Object.keys(obj).sort();
+    return "{" + sorted.map((k) => JSON.stringify(k) + ":" + stableStringify(obj[k])).join(",") + "}";
+  }
+  return JSON.stringify(value);
+}
+
 export function detectFrontmatterConflicts(
   sources: Record<string, unknown>[],
 ): Map<string, ConflictInfo> {
@@ -12,7 +23,7 @@ export function detectFrontmatterConflicts(
 
   for (const source of sources) {
     for (const [key, value] of Object.entries(source)) {
-      const serialized = JSON.stringify(value);
+      const serialized = stableStringify(value);
       if (!valuesByKey.has(key)) {
         valuesByKey.set(key, new Set());
         rawValuesByKey.set(key, []);

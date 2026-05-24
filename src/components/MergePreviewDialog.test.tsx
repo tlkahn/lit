@@ -168,6 +168,24 @@ describe("MergePreviewDialog", () => {
     expect(c2.querySelector("[data-testid='merge-suggest-title-btn']")).toBeTruthy();
   });
 
+  it("confirm does not throw when previewMerge rejects", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "preview_merge") throw new Error("IPC failure");
+      throw new Error(`Unknown: ${cmd}`);
+    });
+
+    const onConfirm = vi.fn();
+    const { container } = render(
+      <MergePreviewDialog open={true} docs={makeDocs(["A", "B"])} onConfirm={onConfirm} onCancel={vi.fn()} />,
+    );
+    fireEvent.click(container.querySelector("[data-testid='merge-confirm-btn']")!);
+    await waitFor(() => {
+      const btn = container.querySelector("[data-testid='merge-confirm-btn']")!;
+      expect(btn.textContent).toBe("Merge");
+    });
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
   it("suggest title button shows loading state while pending", async () => {
     let resolveTitle: (v: string) => void;
     mockInvoke((cmd) => {

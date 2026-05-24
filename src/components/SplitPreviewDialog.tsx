@@ -3,7 +3,8 @@ import type { SplitPlan } from "../lib/ipc";
 
 export function computeOutputPath(originalPath: string, sectionTitle: string): string {
   const dir = originalPath.substring(0, originalPath.lastIndexOf("/") + 1);
-  return `${dir}${sectionTitle}.md`;
+  const safeName = sectionTitle.replace(/[/\\:*?"<>|]/g, "_");
+  return `${dir}${safeName}.md`;
 }
 
 interface SplitPreviewDialogProps {
@@ -60,6 +61,12 @@ export function SplitPreviewDialog({
     });
   }
 
+  const pathCounts = new Map<string, number>();
+  for (const item of items) {
+    pathCounts.set(item.path, (pathCounts.get(item.path) ?? 0) + 1);
+  }
+  const duplicatePaths = [...pathCounts.entries()].filter(([, c]) => c > 1).map(([p]) => p);
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
@@ -70,6 +77,15 @@ export function SplitPreviewDialog({
         data-testid="split-preview-dialog"
       >
         <h2 className="mb-4 text-base font-medium text-text-normal">Split Preview</h2>
+
+        {duplicatePaths.length > 0 && (
+          <div
+            className="mb-2 rounded bg-amber-100 px-3 py-2 text-xs text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
+            data-testid="split-duplicate-path-warning"
+          >
+            Duplicate output paths: {duplicatePaths.join(", ")}
+          </div>
+        )}
 
         <div className="mb-4 flex flex-col gap-2" data-testid="split-section-list">
           {items.map((item, i) => (

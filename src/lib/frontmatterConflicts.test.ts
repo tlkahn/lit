@@ -45,6 +45,15 @@ describe("detectFrontmatterConflicts", () => {
     expect(conflicts.size).toBe(0);
   });
 
+  it("does not falsely flag conflict for objects with same keys in different insertion order", () => {
+    const sources = [
+      { meta: { a: 1, b: 2 } },
+      { meta: { b: 2, a: 1 } },
+    ];
+    const conflicts = detectFrontmatterConflicts(sources);
+    expect(conflicts.size).toBe(0);
+  });
+
   it("handles three sources with partial overlap", () => {
     const sources = [
       { status: "draft", author: "Alice" },
