@@ -99,4 +99,43 @@ describe("graphSelection store", () => {
     toggleNode("a.md");
     expect(useGraphSelectionStore.getState().selectionMode).toBe("none");
   });
+
+  it("addNodes merges array into selection without duplicates", () => {
+    const { addNode, addNodes } = useGraphSelectionStore.getState();
+    addNode("a.md");
+    addNodes(["b.md", "c.md", "a.md"]);
+    expect(useGraphSelectionStore.getState().selectedNodes).toEqual(["a.md", "b.md", "c.md"]);
+  });
+
+  it("addNodes with empty array is a no-op", () => {
+    const { addNode, addNodes } = useGraphSelectionStore.getState();
+    addNode("a.md");
+    const before = useGraphSelectionStore.getState().selectedNodes;
+    addNodes([]);
+    expect(useGraphSelectionStore.getState().selectedNodes).toBe(before);
+  });
+
+  it("addNodes with all duplicates is a no-op", () => {
+    const { addNode, addNodes } = useGraphSelectionStore.getState();
+    addNode("a.md");
+    const before = useGraphSelectionStore.getState().selectedNodes;
+    addNodes(["a.md"]);
+    expect(useGraphSelectionStore.getState().selectedNodes).toBe(before);
+  });
+
+  it("setSelectionMode sets the mode without changing selectedNodes", () => {
+    useGraphSelectionStore.getState().toggleNode("a.md");
+    useGraphSelectionStore.getState().setSelectionMode("lasso");
+    const state = useGraphSelectionStore.getState();
+    expect(state.selectionMode).toBe("lasso");
+    expect(state.selectedNodes).toEqual(["a.md"]);
+  });
+
+  it("setSelectionMode('none') changes mode but preserves selectedNodes", () => {
+    useGraphSelectionStore.getState().toggleNode("a.md");
+    useGraphSelectionStore.getState().setSelectionMode("none");
+    const state = useGraphSelectionStore.getState();
+    expect(state.selectionMode).toBe("none");
+    expect(state.selectedNodes).toEqual(["a.md"]);
+  });
 });
