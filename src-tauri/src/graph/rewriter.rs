@@ -2,10 +2,14 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::LazyLock;
 use walkdir::WalkDir;
 
+static WIKILINK_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[\[([^\[\]]+)\]\]").unwrap());
+
 use super::indexer::normalize_stem;
-use super::links::{blank_fenced_code_blocks, blank_inline_code};
+use super::links::{blank_fenced_code_blocks, blank_frontmatter, blank_inline_code};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct LinkRedirect {
@@ -35,13 +39,14 @@ pub fn rewrite_body(
     }
 
     let mut blanked = body.to_string();
+    blank_frontmatter(&mut blanked);
     blank_fenced_code_blocks(&mut blanked);
     blank_inline_code(&mut blanked);
+    debug_assert_eq!(body.len(), blanked.len(), "blanking must preserve byte length");
 
-    let re = Regex::new(r"\[\[([^\[\]]+)\]\]").unwrap();
     let mut replacements: Vec<(usize, usize, String)> = Vec::new();
 
-    for m in re.find_iter(&blanked) {
+    for m in WIKILINK_RE.find_iter(&blanked) {
         let inner = &blanked[m.start() + 2..m.end() - 2];
         let trimmed = inner.trim();
         if trimmed.is_empty() {
@@ -63,6 +68,9 @@ pub fn rewrite_body(
         let stem = normalize_stem(target);
         if let Some(new_target) = redirects.get(&stem) {
             let mut replacement = String::from("[[");
+            if let Some(slash_pos) = target.rfind('/') {
+                replacement.push_str(&target[..=slash_pos]);
+            }
             replacement.push_str(new_target);
             if let Some(sec) = section {
                 replacement.push('#');
@@ -318,8 +326,65 @@ mod tests {
         let body = "See [[folder/OldPage]] here.";
         let map = make_map(&[("OldPage", "NewPage")]);
         let (result, count) = rewrite_body(body, &map);
-        assert_eq!(result, "See [[NewPage]] here.");
+        assert_eq!(result, "See [[folder/NewPage]] here.");
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn nested_folder_prefix_preserved() {
+        let body = "[[a/b/OldPage]]";
+        let map = make_map(&[("OldPage", "NewPage")]);
+        let (result, count) = rewrite_body(body, &map);
+        assert_eq!(result, "[[a/b/NewPage]]");
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn folder_prefix_with_section_and_display() {
+        let body = "[[folder/OldPage#sec|alias]]";
+        let map = make_map(&[("OldPage", "NewPage")]);
+        let (result, count) = rewrite_body(body, &map);
+        assert_eq!(result, "[[folder/NewPage#sec|alias]]");
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn rewrite_body_multibyte_with_links() {
+        let body = "你好 [[OldPage]] 世界\n```\n[[OldPage]]\n```\n`[[OldPage]]` 结束";
+        let map = make_map(&[("OldPage", "NewPage")]);
+        let (result, count) = rewrite_body(body, &map);
+        assert_eq!(count, 1);
+        assert!(result.contains("你好 [[NewPage]] 世界"));
+        assert!(result.contains("```\n[[OldPage]]\n```"));
+        assert!(result.contains("`[[OldPage]]`"));
+    }
+
+    #[test]
+    fn no_folder_prefix_unchanged() {
+        let body = "[[OldPage]]";
+        let map = make_map(&[("OldPage", "NewPage")]);
+        let (result, count) = rewrite_body(body, &map);
+        assert_eq!(result, "[[NewPage]]");
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn frontmatter_wikilink_not_rewritten() {
+        let body = "---\nrelated: \"[[OldPage]]\"\n---\nBody [[OldPage]].";
+        let map = make_map(&[("OldPage", "NewPage")]);
+        let (result, count) = rewrite_body(body, &map);
+        assert_eq!(count, 1);
+        assert!(result.starts_with("---\nrelated: \"[[OldPage]]\"\n---"));
+        assert!(result.ends_with("Body [[NewPage]]."));
+    }
+
+    #[test]
+    fn frontmatter_only_wikilinks_zero_changes() {
+        let body = "---\nrelated: \"[[OldPage]]\"\ntags: [a]\n---\nNo links.";
+        let map = make_map(&[("OldPage", "NewPage")]);
+        let (result, count) = rewrite_body(body, &map);
+        assert_eq!(count, 0);
+        assert_eq!(result, body);
     }
 
     #[test]
@@ -477,6 +542,22 @@ mod tests {
     // -----------------------------------------------------------------------
     // Phase C: Atomicity
     // -----------------------------------------------------------------------
+
+    #[test]
+    fn vault_frontmatter_wikilink_untouched() {
+        let tmp = TempDir::new().unwrap();
+        let content = "---\nrelated: \"[[OldPage]]\"\n---\nBody [[OldPage]].";
+        write_file(tmp.path(), "note.md", content);
+        let redirects = vec![LinkRedirect {
+            old_target: "OldPage".into(),
+            new_target: "NewPage".into(),
+        }];
+        let summary = rewrite_links_in_vault(tmp.path(), &redirects).unwrap();
+        assert_eq!(summary.total_links_changed, 1);
+        let result = read_file(tmp.path(), "note.md");
+        assert!(result.contains("related: \"[[OldPage]]\""));
+        assert!(result.contains("Body [[NewPage]]."));
+    }
 
     #[cfg(unix)]
     #[test]

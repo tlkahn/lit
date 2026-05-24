@@ -1,4 +1,7 @@
 use regex::Regex;
+use std::sync::LazyLock;
+
+static INLINE_CODE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"`[^`]+`").unwrap());
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WikiLink {
@@ -55,6 +58,31 @@ pub fn extract_wikilinks(body: &str) -> Vec<WikiLink> {
     links
 }
 
+pub(crate) fn blank_frontmatter(text: &mut String) {
+    if !text.starts_with("---\n") && !text.starts_with("---\r\n") {
+        return;
+    }
+    let search_start = if text.starts_with("---\r\n") { 5 } else { 4 };
+    let closing = text[search_start..]
+        .lines()
+        .scan(search_start, |pos, line| {
+            let line_start = *pos;
+            // +1 for the \n; handle \r\n
+            *pos += line.len() + 1;
+            if line.ends_with('\r') {
+                // already counted in line.len()
+            }
+            Some((line_start, line))
+        })
+        .find(|(_, line)| line.trim() == "---");
+    if let Some((fence_start, fence_line)) = closing {
+        let body_start = fence_start + fence_line.len() + 1;
+        let body_start = body_start.min(text.len());
+        let prefix = " ".repeat(body_start);
+        text.replace_range(..body_start, &prefix);
+    }
+}
+
 pub(crate) fn blank_fenced_code_blocks(text: &mut String) {
     let mut result = String::with_capacity(text.len());
     let mut lines = text.split('\n').peekable();
@@ -99,8 +127,7 @@ pub(crate) fn blank_fenced_code_blocks(text: &mut String) {
 }
 
 pub(crate) fn blank_inline_code(text: &mut String) {
-    let re = Regex::new(r"`[^`]+`").unwrap();
-    let blanked = re.replace_all(text, |caps: &regex::Captures| {
+    let blanked = INLINE_CODE_RE.replace_all(text, |caps: &regex::Captures| {
         let matched = caps.get(0).unwrap().as_str();
         " ".repeat(matched.len())
     });
@@ -110,6 +137,58 @@ pub(crate) fn blank_inline_code(text: &mut String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blank_frontmatter_preserves_length() {
+        let input = "---\ntitle: \"[[Page]]\"\ntags: [a]\n---\nBody text here.".to_string();
+        let mut text = input.clone();
+        blank_frontmatter(&mut text);
+        assert_eq!(text.len(), input.len());
+        assert!(text.ends_with("Body text here."));
+        assert!(!text.contains("title:"));
+    }
+
+    #[test]
+    fn blanking_preserves_byte_length_multibyte() {
+        let input = "before\n```\n你好 [[Link]] 世界\n```\nafter `code 你好`".to_string();
+        let mut text = input.clone();
+        blank_fenced_code_blocks(&mut text);
+        assert_eq!(text.len(), input.len());
+        blank_inline_code(&mut text);
+        assert_eq!(text.len(), input.len());
+    }
+
+    #[test]
+    fn blanking_preserves_byte_length_emoji() {
+        let input = "text `🎉 emoji code` more".to_string();
+        let mut text = input.clone();
+        blank_inline_code(&mut text);
+        assert_eq!(text.len(), input.len());
+    }
+
+    #[test]
+    fn blank_frontmatter_preserves_byte_length_multibyte() {
+        let input = "---\ntitle: \"你好世界\"\n---\nBody.".to_string();
+        let mut text = input.clone();
+        blank_frontmatter(&mut text);
+        assert_eq!(text.len(), input.len());
+    }
+
+    #[test]
+    fn blank_frontmatter_no_fence() {
+        let input = "No frontmatter here.".to_string();
+        let mut text = input.clone();
+        blank_frontmatter(&mut text);
+        assert_eq!(text, input);
+    }
+
+    #[test]
+    fn blank_frontmatter_unclosed() {
+        let input = "---\ntitle: Test\nNo closing fence".to_string();
+        let mut text = input.clone();
+        blank_frontmatter(&mut text);
+        assert_eq!(text, input);
+    }
 
     #[test]
     fn simple_link() {
