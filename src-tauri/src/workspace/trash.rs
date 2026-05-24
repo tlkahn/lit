@@ -1,6 +1,9 @@
+use crate::workspace::normalize::validate_within_root;
 use crate::workspace::WorkspaceError;
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -38,10 +41,12 @@ pub fn read_manifest(root: &Path) -> Result<TrashManifest, WorkspaceError> {
 pub fn write_manifest(root: &Path, manifest: &TrashManifest) -> Result<(), WorkspaceError> {
     let trash_dir = root.join(".trash");
     fs::create_dir_all(&trash_dir)?;
+    let tmp_path = trash_dir.join("manifest.json.tmp");
     let manifest_path = trash_dir.join("manifest.json");
     let json = serde_json::to_string_pretty(manifest)
         .map_err(|e| WorkspaceError::ParseError(e.to_string()))?;
-    fs::write(&manifest_path, json)?;
+    fs::write(&tmp_path, json)?;
+    fs::rename(&tmp_path, &manifest_path)?;
     Ok(())
 }
 
@@ -62,7 +67,25 @@ fn now_timestamp() -> u64 {
         .as_secs()
 }
 
+fn ensure_trash_gitignored(root: &Path) {
+    if !root.join(".git").is_dir() {
+        return;
+    }
+    let gitignore_path = root.join(".gitignore");
+    let content = fs::read_to_string(&gitignore_path).unwrap_or_default();
+    if content.lines().any(|line| line.trim() == ".trash/") {
+        return;
+    }
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&gitignore_path) {
+        if !content.is_empty() && !content.ends_with('\n') {
+            let _ = writeln!(f);
+        }
+        let _ = writeln!(f, ".trash/");
+    }
+}
+
 pub fn trash_page(root: &Path, relative_path: &str) -> Result<TrashEntry, WorkspaceError> {
+    validate_within_root(root, relative_path)?;
     let full_path = root.join(relative_path);
     if !full_path.exists() {
         return Err(WorkspaceError::PageNotFound(relative_path.to_string()));
@@ -89,6 +112,8 @@ pub fn trash_page(root: &Path, relative_path: &str) -> Result<TrashEntry, Worksp
     manifest.entries.push(entry.clone());
     write_manifest(root, &manifest)?;
 
+    ensure_trash_gitignored(root);
+
     Ok(entry)
 }
 
@@ -107,6 +132,7 @@ pub fn restore_page(root: &Path, trash_name: &str) -> Result<String, WorkspaceEr
 
     let entry = &manifest.entries[idx];
     let original = &entry.original_path;
+    validate_within_root(root, original)?;
     let dest = root.join(original);
 
     if dest.exists() {
@@ -146,19 +172,41 @@ pub fn purge_page(root: &Path, trash_name: &str) -> Result<(), WorkspaceError> {
 }
 
 pub fn empty_trash(root: &Path) -> Result<(), WorkspaceError> {
-    let mut manifest = read_manifest(root)?;
+    let manifest = read_manifest(root)?;
     let trash_dir = root.join(".trash");
 
-    for entry in &manifest.entries {
+    let mut failed: Vec<TrashEntry> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+
+    for entry in manifest.entries {
         let path = trash_dir.join(&entry.trash_name);
-        if path.exists() {
-            fs::remove_file(&path)?;
+        if !path.exists() {
+            continue;
+        }
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(e) => {
+                errors.push(format!("{}: {e}", entry.trash_name));
+                failed.push(entry);
+            }
         }
     }
 
-    manifest.entries.clear();
-    write_manifest(root, &manifest)?;
-    Ok(())
+    let remaining = TrashManifest {
+        version: manifest.version,
+        entries: failed,
+    };
+    write_manifest(root, &remaining)?;
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(WorkspaceError::IoError(format!(
+            "failed to delete {} item(s): {}",
+            errors.len(),
+            errors.join("; ")
+        )))
+    }
 }
 
 #[cfg(test)]
@@ -425,6 +473,189 @@ mod tests {
         let dir = TempDir::new().unwrap();
         empty_trash(dir.path()).unwrap();
         assert!(list_trash(dir.path()).unwrap().is_empty());
+    }
+
+    // Cycle 1.4–1.5: Path traversal guards
+
+    #[test]
+    fn trash_page_rejects_path_traversal() {
+        let dir = TempDir::new().unwrap();
+        let sibling = dir.path().parent().unwrap().join("secret.md");
+        fs::write(&sibling, "secret").unwrap();
+
+        let result = trash_page(dir.path(), "../secret.md");
+        fs::remove_file(&sibling).ok();
+        assert!(
+            matches!(result, Err(WorkspaceError::InvalidPath(_))),
+            "Expected InvalidPath, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn restore_page_rejects_traversal_in_original_path() {
+        let dir = TempDir::new().unwrap();
+        let trash_dir = dir.path().join(".trash");
+        fs::create_dir_all(&trash_dir).unwrap();
+        fs::write(trash_dir.join("evil.123.md"), "pwned").unwrap();
+
+        let manifest = TrashManifest {
+            version: 1,
+            entries: vec![TrashEntry {
+                trash_name: "evil.123.md".into(),
+                original_path: "../../../etc/shadow".into(),
+                deleted_at: 123,
+            }],
+        };
+        write_manifest(dir.path(), &manifest).unwrap();
+
+        let result = restore_page(dir.path(), "evil.123.md");
+        assert!(
+            matches!(result, Err(WorkspaceError::InvalidPath(_))),
+            "Expected InvalidPath, got {result:?}"
+        );
+    }
+
+    // Cycle 3: empty_trash partial failure
+
+    #[test]
+    fn empty_trash_partial_failure_keeps_failed_entries() {
+        let dir = TempDir::new().unwrap();
+        let trash_dir = dir.path().join(".trash");
+        fs::create_dir_all(&trash_dir).unwrap();
+
+        // Entry 1: normal file (will succeed)
+        fs::write(trash_dir.join("a.1.md"), "content a").unwrap();
+        // Entry 2: a directory instead of file (fs::remove_file will fail)
+        fs::create_dir_all(trash_dir.join("b.2.md")).unwrap();
+        // Entry 3: normal file (will succeed)
+        fs::write(trash_dir.join("c.3.md"), "content c").unwrap();
+
+        let manifest = TrashManifest {
+            version: 1,
+            entries: vec![
+                TrashEntry { trash_name: "a.1.md".into(), original_path: "a.md".into(), deleted_at: 1 },
+                TrashEntry { trash_name: "b.2.md".into(), original_path: "b.md".into(), deleted_at: 2 },
+                TrashEntry { trash_name: "c.3.md".into(), original_path: "c.md".into(), deleted_at: 3 },
+            ],
+        };
+        write_manifest(dir.path(), &manifest).unwrap();
+
+        let result = empty_trash(dir.path());
+        assert!(result.is_err(), "Should report partial failure");
+
+        // Successfully deleted files should be gone
+        assert!(!trash_dir.join("a.1.md").exists());
+        assert!(!trash_dir.join("c.3.md").exists());
+
+        // Manifest should only contain the failed entry
+        let remaining = read_manifest(dir.path()).unwrap();
+        assert_eq!(remaining.entries.len(), 1);
+        assert_eq!(remaining.entries[0].trash_name, "b.2.md");
+    }
+
+    #[test]
+    fn empty_trash_missing_file_treated_as_success() {
+        let dir = TempDir::new().unwrap();
+        let trash_dir = dir.path().join(".trash");
+        fs::create_dir_all(&trash_dir).unwrap();
+
+        // Manifest entry with no corresponding file on disk
+        let manifest = TrashManifest {
+            version: 1,
+            entries: vec![TrashEntry {
+                trash_name: "ghost.1.md".into(),
+                original_path: "ghost.md".into(),
+                deleted_at: 1,
+            }],
+        };
+        write_manifest(dir.path(), &manifest).unwrap();
+
+        let result = empty_trash(dir.path());
+        assert!(result.is_ok(), "Missing file should be treated as success, got {result:?}");
+        assert!(read_manifest(dir.path()).unwrap().entries.is_empty());
+    }
+
+    // Cycle 4: Atomic manifest write
+
+    #[test]
+    fn write_manifest_no_tmp_file_remains() {
+        let dir = TempDir::new().unwrap();
+        let m = TrashManifest {
+            version: 1,
+            entries: vec![TrashEntry {
+                trash_name: "x.1.md".into(),
+                original_path: "x.md".into(),
+                deleted_at: 1,
+            }],
+        };
+        write_manifest(dir.path(), &m).unwrap();
+
+        assert!(
+            !dir.path().join(".trash").join("manifest.json.tmp").exists(),
+            "Temp file should not remain after write"
+        );
+        assert!(dir.path().join(".trash").join("manifest.json").exists());
+        let m2 = read_manifest(dir.path()).unwrap();
+        assert_eq!(m, m2);
+    }
+
+    // Cycle 5: Gitignore management
+
+    #[test]
+    fn trash_page_adds_gitignore_in_git_workspace() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join(".git")).unwrap();
+        fs::write(dir.path().join("a.md"), "content").unwrap();
+
+        trash_page(dir.path(), "a.md").unwrap();
+
+        let gitignore = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
+        assert!(
+            gitignore.contains(".trash/"),
+            ".gitignore should contain .trash/, got: {gitignore}"
+        );
+    }
+
+    #[test]
+    fn trash_page_no_duplicate_gitignore_entry() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join(".git")).unwrap();
+        fs::write(dir.path().join(".gitignore"), ".trash/\n").unwrap();
+        fs::write(dir.path().join("a.md"), "").unwrap();
+
+        trash_page(dir.path(), "a.md").unwrap();
+
+        let content = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
+        let count = content.lines().filter(|l| l.trim() == ".trash/").count();
+        assert_eq!(count, 1, "Expected .trash/ once, got {count} in: {content}");
+    }
+
+    #[test]
+    fn trash_page_no_gitignore_without_git() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("a.md"), "").unwrap();
+
+        trash_page(dir.path(), "a.md").unwrap();
+
+        assert!(
+            !dir.path().join(".gitignore").exists(),
+            ".gitignore should not be created without .git/"
+        );
+    }
+
+    #[test]
+    fn trash_page_preserves_existing_gitignore() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join(".git")).unwrap();
+        fs::write(dir.path().join(".gitignore"), "node_modules/\n.DS_Store\n").unwrap();
+        fs::write(dir.path().join("a.md"), "").unwrap();
+
+        trash_page(dir.path(), "a.md").unwrap();
+
+        let content = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
+        assert!(content.contains("node_modules/"), "Lost node_modules/");
+        assert!(content.contains(".DS_Store"), "Lost .DS_Store");
+        assert!(content.contains(".trash/"), "Missing .trash/");
     }
 
     // Cycle 8: Integration with scan

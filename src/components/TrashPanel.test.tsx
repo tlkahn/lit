@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TrashPanel } from "./TrashPanel";
@@ -79,5 +79,55 @@ describe("TrashPanel", () => {
       expect(screen.getByTestId("empty-trash-btn")).toBeInTheDocument();
     });
     expect(screen.getByText("Empty Trash")).toBeInTheDocument();
+  });
+
+  it("Empty Trash does not proceed when confirm is cancelled", async () => {
+    let emptyTrashCalled = false;
+    mockInvoke((cmd) => {
+      if (cmd === "list_trash") return sampleTrash;
+      if (cmd === "empty_trash") {
+        emptyTrashCalled = true;
+        return null;
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    render(<TrashPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("empty-trash-btn")).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByTestId("empty-trash-btn"));
+    expect(emptyTrashCalled).toBe(false);
+
+    vi.mocked(window.confirm).mockRestore();
+  });
+
+  it("Empty Trash proceeds when confirm is accepted", async () => {
+    let emptyTrashCalled = false;
+    mockInvoke((cmd) => {
+      if (cmd === "list_trash") return sampleTrash;
+      if (cmd === "empty_trash") {
+        emptyTrashCalled = true;
+        return null;
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(<TrashPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("empty-trash-btn")).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByTestId("empty-trash-btn"));
+    expect(emptyTrashCalled).toBe(true);
+
+    vi.mocked(window.confirm).mockRestore();
   });
 });

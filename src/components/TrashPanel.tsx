@@ -50,7 +50,10 @@ export function TrashPanel() {
       <div className="flex items-center justify-between border-b border-border px-2 py-1">
         <span className="text-xs text-text-muted">{trashItems.length} item{trashItems.length !== 1 ? "s" : ""}</span>
         <button
-          onClick={() => emptyTrash()}
+          onClick={() => {
+            if (!window.confirm("Permanently delete all items in Trash?")) return;
+            emptyTrash();
+          }}
           data-testid="empty-trash-btn"
           className="rounded px-2 py-0.5 text-xs text-text-error hover:bg-destructive hover:text-text-on-accent"
         >

@@ -1,7 +1,47 @@
 use super::WorkspaceError;
+use std::path::{Path, PathBuf};
 use unicode_normalization::UnicodeNormalization;
 
 const FORBIDDEN_CHARS: &[char] = &['/', '\\', ':', '*', '?', '"', '<', '>', '|', '\0'];
+
+pub fn validate_within_root(root: &Path, relative_path: &str) -> Result<PathBuf, WorkspaceError> {
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|e| WorkspaceError::InvalidPath(e.to_string()))?;
+    let full = root.join(relative_path);
+    let canonical_full = if full.exists() {
+        full.canonicalize()
+            .map_err(|e| WorkspaceError::InvalidPath(e.to_string()))?
+    } else {
+        let mut ancestor = full.as_path();
+        let mut trailing = Vec::new();
+        loop {
+            if ancestor.exists() {
+                let base = ancestor
+                    .canonicalize()
+                    .map_err(|e| WorkspaceError::InvalidPath(e.to_string()))?;
+                let mut result = base;
+                for seg in trailing.into_iter().rev() {
+                    result = result.join(seg);
+                }
+                break result;
+            }
+            let name = ancestor
+                .file_name()
+                .ok_or_else(|| WorkspaceError::InvalidPath("no file name".into()))?;
+            trailing.push(name.to_os_string());
+            ancestor = ancestor
+                .parent()
+                .ok_or_else(|| WorkspaceError::InvalidPath("no parent directory".into()))?;
+        }
+    };
+    if !canonical_full.starts_with(&canonical_root) {
+        return Err(WorkspaceError::InvalidPath(format!(
+            "path escapes workspace root: {relative_path}"
+        )));
+    }
+    Ok(canonical_full)
+}
 
 pub fn normalize_to_nfc(s: &str) -> String {
     s.nfc().collect()
@@ -43,6 +83,7 @@ pub fn filename_to_page_name(filename: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[test]
     fn nfc_normalization_of_decomposed_unicode() {
@@ -118,6 +159,39 @@ mod tests {
     #[test]
     fn filename_to_page_name_strips_pdf_extension() {
         assert_eq!(filename_to_page_name("Research Paper.pdf"), "Research Paper");
+    }
+
+    #[test]
+    fn validate_within_root_accepts_valid_path() {
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("sub")).unwrap();
+        std::fs::write(dir.path().join("sub/note.md"), "hi").unwrap();
+
+        let result = validate_within_root(dir.path(), "sub/note.md");
+        assert!(result.is_ok(), "Expected Ok, got {result:?}");
+    }
+
+    #[test]
+    fn validate_within_root_nonexistent_valid_dest() {
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("sub")).unwrap();
+        // File doesn't exist, but parent dir does — should be Ok
+        let result = validate_within_root(dir.path(), "sub/new_file.md");
+        assert!(result.is_ok(), "Expected Ok for nonexistent valid dest, got {result:?}");
+    }
+
+    #[test]
+    fn validate_within_root_rejects_traversal() {
+        let dir = TempDir::new().unwrap();
+        let sibling = dir.path().parent().unwrap().join("sibling.md");
+        std::fs::write(&sibling, "secret").unwrap();
+
+        let result = validate_within_root(dir.path(), "../sibling.md");
+        std::fs::remove_file(&sibling).ok();
+        assert!(
+            matches!(result, Err(WorkspaceError::InvalidPath(_))),
+            "Expected InvalidPath, got {result:?}"
+        );
     }
 
     #[test]
