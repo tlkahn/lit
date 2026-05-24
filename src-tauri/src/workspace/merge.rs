@@ -20,6 +20,7 @@ pub struct MergePlan {
     pub source_titles: Vec<String>,
 }
 
+// Spec has `ordering: &[usize]`; omitted here — callers pre-order the slice (Phase 4A).
 pub fn plan_merge(docs: &[MergeInput]) -> MergePlan {
     if docs.is_empty() {
         return MergePlan {
