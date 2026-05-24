@@ -16,3 +16,9 @@
   z-index: 1;
   pointer-events: none;
 }
+
+.graph-lasso-rect {
+  border: 1px dashed var(--interactive-accent, #7c3aed);
+  background: rgba(124, 58, 237, 0.08);
+  z-index: 5;
+}
