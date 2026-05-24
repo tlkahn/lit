@@ -483,6 +483,33 @@ export async function linkUnlinkedMention(
   return invoke<void>("link_unlinked_mention", { sourceId, sourceLine, matchedText });
 }
 
+// Link rewriting
+
+export interface LinkRedirect {
+  oldTarget: string;
+  newTarget: string;
+}
+
+export interface FileRewriteResult {
+  relative_path: string;
+  links_changed: number;
+}
+
+export interface RewriteSummary {
+  files_scanned: number;
+  files_modified: FileRewriteResult[];
+  total_links_changed: number;
+}
+
+export async function rewriteLinks(redirects: LinkRedirect[]): Promise<RewriteSummary> {
+  return invoke<RewriteSummary>("rewrite_links", {
+    redirects: redirects.map((r) => ({
+      old_target: r.oldTarget,
+      new_target: r.newTarget,
+    })),
+  });
+}
+
 // Index progress
 
 export type IndexPhase = "scanning" | "parsing" | "resolving" | "diffing" | "building";

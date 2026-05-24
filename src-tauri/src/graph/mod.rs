@@ -7,4 +7,5 @@ pub mod links;
 pub mod progress;
 pub mod resolve;
 pub mod store;
+pub mod rewriter;
 pub mod types;

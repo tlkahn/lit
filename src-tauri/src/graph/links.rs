@@ -55,7 +55,7 @@ pub fn extract_wikilinks(body: &str) -> Vec<WikiLink> {
     links
 }
 
-fn blank_fenced_code_blocks(text: &mut String) {
+pub(crate) fn blank_fenced_code_blocks(text: &mut String) {
     let mut result = String::with_capacity(text.len());
     let mut lines = text.split('\n').peekable();
 
@@ -98,7 +98,7 @@ fn blank_fenced_code_blocks(text: &mut String) {
     *text = result;
 }
 
-fn blank_inline_code(text: &mut String) {
+pub(crate) fn blank_inline_code(text: &mut String) {
     let re = Regex::new(r"`[^`]+`").unwrap();
     let blanked = re.replace_all(text, |caps: &regex::Captures| {
         let matched = caps.get(0).unwrap().as_str();
