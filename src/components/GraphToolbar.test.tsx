@@ -115,4 +115,22 @@ describe("GraphToolbar", () => {
       expect(onSearch).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe("selection badge", () => {
+    it("renders badge with selectionCount=3 showing '3'", () => {
+      render(<GraphToolbar {...defaults} selectionCount={3} />);
+      const badge = screen.getByTestId("selection-badge");
+      expect(badge.textContent).toBe("3");
+    });
+
+    it("badge hidden when selectionCount=0", () => {
+      render(<GraphToolbar {...defaults} selectionCount={0} />);
+      expect(screen.queryByTestId("selection-badge")).toBeNull();
+    });
+
+    it("badge hidden when selectionCount is undefined", () => {
+      render(<GraphToolbar {...defaults} />);
+      expect(screen.queryByTestId("selection-badge")).toBeNull();
+    });
+  });
 });

@@ -6,6 +6,7 @@ import { buildGraph, resolveThemeColors, applyPositions } from "../lib/graphLayo
 import { getQualitySettings, getTierSettings, type TierSettings } from "../lib/qualityTiers";
 import { createNudgeController, type NudgeController } from "../lib/graphNudge";
 import { useThemeStore } from "../stores/theme";
+import { useGraphSelectionStore } from "../stores/graphSelection";
 import { computeDiff, applyDiff, isDiffEmpty } from "../lib/graphDiff";
 import { isPerfEnabled, perfTable, type PerfEntry } from "../lib/perf";
 import { GraphToolbar } from "./GraphToolbar";
@@ -32,7 +33,13 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   const rafIdRef = useRef<number>(0);
   const pendingPosRef = useRef<{ x: number; y: number } | null>(null);
   const dimColorRef = useRef("#d1d9e0");
-  const defaultNodeReducer = useCallback((_n: string, attrs: Record<string, unknown>) => ({ ...attrs, label: null }), []);
+  const defaultNodeReducer = useCallback((_n: string, attrs: Record<string, unknown>) => {
+    const { selectedNodes } = useGraphSelectionStore.getState();
+    if (selectedNodes.length > 0 && selectedNodes.includes(_n)) {
+      return { ...attrs, label: null, highlighted: true };
+    }
+    return { ...attrs, label: null };
+  }, []);
   const tierSettingsRef = useRef<TierSettings>(getTierSettings("medium"));
   const onNavigateRef = useRef(onNavigate);
   onNavigateRef.current = onNavigate;
@@ -67,6 +74,10 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   const [contextMenu, setContextMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null);
   const contextMenuOpenRef = useRef(false);
   useEffect(() => { contextMenuOpenRef.current = contextMenu !== null; }, [contextMenu]);
+  const selectionCount = useGraphSelectionStore((s) => s.selectedNodes.length);
+  const unsubSelectionRef = useRef<(() => void) | null>(null);
+  const [lassoState, setLassoState] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null);
+  const lassoActiveRef = useRef(false);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -252,7 +263,14 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
           });
         }
 
-        sigma.on("clickNode", ({ node }) => {
+        sigma.on("clickNode", ({ node, event }) => {
+          const mouseEvent = event as { original?: { shiftKey?: boolean; metaKey?: boolean; ctrlKey?: boolean } } | undefined;
+          const orig = mouseEvent?.original;
+          if (orig?.shiftKey || orig?.metaKey || orig?.ctrlKey) {
+            useGraphSelectionStore.getState().toggleNode(node);
+            return;
+          }
+          useGraphSelectionStore.getState().clearSelection();
           onNavigateRef.current?.(node);
         });
 
@@ -269,9 +287,13 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
           neighbors.add(node);
 
           sigma.setSetting("nodeReducer", (_n: string, attrs: Record<string, unknown>) => {
-            if (_n === node) return attrs;
-            if (neighbors.has(_n)) return { ...attrs, label: null };
-            return { ...attrs, color: dimColorRef.current, label: null };
+            const selected = useGraphSelectionStore.getState().selectedNodes;
+            const isSelected = selected.length > 0 && selected.includes(_n);
+            if (_n === node) return isSelected ? { ...attrs, highlighted: true } : attrs;
+            if (neighbors.has(_n)) return isSelected ? { ...attrs, label: null, highlighted: true } : { ...attrs, label: null };
+            return isSelected
+              ? { ...attrs, color: dimColorRef.current, label: null, highlighted: true }
+              : { ...attrs, color: dimColorRef.current, label: null };
           });
           sigma.setSetting("edgeReducer", (_e: string, attrs: Record<string, unknown>) => {
             const src = graph.source(_e);
@@ -325,7 +347,12 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         });
 
         sigma.on("clickStage", () => {
+          useGraphSelectionStore.getState().clearSelection();
           restoreDefaultReducers();
+        });
+
+        unsubSelectionRef.current = useGraphSelectionStore.subscribe(() => {
+          sigma.refresh();
         });
 
         if (perf) {
@@ -352,6 +379,8 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
       pendingPosRef.current = null;
       nudgeRef.current?.dispose();
       nudgeRef.current = null;
+      unsubSelectionRef.current?.();
+      unsubSelectionRef.current = null;
       if (sigmaRef.current) {
         (sigmaRef.current as { kill: () => void }).kill();
         sigmaRef.current = null;
@@ -473,14 +502,63 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
     applyTheme();
   }, [activeThemeId]);
 
+  const handleLassoMouseDown = useCallback((e: React.MouseEvent) => {
+    if (!e.shiftKey || hoveredNodeRef.current) return;
+    lassoActiveRef.current = true;
+    useGraphSelectionStore.setState({ selectionMode: "lasso" });
+    setLassoState({ startX: e.clientX, startY: e.clientY, currentX: e.clientX, currentY: e.clientY });
+    if (containerRef.current) {
+      containerRef.current.style.cursor = "crosshair";
+    }
+  }, []);
+
+  const handleLassoMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!lassoActiveRef.current) return;
+    setLassoState((prev) => prev ? { ...prev, currentX: e.clientX, currentY: e.clientY } : null);
+  }, []);
+
+  const handleLassoMouseUp = useCallback(() => {
+    if (!lassoActiveRef.current) return;
+    lassoActiveRef.current = false;
+
+    const prev = lassoState;
+    if (prev) {
+      const sigma = sigmaRef.current as { getNodeDisplayData: (node: string) => { x: number; y: number } | undefined } | null;
+      const graph = graphRef.current as { nodes: () => string[] } | null;
+      if (sigma && graph) {
+        const left = Math.min(prev.startX, prev.currentX);
+        const top = Math.min(prev.startY, prev.currentY);
+        const right = Math.max(prev.startX, prev.currentX);
+        const bottom = Math.max(prev.startY, prev.currentY);
+        const { addNode } = useGraphSelectionStore.getState();
+        for (const nodeId of graph.nodes()) {
+          const pos = sigma.getNodeDisplayData(nodeId);
+          if (pos && pos.x >= left && pos.x <= right && pos.y >= top && pos.y <= bottom) {
+            addNode(nodeId);
+          }
+        }
+      }
+    }
+
+    setLassoState(null);
+    useGraphSelectionStore.setState({ selectionMode: useGraphSelectionStore.getState().selectedNodes.length > 0 ? "click" : "none" });
+    if (containerRef.current) {
+      containerRef.current.style.cursor = "grab";
+    }
+  }, [lassoState]);
+
   const handleContainerKeyDown = useCallback((e: React.KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "f") {
       e.preventDefault();
       setSearchOpen(true);
     } else if (e.key === "Escape") {
-      if (!searchOpenRef.current && !contextMenuOpenRef.current) {
-        onExitRef.current?.();
+      if (searchOpenRef.current || contextMenuOpenRef.current) return;
+      const { selectedNodes, clearSelection } = useGraphSelectionStore.getState();
+      if (selectedNodes.length > 0) {
+        clearSelection();
+        return;
       }
+      onExitRef.current?.();
     }
   }, []);
 
@@ -510,6 +588,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         mode={mode}
         depth={depth}
         localDisabled={!activePageId}
+        selectionCount={selectionCount}
         onModeChange={setMode}
         onDepthChange={setDepth}
         onResetZoom={handleResetZoom}
@@ -529,8 +608,25 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         ref={containerRef}
         data-testid="graph-canvas"
         style={{ position: "absolute", inset: 0, cursor: "grab" }}
+        onMouseDown={handleLassoMouseDown}
+        onMouseMove={handleLassoMouseMove}
+        onMouseUp={handleLassoMouseUp}
         onContextMenu={(e) => e.preventDefault()}
       />
+      {lassoState && (
+        <div
+          data-testid="lasso-rect"
+          className="graph-lasso-rect"
+          style={{
+            position: "absolute",
+            left: Math.min(lassoState.startX, lassoState.currentX),
+            top: Math.min(lassoState.startY, lassoState.currentY),
+            width: Math.abs(lassoState.currentX - lassoState.startX),
+            height: Math.abs(lassoState.currentY - lassoState.startY),
+            pointerEvents: "none",
+          }}
+        />
+      )}
       {contextMenu && onExportNetwork && (
         <div
           data-graph-context-menu

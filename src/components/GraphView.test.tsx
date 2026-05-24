@@ -5,6 +5,7 @@ import { mockInvoke, mockListen, emitMockEvent, resetListenMock } from "../test/
 import * as graphLayout from "../lib/graphLayout";
 import * as qualityTiers from "../lib/qualityTiers";
 import { setPerfEnabled } from "../lib/perf";
+import { useGraphSelectionStore } from "../stores/graphSelection";
 
 const mockSigmaKill = vi.fn();
 const mockSigmaOn = vi.fn();
@@ -49,6 +50,7 @@ describe("GraphView", () => {
     lastSigmaOptions = {};
     rafQueue = new Map();
     nextRafId = 1;
+    useGraphSelectionStore.setState({ selectedNodes: [], selectionMode: "none" });
     vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb: FrameRequestCallback) => {
       const id = nextRafId++;
       rafQueue.set(id, cb);
@@ -1708,5 +1710,416 @@ describe("GraphView", () => {
     });
 
     expect(onExit).toHaveBeenCalledTimes(1);
+  });
+
+  // --- Phase 2B: Shift/Cmd+Click Selection ---
+
+  it("Shift+clickNode toggles selection, does NOT navigate", async () => {
+    const onNavigate = vi.fn();
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView onNavigate={onNavigate} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const clickNodeHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "clickNode",
+    )?.[1];
+    act(() => {
+      clickNodeHandler!({ node: "a.md", event: { original: { shiftKey: true, metaKey: false, ctrlKey: false } } });
+    });
+
+    expect(onNavigate).not.toHaveBeenCalled();
+    expect(useGraphSelectionStore.getState().selectedNodes).toContain("a.md");
+  });
+
+  it("Cmd+clickNode toggles selection, does NOT navigate", async () => {
+    const onNavigate = vi.fn();
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView onNavigate={onNavigate} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const clickNodeHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "clickNode",
+    )?.[1];
+    act(() => {
+      clickNodeHandler!({ node: "a.md", event: { original: { shiftKey: false, metaKey: true, ctrlKey: false } } });
+    });
+
+    expect(onNavigate).not.toHaveBeenCalled();
+    expect(useGraphSelectionStore.getState().selectedNodes).toContain("a.md");
+  });
+
+  it("Ctrl+clickNode toggles selection, does NOT navigate", async () => {
+    const onNavigate = vi.fn();
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView onNavigate={onNavigate} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const clickNodeHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "clickNode",
+    )?.[1];
+    act(() => {
+      clickNodeHandler!({ node: "a.md", event: { original: { shiftKey: false, metaKey: false, ctrlKey: true } } });
+    });
+
+    expect(onNavigate).not.toHaveBeenCalled();
+    expect(useGraphSelectionStore.getState().selectedNodes).toContain("a.md");
+  });
+
+  it("plain click navigates, selection unchanged", async () => {
+    const onNavigate = vi.fn();
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView onNavigate={onNavigate} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const clickNodeHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "clickNode",
+    )?.[1];
+    act(() => {
+      clickNodeHandler!({ node: "a.md", event: { original: { shiftKey: false, metaKey: false, ctrlKey: false } } });
+    });
+
+    expect(onNavigate).toHaveBeenCalledWith("a.md");
+    expect(useGraphSelectionStore.getState().selectedNodes).toEqual([]);
+  });
+
+  it("plain click with existing selection clears selection, then navigates", async () => {
+    useGraphSelectionStore.getState().toggleNode("b.md");
+    const onNavigate = vi.fn();
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView onNavigate={onNavigate} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const clickNodeHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "clickNode",
+    )?.[1];
+    act(() => {
+      clickNodeHandler!({ node: "a.md", event: { original: { shiftKey: false, metaKey: false, ctrlKey: false } } });
+    });
+
+    expect(useGraphSelectionStore.getState().selectedNodes).toEqual([]);
+    expect(onNavigate).toHaveBeenCalledWith("a.md");
+  });
+
+  it("clickStage clears selection", async () => {
+    useGraphSelectionStore.getState().toggleNode("a.md");
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const clickStageHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "clickStage",
+    )?.[1];
+    act(() => { clickStageHandler!(); });
+
+    expect(useGraphSelectionStore.getState().selectedNodes).toEqual([]);
+  });
+
+  it("nodeReducer returns highlighted: true for selected nodes", async () => {
+    document.documentElement.style.setProperty("--interactive-accent", "#7c3aed");
+    useGraphSelectionStore.getState().toggleNode("a.md");
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    // Trigger a refresh to apply reducers — sigma.refresh triggers nodeReducer
+    // The default nodeReducer is set; we need to find it and test it
+    const nodeReducerCalls = mockSigmaSetSetting.mock.calls.filter(
+      (call) => call[0] === "nodeReducer",
+    );
+    const lastReducer = nodeReducerCalls[nodeReducerCalls.length - 1]![1] as (
+      n: string, attrs: Record<string, unknown>
+    ) => Record<string, unknown>;
+
+    const selectedResult = lastReducer("a.md", { color: "#000", label: "A" });
+    expect(selectedResult.highlighted).toBe(true);
+
+    const unselectedResult = lastReducer("b.md", { color: "#000", label: "B" });
+    expect(unselectedResult.highlighted).toBeUndefined();
+
+    document.documentElement.style.removeProperty("--interactive-accent");
+  });
+
+  it("selection change triggers sigma.refresh()", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    mockSigmaRefresh.mockClear();
+
+    act(() => {
+      useGraphSelectionStore.getState().toggleNode("a.md");
+    });
+
+    expect(mockSigmaRefresh).toHaveBeenCalled();
+  });
+
+  it("hover still shows neighbors while selected nodes retain highlight", async () => {
+    useGraphSelectionStore.getState().toggleNode("a.md");
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const enterNodeHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "enterNode",
+    )?.[1];
+    mockSigmaSetSetting.mockClear();
+    act(() => { enterNodeHandler!({ node: "b.md", event: { x: 100, y: 200 } }); });
+
+    const nodeReducerCall = mockSigmaSetSetting.mock.calls.find(
+      (call) => call[0] === "nodeReducer",
+    );
+    expect(nodeReducerCall).toBeDefined();
+    const reducer = nodeReducerCall![1] as (n: string, attrs: Record<string, unknown>) => Record<string, unknown>;
+
+    // a.md is selected but not the hovered node or neighbor — should still show highlight
+    const selectedResult = reducer("a.md", { color: "#000", label: "A" });
+    expect(selectedResult.highlighted).toBe(true);
+  });
+
+  it("Escape with active selection clears selection, does NOT call onExit", async () => {
+    const onExit = vi.fn();
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView onExit={onExit} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    act(() => {
+      useGraphSelectionStore.getState().toggleNode("a.md");
+    });
+
+    const container = screen.getByTestId("graph-view");
+    await act(async () => {
+      container.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    expect(useGraphSelectionStore.getState().selectedNodes).toEqual([]);
+    expect(onExit).not.toHaveBeenCalled();
+  });
+
+  it("second Escape after clearing selection calls onExit", async () => {
+    const onExit = vi.fn();
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView onExit={onExit} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    act(() => {
+      useGraphSelectionStore.getState().toggleNode("a.md");
+    });
+
+    const container = screen.getByTestId("graph-view");
+    await act(async () => {
+      container.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(onExit).not.toHaveBeenCalled();
+
+    await act(async () => {
+      container.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(onExit).toHaveBeenCalledTimes(1);
+  });
+
+  // --- Phase 2B: GraphToolbar selection badge ---
+  // (badge tests are in GraphToolbar.test.tsx; integration wiring tested here)
+
+  it("GraphView passes selectedNodes.length to toolbar as selectionCount", async () => {
+    act(() => {
+      useGraphSelectionStore.getState().toggleNode("a.md");
+      useGraphSelectionStore.getState().toggleNode("b.md");
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+    });
+
+    const badge = screen.getByTestId("selection-badge");
+    expect(badge.textContent).toBe("2");
+  });
+
+  // --- Phase 2C: Lasso/Marquee Selection ---
+
+  it("Shift+mousedown on container (no hovered node) starts lasso mode", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const canvas = screen.getByTestId("graph-canvas");
+    fireEvent.mouseDown(canvas, { shiftKey: true, clientX: 100, clientY: 100 });
+
+    expect(useGraphSelectionStore.getState().selectionMode).toBe("lasso");
+  });
+
+  it("during lasso, mousemove shows lasso-rect div", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const canvas = screen.getByTestId("graph-canvas");
+    fireEvent.mouseDown(canvas, { shiftKey: true, clientX: 100, clientY: 100 });
+    fireEvent.mouseMove(canvas, { clientX: 200, clientY: 200 });
+
+    expect(screen.getByTestId("lasso-rect")).toBeTruthy();
+  });
+
+  it("drag up-left computes rect with min/abs correctly", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const canvas = screen.getByTestId("graph-canvas");
+    fireEvent.mouseDown(canvas, { shiftKey: true, clientX: 200, clientY: 200 });
+    fireEvent.mouseMove(canvas, { clientX: 100, clientY: 100 });
+
+    const rect = screen.getByTestId("lasso-rect");
+    expect(rect.style.left).toBe("100px");
+    expect(rect.style.top).toBe("100px");
+    expect(rect.style.width).toBe("100px");
+    expect(rect.style.height).toBe("100px");
+  });
+
+  it("lasso div has class graph-lasso-rect", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const canvas = screen.getByTestId("graph-canvas");
+    fireEvent.mouseDown(canvas, { shiftKey: true, clientX: 100, clientY: 100 });
+    fireEvent.mouseMove(canvas, { clientX: 200, clientY: 200 });
+
+    expect(screen.getByTestId("lasso-rect").className).toContain("graph-lasso-rect");
+  });
+
+  it("mouseup ends lasso, rect disappears", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const canvas = screen.getByTestId("graph-canvas");
+    fireEvent.mouseDown(canvas, { shiftKey: true, clientX: 100, clientY: 100 });
+    fireEvent.mouseMove(canvas, { clientX: 200, clientY: 200 });
+    fireEvent.mouseUp(canvas);
+
+    expect(screen.queryByTestId("lasso-rect")).toBeNull();
+    expect(useGraphSelectionStore.getState().selectionMode).not.toBe("lasso");
+  });
+
+  it("nodes inside lasso rect are selected on mouseup", async () => {
+    mockGetNodeDisplayData.mockImplementation((nodeId: string) => {
+      if (nodeId === "a.md") return { x: 150, y: 150 };
+      if (nodeId === "b.md") return { x: 500, y: 500 };
+      return { x: 0, y: 0 };
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const canvas = screen.getByTestId("graph-canvas");
+    fireEvent.mouseDown(canvas, { shiftKey: true, clientX: 100, clientY: 100 });
+    fireEvent.mouseMove(canvas, { clientX: 200, clientY: 200 });
+    fireEvent.mouseUp(canvas);
+
+    expect(useGraphSelectionStore.getState().selectedNodes).toContain("a.md");
+    expect(useGraphSelectionStore.getState().selectedNodes).not.toContain("b.md");
+  });
+
+  it("lasso adds to existing selection (does not replace)", async () => {
+    useGraphSelectionStore.getState().toggleNode("b.md");
+
+    mockGetNodeDisplayData.mockImplementation((nodeId: string) => {
+      if (nodeId === "a.md") return { x: 150, y: 150 };
+      if (nodeId === "b.md") return { x: 500, y: 500 };
+      return { x: 0, y: 0 };
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const canvas = screen.getByTestId("graph-canvas");
+    fireEvent.mouseDown(canvas, { shiftKey: true, clientX: 100, clientY: 100 });
+    fireEvent.mouseMove(canvas, { clientX: 200, clientY: 200 });
+    fireEvent.mouseUp(canvas);
+
+    expect(useGraphSelectionStore.getState().selectedNodes).toContain("a.md");
+    expect(useGraphSelectionStore.getState().selectedNodes).toContain("b.md");
+  });
+
+  it("lasso with zero nodes inside preserves existing selection", async () => {
+    useGraphSelectionStore.getState().toggleNode("a.md");
+
+    mockGetNodeDisplayData.mockReturnValue({ x: 500, y: 500 });
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const canvas = screen.getByTestId("graph-canvas");
+    fireEvent.mouseDown(canvas, { shiftKey: true, clientX: 100, clientY: 100 });
+    fireEvent.mouseMove(canvas, { clientX: 200, clientY: 200 });
+    fireEvent.mouseUp(canvas);
+
+    expect(useGraphSelectionStore.getState().selectedNodes).toEqual(["a.md"]);
+  });
+
+  it("after lasso ends, mousemove does not show lasso rect", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const canvas = screen.getByTestId("graph-canvas");
+    fireEvent.mouseDown(canvas, { shiftKey: true, clientX: 100, clientY: 100 });
+    fireEvent.mouseMove(canvas, { clientX: 200, clientY: 200 });
+    fireEvent.mouseUp(canvas);
+
+    fireEvent.mouseMove(canvas, { clientX: 300, clientY: 300 });
+    expect(screen.queryByTestId("lasso-rect")).toBeNull();
+  });
+
+  it("mousedown WITHOUT shift does not start lasso", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const canvas = screen.getByTestId("graph-canvas");
+    fireEvent.mouseDown(canvas, { shiftKey: false, clientX: 100, clientY: 100 });
+    fireEvent.mouseMove(canvas, { clientX: 200, clientY: 200 });
+
+    expect(screen.queryByTestId("lasso-rect")).toBeNull();
+  });
+
+  it("Shift+mousedown while hovering a node does NOT start lasso", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    // Simulate hovering a node first
+    const enterNodeHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "enterNode",
+    )?.[1];
+    act(() => { enterNodeHandler!({ node: "a.md", event: { x: 100, y: 100 } }); });
+
+    const canvas = screen.getByTestId("graph-canvas");
+    fireEvent.mouseDown(canvas, { shiftKey: true, clientX: 100, clientY: 100 });
+    fireEvent.mouseMove(canvas, { clientX: 200, clientY: 200 });
+
+    expect(screen.queryByTestId("lasso-rect")).toBeNull();
+  });
+
+  it("cursor changes to crosshair during lasso, resets on mouseup", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const canvas = screen.getByTestId("graph-canvas");
+    fireEvent.mouseDown(canvas, { shiftKey: true, clientX: 100, clientY: 100 });
+
+    expect(canvas.style.cursor).toBe("crosshair");
+
+    fireEvent.mouseUp(canvas);
+    expect(canvas.style.cursor).toBe("grab");
   });
 });

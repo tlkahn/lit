@@ -4,13 +4,14 @@ export interface GraphToolbarProps {
   mode: "full" | "local";
   depth: number;
   localDisabled?: boolean;
+  selectionCount?: number;
   onModeChange: (mode: "full" | "local") => void;
   onDepthChange: (depth: number) => void;
   onResetZoom: () => void;
   onSearch?: () => void;
 }
 
-export function GraphToolbar({ mode, depth, localDisabled, onModeChange, onDepthChange, onResetZoom, onSearch }: GraphToolbarProps) {
+export function GraphToolbar({ mode, depth, localDisabled, selectionCount, onModeChange, onDepthChange, onResetZoom, onSearch }: GraphToolbarProps) {
   return (
     <div className="graph-toolbar">
       <div className="graph-toolbar-group">
@@ -61,6 +62,11 @@ export function GraphToolbar({ mode, depth, localDisabled, onModeChange, onDepth
         >
           ⌕
         </button>
+      )}
+      {selectionCount != null && selectionCount > 0 && (
+        <span data-testid="selection-badge" className="graph-toolbar-badge">
+          {selectionCount}
+        </span>
       )}
     </div>
   );
