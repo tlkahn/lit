@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
 import * as ipc from "../lib/ipc";
-import type { PageMeta, IndexProgress } from "../lib/ipc";
+import type { PageMeta, IndexProgress, TrashEntry } from "../lib/ipc";
 import type { Heading } from "../lib/headings";
 import { usePaneStore, createInitialState, startLayoutSync, stopLayoutSync } from "./panes";
 import {
@@ -35,6 +35,7 @@ export interface WorkspaceStore {
   isDirty: boolean;
   reloadTrigger: number;
   viewStates: Record<string, ViewState>;
+  trashItems: TrashEntry[];
   graphReady: boolean;
   indexProgress: IndexProgress | null;
   loading: boolean;
@@ -47,6 +48,10 @@ export interface WorkspaceStore {
   createPage: (name: string, parentDir?: string) => Promise<void>;
   renamePage: (oldPath: string, newName: string) => Promise<void>;
   deletePage: (relativePath: string) => Promise<void>;
+  loadTrash: () => Promise<void>;
+  restorePage: (trashName: string) => Promise<void>;
+  purgePage: (trashName: string) => Promise<void>;
+  emptyTrash: () => Promise<void>;
   clearPendingTitleFocus: () => void;
   setCurrentPageHeadings: (headings: Heading[]) => void;
   setCurrentFrontmatterLineCount: (count: number) => void;
@@ -75,6 +80,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   reloadTrigger: 0,
   viewStates: {},
   paneViewStates: {},
+  trashItems: [],
   graphReady: false,
   indexProgress: null,
   loading: false,
@@ -224,7 +230,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
 
   deletePage: async (relativePath: string) => {
     try {
-      await ipc.deletePage(relativePath);
+      await ipc.trashPage(relativePath);
       set((state) => {
         const viewStates = Object.fromEntries(
           Object.entries(state.viewStates).filter(([k]) => k !== relativePath),
@@ -237,6 +243,47 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         };
       });
       usePaneStore.getState().clearPageFromPanes(relativePath);
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
+  loadTrash: async () => {
+    try {
+      const items = await ipc.listTrash();
+      set({ trashItems: items });
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
+  restorePage: async (trashName: string) => {
+    try {
+      await ipc.restorePage(trashName);
+      set((state) => ({
+        trashItems: state.trashItems.filter((e) => e.trash_name !== trashName),
+      }));
+      await get().refreshPages();
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
+  purgePage: async (trashName: string) => {
+    try {
+      await ipc.purgePage(trashName);
+      set((state) => ({
+        trashItems: state.trashItems.filter((e) => e.trash_name !== trashName),
+      }));
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
+  emptyTrash: async () => {
+    try {
+      await ipc.emptyTrash();
+      set({ trashItems: [] });
     } catch (e) {
       set({ error: String(e) });
     }
