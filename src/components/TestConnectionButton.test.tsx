@@ -12,6 +12,10 @@ describe("TestConnectionButton", () => {
     vi.resetAllMocks();
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("renders a Test Connection button", () => {
     render(<TestConnectionButton model="gpt-4o" />);
     const btn = screen.getByTestId("test-connection-btn");
@@ -96,7 +100,6 @@ describe("TestConnectionButton", () => {
     });
 
     expect(screen.queryByTestId("test-connection-status")).toBeNull();
-    vi.useRealTimers();
   });
 
   it("does not auto-dismiss error status", async () => {
@@ -116,6 +119,5 @@ describe("TestConnectionButton", () => {
     });
 
     expect(screen.getByTestId("test-connection-status")).toHaveTextContent("Bad key");
-    vi.useRealTimers();
   });
 });

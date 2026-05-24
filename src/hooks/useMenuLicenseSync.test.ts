@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook } from "@testing-library/react";
+import { renderHook, waitFor } from "@testing-library/react";
 import { useMenuLicenseSync } from "./useMenuLicenseSync";
 import { useLicenseStore } from "../stores/license";
 import { syncLicenseMenu } from "../lib/ipc";
@@ -26,21 +26,24 @@ describe("useMenuLicenseSync", () => {
 
   it("does not call syncLicenseMenu when state is unknown", async () => {
     renderHook(() => useMenuLicenseSync());
-    await new Promise((r) => setTimeout(r, 10));
-    expect(syncLicenseMenu).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(syncLicenseMenu).not.toHaveBeenCalled();
+    });
   });
 
   it("calls syncLicenseMenu with 'trial' when state is trial", async () => {
     useLicenseStore.setState({ state: "trial", loading: false });
     renderHook(() => useMenuLicenseSync());
-    await new Promise((r) => setTimeout(r, 10));
-    expect(syncLicenseMenu).toHaveBeenCalledWith("trial");
+    await waitFor(() => {
+      expect(syncLicenseMenu).toHaveBeenCalledWith("trial");
+    });
   });
 
   it("calls syncLicenseMenu with 'licensed' when state is licensed", async () => {
     useLicenseStore.setState({ state: "licensed", loading: false });
     renderHook(() => useMenuLicenseSync());
-    await new Promise((r) => setTimeout(r, 10));
-    expect(syncLicenseMenu).toHaveBeenCalledWith("licensed");
+    await waitFor(() => {
+      expect(syncLicenseMenu).toHaveBeenCalledWith("licensed");
+    });
   });
 });

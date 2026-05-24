@@ -13,7 +13,6 @@ const mockedGetLicenseStatus = getLicenseStatus as ReturnType<typeof vi.fn>;
 const mockedActivateLicense = activateLicense as ReturnType<typeof vi.fn>;
 const mockedCheckOnlineValidation = checkOnlineValidation as ReturnType<typeof vi.fn>;
 
-const flushPromises = () => new Promise(resolve => setTimeout(resolve, 0));
 
 describe("license store", () => {
   beforeEach(() => {
@@ -109,9 +108,10 @@ describe("license store", () => {
     mockedCheckOnlineValidation.mockResolvedValue({ action: "revoked", reason: "refund" });
     await useLicenseStore.getState().fetchStatus();
     expect(useLicenseStore.getState().state).toBe("licensed");
-    await flushPromises();
+    await vi.waitFor(() => {
+      expect(useLicenseStore.getState().state).toBe("expired");
+    });
     const s = useLicenseStore.getState();
-    expect(s.state).toBe("expired");
     expect(s.daysRemaining).toBe(0);
     expect(mockedGetLicenseStatus).toHaveBeenCalledTimes(2);
   });
@@ -121,8 +121,9 @@ describe("license store", () => {
     mockedCheckOnlineValidation.mockResolvedValue({ action: "valid" });
     await useLicenseStore.getState().fetchStatus();
     expect(mockedGetLicenseStatus).toHaveBeenCalledTimes(1);
-    await flushPromises();
-    expect(mockedGetLicenseStatus).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(mockedGetLicenseStatus).toHaveBeenCalledTimes(1);
+    });
     expect(useLicenseStore.getState().state).toBe("licensed");
   });
 
@@ -131,8 +132,9 @@ describe("license store", () => {
     mockedCheckOnlineValidation.mockResolvedValue({ action: "skipped", reason: "not_due" });
     await useLicenseStore.getState().fetchStatus();
     expect(mockedGetLicenseStatus).toHaveBeenCalledTimes(1);
-    await flushPromises();
-    expect(mockedGetLicenseStatus).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(mockedGetLicenseStatus).toHaveBeenCalledTimes(1);
+    });
     expect(useLicenseStore.getState().state).toBe("licensed");
   });
 
@@ -140,9 +142,10 @@ describe("license store", () => {
     mockedGetLicenseStatus.mockResolvedValue({ state: "licensed", licensed_to: "Alice" });
     mockedCheckOnlineValidation.mockRejectedValue(new Error("IPC error"));
     await useLicenseStore.getState().fetchStatus();
-    await flushPromises();
-    const s = useLicenseStore.getState();
-    expect(s.state).toBe("licensed");
-    expect(s.loading).toBe(false);
+    await vi.waitFor(() => {
+      const s = useLicenseStore.getState();
+      expect(s.state).toBe("licensed");
+      expect(s.loading).toBe(false);
+    });
   });
 });
