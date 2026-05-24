@@ -641,6 +641,27 @@ export async function syncLicenseMenu(licenseState: string): Promise<void> {
   return invoke<void>("sync_license_menu", { licenseState });
 }
 
+// Oplog (undo)
+
+export interface OperationSummary {
+  id: number;
+  op_type: string;
+  description: string;
+  created_at: number;
+}
+
+export async function undoLastOperation(): Promise<string> {
+  return invoke<string>("undo_last_operation");
+}
+
+export async function listUndoHistory(limit?: number): Promise<OperationSummary[]> {
+  return invoke<OperationSummary[]>("list_undo_history", { limit: limit ?? null });
+}
+
+export async function canUndo(): Promise<boolean> {
+  return invoke<boolean>("can_undo");
+}
+
 // Annotation DSL
 
 export type AnnotationType =
