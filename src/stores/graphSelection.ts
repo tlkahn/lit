@@ -50,3 +50,13 @@ export const useGraphSelectionStore = create<GraphSelectionState>((set, get) => 
   clearSelection: () => set({ selectedNodes: [], selectionMode: "none" }),
   isSelected: (id) => get().selectedNodes.includes(id),
 }));
+
+useGraphSelectionStore.subscribe((state, prev) => {
+  if (state.selectedNodes !== prev.selectedNodes) {
+    console.debug(
+      "[graphSelection] %s | selected: %o",
+      state.selectionMode,
+      state.selectedNodes,
+    );
+  }
+});
