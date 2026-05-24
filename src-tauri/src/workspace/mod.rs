@@ -1,4 +1,5 @@
 pub mod frontmatter;
+pub mod frontmatter_merge;
 pub mod normalize;
 pub mod ops;
 pub mod page;
