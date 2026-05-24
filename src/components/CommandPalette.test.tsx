@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import { CommandPalette, _resetRegistration } from "./CommandPalette";
 import { mockInvoke } from "../test/tauri-mock";
-import { _clear as _clearCommandRegistry } from "../lib/commandRegistry";
+import { _clear as _clearCommandRegistry, hasCommand } from "../lib/commandRegistry";
 import * as registry from "../lib/paletteRegistry";
 import type { PaletteResult } from "../lib/paletteRegistry";
 import type { AnnotationSearchResult, GraphSearchResult, TagSearchResult, TagPageResult } from "../lib/ipc";
@@ -76,6 +76,16 @@ vi.mock("../stores/preferences", () => ({
       selector({ darkMode: "auto" }),
     {
       getState: () => ({ darkMode: "auto" }),
+    },
+  ),
+}));
+
+vi.mock("../stores/graphSelection", () => ({
+  useGraphSelectionStore: Object.assign(
+    (selector: (s: Record<string, unknown>) => unknown) =>
+      selector({ selectedNodes: [] }),
+    {
+      getState: () => ({ selectedNodes: [] }),
     },
   ),
 }));
@@ -1350,6 +1360,14 @@ describe("CommandPalette", () => {
       });
       expect(screen.getByText("Filtered Result")).toBeInTheDocument();
       expect(screen.queryByText("Unfiltered Result")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("fuse-fracture registration", () => {
+    it("ensureRegistered registers fuse-fracture commands", () => {
+      render(<CommandPalette open={true} onClose={onClose} />);
+      expect(hasCommand("lit.mergeDocuments")).toBe(true);
+      expect(hasCommand("lit.splitDocument")).toBe(true);
     });
   });
 });

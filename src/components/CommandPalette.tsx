@@ -7,6 +7,7 @@ import { tagProvider } from "../lib/tagProvider";
 import { contentProvider } from "../lib/contentProvider";
 import { commandProvider } from "../lib/commandProvider";
 import { initCoreCommands } from "../lib/commands/core";
+import { initFuseFractureCommands } from "../lib/commands/fuseFracture";
 import { recordAccess, sortByFrecency } from "../lib/frecency";
 
 const omniContentHintProvider: PaletteProvider = {
@@ -40,6 +41,7 @@ function ensureRegistered(): void {
   registry.register(contentProvider);
   registry.register(commandProvider);
   initCoreCommands();
+  initFuseFractureCommands();
 }
 
 export function _resetRegistration(): void {
