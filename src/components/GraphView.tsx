@@ -510,7 +510,10 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
 
   const handleLassoMouseDown = useCallback((e: React.MouseEvent) => {
     if (!e.shiftKey || hoveredNodeRef.current) return;
-    const coords = { startX: e.clientX, startY: e.clientY, currentX: e.clientX, currentY: e.clientY };
+    const rect = containerRef.current?.getBoundingClientRect();
+    const x = e.clientX - (rect?.left ?? 0);
+    const y = e.clientY - (rect?.top ?? 0);
+    const coords = { startX: x, startY: y, currentX: x, currentY: y };
     lassoRef.current = coords;
     useGraphSelectionStore.getState().setSelectionMode("lasso");
     setLassoState(coords);
@@ -522,9 +525,12 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
 
   const handleLassoMouseMove = useCallback((e: React.MouseEvent) => {
     if (!lassoRef.current) return;
-    lassoRef.current.currentX = e.clientX;
-    lassoRef.current.currentY = e.clientY;
-    setLassoState((prev) => prev ? { ...prev, currentX: e.clientX, currentY: e.clientY } : null);
+    const rect = containerRef.current?.getBoundingClientRect();
+    const x = e.clientX - (rect?.left ?? 0);
+    const y = e.clientY - (rect?.top ?? 0);
+    lassoRef.current.currentX = x;
+    lassoRef.current.currentY = y;
+    setLassoState((prev) => prev ? { ...prev, currentX: x, currentY: y } : null);
   }, []);
 
   const handleLassoMouseUp = useCallback(() => {

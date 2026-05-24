@@ -2269,6 +2269,57 @@ describe("GraphView", () => {
     expect(result.highlighted).toBeUndefined();
   });
 
+  // --- Issue #171: Lasso rect offset when container is not at viewport origin ---
+
+  it("lasso rect uses container-relative coordinates, not raw viewport clientX/Y", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const canvas = screen.getByTestId("graph-canvas");
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
+      left: 200, top: 50, right: 1000, bottom: 800,
+      width: 800, height: 750, x: 200, y: 50, toJSON: () => ({}),
+    });
+
+    fireEvent.mouseDown(canvas, { shiftKey: true, clientX: 300, clientY: 150 });
+    fireEvent.mouseMove(canvas, { clientX: 500, clientY: 250 });
+
+    const rect = screen.getByTestId("lasso-rect");
+    expect(rect.style.left).toBe("100px");
+    expect(rect.style.top).toBe("100px");
+    expect(rect.style.width).toBe("200px");
+    expect(rect.style.height).toBe("100px");
+  });
+
+  it("lasso node hit-testing uses container-relative coords matching sigma display data", async () => {
+    mockGetNodeDisplayData.mockImplementation((nodeId: string) => {
+      if (nodeId === "a.md") return { x: 150, y: 150 };
+      if (nodeId === "b.md") return { x: 50, y: 50 };
+      return { x: 0, y: 0 };
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const canvas = screen.getByTestId("graph-canvas");
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
+      left: 200, top: 50, right: 1000, bottom: 800,
+      width: 800, height: 750, x: 200, y: 50, toJSON: () => ({}),
+    });
+
+    // Container-relative: (100,100) to (300,250)
+    fireEvent.mouseDown(canvas, { shiftKey: true, clientX: 300, clientY: 150 });
+    fireEvent.mouseMove(canvas, { clientX: 500, clientY: 300 });
+    fireEvent.mouseUp(canvas);
+
+    // a.md at (150,150) is inside [100,100]->[300,250]
+    expect(useGraphSelectionStore.getState().selectedNodes).toContain("a.md");
+    // b.md at (50,50) is outside
+    expect(useGraphSelectionStore.getState().selectedNodes).not.toContain("b.md");
+  });
+
   it("camera panning re-enabled after empty lasso", async () => {
     mockGetNodeDisplayData.mockReturnValue({ x: 500, y: 500 });
 
