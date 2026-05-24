@@ -3,6 +3,7 @@ pub mod normalize;
 pub mod ops;
 pub mod page;
 pub mod scan;
+pub mod split;
 pub mod trash;
 pub mod watcher;
 pub mod write_hash;
