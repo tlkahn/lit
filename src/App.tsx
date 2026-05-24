@@ -68,6 +68,7 @@ function App() {
   const colorTheme = usePreferencesStore((s) => s.colorTheme);
   const syncFromPreferences = useThemeStore((s) => s.syncFromPreferences);
   const sidebarVisible = usePreferencesStore((s) => s.sidebarVisible);
+  const llmEnabled = usePreferencesStore((s) => s.llmOpenaiApiKeySet || s.llmAnthropicApiKeySet);
   const focusModeActive = useFocusModeStore((s) => s.active);
   const toggleFocusMode = useFocusModeStore((s) => s.toggleFocusMode);
 
@@ -449,6 +450,8 @@ function App() {
         <MergePreviewDialog
           open={mergePreviewOpen}
           docs={mergePreviewDocs}
+          llmEnabled={llmEnabled}
+          // TODO(phase-4): use the MergePlan returned by previewMerge instead of discarding it
           onConfirm={() => setMergePreviewOpen(false)}
           onCancel={() => setMergePreviewOpen(false)}
         />

@@ -9,21 +9,26 @@ export function initFuseFractureCommands(): void {
       id: "lit.mergeDocuments",
       label: "Merge selected documents",
       keywords: ["fuse", "combine", "join", "merge"],
+      icon: "🔀",
       when: () => useGraphSelectionStore.getState().selectedNodes.length >= 2,
       action: () => {
         const nodes = useGraphSelectionStore.getState().selectedNodes;
+        if (nodes.length < 2) return;
         Promise.all(nodes.map((path) => readPage(path))).then((docs) => {
           window.dispatchEvent(
             new CustomEvent("lit:open-merge-preview", { detail: { docs } }),
           );
-        });
+        }).catch(console.error);
       },
     },
     {
       id: "lit.splitDocument",
       label: "Split current document",
       keywords: ["fracture", "break", "divide", "split"],
-      when: () => useWorkspaceStore.getState().currentPagePath != null,
+      icon: "✂️",
+      when: () =>
+        useWorkspaceStore.getState().workspacePath != null &&
+        useWorkspaceStore.getState().currentPagePath != null,
       action: () => {
         const path = useWorkspaceStore.getState().currentPagePath!;
         readPage(path).then((page) =>
@@ -34,7 +39,7 @@ export function initFuseFractureCommands(): void {
               }),
             );
           }),
-        );
+        ).catch(console.error);
       },
     },
   ]);
