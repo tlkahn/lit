@@ -1,12 +1,12 @@
 import { useState, useCallback } from "react";
 
-export type SidebarTab = "files" | "outline";
+export type SidebarTab = "files" | "outline" | "trash";
 
 const STORAGE_KEY = "lit-sidebar-tab";
 
 function getInitialTab(): SidebarTab {
   const stored = localStorage.getItem(STORAGE_KEY);
-  if (stored === "files" || stored === "outline") return stored;
+  if (stored === "files" || stored === "outline" || stored === "trash") return stored;
   return "files";
 }
 

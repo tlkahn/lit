@@ -11,6 +11,7 @@ pub mod license;
 pub mod page;
 pub mod preferences;
 pub mod theme;
+pub mod trash;
 pub mod llm;
 pub mod pdf_viewer;
 pub mod workspace;

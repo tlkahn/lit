@@ -10,6 +10,11 @@ import {
   createPage,
   renamePage,
   deletePage,
+  trashPage,
+  restorePage,
+  purgePage,
+  listTrash,
+  emptyTrash,
   acknowledgeFileHash,
   parseRawYaml,
   openWorkspaceWindow,
@@ -104,6 +109,22 @@ describe("ipc", () => {
         case "rename_page":
           return "New.md";
         case "delete_page":
+          return null;
+        case "trash_page":
+          return {
+            trash_name: `${(args as Record<string, unknown>)?.relativePath}.1716556800.md`,
+            original_path: (args as Record<string, unknown>)?.relativePath,
+            deleted_at: 1716556800,
+          };
+        case "restore_page":
+          return "restored.md";
+        case "purge_page":
+          return null;
+        case "list_trash":
+          return [
+            { trash_name: "a.123.md", original_path: "a.md", deleted_at: 123 },
+          ];
+        case "empty_trash":
           return null;
         case "acknowledge_file_hash":
           return null;
@@ -1204,6 +1225,41 @@ describe("ipc", () => {
       model: "claude-sonnet-4-6",
       baseUrl: null,
     });
+  });
+
+  it("trashPage calls trash_page with relativePath", async () => {
+    const entry = await trashPage("Doomed.md");
+    expect(entry.original_path).toBe("Doomed.md");
+    expect(entry.deleted_at).toBe(1716556800);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("trash_page", { relativePath: "Doomed.md" });
+  });
+
+  it("restorePage calls restore_page with trashName", async () => {
+    const original = await restorePage("a.123.md");
+    expect(original).toBe("restored.md");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("restore_page", { trashName: "a.123.md" });
+  });
+
+  it("purgePage calls purge_page with trashName", async () => {
+    await purgePage("a.123.md");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("purge_page", { trashName: "a.123.md" });
+  });
+
+  it("listTrash calls list_trash", async () => {
+    const items = await listTrash();
+    expect(items).toHaveLength(1);
+    expect(items[0]!.trash_name).toBe("a.123.md");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("list_trash");
+  });
+
+  it("emptyTrash calls empty_trash", async () => {
+    await emptyTrash();
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("empty_trash");
   });
 
 });
