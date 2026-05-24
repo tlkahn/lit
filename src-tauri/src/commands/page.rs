@@ -170,10 +170,7 @@ pub fn rewrite_vault_links(
     let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
 
     for pr in &planned.rewrites {
-        let full_path = root.join(&pr.relative_path);
-        if let Ok(content) = std::fs::read_to_string(&full_path) {
-            registry.record(&full_path, &content);
-        }
+        registry.record(&root.join(&pr.relative_path), &pr.after_content);
         if let Some(ref gi) = gi {
             let _ = gi.reindex_file(&pr.relative_path, ann_enabled);
         }
