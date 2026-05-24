@@ -35,7 +35,9 @@ import { SubgraphExportPicker } from "./components/SubgraphExportPicker";
 import { useBottomPanelEvents } from "./hooks/useBottomPanelEvents";
 import { getCurrentEditorView } from "./lib/editorViewRef";
 import { annotationToFields, getEditCursorOffset, type AnnotationBuilderEventDetail, type EditRawInfo } from "./lib/annotationDsl";
-import type { Annotation, ExportProgress, ExportSummary } from "./lib/ipc";
+import type { Annotation, ExportProgress, ExportSummary, PageContent, SplitPlan } from "./lib/ipc";
+import { MergePreviewDialog } from "./components/MergePreviewDialog";
+import { SplitPreviewDialog } from "./components/SplitPreviewDialog";
 
 interface LitCliArgs {
   workspace: string | null;
@@ -131,6 +133,12 @@ function App() {
   const licenseState = useLicenseStore((s) => s.state);
   const licensedTo = useLicenseStore((s) => s.licensedTo);
   const daysRemaining = useLicenseStore((s) => s.daysRemaining);
+
+  const [mergePreviewOpen, setMergePreviewOpen] = useState(false);
+  const [mergePreviewDocs, setMergePreviewDocs] = useState<PageContent[]>([]);
+  const [splitPreviewOpen, setSplitPreviewOpen] = useState(false);
+  const [splitPreviewPlan, setSplitPreviewPlan] = useState<SplitPlan>({ preamble: null, sections: [] });
+  const [splitPreviewPath, setSplitPreviewPath] = useState("");
 
   useMenuLicenseSync();
 
@@ -259,6 +267,8 @@ function App() {
   useModalLock(commandPaletteOpen);
   useModalLock(annotationBuilderOpen);
   useModalLock(settingsOpen);
+  useModalLock(mergePreviewOpen);
+  useModalLock(splitPreviewOpen);
 
   useEffect(() => {
     const handler = () => setQuickSwitcherOpen((prev) => !prev);
@@ -288,6 +298,27 @@ function App() {
     };
     window.addEventListener("lit:open-keyboard-shortcuts", handler);
     return () => window.removeEventListener("lit:open-keyboard-shortcuts", handler);
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ docs: PageContent[] }>).detail;
+      setMergePreviewDocs(detail.docs);
+      setMergePreviewOpen(true);
+    };
+    window.addEventListener("lit:open-merge-preview", handler);
+    return () => window.removeEventListener("lit:open-merge-preview", handler);
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ plan: SplitPlan; originalPath: string }>).detail;
+      setSplitPreviewPlan(detail.plan);
+      setSplitPreviewPath(detail.originalPath);
+      setSplitPreviewOpen(true);
+    };
+    window.addEventListener("lit:open-split-preview", handler);
+    return () => window.removeEventListener("lit:open-split-preview", handler);
   }, []);
 
   useEffect(() => {
@@ -414,6 +445,19 @@ function App() {
           open={exportFlow.pickerOpen}
           onExport={exportFlow.handlePickerExport}
           onCancel={exportFlow.handlePickerCancel}
+        />
+        <MergePreviewDialog
+          open={mergePreviewOpen}
+          docs={mergePreviewDocs}
+          onConfirm={() => setMergePreviewOpen(false)}
+          onCancel={() => setMergePreviewOpen(false)}
+        />
+        <SplitPreviewDialog
+          open={splitPreviewOpen}
+          plan={splitPreviewPlan}
+          originalPath={splitPreviewPath}
+          onConfirm={() => setSplitPreviewOpen(false)}
+          onCancel={() => setSplitPreviewOpen(false)}
         />
       </div>
     </LicenseGate>
