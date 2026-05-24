@@ -7,8 +7,10 @@ export interface GraphSelectionState {
   selectionMode: SelectionMode;
   toggleNode: (id: string) => void;
   addNode: (id: string) => void;
+  addNodes: (ids: string[]) => void;
   removeNode: (id: string) => void;
   setNodes: (ids: string[]) => void;
+  setSelectionMode: (mode: SelectionMode) => void;
   clearSelection: () => void;
   isSelected: (id: string) => boolean;
 }
@@ -30,12 +32,21 @@ export const useGraphSelectionStore = create<GraphSelectionState>((set, get) => 
       if (s.selectedNodes.includes(id)) return s;
       return { selectedNodes: [...s.selectedNodes, id] };
     }),
+  addNodes: (ids) =>
+    set((s) => {
+      if (ids.length === 0) return s;
+      const existing = new Set(s.selectedNodes);
+      const newIds = ids.filter((id) => !existing.has(id));
+      if (newIds.length === 0) return s;
+      return { selectedNodes: [...s.selectedNodes, ...newIds] };
+    }),
   removeNode: (id) =>
     set((s) => {
       if (!s.selectedNodes.includes(id)) return s;
       return { selectedNodes: s.selectedNodes.filter((n) => n !== id) };
     }),
   setNodes: (ids) => set({ selectedNodes: ids }),
+  setSelectionMode: (mode) => set({ selectionMode: mode }),
   clearSelection: () => set({ selectedNodes: [], selectionMode: "none" }),
   isSelected: (id) => get().selectedNodes.includes(id),
 }));

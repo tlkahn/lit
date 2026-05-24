@@ -15,6 +15,8 @@ const mockCameraAnimatedReset = vi.fn();
 const mockCameraAnimate = vi.fn();
 const mockGetNodeDisplayData = vi.fn().mockReturnValue({ x: 0, y: 0 });
 const mockSigmaRefresh = vi.fn();
+const dimColorRef = () =>
+  getComputedStyle(document.documentElement).getPropertyValue("--background-modifier-border").trim() || "#d1d9e0";
 let lastSigmaOptions: Record<string, unknown> = {};
 
 vi.mock("sigma", () => ({
@@ -2091,6 +2093,27 @@ describe("GraphView", () => {
     expect(screen.queryByTestId("lasso-rect")).toBeNull();
   });
 
+  it("lasso mouseup uses latest mouse position, not stale intermediate", async () => {
+    mockGetNodeDisplayData.mockImplementation((nodeId: string) => {
+      if (nodeId === "a.md") return { x: 150, y: 150 };
+      if (nodeId === "b.md") return { x: 350, y: 350 };
+      return { x: 0, y: 0 };
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const canvas = screen.getByTestId("graph-canvas");
+    fireEvent.mouseDown(canvas, { shiftKey: true, clientX: 100, clientY: 100 });
+    fireEvent.mouseMove(canvas, { clientX: 200, clientY: 200 });
+    fireEvent.mouseMove(canvas, { clientX: 400, clientY: 400 });
+    fireEvent.mouseUp(canvas);
+
+    expect(useGraphSelectionStore.getState().selectedNodes).toContain("a.md");
+    expect(useGraphSelectionStore.getState().selectedNodes).toContain("b.md");
+  });
+
   it("Shift+mousedown while hovering a node does NOT start lasso", async () => {
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView />);
@@ -2121,5 +2144,145 @@ describe("GraphView", () => {
 
     fireEvent.mouseUp(canvas);
     expect(canvas.style.cursor).toBe("grab");
+  });
+
+  // --- Phase 2D: Perf, batching, camera panning fixes ---
+
+  it("lasso selects all matching nodes in a single store update", async () => {
+    mockGetNodeDisplayData.mockImplementation((nodeId: string) => {
+      if (nodeId === "a.md") return { x: 150, y: 150 };
+      if (nodeId === "b.md") return { x: 160, y: 160 };
+      return { x: 0, y: 0 };
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    mockSigmaRefresh.mockClear();
+
+    const canvas = screen.getByTestId("graph-canvas");
+    fireEvent.mouseDown(canvas, { shiftKey: true, clientX: 100, clientY: 100 });
+    fireEvent.mouseMove(canvas, { clientX: 200, clientY: 200 });
+    fireEvent.mouseUp(canvas);
+
+    const { selectedNodes } = useGraphSelectionStore.getState();
+    expect(selectedNodes).toContain("a.md");
+    expect(selectedNodes).toContain("b.md");
+    expect(mockSigmaRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("subscription uses selector — selectionMode-only change does not trigger sigma.refresh()", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    mockSigmaRefresh.mockClear();
+
+    act(() => {
+      useGraphSelectionStore.getState().setSelectionMode("lasso");
+    });
+
+    expect(mockSigmaRefresh).not.toHaveBeenCalled();
+  });
+
+  it("lasso disables camera panning on mousedown, re-enables on mouseup", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    mockSigmaSetSetting.mockClear();
+
+    const canvas = screen.getByTestId("graph-canvas");
+    fireEvent.mouseDown(canvas, { shiftKey: true, clientX: 100, clientY: 100 });
+
+    expect(mockSigmaSetSetting).toHaveBeenCalledWith("enableCameraPanning", false);
+
+    fireEvent.mouseUp(canvas);
+
+    expect(mockSigmaSetSetting).toHaveBeenCalledWith("enableCameraPanning", true);
+  });
+
+  // --- Issue #6: Search + Selection reducer composition ---
+
+  it("selected node retains highlight when dimmed by search (non-match)", async () => {
+    useGraphSelectionStore.getState().toggleNode("b.md");
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await userEvent.click(screen.getByRole("button", { name: "Search graph" }));
+    mockSigmaSetSetting.mockClear();
+
+    const input = screen.getByTestId("graph-search-input");
+    await userEvent.type(input, "A");
+
+    const nodeReducerCall = mockSigmaSetSetting.mock.calls.find(
+      (call) => call[0] === "nodeReducer",
+    );
+    const reducer = nodeReducerCall![1] as (n: string, attrs: Record<string, unknown>) => Record<string, unknown>;
+    const result = reducer("b.md", { color: "#000", label: "B" });
+    expect(result.highlighted).toBe(true);
+    expect(result.color).toBe(dimColorRef());
+  });
+
+  it("selected node that matches search query keeps highlighted: true", async () => {
+    useGraphSelectionStore.getState().toggleNode("a.md");
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await userEvent.click(screen.getByRole("button", { name: "Search graph" }));
+    mockSigmaSetSetting.mockClear();
+
+    const input = screen.getByTestId("graph-search-input");
+    await userEvent.type(input, "A");
+
+    const nodeReducerCall = mockSigmaSetSetting.mock.calls.find(
+      (call) => call[0] === "nodeReducer",
+    );
+    const reducer = nodeReducerCall![1] as (n: string, attrs: Record<string, unknown>) => Record<string, unknown>;
+    const result = reducer("a.md", { color: "#000", label: "A" });
+    expect(result.highlighted).toBe(true);
+  });
+
+  it("unselected non-match node is dimmed without highlight during search", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await userEvent.click(screen.getByRole("button", { name: "Search graph" }));
+    mockSigmaSetSetting.mockClear();
+
+    const input = screen.getByTestId("graph-search-input");
+    await userEvent.type(input, "A");
+
+    const nodeReducerCall = mockSigmaSetSetting.mock.calls.find(
+      (call) => call[0] === "nodeReducer",
+    );
+    const reducer = nodeReducerCall![1] as (n: string, attrs: Record<string, unknown>) => Record<string, unknown>;
+    const result = reducer("b.md", { color: "#000", label: "B" });
+    expect(result.color).toBe(dimColorRef());
+    expect(result.label).toBeNull();
+    expect(result.highlighted).toBeUndefined();
+  });
+
+  it("camera panning re-enabled after empty lasso", async () => {
+    mockGetNodeDisplayData.mockReturnValue({ x: 500, y: 500 });
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    mockSigmaSetSetting.mockClear();
+
+    const canvas = screen.getByTestId("graph-canvas");
+    fireEvent.mouseDown(canvas, { shiftKey: true, clientX: 100, clientY: 100 });
+    fireEvent.mouseMove(canvas, { clientX: 200, clientY: 200 });
+    fireEvent.mouseUp(canvas);
+
+    expect(mockSigmaSetSetting).toHaveBeenCalledWith("enableCameraPanning", true);
   });
 });

@@ -33,9 +33,9 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   const rafIdRef = useRef<number>(0);
   const pendingPosRef = useRef<{ x: number; y: number } | null>(null);
   const dimColorRef = useRef("#d1d9e0");
+  const selectedSetRef = useRef<Set<string>>(new Set());
   const defaultNodeReducer = useCallback((_n: string, attrs: Record<string, unknown>) => {
-    const { selectedNodes } = useGraphSelectionStore.getState();
-    if (selectedNodes.length > 0 && selectedNodes.includes(_n)) {
+    if (selectedSetRef.current.size > 0 && selectedSetRef.current.has(_n)) {
       return { ...attrs, label: null, highlighted: true };
     }
     return { ...attrs, label: null };
@@ -77,7 +77,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   const selectionCount = useGraphSelectionStore((s) => s.selectedNodes.length);
   const unsubSelectionRef = useRef<(() => void) | null>(null);
   const [lassoState, setLassoState] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null);
-  const lassoActiveRef = useRef(false);
+  const lassoRef = useRef<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -122,7 +122,10 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
     const matchSet = new Set(matches);
     sigma.setSetting("nodeReducer", (_n: string, attrs: Record<string, unknown>) => {
       if (matchSet.has(_n)) return { ...attrs, highlighted: true };
-      return { ...attrs, color: dimColorRef.current, label: null };
+      const isSelected = selectedSetRef.current.size > 0 && selectedSetRef.current.has(_n);
+      return isSelected
+        ? { ...attrs, color: dimColorRef.current, label: null, highlighted: true }
+        : { ...attrs, color: dimColorRef.current, label: null };
     });
     sigma.setSetting("edgeReducer", (_e: string, attrs: Record<string, unknown>) => {
       const src = graph.source(_e);
@@ -287,8 +290,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
           neighbors.add(node);
 
           sigma.setSetting("nodeReducer", (_n: string, attrs: Record<string, unknown>) => {
-            const selected = useGraphSelectionStore.getState().selectedNodes;
-            const isSelected = selected.length > 0 && selected.includes(_n);
+            const isSelected = selectedSetRef.current.size > 0 && selectedSetRef.current.has(_n);
             if (_n === node) return isSelected ? { ...attrs, highlighted: true } : attrs;
             if (neighbors.has(_n)) return isSelected ? { ...attrs, label: null, highlighted: true } : { ...attrs, label: null };
             return isSelected
@@ -351,8 +353,12 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
           restoreDefaultReducers();
         });
 
-        unsubSelectionRef.current = useGraphSelectionStore.subscribe(() => {
-          sigma.refresh();
+        selectedSetRef.current = new Set(useGraphSelectionStore.getState().selectedNodes);
+        unsubSelectionRef.current = useGraphSelectionStore.subscribe((state, prev) => {
+          if (state.selectedNodes !== prev.selectedNodes) {
+            selectedSetRef.current = new Set(state.selectedNodes);
+            sigma.refresh();
+          }
         });
 
         if (perf) {
@@ -504,24 +510,27 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
 
   const handleLassoMouseDown = useCallback((e: React.MouseEvent) => {
     if (!e.shiftKey || hoveredNodeRef.current) return;
-    lassoActiveRef.current = true;
-    useGraphSelectionStore.setState({ selectionMode: "lasso" });
-    setLassoState({ startX: e.clientX, startY: e.clientY, currentX: e.clientX, currentY: e.clientY });
+    const coords = { startX: e.clientX, startY: e.clientY, currentX: e.clientX, currentY: e.clientY };
+    lassoRef.current = coords;
+    useGraphSelectionStore.getState().setSelectionMode("lasso");
+    setLassoState(coords);
+    (sigmaRef.current as { setSetting: (key: string, value: unknown) => void } | null)?.setSetting("enableCameraPanning", false);
     if (containerRef.current) {
       containerRef.current.style.cursor = "crosshair";
     }
   }, []);
 
   const handleLassoMouseMove = useCallback((e: React.MouseEvent) => {
-    if (!lassoActiveRef.current) return;
+    if (!lassoRef.current) return;
+    lassoRef.current.currentX = e.clientX;
+    lassoRef.current.currentY = e.clientY;
     setLassoState((prev) => prev ? { ...prev, currentX: e.clientX, currentY: e.clientY } : null);
   }, []);
 
   const handleLassoMouseUp = useCallback(() => {
-    if (!lassoActiveRef.current) return;
-    lassoActiveRef.current = false;
+    if (!lassoRef.current) return;
 
-    const prev = lassoState;
+    const prev = lassoRef.current;
     if (prev) {
       const sigma = sigmaRef.current as { getNodeDisplayData: (node: string) => { x: number; y: number } | undefined } | null;
       const graph = graphRef.current as { nodes: () => string[] } | null;
@@ -530,22 +539,27 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         const top = Math.min(prev.startY, prev.currentY);
         const right = Math.max(prev.startX, prev.currentX);
         const bottom = Math.max(prev.startY, prev.currentY);
-        const { addNode } = useGraphSelectionStore.getState();
+        const toAdd: string[] = [];
         for (const nodeId of graph.nodes()) {
           const pos = sigma.getNodeDisplayData(nodeId);
           if (pos && pos.x >= left && pos.x <= right && pos.y >= top && pos.y <= bottom) {
-            addNode(nodeId);
+            toAdd.push(nodeId);
           }
+        }
+        if (toAdd.length > 0) {
+          useGraphSelectionStore.getState().addNodes(toAdd);
         }
       }
     }
 
+    lassoRef.current = null;
     setLassoState(null);
-    useGraphSelectionStore.setState({ selectionMode: useGraphSelectionStore.getState().selectedNodes.length > 0 ? "click" : "none" });
+    (sigmaRef.current as { setSetting: (key: string, value: unknown) => void } | null)?.setSetting("enableCameraPanning", true);
+    useGraphSelectionStore.getState().setSelectionMode(useGraphSelectionStore.getState().selectedNodes.length > 0 ? "click" : "none");
     if (containerRef.current) {
       containerRef.current.style.cursor = "grab";
     }
-  }, [lassoState]);
+  }, []);
 
   const handleContainerKeyDown = useCallback((e: React.KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "f") {
