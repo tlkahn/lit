@@ -870,6 +870,10 @@ export async function suggestMergeTitle(
   }
 }
 
+export async function cancelTitleSuggestion(): Promise<void> {
+  return invoke<void>("cancel_title_suggestion");
+}
+
 export async function mergeDocuments(
   paths: string[],
   title: string,

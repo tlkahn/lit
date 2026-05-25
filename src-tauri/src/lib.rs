@@ -122,6 +122,7 @@ pub fn run() {
         .manage(Arc::new(OpLogRegistry::new()))
         .manage(BibCache::new())
         .manage(commands::llm::LlmState::new())
+        .manage(commands::merge_split::TitleSuggestState::new())
         .setup(move |app| {
             let data_dir = app
                 .path()
@@ -357,6 +358,8 @@ pub fn run() {
             commands::oplog::can_undo,
             commands::merge_split::preview_merge,
             commands::merge_split::preview_split,
+            commands::merge_split::suggest_merge_title,
+            commands::merge_split::cancel_title_suggestion,
             commands::merge_split::execute_split,
             commands::merge_split::merge_documents,
         ])
@@ -383,6 +386,9 @@ pub fn run() {
                 }
                 if let Some(llm_state) = window.try_state::<commands::llm::LlmState>() {
                     llm_state.cancel();
+                }
+                if let Some(title_state) = window.try_state::<commands::merge_split::TitleSuggestState>() {
+                    title_state.cancel();
                 }
             }
         })

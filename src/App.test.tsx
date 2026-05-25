@@ -88,6 +88,8 @@ describe("App", () => {
           return { state: "trial", days_remaining: 12 };
         case "has_api_key":
           return false;
+        case "cancel_title_suggestion":
+          return undefined;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -134,6 +136,8 @@ describe("App", () => {
           return null;
         case "get_license_status":
           return { state: "trial", days_remaining: 12 };
+        case "cancel_title_suggestion":
+          return undefined;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -261,6 +265,8 @@ describe("App", () => {
           return null;
         case "get_license_status":
           return { state: "trial", days_remaining: 12 };
+        case "cancel_title_suggestion":
+          return undefined;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -295,6 +301,8 @@ describe("App", () => {
           return null;
         case "get_license_status":
           return { state: "trial", days_remaining: 12 };
+        case "cancel_title_suggestion":
+          return undefined;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -335,6 +343,8 @@ describe("App", () => {
           return null;
         case "get_license_status":
           return { state: "trial", days_remaining: 12 };
+        case "cancel_title_suggestion":
+          return undefined;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -427,6 +437,8 @@ describe("App", () => {
           return null;
         case "get_license_status":
           return { state: "trial", days_remaining: 12 };
+        case "cancel_title_suggestion":
+          return undefined;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -470,6 +482,8 @@ describe("App", () => {
           return null;
         case "get_license_status":
           return { state: "trial", days_remaining: 12 };
+        case "cancel_title_suggestion":
+          return undefined;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -511,6 +525,8 @@ describe("App", () => {
           return null;
         case "get_license_status":
           return { state: "trial", days_remaining: 12 };
+        case "cancel_title_suggestion":
+          return undefined;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -554,6 +570,8 @@ describe("App", () => {
           return null;
         case "get_license_status":
           return { state: "trial", days_remaining: 12 };
+        case "cancel_title_suggestion":
+          return undefined;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }

@@ -85,6 +85,7 @@ import {
   previewSplit,
   executeSplit,
   suggestMergeTitle,
+  cancelTitleSuggestion,
   mergeDocuments,
 } from "./ipc";
 
@@ -440,6 +441,8 @@ describe("ipc", () => {
           return ["Alpha.md", "Beta.md"];
         case "suggest_merge_title":
           throw new Error("LLM not configured");
+        case "cancel_title_suggestion":
+          return undefined;
         case "merge_documents":
           return "notes/Merged.md";
         case "search_tags":
@@ -1407,6 +1410,10 @@ describe("ipc", () => {
   it("suggestMergeTitle returns null on failure", async () => {
     const result = await suggestMergeTitle(["A", "B"], "merged body");
     expect(result).toBeNull();
+  });
+
+  it("cancelTitleSuggestion resolves without error", async () => {
+    await expect(cancelTitleSuggestion()).resolves.toBeUndefined();
   });
 
   it("mergeDocuments invokes merge_documents and returns merged path", async () => {

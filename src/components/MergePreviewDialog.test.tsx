@@ -50,6 +50,8 @@ describe("MergePreviewDialog", () => {
         }
         case "suggest_merge_title":
           return "AI Suggested Title";
+        case "cancel_title_suggestion":
+          return undefined;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -171,6 +173,7 @@ describe("MergePreviewDialog", () => {
   it("confirm does not throw when previewMerge rejects", async () => {
     mockInvoke((cmd) => {
       if (cmd === "preview_merge") throw new Error("IPC failure");
+      if (cmd === "cancel_title_suggestion") return undefined;
       throw new Error(`Unknown: ${cmd}`);
     });
 
@@ -194,6 +197,9 @@ describe("MergePreviewDialog", () => {
       }
       if (cmd === "preview_merge") {
         return { title: "A + B", body: "", frontmatter: {}, source_titles: ["A", "B"] };
+      }
+      if (cmd === "cancel_title_suggestion") {
+        return undefined;
       }
       throw new Error(`Unknown: ${cmd}`);
     });
