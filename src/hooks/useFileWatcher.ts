@@ -7,15 +7,9 @@ import type { FileEvent } from "../lib/ipc";
 
 export function useFileWatcher(onCurrentPageModified?: () => void) {
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
-  const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
   const refreshPages = useWorkspaceStore((s) => s.refreshPages);
   const selectPage = useWorkspaceStore((s) => s.selectPage);
-  const currentPageRef = useRef(currentPagePath);
   const pendingReloadRef = useRef(false);
-
-  useEffect(() => {
-    currentPageRef.current = currentPagePath;
-  }, [currentPagePath]);
 
   useEffect(() => {
     const unsub = useModalLockStore.subscribe((s) => {
@@ -39,10 +33,8 @@ export function useFileWatcher(onCurrentPageModified?: () => void) {
         (event) => {
           if (cancelled) return;
           console.debug("[FileWatcher] file-modified:", event.payload.path);
-          if (
-            currentPageRef.current &&
-            event.payload.path === currentPageRef.current
-          ) {
+          const currentPage = useWorkspaceStore.getState().currentPagePath;
+          if (currentPage && event.payload.path === currentPage) {
             if (useModalLockStore.getState().locked) {
               pendingReloadRef.current = true;
             } else {
@@ -58,7 +50,7 @@ export function useFileWatcher(onCurrentPageModified?: () => void) {
         "workspace://file-deleted",
         (event) => {
           if (cancelled) return;
-          console.debug("[FileWatcher] file-deleted:", event.payload.path, "current:", currentPageRef.current);
+          console.debug("[FileWatcher] file-deleted:", event.payload.path, "current:", useWorkspaceStore.getState().currentPagePath);
           if (useWorkspaceStore.getState().currentPagePath === event.payload.path) {
             console.warn("[FileWatcher] current page deleted, deselecting:", event.payload.path);
             selectPage(null);

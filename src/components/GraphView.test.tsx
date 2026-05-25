@@ -1233,7 +1233,7 @@ describe("GraphView", () => {
       switch (cmd) {
         case "get_graph_subgraph":
           callCount++;
-          if (callCount <= 2) {
+          if (callCount <= 1) {
             return {
               nodes: [
                 { id: "a.md", title: "A", is_stub: false },
@@ -1265,6 +1265,7 @@ describe("GraphView", () => {
 
     const { invoke } = await import("@tauri-apps/api/core");
     (invoke as unknown as ReturnType<typeof vi.fn>).mockClear();
+    mockSigmaKill.mockClear();
 
     await act(async () => {
       emitMockEvent("lit:graph-updated", {});
@@ -1272,6 +1273,11 @@ describe("GraphView", () => {
 
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: [], depth: 0, directed: null });
+    });
+
+    // Merge is a major change (>50% nodes differ), so sigma is re-initialized
+    await waitFor(() => {
+      expect(mockSigmaKill).toHaveBeenCalled();
     });
 
     resetListenMock();

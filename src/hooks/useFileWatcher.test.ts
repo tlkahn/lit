@@ -161,6 +161,25 @@ describe("useFileWatcher", () => {
     expect(refreshPages).toHaveBeenCalled();
   });
 
+  it("file-modified does not fire callback when store was updated between renders", () => {
+    mockListen();
+    useWorkspaceStore.setState({
+      workspacePath: "/test",
+      currentPagePath: "A.md",
+    });
+
+    const callback = vi.fn();
+    renderHook(() => useFileWatcher(callback));
+
+    // Simulate: selectPage("Merged.md") ran but React hasn't re-rendered yet,
+    // so the ref still holds "A.md" while the store already has "Merged.md".
+    useWorkspaceStore.setState({ currentPagePath: "Merged.md" });
+
+    emitMockEvent("workspace://file-modified", { path: "A.md" });
+
+    expect(callback).not.toHaveBeenCalled();
+  });
+
   it("file-deleted does not deselect when store was updated between renders", async () => {
     mockListen();
     useWorkspaceStore.setState({
