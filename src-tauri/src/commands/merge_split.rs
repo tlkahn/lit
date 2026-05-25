@@ -234,22 +234,20 @@ pub fn execute_split(
     };
 
     for path in &result.created_paths {
-        if let Some(ref gi) = gi {
-            let content = std::fs::read_to_string(root.join(path)).unwrap_or_default();
-            registry.record(&root.join(path), &content);
-            let _ = gi.reindex_file(path, ann_enabled);
-        }
+        let content = std::fs::read_to_string(root.join(path)).unwrap_or_default();
+        registry.record(&root.join(path), &content);
     }
-
     for pr in &result.rewrite_actions {
         registry.record(&root.join(&pr.relative_path), &pr.after_content);
-        if let Some(ref gi) = gi {
-            let _ = gi.reindex_file(&pr.relative_path, ann_enabled);
-        }
     }
 
     if let Some(ref gi) = gi {
-        let _ = gi.remove_file(&relative_path, ann_enabled);
+        let diff = crate::graph::indexer::DiffResult {
+            new: result.created_paths.clone(),
+            changed: result.rewrite_actions.iter().map(|pr| pr.relative_path.clone()).collect(),
+            deleted: vec![relative_path.clone()],
+        };
+        let _ = gi.batch_reindex(&diff, ann_enabled);
     }
 
     let _ = app_handle.emit("lit:graph-updated", ());
@@ -358,13 +356,12 @@ pub fn merge_documents(
         indices.get(&root).cloned()
     };
     if let Some(ref gi) = gi {
-        for (path, _) in &result.source_snapshots {
-            let _ = gi.remove_file(path, ann_enabled);
-        }
-        let _ = gi.reindex_file(&result.merged_path, ann_enabled);
-        for pr in &result.planned_rewrites.rewrites {
-            let _ = gi.reindex_file(&pr.relative_path, ann_enabled);
-        }
+        let diff = crate::graph::indexer::DiffResult {
+            new: vec![result.merged_path.clone()],
+            changed: result.planned_rewrites.rewrites.iter().map(|pr| pr.relative_path.clone()).collect(),
+            deleted: result.source_snapshots.iter().map(|(p, _)| p.clone()).collect(),
+        };
+        let _ = gi.batch_reindex(&diff, ann_enabled);
     }
 
     let _ = app_handle.emit("lit:graph-updated", ());

@@ -346,6 +346,36 @@ impl DiffResult {
     pub fn is_empty(&self) -> bool {
         self.new.is_empty() && self.changed.is_empty() && self.deleted.is_empty()
     }
+
+    pub fn merge(&self, other: &DiffResult) -> DiffResult {
+        let mut deleted_set: HashSet<&str> = HashSet::new();
+        for p in self.deleted.iter().chain(other.deleted.iter()) {
+            deleted_set.insert(p);
+        }
+
+        let mut new_set: HashSet<&str> = HashSet::new();
+        for p in self.new.iter().chain(other.new.iter()) {
+            if !deleted_set.contains(p.as_str()) {
+                new_set.insert(p);
+            }
+        }
+
+        let mut changed_set: HashSet<&str> = HashSet::new();
+        for p in self.changed.iter().chain(other.changed.iter()) {
+            if !deleted_set.contains(p.as_str()) && !new_set.contains(p.as_str()) {
+                changed_set.insert(p);
+            }
+        }
+
+        let mut new: Vec<String> = new_set.into_iter().map(String::from).collect();
+        let mut changed: Vec<String> = changed_set.into_iter().map(String::from).collect();
+        let mut deleted: Vec<String> = deleted_set.into_iter().map(String::from).collect();
+        new.sort();
+        changed.sort();
+        deleted.sort();
+
+        DiffResult { new, changed, deleted }
+    }
 }
 
 pub fn compute_diff(store: &Store, root: &Path) -> Result<DiffResult, GraphError> {
@@ -681,32 +711,24 @@ impl GraphIndex {
         })
     }
 
-    pub fn reindex_file(&self, relative_path: &str, annotations_enabled: bool) -> Result<(), GraphError> {
-        let diff = DiffResult {
-            new: vec![],
-            changed: vec![relative_path.to_string()],
-            deleted: vec![],
-        };
+    pub fn batch_reindex(&self, diff: &DiffResult, annotations_enabled: bool) -> Result<(), GraphError> {
+        if diff.is_empty() {
+            return Ok(());
+        }
         let store = self.store.lock().unwrap();
         let mut reverse = self.reverse_stems.lock().unwrap();
-        incremental_reindex(&store, &self.workspace_root, &mut reverse, &diff, annotations_enabled)?;
+        incremental_reindex(&store, &self.workspace_root, &mut reverse, diff, annotations_enabled)?;
         let mut knowledge = self.knowledge.lock().unwrap();
         *knowledge = KnowledgeGraph::from_store(&store)?;
         Ok(())
     }
 
+    pub fn reindex_file(&self, relative_path: &str, annotations_enabled: bool) -> Result<(), GraphError> {
+        self.batch_reindex(&DiffResult { new: vec![], changed: vec![relative_path.to_string()], deleted: vec![] }, annotations_enabled)
+    }
+
     pub fn remove_file(&self, relative_path: &str, annotations_enabled: bool) -> Result<(), GraphError> {
-        let diff = DiffResult {
-            new: vec![],
-            changed: vec![],
-            deleted: vec![relative_path.to_string()],
-        };
-        let store = self.store.lock().unwrap();
-        let mut reverse = self.reverse_stems.lock().unwrap();
-        incremental_reindex(&store, &self.workspace_root, &mut reverse, &diff, annotations_enabled)?;
-        let mut knowledge = self.knowledge.lock().unwrap();
-        *knowledge = KnowledgeGraph::from_store(&store)?;
-        Ok(())
+        self.batch_reindex(&DiffResult { new: vec![], changed: vec![], deleted: vec![relative_path.to_string()] }, annotations_enabled)
     }
 
     pub fn full_rebuild(&self, annotations_enabled: bool) -> Result<IndexResult, GraphError> {
@@ -1749,6 +1771,109 @@ mod tests {
         assert!(!diff.is_empty());
     }
 
+    // --- DiffResult::merge ---
+
+    #[test]
+    fn diff_result_merge_combines_all_fields() {
+        let a = DiffResult {
+            new: vec!["x.md".to_string()],
+            changed: vec!["y.md".to_string()],
+            deleted: vec!["z.md".to_string()],
+        };
+        let b = DiffResult {
+            new: vec!["p.md".to_string()],
+            changed: vec!["q.md".to_string()],
+            deleted: vec!["r.md".to_string()],
+        };
+        let merged = a.merge(&b);
+        assert_eq!(merged.new, vec!["p.md", "x.md"]);
+        assert_eq!(merged.changed, vec!["q.md", "y.md"]);
+        assert_eq!(merged.deleted, vec!["r.md", "z.md"]);
+    }
+
+    #[test]
+    fn diff_result_merge_deleted_wins_over_changed() {
+        let a = DiffResult {
+            new: vec![],
+            changed: vec!["x.md".to_string()],
+            deleted: vec![],
+        };
+        let b = DiffResult {
+            new: vec![],
+            changed: vec![],
+            deleted: vec!["x.md".to_string()],
+        };
+        let merged = a.merge(&b);
+        assert!(merged.changed.is_empty());
+        assert_eq!(merged.deleted, vec!["x.md"]);
+    }
+
+    #[test]
+    fn diff_result_merge_deleted_wins_over_new() {
+        let a = DiffResult {
+            new: vec!["x.md".to_string()],
+            changed: vec![],
+            deleted: vec![],
+        };
+        let b = DiffResult {
+            new: vec![],
+            changed: vec![],
+            deleted: vec!["x.md".to_string()],
+        };
+        let merged = a.merge(&b);
+        assert!(merged.new.is_empty());
+        assert_eq!(merged.deleted, vec!["x.md"]);
+    }
+
+    #[test]
+    fn diff_result_merge_new_wins_over_changed() {
+        let a = DiffResult {
+            new: vec!["x.md".to_string()],
+            changed: vec![],
+            deleted: vec![],
+        };
+        let b = DiffResult {
+            new: vec![],
+            changed: vec!["x.md".to_string()],
+            deleted: vec![],
+        };
+        let merged = a.merge(&b);
+        assert_eq!(merged.new, vec!["x.md"]);
+        assert!(merged.changed.is_empty());
+    }
+
+    #[test]
+    fn diff_result_merge_dedup_same_path() {
+        let a = DiffResult {
+            new: vec!["x.md".to_string()],
+            changed: vec![],
+            deleted: vec![],
+        };
+        let b = DiffResult {
+            new: vec!["x.md".to_string()],
+            changed: vec![],
+            deleted: vec![],
+        };
+        let merged = a.merge(&b);
+        assert_eq!(merged.new, vec!["x.md"]);
+    }
+
+    #[test]
+    fn diff_result_merge_with_empty_is_identity() {
+        let a = DiffResult {
+            new: vec!["x.md".to_string()],
+            changed: vec!["y.md".to_string()],
+            deleted: vec!["z.md".to_string()],
+        };
+        let empty = DiffResult {
+            new: vec![],
+            changed: vec![],
+            deleted: vec![],
+        };
+        let merged = a.merge(&empty);
+        assert_eq!(merged, a);
+    }
+
     // --- incremental_reindex ---
 
     #[test]
@@ -2088,6 +2213,231 @@ mod tests {
         write_md(dir.path(), "a.md", "[[b]]");
         write_md(dir.path(), "b.md", "Target.");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let stats = gi.stats().unwrap();
+        assert_eq!(stats.nodes, 2);
+        assert_eq!(stats.edges, 1);
+    }
+
+    // --- GraphIndex::batch_reindex ---
+
+    #[test]
+    fn graph_index_batch_reindex_mixed_ops() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "[[b]]");
+        write_md(dir.path(), "b.md", "Target.");
+        write_md(dir.path(), "c.md", "Will be deleted.");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        assert_eq!(gi.stats().unwrap().nodes, 3);
+
+        // new file, change a, delete c
+        write_md(dir.path(), "d.md", "[[a]]");
+        write_md(dir.path(), "a.md", "No links now.");
+        fs::remove_file(dir.path().join("c.md")).unwrap();
+
+        let diff = DiffResult {
+            new: vec!["d.md".to_string()],
+            changed: vec!["a.md".to_string()],
+            deleted: vec!["c.md".to_string()],
+        };
+        gi.batch_reindex(&diff, true).unwrap();
+
+        let stats = gi.stats().unwrap();
+        assert_eq!(stats.nodes, 3); // a, b, d (c deleted)
+        // d->a edge exists, a->b edge removed
+        let sub = gi.full_subgraph();
+        assert!(sub.edges.iter().any(|e| e.0 == "d.md" && e.1 == "a.md"));
+        assert!(!sub.edges.iter().any(|e| e.0 == "a.md" && e.1 == "b.md"));
+        assert!(!sub.nodes.iter().any(|n| n.id == "c.md"));
+    }
+
+    #[test]
+    fn batch_reindex_new_file_resolves_stub() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Links to [[b]].");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        // b is a stub node
+        let sub = gi.full_subgraph();
+        let b_node = sub.nodes.iter().find(|n| n.id == "b").unwrap();
+        assert!(b_node.is_stub);
+
+        // Create b.md and batch_reindex with new
+        write_md(dir.path(), "b.md", "I exist now.");
+        let diff = DiffResult {
+            new: vec!["b.md".to_string()],
+            changed: vec![],
+            deleted: vec![],
+        };
+        gi.batch_reindex(&diff, true).unwrap();
+
+        let sub = gi.full_subgraph();
+        // Stub should be replaced by real node
+        assert!(!sub.nodes.iter().any(|n| n.id == "b" && n.is_stub), "stub 'b' should be gone");
+        let b_real = sub.nodes.iter().find(|n| n.id == "b.md").unwrap();
+        assert!(!b_real.is_stub);
+        // Edge a.md -> b.md should exist
+        assert!(sub.edges.iter().any(|e| e.0 == "a.md" && e.1 == "b.md"));
+    }
+
+    #[test]
+    fn batch_diff_from_merge_scenario() {
+        // Simulate merge: a.md + b.md → merged.md, c.md and d.md reference a/b and get rewritten
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Alpha content.");
+        write_md(dir.path(), "b.md", "Beta content.");
+        write_md(dir.path(), "c.md", "Links to [[a]].");
+        write_md(dir.path(), "d.md", "Links to [[b]].");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        assert_eq!(gi.stats().unwrap().nodes, 4);
+
+        // After merge: a.md & b.md deleted, merged.md created, c.md & d.md rewritten
+        write_md(dir.path(), "merged.md", "Alpha + Beta combined.");
+        write_md(dir.path(), "c.md", "Links to [[merged]].");
+        write_md(dir.path(), "d.md", "Links to [[merged]].");
+        fs::remove_file(dir.path().join("a.md")).unwrap();
+        fs::remove_file(dir.path().join("b.md")).unwrap();
+
+        let diff = DiffResult {
+            new: vec!["merged.md".to_string()],
+            changed: vec!["c.md".to_string(), "d.md".to_string()],
+            deleted: vec!["a.md".to_string(), "b.md".to_string()],
+        };
+        gi.batch_reindex(&diff, true).unwrap();
+
+        let sub = gi.full_subgraph();
+        assert_eq!(sub.nodes.len(), 3); // merged, c, d
+        assert!(!sub.nodes.iter().any(|n| n.id == "a.md"));
+        assert!(!sub.nodes.iter().any(|n| n.id == "b.md"));
+        assert!(sub.nodes.iter().any(|n| n.id == "merged.md"));
+        assert!(sub.edges.iter().any(|e| e.0 == "c.md" && e.1 == "merged.md"));
+        assert!(sub.edges.iter().any(|e| e.0 == "d.md" && e.1 == "merged.md"));
+    }
+
+    #[test]
+    fn batch_diff_from_split_scenario() {
+        // Simulate split: big.md → part1.md + part2.md, ref.md references big and gets rewritten
+        let dir = create_workspace();
+        write_md(dir.path(), "big.md", "Part one.\n\nPart two.");
+        write_md(dir.path(), "ref.md", "Links to [[big]].");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        assert_eq!(gi.stats().unwrap().nodes, 2);
+
+        // After split: big.md deleted, part1.md & part2.md created, ref.md rewritten
+        write_md(dir.path(), "part1.md", "Part one.");
+        write_md(dir.path(), "part2.md", "Part two.");
+        write_md(dir.path(), "ref.md", "Links to [[part1]].");
+        fs::remove_file(dir.path().join("big.md")).unwrap();
+
+        let diff = DiffResult {
+            new: vec!["part1.md".to_string(), "part2.md".to_string()],
+            changed: vec!["ref.md".to_string()],
+            deleted: vec!["big.md".to_string()],
+        };
+        gi.batch_reindex(&diff, true).unwrap();
+
+        let sub = gi.full_subgraph();
+        assert_eq!(sub.nodes.len(), 3); // part1, part2, ref
+        assert!(!sub.nodes.iter().any(|n| n.id == "big.md"));
+        assert!(sub.nodes.iter().any(|n| n.id == "part1.md"));
+        assert!(sub.nodes.iter().any(|n| n.id == "part2.md"));
+        assert!(sub.edges.iter().any(|e| e.0 == "ref.md" && e.1 == "part1.md"));
+    }
+
+    #[test]
+    fn batch_reindex_produces_same_result_as_sequential() {
+        // Build two identical workspaces, apply changes via batch vs sequential,
+        // compare resulting node IDs and edge sets.
+        let make_workspace = || {
+            let dir = create_workspace();
+            for i in 0..10 {
+                let name = format!("n{}.md", i);
+                let content = if i > 0 {
+                    format!("Links to [[n{}]].", i - 1)
+                } else {
+                    "Root node.".to_string()
+                };
+                write_md(dir.path(), &name, &content);
+            }
+            dir
+        };
+
+        // Sequential approach
+        let dir_seq = make_workspace();
+        let gi_seq = GraphIndex::build(dir_seq.path().to_path_buf(), true).unwrap();
+        write_md(dir_seq.path(), "n0.md", "Updated root.");
+        write_md(dir_seq.path(), "new.md", "Brand new [[n5]].");
+        fs::remove_file(dir_seq.path().join("n9.md")).unwrap();
+        gi_seq.reindex_file("n0.md", true).unwrap();
+        gi_seq.reindex_file("new.md", true).unwrap();
+        gi_seq.remove_file("n9.md", true).unwrap();
+
+        // Batch approach
+        let dir_batch = make_workspace();
+        let gi_batch = GraphIndex::build(dir_batch.path().to_path_buf(), true).unwrap();
+        write_md(dir_batch.path(), "n0.md", "Updated root.");
+        write_md(dir_batch.path(), "new.md", "Brand new [[n5]].");
+        fs::remove_file(dir_batch.path().join("n9.md")).unwrap();
+        let diff = DiffResult {
+            new: vec!["new.md".to_string()],
+            changed: vec!["n0.md".to_string()],
+            deleted: vec!["n9.md".to_string()],
+        };
+        gi_batch.batch_reindex(&diff, true).unwrap();
+
+        // Compare node IDs
+        let mut seq_nodes: Vec<String> = gi_seq.full_subgraph().nodes.iter().map(|n| n.id.clone()).collect();
+        let mut batch_nodes: Vec<String> = gi_batch.full_subgraph().nodes.iter().map(|n| n.id.clone()).collect();
+        seq_nodes.sort();
+        batch_nodes.sort();
+        assert_eq!(seq_nodes, batch_nodes);
+
+        // Compare edge sets
+        let mut seq_edges: Vec<(String, String)> = gi_seq.full_subgraph().edges.clone();
+        let mut batch_edges: Vec<(String, String)> = gi_batch.full_subgraph().edges.clone();
+        seq_edges.sort();
+        batch_edges.sort();
+        assert_eq!(seq_edges, batch_edges);
+    }
+
+    #[test]
+    fn graph_index_batch_reindex_empty_diff_is_noop() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Hello.");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let diff = DiffResult { new: vec![], changed: vec![], deleted: vec![] };
+        gi.batch_reindex(&diff, true).unwrap();
+        assert_eq!(gi.stats().unwrap().nodes, 1);
+    }
+
+    #[test]
+    fn graph_index_batch_reindex_only_deletes() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Hello.");
+        write_md(dir.path(), "b.md", "World.");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        fs::remove_file(dir.path().join("a.md")).unwrap();
+        fs::remove_file(dir.path().join("b.md")).unwrap();
+        let diff = DiffResult {
+            new: vec![],
+            changed: vec![],
+            deleted: vec!["a.md".to_string(), "b.md".to_string()],
+        };
+        gi.batch_reindex(&diff, true).unwrap();
+        assert_eq!(gi.stats().unwrap().nodes, 0);
+    }
+
+    #[test]
+    fn graph_index_batch_reindex_only_new_files() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Hello.");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        write_md(dir.path(), "b.md", "New file [[a]].");
+        let diff = DiffResult {
+            new: vec!["b.md".to_string()],
+            changed: vec![],
+            deleted: vec![],
+        };
+        gi.batch_reindex(&diff, true).unwrap();
         let stats = gi.stats().unwrap();
         assert_eq!(stats.nodes, 2);
         assert_eq!(stats.edges, 1);

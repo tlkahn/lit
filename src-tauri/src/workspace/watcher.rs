@@ -70,6 +70,8 @@ impl FileWatcher {
                     Err(_) => continue,
                 };
 
+                let mut md_events: Vec<(String, bool)> = Vec::new();
+
                 for event in events {
                     let path = &event.path;
                     if !is_relevant_file(path, &root_clone) {
@@ -118,23 +120,25 @@ impl FileWatcher {
 
                                 let is_md = path.extension().and_then(|e| e.to_str()) == Some("md");
                                 if is_md {
-                                    if let Some(graph_reg) = app_handle.try_state::<std::sync::Arc<GraphRegistry>>() {
-                                        let indices = graph_reg.indices.lock().unwrap();
-                                        if let Some(gi) = indices.get(&root_clone) {
-                                            let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
-                                            if exists {
-                                                let _ = gi.reindex_file(&relative, ann_enabled);
-                                            } else {
-                                                let _ = gi.remove_file(&relative, ann_enabled);
-                                            }
-                                        }
-                                        drop(indices);
-                                        let _ = app_handle.emit("lit:graph-updated", ());
-                                    }
+                                    md_events.push((relative, exists));
                                 }
                             }
                             DebouncedEventKind::AnyContinuous | _ => {}
                         }
+                    }
+                }
+
+                if !md_events.is_empty() {
+                    let refs: Vec<(&str, bool)> = md_events.iter().map(|(p, e)| (p.as_str(), *e)).collect();
+                    let diff = accumulate_diff(&refs);
+                    if let Some(graph_reg) = app_handle.try_state::<std::sync::Arc<GraphRegistry>>() {
+                        let indices = graph_reg.indices.lock().unwrap();
+                        if let Some(gi) = indices.get(&root_clone) {
+                            let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
+                            let _ = gi.batch_reindex(&diff, ann_enabled);
+                        }
+                        drop(indices);
+                        let _ = app_handle.emit("lit:graph-updated", ());
                     }
                 }
             }
@@ -152,6 +156,33 @@ pub fn is_external_change(path: &Path, registry: &WriteHashRegistry) -> bool {
         Err(_) => return true,
     };
     !registry.check(path, &content)
+}
+
+pub(crate) fn accumulate_diff(events: &[(&str, bool)]) -> crate::graph::indexer::DiffResult {
+    use indexmap::IndexMap;
+
+    let mut last_state: IndexMap<&str, bool> = IndexMap::new();
+    for &(path, exists) in events {
+        last_state.insert(path, exists);
+    }
+
+    let mut changed = Vec::new();
+    let mut deleted = Vec::new();
+    for (path, exists) in last_state {
+        if exists {
+            changed.push(path.to_string());
+        } else {
+            deleted.push(path.to_string());
+        }
+    }
+    changed.sort();
+    deleted.sort();
+
+    crate::graph::indexer::DiffResult {
+        new: vec![],
+        changed,
+        deleted,
+    }
 }
 
 fn is_relevant_file(path: &Path, _root: &Path) -> bool {
@@ -296,5 +327,45 @@ mod tests {
         let registry = WriteHashRegistry::new();
         let path = Path::new("/nonexistent/file.md");
         assert!(is_external_change(path, &registry));
+    }
+
+    // --- accumulate_diff ---
+
+    #[test]
+    fn accumulate_watcher_diff_mixed_events() {
+        let diff = accumulate_diff(&[
+            ("a.md", true),
+            ("b.md", false),
+            ("c.md", true),
+        ]);
+        assert_eq!(diff.changed, vec!["a.md", "c.md"]);
+        assert_eq!(diff.deleted, vec!["b.md"]);
+        assert!(diff.new.is_empty());
+    }
+
+    #[test]
+    fn accumulate_watcher_diff_file_created_then_deleted() {
+        let diff = accumulate_diff(&[
+            ("a.md", true),
+            ("a.md", false),
+        ]);
+        assert!(diff.changed.is_empty());
+        assert_eq!(diff.deleted, vec!["a.md"]);
+    }
+
+    #[test]
+    fn accumulate_watcher_diff_file_deleted_then_created() {
+        let diff = accumulate_diff(&[
+            ("a.md", false),
+            ("a.md", true),
+        ]);
+        assert_eq!(diff.changed, vec!["a.md"]);
+        assert!(diff.deleted.is_empty());
+    }
+
+    #[test]
+    fn accumulate_watcher_diff_empty() {
+        let diff = accumulate_diff(&[]);
+        assert!(diff.is_empty());
     }
 }
