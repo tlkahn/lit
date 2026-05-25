@@ -47,9 +47,9 @@ base64 = "0.22"
 url = "2"
 tauri-plugin-deep-link = "2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
-llm-core = { path = "../../llm-rs/crates/llm-core" }
-llm-openai = { path = "../../llm-rs/crates/llm-openai" }
-llm-anthropic = { path = "../../llm-rs/crates/llm-anthropic" }
+llm-core = { git = "https://github.com/tlkahn/llm-rs.git" }
+llm-openai = { git = "https://github.com/tlkahn/llm-rs.git" }
+llm-anthropic = { git = "https://github.com/tlkahn/llm-rs.git" }
 futures = "0.3"
 tokio-stream = "0.1"
 
