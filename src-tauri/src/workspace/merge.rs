@@ -1,6 +1,7 @@
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
@@ -92,12 +93,34 @@ pub fn merge_documents_inner(
         return Err("Cannot merge: no documents provided".to_string());
     }
 
+    if ordering.is_empty() {
+        return Err("Cannot merge: ordering is empty".to_string());
+    }
+    if let Some(&i) = ordering.iter().find(|&&i| i >= docs.len()) {
+        return Err(format!(
+            "Invalid ordering index {}: only {} documents provided",
+            i,
+            docs.len()
+        ));
+    }
+    {
+        let mut seen = HashSet::new();
+        for &i in ordering {
+            if !seen.insert(i) {
+                return Err(format!("Duplicate ordering index: {}", i));
+            }
+        }
+    }
+
     let ordered: Vec<&(String, MergeInput)> = ordering.iter().map(|&i| &docs[i]).collect();
 
     let merge_inputs: Vec<MergeInput> = ordered.iter().map(|(_, input)| input.clone()).collect();
     let plan = plan_merge(&merge_inputs);
 
-    let merged_title = title.unwrap_or(&plan.title);
+    let merged_title = match title {
+        Some(t) if !t.trim().is_empty() => t,
+        _ => &plan.title,
+    };
 
     let parent_dir = if let Some(dir) = output_dir {
         dir.to_string()
@@ -123,11 +146,6 @@ pub fn merge_documents_inner(
 
     let merged_content = serialize_frontmatter(&plan.frontmatter, &plan.body);
 
-    if let Some(parent) = full_merged.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    fs::write(&full_merged, &merged_content).map_err(|e| e.to_string())?;
-
     let source_snapshots: Vec<(String, String)> = ordered
         .iter()
         .map(|(path, _)| {
@@ -151,10 +169,25 @@ pub fn merge_documents_inner(
         })
         .collect();
 
-    let planned_rewrites = rewriter::plan_vault_rewrites(root, &redirects)?;
+    let source_paths: HashSet<&str> = ordered.iter().map(|(p, _)| p.as_str()).collect();
+    let full_planned = rewriter::plan_vault_rewrites(root, &redirects)?;
+    let planned_rewrites = PlannedVaultRewrite {
+        files_scanned: full_planned.files_scanned,
+        rewrites: full_planned
+            .rewrites
+            .into_iter()
+            .filter(|r| !source_paths.contains(r.relative_path.as_str()))
+            .collect(),
+    };
+
     if !planned_rewrites.rewrites.is_empty() {
         rewriter::apply_planned_rewrites(root, &planned_rewrites)?;
     }
+
+    if let Some(parent) = full_merged.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    fs::write(&full_merged, &merged_content).map_err(|e| e.to_string())?;
 
     let mut trashed = Vec::new();
     for (path, _) in &ordered {
@@ -563,5 +596,140 @@ mod tests {
 
         let result = merge_documents_inner(root, &[], None, &[], None);
         assert!(result.is_err());
+    }
+
+    // ── Section D: Validation edge cases ──
+
+    #[test]
+    fn merge_inner_empty_ordering_returns_error() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        write_file(root, "A.md", "Hello from A");
+
+        let docs = make_docs(root, &["A.md"]);
+        let result = merge_documents_inner(root, &docs, None, &[], None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("ordering is empty"));
+    }
+
+    #[test]
+    fn merge_inner_out_of_bounds_ordering_returns_error() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        write_file(root, "A.md", "Hello from A");
+        write_file(root, "B.md", "Hello from B");
+
+        let docs = make_docs(root, &["A.md", "B.md"]);
+        let result = merge_documents_inner(root, &docs, None, &[0, 5], None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid ordering index 5"));
+    }
+
+    #[test]
+    fn merge_inner_duplicate_ordering_returns_error() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        write_file(root, "A.md", "Hello from A");
+        write_file(root, "B.md", "Hello from B");
+
+        let docs = make_docs(root, &["A.md", "B.md"]);
+        let result = merge_documents_inner(root, &docs, None, &[0, 0], None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Duplicate ordering index"));
+    }
+
+    #[test]
+    fn merge_inner_empty_title_falls_back_to_plan() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        write_file(root, "A.md", "Hello from A");
+        write_file(root, "B.md", "Hello from B");
+
+        let docs = make_docs(root, &["A.md", "B.md"]);
+        let result =
+            merge_documents_inner(root, &docs, Some(""), &[0, 1], None).unwrap();
+
+        assert!(
+            result.merged_path.ends_with("A + B.md"),
+            "empty title should fall back to plan title, got: {}",
+            result.merged_path
+        );
+    }
+
+    #[test]
+    fn merge_inner_whitespace_title_falls_back_to_plan() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        write_file(root, "A.md", "Hello from A");
+        write_file(root, "B.md", "Hello from B");
+
+        let docs = make_docs(root, &["A.md", "B.md"]);
+        let result =
+            merge_documents_inner(root, &docs, Some("   "), &[0, 1], None).unwrap();
+
+        assert!(
+            result.merged_path.ends_with("A + B.md"),
+            "whitespace title should fall back to plan title, got: {}",
+            result.merged_path
+        );
+    }
+
+    #[test]
+    fn merge_inner_no_self_referential_rewrite() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        write_file(root, "A.md", "Links to [[B]]");
+        write_file(root, "B.md", "Links to [[A]]");
+        write_file(root, "C.md", "See [[A]] and [[B]]");
+
+        let docs = make_docs(root, &["A.md", "B.md"]);
+        let result =
+            merge_documents_inner(root, &docs, Some("Merged"), &[0, 1], None).unwrap();
+
+        let merged_on_disk = fs::read_to_string(root.join("Merged.md")).unwrap();
+        assert_eq!(
+            merged_on_disk, result.merged_content,
+            "on-disk content must match returned merged_content"
+        );
+        assert!(
+            !merged_on_disk.contains("[[Merged]]"),
+            "merged file should not contain self-referential links, got: {}",
+            merged_on_disk
+        );
+
+        let c_content = fs::read_to_string(root.join("C.md")).unwrap();
+        assert!(
+            c_content.contains("[[Merged]]"),
+            "C.md should still be rewritten: {}",
+            c_content
+        );
+    }
+
+    #[test]
+    fn merge_inner_source_files_not_rewritten_before_trash() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        write_file(root, "A.md", "References [[B]]");
+        write_file(root, "B.md", "Hello from B");
+
+        let docs = make_docs(root, &["A.md", "B.md"]);
+        let result =
+            merge_documents_inner(root, &docs, Some("Merged"), &[0, 1], None).unwrap();
+
+        for pr in &result.planned_rewrites.rewrites {
+            assert_ne!(
+                pr.relative_path, "A.md",
+                "source file A.md should not be in planned rewrites"
+            );
+            assert_ne!(
+                pr.relative_path, "B.md",
+                "source file B.md should not be in planned rewrites"
+            );
+        }
+
+        assert_eq!(
+            result.source_snapshots[0].1, "References [[B]]",
+            "source snapshot should contain original content"
+        );
     }
 }
