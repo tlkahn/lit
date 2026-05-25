@@ -1,9 +1,15 @@
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
+use std::fs;
+use std::path::Path;
 
+use super::frontmatter::serialize_frontmatter;
 use super::frontmatter_merge::merge_frontmatter;
+use super::normalize::{filename_to_page_name, page_name_to_filename};
 use super::split::demote_headings;
+use super::trash;
+use crate::graph::rewriter::{self, LinkRedirect, PlannedVaultRewrite};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MergeInput {
@@ -64,6 +70,105 @@ pub fn plan_merge(docs: &[MergeInput]) -> MergePlan {
         frontmatter,
         source_titles,
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct MergeResult {
+    pub merged_path: String,
+    pub merged_content: String,
+    pub trashed: Vec<trash::TrashEntry>,
+    pub planned_rewrites: PlannedVaultRewrite,
+    pub source_snapshots: Vec<(String, String)>,
+}
+
+pub fn merge_documents_inner(
+    root: &Path,
+    docs: &[(String, MergeInput)],
+    title: Option<&str>,
+    ordering: &[usize],
+    output_dir: Option<&str>,
+) -> Result<MergeResult, String> {
+    if docs.is_empty() {
+        return Err("Cannot merge: no documents provided".to_string());
+    }
+
+    let ordered: Vec<&(String, MergeInput)> = ordering.iter().map(|&i| &docs[i]).collect();
+
+    let merge_inputs: Vec<MergeInput> = ordered.iter().map(|(_, input)| input.clone()).collect();
+    let plan = plan_merge(&merge_inputs);
+
+    let merged_title = title.unwrap_or(&plan.title);
+
+    let parent_dir = if let Some(dir) = output_dir {
+        dir.to_string()
+    } else {
+        let first_path = &ordered[0].0;
+        Path::new(first_path)
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default()
+    };
+
+    let merged_filename = page_name_to_filename(merged_title);
+    let merged_path = if parent_dir.is_empty() {
+        merged_filename.clone()
+    } else {
+        format!("{}/{}", parent_dir, merged_filename)
+    };
+
+    let full_merged = root.join(&merged_path);
+    if full_merged.exists() {
+        return Err(format!("Target file already exists: {}", merged_path));
+    }
+
+    let merged_content = serialize_frontmatter(&plan.frontmatter, &plan.body);
+
+    if let Some(parent) = full_merged.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    fs::write(&full_merged, &merged_content).map_err(|e| e.to_string())?;
+
+    let source_snapshots: Vec<(String, String)> = ordered
+        .iter()
+        .map(|(path, _)| {
+            let content = fs::read_to_string(root.join(path)).unwrap_or_default();
+            (path.clone(), content)
+        })
+        .collect();
+
+    let redirects: Vec<LinkRedirect> = ordered
+        .iter()
+        .map(|(path, _)| {
+            let filename = Path::new(path)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            LinkRedirect {
+                old_target: filename_to_page_name(&filename),
+                new_target: filename_to_page_name(&merged_filename),
+            }
+        })
+        .collect();
+
+    let planned_rewrites = rewriter::plan_vault_rewrites(root, &redirects)?;
+    if !planned_rewrites.rewrites.is_empty() {
+        rewriter::apply_planned_rewrites(root, &planned_rewrites)?;
+    }
+
+    let mut trashed = Vec::new();
+    for (path, _) in &ordered {
+        let entry = trash::trash_page(root, path).map_err(|e| e.to_string())?;
+        trashed.push(entry);
+    }
+
+    Ok(MergeResult {
+        merged_path,
+        merged_content,
+        trashed,
+        planned_rewrites,
+        source_snapshots,
+    })
 }
 
 #[cfg(test)]
@@ -251,5 +356,212 @@ mod tests {
 
         assert!(result.frontmatter.contains_key("author"));
         assert!(result.frontmatter.contains_key("draft"));
+    }
+
+    // ── Section C: merge_documents_inner ──
+
+    use tempfile::TempDir;
+
+    fn write_file(dir: &Path, rel: &str, content: &str) {
+        let path = dir.join(rel);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(path, content).unwrap();
+    }
+
+    fn make_docs(root: &Path, paths: &[&str]) -> Vec<(String, MergeInput)> {
+        paths
+            .iter()
+            .map(|&p| {
+                let content = fs::read_to_string(root.join(p)).unwrap();
+                let parsed = super::super::frontmatter::parse_frontmatter(&content);
+                let filename = Path::new(p).file_name().unwrap().to_string_lossy().to_string();
+                let title = super::super::normalize::filename_to_page_name(&filename);
+                (
+                    p.to_string(),
+                    MergeInput {
+                        title,
+                        body: parsed.body.to_string(),
+                        frontmatter: parsed.map,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn merge_inner_two_docs_creates_merged_file() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        write_file(root, "A.md", "Hello from A");
+        write_file(root, "B.md", "Hello from B");
+
+        let docs = make_docs(root, &["A.md", "B.md"]);
+        let result = merge_documents_inner(root, &docs, None, &[0, 1], None).unwrap();
+
+        assert!(root.join(&result.merged_path).exists());
+        assert!(result.merged_content.contains("## A"));
+        assert!(result.merged_content.contains("## B"));
+        assert!(result.merged_path.ends_with("A + B.md"));
+    }
+
+    #[test]
+    fn merge_inner_ordering_respected() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        write_file(root, "A.md", "Hello from A");
+        write_file(root, "B.md", "Hello from B");
+
+        let docs = make_docs(root, &["A.md", "B.md"]);
+        let result = merge_documents_inner(root, &docs, None, &[1, 0], None).unwrap();
+
+        let b_pos = result.merged_content.find("## B").unwrap();
+        let a_pos = result.merged_content.find("## A").unwrap();
+        assert!(b_pos < a_pos, "B should come before A with ordering [1,0]");
+    }
+
+    #[test]
+    fn merge_inner_title_override() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        write_file(root, "A.md", "Hello from A");
+        write_file(root, "B.md", "Hello from B");
+
+        let docs = make_docs(root, &["A.md", "B.md"]);
+        let result =
+            merge_documents_inner(root, &docs, Some("My Merge"), &[0, 1], None).unwrap();
+
+        assert!(result.merged_path.ends_with("My Merge.md"));
+    }
+
+    #[test]
+    fn merge_inner_trashes_source_files() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        write_file(root, "A.md", "Hello from A");
+        write_file(root, "B.md", "Hello from B");
+
+        let docs = make_docs(root, &["A.md", "B.md"]);
+        let result = merge_documents_inner(root, &docs, None, &[0, 1], None).unwrap();
+
+        assert!(!root.join("A.md").exists());
+        assert!(!root.join("B.md").exists());
+        assert_eq!(result.trashed.len(), 2);
+    }
+
+    #[test]
+    fn merge_inner_source_snapshots_captured() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        write_file(root, "A.md", "---\ntags: [rust]\n---\nHello A");
+        write_file(root, "B.md", "Hello B");
+
+        let docs = make_docs(root, &["A.md", "B.md"]);
+        let result = merge_documents_inner(root, &docs, None, &[0, 1], None).unwrap();
+
+        assert_eq!(result.source_snapshots.len(), 2);
+        assert!(result.source_snapshots[0].1.contains("tags: [rust]"));
+        assert!(result.source_snapshots[1].1.contains("Hello B"));
+    }
+
+    #[test]
+    fn merge_inner_rewrites_links() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        write_file(root, "A.md", "Hello from A");
+        write_file(root, "B.md", "Hello from B");
+        write_file(root, "C.md", "See [[A]] and [[B]]");
+
+        let docs = make_docs(root, &["A.md", "B.md"]);
+        let result =
+            merge_documents_inner(root, &docs, Some("Merged"), &[0, 1], None).unwrap();
+
+        let c_content = fs::read_to_string(root.join("C.md")).unwrap();
+        assert!(c_content.contains("[[Merged]]"), "C.md should have [[Merged]], got: {}", c_content);
+        assert!(!c_content.contains("[[A]]"));
+        assert!(!c_content.contains("[[B]]"));
+        assert!(!result.planned_rewrites.rewrites.is_empty());
+    }
+
+    #[test]
+    fn merge_inner_unrelated_links_untouched() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        write_file(root, "A.md", "Hello from A");
+        write_file(root, "B.md", "Hello from B");
+        write_file(root, "C.md", "See [[Other]]");
+
+        let docs = make_docs(root, &["A.md", "B.md"]);
+        merge_documents_inner(root, &docs, None, &[0, 1], None).unwrap();
+
+        let c_content = fs::read_to_string(root.join("C.md")).unwrap();
+        assert!(c_content.contains("[[Other]]"));
+    }
+
+    #[test]
+    fn merge_inner_subdirectory_output() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        write_file(root, "notes/A.md", "Hello from A");
+        write_file(root, "notes/B.md", "Hello from B");
+
+        let docs = make_docs(root, &["notes/A.md", "notes/B.md"]);
+        let result = merge_documents_inner(root, &docs, None, &[0, 1], None).unwrap();
+
+        assert!(result.merged_path.starts_with("notes/"));
+        assert!(root.join(&result.merged_path).exists());
+    }
+
+    #[test]
+    fn merge_inner_mixed_dirs_uses_first() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        write_file(root, "notes/A.md", "Hello from A");
+        write_file(root, "journal/B.md", "Hello from B");
+
+        let docs = make_docs(root, &["notes/A.md", "journal/B.md"]);
+        let result = merge_documents_inner(root, &docs, None, &[0, 1], None).unwrap();
+
+        assert!(result.merged_path.starts_with("notes/"));
+    }
+
+    #[test]
+    fn merge_inner_explicit_output_dir() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        write_file(root, "A.md", "Hello from A");
+        write_file(root, "B.md", "Hello from B");
+
+        let docs = make_docs(root, &["A.md", "B.md"]);
+        let result =
+            merge_documents_inner(root, &docs, None, &[0, 1], Some("archive")).unwrap();
+
+        assert!(result.merged_path.starts_with("archive/"));
+        assert!(root.join(&result.merged_path).exists());
+    }
+
+    #[test]
+    fn merge_inner_target_exists_returns_error() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        write_file(root, "A.md", "Hello from A");
+        write_file(root, "B.md", "Hello from B");
+        write_file(root, "A + B.md", "already here");
+
+        let docs = make_docs(root, &["A.md", "B.md"]);
+        let result = merge_documents_inner(root, &docs, None, &[0, 1], None);
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("already exists"));
+    }
+
+    #[test]
+    fn merge_inner_empty_docs_returns_error() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+
+        let result = merge_documents_inner(root, &[], None, &[], None);
+        assert!(result.is_err());
     }
 }

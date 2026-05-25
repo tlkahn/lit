@@ -143,6 +143,7 @@ pub struct PlannedRewrite {
     pub links_changed: usize,
 }
 
+#[derive(Debug, Clone)]
 pub struct PlannedVaultRewrite {
     pub files_scanned: usize,
     pub rewrites: Vec<PlannedRewrite>,
