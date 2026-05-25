@@ -304,7 +304,8 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         sigma.on("rightClickNode", ({ node, event }) => {
           const mouseEvent = event as { original?: MouseEvent; x?: number; y?: number } | undefined;
           if (mouseEvent?.original) mouseEvent.original.preventDefault();
-          setContextMenu({ nodeId: node, x: mouseEvent?.x ?? 0, y: mouseEvent?.y ?? 0 });
+          const orig = mouseEvent?.original;
+          setContextMenu({ nodeId: node, x: orig?.clientX ?? mouseEvent?.x ?? 0, y: orig?.clientY ?? mouseEvent?.y ?? 0 });
         });
 
         sigma.on("enterNode", ({ node, event }) => {
