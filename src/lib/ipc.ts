@@ -855,6 +855,10 @@ export async function previewSplit(
   return invoke<SplitPlan>("preview_split", { content, title, frontmatter });
 }
 
+export async function executeSplit(relativePath: string): Promise<string[]> {
+  return invoke<string[]>("execute_split", { relativePath });
+}
+
 export async function suggestMergeTitle(
   sourceTitles: string[],
   mergedBody: string,

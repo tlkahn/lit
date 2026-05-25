@@ -83,6 +83,7 @@ import {
   rewriteVaultLinks,
   previewMerge,
   previewSplit,
+  executeSplit,
   suggestMergeTitle,
 } from "./ipc";
 
@@ -434,6 +435,8 @@ describe("ipc", () => {
             ],
           };
         }
+        case "execute_split":
+          return ["Alpha.md", "Beta.md"];
         case "suggest_merge_title":
           throw new Error("LLM not configured");
         case "search_tags":
@@ -1389,6 +1392,13 @@ describe("ipc", () => {
       title: "Doc",
       frontmatter: { status: "draft" },
     });
+  });
+
+  it("executeSplit invokes execute_split and returns paths", async () => {
+    const paths = await executeSplit("Doc.md");
+    expect(paths).toEqual(["Alpha.md", "Beta.md"]);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("execute_split", { relativePath: "Doc.md" });
   });
 
   it("suggestMergeTitle returns null on failure", async () => {

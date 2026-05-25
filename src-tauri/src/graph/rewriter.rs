@@ -105,7 +105,7 @@ pub fn build_redirect_map(redirects: &[LinkRedirect]) -> HashMap<String, String>
         .collect()
 }
 
-fn walk_md_files_for_rewrite(root: &Path) -> Vec<String> {
+pub(crate) fn walk_md_files_for_rewrite(root: &Path) -> Vec<String> {
     let mut files = Vec::new();
     for entry in WalkDir::new(root).into_iter().filter_entry(|e| {
         if e.depth() == 0 {
@@ -135,7 +135,7 @@ fn walk_md_files_for_rewrite(root: &Path) -> Vec<String> {
     files
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PlannedRewrite {
     pub relative_path: String,
     pub before_content: String,
@@ -283,6 +283,115 @@ pub fn rewrite_links_in_vault(
         files_modified,
         total_links_changed,
     })
+}
+
+pub fn rewrite_body_for_split(
+    body: &str,
+    original_stem: &str,
+    section_to_doc: &HashMap<String, String>,
+    default_target: &str,
+) -> (String, usize) {
+    if body.is_empty() {
+        return (body.to_string(), 0);
+    }
+
+    let norm_original = normalize_stem(original_stem);
+
+    let mut blanked = body.to_string();
+    blank_frontmatter(&mut blanked);
+    blank_fenced_code_blocks(&mut blanked);
+    blank_inline_code(&mut blanked);
+    debug_assert_eq!(body.len(), blanked.len(), "blanking must preserve byte length");
+
+    let mut replacements: Vec<(usize, usize, String)> = Vec::new();
+
+    for m in WIKILINK_RE.find_iter(&blanked) {
+        let inner = &blanked[m.start() + 2..m.end() - 2];
+        let trimmed = inner.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let (target_part, display) = if let Some(pipe_pos) = trimmed.find('|') {
+            (trimmed[..pipe_pos].trim(), Some(trimmed[pipe_pos + 1..].trim()))
+        } else {
+            (trimmed, None)
+        };
+
+        let (target, section) = if let Some(hash_pos) = target_part.find('#') {
+            (
+                target_part[..hash_pos].trim(),
+                Some(target_part[hash_pos + 1..].trim()),
+            )
+        } else {
+            (target_part, None)
+        };
+
+        let stem = normalize_stem(target);
+        if stem != norm_original {
+            continue;
+        }
+
+        let folder_prefix = if let Some(slash_pos) = target.rfind('/') {
+            &target[..=slash_pos]
+        } else {
+            ""
+        };
+
+        let replacement = match section {
+            Some(sec) => {
+                let norm_sec = sec.to_lowercase();
+                if let Some(doc_stem) = section_to_doc.get(&norm_sec) {
+                    let mut r = String::from("[[");
+                    r.push_str(folder_prefix);
+                    r.push_str(doc_stem);
+                    if let Some(disp) = display {
+                        r.push('|');
+                        r.push_str(disp);
+                    }
+                    r.push_str("]]");
+                    r
+                } else {
+                    let mut r = String::from("[[");
+                    r.push_str(folder_prefix);
+                    r.push_str(default_target);
+                    r.push('#');
+                    r.push_str(sec);
+                    if let Some(disp) = display {
+                        r.push('|');
+                        r.push_str(disp);
+                    }
+                    r.push_str("]]");
+                    r
+                }
+            }
+            None => {
+                let mut r = String::from("[[");
+                r.push_str(folder_prefix);
+                r.push_str(default_target);
+                if let Some(disp) = display {
+                    r.push('|');
+                    r.push_str(disp);
+                }
+                r.push_str("]]");
+                r
+            }
+        };
+
+        replacements.push((m.start(), m.end(), replacement));
+    }
+
+    let count = replacements.len();
+    if count == 0 {
+        return (body.to_string(), 0);
+    }
+
+    let mut result = body.to_string();
+    for (start, end, replacement) in replacements.into_iter().rev() {
+        result.replace_range(start..end, &replacement);
+    }
+
+    (result, count)
 }
 
 #[cfg(test)]
@@ -816,5 +925,134 @@ mod tests {
         assert_eq!(read_file(tmp.path(), "a.md"), "[[OldPage]]");
 
         fs::set_permissions(&b_path, fs::Permissions::from_mode(0o644)).unwrap();
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase F: rewrite_body_for_split — section-aware link rewriting
+    // -----------------------------------------------------------------------
+
+    fn make_split_map(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_lowercase(), v.to_string()))
+            .collect()
+    }
+
+    // R1: no section anchor → redirect to default target
+    #[test]
+    fn split_rewrite_bare_link() {
+        let map = make_split_map(&[("alpha", "Alpha"), ("beta", "Beta")]);
+        let (result, count) = rewrite_body_for_split("See [[OldDoc]].", "OldDoc", &map, "Alpha");
+        assert_eq!(result, "See [[Alpha]].");
+        assert_eq!(count, 1);
+    }
+
+    // R2: matching section anchor → drop anchor
+    #[test]
+    fn split_rewrite_matching_section() {
+        let map = make_split_map(&[("alpha", "Alpha"), ("beta", "Beta")]);
+        let (result, count) =
+            rewrite_body_for_split("See [[OldDoc#Alpha]].", "OldDoc", &map, "Alpha");
+        assert_eq!(result, "See [[Alpha]].");
+        assert_eq!(count, 1);
+    }
+
+    // R3: unmatched section anchor → redirect to default, keep anchor
+    #[test]
+    fn split_rewrite_unmatched_section() {
+        let map = make_split_map(&[("alpha", "Alpha"), ("beta", "Beta")]);
+        let (result, count) =
+            rewrite_body_for_split("See [[OldDoc#Random]].", "OldDoc", &map, "Alpha");
+        assert_eq!(result, "See [[Alpha#Random]].");
+        assert_eq!(count, 1);
+    }
+
+    // R4 edge cases
+    #[test]
+    fn split_rewrite_preserves_display_text() {
+        let map = make_split_map(&[("alpha", "Alpha")]);
+        let (result, count) =
+            rewrite_body_for_split("[[OldDoc|alias]]", "OldDoc", &map, "Alpha");
+        assert_eq!(result, "[[Alpha|alias]]");
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn split_rewrite_skips_code_blocks() {
+        let map = make_split_map(&[("alpha", "Alpha")]);
+        let body = "before\n```\n[[OldDoc]]\n```\nafter [[OldDoc]]";
+        let (result, count) = rewrite_body_for_split(body, "OldDoc", &map, "Alpha");
+        assert_eq!(result, "before\n```\n[[OldDoc]]\n```\nafter [[Alpha]]");
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn split_rewrite_skips_frontmatter() {
+        let map = make_split_map(&[("alpha", "Alpha")]);
+        let body = "---\nrelated: \"[[OldDoc]]\"\n---\nBody [[OldDoc]].";
+        let (result, count) = rewrite_body_for_split(body, "OldDoc", &map, "Alpha");
+        assert_eq!(count, 1);
+        assert!(result.starts_with("---\nrelated: \"[[OldDoc]]\"\n---"));
+        assert!(result.ends_with("Body [[Alpha]]."));
+    }
+
+    #[test]
+    fn split_rewrite_folder_prefix() {
+        let map = make_split_map(&[("alpha", "Alpha")]);
+        let (result, count) =
+            rewrite_body_for_split("[[folder/OldDoc]]", "OldDoc", &map, "Alpha");
+        assert_eq!(result, "[[folder/Alpha]]");
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn split_rewrite_embed() {
+        let map = make_split_map(&[("alpha", "Alpha")]);
+        let (result, count) = rewrite_body_for_split("![[OldDoc]]", "OldDoc", &map, "Alpha");
+        assert_eq!(result, "![[Alpha]]");
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn split_rewrite_case_insensitive() {
+        let map = make_split_map(&[("alpha", "Alpha")]);
+        let (result, count) = rewrite_body_for_split("[[olddoc]]", "OldDoc", &map, "Alpha");
+        assert_eq!(result, "[[Alpha]]");
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn split_rewrite_no_matching_links() {
+        let map = make_split_map(&[("alpha", "Alpha")]);
+        let (result, count) = rewrite_body_for_split("[[Other]]", "OldDoc", &map, "Alpha");
+        assert_eq!(result, "[[Other]]");
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn split_rewrite_multiple_links() {
+        let map = make_split_map(&[("alpha", "Alpha"), ("beta", "Beta")]);
+        let body = "A [[OldDoc]] B [[OldDoc#Beta]] C [[OldDoc#Unknown]]";
+        let (result, count) = rewrite_body_for_split(body, "OldDoc", &map, "Alpha");
+        assert_eq!(result, "A [[Alpha]] B [[Beta]] C [[Alpha#Unknown]]");
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn split_rewrite_section_with_display() {
+        let map = make_split_map(&[("alpha", "Alpha"), ("beta", "Beta")]);
+        let (result, count) =
+            rewrite_body_for_split("[[OldDoc#Beta|my alias]]", "OldDoc", &map, "Alpha");
+        assert_eq!(result, "[[Beta|my alias]]");
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn split_rewrite_unmatched_section_with_display() {
+        let map = make_split_map(&[("alpha", "Alpha")]);
+        let (result, count) =
+            rewrite_body_for_split("[[OldDoc#Unk|alias]]", "OldDoc", &map, "Alpha");
+        assert_eq!(result, "[[Alpha#Unk|alias]]");
+        assert_eq!(count, 1);
     }
 }

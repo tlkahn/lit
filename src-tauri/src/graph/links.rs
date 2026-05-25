@@ -119,7 +119,7 @@ pub(crate) fn blank_fenced_code_blocks(text: &mut String) {
         }
     }
 
-    if result.ends_with('\n') && !text.ends_with('\n') {
+    if result.len() > text.len() && result.ends_with('\n') {
         result.pop();
     }
 
