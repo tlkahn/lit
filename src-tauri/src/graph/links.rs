@@ -120,8 +120,6 @@ pub(crate) fn blank_fenced_code_blocks(text: &mut String) {
     }
 
     if text.ends_with('\n') {
-        // split('\n') on a string ending with '\n' produces a trailing empty element;
-        // our loop appends '\n' after it, creating one extra byte. Trim it.
         if result.len() > text.len() {
             result.pop();
         }

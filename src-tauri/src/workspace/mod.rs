@@ -6,6 +6,7 @@ pub mod ops;
 pub mod page;
 pub mod scan;
 pub mod split;
+pub mod split_execute;
 pub mod trash;
 pub mod watcher;
 pub mod write_hash;

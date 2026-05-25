@@ -1,7 +1,8 @@
+use std::sync::Arc;
+
 use indexmap::IndexMap;
 use serde::Deserialize;
 use serde_yaml::Value;
-use std::sync::Arc;
 use tauri::State;
 
 use crate::commands::graph::GraphRegistry;
@@ -11,6 +12,7 @@ use crate::oplog::store::Action;
 use crate::workspace::merge::{self, MergeInput, MergePlan};
 use crate::workspace::ops;
 use crate::workspace::split::{self, SplitPlan};
+use crate::workspace::split_execute;
 use crate::workspace::write_hash::WriteHashRegistry;
 
 #[derive(Debug, Deserialize)]
@@ -40,6 +42,101 @@ pub fn preview_split(
     frontmatter: IndexMap<String, Value>,
 ) -> Result<SplitPlan, String> {
     Ok(split::plan_split(&content, &title, &frontmatter))
+}
+
+#[tauri::command]
+pub fn execute_split(
+    relative_path: String,
+    window: tauri::Window,
+    state: State<WorkspaceRegistry>,
+    registry: State<Arc<WriteHashRegistry>>,
+    oplog_state: State<Arc<OpLogRegistry>>,
+    graph_state: State<Arc<GraphRegistry>>,
+    app_handle: tauri::AppHandle,
+) -> Result<Vec<String>, String> {
+    let root = get_workspace_root(&state, window.label())?;
+
+    let result =
+        split_execute::execute_split(&root, &relative_path, &registry).map_err(|e| e.to_string())?;
+
+    let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
+    let gi = {
+        let indices = graph_state.indices.lock().unwrap();
+        indices.get(&root).cloned()
+    };
+
+    for path in &result.created_paths {
+        if let Some(ref gi) = gi {
+            let content = std::fs::read_to_string(root.join(path)).unwrap_or_default();
+            registry.record(&root.join(path), &content);
+            let _ = gi.reindex_file(path, ann_enabled);
+        }
+    }
+
+    for pr in &result.rewrite_actions {
+        registry.record(&root.join(&pr.relative_path), &pr.after_content);
+        if let Some(ref gi) = gi {
+            let _ = gi.reindex_file(&pr.relative_path, ann_enabled);
+        }
+    }
+
+    if let Some(ref gi) = gi {
+        let _ = gi.remove_file(&relative_path, ann_enabled);
+    }
+
+    if let Ok(oplog) = oplog_state.get_oplog(&root) {
+        let store = oplog.lock().unwrap();
+        let mut actions: Vec<Action> = Vec::new();
+        let mut seq: i64 = 0;
+
+        for path in &result.created_paths {
+            let content = std::fs::read_to_string(root.join(path)).unwrap_or_default();
+            actions.push(Action {
+                seq,
+                action_type: "create_file".into(),
+                path: path.clone(),
+                old_path: None,
+                before_content: None,
+                after_content: Some(content),
+            });
+            seq += 1;
+        }
+
+        for pr in &result.rewrite_actions {
+            actions.push(Action {
+                seq,
+                action_type: "modify_file".into(),
+                path: pr.relative_path.clone(),
+                old_path: None,
+                before_content: Some(pr.before_content.clone()),
+                after_content: Some(pr.after_content.clone()),
+            });
+            seq += 1;
+        }
+
+        actions.push(Action {
+            seq,
+            action_type: "delete_file".into(),
+            path: relative_path.clone(),
+            old_path: None,
+            before_content: Some(
+                std::fs::read_to_string(
+                    root.join(".trash").join(&result.trash_entry.trash_name),
+                )
+                .unwrap_or_default(),
+            ),
+            after_content: None,
+        });
+
+        let desc = format!(
+            "Split '{}' into {} document(s)",
+            relative_path,
+            result.created_paths.len()
+        );
+        let _ = store.record_operation("split_page", &desc, &actions);
+    }
+
+    Ok(result.created_paths)
 }
 
 #[tauri::command]
