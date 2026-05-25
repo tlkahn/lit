@@ -9,7 +9,7 @@ use super::split::{plan_split, SplitPlan};
 use super::trash::{self, TrashEntry};
 use super::write_hash::WriteHashRegistry;
 use super::WorkspaceError;
-use crate::graph::rewriter::PlannedRewrite;
+use crate::graph::rewriter::{rewrite_body_for_split, PlannedRewrite};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SplitResult {
@@ -61,10 +61,6 @@ pub fn execute_split(
         }
     }
 
-    for (i, (_, (body, frontmatter))) in chunks.iter().enumerate() {
-        ops::write_page(root, &target_paths[i], body, frontmatter, registry)?;
-    }
-
     let original_stem = Path::new(relative_path)
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
@@ -72,15 +68,36 @@ pub fn execute_split(
 
     let (section_to_doc, default_target) = build_section_map(&plan, &target_paths);
 
-    let rewrite_actions = rewrite_vault_for_split(
+    for (i, (_, (body, frontmatter))) in chunks.iter().enumerate() {
+        let (rewritten_body, _) =
+            rewrite_body_for_split(body, &original_stem, &section_to_doc, &default_target);
+        ops::write_page(root, &target_paths[i], &rewritten_body, frontmatter, registry)?;
+    }
+
+    let rewrite_actions = match rewrite_vault_for_split(
         root,
         &original_stem,
         &section_to_doc,
         &default_target,
         relative_path,
-    )?;
+    ) {
+        Ok(actions) => actions,
+        Err(e) => {
+            cleanup_created_files(root, &target_paths);
+            return Err(e);
+        }
+    };
 
-    let trash_entry = trash::trash_page(root, relative_path)?;
+    let trash_entry = match trash::trash_page(root, relative_path) {
+        Ok(entry) => entry,
+        Err(e) => {
+            for pr in &rewrite_actions {
+                let _ = std::fs::write(root.join(&pr.relative_path), &pr.before_content);
+            }
+            cleanup_created_files(root, &target_paths);
+            return Err(e);
+        }
+    };
 
     Ok(SplitResult {
         created_paths: target_paths,
@@ -106,6 +123,12 @@ fn collect_chunks(plan: &SplitPlan) -> Vec<ChunkData> {
         ));
     }
     chunks
+}
+
+fn cleanup_created_files(root: &Path, paths: &[String]) {
+    for path in paths {
+        let _ = std::fs::remove_file(root.join(path));
+    }
 }
 
 fn build_section_map(
@@ -142,7 +165,7 @@ fn rewrite_vault_for_split(
     default_target: &str,
     skip_path: &str,
 ) -> Result<Vec<PlannedRewrite>, WorkspaceError> {
-    use crate::graph::rewriter::{rewrite_body_for_split, walk_md_files_for_rewrite};
+    use crate::graph::rewriter::walk_md_files_for_rewrite;
 
     let md_files = walk_md_files_for_rewrite(root);
     let mut rewrites = Vec::new();
@@ -404,5 +427,42 @@ mod tests {
         );
         assert!(tmp.path().join("notes/Alpha.md").exists());
         assert!(tmp.path().join("notes/Beta.md").exists());
+    }
+
+    // R15: internal cross-references rewritten in-memory before writing
+    #[test]
+    fn split_rewrites_internal_links_in_created_files() {
+        let tmp = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        let fm = IndexMap::new();
+        let body = "## Alpha\nSee [[Doc#Beta]] for details.\n## Beta\nBeta body with [[Doc]].\n";
+        write_file(tmp.path(), "Doc.md", &make_doc("Doc", body, &fm));
+
+        let result = execute_split(tmp.path(), "Doc.md", &registry).unwrap();
+
+        let alpha = read_file(tmp.path(), "Alpha.md");
+        assert!(
+            alpha.contains("[[Beta]]"),
+            "cross-ref should be rewritten: {alpha}"
+        );
+        assert!(
+            !alpha.contains("[[Doc#Beta]]"),
+            "old section link should be gone: {alpha}"
+        );
+
+        let beta = read_file(tmp.path(), "Beta.md");
+        assert!(
+            beta.contains("[[Alpha]]"),
+            "bare link should redirect to default: {beta}"
+        );
+        assert!(
+            !beta.contains("[[Doc]]"),
+            "old stem should be gone: {beta}"
+        );
+
+        for action in &result.rewrite_actions {
+            assert_ne!(action.relative_path, "Alpha.md", "created file should not appear in rewrite_actions");
+            assert_ne!(action.relative_path, "Beta.md", "created file should not appear in rewrite_actions");
+        }
     }
 }

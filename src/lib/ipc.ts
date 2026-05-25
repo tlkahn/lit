@@ -869,3 +869,17 @@ export async function suggestMergeTitle(
     return null;
   }
 }
+
+export async function mergeDocuments(
+  paths: string[],
+  title: string,
+  ordering: number[],
+  outputDir?: string,
+): Promise<string> {
+  return invoke<string>("merge_documents", {
+    paths,
+    title,
+    ordering,
+    outputDir: outputDir ?? null,
+  });
+}

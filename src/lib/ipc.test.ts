@@ -85,6 +85,7 @@ import {
   previewSplit,
   executeSplit,
   suggestMergeTitle,
+  mergeDocuments,
 } from "./ipc";
 
 const sampleMeta = {
@@ -439,6 +440,8 @@ describe("ipc", () => {
           return ["Alpha.md", "Beta.md"];
         case "suggest_merge_title":
           throw new Error("LLM not configured");
+        case "merge_documents":
+          return "notes/Merged.md";
         case "search_tags":
           return [
             { tag: "rust", count: 5 },
@@ -1404,6 +1407,30 @@ describe("ipc", () => {
   it("suggestMergeTitle returns null on failure", async () => {
     const result = await suggestMergeTitle(["A", "B"], "merged body");
     expect(result).toBeNull();
+  });
+
+  it("mergeDocuments invokes merge_documents and returns merged path", async () => {
+    const result = await mergeDocuments(["A.md", "B.md"], "Merged", [0, 1]);
+    expect(result).toBe("notes/Merged.md");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("merge_documents", {
+      paths: ["A.md", "B.md"],
+      title: "Merged",
+      ordering: [0, 1],
+      outputDir: null,
+    });
+  });
+
+  it("mergeDocuments passes outputDir when provided", async () => {
+    const result = await mergeDocuments(["A.md", "B.md"], "Merged", [0, 1], "archive");
+    expect(result).toBe("notes/Merged.md");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("merge_documents", {
+      paths: ["A.md", "B.md"],
+      title: "Merged",
+      ordering: [0, 1],
+      outputDir: "archive",
+    });
   });
 
 });
