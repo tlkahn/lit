@@ -182,6 +182,25 @@ pub async fn process_stream<F>(
     }
 }
 
+pub async fn collect_stream_text(
+    stream: llm_core::stream::ResponseStream,
+) -> Result<String, String> {
+    use futures::StreamExt;
+    use llm_core::stream::Chunk;
+
+    let mut text = String::new();
+    let mut stream = stream;
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(Chunk::Text(t)) => text.push_str(&t),
+            Ok(Chunk::Done) => break,
+            Ok(_) => {}
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    Ok(text)
+}
+
 pub fn create_provider(model: &str, base_url: Option<&str>) -> Box<dyn Provider> {
     if model.starts_with("claude-") {
         Box::new(llm_anthropic::provider::AnthropicProvider::new(
@@ -567,5 +586,54 @@ data: [DONE]\n\n";
             Err(err) => assert!(!err.is_retryable()),
             Ok(_) => panic!("expected error for 401 response"),
         }
+    }
+
+    #[tokio::test]
+    async fn collect_stream_text_concatenates_text_chunks() {
+        use llm_core::stream::Chunk;
+        let stream = mock_stream(vec![
+            Ok(Chunk::Text("Hello".into())),
+            Ok(Chunk::Text(" world".into())),
+            Ok(Chunk::Done),
+        ]);
+        let result = collect_stream_text(stream).await.unwrap();
+        assert_eq!(result, "Hello world");
+    }
+
+    #[tokio::test]
+    async fn collect_stream_text_returns_error_on_error_chunk() {
+        let stream = mock_stream(vec![
+            Err(llm_core::error::LlmError::HttpError {
+                status: 401,
+                message: "Unauthorized".into(),
+            }),
+        ]);
+        let result = collect_stream_text(stream).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("401"));
+    }
+
+    #[tokio::test]
+    async fn collect_stream_text_empty_stream() {
+        use llm_core::stream::Chunk;
+        let stream = mock_stream(vec![Ok(Chunk::Done)]);
+        let result = collect_stream_text(stream).await.unwrap();
+        assert_eq!(result, "");
+    }
+
+    #[tokio::test]
+    async fn collect_stream_text_ignores_non_text_chunks() {
+        use llm_core::stream::Chunk;
+        use llm_core::types::Usage;
+        let stream = mock_stream(vec![
+            Ok(Chunk::Text("A".into())),
+            Ok(Chunk::Usage(Usage { input: Some(10), output: Some(5), details: None })),
+            Ok(Chunk::ToolCallStart { name: "search".into(), id: None }),
+            Ok(Chunk::ToolCallDelta { content: "{}".into() }),
+            Ok(Chunk::Text("B".into())),
+            Ok(Chunk::Done),
+        ]);
+        let result = collect_stream_text(stream).await.unwrap();
+        assert_eq!(result, "AB");
     }
 }
