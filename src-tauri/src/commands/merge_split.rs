@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use indexmap::IndexMap;
 use serde::Deserialize;
 use serde_yaml::Value;
-use tauri::State;
+use tauri::{Emitter, State};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
@@ -252,6 +252,8 @@ pub fn execute_split(
         let _ = gi.remove_file(&relative_path, ann_enabled);
     }
 
+    let _ = app_handle.emit("lit:graph-updated", ());
+
     if let Ok(oplog) = oplog_state.get_oplog(&root) {
         let store = oplog.lock().unwrap();
         let mut actions: Vec<Action> = Vec::new();
@@ -364,6 +366,8 @@ pub fn merge_documents(
             let _ = gi.reindex_file(&pr.relative_path, ann_enabled);
         }
     }
+
+    let _ = app_handle.emit("lit:graph-updated", ());
 
     if let Ok(oplog) = oplog_state.get_oplog(&root) {
         let store = oplog.lock().unwrap();

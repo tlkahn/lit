@@ -59,7 +59,7 @@ export function useFileWatcher(onCurrentPageModified?: () => void) {
         (event) => {
           if (cancelled) return;
           console.debug("[FileWatcher] file-deleted:", event.payload.path, "current:", currentPageRef.current);
-          if (currentPageRef.current === event.payload.path) {
+          if (useWorkspaceStore.getState().currentPagePath === event.payload.path) {
             console.warn("[FileWatcher] current page deleted, deselecting:", event.payload.path);
             selectPage(null);
           }

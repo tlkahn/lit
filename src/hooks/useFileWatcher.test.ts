@@ -113,4 +113,70 @@ describe("useFileWatcher", () => {
 
     expect(callback).toHaveBeenCalledOnce();
   });
+
+  it("file-deleted for current page deselects it", async () => {
+    mockListen();
+    useWorkspaceStore.setState({
+      workspacePath: "/test",
+      currentPagePath: "note.md",
+    });
+
+    renderHook(() => useFileWatcher());
+    await act(async () => {});
+
+    emitMockEvent("workspace://file-deleted", { path: "note.md" });
+
+    expect(useWorkspaceStore.getState().currentPagePath).toBeNull();
+  });
+
+  it("file-deleted for different page does not deselect current page", async () => {
+    mockListen();
+    useWorkspaceStore.setState({
+      workspacePath: "/test",
+      currentPagePath: "Merged.md",
+    });
+
+    renderHook(() => useFileWatcher());
+    await act(async () => {});
+
+    emitMockEvent("workspace://file-deleted", { path: "A.md" });
+
+    expect(useWorkspaceStore.getState().currentPagePath).toBe("Merged.md");
+  });
+
+  it("file-deleted calls refreshPages", async () => {
+    mockListen();
+    const refreshPages = vi.fn();
+    useWorkspaceStore.setState({
+      workspacePath: "/test",
+      currentPagePath: null,
+      refreshPages,
+    });
+
+    renderHook(() => useFileWatcher());
+    await act(async () => {});
+
+    emitMockEvent("workspace://file-deleted", { path: "A.md" });
+
+    expect(refreshPages).toHaveBeenCalled();
+  });
+
+  it("file-deleted does not deselect when store was updated between renders", async () => {
+    mockListen();
+    useWorkspaceStore.setState({
+      workspacePath: "/test",
+      currentPagePath: "A.md",
+    });
+
+    renderHook(() => useFileWatcher());
+    await act(async () => {});
+
+    // Simulate: selectPage("Merged.md") ran but React hasn't re-rendered yet,
+    // so the ref still holds "A.md" while the store already has "Merged.md".
+    useWorkspaceStore.setState({ currentPagePath: "Merged.md" });
+
+    emitMockEvent("workspace://file-deleted", { path: "A.md" });
+
+    expect(useWorkspaceStore.getState().currentPagePath).toBe("Merged.md");
+  });
 });

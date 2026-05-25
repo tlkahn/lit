@@ -1226,6 +1226,57 @@ describe("GraphView", () => {
     resetListenMock();
   });
 
+  it("lit:graph-updated after merge replaces source nodes with merged node", async () => {
+    mockListen();
+    let callCount = 0;
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          callCount++;
+          if (callCount <= 2) {
+            return {
+              nodes: [
+                { id: "a.md", title: "A", is_stub: false },
+                { id: "b.md", title: "B", is_stub: false },
+                { id: "c.md", title: "C", is_stub: false },
+              ],
+              edges: [["a.md", "b.md"], ["b.md", "c.md"]],
+              pagerank: { "a.md": 0.3, "b.md": 0.4, "c.md": 0.3 },
+              positions: {},
+            };
+          }
+          return {
+            nodes: [
+              { id: "Merged.md", title: "Merged", is_stub: false },
+              { id: "c.md", title: "C", is_stub: false },
+            ],
+            edges: [["Merged.md", "c.md"]],
+            pagerank: { "Merged.md": 0.6, "c.md": 0.4 },
+            positions: {},
+          };
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    (invoke as unknown as ReturnType<typeof vi.fn>).mockClear();
+
+    await act(async () => {
+      emitMockEvent("lit:graph-updated", {});
+    });
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: [], depth: 0, directed: null });
+    });
+
+    resetListenMock();
+  });
+
   it("empty diff triggers no sigma refresh", async () => {
     mockListen();
     mockInvoke((cmd) => {
