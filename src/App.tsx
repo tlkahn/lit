@@ -18,7 +18,8 @@ import { useThemeStore } from "./stores/theme";
 import { usePreferencesStore } from "./stores/preferences";
 import { useFocusModeStore } from "./stores/focusMode";
 import { useLicenseStore } from "./stores/license";
-import { getStartupContext } from "./lib/ipc";
+import { getStartupContext, mergeDocuments, executeSplit } from "./lib/ipc";
+import type { MergePlan } from "./lib/ipc";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { usePaneStore, findLeaf } from "./stores/panes";
@@ -36,6 +37,7 @@ import { useBottomPanelEvents } from "./hooks/useBottomPanelEvents";
 import { getCurrentEditorView } from "./lib/editorViewRef";
 import { annotationToFields, getEditCursorOffset, type AnnotationBuilderEventDetail, type EditRawInfo } from "./lib/annotationDsl";
 import type { Annotation, ExportProgress, ExportSummary, PageContent, SplitPlan } from "./lib/ipc";
+import { useStatusMessageStore } from "./stores/statusMessage";
 import { MergePreviewDialog } from "./components/MergePreviewDialog";
 import { SplitPreviewDialog } from "./components/SplitPreviewDialog";
 
@@ -451,15 +453,36 @@ function App() {
           open={mergePreviewOpen}
           docs={mergePreviewDocs}
           llmEnabled={llmEnabled}
-          // TODO(phase-4): use the MergePlan returned by previewMerge instead of discarding it
-          onConfirm={() => setMergePreviewOpen(false)}
+          onConfirm={async (plan: MergePlan, ordering: number[]) => {
+            setMergePreviewOpen(false);
+            try {
+              const paths = mergePreviewDocs.map((d) => d.meta.relative_path);
+              const mergedPath = await mergeDocuments(paths, plan.title, ordering);
+              useWorkspaceStore.getState().selectPage(mergedPath);
+              useStatusMessageStore.getState().show("Documents merged");
+            } catch (err) {
+              useStatusMessageStore.getState().show(String(err), "error");
+            }
+          }}
           onCancel={() => setMergePreviewOpen(false)}
         />
         <SplitPreviewDialog
           open={splitPreviewOpen}
           plan={splitPreviewPlan}
           originalPath={splitPreviewPath}
-          onConfirm={() => setSplitPreviewOpen(false)}
+          onConfirm={async () => {
+            setSplitPreviewOpen(false);
+            try {
+              const createdPaths = await executeSplit(splitPreviewPath);
+              const first = createdPaths[0];
+              if (first) {
+                useWorkspaceStore.getState().selectPage(first);
+              }
+              useStatusMessageStore.getState().show("Document split");
+            } catch (err) {
+              useStatusMessageStore.getState().show(String(err), "error");
+            }
+          }}
           onCancel={() => setSplitPreviewOpen(false)}
         />
       </div>
