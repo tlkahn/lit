@@ -84,6 +84,7 @@ import {
   previewMerge,
   previewSplit,
   suggestMergeTitle,
+  cancelTitleSuggestion,
 } from "./ipc";
 
 const sampleMeta = {
@@ -436,6 +437,8 @@ describe("ipc", () => {
         }
         case "suggest_merge_title":
           throw new Error("LLM not configured");
+        case "cancel_title_suggestion":
+          return undefined;
         case "search_tags":
           return [
             { tag: "rust", count: 5 },
@@ -1394,6 +1397,10 @@ describe("ipc", () => {
   it("suggestMergeTitle returns null on failure", async () => {
     const result = await suggestMergeTitle(["A", "B"], "merged body");
     expect(result).toBeNull();
+  });
+
+  it("cancelTitleSuggestion resolves without error", async () => {
+    await expect(cancelTitleSuggestion()).resolves.toBeUndefined();
   });
 
 });

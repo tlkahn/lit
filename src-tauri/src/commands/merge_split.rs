@@ -1,13 +1,47 @@
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use indexmap::IndexMap;
 use serde::Deserialize;
 use serde_yaml::Value;
+use tokio::sync::oneshot;
+use tokio::task::JoinHandle;
 
 use crate::llm;
 use crate::workspace::merge::{self, MergeInput, MergePlan};
 use crate::workspace::split::{self, SplitPlan};
 use super::credential::{self, CredentialStore};
+
+pub struct TitleSuggestState {
+    active: Arc<Mutex<Option<JoinHandle<()>>>>,
+}
+
+impl TitleSuggestState {
+    pub fn new() -> Self {
+        Self {
+            active: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    pub fn set_active(&self, handle: JoinHandle<()>) {
+        let mut guard = self.active.lock().unwrap();
+        if let Some(old) = guard.take() {
+            old.abort();
+        }
+        *guard = Some(handle);
+    }
+
+    pub fn cancel(&self) {
+        let mut guard = self.active.lock().unwrap();
+        if let Some(handle) = guard.take() {
+            handle.abort();
+        }
+    }
+
+    pub fn clear(&self) {
+        *self.active.lock().unwrap() = None;
+    }
+}
 
 #[derive(Debug, Deserialize)]
 pub struct MergeInputPayload {
@@ -49,6 +83,15 @@ fn strip_surrounding_quotes(s: &str) -> &str {
             return &s[1..s.len() - 1];
         }
     }
+    if let (Some(first_char), Some(last_char)) = (s.chars().next(), s.chars().next_back()) {
+        let matched = matches!(
+            (first_char, last_char),
+            ('\u{201C}', '\u{201D}') | ('\u{2018}', '\u{2019}')
+        );
+        if matched {
+            return &s[first_char.len_utf8()..s.len() - last_char.len_utf8()];
+        }
+    }
     s
 }
 
@@ -60,6 +103,10 @@ pub(crate) async fn suggest_title_inner(
     merged_body: &str,
     temperature: f64,
 ) -> Result<String, String> {
+    if source_titles.is_empty() {
+        return Err("source_titles must not be empty".to_string());
+    }
+
     let provider = llm::create_provider(model, base_url);
 
     let titles_text = source_titles.join(", ");
@@ -95,6 +142,7 @@ pub async fn suggest_merge_title(
     merged_body: String,
     app_handle: tauri::AppHandle,
     store: tauri::State<'_, std::sync::Arc<dyn CredentialStore>>,
+    state: tauri::State<'_, TitleSuggestState>,
 ) -> Result<String, String> {
     let prefs = crate::preferences::read_preferences(&app_handle);
 
@@ -118,23 +166,42 @@ pub async fn suggest_merge_title(
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string());
 
-    let provider_name = if model.starts_with("claude-") {
-        "anthropic"
-    } else {
-        "openai"
-    };
+    let keychain_key = credential::get_api_key_inner(store.as_ref(), "anthropic")
+        .ok()
+        .or_else(|| credential::get_api_key_inner(store.as_ref(), "openai").ok());
+    let provider = llm::create_provider(&model, base_url.as_deref());
+    let env_var_name = provider.key_env_var();
+    let api_key = llm::resolve_api_key(keychain_key.as_deref(), env_var_name)
+        .ok_or_else(|| "No API key found. Set one in Settings or via environment variable.".to_string())?;
 
-    let api_key = credential::get_api_key_inner(store.as_ref(), provider_name)?;
+    let (tx, rx) = oneshot::channel();
 
-    suggest_title_inner(
-        &model,
-        &api_key,
-        base_url.as_deref(),
-        &source_titles,
-        &merged_body,
-        temperature,
-    )
-    .await
+    let handle = tokio::spawn(async move {
+        let result = suggest_title_inner(
+            &model,
+            &api_key,
+            base_url.as_deref(),
+            &source_titles,
+            &merged_body,
+            temperature,
+        )
+        .await;
+        let _ = tx.send(result);
+    });
+
+    state.set_active(handle);
+
+    let result = rx.await.map_err(|_| "Title suggestion cancelled".to_string())?;
+    state.clear();
+    result
+}
+
+#[tauri::command]
+pub async fn cancel_title_suggestion(
+    state: tauri::State<'_, TitleSuggestState>,
+) -> Result<(), String> {
+    state.cancel();
+    Ok(())
 }
 
 #[cfg(test)]
@@ -421,5 +488,48 @@ mod tests {
             "openai"
         };
         assert_eq!(provider_name, "anthropic");
+    }
+
+    #[tokio::test]
+    async fn suggest_title_inner_empty_titles_returns_error() {
+        let result = suggest_title_inner(
+            "gpt-4o",
+            "fake-key",
+            None,
+            &[],
+            "body",
+            0.7,
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("source_titles must not be empty"));
+    }
+
+    #[test]
+    fn strip_surrounding_quotes_curly_double() {
+        assert_eq!(strip_surrounding_quotes("\u{201C}My Title\u{201D}"), "My Title");
+    }
+
+    #[test]
+    fn strip_surrounding_quotes_curly_single() {
+        assert_eq!(strip_surrounding_quotes("\u{2018}My Title\u{2019}"), "My Title");
+    }
+
+    #[test]
+    fn strip_surrounding_quotes_curly_mismatched() {
+        let input = "\u{201C}My Title\u{2019}";
+        assert_eq!(strip_surrounding_quotes(input), input);
+    }
+
+    #[test]
+    fn title_suggest_state_cancel() {
+        let state = TitleSuggestState::new();
+        let handle = tokio::runtime::Runtime::new().unwrap().spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        });
+        state.set_active(handle);
+        state.cancel();
+        assert!(state.active.lock().unwrap().is_none());
     }
 }

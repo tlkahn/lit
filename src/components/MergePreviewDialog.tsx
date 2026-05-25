@@ -16,7 +16,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { PageContent, MergePlan } from "../lib/ipc";
-import { previewMerge, suggestMergeTitle } from "../lib/ipc";
+import { previewMerge, suggestMergeTitle, cancelTitleSuggestion } from "../lib/ipc";
 import { detectFrontmatterConflicts } from "../lib/frontmatterConflicts";
 
 export function reorderArray<T>(arr: T[], fromIdx: number, toIdx: number): T[] {
@@ -78,6 +78,9 @@ export function MergePreviewDialog({
       setSuggestingTitle(false);
       setConfirming(false);
     }
+    return () => {
+      cancelTitleSuggestion();
+    };
   }, [open, docs]);
 
   const handleKeyDown = useCallback(

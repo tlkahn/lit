@@ -865,3 +865,7 @@ export async function suggestMergeTitle(
     return null;
   }
 }
+
+export async function cancelTitleSuggestion(): Promise<void> {
+  return invoke<void>("cancel_title_suggestion");
+}

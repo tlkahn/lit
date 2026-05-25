@@ -2592,6 +2592,8 @@ describe("GraphView", () => {
         }
         case "preview_merge":
           return { title: "Merged", body: "merged body", frontmatter: {}, source_titles: ["A", "B"] };
+        case "cancel_title_suggestion":
+          return undefined;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -2689,6 +2691,8 @@ describe("GraphView", () => {
         }
         case "preview_merge":
           return { title: "Merged", body: "merged body", frontmatter: {}, source_titles: ["A", "B"] };
+        case "cancel_title_suggestion":
+          return undefined;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -2735,6 +2739,8 @@ describe("GraphView", () => {
         }
         case "preview_merge":
           return { title: "Merged", body: "merged body", frontmatter: {}, source_titles: ["A", "B"] };
+        case "cancel_title_suggestion":
+          return undefined;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -2849,6 +2855,8 @@ describe("GraphView", () => {
         }
         case "preview_merge":
           return { title: "Merged", body: "merged body", frontmatter: {}, source_titles: ["A", "B"] };
+        case "cancel_title_suggestion":
+          return undefined;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
