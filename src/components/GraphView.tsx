@@ -7,6 +7,7 @@ import { getQualitySettings, getTierSettings, type TierSettings } from "../lib/q
 import { createNudgeController, type NudgeController } from "../lib/graphNudge";
 import { useThemeStore } from "../stores/theme";
 import { useGraphSelectionStore } from "../stores/graphSelection";
+import { usePreferencesStore } from "../stores/preferences";
 import { computeDiff, applyDiff, isDiffEmpty } from "../lib/graphDiff";
 import { isPerfEnabled, perfTable, type PerfEntry } from "../lib/perf";
 import { GraphToolbar } from "./GraphToolbar";
@@ -83,6 +84,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   const contextMenuOpenRef = useRef(false);
   useEffect(() => { contextMenuOpenRef.current = contextMenu !== null; }, [contextMenu]);
   const selectionCount = useGraphSelectionStore((s) => s.selectedNodes.length);
+  const llmEnabled = usePreferencesStore((s) => s.llmOpenaiApiKeySet || s.llmAnthropicApiKeySet);
   const unsubSelectionRef = useRef<(() => void) | null>(null);
   const [splitCheck, setSplitCheck] = useState<{ loading: boolean; hasHeadings: boolean; content: PageContent | null }>({ loading: false, hasHeadings: false, content: null });
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
@@ -751,6 +753,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         <MergePreviewDialog
           open={mergeDialogOpen}
           docs={mergeDialogDocs}
+          llmEnabled={llmEnabled}
           onConfirm={(plan, ordering) => {
             onMergeConfirmRef.current?.(plan, ordering, mergeDialogDocs);
             setMergeDialogOpen(false);
