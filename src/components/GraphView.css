@@ -3,6 +3,7 @@
   height: 100%;
   position: relative;
   background: var(--background-primary-alt, #fafafa);
+  user-select: none;
 }
 
 .graph-loading,
