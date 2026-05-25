@@ -82,6 +82,66 @@ pub struct MergeResult {
     pub source_snapshots: Vec<(String, String)>,
 }
 
+fn build_link_redirects(source_paths: &[&str], merged_filename: &str) -> Vec<LinkRedirect> {
+    let merged_page = filename_to_page_name(merged_filename);
+    source_paths
+        .iter()
+        .map(|path| {
+            let filename = Path::new(path)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            LinkRedirect {
+                old_target: filename_to_page_name(&filename),
+                new_target: merged_page.clone(),
+            }
+        })
+        .collect()
+}
+
+fn resolve_merged_path(first_source_path: &str, output_dir: Option<&str>, merged_filename: &str) -> String {
+    let parent_dir = if let Some(dir) = output_dir {
+        dir.to_string()
+    } else {
+        Path::new(first_source_path)
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default()
+    };
+    if parent_dir.is_empty() {
+        merged_filename.to_string()
+    } else {
+        format!("{}/{}", parent_dir, merged_filename)
+    }
+}
+
+fn resolve_merge_title<'a>(explicit: Option<&'a str>, plan_title: &'a str) -> &'a str {
+    match explicit {
+        Some(t) if !t.trim().is_empty() => t,
+        _ => plan_title,
+    }
+}
+
+fn validate_ordering(docs_len: usize, ordering: &[usize]) -> Result<(), String> {
+    if ordering.is_empty() {
+        return Err("Cannot merge: ordering is empty".to_string());
+    }
+    if let Some(&i) = ordering.iter().find(|&&i| i >= docs_len) {
+        return Err(format!(
+            "Invalid ordering index {}: only {} documents provided",
+            i, docs_len
+        ));
+    }
+    let mut seen = HashSet::new();
+    for &i in ordering {
+        if !seen.insert(i) {
+            return Err(format!("Duplicate ordering index: {}", i));
+        }
+    }
+    Ok(())
+}
+
 pub fn merge_documents_inner(
     root: &Path,
     docs: &[(String, MergeInput)],
@@ -92,52 +152,16 @@ pub fn merge_documents_inner(
     if docs.is_empty() {
         return Err("Cannot merge: no documents provided".to_string());
     }
-
-    if ordering.is_empty() {
-        return Err("Cannot merge: ordering is empty".to_string());
-    }
-    if let Some(&i) = ordering.iter().find(|&&i| i >= docs.len()) {
-        return Err(format!(
-            "Invalid ordering index {}: only {} documents provided",
-            i,
-            docs.len()
-        ));
-    }
-    {
-        let mut seen = HashSet::new();
-        for &i in ordering {
-            if !seen.insert(i) {
-                return Err(format!("Duplicate ordering index: {}", i));
-            }
-        }
-    }
+    validate_ordering(docs.len(), ordering)?;
 
     let ordered: Vec<&(String, MergeInput)> = ordering.iter().map(|&i| &docs[i]).collect();
 
     let merge_inputs: Vec<MergeInput> = ordered.iter().map(|(_, input)| input.clone()).collect();
     let plan = plan_merge(&merge_inputs);
 
-    let merged_title = match title {
-        Some(t) if !t.trim().is_empty() => t,
-        _ => &plan.title,
-    };
-
-    let parent_dir = if let Some(dir) = output_dir {
-        dir.to_string()
-    } else {
-        let first_path = &ordered[0].0;
-        Path::new(first_path)
-            .parent()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default()
-    };
-
+    let merged_title = resolve_merge_title(title, &plan.title);
     let merged_filename = page_name_to_filename(merged_title);
-    let merged_path = if parent_dir.is_empty() {
-        merged_filename.clone()
-    } else {
-        format!("{}/{}", parent_dir, merged_filename)
-    };
+    let merged_path = resolve_merged_path(&ordered[0].0, output_dir, &merged_filename);
 
     let full_merged = root.join(&merged_path);
     if full_merged.exists() {
@@ -154,22 +178,10 @@ pub fn merge_documents_inner(
         })
         .collect();
 
-    let redirects: Vec<LinkRedirect> = ordered
-        .iter()
-        .map(|(path, _)| {
-            let filename = Path::new(path)
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-            LinkRedirect {
-                old_target: filename_to_page_name(&filename),
-                new_target: filename_to_page_name(&merged_filename),
-            }
-        })
-        .collect();
+    let ordered_paths: Vec<&str> = ordered.iter().map(|(p, _)| p.as_str()).collect();
+    let redirects = build_link_redirects(&ordered_paths, &merged_filename);
 
-    let source_paths: HashSet<&str> = ordered.iter().map(|(p, _)| p.as_str()).collect();
+    let source_paths: HashSet<&str> = ordered_paths.iter().copied().collect();
     let full_planned = rewriter::plan_vault_rewrites(root, &redirects)?;
     let planned_rewrites = PlannedVaultRewrite {
         files_scanned: full_planned.files_scanned,
@@ -598,7 +610,103 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ── Section D: Validation edge cases ──
+    // ── Section D: Extracted pure functions ──
+
+    #[test]
+    fn validate_ordering_accepts_valid() {
+        assert!(validate_ordering(3, &[0, 1, 2]).is_ok());
+        assert!(validate_ordering(3, &[2, 0]).is_ok());
+        assert!(validate_ordering(1, &[0]).is_ok());
+    }
+
+    #[test]
+    fn validate_ordering_rejects_empty() {
+        let err = validate_ordering(2, &[]).unwrap_err();
+        assert!(err.contains("ordering is empty"));
+    }
+
+    #[test]
+    fn validate_ordering_rejects_out_of_bounds() {
+        let err = validate_ordering(2, &[0, 5]).unwrap_err();
+        assert!(err.contains("Invalid ordering index 5"));
+        assert!(err.contains("2 documents"));
+    }
+
+    #[test]
+    fn validate_ordering_rejects_duplicates() {
+        let err = validate_ordering(3, &[0, 1, 0]).unwrap_err();
+        assert!(err.contains("Duplicate ordering index: 0"));
+    }
+
+    #[test]
+    fn resolve_title_uses_explicit() {
+        assert_eq!(resolve_merge_title(Some("Custom"), "A + B"), "Custom");
+    }
+
+    #[test]
+    fn resolve_title_falls_back_on_none() {
+        assert_eq!(resolve_merge_title(None, "A + B"), "A + B");
+    }
+
+    #[test]
+    fn resolve_title_falls_back_on_empty() {
+        assert_eq!(resolve_merge_title(Some(""), "A + B"), "A + B");
+    }
+
+    #[test]
+    fn resolve_title_falls_back_on_whitespace() {
+        assert_eq!(resolve_merge_title(Some("  \t "), "A + B"), "A + B");
+    }
+
+    #[test]
+    fn resolve_path_explicit_output_dir() {
+        assert_eq!(
+            resolve_merged_path("notes/A.md", Some("archive"), "Merged.md"),
+            "archive/Merged.md"
+        );
+    }
+
+    #[test]
+    fn resolve_path_infers_from_first_source() {
+        assert_eq!(
+            resolve_merged_path("notes/A.md", None, "Merged.md"),
+            "notes/Merged.md"
+        );
+    }
+
+    #[test]
+    fn resolve_path_root_level_source() {
+        assert_eq!(
+            resolve_merged_path("A.md", None, "Merged.md"),
+            "Merged.md"
+        );
+    }
+
+    #[test]
+    fn resolve_path_nested_source() {
+        assert_eq!(
+            resolve_merged_path("a/b/c/D.md", None, "Merged.md"),
+            "a/b/c/Merged.md"
+        );
+    }
+
+    #[test]
+    fn build_redirects_maps_source_to_merged() {
+        let redirects = build_link_redirects(&["A.md", "B.md"], "Merged.md");
+        assert_eq!(redirects.len(), 2);
+        assert_eq!(redirects[0].old_target, "A");
+        assert_eq!(redirects[0].new_target, "Merged");
+        assert_eq!(redirects[1].old_target, "B");
+        assert_eq!(redirects[1].new_target, "Merged");
+    }
+
+    #[test]
+    fn build_redirects_handles_subdirectory_paths() {
+        let redirects = build_link_redirects(&["notes/Deep Thought.md"], "Merged.md");
+        assert_eq!(redirects.len(), 1);
+        assert_eq!(redirects[0].old_target, "Deep Thought");
+        assert_eq!(redirects[0].new_target, "Merged");
+    }
 
     #[test]
     fn merge_inner_empty_ordering_returns_error() {
