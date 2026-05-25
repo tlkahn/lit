@@ -671,49 +671,63 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
           }}
         />
       )}
-      {contextMenu && (onExportNetwork || onMergeConfirm || onSplitConfirm) && (
+      {contextMenu && (
         <div
           data-graph-context-menu
           className="fixed z-50 min-w-[160px] select-none rounded-lg border border-border/40 bg-bg-primary/80 p-1 shadow-xl shadow-black/20 backdrop-blur-xl backdrop-saturate-150 dark:border-border/10 dark:bg-bg-primary/70"
           style={{ left: contextMenu.x, top: contextMenu.y }}
         >
-          {selectionCount >= 2 && onMergeConfirm && (
+          {selectionCount >= 2 && (
             <button
               data-testid="ctx-merge-btn"
               className="block w-full rounded-md px-3 py-1 text-start text-[13px] text-text-normal hover:bg-interactive-accent hover:text-text-on-accent"
               onClick={() => {
                 const selectedNodes = useGraphSelectionStore.getState().selectedNodes;
                 setContextMenu(null);
-                Promise.all(selectedNodes.map((id) => readPage(id))).then((docs) => {
-                  setMergeDialogDocs(docs);
-                  setMergeDialogOpen(true);
-                });
+                if (onMergeConfirm) {
+                  Promise.all(selectedNodes.map((id) => readPage(id))).then((docs) => {
+                    setMergeDialogDocs(docs);
+                    setMergeDialogOpen(true);
+                  });
+                } else {
+                  Promise.all(selectedNodes.map((id) => readPage(id))).then((docs) => {
+                    window.dispatchEvent(
+                      new CustomEvent("lit:open-merge-preview", { detail: { docs } }),
+                    );
+                  });
+                }
               }}
             >
               {`Merge ${selectionCount} documents`}
             </button>
           )}
-          {onSplitConfirm && (
-            <button
-              data-testid="ctx-split-btn"
-              className="block w-full rounded-md px-3 py-1 text-start text-[13px] text-text-normal hover:bg-interactive-accent hover:text-text-on-accent disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-text-normal"
-              disabled={splitCheck.loading || !splitCheck.hasHeadings}
-              title={!splitCheck.loading && !splitCheck.hasHeadings ? "Document has no headings — cannot split" : undefined}
-              onClick={() => {
-                if (!splitCheck.content) return;
-                const nodeId = contextMenu.nodeId;
-                setContextMenu(null);
+          <button
+            data-testid="ctx-split-btn"
+            className="block w-full rounded-md px-3 py-1 text-start text-[13px] text-text-normal hover:bg-interactive-accent hover:text-text-on-accent disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-text-normal"
+            disabled={splitCheck.loading || !splitCheck.hasHeadings}
+            title={!splitCheck.loading && !splitCheck.hasHeadings ? "Document has no headings — cannot split" : undefined}
+            onClick={() => {
+              if (!splitCheck.content) return;
+              const nodeId = contextMenu.nodeId;
+              setContextMenu(null);
+              if (onSplitConfirm) {
                 previewSplit(splitCheck.content.body, splitCheck.content.meta.title, splitCheck.content.meta.frontmatter).then((plan) => {
                   setSplitDialogPlan(plan);
                   setSplitDialogPath(nodeId);
                   setSplitDialogOpen(true);
                 });
-              }}
-            >
-              Split document
-            </button>
-          )}
-          {(onMergeConfirm || onSplitConfirm) && onExportNetwork && (
+              } else {
+                previewSplit(splitCheck.content.body, splitCheck.content.meta.title, splitCheck.content.meta.frontmatter).then((plan) => {
+                  window.dispatchEvent(
+                    new CustomEvent("lit:open-split-preview", { detail: { plan, originalPath: nodeId } }),
+                  );
+                });
+              }
+            }}
+          >
+            Split document
+          </button>
+          {onExportNetwork && (
             <div data-testid="ctx-divider" className="my-1 border-t border-border/40" />
           )}
           {onExportNetwork && (

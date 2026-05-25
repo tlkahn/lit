@@ -1501,7 +1501,7 @@ describe("GraphView", () => {
       rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
     });
 
-    const exportBtn = container.querySelector("[data-graph-context-menu] button")!;
+    const exportBtn = container.querySelector("[data-testid='ctx-export-btn']")!;
     fireEvent.click(exportBtn);
     expect(onExportNetwork).toHaveBeenCalledWith("a.md");
   });
@@ -1518,7 +1518,7 @@ describe("GraphView", () => {
       rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
     });
 
-    fireEvent.click(container.querySelector("[data-graph-context-menu] button")!);
+    fireEvent.click(container.querySelector("[data-testid='ctx-export-btn']")!);
     expect(container.querySelector("[data-graph-context-menu]")).toBeNull();
   });
 
@@ -1563,7 +1563,7 @@ describe("GraphView", () => {
     expect(container.querySelector("[data-graph-context-menu]")).toBeNull();
   });
 
-  it("context menu hidden when onExportNetwork is not provided", async () => {
+  it("context menu without onExportNetwork omits export button", async () => {
     const GraphView = (await import("./GraphView")).default;
     const { container } = render(<GraphView />);
     await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
@@ -1575,7 +1575,8 @@ describe("GraphView", () => {
       rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
     });
 
-    expect(container.querySelector("[data-graph-context-menu]")).toBeNull();
+    expect(container.querySelector("[data-graph-context-menu]")).toBeTruthy();
+    expect(container.querySelector("[data-testid='ctx-export-btn']")).toBeNull();
   });
 
   it("Escape when context menu is open does NOT call onExit", async () => {
