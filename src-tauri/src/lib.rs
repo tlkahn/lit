@@ -360,6 +360,8 @@ pub fn run() {
             commands::merge_split::preview_split,
             commands::merge_split::suggest_merge_title,
             commands::merge_split::cancel_title_suggestion,
+            commands::merge_split::execute_split,
+            commands::merge_split::merge_documents,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

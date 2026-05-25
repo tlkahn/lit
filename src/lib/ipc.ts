@@ -855,6 +855,10 @@ export async function previewSplit(
   return invoke<SplitPlan>("preview_split", { content, title, frontmatter });
 }
 
+export async function executeSplit(relativePath: string): Promise<string[]> {
+  return invoke<string[]>("execute_split", { relativePath });
+}
+
 export async function suggestMergeTitle(
   sourceTitles: string[],
   mergedBody: string,
@@ -868,4 +872,18 @@ export async function suggestMergeTitle(
 
 export async function cancelTitleSuggestion(): Promise<void> {
   return invoke<void>("cancel_title_suggestion");
+}
+
+export async function mergeDocuments(
+  paths: string[],
+  title: string,
+  ordering: number[],
+  outputDir?: string,
+): Promise<string> {
+  return invoke<string>("merge_documents", {
+    paths,
+    title,
+    ordering,
+    outputDir: outputDir ?? null,
+  });
 }

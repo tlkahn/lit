@@ -83,8 +83,10 @@ import {
   rewriteVaultLinks,
   previewMerge,
   previewSplit,
+  executeSplit,
   suggestMergeTitle,
   cancelTitleSuggestion,
+  mergeDocuments,
 } from "./ipc";
 
 const sampleMeta = {
@@ -435,10 +437,14 @@ describe("ipc", () => {
             ],
           };
         }
+        case "execute_split":
+          return ["Alpha.md", "Beta.md"];
         case "suggest_merge_title":
           throw new Error("LLM not configured");
         case "cancel_title_suggestion":
           return undefined;
+        case "merge_documents":
+          return "notes/Merged.md";
         case "search_tags":
           return [
             { tag: "rust", count: 5 },
@@ -1394,6 +1400,13 @@ describe("ipc", () => {
     });
   });
 
+  it("executeSplit invokes execute_split and returns paths", async () => {
+    const paths = await executeSplit("Doc.md");
+    expect(paths).toEqual(["Alpha.md", "Beta.md"]);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("execute_split", { relativePath: "Doc.md" });
+  });
+
   it("suggestMergeTitle returns null on failure", async () => {
     const result = await suggestMergeTitle(["A", "B"], "merged body");
     expect(result).toBeNull();
@@ -1401,6 +1414,30 @@ describe("ipc", () => {
 
   it("cancelTitleSuggestion resolves without error", async () => {
     await expect(cancelTitleSuggestion()).resolves.toBeUndefined();
+  });
+
+  it("mergeDocuments invokes merge_documents and returns merged path", async () => {
+    const result = await mergeDocuments(["A.md", "B.md"], "Merged", [0, 1]);
+    expect(result).toBe("notes/Merged.md");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("merge_documents", {
+      paths: ["A.md", "B.md"],
+      title: "Merged",
+      ordering: [0, 1],
+      outputDir: null,
+    });
+  });
+
+  it("mergeDocuments passes outputDir when provided", async () => {
+    const result = await mergeDocuments(["A.md", "B.md"], "Merged", [0, 1], "archive");
+    expect(result).toBe("notes/Merged.md");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("merge_documents", {
+      paths: ["A.md", "B.md"],
+      title: "Merged",
+      ordering: [0, 1],
+      outputDir: "archive",
+    });
   });
 
 });
