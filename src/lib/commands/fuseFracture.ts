@@ -1,7 +1,8 @@
 import { registerOnce } from "../commandRegistry";
 import { useGraphSelectionStore } from "../../stores/graphSelection";
 import { useWorkspaceStore } from "../../stores/workspace";
-import { readPage, previewSplit } from "../ipc";
+import { useStatusMessageStore } from "../../stores/statusMessage";
+import { readPage, previewSplit, undoLastOperation, rebuildGraphIndex } from "../ipc";
 
 export function initFuseFractureCommands(): void {
   registerOnce("fuse-fracture", [
@@ -40,6 +41,27 @@ export function initFuseFractureCommands(): void {
             );
           }),
         ).catch(console.error);
+      },
+    },
+    {
+      id: "lit.undoOperation",
+      label: "Undo last merge/split",
+      keywords: ["undo", "revert", "rollback"],
+      icon: "↩️",
+      when: () => useWorkspaceStore.getState().workspacePath != null,
+      action: () => {
+        undoLastOperation()
+          .then((description) => {
+            useStatusMessageStore.getState().show(`Undid: ${description}`);
+            return rebuildGraphIndex();
+          })
+          .then(() => {
+            useWorkspaceStore.getState().refreshPages();
+            useWorkspaceStore.getState().triggerReload();
+          })
+          .catch((err) => {
+            useStatusMessageStore.getState().show(String(err), "error");
+          });
       },
     },
   ]);

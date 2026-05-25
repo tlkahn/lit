@@ -324,6 +324,7 @@ export function useKeymaps(): {
       for (const binding of appBindingsRef.current) {
         if (normalizeBindingForPlatform(binding.key) === pressed) {
           if (binding.when === "editorFocus" && getCurrentEditorView() == null) continue;
+          if (binding.when === "!editorFocus" && getCurrentEditorView() != null) continue;
           e.preventDefault();
           executeCommand(binding.command);
           return;

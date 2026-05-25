@@ -655,6 +655,71 @@ describe("useKeymaps", () => {
     }
   });
 
+  // --- Negated when-clause (!editorFocus) ---
+
+  it("binding with when: !editorFocus does NOT fire when editor is focused", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_keymaps") {
+        return [
+          { key: "Mod-z", command: "lit.undoOperation", when: "!editorFocus" },
+        ];
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    const actionFn = vi.fn();
+    registerHandler("lit.undoOperation", actionFn);
+
+    const mockView = { focus: vi.fn() } as unknown as EditorView;
+    registerPaneView("main", mockView);
+    usePaneStore.setState({
+      root: { type: "leaf", id: "main", pagePath: "test.md" },
+      focusedPaneId: "main",
+    });
+
+    const { result } = await loadHook();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const preventDefault = vi.fn();
+    const event = new KeyboardEvent("keydown", {
+      key: "z",
+      metaKey: true,
+      bubbles: true,
+    });
+    Object.defineProperty(event, "preventDefault", { value: preventDefault });
+    document.dispatchEvent(event);
+
+    expect(preventDefault).not.toHaveBeenCalled();
+    expect(actionFn).not.toHaveBeenCalled();
+  });
+
+  it("binding with when: !editorFocus DOES fire when no editor is focused", async () => {
+    resetEditorViewRef();
+    mockInvoke((cmd) => {
+      if (cmd === "get_keymaps") {
+        return [
+          { key: "Mod-z", command: "lit.undoOperation", when: "!editorFocus" },
+        ];
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    const actionFn = vi.fn();
+    registerHandler("lit.undoOperation", actionFn);
+
+    const { result } = await loadHook();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const event = new KeyboardEvent("keydown", {
+      key: "z",
+      ctrlKey: true,
+      bubbles: true,
+    });
+    document.dispatchEvent(event);
+
+    expect(actionFn).toHaveBeenCalled();
+  });
+
   // --- Cycle 13: Integration smoke test ---
 
   it("split → navigate → close full keyboard flow", async () => {

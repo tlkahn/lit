@@ -9,6 +9,7 @@ import { useCursorInfoStore } from "../stores/cursorInfo";
 import { useBottomPanelStore } from "../stores/bottomPanel";
 import { usePreferencesStore } from "../stores/preferences";
 import { useLlmResponseStore } from "../stores/llmResponse";
+import { useStatusMessageStore } from "../stores/statusMessage";
 
 beforeEach(() => {
   useWorkspaceStore.setState({
@@ -36,6 +37,7 @@ beforeEach(() => {
     annotationEnabled: true,
   });
   useLlmResponseStore.getState().reset();
+  useStatusMessageStore.setState({ message: null, variant: "success" });
 });
 
 describe("StatusBar", () => {
@@ -487,6 +489,40 @@ describe("StatusBar", () => {
       const glyph = btn.querySelector(".nerd-font");
       expect(glyph).toBeTruthy();
       expect(glyph!.textContent).toBe("");
+    });
+  });
+
+  describe("Status message display", () => {
+    it("shows status message when store has a message", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      useStatusMessageStore.setState({ message: "Undid: Merge A+B", variant: "success" });
+      render(<StatusBar />);
+      const el = screen.getByTestId("status-bar-message");
+      expect(el).toBeInTheDocument();
+      expect(el).toHaveTextContent("Undid: Merge A+B");
+    });
+
+    it("does not show status message when message is null", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      useStatusMessageStore.setState({ message: null, variant: "success" });
+      render(<StatusBar />);
+      expect(screen.queryByTestId("status-bar-message")).toBeNull();
+    });
+
+    it("shows error variant with error styling", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      useStatusMessageStore.setState({ message: "Nothing to undo", variant: "error" });
+      render(<StatusBar />);
+      const el = screen.getByTestId("status-bar-message");
+      expect(el.className).toContain("text-text-error");
+    });
+
+    it("shows success variant with muted styling", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      useStatusMessageStore.setState({ message: "Done", variant: "success" });
+      render(<StatusBar />);
+      const el = screen.getByTestId("status-bar-message");
+      expect(el.className).toContain("text-text-muted");
     });
   });
 

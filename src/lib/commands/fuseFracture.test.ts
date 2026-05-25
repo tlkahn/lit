@@ -10,6 +10,8 @@ const mockGraphSelectionState = vi.hoisted(() => ({
 const mockWorkspaceState = vi.hoisted(() => ({
   workspacePath: "/tmp/vault" as string | null,
   currentPagePath: "hello.md" as string | null,
+  refreshPages: vi.fn(),
+  triggerReload: vi.fn(),
 }));
 
 vi.mock("../../stores/graphSelection", () => ({
@@ -26,6 +28,19 @@ vi.mock("../../stores/workspace", () => ({
   ),
 }));
 
+const mockStatusMessageState = vi.hoisted(() => ({
+  message: null as string | null,
+  variant: "success" as string,
+  show: vi.fn(),
+}));
+
+vi.mock("../../stores/statusMessage", () => ({
+  useStatusMessageStore: Object.assign(
+    (selector: (s: Record<string, unknown>) => unknown) => selector(mockStatusMessageState),
+    { getState: () => mockStatusMessageState },
+  ),
+}));
+
 import { initFuseFractureCommands } from "./fuseFracture";
 
 describe("initFuseFractureCommands", () => {
@@ -35,19 +50,22 @@ describe("initFuseFractureCommands", () => {
     mockGraphSelectionState.selectedNodes = [];
     mockWorkspaceState.workspacePath = "/tmp/vault";
     mockWorkspaceState.currentPagePath = "hello.md";
+    mockWorkspaceState.refreshPages.mockClear();
+    mockWorkspaceState.triggerReload.mockClear();
+    mockStatusMessageState.show.mockClear();
   });
 
   it("registers lit.mergeDocuments and lit.splitDocument", () => {
     initFuseFractureCommands();
     expect(hasCommand("lit.mergeDocuments")).toBe(true);
     expect(hasCommand("lit.splitDocument")).toBe(true);
-    expect(getAllCommands()).toHaveLength(2);
+    expect(getAllCommands()).toHaveLength(3);
   });
 
   it("calling initFuseFractureCommands twice does not duplicate", () => {
     initFuseFractureCommands();
     initFuseFractureCommands();
-    expect(getAllCommands()).toHaveLength(2);
+    expect(getAllCommands()).toHaveLength(3);
   });
 
   it("lit.mergeDocuments is hidden when selectedNodes is empty", () => {
@@ -177,6 +195,111 @@ describe("initFuseFractureCommands", () => {
       });
 
       dispatchSpy.mockRestore();
+    });
+  });
+
+  describe("lit.undoOperation", () => {
+    it("is registered with correct label and keywords", () => {
+      initFuseFractureCommands();
+      expect(hasCommand("lit.undoOperation")).toBe(true);
+      const cmds = getAllCommands();
+      const undo = cmds.find((c) => c.id === "lit.undoOperation");
+      expect(undo!.label).toBe("Undo last merge/split");
+      expect(undo!.keywords).toEqual(["undo", "revert", "rollback"]);
+    });
+
+    it("is visible when workspace is open", () => {
+      initFuseFractureCommands();
+      mockWorkspaceState.workspacePath = "/tmp/vault";
+      const visible = getVisibleCommands("undo");
+      expect(visible.find((c) => c.id === "lit.undoOperation")).toBeDefined();
+    });
+
+    it("is hidden when workspace is not open", () => {
+      initFuseFractureCommands();
+      mockWorkspaceState.workspacePath = null;
+      const visible = getVisibleCommands("undo");
+      expect(visible.find((c) => c.id === "lit.undoOperation")).toBeUndefined();
+    });
+
+    it("calls undo_last_operation IPC", async () => {
+      initFuseFractureCommands();
+      mockInvoke((cmd) => {
+        if (cmd === "undo_last_operation") return "Merge A+B";
+        if (cmd === "rebuild_graph_index") return "ok";
+        return null;
+      });
+
+      executeCommand("lit.undoOperation");
+
+      await vi.waitFor(() => {
+        expect(mockStatusMessageState.show).toHaveBeenCalled();
+      });
+    });
+
+    it("calls rebuildGraphIndex after undo", async () => {
+      initFuseFractureCommands();
+      const calledCommands: string[] = [];
+      mockInvoke((cmd) => {
+        calledCommands.push(cmd);
+        if (cmd === "undo_last_operation") return "Merge A+B";
+        if (cmd === "rebuild_graph_index") return "ok";
+        return null;
+      });
+
+      executeCommand("lit.undoOperation");
+
+      await vi.waitFor(() => {
+        expect(calledCommands).toContain("rebuild_graph_index");
+      });
+    });
+
+    it("calls refreshPages and triggerReload after undo", async () => {
+      initFuseFractureCommands();
+      mockInvoke((cmd) => {
+        if (cmd === "undo_last_operation") return "Merge A+B";
+        if (cmd === "rebuild_graph_index") return "ok";
+        return null;
+      });
+
+      executeCommand("lit.undoOperation");
+
+      await vi.waitFor(() => {
+        expect(mockWorkspaceState.refreshPages).toHaveBeenCalled();
+        expect(mockWorkspaceState.triggerReload).toHaveBeenCalled();
+      });
+    });
+
+    it("shows success message with description after undo", async () => {
+      initFuseFractureCommands();
+      mockInvoke((cmd) => {
+        if (cmd === "undo_last_operation") return "Merge A+B";
+        if (cmd === "rebuild_graph_index") return "ok";
+        return null;
+      });
+
+      executeCommand("lit.undoOperation");
+
+      await vi.waitFor(() => {
+        expect(mockStatusMessageState.show).toHaveBeenCalledWith("Undid: Merge A+B");
+      });
+    });
+
+    it("shows error message when undo fails", async () => {
+      initFuseFractureCommands();
+      mockInvoke((cmd) => {
+        if (cmd === "undo_last_operation") throw new Error("Nothing to undo");
+        return null;
+      });
+
+      executeCommand("lit.undoOperation");
+
+      await vi.waitFor(() => {
+        expect(mockStatusMessageState.show).toHaveBeenCalledWith(
+          expect.stringContaining("Nothing to undo"),
+          "error",
+        );
+      });
     });
   });
 });

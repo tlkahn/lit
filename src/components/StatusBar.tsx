@@ -4,6 +4,7 @@ import { useCursorInfoStore } from "../stores/cursorInfo";
 import { useBottomPanelStore } from "../stores/bottomPanel";
 import { usePreferencesStore } from "../stores/preferences";
 import { useLlmResponseStore } from "../stores/llmResponse";
+import { useStatusMessageStore } from "../stores/statusMessage";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import { getNextUntitledName } from "../lib/naming";
 import { BufferStack } from "./BufferStack";
@@ -124,6 +125,8 @@ export function StatusBar() {
   const line = useCursorInfoStore((s) => s.line);
   const col = useCursorInfoStore((s) => s.col);
   const errorMessage = useLlmResponseStore((s) => s.errorMessage);
+  const statusMessage = useStatusMessageStore((s) => s.message);
+  const statusVariant = useStatusMessageStore((s) => s.variant);
 
   const handleNewPage = () => {
     const name = getNextUntitledName(pages);
@@ -171,6 +174,14 @@ export function StatusBar() {
         <BufferStack />
       </div>
       <div className="flex items-center">
+        {statusMessage && (
+          <span
+            data-testid="status-bar-message"
+            className={`mr-2 max-w-[40%] truncate ${statusVariant === "error" ? "text-text-error" : "text-text-muted"}`}
+          >
+            {statusMessage}
+          </span>
+        )}
         {errorMessage && (
           <span
             data-testid="status-bar-llm-error"
