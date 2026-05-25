@@ -293,12 +293,12 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         sigma.on("clickNode", ({ node, event }) => {
           const mouseEvent = event as { original?: { shiftKey?: boolean; metaKey?: boolean; ctrlKey?: boolean } } | undefined;
           const orig = mouseEvent?.original;
-          if (orig?.shiftKey || orig?.metaKey || orig?.ctrlKey) {
-            useGraphSelectionStore.getState().toggleNode(node);
+          if (orig?.metaKey || orig?.ctrlKey) {
+            useGraphSelectionStore.getState().clearSelection();
+            onNavigateRef.current?.(node);
             return;
           }
-          useGraphSelectionStore.getState().clearSelection();
-          onNavigateRef.current?.(node);
+          useGraphSelectionStore.getState().toggleNode(node);
         });
 
         sigma.on("rightClickNode", ({ node, event }) => {

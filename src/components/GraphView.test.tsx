@@ -188,7 +188,7 @@ describe("GraphView", () => {
       (call) => call[0] === "clickNode",
     )?.[1];
     expect(clickNodeHandler).toBeDefined();
-    clickNodeHandler!({ node: "a.md" });
+    clickNodeHandler!({ node: "a.md", event: { original: { metaKey: true } } });
 
     expect(onNav2).toHaveBeenCalledWith("a.md");
     expect(onNav1).not.toHaveBeenCalled();
@@ -1715,9 +1715,26 @@ describe("GraphView", () => {
     expect(onExit).toHaveBeenCalledTimes(1);
   });
 
-  // --- Phase 2B: Shift/Cmd+Click Selection ---
+  // --- Phase 2B: Click Selection (plain=toggle, Cmd/Ctrl=navigate) ---
 
-  it("Shift+clickNode toggles selection, does NOT navigate", async () => {
+  it("plain click toggles selection, does NOT navigate", async () => {
+    const onNavigate = vi.fn();
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView onNavigate={onNavigate} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const clickNodeHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "clickNode",
+    )?.[1];
+    act(() => {
+      clickNodeHandler!({ node: "a.md", event: { original: { shiftKey: false, metaKey: false, ctrlKey: false } } });
+    });
+
+    expect(onNavigate).not.toHaveBeenCalled();
+    expect(useGraphSelectionStore.getState().selectedNodes).toContain("a.md");
+  });
+
+  it("Shift+click toggles selection, does NOT navigate", async () => {
     const onNavigate = vi.fn();
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView onNavigate={onNavigate} />);
@@ -1734,7 +1751,8 @@ describe("GraphView", () => {
     expect(useGraphSelectionStore.getState().selectedNodes).toContain("a.md");
   });
 
-  it("Cmd+clickNode toggles selection, does NOT navigate", async () => {
+  it("Cmd+click clears selection and navigates", async () => {
+    useGraphSelectionStore.getState().toggleNode("b.md");
     const onNavigate = vi.fn();
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView onNavigate={onNavigate} />);
@@ -1747,11 +1765,12 @@ describe("GraphView", () => {
       clickNodeHandler!({ node: "a.md", event: { original: { shiftKey: false, metaKey: true, ctrlKey: false } } });
     });
 
-    expect(onNavigate).not.toHaveBeenCalled();
-    expect(useGraphSelectionStore.getState().selectedNodes).toContain("a.md");
+    expect(useGraphSelectionStore.getState().selectedNodes).toEqual([]);
+    expect(onNavigate).toHaveBeenCalledWith("a.md");
   });
 
-  it("Ctrl+clickNode toggles selection, does NOT navigate", async () => {
+  it("Ctrl+click clears selection and navigates", async () => {
+    useGraphSelectionStore.getState().toggleNode("b.md");
     const onNavigate = vi.fn();
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView onNavigate={onNavigate} />);
@@ -1764,11 +1783,12 @@ describe("GraphView", () => {
       clickNodeHandler!({ node: "a.md", event: { original: { shiftKey: false, metaKey: false, ctrlKey: true } } });
     });
 
-    expect(onNavigate).not.toHaveBeenCalled();
-    expect(useGraphSelectionStore.getState().selectedNodes).toContain("a.md");
+    expect(useGraphSelectionStore.getState().selectedNodes).toEqual([]);
+    expect(onNavigate).toHaveBeenCalledWith("a.md");
   });
 
-  it("plain click navigates, selection unchanged", async () => {
+  it("plain click with existing selection does NOT clear, toggles instead", async () => {
+    useGraphSelectionStore.getState().toggleNode("b.md");
     const onNavigate = vi.fn();
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView onNavigate={onNavigate} />);
@@ -1781,11 +1801,12 @@ describe("GraphView", () => {
       clickNodeHandler!({ node: "a.md", event: { original: { shiftKey: false, metaKey: false, ctrlKey: false } } });
     });
 
-    expect(onNavigate).toHaveBeenCalledWith("a.md");
-    expect(useGraphSelectionStore.getState().selectedNodes).toEqual([]);
+    expect(useGraphSelectionStore.getState().selectedNodes).toContain("a.md");
+    expect(useGraphSelectionStore.getState().selectedNodes).toContain("b.md");
+    expect(onNavigate).not.toHaveBeenCalled();
   });
 
-  it("plain click with existing selection clears selection, then navigates", async () => {
+  it("Shift+Cmd+click navigates (Cmd takes priority)", async () => {
     useGraphSelectionStore.getState().toggleNode("b.md");
     const onNavigate = vi.fn();
     const GraphView = (await import("./GraphView")).default;
@@ -1796,7 +1817,7 @@ describe("GraphView", () => {
       (call) => call[0] === "clickNode",
     )?.[1];
     act(() => {
-      clickNodeHandler!({ node: "a.md", event: { original: { shiftKey: false, metaKey: false, ctrlKey: false } } });
+      clickNodeHandler!({ node: "a.md", event: { original: { shiftKey: true, metaKey: true, ctrlKey: false } } });
     });
 
     expect(useGraphSelectionStore.getState().selectedNodes).toEqual([]);
