@@ -2420,7 +2420,24 @@ describe("GraphView", () => {
     expect(mergeBtn!.textContent).toBe("Merge 3 documents");
   });
 
-  it("split item always present in context menu", async () => {
+  it("split item hidden with 2+ selected nodes", async () => {
+    useGraphSelectionStore.setState({ selectedNodes: ["a.md", "b.md"], selectionMode: "click" });
+
+    const GraphView = (await import("./GraphView")).default;
+    const { container } = render(<GraphView onExportNetwork={vi.fn()} onMergeConfirm={vi.fn()} onSplitConfirm={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    act(() => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    expect(container.querySelector("[data-testid='ctx-split-btn']")).toBeNull();
+  });
+
+  it("split item visible with single node selection", async () => {
     const GraphView = (await import("./GraphView")).default;
     const { container } = render(<GraphView onExportNetwork={vi.fn()} onMergeConfirm={vi.fn()} onSplitConfirm={vi.fn()} />);
     await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
@@ -2437,7 +2454,7 @@ describe("GraphView", () => {
     expect(splitBtn!.textContent).toBe("Split document");
   });
 
-  it("export network still present alongside merge and split items", async () => {
+  it("export network present alongside merge for multi-selection (split hidden)", async () => {
     useGraphSelectionStore.setState({ selectedNodes: ["a.md", "b.md"], selectionMode: "click" });
 
     const GraphView = (await import("./GraphView")).default;
@@ -2452,7 +2469,7 @@ describe("GraphView", () => {
     });
 
     expect(container.querySelector("[data-testid='ctx-merge-btn']")).toBeTruthy();
-    expect(container.querySelector("[data-testid='ctx-split-btn']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='ctx-split-btn']")).toBeNull();
     expect(container.querySelector("[data-testid='ctx-export-btn']")).toBeTruthy();
   });
 

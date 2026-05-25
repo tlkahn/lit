@@ -701,32 +701,34 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
               {`Merge ${selectionCount} documents`}
             </button>
           )}
-          <button
-            data-testid="ctx-split-btn"
-            className="block w-full rounded-md px-3 py-1 text-start text-[13px] text-text-normal hover:bg-interactive-accent hover:text-text-on-accent disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-text-normal"
-            disabled={splitCheck.loading || !splitCheck.hasHeadings}
-            title={!splitCheck.loading && !splitCheck.hasHeadings ? "Document has no headings — cannot split" : undefined}
-            onClick={() => {
-              if (!splitCheck.content) return;
-              const nodeId = contextMenu.nodeId;
-              setContextMenu(null);
-              if (onSplitConfirm) {
-                previewSplit(splitCheck.content.body, splitCheck.content.meta.title, splitCheck.content.meta.frontmatter).then((plan) => {
-                  setSplitDialogPlan(plan);
-                  setSplitDialogPath(nodeId);
-                  setSplitDialogOpen(true);
-                });
-              } else {
-                previewSplit(splitCheck.content.body, splitCheck.content.meta.title, splitCheck.content.meta.frontmatter).then((plan) => {
-                  window.dispatchEvent(
-                    new CustomEvent("lit:open-split-preview", { detail: { plan, originalPath: nodeId } }),
-                  );
-                });
-              }
-            }}
-          >
-            Split document
-          </button>
+          {selectionCount <= 1 && (
+            <button
+              data-testid="ctx-split-btn"
+              className="block w-full rounded-md px-3 py-1 text-start text-[13px] text-text-normal hover:bg-interactive-accent hover:text-text-on-accent disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-text-normal"
+              disabled={splitCheck.loading || !splitCheck.hasHeadings}
+              title={!splitCheck.loading && !splitCheck.hasHeadings ? "Document has no headings — cannot split" : undefined}
+              onClick={() => {
+                if (!splitCheck.content) return;
+                const nodeId = contextMenu.nodeId;
+                setContextMenu(null);
+                if (onSplitConfirm) {
+                  previewSplit(splitCheck.content.body, splitCheck.content.meta.title, splitCheck.content.meta.frontmatter).then((plan) => {
+                    setSplitDialogPlan(plan);
+                    setSplitDialogPath(nodeId);
+                    setSplitDialogOpen(true);
+                  });
+                } else {
+                  previewSplit(splitCheck.content.body, splitCheck.content.meta.title, splitCheck.content.meta.frontmatter).then((plan) => {
+                    window.dispatchEvent(
+                      new CustomEvent("lit:open-split-preview", { detail: { plan, originalPath: nodeId } }),
+                    );
+                  });
+                }
+              }}
+            >
+              Split document
+            </button>
+          )}
           {onExportNetwork && (
             <div data-testid="ctx-divider" className="my-1 border-t border-border/40" />
           )}
