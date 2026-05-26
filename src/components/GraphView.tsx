@@ -68,6 +68,9 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<"full" | "local">(initialMode ?? "full");
   modeRef.current = mode;
+  useEffect(() => {
+    if (initialMode) setMode(initialMode);
+  }, [initialMode]);
   const [depth, setDepth] = useState(2);
   depthRef.current = depth;
   const [searchOpen, setSearchOpen] = useState(false);
@@ -187,6 +190,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         setMode("full");
         return;
       }
+      lastRenderedSeedRef.current = mode === "local" ? (activePageId ?? null) : null;
       try {
         setLoading(true);
         setError(null);
@@ -348,7 +352,6 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         }
 
         setGraphStats({ nodes: graph.order, edges: graph.size });
-        lastRenderedSeedRef.current = mode === "local" ? (activePageId ?? null) : null;
         setLoading(false);
         if (mode === "local" && activePageId) {
           const pos = sigma.getNodeDisplayData(activePageId);

@@ -3215,4 +3215,326 @@ describe("GraphView", () => {
 
     expect(mockCameraAnimate).not.toHaveBeenCalled();
   });
+
+  describe("local graph display debugging", () => {
+    it("local mode initial mount: traces full lifecycle", async () => {
+      const log: string[] = [];
+      const { invoke } = await import("@tauri-apps/api/core");
+      const invokeLog = (invoke as unknown as ReturnType<typeof vi.fn>);
+
+      invokeLog.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+        log.push(`IPC: ${cmd} args=${JSON.stringify(args)}`);
+        if (cmd === "get_graph_subgraph") {
+          return Promise.resolve({
+            nodes: [
+              { id: "a.md", title: "A" },
+              { id: "b.md", title: "B" },
+            ],
+            edges: [["a.md", "b.md"]],
+            pagerank: { "a.md": 0.4, "b.md": 0.6 },
+            positions: {},
+          });
+        }
+        if (cmd === "get_graph_positions") return Promise.resolve({});
+        return Promise.reject(new Error(`Unknown: ${cmd}`));
+      });
+
+      const GraphView = (await import("./GraphView")).default;
+      log.push("RENDER: initialMode=local, activePageId=a.md, visible=true");
+      render(<GraphView activePageId="a.md" initialMode="local" visible={true} />);
+
+      await waitFor(() => {
+        expect(mockSigmaOn).toHaveBeenCalled();
+      });
+
+      log.push(`sigma.on calls: ${mockSigmaOn.mock.calls.length}`);
+      log.push(`sigma.kill calls: ${mockSigmaKill.mock.calls.length}`);
+      log.push(`loading visible: ${!!screen.queryByTestId("graph-loading")}`);
+      log.push(`error visible: ${!!screen.queryByTestId("graph-error")}`);
+      log.push(`canvas visible: ${!!screen.queryByTestId("graph-canvas")}`);
+
+      const ipcCalls = invokeLog.mock.calls.filter(
+        (c: unknown[]) => c[0] === "get_graph_subgraph"
+      );
+      log.push(`total get_graph_subgraph calls: ${ipcCalls.length}`);
+      for (const call of ipcCalls) {
+        log.push(`  call: ${JSON.stringify(call[1])}`);
+      }
+
+      console.log("=== LOCAL MODE LIFECYCLE ===\n" + log.join("\n"));
+
+      expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("graph-error")).not.toBeInTheDocument();
+      expect(screen.getByTestId("graph-canvas")).toBeInTheDocument();
+      expect(ipcCalls.length).toBeGreaterThanOrEqual(1);
+      const localCalls = ipcCalls.filter(
+        (c: unknown[]) => (c[1] as { seeds: string[] }).seeds.length > 0
+      );
+      expect(localCalls.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("switch full→local via toolbar: traces lifecycle", async () => {
+      const log: string[] = [];
+      const { invoke } = await import("@tauri-apps/api/core");
+      const invokeLog = (invoke as unknown as ReturnType<typeof vi.fn>);
+
+      invokeLog.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+        log.push(`IPC: ${cmd} seeds=${JSON.stringify((args as Record<string, unknown>)?.seeds)}`);
+        if (cmd === "get_graph_subgraph") {
+          return Promise.resolve({
+            nodes: [
+              { id: "a.md", title: "A" },
+              { id: "b.md", title: "B" },
+              { id: "c.md", title: "C" },
+            ],
+            edges: [["a.md", "b.md"], ["b.md", "c.md"]],
+            pagerank: { "a.md": 0.3, "b.md": 0.4, "c.md": 0.3 },
+            positions: {},
+          });
+        }
+        if (cmd === "get_graph_positions") return Promise.resolve({});
+        return Promise.reject(new Error(`Unknown: ${cmd}`));
+      });
+
+      const GraphView = (await import("./GraphView")).default;
+      log.push("--- PHASE 1: mount in full mode ---");
+      render(<GraphView activePageId="a.md" visible={true} />);
+      await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+      await waitFor(() => { expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument(); });
+
+      log.push(`full mode sigma.on calls: ${mockSigmaOn.mock.calls.length}`);
+      const fullModeCalls = invokeLog.mock.calls.filter(
+        (c: unknown[]) => c[0] === "get_graph_subgraph"
+      );
+      log.push(`full mode IPC calls: ${fullModeCalls.length}`);
+
+      invokeLog.mockClear();
+      mockSigmaKill.mockClear();
+      mockSigmaOn.mockClear();
+
+      log.push("--- PHASE 2: click Local button ---");
+      await act(async () => {
+        await userEvent.click(screen.getByRole("button", { name: "Local" }));
+      });
+
+      await waitFor(() => {
+        const calls = invokeLog.mock.calls.filter(
+          (c: unknown[]) => c[0] === "get_graph_subgraph"
+        );
+        expect(calls.length).toBeGreaterThanOrEqual(1);
+      }, { timeout: 3000 });
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+      }, { timeout: 3000 });
+
+      const localCalls = invokeLog.mock.calls.filter(
+        (c: unknown[]) => c[0] === "get_graph_subgraph"
+      );
+      log.push(`local mode IPC calls: ${localCalls.length}`);
+      for (const call of localCalls) {
+        log.push(`  seeds=${JSON.stringify((call[1] as Record<string, unknown>)?.seeds)}`);
+      }
+      log.push(`sigma.kill calls after switch: ${mockSigmaKill.mock.calls.length}`);
+      log.push(`sigma.on calls after switch: ${mockSigmaOn.mock.calls.length}`);
+      log.push(`loading visible: ${!!screen.queryByTestId("graph-loading")}`);
+      log.push(`error visible: ${!!screen.queryByTestId("graph-error")}`);
+
+      const localBtn = screen.getByRole("button", { name: "Local" });
+      log.push(`Local button aria-pressed: ${localBtn.getAttribute("aria-pressed")}`);
+
+      console.log("=== FULL→LOCAL SWITCH ===\n" + log.join("\n"));
+
+      expect(localBtn.getAttribute("aria-pressed")).toBe("true");
+      expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("graph-error")).not.toBeInTheDocument();
+    });
+
+    it("local mode with activePageId change while visible: traces reinit", async () => {
+      const log: string[] = [];
+      const { invoke } = await import("@tauri-apps/api/core");
+      const invokeLog = (invoke as unknown as ReturnType<typeof vi.fn>);
+
+      invokeLog.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+        log.push(`IPC: ${cmd} seeds=${JSON.stringify((args as Record<string, unknown>)?.seeds)}`);
+        if (cmd === "get_graph_subgraph") {
+          const seeds = (args as Record<string, unknown>)?.seeds as string[];
+          const seedId = seeds?.[0] ?? "a.md";
+          return Promise.resolve({
+            nodes: [
+              { id: seedId, title: seedId.replace(".md", "").toUpperCase() },
+              { id: "shared.md", title: "Shared" },
+            ],
+            edges: [[seedId, "shared.md"]],
+            pagerank: {},
+            positions: {},
+          });
+        }
+        if (cmd === "get_graph_positions") return Promise.resolve({});
+        return Promise.reject(new Error(`Unknown: ${cmd}`));
+      });
+
+      const GraphView = (await import("./GraphView")).default;
+      log.push("--- PHASE 1: mount local with a.md ---");
+      const { rerender } = render(<GraphView activePageId="a.md" initialMode="local" visible={true} />);
+      await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+      await waitFor(() => { expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument(); });
+
+      const phase1Calls = invokeLog.mock.calls.filter(
+        (c: unknown[]) => c[0] === "get_graph_subgraph"
+      );
+      log.push(`phase 1 IPC calls: ${phase1Calls.length}`);
+
+      invokeLog.mockClear();
+      mockSigmaKill.mockClear();
+
+      log.push("--- PHASE 2: change to b.md ---");
+      await act(async () => {
+        rerender(<GraphView activePageId="b.md" initialMode="local" visible={true} />);
+      });
+
+      await waitFor(() => {
+        const calls = invokeLog.mock.calls.filter(
+          (c: unknown[]) => c[0] === "get_graph_subgraph"
+        );
+        expect(calls.length).toBeGreaterThanOrEqual(1);
+      }, { timeout: 3000 });
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+      }, { timeout: 3000 });
+
+      const phase2Calls = invokeLog.mock.calls.filter(
+        (c: unknown[]) => c[0] === "get_graph_subgraph"
+      );
+      log.push(`phase 2 IPC calls: ${phase2Calls.length}`);
+      for (const call of phase2Calls) {
+        log.push(`  seeds=${JSON.stringify((call[1] as Record<string, unknown>)?.seeds)}`);
+      }
+      log.push(`sigma.kill calls: ${mockSigmaKill.mock.calls.length}`);
+      log.push(`loading visible: ${!!screen.queryByTestId("graph-loading")}`);
+      log.push(`error visible: ${!!screen.queryByTestId("graph-error")}`);
+
+      console.log("=== LOCAL SEED CHANGE ===\n" + log.join("\n"));
+
+      expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("graph-error")).not.toBeInTheDocument();
+    });
+
+    it("hidden→visible with initialMode=local: switches to local mode", async () => {
+      const log: string[] = [];
+      const { invoke } = await import("@tauri-apps/api/core");
+      const invokeLog = (invoke as unknown as ReturnType<typeof vi.fn>);
+
+      invokeLog.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+        log.push(`IPC: ${cmd} seeds=${JSON.stringify((args as Record<string, unknown>)?.seeds)}`);
+        if (cmd === "get_graph_subgraph") {
+          return Promise.resolve({
+            nodes: [
+              { id: "a.md", title: "A" },
+              { id: "b.md", title: "B" },
+            ],
+            edges: [["a.md", "b.md"]],
+            pagerank: {},
+            positions: {},
+          });
+        }
+        if (cmd === "get_graph_positions") return Promise.resolve({});
+        return Promise.reject(new Error(`Unknown: ${cmd}`));
+      });
+
+      const GraphView = (await import("./GraphView")).default;
+      log.push("--- PHASE 1: mount in full mode ---");
+      const { rerender } = render(<GraphView activePageId="a.md" initialMode="full" visible={true} />);
+      await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+      await waitFor(() => { expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument(); });
+
+      log.push("full mode rendered OK");
+      const fullBtn = screen.getByRole("button", { name: "Full" });
+      log.push(`Full pressed: ${fullBtn.getAttribute("aria-pressed")}`);
+
+      log.push("--- PHASE 2: hide graph ---");
+      await act(async () => {
+        rerender(<GraphView activePageId="a.md" initialMode="full" visible={false} />);
+      });
+
+      invokeLog.mockClear();
+      mockSigmaKill.mockClear();
+      mockSigmaOn.mockClear();
+
+      log.push("--- PHASE 3: re-show with initialMode=local ---");
+      await act(async () => {
+        rerender(<GraphView activePageId="a.md" initialMode="local" visible={true} />);
+      });
+
+      // Wait a bit for any effects to settle
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 100));
+      });
+
+      const localBtn = screen.getByRole("button", { name: "Local" });
+      const localPressed = localBtn.getAttribute("aria-pressed");
+      log.push(`Local pressed after re-show: ${localPressed}`);
+      log.push(`loading visible: ${!!screen.queryByTestId("graph-loading")}`);
+
+      const ipcCalls = invokeLog.mock.calls.filter(
+        (c: unknown[]) => c[0] === "get_graph_subgraph"
+      );
+      log.push(`IPC calls after re-show: ${ipcCalls.length}`);
+      for (const call of ipcCalls) {
+        log.push(`  seeds=${JSON.stringify((call[1] as Record<string, unknown>)?.seeds)}`);
+      }
+
+      console.log("=== HIDDEN→VISIBLE initialMode CHANGE ===\n" + log.join("\n"));
+
+      expect(localPressed).toBe("true");
+    });
+
+    it("local mode IPC error: shows error state, not stuck loading", async () => {
+      const log: string[] = [];
+      const { invoke } = await import("@tauri-apps/api/core");
+      const invokeLog = (invoke as unknown as ReturnType<typeof vi.fn>);
+
+      invokeLog.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+        log.push(`IPC: ${cmd} seeds=${JSON.stringify((args as Record<string, unknown>)?.seeds)}`);
+        if (cmd === "get_graph_subgraph") {
+          const seeds = (args as Record<string, unknown>)?.seeds as string[];
+          if (seeds && seeds.length > 0) {
+            return Promise.reject(new Error("NodeNotFound: x.md"));
+          }
+          return Promise.resolve({
+            nodes: [{ id: "a.md", title: "A" }],
+            edges: [],
+            pagerank: {},
+            positions: {},
+          });
+        }
+        if (cmd === "get_graph_positions") return Promise.resolve({});
+        return Promise.reject(new Error(`Unknown: ${cmd}`));
+      });
+
+      const GraphView = (await import("./GraphView")).default;
+      log.push("RENDER: local mode with x.md (not in graph)");
+      render(<GraphView activePageId="x.md" initialMode="local" visible={true} />);
+
+      await waitFor(() => {
+        expect(
+          screen.queryByTestId("graph-error") || screen.queryByTestId("graph-loading") === null
+        ).toBeTruthy();
+      }, { timeout: 3000 });
+
+      log.push(`loading visible: ${!!screen.queryByTestId("graph-loading")}`);
+      log.push(`error visible: ${!!screen.queryByTestId("graph-error")}`);
+      log.push(`error text: ${screen.queryByTestId("graph-error")?.textContent ?? "(none)"}`);
+
+      const ipcCalls = invokeLog.mock.calls.filter(
+        (c: unknown[]) => c[0] === "get_graph_subgraph"
+      );
+      log.push(`IPC calls: ${ipcCalls.length}`);
+
+      console.log("=== LOCAL MODE IPC ERROR ===\n" + log.join("\n"));
+
+      expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+    });
+  });
 });
