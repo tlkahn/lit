@@ -32,12 +32,49 @@ impl SubgraphResult {
         if stub_ids.is_empty() {
             return self;
         }
+
+        let mut edge_set: HashSet<(String, String)> = HashSet::new();
+
+        // Keep direct real→real edges
+        for (s, t) in &self.edges {
+            if !stub_ids.contains(s) && !stub_ids.contains(t) {
+                edge_set.insert((s.clone(), t.clone()));
+            }
+        }
+
+        // Bridge through stubs: real nodes that share a stub reference become connected.
+        // Collect real sources that point to each stub, and real targets each stub points to.
+        let mut stub_incoming: HashMap<&str, Vec<&str>> = HashMap::new();
+        let mut stub_outgoing: HashMap<&str, Vec<&str>> = HashMap::new();
+        for (s, t) in &self.edges {
+            if stub_ids.contains(t) && !stub_ids.contains(s) {
+                stub_incoming.entry(t.as_str()).or_default().push(s.as_str());
+            }
+            if stub_ids.contains(s) && !stub_ids.contains(t) {
+                stub_outgoing.entry(s.as_str()).or_default().push(t.as_str());
+            }
+        }
+        for stub in &stub_ids {
+            let incoming = stub_incoming.get(stub.as_str()).map(|v| v.as_slice()).unwrap_or(&[]);
+            let outgoing = stub_outgoing.get(stub.as_str()).map(|v| v.as_slice()).unwrap_or(&[]);
+            // Connect each incoming real node to each outgoing real node (transitive)
+            for &src in incoming {
+                for &tgt in outgoing {
+                    if src != tgt {
+                        edge_set.insert((src.to_string(), tgt.to_string()));
+                    }
+                }
+            }
+            // Connect real nodes that co-reference the same stub
+            for i in 0..incoming.len() {
+                for j in (i + 1)..incoming.len() {
+                    edge_set.insert((incoming[i].to_string(), incoming[j].to_string()));
+                }
+            }
+        }
+
         let nodes = self.nodes.into_iter().filter(|n| !n.is_stub).collect();
-        let edges = self
-            .edges
-            .into_iter()
-            .filter(|(s, t)| !stub_ids.contains(s) && !stub_ids.contains(t))
-            .collect();
+        let edges = edge_set.into_iter().collect();
         SubgraphResult { nodes, edges }
     }
 }
@@ -541,7 +578,7 @@ mod tests {
     // --- without_stubs ---
 
     #[test]
-    fn without_stubs_filters_stub_nodes_and_edges() {
+    fn without_stubs_filters_stub_nodes_and_keeps_direct_edges() {
         let result = SubgraphResult {
             nodes: vec![
                 GraphNode { id: "A".into(), title: "Alpha".into(), is_stub: false },
@@ -557,7 +594,70 @@ mod tests {
         assert_eq!(filtered.nodes.len(), 2);
         assert!(filtered.nodes.iter().all(|n| !n.is_stub));
         assert_eq!(filtered.edges.len(), 1);
-        assert_eq!(filtered.edges[0], ("A".to_string(), "B".to_string()));
+        assert!(filtered.edges.contains(&("A".to_string(), "B".to_string())));
+    }
+
+    #[test]
+    fn without_stubs_bridges_co_referencing_nodes() {
+        // A and B both link to stub S → A and B should be connected
+        let result = SubgraphResult {
+            nodes: vec![
+                GraphNode { id: "A".into(), title: "Alpha".into(), is_stub: false },
+                GraphNode { id: "B".into(), title: "Beta".into(), is_stub: false },
+                GraphNode { id: "S".into(), title: "".into(), is_stub: true },
+            ],
+            edges: vec![
+                ("A".into(), "S".into()),
+                ("B".into(), "S".into()),
+            ],
+        };
+        let filtered = result.without_stubs();
+        assert_eq!(filtered.nodes.len(), 2);
+        assert_eq!(filtered.edges.len(), 1);
+        let edge = &filtered.edges[0];
+        let pair: HashSet<&str> = [edge.0.as_str(), edge.1.as_str()].into();
+        assert!(pair.contains("A") && pair.contains("B"));
+    }
+
+    #[test]
+    fn without_stubs_bridges_transitive_through_stub() {
+        // A → S → B: transitive bridge creates A → B
+        let result = SubgraphResult {
+            nodes: vec![
+                GraphNode { id: "A".into(), title: "Alpha".into(), is_stub: false },
+                GraphNode { id: "B".into(), title: "Beta".into(), is_stub: false },
+                GraphNode { id: "S".into(), title: "".into(), is_stub: true },
+            ],
+            edges: vec![
+                ("A".into(), "S".into()),
+                ("S".into(), "B".into()),
+            ],
+        };
+        let filtered = result.without_stubs();
+        assert_eq!(filtered.nodes.len(), 2);
+        assert_eq!(filtered.edges.len(), 1);
+        assert!(filtered.edges.contains(&("A".to_string(), "B".to_string())));
+    }
+
+    #[test]
+    fn without_stubs_three_nodes_share_stub() {
+        // A, B, C all link to stub S → 3 bridge edges
+        let result = SubgraphResult {
+            nodes: vec![
+                GraphNode { id: "A".into(), title: "".into(), is_stub: false },
+                GraphNode { id: "B".into(), title: "".into(), is_stub: false },
+                GraphNode { id: "C".into(), title: "".into(), is_stub: false },
+                GraphNode { id: "S".into(), title: "".into(), is_stub: true },
+            ],
+            edges: vec![
+                ("A".into(), "S".into()),
+                ("B".into(), "S".into()),
+                ("C".into(), "S".into()),
+            ],
+        };
+        let filtered = result.without_stubs();
+        assert_eq!(filtered.nodes.len(), 3);
+        assert_eq!(filtered.edges.len(), 3);
     }
 
     #[test]
@@ -570,6 +670,24 @@ mod tests {
         };
         let filtered = result.without_stubs();
         assert_eq!(filtered.nodes.len(), 1);
+    }
+
+    #[test]
+    fn without_stubs_no_self_loops_from_bridging() {
+        // A links to stub S, and S links back to A → no self-loop
+        let result = SubgraphResult {
+            nodes: vec![
+                GraphNode { id: "A".into(), title: "".into(), is_stub: false },
+                GraphNode { id: "S".into(), title: "".into(), is_stub: true },
+            ],
+            edges: vec![
+                ("A".into(), "S".into()),
+                ("S".into(), "A".into()),
+            ],
+        };
+        let filtered = result.without_stubs();
+        assert_eq!(filtered.nodes.len(), 1);
+        assert_eq!(filtered.edges.len(), 0);
     }
 
     // --- Step 3: full_subgraph ---

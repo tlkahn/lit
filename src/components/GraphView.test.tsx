@@ -3537,4 +3537,840 @@ describe("GraphView", () => {
       expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
     });
   });
+
+  describe("full→local toggle regression (flash-then-blank)", () => {
+    let sigmaConstructorCount: number;
+    let eventLog: string[];
+
+    function setupInstrumentedMocks() {
+      sigmaConstructorCount = 0;
+      eventLog = [];
+
+      const origKill = mockSigmaKill.getMockImplementation();
+      mockSigmaKill.mockImplementation((...args: unknown[]) => {
+        sigmaConstructorCount--;
+        eventLog.push(`[sigma] kill (live instances: ${sigmaConstructorCount})`);
+        origKill?.(...args);
+      });
+
+      const origOn = mockSigmaOn.getMockImplementation();
+      mockSigmaOn.mockImplementation((event: string, ...rest: unknown[]) => {
+        if (event === "clickNode") {
+          sigmaConstructorCount++;
+          eventLog.push(`[sigma] constructed (live instances: ${sigmaConstructorCount})`);
+        }
+        origOn?.(event, ...rest);
+      });
+    }
+
+    async function makeIpcMock(opts?: { delayMs?: number; localEmpty?: boolean }) {
+      const { invoke: rawInvoke } = await import("@tauri-apps/api/core");
+      const invoke = rawInvoke as unknown as ReturnType<typeof vi.fn>;
+      const ipcLog: { cmd: string; args: unknown; ts: number }[] = [];
+      const t0 = performance.now();
+
+      invoke.mockImplementation(async (cmd: string, args?: Record<string, unknown>) => {
+        const elapsed = performance.now() - t0;
+        ipcLog.push({ cmd, args, ts: elapsed });
+        eventLog.push(`[ipc] ${cmd} seeds=${JSON.stringify((args as Record<string, unknown>)?.seeds)} depth=${(args as Record<string, unknown>)?.depth} @${elapsed.toFixed(0)}ms`);
+
+        if (opts?.delayMs) {
+          await new Promise((r) => setTimeout(r, opts.delayMs));
+        }
+
+        if (cmd === "get_graph_subgraph") {
+          const seeds = (args as Record<string, unknown>)?.seeds as string[] | undefined;
+          const isLocal = seeds && seeds.length > 0;
+
+          if (isLocal && opts?.localEmpty) {
+            return { nodes: [], edges: [], pagerank: {}, positions: {} };
+          }
+
+          if (isLocal) {
+            const seedId = seeds![0]!;
+            return {
+              nodes: [
+                { id: seedId, title: seedId.replace(".md", "").toUpperCase() },
+                { id: "neighbor.md", title: "Neighbor" },
+              ],
+              edges: [[seedId, "neighbor.md"]],
+              pagerank: { [seedId]: 0.6, "neighbor.md": 0.4 },
+              positions: { [seedId]: { x: 50, y: 50 }, "neighbor.md": { x: 80, y: 80 } },
+            };
+          }
+
+          return {
+            nodes: [
+              { id: "a.md", title: "A" },
+              { id: "b.md", title: "B" },
+              { id: "c.md", title: "C" },
+            ],
+            edges: [["a.md", "b.md"], ["b.md", "c.md"]],
+            pagerank: { "a.md": 0.3, "b.md": 0.4, "c.md": 0.3 },
+            positions: {},
+          };
+        }
+        if (cmd === "get_graph_positions") return {};
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      return { invoke, ipcLog };
+    }
+
+    it("toolbar full→local: sigma survives and graph has nodes after switch", async () => {
+      setupInstrumentedMocks();
+      const { invoke, ipcLog } = await makeIpcMock();
+      const buildSpy = vi.spyOn(graphLayout, "buildGraph");
+
+      const GraphView = (await import("./GraphView")).default;
+      eventLog.push("--- PHASE 1: mount in full mode ---");
+      render(<GraphView activePageId="a.md" visible={true} />);
+
+      await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+      await waitFor(() => { expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument(); });
+
+      eventLog.push(`full mode complete: buildGraph calls=${buildSpy.mock.calls.length}`);
+      const fullBuildCall = buildSpy.mock.calls[0]?.[0];
+      eventLog.push(`full buildGraph seedId=${fullBuildCall?.seedId}, nodes=${fullBuildCall?.subgraph.nodes.length}`);
+
+      const fullIpcCalls = ipcLog.filter((c) => c.cmd === "get_graph_subgraph");
+      eventLog.push(`full mode IPC count: ${fullIpcCalls.length}`);
+
+      invoke.mockClear();
+      buildSpy.mockClear();
+      mockSigmaKill.mockClear();
+      mockSigmaOn.mockClear();
+      ipcLog.length = 0;
+
+      eventLog.push("--- PHASE 2: click Local toolbar button ---");
+      await act(async () => {
+        await userEvent.click(screen.getByRole("button", { name: "Local" }));
+      });
+
+      // Wait for the local mode init to complete
+      await waitFor(() => {
+        const localCalls = ipcLog.filter(
+          (c) => c.cmd === "get_graph_subgraph" && (c.args as Record<string, unknown>)?.seeds &&
+            ((c.args as Record<string, unknown>).seeds as string[]).length > 0
+        );
+        return expect(localCalls.length).toBeGreaterThanOrEqual(1);
+      }, { timeout: 3000 });
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+      }, { timeout: 3000 });
+
+      // Allow any remaining async effects to settle
+      await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+
+      const localBuildCalls = buildSpy.mock.calls;
+      eventLog.push(`local buildGraph calls: ${localBuildCalls.length}`);
+      for (const [i, call] of localBuildCalls.entries()) {
+        const opts = call[0];
+        eventLog.push(`  buildGraph[${i}]: seedId=${opts.seedId}, nodes=${opts.subgraph.nodes.length}`);
+      }
+
+      const localIpcCalls = ipcLog.filter((c) => c.cmd === "get_graph_subgraph");
+      eventLog.push(`local IPC calls: ${localIpcCalls.length}`);
+      eventLog.push(`sigma.kill calls: ${mockSigmaKill.mock.calls.length}`);
+      eventLog.push(`sigma constructed after switch: ${mockSigmaOn.mock.calls.filter((c) => c[0] === "clickNode").length > 0}`);
+
+      // Check toolbar state
+      const localBtn = screen.getByRole("button", { name: "Local" });
+      eventLog.push(`Local aria-pressed: ${localBtn.getAttribute("aria-pressed")}`);
+      eventLog.push(`loading: ${!!screen.queryByTestId("graph-loading")}`);
+      eventLog.push(`error: ${!!screen.queryByTestId("graph-error")}`);
+
+      // Check aria-label for graph stats (proves graph was built with nodes)
+      const graphView = screen.getByTestId("graph-view");
+      eventLog.push(`aria-label: ${graphView.getAttribute("aria-label")}`);
+
+      console.log("=== TOOLBAR FULL→LOCAL ===\n" + eventLog.join("\n"));
+
+      // CRITICAL: graph must have nodes after switch (this is the "flash then blank" check)
+      expect(localBtn.getAttribute("aria-pressed")).toBe("true");
+      expect(screen.queryByTestId("graph-error")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+
+      // buildGraph must have been called with a seedId (local mode)
+      const localBuildWithSeed = localBuildCalls.filter((c) => c[0].seedId != null);
+      expect(localBuildWithSeed.length).toBeGreaterThanOrEqual(1);
+
+      // Graph stats should reflect the local subgraph (2 nodes: seed + neighbor)
+      expect(graphView.getAttribute("aria-label")).toContain("2 node");
+
+      // Sigma should have been killed exactly once (old full instance) and rebuilt once
+      expect(mockSigmaKill.mock.calls.length).toBe(1);
+
+      buildSpy.mockRestore();
+    });
+
+    it("toolbar full→local: exactly one reinit cycle (no double-init from visibility effect)", async () => {
+      setupInstrumentedMocks();
+      const { invoke, ipcLog } = await makeIpcMock();
+
+      const GraphView = (await import("./GraphView")).default;
+      render(<GraphView activePageId="a.md" visible={true} />);
+      await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+      await waitFor(() => { expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument(); });
+
+      invoke.mockClear();
+      mockSigmaKill.mockClear();
+      mockSigmaOn.mockClear();
+      ipcLog.length = 0;
+
+      eventLog.push("--- clicking Local ---");
+      await act(async () => {
+        await userEvent.click(screen.getByRole("button", { name: "Local" }));
+      });
+
+      // Wait for local init to finish
+      await waitFor(() => {
+        expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+      }, { timeout: 3000 });
+
+      // Let any additional async effects settle
+      await act(async () => { await new Promise((r) => setTimeout(r, 200)); });
+
+      const subgraphCalls = ipcLog.filter((c) => c.cmd === "get_graph_subgraph");
+      eventLog.push(`total get_graph_subgraph calls after Local click: ${subgraphCalls.length}`);
+      for (const call of subgraphCalls) {
+        eventLog.push(`  seeds=${JSON.stringify((call.args as Record<string, unknown>)?.seeds)}`);
+      }
+      eventLog.push(`total sigma.kill calls: ${mockSigmaKill.mock.calls.length}`);
+
+      console.log("=== DOUBLE-INIT CHECK ===\n" + eventLog.join("\n"));
+
+      // The visibility effect (line 385) should NOT trigger reinitTrigger when mode changes,
+      // because init() sets lastRenderedSeedRef synchronously before visibility effect runs.
+      // If this fails, the visibility effect is racing with init.
+      expect(subgraphCalls.length).toBe(1);
+      expect(mockSigmaKill.mock.calls.length).toBe(1);
+    });
+
+    it("toolbar full→local then depth change: graph rebuilds with new depth", async () => {
+      setupInstrumentedMocks();
+      const { invoke, ipcLog } = await makeIpcMock();
+
+      const GraphView = (await import("./GraphView")).default;
+      eventLog.push("--- PHASE 1: mount full ---");
+      render(<GraphView activePageId="a.md" visible={true} />);
+      await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+      await waitFor(() => { expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument(); });
+
+      eventLog.push("--- PHASE 2: switch to local ---");
+      await act(async () => {
+        await userEvent.click(screen.getByRole("button", { name: "Local" }));
+      });
+      await waitFor(() => {
+        expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+      }, { timeout: 3000 });
+
+      invoke.mockClear();
+      mockSigmaKill.mockClear();
+      ipcLog.length = 0;
+
+      eventLog.push("--- PHASE 3: change depth to 1 ---");
+      // Depth buttons only visible in local mode
+      const depthBtn1 = screen.getByRole("button", { name: /^1$/ });
+      expect(depthBtn1).toBeInTheDocument();
+
+      await act(async () => {
+        await userEvent.click(depthBtn1);
+      });
+
+      await waitFor(() => {
+        const calls = ipcLog.filter((c) => c.cmd === "get_graph_subgraph");
+        expect(calls.length).toBeGreaterThanOrEqual(1);
+      }, { timeout: 3000 });
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+      }, { timeout: 3000 });
+
+      const depthCalls = ipcLog.filter((c) => c.cmd === "get_graph_subgraph");
+      eventLog.push(`depth change IPC calls: ${depthCalls.length}`);
+      for (const call of depthCalls) {
+        eventLog.push(`  seeds=${JSON.stringify((call.args as Record<string, unknown>)?.seeds)} depth=${(call.args as Record<string, unknown>)?.depth}`);
+      }
+
+      const graphView = screen.getByTestId("graph-view");
+      eventLog.push(`aria-label after depth change: ${graphView.getAttribute("aria-label")}`);
+
+      console.log("=== DEPTH CHANGE AFTER LOCAL SWITCH ===\n" + eventLog.join("\n"));
+
+      // Depth change should call IPC with depth=1 and local seeds
+      const depthOneCalls = depthCalls.filter(
+        (c) => (c.args as Record<string, unknown>)?.depth === 1 &&
+          ((c.args as Record<string, unknown>)?.seeds as string[])?.length > 0
+      );
+      expect(depthOneCalls.length).toBe(1);
+
+      // Graph should still show nodes
+      expect(screen.queryByTestId("graph-error")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+      expect(graphView.getAttribute("aria-label")).toContain("node");
+    });
+
+    it("initialMode prop change full→local while visible: graph rebuilds in local mode", async () => {
+      setupInstrumentedMocks();
+      const { invoke, ipcLog } = await makeIpcMock();
+      const buildSpy = vi.spyOn(graphLayout, "buildGraph");
+
+      const GraphView = (await import("./GraphView")).default;
+      eventLog.push("--- PHASE 1: mount full (initialMode=undefined) ---");
+      const { rerender } = render(
+        <GraphView activePageId="a.md" visible={true} />
+      );
+      await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+      await waitFor(() => { expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument(); });
+
+      eventLog.push(`full mode graph: ${screen.getByTestId("graph-view").getAttribute("aria-label")}`);
+
+      invoke.mockClear();
+      buildSpy.mockClear();
+      mockSigmaKill.mockClear();
+      mockSigmaOn.mockClear();
+      ipcLog.length = 0;
+
+      eventLog.push("--- PHASE 2: change initialMode to 'local' (simulating keyboard shortcut) ---");
+      await act(async () => {
+        rerender(<GraphView activePageId="a.md" initialMode="local" visible={true} />);
+      });
+
+      // The initialMode sync effect should trigger setMode("local"), which triggers init
+      await waitFor(() => {
+        const localCalls = ipcLog.filter(
+          (c) => c.cmd === "get_graph_subgraph" &&
+            ((c.args as Record<string, unknown>)?.seeds as string[])?.length > 0
+        );
+        return expect(localCalls.length).toBeGreaterThanOrEqual(1);
+      }, { timeout: 3000 });
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+      }, { timeout: 3000 });
+
+      await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+
+      const localBuildCalls = buildSpy.mock.calls.filter((c) => c[0].seedId != null);
+      eventLog.push(`local buildGraph calls with seedId: ${localBuildCalls.length}`);
+
+      const localIpc = ipcLog.filter(
+        (c) => c.cmd === "get_graph_subgraph" &&
+          ((c.args as Record<string, unknown>)?.seeds as string[])?.length > 0
+      );
+      eventLog.push(`local IPC calls: ${localIpc.length}`);
+      eventLog.push(`sigma.kill calls: ${mockSigmaKill.mock.calls.length}`);
+
+      const graphView = screen.getByTestId("graph-view");
+      eventLog.push(`aria-label: ${graphView.getAttribute("aria-label")}`);
+
+      const localBtn = screen.getByRole("button", { name: "Local" });
+      eventLog.push(`Local pressed: ${localBtn.getAttribute("aria-pressed")}`);
+
+      console.log("=== INITIAL_MODE PROP CHANGE ===\n" + eventLog.join("\n"));
+
+      expect(localBtn.getAttribute("aria-pressed")).toBe("true");
+      expect(screen.queryByTestId("graph-error")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+
+      // Must have built a local graph with nodes
+      expect(localBuildCalls.length).toBeGreaterThanOrEqual(1);
+      expect(graphView.getAttribute("aria-label")).toContain("2 node");
+
+      buildSpy.mockRestore();
+    });
+
+    it("initialMode prop change while hidden then shown: local graph renders", async () => {
+      setupInstrumentedMocks();
+      const { invoke, ipcLog } = await makeIpcMock();
+
+      const GraphView = (await import("./GraphView")).default;
+      eventLog.push("--- PHASE 1: mount full visible ---");
+      const { rerender } = render(
+        <GraphView activePageId="a.md" initialMode="full" visible={true} />
+      );
+      await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+      await waitFor(() => { expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument(); });
+
+      eventLog.push("--- PHASE 2: hide ---");
+      await act(async () => {
+        rerender(<GraphView activePageId="a.md" initialMode="full" visible={false} />);
+      });
+
+      invoke.mockClear();
+      mockSigmaKill.mockClear();
+      ipcLog.length = 0;
+
+      eventLog.push("--- PHASE 3: change initialMode to local while hidden ---");
+      await act(async () => {
+        rerender(<GraphView activePageId="a.md" initialMode="local" visible={false} />);
+      });
+
+      // Mode should change but init should NOT run (not visible)
+      const midCalls = ipcLog.filter((c) => c.cmd === "get_graph_subgraph");
+      eventLog.push(`IPC calls while hidden: ${midCalls.length}`);
+
+      eventLog.push("--- PHASE 4: make visible again ---");
+      await act(async () => {
+        rerender(<GraphView activePageId="a.md" initialMode="local" visible={true} />);
+      });
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+      }, { timeout: 3000 });
+
+      await act(async () => { await new Promise((r) => setTimeout(r, 100)); });
+
+      const allCalls = ipcLog.filter((c) => c.cmd === "get_graph_subgraph");
+      const localCalls = allCalls.filter(
+        (c) => ((c.args as Record<string, unknown>)?.seeds as string[])?.length > 0
+      );
+      eventLog.push(`total IPC calls: ${allCalls.length}`);
+      eventLog.push(`local IPC calls: ${localCalls.length}`);
+      eventLog.push(`sigma.kill calls: ${mockSigmaKill.mock.calls.length}`);
+
+      const localBtn = screen.getByRole("button", { name: "Local" });
+      const graphView = screen.getByTestId("graph-view");
+      eventLog.push(`Local pressed: ${localBtn.getAttribute("aria-pressed")}`);
+      eventLog.push(`aria-label: ${graphView.getAttribute("aria-label")}`);
+
+      console.log("=== HIDDEN→VISIBLE WITH MODE CHANGE ===\n" + eventLog.join("\n"));
+
+      expect(localBtn.getAttribute("aria-pressed")).toBe("true");
+      expect(screen.queryByTestId("graph-error")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+      // Must show local graph nodes, not the old full graph
+      expect(graphView.getAttribute("aria-label")).toContain("2 node");
+    });
+
+    it("slow IPC: full→local switch does not flash-then-blank with async delay", async () => {
+      setupInstrumentedMocks();
+      const { invoke, ipcLog } = await makeIpcMock({ delayMs: 50 });
+      const buildSpy = vi.spyOn(graphLayout, "buildGraph");
+
+      const GraphView = (await import("./GraphView")).default;
+      eventLog.push("--- PHASE 1: mount full (slow IPC) ---");
+      render(<GraphView activePageId="a.md" visible={true} />);
+      await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); }, { timeout: 5000 });
+      await waitFor(() => { expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument(); }, { timeout: 5000 });
+
+      invoke.mockClear();
+      buildSpy.mockClear();
+      mockSigmaKill.mockClear();
+      mockSigmaOn.mockClear();
+      ipcLog.length = 0;
+
+      eventLog.push("--- PHASE 2: click Local (slow IPC) ---");
+      await act(async () => {
+        await userEvent.click(screen.getByRole("button", { name: "Local" }));
+      });
+
+      // Wait longer for slow IPC
+      await waitFor(() => {
+        expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+      }, { timeout: 5000 });
+
+      await act(async () => { await new Promise((r) => setTimeout(r, 200)); });
+
+      const localCalls = ipcLog.filter(
+        (c) => c.cmd === "get_graph_subgraph" &&
+          ((c.args as Record<string, unknown>)?.seeds as string[])?.length > 0
+      );
+      eventLog.push(`slow IPC local calls: ${localCalls.length}`);
+      eventLog.push(`sigma.kill: ${mockSigmaKill.mock.calls.length}`);
+      eventLog.push(`buildGraph calls: ${buildSpy.mock.calls.length}`);
+
+      const graphView = screen.getByTestId("graph-view");
+      eventLog.push(`aria-label: ${graphView.getAttribute("aria-label")}`);
+
+      console.log("=== SLOW IPC FULL→LOCAL ===\n" + eventLog.join("\n"));
+
+      // With slow IPC, the visibility effect might race with init().
+      // This test checks whether a delayed IPC response causes the flash-then-blank bug.
+      expect(screen.queryByTestId("graph-error")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+      expect(graphView.getAttribute("aria-label")).toContain("2 node");
+      expect(localCalls.length).toBe(1);
+
+      buildSpy.mockRestore();
+    });
+
+    it("full→local→full→local rapid toggle: graph settles correctly", async () => {
+      setupInstrumentedMocks();
+      const { invoke, ipcLog } = await makeIpcMock();
+
+      const GraphView = (await import("./GraphView")).default;
+      render(<GraphView activePageId="a.md" visible={true} />);
+      await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+      await waitFor(() => { expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument(); });
+
+      invoke.mockClear();
+      mockSigmaKill.mockClear();
+      ipcLog.length = 0;
+
+      eventLog.push("--- rapid toggle: Local → Full → Local ---");
+
+      await act(async () => {
+        await userEvent.click(screen.getByRole("button", { name: "Local" }));
+      });
+      // Don't wait for completion — immediately toggle back
+      await act(async () => {
+        await userEvent.click(screen.getByRole("button", { name: "Full" }));
+      });
+      await act(async () => {
+        await userEvent.click(screen.getByRole("button", { name: "Local" }));
+      });
+
+      // Now wait for everything to settle
+      await waitFor(() => {
+        expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+      }, { timeout: 5000 });
+
+      await act(async () => { await new Promise((r) => setTimeout(r, 200)); });
+
+      const allCalls = ipcLog.filter((c) => c.cmd === "get_graph_subgraph");
+      eventLog.push(`total IPC calls during rapid toggle: ${allCalls.length}`);
+      eventLog.push(`sigma.kill calls: ${mockSigmaKill.mock.calls.length}`);
+
+      const graphView = screen.getByTestId("graph-view");
+      const localBtn = screen.getByRole("button", { name: "Local" });
+      eventLog.push(`final Local pressed: ${localBtn.getAttribute("aria-pressed")}`);
+      eventLog.push(`final aria-label: ${graphView.getAttribute("aria-label")}`);
+
+      console.log("=== RAPID TOGGLE ===\n" + eventLog.join("\n"));
+
+      // After settling, should be in local mode with a valid graph
+      expect(localBtn.getAttribute("aria-pressed")).toBe("true");
+      expect(screen.queryByTestId("graph-error")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+      expect(graphView.getAttribute("aria-label")).toContain("2 node");
+    });
+
+    it("local mode with activePageId change + depth change simultaneously: no blank graph", async () => {
+      setupInstrumentedMocks();
+      const { invoke, ipcLog } = await makeIpcMock();
+
+      const GraphView = (await import("./GraphView")).default;
+      eventLog.push("--- PHASE 1: mount local a.md depth 2 ---");
+      const { rerender } = render(
+        <GraphView activePageId="a.md" initialMode="local" visible={true} />
+      );
+      await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+      await waitFor(() => { expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument(); });
+
+      invoke.mockClear();
+      mockSigmaKill.mockClear();
+      ipcLog.length = 0;
+
+      eventLog.push("--- PHASE 2: change activePageId to b.md AND depth to 1 ---");
+      await act(async () => {
+        // Change activePageId (triggers visibility effect reinit)
+        rerender(<GraphView activePageId="b.md" initialMode="local" visible={true} />);
+      });
+      // Also click depth=1
+      await act(async () => {
+        await userEvent.click(screen.getByRole("button", { name: /^1$/ }));
+      });
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+      }, { timeout: 5000 });
+
+      await act(async () => { await new Promise((r) => setTimeout(r, 200)); });
+
+      const allCalls = ipcLog.filter((c) => c.cmd === "get_graph_subgraph");
+      eventLog.push(`total IPC calls: ${allCalls.length}`);
+      for (const call of allCalls) {
+        eventLog.push(`  seeds=${JSON.stringify((call.args as Record<string, unknown>)?.seeds)} depth=${(call.args as Record<string, unknown>)?.depth}`);
+      }
+
+      const graphView = screen.getByTestId("graph-view");
+      eventLog.push(`aria-label: ${graphView.getAttribute("aria-label")}`);
+
+      console.log("=== SEED + DEPTH SIMULTANEOUS CHANGE ===\n" + eventLog.join("\n"));
+
+      expect(screen.queryByTestId("graph-error")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+      expect(graphView.getAttribute("aria-label")).toContain("node");
+    });
+
+    it("visibility effect does not trigger reinitTrigger when init already set lastRenderedSeedRef", async () => {
+      setupInstrumentedMocks();
+      const { invoke, ipcLog } = await makeIpcMock();
+
+      const GraphView = (await import("./GraphView")).default;
+      render(<GraphView activePageId="a.md" visible={true} />);
+      await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+      await waitFor(() => { expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument(); });
+
+      invoke.mockClear();
+      ipcLog.length = 0;
+
+      eventLog.push("--- switch to local and track IPC carefully ---");
+      await act(async () => {
+        await userEvent.click(screen.getByRole("button", { name: "Local" }));
+      });
+
+      // Wait for completion
+      await waitFor(() => {
+        expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+      }, { timeout: 3000 });
+
+      // Extra settle time to catch any straggler reinits
+      await act(async () => { await new Promise((r) => setTimeout(r, 300)); });
+
+      const subgraphCalls = ipcLog.filter((c) => c.cmd === "get_graph_subgraph");
+      eventLog.push(`IPC calls after settle: ${subgraphCalls.length}`);
+      for (const [i, call] of subgraphCalls.entries()) {
+        eventLog.push(`  [${i}] seeds=${JSON.stringify((call.args as Record<string, unknown>)?.seeds)} depth=${(call.args as Record<string, unknown>)?.depth} @${call.ts.toFixed(0)}ms`);
+      }
+
+      console.log("=== REINIT_TRIGGER RACE CHECK ===\n" + eventLog.join("\n"));
+
+      // If the visibility effect races with init and fires reinitTrigger,
+      // we'll see 2+ IPC calls. Should be exactly 1.
+      expect(subgraphCalls.length).toBe(1);
+    });
+
+    it("keyboard shortcut flow: Cmd+G hides graph, re-open shows local mode", async () => {
+      // Simulates the ContentArea flow:
+      // 1. Graph open in full mode (visible=true, initialMode=undefined)
+      // 2. Cmd+G fires: visible=false + initialMode="local" (batched)
+      // 3. User re-opens via Graph button: visible=true + initialMode=undefined
+      // The graph should render in local mode at step 3.
+      setupInstrumentedMocks();
+      const { invoke, ipcLog } = await makeIpcMock();
+      const buildSpy = vi.spyOn(graphLayout, "buildGraph");
+
+      const GraphView = (await import("./GraphView")).default;
+      eventLog.push("--- PHASE 1: mount full, visible ---");
+      const { rerender } = render(
+        <GraphView activePageId="a.md" initialMode={undefined} visible={true} />
+      );
+      await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+      await waitFor(() => { expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument(); });
+
+      const fullLabel = screen.getByTestId("graph-view").getAttribute("aria-label");
+      eventLog.push(`full mode: ${fullLabel}`);
+      expect(fullLabel).toContain("3 node");
+
+      invoke.mockClear();
+      buildSpy.mockClear();
+      mockSigmaKill.mockClear();
+      mockSigmaOn.mockClear();
+      ipcLog.length = 0;
+
+      eventLog.push("--- PHASE 2: Cmd+G → visible=false, initialMode='local' (batched) ---");
+      await act(async () => {
+        rerender(<GraphView activePageId="a.md" initialMode="local" visible={false} />);
+      });
+
+      // Mode should have changed to "local" via initialMode sync effect,
+      // but init should NOT run (not visible) — check no local IPC call yet
+      await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+
+      const hiddenLocalIpc = ipcLog.filter(
+        (c) => c.cmd === "get_graph_subgraph" &&
+          ((c.args as Record<string, unknown>)?.seeds as string[])?.length > 0
+      );
+      eventLog.push(`IPC calls while hidden (should be 0): ${hiddenLocalIpc.length}`);
+      eventLog.push(`sigma.kill calls: ${mockSigmaKill.mock.calls.length}`);
+
+      invoke.mockClear();
+      buildSpy.mockClear();
+      mockSigmaKill.mockClear();
+      ipcLog.length = 0;
+
+      eventLog.push("--- PHASE 3: re-open via Graph button → visible=true, initialMode=undefined ---");
+      await act(async () => {
+        rerender(<GraphView activePageId="a.md" initialMode={undefined} visible={true} />);
+      });
+
+      // The visibility effect should detect stale lastRenderedSeedRef and trigger reinit
+      await waitFor(() => {
+        const calls = ipcLog.filter((c) => c.cmd === "get_graph_subgraph");
+        return expect(calls.length).toBeGreaterThanOrEqual(1);
+      }, { timeout: 3000 });
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+      }, { timeout: 3000 });
+
+      await act(async () => { await new Promise((r) => setTimeout(r, 100)); });
+
+      const reopenCalls = ipcLog.filter((c) => c.cmd === "get_graph_subgraph");
+      const localReopenCalls = reopenCalls.filter(
+        (c) => ((c.args as Record<string, unknown>)?.seeds as string[])?.length > 0
+      );
+      eventLog.push(`IPC calls on re-open: ${reopenCalls.length}`);
+      eventLog.push(`  local calls: ${localReopenCalls.length}`);
+      for (const call of reopenCalls) {
+        eventLog.push(`  seeds=${JSON.stringify((call.args as Record<string, unknown>)?.seeds)} depth=${(call.args as Record<string, unknown>)?.depth}`);
+      }
+
+      const localBtn = screen.getByRole("button", { name: "Local" });
+      const graphView = screen.getByTestId("graph-view");
+      eventLog.push(`Local pressed: ${localBtn.getAttribute("aria-pressed")}`);
+      eventLog.push(`aria-label: ${graphView.getAttribute("aria-label")}`);
+      eventLog.push(`loading: ${!!screen.queryByTestId("graph-loading")}`);
+      eventLog.push(`error: ${!!screen.queryByTestId("graph-error")}`);
+      eventLog.push(`buildGraph calls: ${buildSpy.mock.calls.length}`);
+      for (const [i, call] of buildSpy.mock.calls.entries()) {
+        eventLog.push(`  buildGraph[${i}]: seedId=${call[0].seedId}, nodes=${call[0].subgraph.nodes.length}`);
+      }
+
+      console.log("=== KEYBOARD SHORTCUT FLOW (Cmd+G) ===\n" + eventLog.join("\n"));
+
+      // After re-open, graph should be in local mode with seed node
+      expect(localBtn.getAttribute("aria-pressed")).toBe("true");
+      expect(screen.queryByTestId("graph-error")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+      expect(graphView.getAttribute("aria-label")).toContain("2 node");
+      expect(localReopenCalls.length).toBeGreaterThanOrEqual(1);
+
+      buildSpy.mockRestore();
+    });
+
+    it("keyboard shortcut flow: Cmd+G from full graph → Cmd+G again re-shows in local mode", async () => {
+      // Exact real-world sequence:
+      // 1. Graph open in full mode
+      // 2. Cmd+G → hides graph + sets initialMode="local"
+      // 3. Cmd+G again → shows graph (toggle back) + sets initialMode="local" again
+      // This tests the double-toggle case where graph should come back in local mode.
+      setupInstrumentedMocks();
+      const { invoke, ipcLog } = await makeIpcMock();
+
+      const GraphView = (await import("./GraphView")).default;
+      eventLog.push("--- PHASE 1: mount full visible ---");
+      const { rerender } = render(
+        <GraphView activePageId="a.md" initialMode={undefined} visible={true} />
+      );
+      await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+      await waitFor(() => { expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument(); });
+
+      invoke.mockClear();
+      mockSigmaKill.mockClear();
+      ipcLog.length = 0;
+
+      eventLog.push("--- PHASE 2: first Cmd+G → hide + local ---");
+      await act(async () => {
+        rerender(<GraphView activePageId="a.md" initialMode="local" visible={false} />);
+      });
+      await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+
+      eventLog.push(`sigma.kill: ${mockSigmaKill.mock.calls.length}`);
+
+      invoke.mockClear();
+      mockSigmaKill.mockClear();
+      ipcLog.length = 0;
+
+      eventLog.push("--- PHASE 3: second Cmd+G → show + local ---");
+      // ContentArea handler: toggle editor→graph, set initialMode=local
+      await act(async () => {
+        rerender(<GraphView activePageId="a.md" initialMode="local" visible={true} />);
+      });
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+      }, { timeout: 3000 });
+
+      await act(async () => { await new Promise((r) => setTimeout(r, 100)); });
+
+      const reopenCalls = ipcLog.filter((c) => c.cmd === "get_graph_subgraph");
+      const localCalls = reopenCalls.filter(
+        (c) => ((c.args as Record<string, unknown>)?.seeds as string[])?.length > 0
+      );
+      eventLog.push(`IPC calls on second toggle: ${reopenCalls.length}`);
+      for (const call of reopenCalls) {
+        eventLog.push(`  seeds=${JSON.stringify((call.args as Record<string, unknown>)?.seeds)}`);
+      }
+
+      const localBtn = screen.getByRole("button", { name: "Local" });
+      const graphView = screen.getByTestId("graph-view");
+      eventLog.push(`Local pressed: ${localBtn.getAttribute("aria-pressed")}`);
+      eventLog.push(`aria-label: ${graphView.getAttribute("aria-label")}`);
+
+      console.log("=== DOUBLE Cmd+G TOGGLE ===\n" + eventLog.join("\n"));
+
+      expect(localBtn.getAttribute("aria-pressed")).toBe("true");
+      expect(screen.queryByTestId("graph-error")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+      expect(graphView.getAttribute("aria-label")).toContain("2 node");
+      expect(localCalls.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("init effect early-returns when hidden but still processes mode change on re-show", async () => {
+      // Validates that when mode changes while hidden:
+      // 1. init() returns early (visibleRef check)
+      // 2. lastRenderedSeedRef is NOT updated (stays stale)
+      // 3. When visible again, the stale ref triggers reinitTrigger
+      // 4. New init runs with correct mode and seed
+      // If this fails, the graph stays blank after hide+mode change+show.
+      setupInstrumentedMocks();
+      const { invoke, ipcLog } = await makeIpcMock();
+
+      const GraphView = (await import("./GraphView")).default;
+      const { rerender } = render(
+        <GraphView activePageId="a.md" initialMode="full" visible={true} />
+      );
+      await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+      await waitFor(() => { expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument(); });
+
+      // Full mode: lastRenderedSeedRef should be null
+      const fullLabel = screen.getByTestId("graph-view").getAttribute("aria-label");
+      eventLog.push(`full mode: ${fullLabel}`);
+
+      invoke.mockClear();
+      mockSigmaKill.mockClear();
+      ipcLog.length = 0;
+
+      // Hide + switch initialMode
+      await act(async () => {
+        rerender(<GraphView activePageId="a.md" initialMode="local" visible={false} />);
+      });
+
+      // Init should NOT have fetched local data (hidden early return)
+      await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+      const hiddenIpc = ipcLog.filter(
+        (c) => c.cmd === "get_graph_subgraph" &&
+          ((c.args as Record<string, unknown>)?.seeds as string[])?.length > 0
+      );
+      eventLog.push(`local IPC while hidden: ${hiddenIpc.length}`);
+
+      // But sigma should have been killed (init cleanup runs even if body returns early)
+      eventLog.push(`sigma.kill from mode change: ${mockSigmaKill.mock.calls.length}`);
+
+      invoke.mockClear();
+      mockSigmaKill.mockClear();
+      ipcLog.length = 0;
+
+      // Re-show
+      await act(async () => {
+        rerender(<GraphView activePageId="a.md" initialMode="local" visible={true} />);
+      });
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument();
+      }, { timeout: 3000 });
+
+      await act(async () => { await new Promise((r) => setTimeout(r, 100)); });
+
+      const showIpc = ipcLog.filter((c) => c.cmd === "get_graph_subgraph");
+      const localShowIpc = showIpc.filter(
+        (c) => ((c.args as Record<string, unknown>)?.seeds as string[])?.length > 0
+      );
+      eventLog.push(`IPC on re-show: ${showIpc.length} (local: ${localShowIpc.length})`);
+
+      const graphView = screen.getByTestId("graph-view");
+      eventLog.push(`aria-label: ${graphView.getAttribute("aria-label")}`);
+
+      console.log("=== HIDDEN MODE CHANGE + RE-SHOW ===\n" + eventLog.join("\n"));
+
+      // The stale lastRenderedSeedRef should trigger reinit when visible
+      expect(localShowIpc.length).toBeGreaterThanOrEqual(1);
+      expect(graphView.getAttribute("aria-label")).toContain("2 node");
+    });
+  });
 });
