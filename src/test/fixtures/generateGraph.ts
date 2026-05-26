@@ -4,7 +4,6 @@ import { mulberry32 } from "../../lib/random";
 export interface SyntheticGraphOptions {
   nodeCount: number;
   edgeDensity?: number;
-  stubFraction?: number;
   seed?: number;
 }
 
@@ -14,18 +13,12 @@ export interface SyntheticGraphResult {
 }
 
 export function generateSyntheticGraph(opts: SyntheticGraphOptions): SyntheticGraphResult {
-  const { nodeCount, edgeDensity = 3, stubFraction = 0.1, seed = 42 } = opts;
+  const { nodeCount, edgeDensity = 3, seed = 42 } = opts;
   const rng = mulberry32(seed);
 
-  const stubCount = Math.round(nodeCount * stubFraction);
-  const realCount = nodeCount - stubCount;
-
   const nodes: GraphNode[] = [];
-  for (let i = 0; i < realCount; i++) {
-    nodes.push({ id: `page-${i}`, title: `Page ${i}`, is_stub: false });
-  }
-  for (let i = 0; i < stubCount; i++) {
-    nodes.push({ id: `stub-${i}`, title: `Stub ${i}`, is_stub: true });
+  for (let i = 0; i < nodeCount; i++) {
+    nodes.push({ id: `page-${i}`, title: `Page ${i}` });
   }
 
   const edgeSet = new Set<string>();

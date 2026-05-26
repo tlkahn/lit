@@ -382,7 +382,6 @@ export interface LinkEntry {
 export interface GraphNode {
   id: string;
   title: string;
-  is_stub: boolean;
 }
 
 export interface SubgraphResult {

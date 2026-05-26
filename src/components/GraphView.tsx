@@ -200,13 +200,12 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
 
         if (cancelled) return;
 
-        const { accentColor, stubColor, dimColor } = resolveThemeColors();
+        const { accentColor, dimColor } = resolveThemeColors();
         dimColorRef.current = dimColor;
         t0 = perf ? performance.now() : 0;
         const graph = buildGraph({
           subgraph,
           accentColor,
-          stubColor,
           seedId: mode === "local" ? (activePageId ?? undefined) : undefined,
         });
         if (perf) {
@@ -235,19 +234,13 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         const filledProgram = createNodeBorderProgram({
           borders: [{ size: { value: 0.15, mode: "relative" }, color: { attribute: "color" } }],
         });
-        const hollowProgram = createNodeBorderProgram({
-          borders: [
-            { size: { value: 0.15, mode: "relative" }, color: { attribute: "color" } },
-            { size: { fill: true }, color: { transparent: true } },
-          ],
-        });
         const seedProgram = createNodeBorderProgram({
           borders: [{ size: { value: 0.3, mode: "relative" }, color: { attribute: "color" } }],
         });
 
         const sigmaT0 = perf ? performance.now() : 0;
         const sigma = new Sigma(graph, containerRef.current, {
-          nodeProgramClasses: { filled: filledProgram, hollow: hollowProgram, seed: seedProgram },
+          nodeProgramClasses: { filled: filledProgram, seed: seedProgram },
           hideEdgesOnMove: tierSettings.hideEdgesOnMove,
           hideLabelsOnMove: tierSettings.hideLabelsOnMove,
           labelRenderedSizeThreshold: tierSettings.labelRenderedSizeThreshold,
@@ -420,8 +413,8 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
           return;
         }
 
-        const { accentColor, stubColor } = resolveThemeColors();
-        applyDiff(graph, diff, pagerank, accentColor, stubColor);
+        const { accentColor } = resolveThemeColors();
+        applyDiff(graph, diff, pagerank, accentColor);
         setGraphStats({ nodes: graph.order, edges: graph.size });
 
         if (visibleRef.current) {
@@ -467,11 +460,11 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
     const graph = graphRef.current as import("graphology").default | null;
     const sigma = sigmaRef.current as { refresh: () => void; setSetting: (key: string, value: unknown) => void } | null;
     if (!graph || !sigma) return;
-    const { accentColor, stubColor, dimColor, edgeColor, labelColor } = resolveThemeColors();
+    const { accentColor, dimColor, edgeColor, labelColor } = resolveThemeColors();
     dimColorRef.current = dimColor;
     graph.forEachNode((node: string, attrs: Record<string, unknown>) => {
       if (attrs.type === "seed") return;
-      graph.setNodeAttribute(node, "color", attrs.type === "hollow" ? stubColor : accentColor);
+      graph.setNodeAttribute(node, "color", accentColor);
     });
     sigma.setSetting("defaultEdgeColor", edgeColor);
     sigma.setSetting("labelColor", { color: labelColor });

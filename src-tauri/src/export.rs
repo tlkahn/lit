@@ -240,20 +240,13 @@ where
         .neighbors(node_id, depth, false)
         .map_err(|e| e.to_string())?;
 
-    let seed_node = subgraph
-        .nodes
-        .iter()
-        .find(|n| n.id == node_id)
-        .ok_or_else(|| format!("seed node \"{node_id}\" not found in graph result"))?;
-
-    if seed_node.is_stub {
-        return Err(format!("seed node \"{node_id}\" is a stub (no backing file)"));
+    if !subgraph.nodes.iter().any(|n| n.id == node_id) {
+        return Err(format!("seed node \"{node_id}\" not found in graph (stub or missing)"));
     }
 
     let node_ids: Vec<String> = subgraph
         .nodes
         .into_iter()
-        .filter(|n| !n.is_stub)
         .map(|n| n.id)
         .collect();
 
@@ -733,7 +726,7 @@ mod tests {
         let dest = dir.path().join("out.zip");
         let result = run_subgraph_export(dir.path(), &gi, "ghost", 1, &dest, |_, _| {});
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("stub"));
+        assert!(result.unwrap_err().contains("not found"));
     }
 
     #[test]

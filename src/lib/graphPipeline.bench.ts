@@ -33,7 +33,7 @@ describe("buildGraph (Graphology construction)", () => {
   for (const size of SIZES) {
     const { subgraph } = datasets[size];
     bench(`${size.toLocaleString()} nodes`, () => {
-      buildGraph({ subgraph, accentColor: "#0969da", stubColor: "#818b98" });
+      buildGraph({ subgraph, accentColor: "#0969da" });
     });
   }
 });
@@ -41,7 +41,7 @@ describe("buildGraph (Graphology construction)", () => {
 describe("computeDiff (no changes — best case)", () => {
   for (const size of SIZES) {
     const { subgraph } = datasets[size];
-    const graph = buildGraph({ subgraph, accentColor: "#0969da", stubColor: "#818b98" });
+    const graph = buildGraph({ subgraph, accentColor: "#0969da" });
     bench(`${size.toLocaleString()} nodes`, () => {
       const diff = computeDiff(graph, subgraph);
       isDiffEmpty(diff);
@@ -52,7 +52,7 @@ describe("computeDiff (no changes — best case)", () => {
 describe("computeDiff (5% nodes added)", () => {
   for (const size of SIZES) {
     const { subgraph } = datasets[size];
-    const graph = buildGraph({ subgraph, accentColor: "#0969da", stubColor: "#818b98" });
+    const graph = buildGraph({ subgraph, accentColor: "#0969da" });
     const added = Math.round(size * 0.05);
     const mutated = {
       nodes: [
@@ -60,7 +60,7 @@ describe("computeDiff (5% nodes added)", () => {
         ...Array.from({ length: added }, (_, i) => ({
           id: `new-${i}`,
           title: `New ${i}`,
-          is_stub: false,
+
         })),
       ],
       edges: [
@@ -84,7 +84,7 @@ describe("applyDiff (5% nodes added)", () => {
         ...Array.from({ length: added }, (_, i) => ({
           id: `new-${i}`,
           title: `New ${i}`,
-          is_stub: false,
+
         })),
       ],
       edges: [
@@ -96,9 +96,9 @@ describe("applyDiff (5% nodes added)", () => {
     for (let i = 0; i < added; i++) mutatedPagerank[`new-${i}`] = 0.001;
 
     bench(`${size.toLocaleString()} nodes + ${added} new`, () => {
-      const graph = buildGraph({ subgraph, accentColor: "#0969da", stubColor: "#818b98" });
+      const graph = buildGraph({ subgraph, accentColor: "#0969da" });
       const diff = computeDiff(graph, mutated);
-      applyDiff(graph, diff, mutatedPagerank, "#0969da", "#818b98");
+      applyDiff(graph, diff, mutatedPagerank, "#0969da");
     });
   }
 });
@@ -106,7 +106,7 @@ describe("applyDiff (5% nodes added)", () => {
 describe("position cache: serialize + deserialize positions", () => {
   for (const size of SIZES) {
     const { subgraph } = datasets[size];
-    const graph = buildGraph({ subgraph, accentColor: "#0969da", stubColor: "#818b98" });
+    const graph = buildGraph({ subgraph, accentColor: "#0969da" });
     const positions: Record<string, { x: number; y: number }> = {};
     graph.forEachNode((node, attrs) => {
       positions[node] = { x: attrs.x as number, y: attrs.y as number };

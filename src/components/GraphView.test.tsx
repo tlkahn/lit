@@ -49,8 +49,8 @@ describe("GraphView", () => {
         case "get_graph_subgraph":
           return {
             nodes: [
-              { id: "a.md", title: "A", is_stub: false },
-              { id: "b.md", title: "B", is_stub: false },
+              { id: "a.md", title: "A" },
+              { id: "b.md", title: "B" },
             ],
             edges: [["a.md", "b.md"]],
             pagerank: { "a.md": 0.4, "b.md": 0.6 },
@@ -180,7 +180,6 @@ describe("GraphView", () => {
 
   it("uses theme CSS variables for graph node colors", async () => {
     document.documentElement.style.setProperty("--interactive-accent", "#ff0000");
-    document.documentElement.style.setProperty("--text-faint", "#00ff00");
 
     const buildGraphSpy = vi.spyOn(graphLayout, "buildGraph");
 
@@ -193,11 +192,9 @@ describe("GraphView", () => {
 
     const callArgs = buildGraphSpy.mock.calls[0]![0];
     expect(callArgs.accentColor).toBe("#ff0000");
-    expect(callArgs.stubColor).toBe("#00ff00");
 
     buildGraphSpy.mockRestore();
     document.documentElement.style.removeProperty("--interactive-accent");
-    document.documentElement.style.removeProperty("--text-faint");
   });
 
   it("no FA2 worker is started during init", async () => {
@@ -225,8 +222,8 @@ describe("GraphView", () => {
         case "get_graph_subgraph":
           return {
             nodes: [
-              { id: "a.md", title: "A", is_stub: false },
-              { id: "b.md", title: "B", is_stub: false },
+              { id: "a.md", title: "A" },
+              { id: "b.md", title: "B" },
             ],
             edges: [["a.md", "b.md"]],
             pagerank: { "a.md": 0.4, "b.md": 0.6 },
@@ -259,8 +256,8 @@ describe("GraphView", () => {
         case "get_graph_subgraph":
           return {
             nodes: [
-              { id: "a.md", title: "A", is_stub: false },
-              { id: "b.md", title: "B", is_stub: false },
+              { id: "a.md", title: "A" },
+              { id: "b.md", title: "B" },
             ],
             edges: [["a.md", "b.md"]],
             pagerank: { "a.md": 0.4, "b.md": 0.6 },
@@ -1067,8 +1064,8 @@ describe("GraphView", () => {
           if (callCount <= 2) {
             return {
               nodes: [
-                { id: "a.md", title: "A", is_stub: false },
-                { id: "b.md", title: "B", is_stub: false },
+                { id: "a.md", title: "A" },
+                { id: "b.md", title: "B" },
               ],
               edges: [["a.md", "b.md"]],
               pagerank: { "a.md": 0.4, "b.md": 0.6 },
@@ -1077,9 +1074,9 @@ describe("GraphView", () => {
           }
           return {
             nodes: [
-              { id: "a.md", title: "A", is_stub: false },
-              { id: "b.md", title: "B", is_stub: false },
-              { id: "c.md", title: "C", is_stub: false },
+              { id: "a.md", title: "A" },
+              { id: "b.md", title: "B" },
+              { id: "c.md", title: "C" },
             ],
             edges: [["a.md", "b.md"], ["a.md", "c.md"]],
             pagerank: { "a.md": 0.4, "b.md": 0.3, "c.md": 0.3 },
@@ -1118,9 +1115,9 @@ describe("GraphView", () => {
           if (callCount <= 1) {
             return {
               nodes: [
-                { id: "a.md", title: "A", is_stub: false },
-                { id: "b.md", title: "B", is_stub: false },
-                { id: "c.md", title: "C", is_stub: false },
+                { id: "a.md", title: "A" },
+                { id: "b.md", title: "B" },
+                { id: "c.md", title: "C" },
               ],
               edges: [["a.md", "b.md"], ["b.md", "c.md"]],
               pagerank: { "a.md": 0.3, "b.md": 0.4, "c.md": 0.3 },
@@ -1129,8 +1126,8 @@ describe("GraphView", () => {
           }
           return {
             nodes: [
-              { id: "Merged.md", title: "Merged", is_stub: false },
-              { id: "c.md", title: "C", is_stub: false },
+              { id: "Merged.md", title: "Merged" },
+              { id: "c.md", title: "C" },
             ],
             edges: [["Merged.md", "c.md"]],
             pagerank: { "Merged.md": 0.6, "c.md": 0.4 },
@@ -1172,8 +1169,8 @@ describe("GraphView", () => {
         case "get_graph_subgraph":
           return {
             nodes: [
-              { id: "a.md", title: "A", is_stub: false },
-              { id: "b.md", title: "B", is_stub: false },
+              { id: "a.md", title: "A" },
+              { id: "b.md", title: "B" },
             ],
             edges: [["a.md", "b.md"]],
             pagerank: { "a.md": 0.4, "b.md": 0.6 },
@@ -1211,8 +1208,8 @@ describe("GraphView", () => {
           if (callCount <= 2) {
             return {
               nodes: [
-                { id: "a.md", title: "A", is_stub: false },
-                { id: "b.md", title: "B", is_stub: false },
+                { id: "a.md", title: "A" },
+                { id: "b.md", title: "B" },
               ],
               edges: [["a.md", "b.md"]],
               pagerank: { "a.md": 0.4, "b.md": 0.6 },
@@ -1221,9 +1218,9 @@ describe("GraphView", () => {
           }
           return {
             nodes: [
-              { id: "a.md", title: "A", is_stub: false },
-              { id: "b.md", title: "B", is_stub: false },
-              { id: "d.md", title: "D", is_stub: false },
+              { id: "a.md", title: "A" },
+              { id: "b.md", title: "B" },
+              { id: "d.md", title: "D" },
             ],
             edges: [["a.md", "b.md"], ["b.md", "d.md"]],
             pagerank: { "a.md": 0.4, "b.md": 0.3, "d.md": 0.3 },
@@ -1267,8 +1264,8 @@ describe("GraphView", () => {
         case "get_graph_subgraph":
           return {
             nodes: [
-              { id: "a.md", title: "A", is_stub: false },
-              { id: "b.md", title: "B", is_stub: false },
+              { id: "a.md", title: "A" },
+              { id: "b.md", title: "B" },
             ],
             edges: [["a.md", "b.md"]],
             pagerank: { "a.md": 0.4, "b.md": 0.6 },
@@ -1304,8 +1301,8 @@ describe("GraphView", () => {
         case "get_graph_subgraph":
           return {
             nodes: [
-              { id: "a.md", title: "A", is_stub: false },
-              { id: "b.md", title: "B", is_stub: false },
+              { id: "a.md", title: "A" },
+              { id: "b.md", title: "B" },
             ],
             edges: [["a.md", "b.md"]],
             pagerank: { "a.md": 0.4, "b.md": 0.6 },
@@ -1356,8 +1353,8 @@ describe("GraphView", () => {
           if (ipcCallCount <= 2) {
             return {
               nodes: [
-                { id: "a.md", title: "A", is_stub: false },
-                { id: "b.md", title: "B", is_stub: false },
+                { id: "a.md", title: "A" },
+                { id: "b.md", title: "B" },
               ],
               edges: [["a.md", "b.md"]],
               pagerank: { "a.md": 0.4, "b.md": 0.6 },
@@ -1397,8 +1394,8 @@ describe("GraphView", () => {
     // Resolve to avoid dangling promise
     resolveIpcHolder.fn?.({
       nodes: [
-        { id: "a.md", title: "A", is_stub: false },
-        { id: "b.md", title: "B", is_stub: false },
+        { id: "a.md", title: "A" },
+        { id: "b.md", title: "B" },
       ],
       edges: [["a.md", "b.md"]],
       pagerank: { "a.md": 0.4, "b.md": 0.6 },
@@ -2352,9 +2349,9 @@ describe("GraphView", () => {
         case "get_graph_subgraph":
           return {
             nodes: [
-              { id: "a.md", title: "A", is_stub: false },
-              { id: "b.md", title: "B", is_stub: false },
-              { id: "c.md", title: "C", is_stub: false },
+              { id: "a.md", title: "A" },
+              { id: "b.md", title: "B" },
+              { id: "c.md", title: "C" },
             ],
             edges: [["a.md", "b.md"], ["b.md", "c.md"]],
             pagerank: { "a.md": 0.3, "b.md": 0.4, "c.md": 0.3 },
@@ -2443,8 +2440,8 @@ describe("GraphView", () => {
         case "get_graph_subgraph":
           return {
             nodes: [
-              { id: "a.md", title: "A", is_stub: false },
-              { id: "b.md", title: "B", is_stub: false },
+              { id: "a.md", title: "A" },
+              { id: "b.md", title: "B" },
             ],
             edges: [["a.md", "b.md"]],
             pagerank: { "a.md": 0.4, "b.md": 0.6 },
@@ -2483,8 +2480,8 @@ describe("GraphView", () => {
         case "get_graph_subgraph":
           return {
             nodes: [
-              { id: "a.md", title: "A", is_stub: false },
-              { id: "b.md", title: "B", is_stub: false },
+              { id: "a.md", title: "A" },
+              { id: "b.md", title: "B" },
             ],
             edges: [["a.md", "b.md"]],
             pagerank: { "a.md": 0.4, "b.md": 0.6 },
@@ -2520,8 +2517,8 @@ describe("GraphView", () => {
         case "get_graph_subgraph":
           return {
             nodes: [
-              { id: "a.md", title: "A", is_stub: false },
-              { id: "b.md", title: "B", is_stub: false },
+              { id: "a.md", title: "A" },
+              { id: "b.md", title: "B" },
             ],
             edges: [["a.md", "b.md"]],
             pagerank: { "a.md": 0.4, "b.md": 0.6 },
@@ -2559,8 +2556,8 @@ describe("GraphView", () => {
         case "get_graph_subgraph":
           return {
             nodes: [
-              { id: "a.md", title: "A", is_stub: false },
-              { id: "b.md", title: "B", is_stub: false },
+              { id: "a.md", title: "A" },
+              { id: "b.md", title: "B" },
             ],
             edges: [["a.md", "b.md"]],
             pagerank: { "a.md": 0.4, "b.md": 0.6 },
@@ -2611,8 +2608,8 @@ describe("GraphView", () => {
         case "get_graph_subgraph":
           return {
             nodes: [
-              { id: "a.md", title: "A", is_stub: false },
-              { id: "b.md", title: "B", is_stub: false },
+              { id: "a.md", title: "A" },
+              { id: "b.md", title: "B" },
             ],
             edges: [["a.md", "b.md"]],
             pagerank: { "a.md": 0.4, "b.md": 0.6 },
@@ -2659,8 +2656,8 @@ describe("GraphView", () => {
         case "get_graph_subgraph":
           return {
             nodes: [
-              { id: "a.md", title: "A", is_stub: false },
-              { id: "b.md", title: "B", is_stub: false },
+              { id: "a.md", title: "A" },
+              { id: "b.md", title: "B" },
             ],
             edges: [["a.md", "b.md"]],
             pagerank: { "a.md": 0.4, "b.md": 0.6 },
@@ -2707,8 +2704,8 @@ describe("GraphView", () => {
         case "get_graph_subgraph":
           return {
             nodes: [
-              { id: "a.md", title: "A", is_stub: false },
-              { id: "b.md", title: "B", is_stub: false },
+              { id: "a.md", title: "A" },
+              { id: "b.md", title: "B" },
             ],
             edges: [["a.md", "b.md"]],
             pagerank: { "a.md": 0.4, "b.md": 0.6 },
@@ -2767,8 +2764,8 @@ describe("GraphView", () => {
         case "get_graph_subgraph":
           return {
             nodes: [
-              { id: "a.md", title: "A", is_stub: false },
-              { id: "b.md", title: "B", is_stub: false },
+              { id: "a.md", title: "A" },
+              { id: "b.md", title: "B" },
             ],
             edges: [["a.md", "b.md"]],
             pagerank: { "a.md": 0.4, "b.md": 0.6 },
@@ -2823,8 +2820,8 @@ describe("GraphView", () => {
         case "get_graph_subgraph":
           return {
             nodes: [
-              { id: "a.md", title: "A", is_stub: false },
-              { id: "b.md", title: "B", is_stub: false },
+              { id: "a.md", title: "A" },
+              { id: "b.md", title: "B" },
             ],
             edges: [["a.md", "b.md"]],
             pagerank: { "a.md": 0.4, "b.md": 0.6 },
@@ -2878,8 +2875,8 @@ describe("GraphView", () => {
         case "get_graph_subgraph":
           return {
             nodes: [
-              { id: "a.md", title: "A", is_stub: false },
-              { id: "b.md", title: "B", is_stub: false },
+              { id: "a.md", title: "A" },
+              { id: "b.md", title: "B" },
             ],
             edges: [["a.md", "b.md"]],
             pagerank: { "a.md": 0.4, "b.md": 0.6 },

@@ -21,6 +21,27 @@ pub struct SubgraphResult {
     pub edges: Vec<(String, String)>,
 }
 
+impl SubgraphResult {
+    pub fn without_stubs(self) -> Self {
+        let stub_ids: HashSet<String> = self
+            .nodes
+            .iter()
+            .filter(|n| n.is_stub)
+            .map(|n| n.id.clone())
+            .collect();
+        if stub_ids.is_empty() {
+            return self;
+        }
+        let nodes = self.nodes.into_iter().filter(|n| !n.is_stub).collect();
+        let edges = self
+            .edges
+            .into_iter()
+            .filter(|(s, t)| !stub_ids.contains(s) && !stub_ids.contains(t))
+            .collect();
+        SubgraphResult { nodes, edges }
+    }
+}
+
 #[derive(Serialize, Clone, Debug)]
 pub struct SubgraphBundle {
     #[serde(flatten)]
@@ -82,7 +103,7 @@ impl KnowledgeGraph {
                 Some((self.graph[s].id.clone(), self.graph[t].id.clone()))
             })
             .collect();
-        SubgraphResult { nodes, edges }
+        SubgraphResult { nodes, edges }.without_stubs()
     }
 
     pub fn neighbors(
@@ -121,6 +142,7 @@ impl KnowledgeGraph {
             .intersection(&nb)
             .copied()
             .filter(|&idx| idx != idx_a && idx != idx_b)
+            .filter(|&idx| !self.graph[idx].is_stub)
             .map(|idx| self.graph[idx].clone())
             .collect();
 
@@ -251,7 +273,7 @@ impl KnowledgeGraph {
             })
             .collect();
 
-        SubgraphResult { nodes, edges }
+        SubgraphResult { nodes, edges }.without_stubs()
     }
 
     pub fn pagerank(&self, damping: f64) -> HashMap<String, f64> {
@@ -499,24 +521,58 @@ mod tests {
         assert_eq!(kg.graph.edge_count(), 1);
     }
 
+    // --- without_stubs ---
+
+    #[test]
+    fn without_stubs_filters_stub_nodes_and_edges() {
+        let result = SubgraphResult {
+            nodes: vec![
+                GraphNode { id: "A".into(), title: "Alpha".into(), is_stub: false },
+                GraphNode { id: "B".into(), title: "Beta".into(), is_stub: false },
+                GraphNode { id: "S".into(), title: "".into(), is_stub: true },
+            ],
+            edges: vec![
+                ("A".into(), "B".into()),
+                ("A".into(), "S".into()),
+            ],
+        };
+        let filtered = result.without_stubs();
+        assert_eq!(filtered.nodes.len(), 2);
+        assert!(filtered.nodes.iter().all(|n| !n.is_stub));
+        assert_eq!(filtered.edges.len(), 1);
+        assert_eq!(filtered.edges[0], ("A".to_string(), "B".to_string()));
+    }
+
+    #[test]
+    fn without_stubs_noop_when_no_stubs() {
+        let result = SubgraphResult {
+            nodes: vec![
+                GraphNode { id: "A".into(), title: "Alpha".into(), is_stub: false },
+            ],
+            edges: vec![],
+        };
+        let filtered = result.without_stubs();
+        assert_eq!(filtered.nodes.len(), 1);
+    }
+
     // --- Step 3: full_subgraph ---
 
     #[test]
     fn full_subgraph_all_nodes() {
         let (_, kg) = build_test_graph();
         let result = kg.full_subgraph();
-        assert_eq!(result.nodes.len(), 6);
+        assert_eq!(result.nodes.len(), 5);
         let ids: HashSet<&str> = result.nodes.iter().map(|n| n.id.as_str()).collect();
         assert!(ids.contains("A"));
         assert!(ids.contains("E"));
-        assert!(ids.contains("F"));
+        assert!(!ids.contains("F"));
     }
 
     #[test]
     fn full_subgraph_all_edges() {
         let (_, kg) = build_test_graph();
         let result = kg.full_subgraph();
-        assert_eq!(result.edges.len(), 5);
+        assert_eq!(result.edges.len(), 4);
     }
 
     #[test]
@@ -557,10 +613,11 @@ mod tests {
         let (_, kg) = build_test_graph();
         let result = kg.neighbors("A", 1, true).unwrap();
         let ids: HashSet<&str> = result.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert_eq!(ids.len(), 3);
         assert!(ids.contains("A"));
         assert!(ids.contains("B"));
         assert!(ids.contains("D"));
-        assert!(ids.contains("F"));
+        assert!(!ids.contains("F"));
         assert!(!ids.contains("C"));
         assert!(!ids.contains("E"));
     }
@@ -580,11 +637,12 @@ mod tests {
         let (_, kg) = build_test_graph();
         let result = kg.neighbors("A", 2, true).unwrap();
         let ids: HashSet<&str> = result.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert_eq!(ids.len(), 4);
         assert!(ids.contains("A"));
         assert!(ids.contains("B"));
         assert!(ids.contains("C"));
         assert!(ids.contains("D"));
-        assert!(ids.contains("F"));
+        assert!(!ids.contains("F"));
         assert!(!ids.contains("E"));
     }
 
@@ -616,10 +674,11 @@ mod tests {
             .iter()
             .map(|(s, t)| (s.as_str(), t.as_str()))
             .collect();
+        assert_eq!(edges.len(), 3);
         assert!(edges.contains(&("A", "B")));
         assert!(edges.contains(&("A", "D")));
-        assert!(edges.contains(&("A", "F")));
         assert!(edges.contains(&("B", "D")));
+        assert!(!edges.contains(&("A", "F")));
         assert!(!edges.contains(&("B", "C")));
     }
 
@@ -627,9 +686,7 @@ mod tests {
     fn neighbors_rich_node_info() {
         let (_, kg) = build_test_graph();
         let result = kg.neighbors("A", 1, true).unwrap();
-        let f_node = result.nodes.iter().find(|n| n.id == "F").unwrap();
-        assert!(f_node.is_stub);
-        assert_eq!(f_node.title, "");
+        assert!(result.nodes.iter().find(|n| n.id == "F").is_none());
         let b_node = result.nodes.iter().find(|n| n.id == "B").unwrap();
         assert!(!b_node.is_stub);
         assert_eq!(b_node.title, "Beta");
@@ -678,10 +735,10 @@ mod tests {
         let (_, kg) = build_test_graph();
         let result = kg.shared("A", "A", true).unwrap();
         let ids: HashSet<&str> = result.iter().map(|n| n.id.as_str()).collect();
-        assert_eq!(ids.len(), 3);
+        assert_eq!(ids.len(), 2);
         assert!(ids.contains("B"));
         assert!(ids.contains("D"));
-        assert!(ids.contains("F"));
+        assert!(!ids.contains("F"));
     }
 
     // --- Step 6: paths ---
@@ -797,12 +854,12 @@ mod tests {
         let (_, kg) = build_test_graph();
         let result = kg.subgraph(&["A", "B"], 1, true).unwrap();
         let ids: HashSet<&str> = result.nodes.iter().map(|n| n.id.as_str()).collect();
-        assert_eq!(ids.len(), 5);
+        assert_eq!(ids.len(), 4);
         assert!(ids.contains("A"));
         assert!(ids.contains("B"));
         assert!(ids.contains("C"));
         assert!(ids.contains("D"));
-        assert!(ids.contains("F"));
+        assert!(!ids.contains("F"));
     }
 
     #[test]

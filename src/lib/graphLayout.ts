@@ -2,24 +2,21 @@ import Graph from "graphology";
 import type { SubgraphResult } from "./ipc";
 
 const DEFAULT_ACCENT = "#0969da";
-const DEFAULT_STUB = "#818b98";
 const DEFAULT_DIM = "#d1d9e0";
 const DEFAULT_EDGE = "#818b98";
 const DEFAULT_LABEL = "#1f2328";
 
-export function resolveThemeColors(): { accentColor: string; stubColor: string; dimColor: string; edgeColor: string; labelColor: string } {
+export function resolveThemeColors(): { accentColor: string; dimColor: string; edgeColor: string; labelColor: string } {
   if (typeof document === "undefined") {
-    return { accentColor: DEFAULT_ACCENT, stubColor: DEFAULT_STUB, dimColor: DEFAULT_DIM, edgeColor: DEFAULT_EDGE, labelColor: DEFAULT_LABEL };
+    return { accentColor: DEFAULT_ACCENT, dimColor: DEFAULT_DIM, edgeColor: DEFAULT_EDGE, labelColor: DEFAULT_LABEL };
   }
   const style = getComputedStyle(document.documentElement);
   const accent = style.getPropertyValue("--interactive-accent").trim();
-  const stub = style.getPropertyValue("--text-faint").trim();
   const dim = style.getPropertyValue("--background-modifier-border").trim();
   const edge = style.getPropertyValue("--text-faint").trim();
   const label = style.getPropertyValue("--text-normal").trim();
   return {
     accentColor: accent || DEFAULT_ACCENT,
-    stubColor: stub || DEFAULT_STUB,
     dimColor: dim || DEFAULT_DIM,
     edgeColor: edge || DEFAULT_EDGE,
     labelColor: label || DEFAULT_LABEL,
@@ -33,12 +30,11 @@ export const SEED_COLOR = "#f59e0b";
 export interface GraphBuildOptions {
   subgraph: SubgraphResult;
   accentColor: string;
-  stubColor: string;
   seedId?: string;
 }
 
 export function buildGraph(options: GraphBuildOptions): Graph {
-  const { subgraph, accentColor, stubColor, seedId } = options;
+  const { subgraph, accentColor, seedId } = options;
   const graph = new Graph();
 
   if (subgraph.nodes.length === 0) return graph;
@@ -47,8 +43,8 @@ export function buildGraph(options: GraphBuildOptions): Graph {
     const isSeed = seedId != null && node.id === seedId;
     graph.addNode(node.id, {
       label: node.title,
-      color: isSeed ? SEED_COLOR : node.is_stub ? stubColor : accentColor,
-      type: isSeed ? "seed" : node.is_stub ? "hollow" : "filled",
+      color: isSeed ? SEED_COLOR : accentColor,
+      type: isSeed ? "seed" : "filled",
       size: NODE_SIZE,
       x: Math.random() * 100,
       y: Math.random() * 100,

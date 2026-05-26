@@ -7,12 +7,6 @@ describe("generateSyntheticGraph", () => {
     expect(subgraph.nodes).toHaveLength(100);
   });
 
-  it("respects stub fraction", () => {
-    const { subgraph } = generateSyntheticGraph({ nodeCount: 100, stubFraction: 0.2 });
-    const stubs = subgraph.nodes.filter((n) => n.is_stub);
-    expect(stubs).toHaveLength(20);
-  });
-
   it("produces approximately edgeDensity * nodeCount edges", () => {
     const { subgraph } = generateSyntheticGraph({ nodeCount: 200, edgeDensity: 3 });
     expect(subgraph.edges.length).toBeGreaterThan(200 * 2);

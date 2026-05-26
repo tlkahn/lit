@@ -6,7 +6,6 @@ describe("graphLayout", () => {
   describe("buildGraph", () => {
     const defaults = {
       accentColor: "#7c3aed",
-      stubColor: "#999",
     };
 
     it("empty subgraph returns empty graph", () => {
@@ -20,10 +19,10 @@ describe("graphLayout", () => {
 
     it("single real node has correct attributes", () => {
       const subgraph: SubgraphResult = {
-        nodes: [{ id: "a.md", title: "Alpha", is_stub: false }],
+        nodes: [{ id: "a.md", title: "Alpha" }],
         edges: [],
       };
-      const graph = buildGraph({ subgraph, accentColor: "#7c3aed", stubColor: "#999" });
+      const graph = buildGraph({ subgraph, accentColor: "#7c3aed" });
       const attrs = graph.getNodeAttributes("a.md");
       expect(attrs.label).toBe("Alpha");
       expect(attrs.color).toBe("#7c3aed");
@@ -33,26 +32,15 @@ describe("graphLayout", () => {
       expect(attrs.size).toBeGreaterThan(0);
     });
 
-    it("stub node has hollow type and stub color", () => {
-      const subgraph: SubgraphResult = {
-        nodes: [{ id: "s.md", title: "Stub", is_stub: true }],
-        edges: [],
-      };
-      const graph = buildGraph({ subgraph, accentColor: "#7c3aed", stubColor: "#999" });
-      const attrs = graph.getNodeAttributes("s.md");
-      expect(attrs.type).toBe("hollow");
-      expect(attrs.color).toBe("#999");
-    });
-
     it("all nodes get uniform NODE_SIZE", () => {
       const subgraph: SubgraphResult = {
         nodes: [
-          { id: "a.md", title: "A", is_stub: false },
-          { id: "s.md", title: "Stub", is_stub: true },
+          { id: "a.md", title: "A" },
+          { id: "s.md", title: "Stub" },
         ],
         edges: [],
       };
-      const graph = buildGraph({ subgraph, accentColor: "#7c3aed", stubColor: "#999" });
+      const graph = buildGraph({ subgraph, accentColor: "#7c3aed" });
       expect(graph.getNodeAttributes("a.md").size).toBe(NODE_SIZE);
       expect(graph.getNodeAttributes("s.md").size).toBe(NODE_SIZE);
     });
@@ -60,8 +48,8 @@ describe("graphLayout", () => {
     it("edges added between existing nodes with size 1", () => {
       const subgraph: SubgraphResult = {
         nodes: [
-          { id: "a.md", title: "A", is_stub: false },
-          { id: "b.md", title: "B", is_stub: false },
+          { id: "a.md", title: "A" },
+          { id: "b.md", title: "B" },
         ],
         edges: [["a.md", "b.md"]],
       };
@@ -72,7 +60,7 @@ describe("graphLayout", () => {
 
     it("edge referencing missing node is silently skipped", () => {
       const subgraph: SubgraphResult = {
-        nodes: [{ id: "a.md", title: "A", is_stub: false }],
+        nodes: [{ id: "a.md", title: "A" }],
         edges: [["a.md", "missing.md"]],
       };
       const graph = buildGraph({ subgraph, ...defaults });
@@ -82,12 +70,12 @@ describe("graphLayout", () => {
     it("seed node gets distinct color and type", () => {
       const subgraph: SubgraphResult = {
         nodes: [
-          { id: "a.md", title: "A", is_stub: false },
-          { id: "b.md", title: "B", is_stub: false },
+          { id: "a.md", title: "A" },
+          { id: "b.md", title: "B" },
         ],
         edges: [],
       };
-      const graph = buildGraph({ subgraph, accentColor: "#7c3aed", stubColor: "#999", seedId: "a.md" });
+      const graph = buildGraph({ subgraph, accentColor: "#7c3aed", seedId: "a.md" });
       const seedAttrs = graph.getNodeAttributes("a.md");
       expect(seedAttrs.color).toBe(SEED_COLOR);
       expect(seedAttrs.type).toBe("seed");
@@ -98,19 +86,19 @@ describe("graphLayout", () => {
 
     it("seed node has same size as other nodes", () => {
       const subgraph: SubgraphResult = {
-        nodes: [{ id: "a.md", title: "A", is_stub: false }],
+        nodes: [{ id: "a.md", title: "A" }],
         edges: [],
       };
-      const graph = buildGraph({ subgraph, accentColor: "#7c3aed", stubColor: "#999", seedId: "a.md" });
+      const graph = buildGraph({ subgraph, accentColor: "#7c3aed", seedId: "a.md" });
       expect(graph.getNodeAttributes("a.md").size).toBe(NODE_SIZE);
     });
 
     it("no seedId means all nodes use normal attributes", () => {
       const subgraph: SubgraphResult = {
-        nodes: [{ id: "a.md", title: "A", is_stub: false }],
+        nodes: [{ id: "a.md", title: "A" }],
         edges: [],
       };
-      const graph = buildGraph({ subgraph, accentColor: "#7c3aed", stubColor: "#999" });
+      const graph = buildGraph({ subgraph, accentColor: "#7c3aed" });
       expect(graph.getNodeAttributes("a.md").type).toBe("filled");
       expect(graph.getNodeAttributes("a.md").color).toBe("#7c3aed");
     });
@@ -118,8 +106,8 @@ describe("graphLayout", () => {
     it("duplicate directional edges produce one undirected edge", () => {
       const subgraph: SubgraphResult = {
         nodes: [
-          { id: "a.md", title: "A", is_stub: false },
-          { id: "b.md", title: "B", is_stub: false },
+          { id: "a.md", title: "A" },
+          { id: "b.md", title: "B" },
         ],
         edges: [["a.md", "b.md"], ["b.md", "a.md"]],
       };
@@ -136,18 +124,15 @@ describe("graphLayout", () => {
       document.documentElement.style.removeProperty("--text-normal");
     });
 
-    it("reads --interactive-accent and --text-faint from computed style", () => {
+    it("reads --interactive-accent from computed style", () => {
       document.documentElement.style.setProperty("--interactive-accent", "#0969da");
-      document.documentElement.style.setProperty("--text-faint", "#818b98");
       const colors = resolveThemeColors();
       expect(colors.accentColor).toBe("#0969da");
-      expect(colors.stubColor).toBe("#818b98");
     });
 
     it("falls back to defaults when CSS vars are unset", () => {
       const colors = resolveThemeColors();
       expect(colors.accentColor).toBe("#0969da");
-      expect(colors.stubColor).toBe("#818b98");
     });
 
     it("resolves dimColor from --background-modifier-border", () => {
@@ -184,13 +169,13 @@ describe("graphLayout", () => {
     function makeGraph(edges: [string, string][] = []): import("graphology").default {
       const sub = {
         nodes: [
-          { id: "a.md", title: "A", is_stub: false },
-          { id: "b.md", title: "B", is_stub: false },
-          { id: "c.md", title: "C", is_stub: false },
+          { id: "a.md", title: "A" },
+          { id: "b.md", title: "B" },
+          { id: "c.md", title: "C" },
         ],
         edges,
       };
-      return buildGraph({ subgraph: sub, accentColor: "#7c3aed", stubColor: "#999" });
+      return buildGraph({ subgraph: sub, accentColor: "#7c3aed" });
     }
 
     it("applies exact positions for nodes present in the map", () => {
