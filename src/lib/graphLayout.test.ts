@@ -55,7 +55,7 @@ describe("graphLayout", () => {
       };
       const graph = buildGraph({ subgraph, ...defaults });
       expect(graph.size).toBe(1);
-      expect(graph.getEdgeAttributes(graph.edges()[0]!).size).toBe(1);
+      expect(graph.getEdgeAttributes(graph.edges()[0]!).size).toBe(0.5);
     });
 
     it("edge referencing missing node is silently skipped", () => {

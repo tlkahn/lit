@@ -137,6 +137,59 @@ describe("useGraphLasso", () => {
     expect(containerRef.current!.style.cursor).toBe("grab");
   });
 
+  it("empty lasso (no nodes in rect) does not call addNodes", async () => {
+    sigmaRef.current!.getNodeDisplayData.mockReturnValue({ x: 500, y: 500 });
+
+    const { useGraphLasso } = await import("./useGraphLasso");
+    const { result } = renderHook(() =>
+      useGraphLasso(containerRef, sigmaRef, graphRef, hoveredNodeRef),
+    );
+
+    act(() => {
+      result.current.handleLassoMouseDown({
+        shiftKey: true, clientX: 100, clientY: 100,
+      } as React.MouseEvent);
+    });
+    act(() => {
+      result.current.handleLassoMouseMove({
+        clientX: 200, clientY: 200,
+      } as React.MouseEvent);
+    });
+    act(() => {
+      result.current.handleLassoMouseUp();
+    });
+
+    expect(result.current.lassoState).toBeNull();
+    expect(useGraphSelectionStore.getState().selectedNodes).toEqual([]);
+    expect(containerRef.current!.style.cursor).toBe("grab");
+  });
+
+  it("mouseUp re-enables camera panning even with empty selection", async () => {
+    sigmaRef.current!.getNodeDisplayData.mockReturnValue({ x: 500, y: 500 });
+
+    const { useGraphLasso } = await import("./useGraphLasso");
+    const { result } = renderHook(() =>
+      useGraphLasso(containerRef, sigmaRef, graphRef, hoveredNodeRef),
+    );
+
+    act(() => {
+      result.current.handleLassoMouseDown({
+        shiftKey: true, clientX: 100, clientY: 100,
+      } as React.MouseEvent);
+    });
+    act(() => {
+      result.current.handleLassoMouseMove({
+        clientX: 200, clientY: 200,
+      } as React.MouseEvent);
+    });
+    act(() => {
+      result.current.handleLassoMouseUp();
+    });
+
+    expect(sigmaRef.current!.setSetting).toHaveBeenCalledWith("enableCameraPanning", true);
+    expect(useGraphSelectionStore.getState().selectionMode).toBe("none");
+  });
+
   it("coordinates are container-relative", async () => {
     vi.spyOn(containerRef.current!, "getBoundingClientRect").mockReturnValue({
       left: 200, top: 50, right: 1000, bottom: 800,
