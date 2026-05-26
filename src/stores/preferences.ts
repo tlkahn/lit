@@ -94,7 +94,7 @@ function mapPreferences(prefs: Preferences) {
   };
 }
 
-export const usePreferencesStore = create<PreferencesState>((set) => ({
+export const usePreferencesStore = create<PreferencesState>((set, get) => ({
   darkMode: "auto",
   colorTheme: null,
   sidebarVisible: true,
@@ -127,6 +127,7 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   loaded: false,
 
   loadPreferences: async () => {
+    if (get().loaded) return;
     try {
       const prefs = await getPreferences();
       set({ ...mapPreferences(prefs), loaded: true });
