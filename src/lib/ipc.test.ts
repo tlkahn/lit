@@ -479,7 +479,7 @@ describe("ipc", () => {
           return { nodes: 5, stubs: 1, edges: 3, tags: 2 };
         case "get_graph_neighbors":
           return {
-            nodes: [{ id: "a.md", title: "A", is_stub: false }],
+            nodes: [{ id: "a.md", title: "A" }],
             edges: [["a.md", "b.md"]],
           };
         case "get_graph_paths":
@@ -487,8 +487,8 @@ describe("ipc", () => {
         case "get_graph_subgraph":
           return {
             nodes: [
-              { id: "a.md", title: "A", is_stub: false },
-              { id: "b.md", title: "B", is_stub: false },
+              { id: "a.md", title: "A" },
+              { id: "b.md", title: "B" },
             ],
             edges: [["a.md", "b.md"]],
             pagerank: { "a.md": 0.4, "b.md": 0.6 },
