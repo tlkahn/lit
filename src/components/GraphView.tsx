@@ -16,6 +16,7 @@ import { GraphToolbar } from "./GraphToolbar";
 import { GraphSearch, getMatchingNodes } from "./GraphSearch";
 import { MergePreviewDialog } from "./MergePreviewDialog";
 import { SplitPreviewDialog } from "./SplitPreviewDialog";
+import { useGraphLasso } from "../hooks/useGraphLasso";
 import "./GraphSearch.css";
 import "./GraphView.css";
 
@@ -89,8 +90,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   const [splitDialogPath, setSplitDialogPath] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState<{ nodeIds: string[]; labels: string[] } | null>(null);
   const deletePageAction = useWorkspaceStore((s) => s.deletePage);
-  const [lassoState, setLassoState] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null);
-  const lassoRef = useRef<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null);
+  const { lassoState, handleLassoMouseDown, handleLassoMouseMove, handleLassoMouseUp } = useGraphLasso(containerRef, sigmaRef as React.RefObject<{ setSetting: (k: string, v: unknown) => void; getNodeDisplayData: (n: string) => { x: number; y: number } | undefined } | null>, graphRef as React.RefObject<{ nodes: () => string[] } | null>, hoveredNodeRef);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -480,65 +480,6 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
     }
     applyTheme();
   }, [activeThemeId]);
-
-  const handleLassoMouseDown = useCallback((e: React.MouseEvent) => {
-    if (!e.shiftKey || hoveredNodeRef.current) return;
-    const rect = containerRef.current?.getBoundingClientRect();
-    const x = e.clientX - (rect?.left ?? 0);
-    const y = e.clientY - (rect?.top ?? 0);
-    const coords = { startX: x, startY: y, currentX: x, currentY: y };
-    lassoRef.current = coords;
-    useGraphSelectionStore.getState().setSelectionMode("lasso");
-    setLassoState(coords);
-    (sigmaRef.current as { setSetting: (key: string, value: unknown) => void } | null)?.setSetting("enableCameraPanning", false);
-    if (containerRef.current) {
-      containerRef.current.style.cursor = "crosshair";
-    }
-  }, []);
-
-  const handleLassoMouseMove = useCallback((e: React.MouseEvent) => {
-    if (!lassoRef.current) return;
-    const rect = containerRef.current?.getBoundingClientRect();
-    const x = e.clientX - (rect?.left ?? 0);
-    const y = e.clientY - (rect?.top ?? 0);
-    lassoRef.current.currentX = x;
-    lassoRef.current.currentY = y;
-    setLassoState((prev) => prev ? { ...prev, currentX: x, currentY: y } : null);
-  }, []);
-
-  const handleLassoMouseUp = useCallback(() => {
-    if (!lassoRef.current) return;
-
-    const prev = lassoRef.current;
-    if (prev) {
-      const sigma = sigmaRef.current as { getNodeDisplayData: (node: string) => { x: number; y: number } | undefined } | null;
-      const graph = graphRef.current as { nodes: () => string[] } | null;
-      if (sigma && graph) {
-        const left = Math.min(prev.startX, prev.currentX);
-        const top = Math.min(prev.startY, prev.currentY);
-        const right = Math.max(prev.startX, prev.currentX);
-        const bottom = Math.max(prev.startY, prev.currentY);
-        const toAdd: string[] = [];
-        for (const nodeId of graph.nodes()) {
-          const pos = sigma.getNodeDisplayData(nodeId);
-          if (pos && pos.x >= left && pos.x <= right && pos.y >= top && pos.y <= bottom) {
-            toAdd.push(nodeId);
-          }
-        }
-        if (toAdd.length > 0) {
-          useGraphSelectionStore.getState().addNodes(toAdd);
-        }
-      }
-    }
-
-    lassoRef.current = null;
-    setLassoState(null);
-    (sigmaRef.current as { setSetting: (key: string, value: unknown) => void } | null)?.setSetting("enableCameraPanning", true);
-    useGraphSelectionStore.getState().setSelectionMode(useGraphSelectionStore.getState().selectedNodes.length > 0 ? "click" : "none");
-    if (containerRef.current) {
-      containerRef.current.style.cursor = "grab";
-    }
-  }, []);
 
   const handleContainerKeyDown = useCallback((e: React.KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "f") {
