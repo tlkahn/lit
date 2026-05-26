@@ -17,11 +17,11 @@ describe("getQualityTier", () => {
 });
 
 describe("getTierSettings", () => {
-  it("small tier enables edge events and shows all labels", () => {
+  it("small tier enables edge events, threshold=Infinity", () => {
     const s = getTierSettings("small");
     expect(s).toEqual({
       tier: "small",
-      labelRenderedSizeThreshold: 0,
+      labelRenderedSizeThreshold: Infinity,
       enableEdgeEvents: true,
       hideEdgesOnMove: false,
       hideLabelsOnMove: false,
@@ -29,11 +29,11 @@ describe("getTierSettings", () => {
     });
   });
 
-  it("medium tier disables edge events, threshold=6", () => {
+  it("medium tier disables edge events, threshold=Infinity", () => {
     const s = getTierSettings("medium");
     expect(s).toEqual({
       tier: "medium",
-      labelRenderedSizeThreshold: 6,
+      labelRenderedSizeThreshold: Infinity,
       enableEdgeEvents: false,
       hideEdgesOnMove: false,
       hideLabelsOnMove: false,
@@ -41,11 +41,11 @@ describe("getTierSettings", () => {
     });
   });
 
-  it("large tier hides edges/labels on move, threshold=12", () => {
+  it("large tier hides edges/labels on move, threshold=Infinity", () => {
     const s = getTierSettings("large");
     expect(s).toEqual({
       tier: "large",
-      labelRenderedSizeThreshold: 12,
+      labelRenderedSizeThreshold: Infinity,
       enableEdgeEvents: false,
       hideEdgesOnMove: true,
       hideLabelsOnMove: true,
@@ -57,7 +57,7 @@ describe("getTierSettings", () => {
     const s = getTierSettings("huge");
     expect(s).toEqual({
       tier: "huge",
-      labelRenderedSizeThreshold: 12,
+      labelRenderedSizeThreshold: Infinity,
       enableEdgeEvents: false,
       hideEdgesOnMove: true,
       hideLabelsOnMove: true,

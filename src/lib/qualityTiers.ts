@@ -10,10 +10,10 @@ export interface TierSettings {
 }
 
 const TIERS: Record<QualityTier, Omit<TierSettings, "tier">> = {
-  small: { labelRenderedSizeThreshold: 0, enableEdgeEvents: true, hideEdgesOnMove: false, hideLabelsOnMove: false, defaultEdgesHidden: false },
-  medium: { labelRenderedSizeThreshold: 6, enableEdgeEvents: false, hideEdgesOnMove: false, hideLabelsOnMove: false, defaultEdgesHidden: false },
-  large: { labelRenderedSizeThreshold: 12, enableEdgeEvents: false, hideEdgesOnMove: true, hideLabelsOnMove: true, defaultEdgesHidden: false },
-  huge: { labelRenderedSizeThreshold: 12, enableEdgeEvents: false, hideEdgesOnMove: true, hideLabelsOnMove: true, defaultEdgesHidden: true },
+  small: { labelRenderedSizeThreshold: Infinity, enableEdgeEvents: true, hideEdgesOnMove: false, hideLabelsOnMove: false, defaultEdgesHidden: false },
+  medium: { labelRenderedSizeThreshold: Infinity, enableEdgeEvents: false, hideEdgesOnMove: false, hideLabelsOnMove: false, defaultEdgesHidden: false },
+  large: { labelRenderedSizeThreshold: Infinity, enableEdgeEvents: false, hideEdgesOnMove: true, hideLabelsOnMove: true, defaultEdgesHidden: false },
+  huge: { labelRenderedSizeThreshold: Infinity, enableEdgeEvents: false, hideEdgesOnMove: true, hideLabelsOnMove: true, defaultEdgesHidden: true },
 };
 
 export function getQualityTier(order: number): QualityTier {
