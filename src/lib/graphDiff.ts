@@ -89,7 +89,6 @@ export function applyDiff(
   diff: GraphDiff,
   _pagerank: Record<string, number>,
   accentColor: string,
-  stubColor: string,
 ): void {
   for (const node of diff.addedNodes) {
 
@@ -112,8 +111,8 @@ export function applyDiff(
 
     graph.addNode(node.id, {
       label: node.title,
-      color: node.is_stub ? stubColor : accentColor,
-      type: node.is_stub ? "hollow" : "filled",
+      color: accentColor,
+      type: "filled",
       size: NODE_SIZE,
       x,
       y,

@@ -2260,10 +2260,9 @@ mod tests {
         write_md(dir.path(), "a.md", "Links to [[b]].");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
 
-        // b is a stub node
+        // b is a stub node — filtered from subgraph output
         let sub = gi.full_subgraph();
-        let b_node = sub.nodes.iter().find(|n| n.id == "b").unwrap();
-        assert!(b_node.is_stub);
+        assert!(!sub.nodes.iter().any(|n| n.id == "b"), "stub 'b' should not appear in subgraph");
 
         // Create b.md and batch_reindex with new
         write_md(dir.path(), "b.md", "I exist now.");
@@ -2275,8 +2274,8 @@ mod tests {
         gi.batch_reindex(&diff, true).unwrap();
 
         let sub = gi.full_subgraph();
-        // Stub should be replaced by real node
-        assert!(!sub.nodes.iter().any(|n| n.id == "b" && n.is_stub), "stub 'b' should be gone");
+        // Real node should now appear (stub was replaced)
+        assert!(!sub.nodes.iter().any(|n| n.id == "b"), "bare stub 'b' should be gone");
         let b_real = sub.nodes.iter().find(|n| n.id == "b.md").unwrap();
         assert!(!b_real.is_stub);
         // Edge a.md -> b.md should exist

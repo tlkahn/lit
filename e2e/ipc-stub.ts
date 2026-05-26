@@ -1,16 +1,16 @@
 function generateCannedGraph(): {
-  nodes: { id: string; title: string; is_stub: boolean }[];
+  nodes: { id: string; title: string }[];
   edges: [string, string][];
   positions: Record<string, { x: number; y: number }>;
 } {
   const NODE_COUNT = 50;
   const EDGE_COUNT = 40;
-  const nodes: { id: string; title: string; is_stub: boolean }[] = [];
+  const nodes: { id: string; title: string }[] = [];
   const positions: Record<string, { x: number; y: number }> = {};
 
   for (let i = 0; i < NODE_COUNT; i++) {
     const id = `node-${i}.md`;
-    nodes.push({ id, title: `Node ${i}`, is_stub: i >= 40 });
+    nodes.push({ id, title: `Node ${i}` });
     const angle = (2 * Math.PI * i) / NODE_COUNT;
     positions[id] = { x: Math.cos(angle) * 500, y: Math.sin(angle) * 500 };
   }
