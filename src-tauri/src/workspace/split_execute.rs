@@ -183,8 +183,16 @@ fn rewrite_vault_for_split(
         }
 
         let full_path = root.join(rel_path);
-        let original = std::fs::read_to_string(&full_path)
-            .map_err(|e| WorkspaceError::IoError(format!("Failed to read {}: {}", rel_path, e)))?;
+        let original = match std::fs::read_to_string(&full_path) {
+            Ok(s) => s,
+            Err(_) if candidate_paths.is_some() => continue,
+            Err(e) => {
+                return Err(WorkspaceError::IoError(format!(
+                    "Failed to read {}: {}",
+                    rel_path, e
+                )));
+            }
+        };
 
         let (rewritten, count) =
             rewrite_body_for_split(&original, original_stem, section_to_doc, default_target);
@@ -500,5 +508,32 @@ mod tests {
         );
 
         assert!(!result.rewrite_actions.is_empty());
+    }
+
+    #[test]
+    fn rewrite_vault_for_split_skips_missing_candidate_file() {
+        let tmp = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        let fm = IndexMap::new();
+        let body = "## Alpha\nAlpha body.\n## Beta\nBeta body.\n";
+        write_file(tmp.path(), "Doc.md", &make_doc("Doc", body, &fm));
+        write_file(tmp.path(), "other.md", "See [[Doc]].");
+
+        let mut candidates: std::collections::HashSet<String> = std::collections::HashSet::new();
+        candidates.insert("other.md".into());
+        candidates.insert("ghost.md".into());
+
+        let result = execute_split(tmp.path(), "Doc.md", &registry, Some(&candidates));
+        assert!(result.is_ok(), "should not error on missing candidate: {result:?}");
+
+        let other = read_file(tmp.path(), "other.md");
+        assert!(
+            other.contains("[[Alpha]]"),
+            "other.md should be rewritten: {other}"
+        );
+        assert!(
+            !other.contains("[[Doc]]"),
+            "old link should be gone: {other}"
+        );
     }
 }

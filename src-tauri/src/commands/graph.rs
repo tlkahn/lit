@@ -1052,6 +1052,50 @@ mod tests {
         );
         assert_eq!(layout_count.load(Ordering::SeqCst), 1);
     }
+
+    #[test]
+    fn targeted_rewrite_pipeline_affected_plan_apply() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("target.md"), "Plain text.").unwrap();
+        std::fs::write(dir.path().join("linker.md"), "See [[target]].").unwrap();
+        std::fs::write(dir.path().join("bystander.md"), "See [[other]].").unwrap();
+
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        let stems = vec![crate::graph::indexer::normalize_stem("target")];
+        let affected = gi.affected_sources(&stems);
+        assert!(
+            affected.contains("linker.md"),
+            "linker.md should be affected"
+        );
+        assert!(
+            !affected.contains("bystander.md"),
+            "bystander.md should not be affected"
+        );
+
+        let redirects = vec![crate::graph::rewriter::LinkRedirect {
+            old_target: "target".to_string(),
+            new_target: "renamed".to_string(),
+        }];
+        let planned =
+            crate::graph::rewriter::plan_vault_rewrites_for_paths(dir.path(), &redirects, &affected)
+                .unwrap();
+        assert_eq!(planned.files_scanned, 1);
+
+        let summary =
+            crate::graph::rewriter::apply_planned_rewrites(dir.path(), &planned).unwrap();
+        assert_eq!(summary.total_links_changed, 1);
+
+        let linker = std::fs::read_to_string(dir.path().join("linker.md")).unwrap();
+        assert!(linker.contains("[[renamed]]"), "linker.md should be rewritten: {linker}");
+        assert!(!linker.contains("[[target]]"), "old link should be gone: {linker}");
+
+        let bystander = std::fs::read_to_string(dir.path().join("bystander.md")).unwrap();
+        assert!(
+            bystander.contains("[[other]]"),
+            "bystander.md should be unchanged: {bystander}"
+        );
+    }
 }
 
 // TODO: consider deprecating in favor of rewrite_vault_links (page.rs), which records OpLog actions
