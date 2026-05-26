@@ -8,6 +8,7 @@ import { createNudgeController, type NudgeController } from "../lib/graphNudge";
 import { useThemeStore } from "../stores/theme";
 import { useGraphSelectionStore } from "../stores/graphSelection";
 import { usePreferencesStore } from "../stores/preferences";
+import { useWorkspaceStore } from "../stores/workspace";
 import { computeDiff, applyDiff, isDiffEmpty } from "../lib/graphDiff";
 import { isPerfEnabled, perfTable, type PerfEntry } from "../lib/perf";
 import { defaultNodeReduce, hoverNodeReduce, searchNodeReduce } from "../lib/graphReducers";
@@ -86,6 +87,8 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   const [splitDialogOpen, setSplitDialogOpen] = useState(false);
   const [splitDialogPlan, setSplitDialogPlan] = useState<SplitPlan | null>(null);
   const [splitDialogPath, setSplitDialogPath] = useState("");
+  const [deleteConfirm, setDeleteConfirm] = useState<{ nodeIds: string[]; labels: string[] } | null>(null);
+  const deletePageAction = useWorkspaceStore((s) => s.deletePage);
   const [lassoState, setLassoState] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null);
   const lassoRef = useRef<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null);
 
@@ -676,6 +679,23 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
               Split document
             </button>
           )}
+          <div className="my-1 border-t border-border/40" />
+          <button
+            data-testid="ctx-delete-btn"
+            className="block w-full rounded-md px-3 py-1 text-start text-[13px] text-red-500 hover:bg-red-600 hover:text-white"
+            onClick={() => {
+              const graph = graphRef.current as import("graphology").default | null;
+              const selectedNodes = useGraphSelectionStore.getState().selectedNodes;
+              const nodeIds = selectedNodes.length >= 1 ? [...selectedNodes] : [contextMenu.nodeId];
+              const labels = nodeIds.map((id) => {
+                try { return (graph?.getNodeAttribute(id, "label") as string) || id; } catch { return id; }
+              });
+              setContextMenu(null);
+              setDeleteConfirm({ nodeIds, labels });
+            }}
+          >
+            {selectionCount >= 2 ? `Delete ${selectionCount} documents` : "Delete document"}
+          </button>
           {onExportNetwork && (
             <div data-testid="ctx-divider" className="my-1 border-t border-border/40" />
           )}
@@ -716,6 +736,49 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
           }}
           onCancel={() => setSplitDialogOpen(false)}
         />
+      )}
+      {deleteConfirm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+          data-testid="confirm-delete-backdrop"
+          onKeyDown={(e) => { if (e.key === "Escape") setDeleteConfirm(null); }}
+        >
+          <div className="w-80 rounded-lg bg-bg-primary p-5 shadow-lg" data-testid="confirm-delete-dialog">
+            <p className="mb-4 text-sm text-text-normal">
+              {deleteConfirm.nodeIds.length === 1
+                ? <>Move &quot;{deleteConfirm.labels[0]}&quot; to trash?</>
+                : <>Move {deleteConfirm.nodeIds.length} documents to trash?</>}
+            </p>
+            {deleteConfirm.nodeIds.length > 1 && (
+              <ul className="mb-4 max-h-32 overflow-y-auto text-xs text-text-muted list-disc pl-4">
+                {deleteConfirm.labels.map((label, i) => <li key={deleteConfirm.nodeIds[i]}>{label}</li>)}
+              </ul>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                className="rounded px-3 py-1.5 text-sm text-text-muted hover:bg-bg-secondary"
+                onClick={() => setDeleteConfirm(null)}
+                data-testid="confirm-delete-cancel"
+              >
+                Cancel
+              </button>
+              <button
+                className="rounded bg-red-600 px-3 py-1.5 text-sm text-white hover:opacity-90"
+                data-testid="confirm-delete-btn"
+                onClick={async () => {
+                  const ids = deleteConfirm.nodeIds;
+                  setDeleteConfirm(null);
+                  useGraphSelectionStore.getState().clearSelection();
+                  for (const id of ids) {
+                    await deletePageAction(id);
+                  }
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

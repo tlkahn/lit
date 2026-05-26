@@ -2940,4 +2940,62 @@ describe("GraphView", () => {
 
     expect(container.querySelector("[data-testid='ctx-divider']")).toBeTruthy();
   });
+
+  it("delete button shows in context menu and opens confirmation dialog", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    act(() => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    const deleteBtn = screen.getByTestId("ctx-delete-btn");
+    expect(deleteBtn.textContent).toBe("Delete document");
+
+    await act(async () => { fireEvent.click(deleteBtn); });
+
+    expect(screen.getByTestId("confirm-delete-dialog")).toBeTruthy();
+    expect(screen.getByTestId("confirm-delete-dialog").textContent).toContain("trash");
+  });
+
+  it("delete button shows count when multiple nodes selected", async () => {
+    useGraphSelectionStore.setState({ selectedNodes: ["a.md", "b.md"], selectionMode: "click" });
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    act(() => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    const deleteBtn = screen.getByTestId("ctx-delete-btn");
+    expect(deleteBtn.textContent).toBe("Delete 2 documents");
+  });
+
+  it("cancel button in delete dialog dismisses without deleting", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    act(() => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    await act(async () => { fireEvent.click(screen.getByTestId("ctx-delete-btn")); });
+    expect(screen.getByTestId("confirm-delete-dialog")).toBeTruthy();
+
+    await act(async () => { fireEvent.click(screen.getByTestId("confirm-delete-cancel")); });
+    expect(screen.queryByTestId("confirm-delete-dialog")).toBeNull();
+  });
 });
