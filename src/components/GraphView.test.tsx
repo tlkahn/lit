@@ -996,6 +996,28 @@ describe("GraphView", () => {
     expect(invoke).not.toHaveBeenCalledWith("get_graph_subgraph", expect.anything());
   });
 
+  it("local-mode activePageId change while visible triggers exactly one IPC fetch", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    const { rerender } = render(<GraphView visible={true} activePageId="a.md" initialMode="local" />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    (invoke as unknown as ReturnType<typeof vi.fn>).mockClear();
+
+    await act(async () => {
+      rerender(<GraphView visible={true} activePageId="b.md" initialMode="local" />);
+    });
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: ["b.md"], depth: 2, directed: null });
+    });
+
+    const subgraphCalls = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (call) => call[0] === "get_graph_subgraph",
+    );
+    expect(subgraphCalls).toHaveLength(1);
+  });
+
   it("local mode re-inits when seed changes while hidden, on becoming visible", async () => {
     const GraphView = (await import("./GraphView")).default;
     const { rerender } = render(<GraphView visible={true} activePageId="a.md" initialMode="local" />);
@@ -3090,6 +3112,68 @@ describe("GraphView", () => {
     expect(mockCameraAnimate).not.toHaveBeenCalled();
   });
 
+  it("full-mode does not re-pan to same activePageId on visibility toggle", async () => {
+    mockGetNodeDisplayData.mockImplementation((nodeId: string) => {
+      if (nodeId === "a.md") return { x: 10, y: 20 };
+      if (nodeId === "b.md") return { x: 30, y: 40 };
+      return { x: 0, y: 0 };
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    const { rerender } = render(<GraphView visible={true} activePageId="a.md" />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await act(async () => {
+      rerender(<GraphView visible={true} activePageId="b.md" />);
+    });
+    expect(mockCameraAnimate).toHaveBeenCalledWith({ x: 30, y: 40 });
+
+    mockCameraAnimate.mockClear();
+
+    await act(async () => {
+      rerender(<GraphView visible={false} activePageId="b.md" />);
+    });
+    await act(async () => {
+      rerender(<GraphView visible={true} activePageId="b.md" />);
+    });
+
+    expect(mockCameraAnimate).not.toHaveBeenCalled();
+  });
+
+  it("full-mode does not re-pan on parent rerender causing visible flicker", async () => {
+    mockGetNodeDisplayData.mockImplementation((nodeId: string) => {
+      if (nodeId === "a.md") return { x: 10, y: 20 };
+      if (nodeId === "b.md") return { x: 30, y: 40 };
+      return { x: 0, y: 0 };
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    const { rerender } = render(<GraphView visible={true} activePageId="a.md" />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await act(async () => {
+      rerender(<GraphView visible={true} activePageId="b.md" />);
+    });
+    expect(mockCameraAnimate).toHaveBeenCalledWith({ x: 30, y: 40 });
+
+    mockCameraAnimate.mockClear();
+
+    await act(async () => {
+      rerender(<GraphView visible={false} activePageId="b.md" />);
+    });
+    await act(async () => {
+      rerender(<GraphView visible={true} activePageId="b.md" />);
+    });
+    await act(async () => {
+      rerender(<GraphView visible={false} activePageId="b.md" />);
+    });
+    await act(async () => {
+      rerender(<GraphView visible={true} activePageId="b.md" />);
+    });
+
+    expect(mockCameraAnimate).not.toHaveBeenCalled();
+  });
+
   it("local-mode centers on seed after rebuild", async () => {
     mockGetNodeDisplayData.mockImplementation((nodeId: string) => {
       if (nodeId === "a.md") return { x: 10, y: 20 };
@@ -3110,6 +3194,16 @@ describe("GraphView", () => {
     await waitFor(() => {
       expect(mockCameraAnimate).toHaveBeenCalledWith({ x: 30, y: 40 });
     });
+  });
+
+  it("local mode with null activePageId falls back to full mode", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView activePageId={null} initialMode="local" />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+    await waitFor(() => { expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument(); });
+
+    const fullBtn = screen.getByRole("button", { name: "Full" });
+    expect(fullBtn.getAttribute("aria-pressed")).toBe("true");
   });
 
   it("no camera pan on initial full-mode render", async () => {

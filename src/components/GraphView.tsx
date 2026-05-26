@@ -55,6 +55,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
   const lastRenderedSeedRef = useRef<string | null>(null);
+  const lastPannedIdRef = useRef<string | null>(null);
   const pendingRefreshRef = useRef(false);
   const pendingThemeUpdateRef = useRef(false);
   const diffInProgressRef = useRef(false);
@@ -182,6 +183,10 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
 
     async function init() {
       if (!visibleRef.current) return;
+      if (mode === "local" && !activePageId) {
+        setMode("full");
+        return;
+      }
       try {
         setLoading(true);
         setError(null);
@@ -361,6 +366,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
 
     return () => {
       cancelled = true;
+      lastPannedIdRef.current = null;
       nudgeRef.current?.dispose();
       nudgeRef.current = null;
       unsubSelectionRef.current?.();
@@ -371,7 +377,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
       }
       graphRef.current = null;
     };
-  }, [mode, depth, mode === "local" ? activePageId : null, reinitTrigger]);
+  }, [mode, depth, reinitTrigger]);
 
   useEffect(() => {
     if (!visible) {
@@ -389,12 +395,15 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         (sigmaRef.current as { refresh: () => void } | null)?.refresh();
         pendingRefreshRef.current = false;
       }
-      if (mode === "full" && activePageId) {
+      if (mode === "full" && activePageId && activePageId !== lastPannedIdRef.current) {
         const graph = graphRef.current as import("graphology").default | null;
         const sigma = sigmaRef.current as { getNodeDisplayData: (node: string) => { x: number; y: number } | undefined; getCamera: () => { animate: (state: Record<string, number>) => void } } | null;
         if (graph && sigma && graph.hasNode(activePageId)) {
           const pos = sigma.getNodeDisplayData(activePageId);
-          if (pos) sigma.getCamera().animate({ x: pos.x, y: pos.y });
+          if (pos) {
+            sigma.getCamera().animate({ x: pos.x, y: pos.y });
+            lastPannedIdRef.current = activePageId;
+          }
         }
       }
     }
