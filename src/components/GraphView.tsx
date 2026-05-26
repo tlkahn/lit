@@ -6,6 +6,7 @@ import { buildGraph, resolveThemeColors, applyPositions } from "../lib/graphLayo
 import { getQualitySettings, getTierSettings, type TierSettings } from "../lib/qualityTiers";
 import { createNudgeController, type NudgeController } from "../lib/graphNudge";
 import { useGraphSelectionStore } from "../stores/graphSelection";
+import { useGraphViewState } from "../stores/graphViewState";
 import { usePreferencesStore } from "../stores/preferences";
 import { computeDiff, applyDiff, isDiffEmpty } from "../lib/graphDiff";
 import { isPerfEnabled, perfTable, type PerfEntry } from "../lib/perf";
@@ -24,7 +25,6 @@ import "./GraphView.css";
 
 export interface GraphViewProps {
   activePageId?: string | null;
-  initialMode?: "full" | "local";
   visible?: boolean;
   onNavigate?: (pageId: string) => void;
   onExit?: () => void;
@@ -33,7 +33,7 @@ export interface GraphViewProps {
   onSplitConfirm?: (originalPath: string, plan: SplitPlan) => void;
 }
 
-export default function GraphView({ activePageId, initialMode, visible = true, onNavigate, onExit, onExportNetwork, onMergeConfirm, onSplitConfirm }: GraphViewProps) {
+export default function GraphView({ activePageId, visible = true, onNavigate, onExit, onExportNetwork, onMergeConfirm, onSplitConfirm }: GraphViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sigmaRef = useRef<unknown>(null);
   const graphRef = useRef<unknown>(null);
@@ -60,16 +60,18 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   const lastRenderedSeedRef = useRef<string | null>(null);
   const pendingRefreshRef = useRef(false);
   const diffInProgressRef = useRef(false);
-  const modeRef = useRef(initialMode ?? "full");
+  const modeRef = useRef<"full" | "local">("full");
   const depthRef = useRef(2);
   const activePageIdRef = useRef(activePageId);
   activePageIdRef.current = activePageId;
   const [reinitTrigger, setReinitTrigger] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [mode, setMode] = useState<"full" | "local">(initialMode ?? "full");
+  const mode = useGraphViewState((s) => s.mode);
+  const setMode = useGraphViewState((s) => s.setMode);
   modeRef.current = mode;
-  const [depth, setDepth] = useState(2);
+  const depth = useGraphViewState((s) => s.depth);
+  const setDepth = useGraphViewState((s) => s.setDepth);
   depthRef.current = depth;
   const [graphStats, setGraphStats] = useState<{ nodes: number; edges: number } | null>(null);
   const [contextMenu, setContextMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null);

@@ -16,6 +16,7 @@ import { BottomPanel } from "./BottomPanel";
 import { buildHeadingTree, applyRename, applyMove, insertChild, insertSibling, insertDangling, resolveDeleteFallback, findNode } from "../lib/headingTree";
 import { YamlHighlighter } from "./YamlHighlighter";
 import { globalJumpTracker } from "../editor/jumpTracker";
+import { useGraphViewState } from "../stores/graphViewState";
 
 const LazyMindmapView = lazy(() => import("./MindmapView"));
 const LazyGraphView = lazy(() => import("./GraphView"));
@@ -61,7 +62,6 @@ export function ContentArea({ onExportNetwork }: { onExportNetwork?: (nodeId: st
   );
   const body = usePaneField(focusedPaneId, bodySel);
 
-  const [graphInitialMode, setGraphInitialMode] = useState<"full" | "local" | undefined>(undefined);
   const [graphEverOpened, setGraphEverOpened] = useState(false);
   const [mindmapSelectedId, setMindmapSelectedId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
@@ -274,7 +274,9 @@ export function ContentArea({ onExportNetwork }: { onExportNetwork?: (nodeId: st
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<{ mode?: "local" | "full" }>).detail;
       setViewMode((prev) => (prev === "graph" ? "editor" : "graph"));
-      setGraphInitialMode(detail?.mode ?? undefined);
+      if (detail?.mode) {
+        useGraphViewState.getState().setMode(detail.mode);
+      }
     };
     window.addEventListener("lit:toggle-graph-view", handler);
     return () => window.removeEventListener("lit:toggle-graph-view", handler);
@@ -380,7 +382,7 @@ export function ContentArea({ onExportNetwork }: { onExportNetwork?: (nodeId: st
               Mindmap
             </button>
             <button
-              onClick={() => { setGraphInitialMode(undefined); setViewMode("graph"); }}
+              onClick={() => setViewMode("graph")}
               aria-label="Graph"
               className={`rounded px-2 py-0.5 text-xs ${viewMode === "graph" ? "bg-interactive-accent text-white" : "text-text-faint hover:text-text-muted"}`}
             >
@@ -507,7 +509,6 @@ export function ContentArea({ onExportNetwork }: { onExportNetwork?: (nodeId: st
           <Suspense fallback={<div className="flex items-center justify-center h-full text-text-faint">Loading…</div>}>
             <LazyGraphView
               activePageId={currentPanePage}
-              initialMode={graphInitialMode}
               visible={viewMode === "graph"}
               onNavigate={(pageId) => {
                 selectPage(pageId);

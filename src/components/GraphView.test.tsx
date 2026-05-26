@@ -6,6 +6,7 @@ import * as graphLayout from "../lib/graphLayout";
 import * as qualityTiers from "../lib/qualityTiers";
 import { setPerfEnabled } from "../lib/perf";
 import { useGraphSelectionStore } from "../stores/graphSelection";
+import { useGraphViewState } from "../stores/graphViewState";
 
 const mockSigmaKill = vi.fn();
 const mockSigmaOn = vi.fn();
@@ -43,6 +44,7 @@ describe("GraphView", () => {
     vi.clearAllMocks();
     lastSigmaOptions = {};
     useGraphSelectionStore.setState({ selectedNodes: [], selectionMode: "none" });
+    useGraphViewState.setState({ mode: "full", depth: 2 });
     setPerfEnabled(false);
     mockInvoke((cmd) => {
       switch (cmd) {
@@ -998,7 +1000,8 @@ describe("GraphView", () => {
 
   it("local mode re-inits when seed changes while hidden, on becoming visible", async () => {
     const GraphView = (await import("./GraphView")).default;
-    const { rerender } = render(<GraphView visible={true} activePageId="a.md" initialMode="local" />);
+    useGraphViewState.setState({ mode: "local" });
+    const { rerender } = render(<GraphView visible={true} activePageId="a.md" />);
     await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
 
     const { invoke } = await import("@tauri-apps/api/core");
@@ -1007,14 +1010,14 @@ describe("GraphView", () => {
 
     // Hide and change seed
     await act(async () => {
-      rerender(<GraphView visible={false} activePageId="b.md" initialMode="local" />);
+      rerender(<GraphView visible={false} activePageId="b.md" />);
     });
     // No re-init while hidden
     expect(invoke).not.toHaveBeenCalledWith("get_graph_subgraph", expect.anything());
 
     // Show again — should detect stale seed and re-init
     await act(async () => {
-      rerender(<GraphView visible={true} activePageId="b.md" initialMode="local" />);
+      rerender(<GraphView visible={true} activePageId="b.md" />);
     });
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: ["b.md"], depth: 2, directed: null });
