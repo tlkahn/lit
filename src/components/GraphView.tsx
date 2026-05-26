@@ -9,14 +9,15 @@ import { useGraphSelectionStore } from "../stores/graphSelection";
 import { usePreferencesStore } from "../stores/preferences";
 import { computeDiff, applyDiff, isDiffEmpty } from "../lib/graphDiff";
 import { isPerfEnabled, perfTable, type PerfEntry } from "../lib/perf";
-import { defaultNodeReduce, searchNodeReduce } from "../lib/graphReducers";
+import { defaultNodeReduce } from "../lib/graphReducers";
 import { GraphToolbar } from "./GraphToolbar";
-import { GraphSearch, getMatchingNodes } from "./GraphSearch";
+import { GraphSearch } from "./GraphSearch";
 import { MergePreviewDialog } from "./MergePreviewDialog";
 import { SplitPreviewDialog } from "./SplitPreviewDialog";
 import { useGraphLasso } from "../hooks/useGraphLasso";
 import { GraphDeleteDialog } from "./GraphDeleteDialog";
 import { useGraphTheme } from "../hooks/useGraphTheme";
+import { useGraphSearch } from "../hooks/useGraphSearch";
 import "./GraphSearch.css";
 import "./GraphView.css";
 
@@ -69,11 +70,6 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   modeRef.current = mode;
   const [depth, setDepth] = useState(2);
   depthRef.current = depth;
-  const [searchOpen, setSearchOpen] = useState(false);
-  const searchOpenRef = useRef(false);
-  useEffect(() => { searchOpenRef.current = searchOpen; }, [searchOpen]);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchMatches, setSearchMatches] = useState<string[]>([]);
   const [graphStats, setGraphStats] = useState<{ nodes: number; edges: number } | null>(null);
   const [contextMenu, setContextMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null);
   const contextMenuOpenRef = useRef(false);
@@ -90,6 +86,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   const [deleteConfirm, setDeleteConfirm] = useState<{ nodeIds: string[]; labels: string[] } | null>(null);
   const { lassoState, handleLassoMouseDown, handleLassoMouseMove, handleLassoMouseUp } = useGraphLasso(containerRef, sigmaRef as React.RefObject<{ setSetting: (k: string, v: unknown) => void; getNodeDisplayData: (n: string) => { x: number; y: number } | undefined } | null>, graphRef as React.RefObject<{ nodes: () => string[] } | null>, hoveredNodeRef);
   useGraphTheme(graphRef as React.RefObject<{ forEachNode: (cb: (node: string, attrs: Record<string, unknown>) => void) => void; setNodeAttribute: (node: string, attr: string, value: unknown) => void } | null>, sigmaRef as React.RefObject<{ refresh: () => void; setSetting: (key: string, value: unknown) => void } | null>, dimColorRef);
+  const { searchOpen, setSearchOpen, searchOpenRef, searchQuery, searchMatches, handleSearchQueryChange, handleSearchClose, handleSearchNavigate } = useGraphSearch(graphRef as React.RefObject<{ forEachNode: (cb: (node: string, attrs: Record<string, unknown>) => void) => void; source: (edge: string) => string; target: (edge: string) => string } | null>, sigmaRef as React.RefObject<{ setSetting: (key: string, value: unknown) => void; getCamera: () => { animate: (state: Record<string, number>) => void }; getNodeDisplayData: (node: string) => { x: number; y: number } | undefined } | null>, tierSettingsRef, defaultNodeReducer, onNavigateRef, selectedSetRef, dimColorRef);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -122,58 +119,6 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   const handleResetZoom = useCallback(() => {
     const sigma = sigmaRef.current as { getCamera: () => { animatedReset: () => void } } | null;
     sigma?.getCamera().animatedReset();
-  }, []);
-
-  const handleSearchQueryChange = useCallback((query: string) => {
-    setSearchQuery(query);
-    const graph = graphRef.current as import("graphology").default | null;
-    const sigma = sigmaRef.current as { setSetting: (key: string, value: unknown) => void; getCamera: () => { animate: (state: Record<string, number>) => void }; getNodeDisplayData: (node: string) => { x: number; y: number } | undefined } | null;
-    if (!graph || !sigma) return;
-    if (!query) {
-      setSearchMatches([]);
-      sigma.setSetting("nodeReducer", defaultNodeReducer);
-      sigma.setSetting("edgeReducer",
-        tierSettingsRef.current.defaultEdgesHidden
-          ? (_e: string, attrs: Record<string, unknown>) => ({ ...attrs, hidden: true })
-          : null
-      );
-      return;
-    }
-    const matches = getMatchingNodes(graph, query);
-    setSearchMatches(matches);
-    const matchSet = new Set(matches);
-    sigma.setSetting("nodeReducer", (_n: string, attrs: Record<string, unknown>) => {
-      return searchNodeReduce(_n, attrs, { selectedSet: selectedSetRef.current, dimColor: dimColorRef.current, matchSet });
-    });
-    sigma.setSetting("edgeReducer", (_e: string, attrs: Record<string, unknown>) => {
-      const src = graph.source(_e);
-      const tgt = graph.target(_e);
-      if (matchSet.has(src) || matchSet.has(tgt)) return attrs;
-      return { ...attrs, hidden: true };
-    });
-    if (matches.length === 1) {
-      const pos = sigma.getNodeDisplayData(matches[0]!);
-      if (pos) sigma.getCamera().animate({ x: pos.x, y: pos.y, ratio: 0.5 });
-    }
-  }, []);
-
-  const handleSearchClose = useCallback(() => {
-    setSearchOpen(false);
-    setSearchQuery("");
-    setSearchMatches([]);
-    const sigma = sigmaRef.current as { setSetting: (key: string, value: unknown) => void } | null;
-    if (sigma) {
-      sigma.setSetting("nodeReducer", defaultNodeReducer);
-      sigma.setSetting("edgeReducer",
-        tierSettingsRef.current.defaultEdgesHidden
-          ? (_e: string, attrs: Record<string, unknown>) => ({ ...attrs, hidden: true })
-          : null
-      );
-    }
-  }, [defaultNodeReducer]);
-
-  const handleSearchNavigate = useCallback((nodeId: string) => {
-    onNavigateRef.current?.(nodeId);
   }, []);
 
   useEffect(() => {
