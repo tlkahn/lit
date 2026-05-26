@@ -116,6 +116,9 @@ impl KnowledgeGraph {
             .id_to_index
             .get(id)
             .ok_or_else(|| GraphError::NodeNotFound { id: id.into() })?;
+        if self.graph[start].is_stub {
+            return Err(GraphError::NodeNotFound { id: id.into() });
+        }
         let visited = self.bfs_collect(&[start], depth, directed);
         Ok(self.induced_subgraph(&visited))
     }
@@ -164,6 +167,12 @@ impl KnowledgeGraph {
             .id_to_index
             .get(to)
             .ok_or_else(|| GraphError::NodeNotFound { id: to.into() })?;
+        if self.graph[start].is_stub {
+            return Err(GraphError::NodeNotFound { id: from.into() });
+        }
+        if self.graph[end].is_stub {
+            return Err(GraphError::NodeNotFound { id: to.into() });
+        }
 
         if start == end {
             return Ok(vec![]);
@@ -204,6 +213,11 @@ impl KnowledgeGraph {
                 .ok_or_else(|| GraphError::NodeNotFound {
                     id: seed_id.into(),
                 })?;
+            if self.graph[idx].is_stub {
+                return Err(GraphError::NodeNotFound {
+                    id: seed_id.into(),
+                });
+            }
             seed_indices.push(idx);
         }
 
@@ -364,6 +378,9 @@ impl KnowledgeGraph {
         }
 
         for neighbor in neighbors {
+            if self.graph[neighbor].is_stub {
+                continue;
+            }
             if neighbor == target {
                 path.push(neighbor);
                 results.push(path.iter().map(|&idx| self.graph[idx].id.clone()).collect());
@@ -692,6 +709,17 @@ mod tests {
         assert_eq!(b_node.title, "Beta");
     }
 
+    #[test]
+    fn neighbors_stub_seed_returns_error() {
+        let (_, kg) = build_test_graph();
+        let result = kg.neighbors("F", 1, true);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            GraphError::NodeNotFound { id } => assert_eq!(id, "F"),
+            other => panic!("expected NodeNotFound, got {other:?}"),
+        }
+    }
+
     // --- Step 5: shared ---
 
     #[test]
@@ -809,6 +837,31 @@ mod tests {
         assert_eq!(result[0], vec!["C", "B", "A"]);
     }
 
+    #[test]
+    fn paths_stub_target_returns_error() {
+        let (_, kg) = build_test_graph();
+        assert!(kg.paths("A", "F", 10, true).is_err());
+    }
+
+    #[test]
+    fn paths_stub_source_returns_error() {
+        let (_, kg) = build_test_graph();
+        assert!(kg.paths("F", "A", 10, true).is_err());
+    }
+
+    #[test]
+    fn paths_does_not_traverse_through_stub() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("X", "X"), 1).unwrap();
+        store.upsert_node(&make_node("Y", "Y"), 1).unwrap();
+        store.upsert_stub("S").unwrap();
+        store.insert_edge("X", "S", "", "", 0).unwrap();
+        store.insert_edge("S", "Y", "", "", 0).unwrap();
+        let kg = KnowledgeGraph::from_store(&store).unwrap();
+        let result = kg.paths("X", "Y", 3, true).unwrap();
+        assert!(result.is_empty());
+    }
+
     // --- Step 7: subgraph ---
 
     #[test]
@@ -838,6 +891,23 @@ mod tests {
         let (_, kg) = build_test_graph();
         let result = kg.subgraph(&["Z"], 1, true);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn subgraph_stub_seed_returns_error() {
+        let (_, kg) = build_test_graph();
+        let result = kg.subgraph(&["F"], 1, true);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            GraphError::NodeNotFound { id } => assert_eq!(id, "F"),
+            other => panic!("expected NodeNotFound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn subgraph_mixed_seeds_with_stub_returns_error() {
+        let (_, kg) = build_test_graph();
+        assert!(kg.subgraph(&["A", "F"], 1, true).is_err());
     }
 
     #[test]
