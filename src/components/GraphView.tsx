@@ -10,8 +10,8 @@ import { useGraphSelectionStore } from "../stores/graphSelection";
 import { usePreferencesStore } from "../stores/preferences";
 import { computeDiff, applyDiff, isDiffEmpty } from "../lib/graphDiff";
 import { isPerfEnabled, perfTable, type PerfEntry } from "../lib/perf";
+import { defaultNodeReduce, hoverNodeReduce, searchNodeReduce } from "../lib/graphReducers";
 import { GraphToolbar } from "./GraphToolbar";
-import { GraphTooltip } from "./GraphTooltip";
 import { GraphSearch, getMatchingNodes } from "./GraphSearch";
 import { MergePreviewDialog } from "./MergePreviewDialog";
 import { SplitPreviewDialog } from "./SplitPreviewDialog";
@@ -35,15 +35,10 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   const graphRef = useRef<unknown>(null);
   const hoveredNodeRef = useRef<string | null>(null);
   const nudgeRef = useRef<NudgeController | null>(null);
-  const rafIdRef = useRef<number>(0);
-  const pendingPosRef = useRef<{ x: number; y: number } | null>(null);
   const dimColorRef = useRef("#d1d9e0");
   const selectedSetRef = useRef<Set<string>>(new Set());
   const defaultNodeReducer = useCallback((_n: string, attrs: Record<string, unknown>) => {
-    if (selectedSetRef.current.size > 0 && selectedSetRef.current.has(_n)) {
-      return { ...attrs, label: null, highlighted: true };
-    }
-    return { ...attrs, label: null };
+    return defaultNodeReduce(_n, attrs, { selectedSet: selectedSetRef.current, dimColor: dimColorRef.current });
   }, []);
   const tierSettingsRef = useRef<TierSettings>(getTierSettings("medium"));
   const onNavigateRef = useRef(onNavigate);
@@ -73,7 +68,6 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   modeRef.current = mode;
   const [depth, setDepth] = useState(2);
   depthRef.current = depth;
-  const [tooltip, setTooltip] = useState({ visible: false, x: 0, y: 0, title: "", connections: 0 });
   const [searchOpen, setSearchOpen] = useState(false);
   const searchOpenRef = useRef(false);
   useEffect(() => { searchOpenRef.current = searchOpen; }, [searchOpen]);
@@ -147,11 +141,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
     setSearchMatches(matches);
     const matchSet = new Set(matches);
     sigma.setSetting("nodeReducer", (_n: string, attrs: Record<string, unknown>) => {
-      if (matchSet.has(_n)) return { ...attrs, highlighted: true };
-      const isSelected = selectedSetRef.current.size > 0 && selectedSetRef.current.has(_n);
-      return isSelected
-        ? { ...attrs, color: dimColorRef.current, label: null, highlighted: true }
-        : { ...attrs, color: dimColorRef.current, label: null };
+      return searchNodeReduce(_n, attrs, { selectedSet: selectedSetRef.current, dimColor: dimColorRef.current, matchSet });
     });
     sigma.setSetting("edgeReducer", (_e: string, attrs: Record<string, unknown>) => {
       const src = graph.source(_e);
@@ -310,19 +300,14 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
           setContextMenu({ nodeId: node, x: orig?.clientX ?? mouseEvent?.x ?? 0, y: orig?.clientY ?? mouseEvent?.y ?? 0 });
         });
 
-        sigma.on("enterNode", ({ node, event }) => {
+        sigma.on("enterNode", ({ node }) => {
           hoveredNodeRef.current = node;
           nudgeRef.current?.enter(node);
           const neighbors = new Set(graph.neighbors(node));
           neighbors.add(node);
 
           sigma.setSetting("nodeReducer", (_n: string, attrs: Record<string, unknown>) => {
-            const isSelected = selectedSetRef.current.size > 0 && selectedSetRef.current.has(_n);
-            if (_n === node) return isSelected ? { ...attrs, highlighted: true } : attrs;
-            if (neighbors.has(_n)) return isSelected ? { ...attrs, label: null, highlighted: true } : { ...attrs, label: null };
-            return isSelected
-              ? { ...attrs, color: dimColorRef.current, label: null, highlighted: true }
-              : { ...attrs, color: dimColorRef.current, label: null };
+            return hoverNodeReduce(_n, attrs, { selectedSet: selectedSetRef.current, dimColor: dimColorRef.current, hoveredNode: node, neighbors });
           });
           sigma.setSetting("edgeReducer", (_e: string, attrs: Record<string, unknown>) => {
             const src = graph.source(_e);
@@ -334,45 +319,15 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
           if (containerRef.current) {
             containerRef.current.style.cursor = "pointer";
           }
-
-          const mouseEvent = event as { x?: number; y?: number } | undefined;
-          setTooltip({
-            visible: true,
-            x: (mouseEvent?.x ?? 0) + 10,
-            y: (mouseEvent?.y ?? 0) + 10,
-            title: (graph.getNodeAttribute(node, "label") as string) || node,
-            connections: graph.degree(node),
-          });
-        });
-
-        sigma.on("moveBody", ({ event }) => {
-          if (hoveredNodeRef.current) {
-            const mouseEvent = event as { x?: number; y?: number } | undefined;
-            pendingPosRef.current = { x: (mouseEvent?.x ?? 0) + 10, y: (mouseEvent?.y ?? 0) + 10 };
-            if (!rafIdRef.current) {
-              rafIdRef.current = requestAnimationFrame(() => {
-                rafIdRef.current = 0;
-                const pos = pendingPosRef.current;
-                pendingPosRef.current = null;
-                if (pos) {
-                  setTooltip((t) => ({ ...t, ...pos }));
-                }
-              });
-            }
-          }
         });
 
         sigma.on("leaveNode", () => {
           hoveredNodeRef.current = null;
           nudgeRef.current?.leave();
-          cancelAnimationFrame(rafIdRef.current);
-          rafIdRef.current = 0;
-          pendingPosRef.current = null;
           restoreDefaultReducers();
           if (containerRef.current) {
             containerRef.current.style.cursor = "grab";
           }
-          setTooltip((t) => ({ ...t, visible: false }));
         });
 
         sigma.on("clickStage", () => {
@@ -407,9 +362,6 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
 
     return () => {
       cancelled = true;
-      cancelAnimationFrame(rafIdRef.current);
-      rafIdRef.current = 0;
-      pendingPosRef.current = null;
       nudgeRef.current?.dispose();
       nudgeRef.current = null;
       unsubSelectionRef.current?.();
@@ -650,7 +602,6 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         onNavigate={handleSearchNavigate}
         onClose={handleSearchClose}
       />
-      <GraphTooltip {...tooltip} />
       <div
         ref={containerRef}
         data-testid="graph-canvas"

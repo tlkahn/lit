@@ -38,27 +38,11 @@ vi.mock("@sigma/node-border", () => ({
   createNodeBorderProgram: () => class MockProgram {},
 }));
 
-let rafQueue: Map<number, FrameRequestCallback> = new Map();
-let nextRafId = 1;
-const flushRAF = () => {
-  const cbs = [...rafQueue.values()];
-  rafQueue.clear();
-  cbs.forEach((cb) => cb(performance.now()));
-};
-
 describe("GraphView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     lastSigmaOptions = {};
-    rafQueue = new Map();
-    nextRafId = 1;
     useGraphSelectionStore.setState({ selectedNodes: [], selectionMode: "none" });
-    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb: FrameRequestCallback) => {
-      const id = nextRafId++;
-      rafQueue.set(id, cb);
-      return id;
-    });
-    vi.spyOn(window, "cancelAnimationFrame").mockImplementation((id: number) => { rafQueue.delete(id); });
     setPerfEnabled(false);
     mockInvoke((cmd) => {
       switch (cmd) {
@@ -433,7 +417,7 @@ describe("GraphView", () => {
     expect(nodeReducerCall).toBeDefined();
     const reducer = nodeReducerCall![1] as (n: string, attrs: Record<string, unknown>) => Record<string, unknown>;
     const result = reducer("any", { color: "#fff", label: "Test" });
-    expect(result.label).toBeNull();
+    expect(result.forceLabel).toBe(false);
     expect(mockSigmaSetSetting).toHaveBeenCalledWith("edgeReducer", null);
   });
 
@@ -455,7 +439,7 @@ describe("GraphView", () => {
     expect(nodeReducerCall).toBeDefined();
     const reducer = nodeReducerCall![1] as (n: string, attrs: Record<string, unknown>) => Record<string, unknown>;
     const result = reducer("any", { color: "#fff", label: "Test" });
-    expect(result.label).toBeNull();
+    expect(result.forceLabel).toBe(false);
     expect(mockSigmaSetSetting).toHaveBeenCalledWith("edgeReducer", null);
   });
 
@@ -468,7 +452,7 @@ describe("GraphView", () => {
     expect(mockCameraAnimatedReset).toHaveBeenCalled();
   });
 
-  it("moveBody updates tooltip position while node is hovered", async () => {
+  it("no DOM tooltip is rendered on hover", async () => {
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView />);
     await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
@@ -477,32 +461,6 @@ describe("GraphView", () => {
       (call) => call[0] === "enterNode",
     )?.[1];
     act(() => { enterNodeHandler!({ node: "a.md", event: { x: 100, y: 200 } }); });
-
-    const moveBodyHandler = mockSigmaOn.mock.calls.find(
-      (call) => call[0] === "moveBody",
-    )?.[1];
-    expect(moveBodyHandler).toBeDefined();
-    act(() => {
-      moveBodyHandler!({ event: { x: 300, y: 400 } });
-      flushRAF();
-    });
-
-    const tooltip = document.querySelector(".graph-tooltip") as HTMLElement;
-    expect(tooltip).toBeTruthy();
-    expect(tooltip.style.left).toBe("310px");
-    expect(tooltip.style.top).toBe("410px");
-  });
-
-  it("moveBody is ignored when no node is hovered", async () => {
-    const GraphView = (await import("./GraphView")).default;
-    render(<GraphView />);
-    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
-
-    const moveBodyHandler = mockSigmaOn.mock.calls.find(
-      (call) => call[0] === "moveBody",
-    )?.[1];
-    expect(moveBodyHandler).toBeDefined();
-    act(() => { moveBodyHandler!({ event: { x: 300, y: 400 } }); });
 
     expect(document.querySelector(".graph-tooltip")).toBeNull();
   });
@@ -521,82 +479,6 @@ describe("GraphView", () => {
     expect(localBtn).not.toBeDisabled();
   });
 
-  it("moveBody batches multiple events into one rAF update", async () => {
-    const GraphView = (await import("./GraphView")).default;
-    render(<GraphView />);
-    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
-
-    const enterNodeHandler = mockSigmaOn.mock.calls.find(
-      (call) => call[0] === "enterNode",
-    )?.[1];
-    act(() => { enterNodeHandler!({ node: "a.md", event: { x: 0, y: 0 } }); });
-
-    const moveBodyHandler = mockSigmaOn.mock.calls.find(
-      (call) => call[0] === "moveBody",
-    )?.[1];
-    act(() => {
-      moveBodyHandler!({ event: { x: 100, y: 100 } });
-      moveBodyHandler!({ event: { x: 200, y: 200 } });
-      moveBodyHandler!({ event: { x: 300, y: 400 } });
-      flushRAF();
-    });
-
-    const tooltip = document.querySelector(".graph-tooltip") as HTMLElement;
-    expect(tooltip).toBeTruthy();
-    expect(tooltip.style.left).toBe("310px");
-    expect(tooltip.style.top).toBe("410px");
-  });
-
-  it("rAF is cancelled on leaveNode", async () => {
-    const GraphView = (await import("./GraphView")).default;
-    render(<GraphView />);
-    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
-
-    const enterNodeHandler = mockSigmaOn.mock.calls.find(
-      (call) => call[0] === "enterNode",
-    )?.[1];
-    act(() => { enterNodeHandler!({ node: "a.md", event: { x: 0, y: 0 } }); });
-
-    const moveBodyHandler = mockSigmaOn.mock.calls.find(
-      (call) => call[0] === "moveBody",
-    )?.[1];
-    act(() => { moveBodyHandler!({ event: { x: 500, y: 500 } }); });
-
-    const leaveNodeHandler = mockSigmaOn.mock.calls.find(
-      (call) => call[0] === "leaveNode",
-    )?.[1];
-    act(() => { leaveNodeHandler!(); });
-
-    act(() => { flushRAF(); });
-
-    const tooltip = document.querySelector(".graph-tooltip") as HTMLElement;
-    expect(tooltip).toBeNull();
-  });
-
-  it("moveBody after leaveNode does not update tooltip", async () => {
-    const GraphView = (await import("./GraphView")).default;
-    render(<GraphView />);
-    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
-
-    const enterNodeHandler = mockSigmaOn.mock.calls.find(
-      (call) => call[0] === "enterNode",
-    )?.[1];
-    const leaveNodeHandler = mockSigmaOn.mock.calls.find(
-      (call) => call[0] === "leaveNode",
-    )?.[1];
-    const moveBodyHandler = mockSigmaOn.mock.calls.find(
-      (call) => call[0] === "moveBody",
-    )?.[1];
-
-    act(() => { enterNodeHandler!({ node: "a.md", event: { x: 100, y: 200 } }); });
-    act(() => { leaveNodeHandler!(); });
-    act(() => {
-      moveBodyHandler!({ event: { x: 999, y: 999 } });
-      flushRAF();
-    });
-
-    expect(document.querySelector(".graph-tooltip")).toBeNull();
-  });
 
   it("enterNode sets cursor to pointer, leaveNode resets to grab", async () => {
     const GraphView = (await import("./GraphView")).default;
@@ -684,7 +566,7 @@ describe("GraphView", () => {
     expect(nodeReducerCall).toBeDefined();
     const reducer = nodeReducerCall![1] as (n: string, attrs: Record<string, unknown>) => Record<string, unknown>;
     const result = reducer("any", { color: "#fff", label: "Test" });
-    expect(result.label).toBeNull();
+    expect(result.forceLabel).toBe(false);
     expect(mockSigmaSetSetting).toHaveBeenCalledWith("edgeReducer", null);
   });
 
@@ -878,7 +760,7 @@ describe("GraphView", () => {
     await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
 
     expect(lastSigmaOptions.enableEdgeEvents).toBe(true);
-    expect(lastSigmaOptions.labelRenderedSizeThreshold).toBe(0);
+    expect(lastSigmaOptions.labelRenderedSizeThreshold).toBe(Infinity);
     expect(lastSigmaOptions.hideEdgesOnMove).toBe(false);
     expect(lastSigmaOptions.hideLabelsOnMove).toBe(false);
   });
@@ -1023,7 +905,7 @@ describe("GraphView", () => {
     spy.mockRestore();
   });
 
-  it("medium graph: Sigma gets labelRenderedSizeThreshold=6 and no edge events", async () => {
+  it("medium graph: Sigma gets labelRenderedSizeThreshold=Infinity and no edge events", async () => {
     const mockGraph = {
       order: 3000, size: 4000,
       neighbors: vi.fn().mockReturnValue([]),
@@ -1040,7 +922,7 @@ describe("GraphView", () => {
     await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
 
     expect(lastSigmaOptions.enableEdgeEvents).toBe(false);
-    expect(lastSigmaOptions.labelRenderedSizeThreshold).toBe(6);
+    expect(lastSigmaOptions.labelRenderedSizeThreshold).toBe(Infinity);
     expect(lastSigmaOptions.hideEdgesOnMove).toBe(false);
     expect(lastSigmaOptions.hideLabelsOnMove).toBe(false);
 
@@ -1064,7 +946,7 @@ describe("GraphView", () => {
     await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
 
     expect(lastSigmaOptions.enableEdgeEvents).toBe(false);
-    expect(lastSigmaOptions.labelRenderedSizeThreshold).toBe(12);
+    expect(lastSigmaOptions.labelRenderedSizeThreshold).toBe(Infinity);
     expect(lastSigmaOptions.hideEdgesOnMove).toBe(true);
     expect(lastSigmaOptions.hideLabelsOnMove).toBe(true);
 
@@ -1914,9 +1796,11 @@ describe("GraphView", () => {
 
     const selectedResult = lastReducer("a.md", { color: "#000", label: "A" });
     expect(selectedResult.highlighted).toBe(true);
+    expect(selectedResult.forceLabel).toBe(true);
 
     const unselectedResult = lastReducer("b.md", { color: "#000", label: "B" });
     expect(unselectedResult.highlighted).toBeUndefined();
+    expect(unselectedResult.forceLabel).toBe(false);
 
     document.documentElement.style.removeProperty("--interactive-accent");
   });
@@ -1956,6 +1840,7 @@ describe("GraphView", () => {
     // a.md is selected but not the hovered node or neighbor — should still show highlight
     const selectedResult = reducer("a.md", { color: "#000", label: "A" });
     expect(selectedResult.highlighted).toBe(true);
+    expect(selectedResult.forceLabel).toBe(true);
   });
 
   it("Escape with active selection clears selection, does NOT call onExit", async () => {
@@ -2344,7 +2229,7 @@ describe("GraphView", () => {
     const reducer = nodeReducerCall![1] as (n: string, attrs: Record<string, unknown>) => Record<string, unknown>;
     const result = reducer("b.md", { color: "#000", label: "B" });
     expect(result.color).toBe(dimColorRef());
-    expect(result.label).toBeNull();
+    expect(result.forceLabel).toBe(false);
     expect(result.highlighted).toBeUndefined();
   });
 
