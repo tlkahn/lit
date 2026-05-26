@@ -345,6 +345,10 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         setGraphStats({ nodes: graph.order, edges: graph.size });
         lastRenderedSeedRef.current = mode === "local" ? (activePageId ?? null) : null;
         setLoading(false);
+        if (mode === "local" && activePageId) {
+          const pos = sigma.getNodeDisplayData(activePageId);
+          if (pos) sigma.getCamera().animate({ x: pos.x, y: pos.y });
+        }
       } catch (e) {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : "Failed to load graph");
@@ -384,6 +388,14 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
       if (pendingRefreshRef.current) {
         (sigmaRef.current as { refresh: () => void } | null)?.refresh();
         pendingRefreshRef.current = false;
+      }
+      if (mode === "full" && activePageId) {
+        const graph = graphRef.current as import("graphology").default | null;
+        const sigma = sigmaRef.current as { getNodeDisplayData: (node: string) => { x: number; y: number } | undefined; getCamera: () => { animate: (state: Record<string, number>) => void } } | null;
+        if (graph && sigma && graph.hasNode(activePageId)) {
+          const pos = sigma.getNodeDisplayData(activePageId);
+          if (pos) sigma.getCamera().animate({ x: pos.x, y: pos.y });
+        }
       }
     }
   }, [visible, mode, activePageId]);
