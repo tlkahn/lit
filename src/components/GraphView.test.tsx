@@ -382,7 +382,7 @@ describe("GraphView", () => {
     buildGraphSpy.mockRestore();
   });
 
-  it("enterNode sets nodeReducer and edgeReducer on sigma", async () => {
+  it("enterNode sets nodeReducer on sigma", async () => {
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView />);
     await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
@@ -391,10 +391,14 @@ describe("GraphView", () => {
       (call) => call[0] === "enterNode",
     )?.[1];
     expect(enterNodeHandler).toBeDefined();
+    mockSigmaSetSetting.mockClear();
     act(() => { enterNodeHandler!({ node: "a.md", event: { x: 100, y: 200 } }); });
 
     expect(mockSigmaSetSetting).toHaveBeenCalledWith("nodeReducer", expect.any(Function));
-    expect(mockSigmaSetSetting).toHaveBeenCalledWith("edgeReducer", expect.any(Function));
+    const edgeReducerCall = mockSigmaSetSetting.mock.calls.find(
+      (call) => call[0] === "edgeReducer",
+    );
+    expect(edgeReducerCall).toBeUndefined();
   });
 
   it("leaveNode clears reducers", async () => {
@@ -672,8 +676,7 @@ describe("GraphView", () => {
 
   // --- Theme-aware dim color ---
 
-  it("enterNode nodeReducer uses theme dim color for non-neighbors", async () => {
-    document.documentElement.style.setProperty("--background-modifier-border", "#3d444d");
+  it("enterNode nodeReducer forces label on hovered node without dimming others", async () => {
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView />);
     await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
@@ -688,10 +691,10 @@ describe("GraphView", () => {
       (call) => call[0] === "nodeReducer",
     );
     const reducer = nodeReducerCall![1] as (node: string, attrs: Record<string, unknown>) => Record<string, unknown>;
-    const dimmed = reducer("nonexistent-node", { color: "#000", label: "X" });
-    expect(dimmed.color).toBe("#3d444d");
-
-    document.documentElement.style.removeProperty("--background-modifier-border");
+    const hovered = reducer("a.md", { color: "#000", label: "A" });
+    expect(hovered.forceLabel).toBe(true);
+    const other = reducer("nonexistent-node", { color: "#000", label: "X" });
+    expect(other.color).toBe("#000");
   });
 
   it("search nodeReducer uses theme dim color for non-matches", async () => {

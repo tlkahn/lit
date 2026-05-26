@@ -11,7 +11,7 @@ import { usePreferencesStore } from "../stores/preferences";
 import { useWorkspaceStore } from "../stores/workspace";
 import { computeDiff, applyDiff, isDiffEmpty } from "../lib/graphDiff";
 import { isPerfEnabled, perfTable, type PerfEntry } from "../lib/perf";
-import { defaultNodeReduce, hoverNodeReduce, searchNodeReduce } from "../lib/graphReducers";
+import { defaultNodeReduce, searchNodeReduce } from "../lib/graphReducers";
 import { GraphToolbar } from "./GraphToolbar";
 import { GraphSearch, getMatchingNodes } from "./GraphSearch";
 import { MergePreviewDialog } from "./MergePreviewDialog";
@@ -299,17 +299,10 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         sigma.on("enterNode", ({ node }) => {
           hoveredNodeRef.current = node;
           nudgeRef.current?.enter(node);
-          const neighbors = new Set(graph.neighbors(node));
-          neighbors.add(node);
 
           sigma.setSetting("nodeReducer", (_n: string, attrs: Record<string, unknown>) => {
-            return hoverNodeReduce(_n, attrs, { selectedSet: selectedSetRef.current, dimColor: dimColorRef.current, hoveredNode: node, neighbors });
-          });
-          sigma.setSetting("edgeReducer", (_e: string, attrs: Record<string, unknown>) => {
-            const src = graph.source(_e);
-            const tgt = graph.target(_e);
-            if (neighbors.has(src) && neighbors.has(tgt)) return attrs;
-            return { ...attrs, hidden: true };
+            if (_n === node) return { ...attrs, forceLabel: true };
+            return defaultNodeReduce(_n, attrs, { selectedSet: selectedSetRef.current, dimColor: dimColorRef.current });
           });
 
           if (containerRef.current) {

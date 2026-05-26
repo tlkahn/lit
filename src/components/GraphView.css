@@ -4,6 +4,12 @@
   position: relative;
   background: var(--background-primary-alt, #fafafa);
   user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.graph-view-container canvas {
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .graph-loading,
