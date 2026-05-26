@@ -235,10 +235,16 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         }
 
         const filledProgram = createNodeBorderProgram({
-          borders: [{ size: { value: 0.15, mode: "relative" }, color: { attribute: "color" } }],
+          borders: [
+            { size: { value: 0.08, mode: "relative" }, color: { transparent: true } },
+            { size: { fill: true }, color: { attribute: "color" } },
+          ],
         });
         const seedProgram = createNodeBorderProgram({
-          borders: [{ size: { value: 0.3, mode: "relative" }, color: { attribute: "color" } }],
+          borders: [
+            { size: { value: 0.12, mode: "relative" }, color: { transparent: true } },
+            { size: { fill: true }, color: { attribute: "color" } },
+          ],
         });
 
         const sigmaT0 = perf ? performance.now() : 0;
@@ -399,7 +405,6 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         } else {
           subgraph = await getFullSubgraph();
         }
-        const pagerank = subgraph.pagerank ?? {};
         const diff = computeDiff(graph, subgraph);
 
         if (isDiffEmpty(diff)) return;
@@ -410,7 +415,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
         }
 
         const { accentColor } = resolveThemeColors();
-        applyDiff(graph, diff, pagerank, accentColor);
+        applyDiff(graph, diff, accentColor);
         setGraphStats({ nodes: graph.order, edges: graph.size });
 
         if (visibleRef.current) {

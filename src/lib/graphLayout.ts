@@ -23,7 +23,7 @@ export function resolveThemeColors(): { accentColor: string; dimColor: string; e
   };
 }
 
-export const NODE_SIZE = 8;
+export const NODE_SIZE = 4;
 
 export const SEED_COLOR = "#f59e0b";
 
@@ -53,7 +53,7 @@ export function buildGraph(options: GraphBuildOptions): Graph {
 
   for (const [source, target] of subgraph.edges) {
     if (!graph.hasNode(source) || !graph.hasNode(target)) continue;
-    graph.mergeUndirectedEdge(source, target, { size: 1 });
+    graph.mergeUndirectedEdge(source, target, { size: 0.5 });
   }
 
   return graph;

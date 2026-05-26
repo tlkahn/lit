@@ -76,7 +76,7 @@ describe("computeDiff (5% nodes added)", () => {
 
 describe("applyDiff (5% nodes added)", () => {
   for (const size of SIZES) {
-    const { subgraph, pagerank } = datasets[size];
+    const { subgraph } = datasets[size];
     const added = Math.round(size * 0.05);
     const mutated = {
       nodes: [
@@ -92,13 +92,10 @@ describe("applyDiff (5% nodes added)", () => {
         ...Array.from({ length: added }, (_, i) => [`new-${i}`, subgraph.nodes[i % subgraph.nodes.length]!.id] as [string, string]),
       ],
     };
-    const mutatedPagerank = { ...pagerank };
-    for (let i = 0; i < added; i++) mutatedPagerank[`new-${i}`] = 0.001;
-
     bench(`${size.toLocaleString()} nodes + ${added} new`, () => {
       const graph = buildGraph({ subgraph, accentColor: "#0969da" });
       const diff = computeDiff(graph, mutated);
-      applyDiff(graph, diff, mutatedPagerank, "#0969da");
+      applyDiff(graph, diff, "#0969da");
     });
   }
 });

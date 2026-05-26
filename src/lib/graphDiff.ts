@@ -87,7 +87,6 @@ export function isDiffEmpty(diff: GraphDiff): boolean {
 export function applyDiff(
   graph: Graph,
   diff: GraphDiff,
-  _pagerank: Record<string, number>,
   accentColor: string,
 ): void {
   for (const node of diff.addedNodes) {
@@ -129,7 +128,7 @@ export function applyDiff(
 
   for (const [source, target] of diff.addedEdges) {
     if (graph.hasNode(source) && graph.hasNode(target)) {
-      graph.mergeUndirectedEdge(source, target, { size: 1 });
+      graph.mergeUndirectedEdge(source, target, { size: 0.5 });
     }
   }
 

@@ -190,9 +190,7 @@ describe("applyDiff", () => {
       removedEdges: [] as [string, string][],
       isMajorChange: false,
     };
-    const pagerank = { "a.md": 0.4, "b.md": 0.3, "c.md": 0.3 };
-
-    applyDiff(graph, diff, pagerank, "#0969da");
+    applyDiff(graph, diff, "#0969da");
 
     expect(graph.hasNode("c.md")).toBe(true);
     expect(graph.getNodeAttribute("c.md", "label")).toBe("Page C");
@@ -215,7 +213,7 @@ describe("applyDiff", () => {
       isMajorChange: false,
     };
 
-    applyDiff(graph, diff, { "a.md": 0.5, "b.md": 0.5 }, "#0969da");
+    applyDiff(graph, diff, "#0969da");
 
     expect(graph.hasNode("c.md")).toBe(false);
     expect(graph.size).toBe(0);
@@ -234,7 +232,7 @@ describe("applyDiff", () => {
       isMajorChange: false,
     };
 
-    applyDiff(graph, diff, { "a.md": 0.5 }, "#0969da");
+    applyDiff(graph, diff, "#0969da");
 
     expect(graph.getNodeAttribute("a.md", "label")).toBe("New");
   });
@@ -255,7 +253,7 @@ describe("applyDiff", () => {
       isMajorChange: false,
     };
 
-    applyDiff(graph, diff, { "a.md": 0.4, "b.md": 0.3, "c.md": 0.3 }, "#0969da");
+    applyDiff(graph, diff, "#0969da");
 
     expect(graph.hasUndirectedEdge("a.md", "c.md")).toBe(true);
     expect(graph.hasUndirectedEdge("a.md", "b.md")).toBe(false);
@@ -274,7 +272,7 @@ describe("applyDiff", () => {
       isMajorChange: false,
     };
 
-    applyDiff(graph, diff, { "a.md": 0.5, "c.md": 0.3 }, "#0969da");
+    applyDiff(graph, diff, "#0969da");
 
     const cx = graph.getNodeAttribute("c.md", "x") as number;
     const cy = graph.getNodeAttribute("c.md", "y") as number;
