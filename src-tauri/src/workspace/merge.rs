@@ -148,6 +148,7 @@ pub fn merge_documents_inner(
     title: Option<&str>,
     ordering: &[usize],
     output_dir: Option<&str>,
+    candidate_paths: Option<&HashSet<String>>,
 ) -> Result<MergeResult, String> {
     if docs.is_empty() {
         return Err("Cannot merge: no documents provided".to_string());
@@ -182,7 +183,10 @@ pub fn merge_documents_inner(
     let redirects = build_link_redirects(&ordered_paths, &merged_filename);
 
     let source_paths: HashSet<&str> = ordered_paths.iter().copied().collect();
-    let full_planned = rewriter::plan_vault_rewrites(root, &redirects)?;
+    let full_planned = match candidate_paths {
+        Some(paths) => rewriter::plan_vault_rewrites_for_paths(root, &redirects, paths)?,
+        None => rewriter::plan_vault_rewrites(root, &redirects)?,
+    };
     let planned_rewrites = PlannedVaultRewrite {
         files_scanned: full_planned.files_scanned,
         rewrites: full_planned
@@ -443,7 +447,7 @@ mod tests {
         write_file(root, "B.md", "Hello from B");
 
         let docs = make_docs(root, &["A.md", "B.md"]);
-        let result = merge_documents_inner(root, &docs, None, &[0, 1], None).unwrap();
+        let result = merge_documents_inner(root, &docs, None, &[0, 1], None, None).unwrap();
 
         assert!(root.join(&result.merged_path).exists());
         assert!(result.merged_content.contains("## A"));
@@ -459,7 +463,7 @@ mod tests {
         write_file(root, "B.md", "Hello from B");
 
         let docs = make_docs(root, &["A.md", "B.md"]);
-        let result = merge_documents_inner(root, &docs, None, &[1, 0], None).unwrap();
+        let result = merge_documents_inner(root, &docs, None, &[1, 0], None, None).unwrap();
 
         let b_pos = result.merged_content.find("## B").unwrap();
         let a_pos = result.merged_content.find("## A").unwrap();
@@ -475,7 +479,7 @@ mod tests {
 
         let docs = make_docs(root, &["A.md", "B.md"]);
         let result =
-            merge_documents_inner(root, &docs, Some("My Merge"), &[0, 1], None).unwrap();
+            merge_documents_inner(root, &docs, Some("My Merge"), &[0, 1], None, None).unwrap();
 
         assert!(result.merged_path.ends_with("My Merge.md"));
     }
@@ -488,7 +492,7 @@ mod tests {
         write_file(root, "B.md", "Hello from B");
 
         let docs = make_docs(root, &["A.md", "B.md"]);
-        let result = merge_documents_inner(root, &docs, None, &[0, 1], None).unwrap();
+        let result = merge_documents_inner(root, &docs, None, &[0, 1], None, None).unwrap();
 
         assert!(!root.join("A.md").exists());
         assert!(!root.join("B.md").exists());
@@ -503,7 +507,7 @@ mod tests {
         write_file(root, "B.md", "Hello B");
 
         let docs = make_docs(root, &["A.md", "B.md"]);
-        let result = merge_documents_inner(root, &docs, None, &[0, 1], None).unwrap();
+        let result = merge_documents_inner(root, &docs, None, &[0, 1], None, None).unwrap();
 
         assert_eq!(result.source_snapshots.len(), 2);
         assert!(result.source_snapshots[0].1.contains("tags: [rust]"));
@@ -520,7 +524,7 @@ mod tests {
 
         let docs = make_docs(root, &["A.md", "B.md"]);
         let result =
-            merge_documents_inner(root, &docs, Some("Merged"), &[0, 1], None).unwrap();
+            merge_documents_inner(root, &docs, Some("Merged"), &[0, 1], None, None).unwrap();
 
         let c_content = fs::read_to_string(root.join("C.md")).unwrap();
         assert!(c_content.contains("[[Merged]]"), "C.md should have [[Merged]], got: {}", c_content);
@@ -538,7 +542,7 @@ mod tests {
         write_file(root, "C.md", "See [[Other]]");
 
         let docs = make_docs(root, &["A.md", "B.md"]);
-        merge_documents_inner(root, &docs, None, &[0, 1], None).unwrap();
+        merge_documents_inner(root, &docs, None, &[0, 1], None, None).unwrap();
 
         let c_content = fs::read_to_string(root.join("C.md")).unwrap();
         assert!(c_content.contains("[[Other]]"));
@@ -552,7 +556,7 @@ mod tests {
         write_file(root, "notes/B.md", "Hello from B");
 
         let docs = make_docs(root, &["notes/A.md", "notes/B.md"]);
-        let result = merge_documents_inner(root, &docs, None, &[0, 1], None).unwrap();
+        let result = merge_documents_inner(root, &docs, None, &[0, 1], None, None).unwrap();
 
         assert!(result.merged_path.starts_with("notes/"));
         assert!(root.join(&result.merged_path).exists());
@@ -566,7 +570,7 @@ mod tests {
         write_file(root, "journal/B.md", "Hello from B");
 
         let docs = make_docs(root, &["notes/A.md", "journal/B.md"]);
-        let result = merge_documents_inner(root, &docs, None, &[0, 1], None).unwrap();
+        let result = merge_documents_inner(root, &docs, None, &[0, 1], None, None).unwrap();
 
         assert!(result.merged_path.starts_with("notes/"));
     }
@@ -580,7 +584,7 @@ mod tests {
 
         let docs = make_docs(root, &["A.md", "B.md"]);
         let result =
-            merge_documents_inner(root, &docs, None, &[0, 1], Some("archive")).unwrap();
+            merge_documents_inner(root, &docs, None, &[0, 1], Some("archive"), None).unwrap();
 
         assert!(result.merged_path.starts_with("archive/"));
         assert!(root.join(&result.merged_path).exists());
@@ -595,7 +599,7 @@ mod tests {
         write_file(root, "A + B.md", "already here");
 
         let docs = make_docs(root, &["A.md", "B.md"]);
-        let result = merge_documents_inner(root, &docs, None, &[0, 1], None);
+        let result = merge_documents_inner(root, &docs, None, &[0, 1], None, None);
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("already exists"));
@@ -606,7 +610,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let root = dir.path();
 
-        let result = merge_documents_inner(root, &[], None, &[], None);
+        let result = merge_documents_inner(root, &[], None, &[], None, None);
         assert!(result.is_err());
     }
 
@@ -715,7 +719,7 @@ mod tests {
         write_file(root, "A.md", "Hello from A");
 
         let docs = make_docs(root, &["A.md"]);
-        let result = merge_documents_inner(root, &docs, None, &[], None);
+        let result = merge_documents_inner(root, &docs, None, &[], None, None);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("ordering is empty"));
     }
@@ -728,7 +732,7 @@ mod tests {
         write_file(root, "B.md", "Hello from B");
 
         let docs = make_docs(root, &["A.md", "B.md"]);
-        let result = merge_documents_inner(root, &docs, None, &[0, 5], None);
+        let result = merge_documents_inner(root, &docs, None, &[0, 5], None, None);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Invalid ordering index 5"));
     }
@@ -741,7 +745,7 @@ mod tests {
         write_file(root, "B.md", "Hello from B");
 
         let docs = make_docs(root, &["A.md", "B.md"]);
-        let result = merge_documents_inner(root, &docs, None, &[0, 0], None);
+        let result = merge_documents_inner(root, &docs, None, &[0, 0], None, None);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Duplicate ordering index"));
     }
@@ -755,7 +759,7 @@ mod tests {
 
         let docs = make_docs(root, &["A.md", "B.md"]);
         let result =
-            merge_documents_inner(root, &docs, Some(""), &[0, 1], None).unwrap();
+            merge_documents_inner(root, &docs, Some(""), &[0, 1], None, None).unwrap();
 
         assert!(
             result.merged_path.ends_with("A + B.md"),
@@ -773,7 +777,7 @@ mod tests {
 
         let docs = make_docs(root, &["A.md", "B.md"]);
         let result =
-            merge_documents_inner(root, &docs, Some("   "), &[0, 1], None).unwrap();
+            merge_documents_inner(root, &docs, Some("   "), &[0, 1], None, None).unwrap();
 
         assert!(
             result.merged_path.ends_with("A + B.md"),
@@ -792,7 +796,7 @@ mod tests {
 
         let docs = make_docs(root, &["A.md", "B.md"]);
         let result =
-            merge_documents_inner(root, &docs, Some("Merged"), &[0, 1], None).unwrap();
+            merge_documents_inner(root, &docs, Some("Merged"), &[0, 1], None, None).unwrap();
 
         let merged_on_disk = fs::read_to_string(root.join("Merged.md")).unwrap();
         assert_eq!(
@@ -822,7 +826,7 @@ mod tests {
 
         let docs = make_docs(root, &["A.md", "B.md"]);
         let result =
-            merge_documents_inner(root, &docs, Some("Merged"), &[0, 1], None).unwrap();
+            merge_documents_inner(root, &docs, Some("Merged"), &[0, 1], None, None).unwrap();
 
         for pr in &result.planned_rewrites.rewrites {
             assert_ne!(

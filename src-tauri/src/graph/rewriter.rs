@@ -1,6 +1,6 @@
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::LazyLock;
 use walkdir::WalkDir;
@@ -149,6 +149,37 @@ pub struct PlannedVaultRewrite {
     pub rewrites: Vec<PlannedRewrite>,
 }
 
+fn scan_files_for_rewrites(
+    root: &Path,
+    rel_paths: &[String],
+    map: &HashMap<String, String>,
+    skip_missing: bool,
+) -> Result<(usize, Vec<PlannedRewrite>), String> {
+    let mut files_scanned = 0;
+    let mut rewrites = Vec::new();
+
+    for rel_path in rel_paths {
+        let full_path = root.join(rel_path);
+        let original = match std::fs::read_to_string(&full_path) {
+            Ok(s) => s,
+            Err(_) if skip_missing => continue,
+            Err(e) => return Err(format!("Failed to read {}: {}", rel_path, e)),
+        };
+        files_scanned += 1;
+        let (rewritten, count) = rewrite_body(&original, map);
+        if count > 0 {
+            rewrites.push(PlannedRewrite {
+                relative_path: rel_path.clone(),
+                before_content: original,
+                after_content: rewritten,
+                links_changed: count,
+            });
+        }
+    }
+
+    Ok((files_scanned, rewrites))
+}
+
 pub fn plan_vault_rewrites(
     root: &Path,
     redirects: &[LinkRedirect],
@@ -162,23 +193,29 @@ pub fn plan_vault_rewrites(
     }
 
     let md_files = walk_md_files_for_rewrite(root);
-    let files_scanned = md_files.len();
-    let mut rewrites = Vec::new();
+    let (files_scanned, rewrites) = scan_files_for_rewrites(root, &md_files, &map, false)?;
 
-    for rel_path in &md_files {
-        let full_path = root.join(rel_path);
-        let original = std::fs::read_to_string(&full_path)
-            .map_err(|e| format!("Failed to read {}: {}", rel_path, e))?;
-        let (rewritten, count) = rewrite_body(&original, &map);
-        if count > 0 {
-            rewrites.push(PlannedRewrite {
-                relative_path: rel_path.clone(),
-                before_content: original,
-                after_content: rewritten,
-                links_changed: count,
-            });
-        }
+    Ok(PlannedVaultRewrite {
+        files_scanned,
+        rewrites,
+    })
+}
+
+pub fn plan_vault_rewrites_for_paths(
+    root: &Path,
+    redirects: &[LinkRedirect],
+    candidate_paths: &HashSet<String>,
+) -> Result<PlannedVaultRewrite, String> {
+    let map = build_redirect_map(redirects);
+    if map.is_empty() || candidate_paths.is_empty() {
+        return Ok(PlannedVaultRewrite {
+            files_scanned: 0,
+            rewrites: vec![],
+        });
     }
+
+    let paths: Vec<String> = candidate_paths.iter().cloned().collect();
+    let (files_scanned, rewrites) = scan_files_for_rewrites(root, &paths, &map, true)?;
 
     Ok(PlannedVaultRewrite {
         files_scanned,
@@ -1055,5 +1092,98 @@ mod tests {
             rewrite_body_for_split("[[OldDoc#Unk|alias]]", "OldDoc", &map, "Alpha");
         assert_eq!(result, "[[Alpha#Unk|alias]]");
         assert_eq!(count, 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase G: plan_vault_rewrites_for_paths — targeted scan
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn plan_for_paths_scans_only_candidates() {
+        let tmp = TempDir::new().unwrap();
+        write_file(tmp.path(), "a.md", "[[OldPage]]");
+        write_file(tmp.path(), "b.md", "[[OldPage]]");
+        write_file(tmp.path(), "c.md", "[[OldPage]]");
+        let redirects = vec![LinkRedirect {
+            old_target: "OldPage".into(),
+            new_target: "NewPage".into(),
+        }];
+        let candidates: HashSet<String> =
+            ["a.md", "c.md"].iter().map(|s| s.to_string()).collect();
+        let planned =
+            plan_vault_rewrites_for_paths(tmp.path(), &redirects, &candidates).unwrap();
+        assert_eq!(planned.files_scanned, 2);
+        assert_eq!(planned.rewrites.len(), 2);
+        // b.md should be untouched on disk
+        assert_eq!(read_file(tmp.path(), "b.md"), "[[OldPage]]");
+    }
+
+    #[test]
+    fn plan_for_paths_empty_candidates() {
+        let tmp = TempDir::new().unwrap();
+        write_file(tmp.path(), "a.md", "[[OldPage]]");
+        let redirects = vec![LinkRedirect {
+            old_target: "OldPage".into(),
+            new_target: "NewPage".into(),
+        }];
+        let candidates: HashSet<String> = HashSet::new();
+        let planned =
+            plan_vault_rewrites_for_paths(tmp.path(), &redirects, &candidates).unwrap();
+        assert_eq!(planned.files_scanned, 0);
+        assert!(planned.rewrites.is_empty());
+    }
+
+    #[test]
+    fn plan_for_paths_finds_rewrites() {
+        let tmp = TempDir::new().unwrap();
+        write_file(tmp.path(), "note.md", "See [[OldPage]] and [[OldPage]].");
+        let redirects = vec![LinkRedirect {
+            old_target: "OldPage".into(),
+            new_target: "NewPage".into(),
+        }];
+        let candidates: HashSet<String> = ["note.md"].iter().map(|s| s.to_string()).collect();
+        let planned =
+            plan_vault_rewrites_for_paths(tmp.path(), &redirects, &candidates).unwrap();
+        assert_eq!(planned.files_scanned, 1);
+        assert_eq!(planned.rewrites.len(), 1);
+        assert_eq!(planned.rewrites[0].before_content, "See [[OldPage]] and [[OldPage]].");
+        assert_eq!(planned.rewrites[0].after_content, "See [[NewPage]] and [[NewPage]].");
+        assert_eq!(planned.rewrites[0].links_changed, 2);
+        // File on disk is NOT modified (plan only)
+        assert_eq!(read_file(tmp.path(), "note.md"), "See [[OldPage]] and [[OldPage]].");
+    }
+
+    #[test]
+    fn plan_for_paths_skips_missing_file() {
+        let tmp = TempDir::new().unwrap();
+        write_file(tmp.path(), "exists.md", "[[OldPage]]");
+        let redirects = vec![LinkRedirect {
+            old_target: "OldPage".into(),
+            new_target: "NewPage".into(),
+        }];
+        let candidates: HashSet<String> =
+            ["exists.md", "ghost.md"].iter().map(|s| s.to_string()).collect();
+        let planned =
+            plan_vault_rewrites_for_paths(tmp.path(), &redirects, &candidates).unwrap();
+        // ghost.md is skipped, only exists.md counted
+        assert_eq!(planned.files_scanned, 1);
+        assert_eq!(planned.rewrites.len(), 1);
+    }
+
+    #[test]
+    fn plan_for_paths_no_matching_links() {
+        let tmp = TempDir::new().unwrap();
+        write_file(tmp.path(), "a.md", "[[Other]]");
+        write_file(tmp.path(), "b.md", "No links here.");
+        let redirects = vec![LinkRedirect {
+            old_target: "OldPage".into(),
+            new_target: "NewPage".into(),
+        }];
+        let candidates: HashSet<String> =
+            ["a.md", "b.md"].iter().map(|s| s.to_string()).collect();
+        let planned =
+            plan_vault_rewrites_for_paths(tmp.path(), &redirects, &candidates).unwrap();
+        assert_eq!(planned.files_scanned, 2);
+        assert!(planned.rewrites.is_empty());
     }
 }

@@ -1038,23 +1038,31 @@ pub fn rewrite_links(
     let root =
         crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
 
-    let summary =
-        crate::graph::rewriter::rewrite_links_in_vault(&root, &redirects).map_err(|e| e.to_string())?;
-
-    // Update WriteHashRegistry and reindex for each modified file
     let gi = {
         let indices = graph_state.indices.lock().unwrap();
         indices.get(&root).cloned()
     };
+
+    let planned = match &gi {
+        Some(gi) => {
+            let stems: Vec<String> = redirects
+                .iter()
+                .map(|r| crate::graph::indexer::normalize_stem(&r.old_target))
+                .collect();
+            let affected = gi.affected_sources(&stems);
+            crate::graph::rewriter::plan_vault_rewrites_for_paths(&root, &redirects, &affected)?
+        }
+        None => crate::graph::rewriter::plan_vault_rewrites(&root, &redirects)?,
+    };
+
+    let summary = crate::graph::rewriter::apply_planned_rewrites(&root, &planned)?;
+
     let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
 
-    for file_result in &summary.files_modified {
-        let full_path = root.join(&file_result.relative_path);
-        if let Ok(content) = std::fs::read_to_string(&full_path) {
-            registry.record(&full_path, &content);
-        }
+    for pr in &planned.rewrites {
+        registry.record(&root.join(&pr.relative_path), &pr.after_content);
         if let Some(ref gi) = gi {
-            let _ = gi.reindex_file(&file_result.relative_path, ann_enabled);
+            let _ = gi.reindex_file(&pr.relative_path, ann_enabled);
         }
     }
 

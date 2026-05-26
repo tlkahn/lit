@@ -152,7 +152,22 @@ pub fn rewrite_vault_links(
 ) -> Result<crate::graph::rewriter::RewriteSummary, String> {
     let root = get_workspace_root(&workspace_state, window.label())?;
 
-    let planned = crate::graph::rewriter::plan_vault_rewrites(&root, &redirects)?;
+    let planned = {
+        let candidate_paths = {
+            let indices = graph_state.indices.lock().unwrap();
+            indices.get(&root).map(|gi| {
+                let stems: Vec<String> = redirects
+                    .iter()
+                    .map(|r| crate::graph::indexer::normalize_stem(&r.old_target))
+                    .collect();
+                gi.affected_sources(&stems)
+            })
+        };
+        match candidate_paths {
+            Some(ref paths) => crate::graph::rewriter::plan_vault_rewrites_for_paths(&root, &redirects, paths)?,
+            None => crate::graph::rewriter::plan_vault_rewrites(&root, &redirects)?,
+        }
+    };
     if planned.rewrites.is_empty() {
         return Ok(crate::graph::rewriter::RewriteSummary {
             files_scanned: planned.files_scanned,

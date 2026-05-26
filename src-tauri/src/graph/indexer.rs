@@ -741,6 +741,10 @@ impl GraphIndex {
         Ok(result)
     }
 
+    pub fn affected_sources(&self, stems: &[String]) -> HashSet<String> {
+        self.reverse_stems.lock().unwrap().affected_sources(stems)
+    }
+
     pub fn stats(&self) -> Result<Stats, GraphError> {
         let store = self.store.lock().unwrap();
         store.stats()
@@ -3723,5 +3727,30 @@ mod tests {
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         gi.compute_layout_background(&crate::graph::layout::LayoutSettings::default());
         assert!(logs_contain("layout positions saved"));
+    }
+
+    // --- GraphIndex::affected_sources ---
+
+    #[test]
+    fn graph_index_affected_sources_returns_linkers() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "links to [[B]]");
+        write_md(dir.path(), "b.md", "target");
+        write_md(dir.path(), "c.md", "links to [[D]]");
+        write_md(dir.path(), "d.md", "other target");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let affected = gi.affected_sources(&["b".to_string()]);
+        assert!(affected.contains("a.md"));
+        assert!(!affected.contains("c.md"));
+    }
+
+    #[test]
+    fn graph_index_affected_sources_empty_stems() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "links to [[B]]");
+        write_md(dir.path(), "b.md", "target");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let affected = gi.affected_sources(&[]);
+        assert!(affected.is_empty());
     }
 }

@@ -224,8 +224,16 @@ pub fn execute_split(
 ) -> Result<Vec<String>, String> {
     let root = get_workspace_root(&state, window.label())?;
 
+    let candidate_paths = {
+        let indices = graph_state.indices.lock().unwrap();
+        indices.get(&root).map(|gi| {
+            let stem = crate::graph::indexer::normalize_stem(&relative_path);
+            gi.affected_sources(&[stem])
+        })
+    };
+
     let result =
-        split_execute::execute_split(&root, &relative_path, &registry).map_err(|e| e.to_string())?;
+        split_execute::execute_split(&root, &relative_path, &registry, candidate_paths.as_ref()).map_err(|e| e.to_string())?;
 
     let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
     let gi = {
@@ -337,12 +345,24 @@ pub fn merge_documents(
         })
         .collect::<Result<Vec<_>, String>>()?;
 
+    let candidate_paths = {
+        let indices = graph_state.indices.lock().unwrap();
+        indices.get(&root).map(|gi| {
+            let stems: Vec<String> = paths
+                .iter()
+                .map(|p| crate::graph::indexer::normalize_stem(p))
+                .collect();
+            gi.affected_sources(&stems)
+        })
+    };
+
     let result = merge::merge_documents_inner(
         &root,
         &docs,
         Some(&title),
         &ordering,
         output_dir.as_deref(),
+        candidate_paths.as_ref(),
     )?;
 
     registry.record(&root.join(&result.merged_path), &result.merged_content);
@@ -795,7 +815,7 @@ mod tests {
             ),
         ];
 
-        let result = merge::merge_documents_inner(root, &docs, Some("Merged"), &[0, 1], None)
+        let result = merge::merge_documents_inner(root, &docs, Some("Merged"), &[0, 1], None, None)
             .unwrap();
 
         assert!(root.join("Merged.md").exists());
@@ -864,5 +884,58 @@ mod tests {
             std::fs::read_to_string(root.join("C.md")).unwrap(),
             c_original
         );
+    }
+
+    #[test]
+    fn merge_inner_with_candidate_paths_only_scans_those() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        write_file(root, "A.md", "Hello from A");
+        write_file(root, "B.md", "Hello from B");
+        write_file(root, "C.md", "See [[A]] and [[B]]");
+        write_file(root, "D.md", "See [[A]]");
+
+        let docs: Vec<(String, MergeInput)> = vec![
+            ("A.md".to_string(), MergeInput { title: "A".into(), body: "Hello from A".into(), frontmatter: IndexMap::new() }),
+            ("B.md".to_string(), MergeInput { title: "B".into(), body: "Hello from B".into(), frontmatter: IndexMap::new() }),
+        ];
+
+        let mut candidates: std::collections::HashSet<String> = std::collections::HashSet::new();
+        candidates.insert("C.md".into());
+
+        let result = merge::merge_documents_inner(root, &docs, Some("Merged"), &[0, 1], None, Some(&candidates)).unwrap();
+
+        let c_content = std::fs::read_to_string(root.join("C.md")).unwrap();
+        assert!(c_content.contains("[[Merged]]"), "C.md should be rewritten: {c_content}");
+
+        let d_content = std::fs::read_to_string(root.join("D.md")).unwrap();
+        assert!(d_content.contains("[[A]]"), "D.md should NOT be rewritten: {d_content}");
+
+        assert_eq!(result.planned_rewrites.files_scanned, 1);
+    }
+
+    #[test]
+    fn merge_inner_with_none_falls_back_to_full_walk() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        write_file(root, "A.md", "Hello from A");
+        write_file(root, "B.md", "Hello from B");
+        write_file(root, "C.md", "See [[A]]");
+        write_file(root, "D.md", "See [[B]]");
+
+        let docs: Vec<(String, MergeInput)> = vec![
+            ("A.md".to_string(), MergeInput { title: "A".into(), body: "Hello from A".into(), frontmatter: IndexMap::new() }),
+            ("B.md".to_string(), MergeInput { title: "B".into(), body: "Hello from B".into(), frontmatter: IndexMap::new() }),
+        ];
+
+        let result = merge::merge_documents_inner(root, &docs, Some("Merged"), &[0, 1], None, None).unwrap();
+
+        let c_content = std::fs::read_to_string(root.join("C.md")).unwrap();
+        assert!(c_content.contains("[[Merged]]"), "C.md should be rewritten: {c_content}");
+
+        let d_content = std::fs::read_to_string(root.join("D.md")).unwrap();
+        assert!(d_content.contains("[[Merged]]"), "D.md should also be rewritten: {d_content}");
+
+        assert!(result.planned_rewrites.files_scanned >= 2);
     }
 }

@@ -22,6 +22,7 @@ pub fn execute_split(
     root: &Path,
     relative_path: &str,
     registry: &WriteHashRegistry,
+    candidate_paths: Option<&std::collections::HashSet<String>>,
 ) -> Result<SplitResult, WorkspaceError> {
     let page = ops::read_page(root, relative_path, registry)?;
     let plan = plan_split(&page.body, &page.meta.title, &page.meta.frontmatter);
@@ -80,6 +81,7 @@ pub fn execute_split(
         &section_to_doc,
         &default_target,
         relative_path,
+        candidate_paths,
     ) {
         Ok(actions) => actions,
         Err(e) => {
@@ -164,10 +166,14 @@ fn rewrite_vault_for_split(
     section_to_doc: &HashMap<String, String>,
     default_target: &str,
     skip_path: &str,
+    candidate_paths: Option<&std::collections::HashSet<String>>,
 ) -> Result<Vec<PlannedRewrite>, WorkspaceError> {
     use crate::graph::rewriter::walk_md_files_for_rewrite;
 
-    let md_files = walk_md_files_for_rewrite(root);
+    let md_files = match candidate_paths {
+        Some(paths) => paths.iter().cloned().collect(),
+        None => walk_md_files_for_rewrite(root),
+    };
     let mut rewrites = Vec::new();
     let mut written: Vec<(&str, String)> = Vec::new();
 
@@ -244,7 +250,7 @@ mod tests {
         let body = "## Alpha\nAlpha body.\n## Beta\nBeta body.\n";
         write_file(tmp.path(), "Doc.md", &make_doc("Doc", body, &fm));
 
-        let result = execute_split(tmp.path(), "Doc.md", &registry).unwrap();
+        let result = execute_split(tmp.path(), "Doc.md", &registry, None).unwrap();
 
         assert_eq!(result.created_paths.len(), 2);
         assert!(tmp.path().join("Alpha.md").exists());
@@ -265,7 +271,7 @@ mod tests {
         let body = "Some intro text.\n\n## Section\nSection body.\n";
         write_file(tmp.path(), "Doc.md", &make_doc("Doc", body, &fm));
 
-        let result = execute_split(tmp.path(), "Doc.md", &registry).unwrap();
+        let result = execute_split(tmp.path(), "Doc.md", &registry, None).unwrap();
 
         assert_eq!(result.created_paths.len(), 2);
         assert!(tmp.path().join("Doc - Introduction.md").exists());
@@ -288,7 +294,7 @@ mod tests {
         let body = "## Alpha\nAlpha body.\n## Beta\nBeta body.\n";
         write_file(tmp.path(), "Doc.md", &make_doc("Doc", body, &fm));
 
-        execute_split(tmp.path(), "Doc.md", &registry).unwrap();
+        execute_split(tmp.path(), "Doc.md", &registry, None).unwrap();
 
         let alpha = read_file(tmp.path(), "Alpha.md");
         assert!(alpha.contains("status: draft"));
@@ -305,7 +311,7 @@ mod tests {
         let body = "## Alpha\nAlpha body.\n## Beta\nBeta body.\n";
         write_file(tmp.path(), "Doc.md", &make_doc("Doc", body, &fm));
 
-        let result = execute_split(tmp.path(), "Doc.md", &registry).unwrap();
+        let result = execute_split(tmp.path(), "Doc.md", &registry, None).unwrap();
 
         assert!(!tmp.path().join("Doc.md").exists());
         assert_eq!(result.trash_entry.original_path, "Doc.md");
@@ -326,7 +332,7 @@ mod tests {
             "See [[Doc]] and [[Doc#Alpha]] and [[Doc#Random]].",
         );
 
-        let result = execute_split(tmp.path(), "Doc.md", &registry).unwrap();
+        let result = execute_split(tmp.path(), "Doc.md", &registry, None).unwrap();
 
         let other = read_file(tmp.path(), "other.md");
         assert!(
@@ -357,7 +363,7 @@ mod tests {
         let body = "## Alpha\nAlpha body.\n## Beta\nBeta body.\n";
         write_file(tmp.path(), "Doc.md", &make_doc("Doc", body, &fm));
 
-        let result = execute_split(tmp.path(), "Doc.md", &registry).unwrap();
+        let result = execute_split(tmp.path(), "Doc.md", &registry, None).unwrap();
 
         assert_eq!(result.created_paths, vec!["Alpha.md", "Beta.md"]);
         assert_eq!(result.trash_entry.original_path, "Doc.md");
@@ -373,7 +379,7 @@ mod tests {
         write_file(tmp.path(), "Doc.md", &make_doc("Doc", body, &fm));
         write_file(tmp.path(), "Alpha.md", "existing");
 
-        let result = execute_split(tmp.path(), "Doc.md", &registry);
+        let result = execute_split(tmp.path(), "Doc.md", &registry, None);
         assert!(result.is_err());
         assert!(tmp.path().join("Doc.md").exists(), "original should remain");
         assert!(!tmp.path().join("Beta.md").exists(), "no partial files");
@@ -388,7 +394,7 @@ mod tests {
         let body = "Just plain text.\nNo headings at all.\n";
         write_file(tmp.path(), "Doc.md", &make_doc("Doc", body, &fm));
 
-        let result = execute_split(tmp.path(), "Doc.md", &registry).unwrap();
+        let result = execute_split(tmp.path(), "Doc.md", &registry, None).unwrap();
 
         assert_eq!(result.created_paths, vec!["Doc - Introduction.md"]);
         assert!(tmp.path().join("Doc - Introduction.md").exists());
@@ -402,7 +408,7 @@ mod tests {
         let registry = WriteHashRegistry::new();
         write_file(tmp.path(), "Empty.md", "");
 
-        let result = execute_split(tmp.path(), "Empty.md", &registry);
+        let result = execute_split(tmp.path(), "Empty.md", &registry, None);
         assert!(result.is_err());
     }
 
@@ -419,7 +425,7 @@ mod tests {
             &make_doc("Doc", body, &fm),
         );
 
-        let result = execute_split(tmp.path(), "notes/Doc.md", &registry).unwrap();
+        let result = execute_split(tmp.path(), "notes/Doc.md", &registry, None).unwrap();
 
         assert_eq!(
             result.created_paths,
@@ -438,7 +444,7 @@ mod tests {
         let body = "## Alpha\nSee [[Doc#Beta]] for details.\n## Beta\nBeta body with [[Doc]].\n";
         write_file(tmp.path(), "Doc.md", &make_doc("Doc", body, &fm));
 
-        let result = execute_split(tmp.path(), "Doc.md", &registry).unwrap();
+        let result = execute_split(tmp.path(), "Doc.md", &registry, None).unwrap();
 
         let alpha = read_file(tmp.path(), "Alpha.md");
         assert!(
@@ -464,5 +470,35 @@ mod tests {
             assert_ne!(action.relative_path, "Alpha.md", "created file should not appear in rewrite_actions");
             assert_ne!(action.relative_path, "Beta.md", "created file should not appear in rewrite_actions");
         }
+    }
+
+    #[test]
+    fn rewrite_vault_for_split_with_candidates_only_scans_those() {
+        let tmp = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        let fm = IndexMap::new();
+        let body = "## Alpha\nAlpha body.\n## Beta\nBeta body.\n";
+        write_file(tmp.path(), "Doc.md", &make_doc("Doc", body, &fm));
+        write_file(tmp.path(), "other.md", "See [[Doc]].");
+        write_file(tmp.path(), "skip.md", "See [[Doc]].");
+
+        let mut candidates: std::collections::HashSet<String> = std::collections::HashSet::new();
+        candidates.insert("other.md".into());
+
+        let result = execute_split(tmp.path(), "Doc.md", &registry, Some(&candidates)).unwrap();
+
+        let other = read_file(tmp.path(), "other.md");
+        assert!(
+            other.contains("[[Alpha]]"),
+            "other.md should be rewritten: {other}"
+        );
+
+        let skip = read_file(tmp.path(), "skip.md");
+        assert!(
+            skip.contains("[[Doc]]"),
+            "skip.md should NOT be rewritten: {skip}"
+        );
+
+        assert!(!result.rewrite_actions.is_empty());
     }
 }
