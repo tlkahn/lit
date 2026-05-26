@@ -131,6 +131,9 @@ impl FileWatcher {
                 if !md_events.is_empty() {
                     let refs: Vec<(&str, FileChangeKind)> = md_events.iter().map(|(p, k)| (p.as_str(), *k)).collect();
                     let diff = accumulate_diff(&refs);
+                    if diff.is_empty() {
+                        continue;
+                    }
                     if let Some(graph_reg) = app_handle.try_state::<std::sync::Arc<GraphRegistry>>() {
                         let indices = graph_reg.indices.lock().unwrap();
                         if let Some(gi) = indices.get(&root_clone) {
@@ -165,24 +168,29 @@ pub(crate) fn accumulate_diff(events: &[(&str, FileChangeKind)]) -> crate::graph
 
     let mut last_state: IndexMap<&str, FileChangeKind> = IndexMap::new();
     for &(path, kind) in events {
-        last_state.insert(path, kind);
+        match (last_state.get(path), kind) {
+            (Some(FileChangeKind::Created), FileChangeKind::Modified) => {}
+            _ => { last_state.insert(path, kind); }
+        }
     }
 
     let mut new_files = Vec::new();
+    let mut changed = Vec::new();
     let mut deleted = Vec::new();
     for (path, kind) in last_state {
         match kind {
             FileChangeKind::Created => new_files.push(path.to_string()),
+            FileChangeKind::Modified => changed.push(path.to_string()),
             FileChangeKind::Deleted => deleted.push(path.to_string()),
-            FileChangeKind::Modified => {}
         }
     }
     new_files.sort();
+    changed.sort();
     deleted.sort();
 
     crate::graph::indexer::DiffResult {
         new: new_files,
-        changed: vec![],
+        changed,
         deleted,
     }
 }
@@ -342,9 +350,11 @@ mod tests {
     }
 
     #[test]
-    fn accumulate_watcher_diff_modified_skipped() {
+    fn accumulate_watcher_diff_modified_goes_to_changed() {
         let diff = accumulate_diff(&[("a.md", FileChangeKind::Modified)]);
-        assert!(diff.is_empty());
+        assert_eq!(diff.changed, vec!["a.md"]);
+        assert!(diff.new.is_empty());
+        assert!(diff.deleted.is_empty());
     }
 
     #[test]
@@ -355,7 +365,7 @@ mod tests {
             ("c.md", FileChangeKind::Modified),
         ]);
         assert_eq!(diff.new, vec!["a.md"]);
-        assert!(diff.changed.is_empty());
+        assert_eq!(diff.changed, vec!["c.md"]);
         assert_eq!(diff.deleted, vec!["b.md"]);
     }
 
@@ -380,8 +390,40 @@ mod tests {
     }
 
     #[test]
+    fn accumulate_watcher_diff_created_then_modified() {
+        let diff = accumulate_diff(&[
+            ("a.md", FileChangeKind::Created),
+            ("a.md", FileChangeKind::Modified),
+        ]);
+        assert_eq!(diff.new, vec!["a.md"]);
+        assert!(diff.changed.is_empty());
+    }
+
+    #[test]
+    fn accumulate_watcher_diff_created_modified_deleted() {
+        let diff = accumulate_diff(&[
+            ("a.md", FileChangeKind::Created),
+            ("a.md", FileChangeKind::Modified),
+            ("a.md", FileChangeKind::Deleted),
+        ]);
+        assert!(diff.new.is_empty());
+        assert!(diff.changed.is_empty());
+        assert_eq!(diff.deleted, vec!["a.md"]);
+    }
+
+    #[test]
     fn accumulate_watcher_diff_empty() {
         let diff = accumulate_diff(&[]);
         assert!(diff.is_empty());
+    }
+
+    #[test]
+    fn accumulate_watcher_diff_all_modified_no_topology() {
+        let diff = accumulate_diff(&[
+            ("a.md", FileChangeKind::Modified),
+            ("b.md", FileChangeKind::Modified),
+        ]);
+        assert!(!diff.is_empty());
+        assert_eq!(diff.changed, vec!["a.md", "b.md"]);
     }
 }
