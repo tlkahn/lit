@@ -3753,4 +3753,42 @@ mod tests {
         let affected = gi.affected_sources(&[]);
         assert!(affected.is_empty());
     }
+
+    #[test]
+    fn watcher_diff_created_file_resolves_stub() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Links to [[b]].");
+        let store = Store::open_memory().unwrap();
+        let (_, mut reverse) = index_workspace(&store, dir.path(), true).unwrap();
+
+        let meta = store.all_nodes_metadata().unwrap();
+        assert!(
+            meta.iter().any(|(id, is_stub)| id == "b" && *is_stub),
+            "b should be a stub before b.md is created"
+        );
+
+        write_md(dir.path(), "b.md", "I exist now.");
+        let diff = DiffResult {
+            new: vec!["b.md".to_string()],
+            changed: vec![],
+            deleted: vec![],
+        };
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
+
+        let meta = store.all_nodes_metadata().unwrap();
+        assert!(
+            !meta.iter().any(|(id, is_stub)| id == "b" && *is_stub),
+            "stub 'b' should be cleaned up after b.md is created"
+        );
+        assert!(
+            meta.iter().any(|(id, is_stub)| id == "b.md" && !is_stub),
+            "b.md should exist as a real node"
+        );
+        let edges = store.all_edges().unwrap();
+        assert!(
+            edges.iter().any(|(s, t)| s == "a.md" && t == "b.md"),
+            "a.md should link to b.md, edges: {:?}",
+            edges
+        );
+    }
 }
