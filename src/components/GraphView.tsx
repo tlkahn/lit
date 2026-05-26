@@ -5,7 +5,6 @@ import { listen } from "@tauri-apps/api/event";
 import { buildGraph, resolveThemeColors, applyPositions } from "../lib/graphLayout";
 import { getQualitySettings, getTierSettings, type TierSettings } from "../lib/qualityTiers";
 import { createNudgeController, type NudgeController } from "../lib/graphNudge";
-import { useThemeStore } from "../stores/theme";
 import { useGraphSelectionStore } from "../stores/graphSelection";
 import { usePreferencesStore } from "../stores/preferences";
 import { computeDiff, applyDiff, isDiffEmpty } from "../lib/graphDiff";
@@ -17,6 +16,7 @@ import { MergePreviewDialog } from "./MergePreviewDialog";
 import { SplitPreviewDialog } from "./SplitPreviewDialog";
 import { useGraphLasso } from "../hooks/useGraphLasso";
 import { GraphDeleteDialog } from "./GraphDeleteDialog";
+import { useGraphTheme } from "../hooks/useGraphTheme";
 import "./GraphSearch.css";
 import "./GraphView.css";
 
@@ -57,7 +57,6 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   visibleRef.current = visible;
   const lastRenderedSeedRef = useRef<string | null>(null);
   const pendingRefreshRef = useRef(false);
-  const pendingThemeUpdateRef = useRef(false);
   const diffInProgressRef = useRef(false);
   const modeRef = useRef(initialMode ?? "full");
   const depthRef = useRef(2);
@@ -90,6 +89,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
   const [splitDialogPath, setSplitDialogPath] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState<{ nodeIds: string[]; labels: string[] } | null>(null);
   const { lassoState, handleLassoMouseDown, handleLassoMouseMove, handleLassoMouseUp } = useGraphLasso(containerRef, sigmaRef as React.RefObject<{ setSetting: (k: string, v: unknown) => void; getNodeDisplayData: (n: string) => { x: number; y: number } | undefined } | null>, graphRef as React.RefObject<{ nodes: () => string[] } | null>, hoveredNodeRef);
+  useGraphTheme(graphRef as React.RefObject<{ forEachNode: (cb: (node: string, attrs: Record<string, unknown>) => void) => void; setNodeAttribute: (node: string, attr: string, value: unknown) => void } | null>, sigmaRef as React.RefObject<{ refresh: () => void; setSetting: (key: string, value: unknown) => void } | null>, dimColorRef);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -374,9 +374,6 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
     } else {
       if (mode === "local" && activePageId !== lastRenderedSeedRef.current) {
         setReinitTrigger((c) => c + 1);
-      } else if (pendingThemeUpdateRef.current) {
-        applyTheme();
-        pendingThemeUpdateRef.current = false;
       } else {
         (sigmaRef.current as { refresh: () => void } | null)?.refresh();
       }
@@ -454,31 +451,7 @@ export default function GraphView({ activePageId, initialMode, visible = true, o
     return () => { cancelled = true; unlisten?.(); };
   }, []);
 
-  const activeThemeId = useThemeStore((s) => s.activeThemeId);
 
-  const applyTheme = () => {
-    const graph = graphRef.current as import("graphology").default | null;
-    const sigma = sigmaRef.current as { refresh: () => void; setSetting: (key: string, value: unknown) => void } | null;
-    if (!graph || !sigma) return;
-    const { accentColor, dimColor, edgeColor, labelColor } = resolveThemeColors();
-    dimColorRef.current = dimColor;
-    graph.forEachNode((node: string, attrs: Record<string, unknown>) => {
-      if (attrs.type === "seed") return;
-      graph.setNodeAttribute(node, "color", accentColor);
-    });
-    sigma.setSetting("defaultEdgeColor", edgeColor);
-    sigma.setSetting("labelColor", { color: labelColor });
-    sigma.refresh();
-  };
-
-  useEffect(() => {
-    if (!graphRef.current || !sigmaRef.current) return;
-    if (!visible) {
-      pendingThemeUpdateRef.current = true;
-      return;
-    }
-    applyTheme();
-  }, [activeThemeId]);
 
   const handleContainerKeyDown = useCallback((e: React.KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "f") {

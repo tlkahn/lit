@@ -1558,9 +1558,9 @@ describe("GraphView", () => {
     expect(onExit).not.toHaveBeenCalled();
   });
 
-  // --- Theme change while hidden (deferred update) ---
+  // --- Theme reactivity (immediate, no deferred path) ---
 
-  it("theme change while hidden does not call sigma.refresh or setSetting", async () => {
+  it("theme change while hidden still applies immediately", async () => {
     const { useThemeStore } = await import("../stores/theme");
     const GraphView = (await import("./GraphView")).default;
     const { rerender } = render(<GraphView visible={true} />);
@@ -1568,35 +1568,29 @@ describe("GraphView", () => {
 
     await act(async () => { rerender(<GraphView visible={false} />); });
     mockSigmaRefresh.mockClear();
-    mockSigmaSetSetting.mockClear();
 
     await act(async () => {
       useThemeStore.setState({ activeThemeId: "hidden-theme" });
     });
 
-    expect(mockSigmaRefresh).not.toHaveBeenCalled();
-    expect(mockSigmaSetSetting).not.toHaveBeenCalled();
+    expect(mockSigmaRefresh).toHaveBeenCalled();
   });
 
-  it("deferred theme update is applied when graph becomes visible", async () => {
+  it("theme change applies edge and label colors immediately", async () => {
     document.documentElement.style.setProperty("--text-faint", "#aabbcc");
     document.documentElement.style.setProperty("--text-normal", "#ddeeff");
 
     const { useThemeStore } = await import("../stores/theme");
     const GraphView = (await import("./GraphView")).default;
-    const { rerender } = render(<GraphView visible={true} />);
+    render(<GraphView visible={true} />);
     await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
-
-    await act(async () => { rerender(<GraphView visible={false} />); });
-
-    await act(async () => {
-      useThemeStore.setState({ activeThemeId: "deferred-theme" });
-    });
 
     mockSigmaRefresh.mockClear();
     mockSigmaSetSetting.mockClear();
 
-    await act(async () => { rerender(<GraphView visible={true} />); });
+    await act(async () => {
+      useThemeStore.setState({ activeThemeId: "immediate-theme" });
+    });
 
     expect(mockSigmaSetSetting).toHaveBeenCalledWith("defaultEdgeColor", "#aabbcc");
     expect(mockSigmaSetSetting).toHaveBeenCalledWith("labelColor", { color: "#ddeeff" });
@@ -1606,13 +1600,14 @@ describe("GraphView", () => {
     document.documentElement.style.removeProperty("--text-normal");
   });
 
-  it("multiple theme changes while hidden produce single deferred update", async () => {
+  it("each theme change while hidden produces its own update", async () => {
     const { useThemeStore } = await import("../stores/theme");
     const GraphView = (await import("./GraphView")).default;
     const { rerender } = render(<GraphView visible={true} />);
     await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
 
     await act(async () => { rerender(<GraphView visible={false} />); });
+    mockSigmaRefresh.mockClear();
 
     await act(async () => {
       useThemeStore.setState({ activeThemeId: "theme-a" });
@@ -1621,12 +1616,7 @@ describe("GraphView", () => {
       useThemeStore.setState({ activeThemeId: "theme-b" });
     });
 
-    mockSigmaRefresh.mockClear();
-
-    await act(async () => { rerender(<GraphView visible={true} />); });
-
-    const refreshCount = mockSigmaRefresh.mock.calls.length;
-    expect(refreshCount).toBe(1);
+    expect(mockSigmaRefresh.mock.calls.length).toBe(2);
   });
 
   it("Escape after context menu dismissed calls onExit", async () => {
