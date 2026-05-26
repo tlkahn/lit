@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use indexmap::IndexMap;
 use serde::Deserialize;
 use serde_yaml::Value;
-use tauri::{Emitter, State};
+use tauri::State;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
@@ -255,10 +255,9 @@ pub fn execute_split(
             changed: result.rewrite_actions.iter().map(|pr| pr.relative_path.clone()).collect(),
             deleted: vec![relative_path.clone()],
         };
-        let _ = gi.batch_reindex(&diff, ann_enabled);
+        let reindex_result = gi.batch_reindex(&diff, ann_enabled);
+        crate::commands::graph::emit_reindex_result(&app_handle, reindex_result);
     }
-
-    let _ = app_handle.emit("lit:graph-updated", ());
 
     if let Ok(oplog) = oplog_state.get_oplog(&root) {
         let store = oplog.lock().unwrap();
@@ -381,10 +380,9 @@ pub fn merge_documents(
             changed: result.planned_rewrites.rewrites.iter().map(|pr| pr.relative_path.clone()).collect(),
             deleted: result.source_snapshots.iter().map(|(p, _)| p.clone()).collect(),
         };
-        let _ = gi.batch_reindex(&diff, ann_enabled);
+        let reindex_result = gi.batch_reindex(&diff, ann_enabled);
+        crate::commands::graph::emit_reindex_result(&app_handle, reindex_result);
     }
-
-    let _ = app_handle.emit("lit:graph-updated", ());
 
     if let Ok(oplog) = oplog_state.get_oplog(&root) {
         let store = oplog.lock().unwrap();

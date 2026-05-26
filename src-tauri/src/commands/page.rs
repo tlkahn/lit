@@ -42,7 +42,9 @@ pub fn write_page(
     let indices = graph_state.indices.lock().unwrap();
     if let Some(gi) = indices.get(&root) {
         let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
-        let _ = gi.reindex_file(&relative_path, ann_enabled);
+        let result = gi.reindex_file(&relative_path, ann_enabled);
+        drop(indices);
+        crate::commands::graph::emit_reindex_result(&app_handle, result);
     }
 
     Ok(())
@@ -184,11 +186,22 @@ pub fn rewrite_vault_links(
     };
     let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
 
+    let mut reindex_err: Option<crate::graph::error::GraphError> = None;
     for pr in &planned.rewrites {
         registry.record(&root.join(&pr.relative_path), &pr.after_content);
         if let Some(ref gi) = gi {
-            let _ = gi.reindex_file(&pr.relative_path, ann_enabled);
+            if let Err(e) = gi.reindex_file(&pr.relative_path, ann_enabled) {
+                reindex_err = Some(e);
+            }
         }
+    }
+
+    if gi.is_some() {
+        let result = match reindex_err {
+            Some(e) => Err(e),
+            None => Ok(()),
+        };
+        crate::commands::graph::emit_reindex_result(&app_handle, result);
     }
 
     if let Ok(oplog) = oplog_state.get_oplog(&root) {

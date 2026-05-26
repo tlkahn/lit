@@ -1,9 +1,22 @@
+use crate::graph::error::GraphError;
 use crate::graph::indexer::GraphIndex;
 use crate::graph::types::Position;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
 use tauri::{Emitter, State};
+
+pub(crate) fn reindex_event_name(result: &Result<(), GraphError>) -> (&'static str, Option<String>) {
+    match result {
+        Ok(()) => ("lit:graph-updated", None),
+        Err(e) => ("lit:graph-reindex-failed", Some(e.to_string())),
+    }
+}
+
+pub(crate) fn emit_reindex_result(handle: &tauri::AppHandle, result: Result<(), GraphError>) {
+    let (event, payload) = reindex_event_name(&result);
+    let _ = handle.emit(event, payload);
+}
 
 pub struct GraphRegistry {
     pub indices: Mutex<HashMap<PathBuf, Arc<GraphIndex>>>,
@@ -474,7 +487,8 @@ pub fn link_unlinked_mention(
     };
     if let Some(gi) = gi {
         let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
-        let _ = gi.reindex_file(&source_id, ann_enabled);
+        let result = gi.reindex_file(&source_id, ann_enabled);
+        emit_reindex_result(&app_handle, result);
     }
 
     Ok(())
@@ -538,6 +552,21 @@ pub async fn ensure_graph_ready(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reindex_event_name_ok_returns_graph_updated() {
+        let (event, payload) = reindex_event_name(&Ok(()));
+        assert_eq!(event, "lit:graph-updated");
+        assert!(payload.is_none());
+    }
+
+    #[test]
+    fn reindex_event_name_err_returns_graph_reindex_failed() {
+        let err = GraphError::Other("disk full".to_string());
+        let (event, payload) = reindex_event_name(&Err(err));
+        assert_eq!(event, "lit:graph-reindex-failed");
+        assert_eq!(payload.unwrap(), "disk full");
+    }
 
     #[test]
     fn graph_registry_insert_and_get() {
@@ -1059,11 +1088,22 @@ pub fn rewrite_links(
 
     let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
 
+    let mut reindex_err: Option<GraphError> = None;
     for pr in &planned.rewrites {
         registry.record(&root.join(&pr.relative_path), &pr.after_content);
         if let Some(ref gi) = gi {
-            let _ = gi.reindex_file(&pr.relative_path, ann_enabled);
+            if let Err(e) = gi.reindex_file(&pr.relative_path, ann_enabled) {
+                reindex_err = Some(e);
+            }
         }
+    }
+
+    if gi.is_some() {
+        let result = match reindex_err {
+            Some(e) => Err(e),
+            None => Ok(()),
+        };
+        emit_reindex_result(&app_handle, result);
     }
 
     Ok(summary)
