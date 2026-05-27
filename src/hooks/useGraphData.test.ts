@@ -1,0 +1,556 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { renderHook, act, waitFor } from "@testing-library/react";
+import Graph from "graphology";
+import { mockInvoke, mockListen, emitMockEvent } from "../test/tauri-mock";
+import * as graphLayout from "../lib/graphLayout";
+import type { SubgraphResult } from "../lib/ipc";
+import type { UseGraphDataOptions } from "./useGraphData";
+
+const TWO_NODE_SUBGRAPH: SubgraphResult = {
+  nodes: [
+    { id: "a.md", title: "A" },
+    { id: "b.md", title: "B" },
+  ],
+  edges: [["a.md", "b.md"]],
+};
+
+const LOCAL_SUBGRAPH: SubgraphResult = {
+  nodes: [
+    { id: "a.md", title: "A" },
+    { id: "c.md", title: "C" },
+  ],
+  edges: [["a.md", "c.md"]],
+};
+
+function makeInvokeHandler(subgraph: SubgraphResult = TWO_NODE_SUBGRAPH) {
+  return (cmd: string, _args?: Record<string, unknown>) => {
+    if (cmd === "get_graph_subgraph") return subgraph;
+    if (cmd === "get_graph_positions") return {};
+    return null;
+  };
+}
+
+describe("useGraphData", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(graphLayout, "resolveThemeColors").mockReturnValue({
+      accentColor: "#0969da",
+      dimColor: "#d1d9e0",
+      edgeColor: "#818b98",
+      labelColor: "#1f2328",
+    });
+  });
+
+  async function importHook() {
+    const mod = await import("./useGraphData");
+    return mod.useGraphData;
+  }
+
+  // Cycle 1: Initial state
+  describe("initial state", () => {
+    it("returns loading: true, error: null, graphStats: null, empty graph, dataVersion 0", async () => {
+      mockInvoke(makeInvokeHandler());
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+      );
+
+      expect(result.current.loading).toBe(true);
+      expect(result.current.error).toBe(null);
+      expect(result.current.graphStats).toBe(null);
+      expect(result.current.graphRef.current).toBeInstanceOf(Graph);
+      expect(result.current.graphRef.current!.order).toBe(0);
+      expect(result.current.dataVersion).toBe(0);
+    });
+  });
+
+  // Cycle 2: Full mode fetch + build
+  describe("full mode fetch + build", () => {
+    it("calls getFullSubgraph and populates graph", async () => {
+      const handler = vi.fn(makeInvokeHandler());
+      mockInvoke(handler);
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      expect(handler).toHaveBeenCalledWith("get_graph_subgraph", {
+        seeds: [],
+        depth: 0,
+        directed: null,
+      });
+      expect(result.current.graphStats).toEqual({ nodes: 2, edges: 1 });
+      expect(result.current.graphRef.current!.order).toBe(2);
+      expect(result.current.graphRef.current!.size).toBe(1);
+    });
+  });
+
+  // Cycle 3: Local mode fetch
+  describe("local mode fetch", () => {
+    it("calls getGraphSubgraph with seed and depth", async () => {
+      const handler = vi.fn(makeInvokeHandler(LOCAL_SUBGRAPH));
+      mockInvoke(handler);
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "local", depth: 2, activePageId: "a.md" }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      expect(handler).toHaveBeenCalledWith("get_graph_subgraph", {
+        seeds: ["a.md"],
+        depth: 2,
+        directed: null,
+      });
+      expect(result.current.graphRef.current!.hasNode("a.md")).toBe(true);
+      expect(result.current.graphRef.current!.hasNode("c.md")).toBe(true);
+    });
+
+    it("passes seedId to populateGraph so seed node gets seed color", async () => {
+      mockInvoke(makeInvokeHandler(LOCAL_SUBGRAPH));
+      const populateSpy = vi.spyOn(graphLayout, "populateGraph");
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "local", depth: 2, activePageId: "a.md" }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      expect(populateSpy).toHaveBeenCalledWith(
+        expect.any(Graph),
+        LOCAL_SUBGRAPH,
+        "#0969da",
+        "a.md",
+      );
+    });
+  });
+
+  // Cycle 4: Theme color resolution + dimColorRef
+  describe("theme color resolution", () => {
+    it("resolves theme colors and sets dimColorRef", async () => {
+      vi.spyOn(graphLayout, "resolveThemeColors").mockReturnValue({
+        accentColor: "#ff0000",
+        dimColor: "#aabbcc",
+        edgeColor: "#818b98",
+        labelColor: "#1f2328",
+      });
+      mockInvoke(makeInvokeHandler());
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      expect(graphLayout.resolveThemeColors).toHaveBeenCalled();
+      expect(result.current.dimColorRef.current).toBe("#aabbcc");
+    });
+
+    it("uses resolved accent color for graph nodes", async () => {
+      vi.spyOn(graphLayout, "resolveThemeColors").mockReturnValue({
+        accentColor: "#ff0000",
+        dimColor: "#aabbcc",
+        edgeColor: "#818b98",
+        labelColor: "#1f2328",
+      });
+      mockInvoke(makeInvokeHandler());
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      const graph = result.current.graphRef.current!;
+      expect(graph.getNodeAttribute("a.md", "color")).toBe("#ff0000");
+    });
+  });
+
+  // Cycle 5: Position application
+  describe("position application", () => {
+    it("applies positions from subgraph result", async () => {
+      const subgraphWithPos: SubgraphResult = {
+        ...TWO_NODE_SUBGRAPH,
+        positions: { "a.md": { x: 42, y: 84 } },
+      };
+      mockInvoke(makeInvokeHandler(subgraphWithPos));
+      const applySpy = vi.spyOn(graphLayout, "applyPositions");
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      expect(applySpy).toHaveBeenCalledWith(
+        expect.any(Graph),
+        { "a.md": { x: 42, y: 84 } },
+      );
+      expect(result.current.graphRef.current!.getNodeAttribute("a.md", "x")).toBe(42);
+      expect(result.current.graphRef.current!.getNodeAttribute("a.md", "y")).toBe(84);
+    });
+
+    it("does not call applyPositions when positions are empty", async () => {
+      const subgraphNoPos: SubgraphResult = {
+        ...TWO_NODE_SUBGRAPH,
+        positions: {},
+      };
+      mockInvoke(makeInvokeHandler(subgraphNoPos));
+      const applySpy = vi.spyOn(graphLayout, "applyPositions");
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      expect(applySpy).not.toHaveBeenCalled();
+    });
+  });
+
+  // Cycle 6: Quality tier
+  describe("quality tier", () => {
+    it("returns small tier for small graphs", async () => {
+      mockInvoke(makeInvokeHandler());
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      expect(result.current.tierSettings.tier).toBe("small");
+      expect(result.current.tierSettings.enableEdgeEvents).toBe(true);
+    });
+
+    it("returns appropriate tier for large graphs", async () => {
+      const manyNodes = Array.from({ length: 1200 }, (_, i) => ({
+        id: `n${i}.md`,
+        title: `N${i}`,
+      }));
+      const largeSubgraph: SubgraphResult = { nodes: manyNodes, edges: [] };
+      mockInvoke(makeInvokeHandler(largeSubgraph));
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      expect(result.current.tierSettings.tier).toBe("medium");
+      expect(result.current.tierSettings.enableEdgeEvents).toBe(false);
+    });
+  });
+
+  // Cycle 7: Error handling
+  describe("error handling", () => {
+    it("sets error and loading false when IPC throws", async () => {
+      mockInvoke(() => {
+        throw new Error("connection lost");
+      });
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      expect(result.current.error).toBe("connection lost");
+      expect(result.current.graphRef.current!.order).toBe(0);
+    });
+
+    it("sets generic error for non-Error throws", async () => {
+      mockInvoke(() => {
+        throw "string error";
+      });
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      expect(result.current.error).toBe("Failed to load graph");
+    });
+  });
+
+  // Cycle 8: Mode/depth change triggers rebuild (same instance)
+  describe("mode/depth change rebuild", () => {
+    it("clears and rebuilds graph on mode change, same instance", async () => {
+      const handler = vi.fn((cmd: string, args?: Record<string, unknown>) => {
+        if (cmd === "get_graph_subgraph") {
+          const seeds = (args?.seeds as string[]) ?? [];
+          return seeds.length > 0 ? LOCAL_SUBGRAPH : TWO_NODE_SUBGRAPH;
+        }
+        return {};
+      });
+      mockInvoke(handler);
+      const useGraphData = await importHook();
+
+      const { result, rerender } = renderHook(
+        (props: UseGraphDataOptions) => useGraphData(props),
+        { initialProps: { mode: "full", depth: 1, activePageId: null } as UseGraphDataOptions },
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      const graphBefore = result.current.graphRef.current;
+      expect(graphBefore!.order).toBe(2);
+      expect(graphBefore!.hasNode("a.md")).toBe(true);
+      expect(graphBefore!.hasNode("b.md")).toBe(true);
+
+      rerender({ mode: "local", depth: 2, activePageId: "a.md" });
+
+      await waitFor(() => {
+        expect(result.current.graphRef.current!.hasNode("c.md")).toBe(true);
+      });
+
+      expect(result.current.graphRef.current).toBe(graphBefore);
+      expect(result.current.graphRef.current!.hasNode("b.md")).toBe(false);
+      expect(result.current.graphStats).toEqual({ nodes: 2, edges: 1 });
+    });
+  });
+
+  // Cycle 9: dataVersion increments
+  describe("dataVersion", () => {
+    it("increments after each build", async () => {
+      const handler = vi.fn((cmd: string, args?: Record<string, unknown>) => {
+        if (cmd === "get_graph_subgraph") {
+          const seeds = (args?.seeds as string[]) ?? [];
+          return seeds.length > 0 ? LOCAL_SUBGRAPH : TWO_NODE_SUBGRAPH;
+        }
+        return {};
+      });
+      mockInvoke(handler);
+      const useGraphData = await importHook();
+
+      const { result, rerender } = renderHook(
+        (props: UseGraphDataOptions) => useGraphData(props),
+        { initialProps: { mode: "full", depth: 1, activePageId: null } as UseGraphDataOptions },
+      );
+
+      expect(result.current.dataVersion).toBe(0);
+
+      await waitFor(() => {
+        expect(result.current.dataVersion).toBe(1);
+      });
+
+      rerender({ mode: "local", depth: 2, activePageId: "a.md" });
+
+      await waitFor(() => {
+        expect(result.current.dataVersion).toBe(2);
+      });
+    });
+  });
+
+  // Cycle 10: lit:graph-updated full rebuild
+  describe("lit:graph-updated", () => {
+    it("re-fetches and rebuilds on event", async () => {
+      let callCount = 0;
+      const updatedSubgraph: SubgraphResult = {
+        nodes: [
+          { id: "a.md", title: "A" },
+          { id: "b.md", title: "B" },
+          { id: "d.md", title: "D" },
+        ],
+        edges: [["a.md", "b.md"], ["b.md", "d.md"]],
+      };
+
+      mockInvoke((cmd: string) => {
+        if (cmd === "get_graph_subgraph") {
+          callCount++;
+          return callCount === 1 ? TWO_NODE_SUBGRAPH : updatedSubgraph;
+        }
+        return {};
+      });
+      mockListen();
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      expect(result.current.graphStats).toEqual({ nodes: 2, edges: 1 });
+      const v1 = result.current.dataVersion;
+
+      await act(async () => {
+        emitMockEvent("lit:graph-updated", null);
+      });
+
+      await waitFor(() => {
+        expect(result.current.graphStats).toEqual({ nodes: 3, edges: 2 });
+      });
+
+      expect(result.current.dataVersion).toBeGreaterThan(v1);
+      expect(result.current.graphRef.current!.order).toBe(3);
+    });
+  });
+
+  // Cycle 11: lit:layout-ready
+  describe("lit:layout-ready", () => {
+    it("fetches and applies positions on event", async () => {
+      mockInvoke((cmd: string) => {
+        if (cmd === "get_graph_subgraph") return TWO_NODE_SUBGRAPH;
+        if (cmd === "get_graph_positions") {
+          return { "a.md": { x: 100, y: 200 }, "b.md": { x: 300, y: 400 } };
+        }
+        return {};
+      });
+      mockListen();
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      const v1 = result.current.dataVersion;
+
+      await act(async () => {
+        emitMockEvent("lit:layout-ready", null);
+      });
+
+      await waitFor(() => {
+        expect(result.current.dataVersion).toBeGreaterThan(v1);
+      });
+
+      const graph = result.current.graphRef.current!;
+      expect(graph.getNodeAttribute("a.md", "x")).toBe(100);
+      expect(graph.getNodeAttribute("a.md", "y")).toBe(200);
+      expect(graph.getNodeAttribute("b.md", "x")).toBe(300);
+      expect(graph.getNodeAttribute("b.md", "y")).toBe(400);
+    });
+
+    it("silently catches getGraphPositions errors", async () => {
+      mockInvoke((cmd: string) => {
+        if (cmd === "get_graph_subgraph") return TWO_NODE_SUBGRAPH;
+        if (cmd === "get_graph_positions") throw new Error("no positions");
+        return {};
+      });
+      mockListen();
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      await act(async () => {
+        emitMockEvent("lit:layout-ready", null);
+      });
+
+      expect(result.current.error).toBe(null);
+    });
+  });
+
+  // Cycle 12: Cleanup + stale effect cancellation
+  describe("cleanup", () => {
+    it("unsubscribes event listeners on unmount", async () => {
+      mockInvoke(makeInvokeHandler());
+      mockListen();
+      const useGraphData = await importHook();
+
+      const { result, unmount } = renderHook(() =>
+        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      unmount();
+
+      // After unmount, emitting events should not cause errors
+      emitMockEvent("lit:graph-updated", null);
+      emitMockEvent("lit:layout-ready", null);
+    });
+
+    it("discards stale results on rapid mode changes", async () => {
+      const resolvers: Array<(v: SubgraphResult) => void> = [];
+      mockInvoke((cmd: string) => {
+        if (cmd === "get_graph_subgraph") {
+          return new Promise<SubgraphResult>((resolve) => {
+            resolvers.push(resolve);
+          });
+        }
+        return {};
+      });
+      const useGraphData = await importHook();
+
+      const { result, rerender } = renderHook(
+        (props: UseGraphDataOptions) => useGraphData(props),
+        { initialProps: { mode: "full", depth: 1, activePageId: null } as UseGraphDataOptions },
+      );
+
+      // First render starts a fetch
+      expect(resolvers).toHaveLength(1);
+
+      // Rapidly change mode before first resolves
+      rerender({ mode: "local", depth: 2, activePageId: "a.md" });
+
+      await waitFor(() => {
+        expect(resolvers).toHaveLength(2);
+      });
+
+      resolvers[0]!(TWO_NODE_SUBGRAPH);
+      resolvers[1]!(LOCAL_SUBGRAPH);
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      // Should have the local subgraph data, not the full one
+      expect(result.current.graphRef.current!.hasNode("c.md")).toBe(true);
+      // "b.md" from the stale full subgraph should not be present
+      expect(result.current.graphRef.current!.hasNode("b.md")).toBe(false);
+    });
+  });
+});

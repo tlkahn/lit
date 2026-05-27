@@ -33,12 +33,7 @@ export interface GraphBuildOptions {
   seedId?: string;
 }
 
-export function buildGraph(options: GraphBuildOptions): Graph {
-  const { subgraph, accentColor, seedId } = options;
-  const graph = new Graph();
-
-  if (subgraph.nodes.length === 0) return graph;
-
+export function populateGraph(graph: Graph, subgraph: SubgraphResult, accentColor: string, seedId?: string): void {
   for (const node of subgraph.nodes) {
     const isSeed = seedId != null && node.id === seedId;
     graph.addNode(node.id, {
@@ -55,7 +50,13 @@ export function buildGraph(options: GraphBuildOptions): Graph {
     if (!graph.hasNode(source) || !graph.hasNode(target)) continue;
     graph.mergeUndirectedEdge(source, target, { size: 0.5 });
   }
+}
 
+export function buildGraph(options: GraphBuildOptions): Graph {
+  const { subgraph, accentColor, seedId } = options;
+  const graph = new Graph();
+  if (subgraph.nodes.length === 0) return graph;
+  populateGraph(graph, subgraph, accentColor, seedId);
   return graph;
 }
 
