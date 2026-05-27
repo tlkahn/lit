@@ -491,7 +491,198 @@ describe("useGraphData", () => {
     });
   });
 
-  // Cycle 12: Cleanup + stale effect cancellation
+  // Cycle 12: Race conditions
+  describe("race conditions", () => {
+    it("discards stale Effect 1 result when Effect 2 supersedes it", async () => {
+      const resolvers: Array<(v: SubgraphResult) => void> = [];
+      mockInvoke((cmd: string) => {
+        if (cmd === "get_graph_subgraph") {
+          return new Promise<SubgraphResult>((resolve) => {
+            resolvers.push(resolve);
+          });
+        }
+        return {};
+      });
+      mockListen();
+      const useGraphData = await importHook();
+
+      const updatedSubgraph: SubgraphResult = {
+        nodes: [
+          { id: "a.md", title: "A" },
+          { id: "b.md", title: "B" },
+          { id: "d.md", title: "D" },
+        ],
+        edges: [["a.md", "b.md"], ["b.md", "d.md"]],
+      };
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+      );
+
+      // Effect 1 fetch is in-flight
+      expect(resolvers).toHaveLength(1);
+
+      // graph-updated fires → Effect 2 starts its own fetch
+      await act(async () => {
+        emitMockEvent("lit:graph-updated", null);
+      });
+      expect(resolvers).toHaveLength(2);
+
+      // Effect 2 resolves first with correct 3-node data
+      await act(async () => {
+        resolvers[1]!(updatedSubgraph);
+      });
+
+      await waitFor(() => {
+        expect(result.current.graphStats).toEqual({ nodes: 3, edges: 2 });
+      });
+
+      // Effect 1 resolves later with stale 2-node data
+      await act(async () => {
+        resolvers[0]!(TWO_NODE_SUBGRAPH);
+      });
+
+      // Stale data discarded — still 3 nodes
+      expect(result.current.graphStats).toEqual({ nodes: 3, edges: 2 });
+      expect(result.current.graphRef.current!.hasNode("d.md")).toBe(true);
+      // loading cleared by Effect 2
+      expect(result.current.loading).toBe(false);
+    });
+
+    it("discards stale result when two graph-updated events race", async () => {
+      let callCount = 0;
+      const resolvers: Array<(v: SubgraphResult) => void> = [];
+
+      mockInvoke((cmd: string) => {
+        if (cmd === "get_graph_subgraph") {
+          callCount++;
+          if (callCount === 1) return TWO_NODE_SUBGRAPH;
+          return new Promise<SubgraphResult>((resolve) => {
+            resolvers.push(resolve);
+          });
+        }
+        return {};
+      });
+      mockListen();
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      // Two rapid graph-updated events
+      await act(async () => {
+        emitMockEvent("lit:graph-updated", null);
+      });
+      await act(async () => {
+        emitMockEvent("lit:graph-updated", null);
+      });
+      expect(resolvers).toHaveLength(2);
+
+      const freshSubgraph: SubgraphResult = {
+        nodes: [
+          { id: "a.md", title: "A" },
+          { id: "b.md", title: "B" },
+          { id: "d.md", title: "D" },
+        ],
+        edges: [["a.md", "b.md"], ["b.md", "d.md"]],
+      };
+      const staleSubgraph: SubgraphResult = {
+        nodes: [{ id: "stale.md", title: "Stale" }],
+        edges: [],
+      };
+
+      // Second event resolves first (correct)
+      await act(async () => {
+        resolvers[1]!(freshSubgraph);
+      });
+
+      await waitFor(() => {
+        expect(result.current.graphStats).toEqual({ nodes: 3, edges: 2 });
+      });
+
+      // First event resolves later (stale)
+      await act(async () => {
+        resolvers[0]!(staleSubgraph);
+      });
+
+      // Stale data discarded
+      expect(result.current.graphStats).toEqual({ nodes: 3, edges: 2 });
+      expect(result.current.graphRef.current!.hasNode("d.md")).toBe(true);
+      expect(result.current.graphRef.current!.hasNode("stale.md")).toBe(false);
+    });
+
+    it("discards stale positions when layout-ready fires during rebuild", async () => {
+      const subgraphResolvers: Array<(v: SubgraphResult) => void> = [];
+      const positionResolvers: Array<(v: Record<string, { x: number; y: number }>) => void> = [];
+
+      mockInvoke((cmd: string) => {
+        if (cmd === "get_graph_subgraph") {
+          return new Promise<SubgraphResult>((resolve) => {
+            subgraphResolvers.push(resolve);
+          });
+        }
+        if (cmd === "get_graph_positions") {
+          return new Promise<Record<string, { x: number; y: number }>>((resolve) => {
+            positionResolvers.push(resolve);
+          });
+        }
+        return {};
+      });
+      mockListen();
+      const applySpy = vi.spyOn(graphLayout, "applyPositions");
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+      );
+
+      // Effect 1 rebuild is in-flight
+      expect(subgraphResolvers).toHaveLength(1);
+
+      // layout-ready fires → captures current generation
+      await act(async () => {
+        emitMockEvent("lit:layout-ready", null);
+      });
+      expect(positionResolvers).toHaveLength(1);
+
+      // graph-updated fires → bumps generation
+      await act(async () => {
+        emitMockEvent("lit:graph-updated", null);
+      });
+      expect(subgraphResolvers).toHaveLength(2);
+
+      // Resolve graph-updated rebuild (latest generation)
+      await act(async () => {
+        subgraphResolvers[1]!(TWO_NODE_SUBGRAPH);
+      });
+
+      // Resolve initial rebuild (superseded)
+      await act(async () => {
+        subgraphResolvers[0]!(TWO_NODE_SUBGRAPH);
+      });
+
+      await waitFor(() => {
+        expect(result.current.graphStats).toEqual({ nodes: 2, edges: 1 });
+      });
+
+      applySpy.mockClear();
+
+      // Stale positions resolve — generation has changed since capture
+      await act(async () => {
+        positionResolvers[0]!({ "a.md": { x: 999, y: 999 } });
+      });
+
+      // Stale positions should NOT be applied
+      expect(applySpy).not.toHaveBeenCalled();
+    });
+  });
+
+  // Cycle 13: Cleanup + stale effect cancellation
   describe("cleanup", () => {
     it("unsubscribes event listeners on unmount", async () => {
       mockInvoke(makeInvokeHandler());

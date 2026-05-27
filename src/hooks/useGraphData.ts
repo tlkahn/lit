@@ -22,6 +22,47 @@ export interface UseGraphDataResult {
   dataVersion: number;
 }
 
+async function doRebuild(
+  graph: Graph,
+  currentMode: "full" | "local",
+  currentDepth: number,
+  currentActivePageId: string | null | undefined,
+  dimColorRef: MutableRefObject<string>,
+  generationRef: MutableRefObject<number>,
+): Promise<{ stats: { nodes: number; edges: number }; tierSettings: TierSettings } | null> {
+  const myGen = ++generationRef.current;
+
+  let subgraph: SubgraphResult;
+  if (currentMode === "local" && currentActivePageId) {
+    subgraph = await getGraphSubgraph([currentActivePageId], currentDepth);
+  } else {
+    subgraph = await getFullSubgraph();
+  }
+
+  if (myGen !== generationRef.current) return null;
+
+  const { accentColor, dimColor } = resolveThemeColors();
+  dimColorRef.current = dimColor;
+
+  graph.clear();
+  populateGraph(
+    graph,
+    subgraph,
+    accentColor,
+    currentMode === "local" ? (currentActivePageId ?? undefined) : undefined,
+  );
+
+  const positions = subgraph.positions;
+  if (positions && Object.keys(positions).length > 0) {
+    applyPositions(graph, positions);
+  }
+
+  return {
+    stats: { nodes: graph.order, edges: graph.size },
+    tierSettings: getQualitySettings(graph.order),
+  };
+}
+
 const DEFAULT_TIER: TierSettings = {
   tier: "small",
   labelRenderedSizeThreshold: Infinity,
@@ -42,6 +83,7 @@ export function useGraphData(options: UseGraphDataOptions): UseGraphDataResult {
   const [tierSettings, setTierSettings] = useState<TierSettings>(DEFAULT_TIER);
   const [dataVersion, setDataVersion] = useState(0);
 
+  const generationRef = useRef(0);
   const modeRef = useRef(mode);
   const depthRef = useRef(depth);
   const activePageIdRef = useRef(activePageId);
@@ -58,31 +100,10 @@ export function useGraphData(options: UseGraphDataOptions): UseGraphDataResult {
       try {
         setLoading(true);
         setError(null);
-
-        let subgraph: SubgraphResult;
-        if (mode === "local" && activePageId) {
-          subgraph = await getGraphSubgraph([activePageId], depth);
-        } else {
-          subgraph = await getFullSubgraph();
-        }
-
-        if (cancelled) return;
-
-        const { accentColor, dimColor } = resolveThemeColors();
-        dimColorRef.current = dimColor;
-
-        const graph = graphRef.current!;
-        graph.clear();
-        populateGraph(graph, subgraph, accentColor, mode === "local" ? (activePageId ?? undefined) : undefined);
-
-        const positions = subgraph.positions;
-        if (positions && Object.keys(positions).length > 0) {
-          applyPositions(graph, positions);
-        }
-
-        const settings = getQualitySettings(graph.order);
-        setTierSettings(settings);
-        setGraphStats({ nodes: graph.order, edges: graph.size });
+        const result = await doRebuild(graphRef.current!, mode, depth, activePageId, dimColorRef, generationRef);
+        if (cancelled || !result) return;
+        setTierSettings(result.tierSettings);
+        setGraphStats(result.stats);
         setLoading(false);
         setDataVersion((v) => v + 1);
       } catch (e) {
@@ -106,31 +127,12 @@ export function useGraphData(options: UseGraphDataOptions): UseGraphDataResult {
 
     listen("lit:graph-updated", async () => {
       if (cancelled) return;
-
       try {
-        let subgraph: SubgraphResult;
-        if (modeRef.current === "local" && activePageIdRef.current) {
-          subgraph = await getGraphSubgraph([activePageIdRef.current], depthRef.current);
-        } else {
-          subgraph = await getFullSubgraph();
-        }
-
-        if (cancelled) return;
-
-        const { accentColor, dimColor } = resolveThemeColors();
-        dimColorRef.current = dimColor;
-
-        const graph = graphRef.current!;
-        graph.clear();
-        populateGraph(graph, subgraph, accentColor, modeRef.current === "local" ? (activePageIdRef.current ?? undefined) : undefined);
-
-        const positions = subgraph.positions;
-        if (positions && Object.keys(positions).length > 0) {
-          applyPositions(graph, positions);
-        }
-
-        setTierSettings(getQualitySettings(graph.order));
-        setGraphStats({ nodes: graph.order, edges: graph.size });
+        const result = await doRebuild(graphRef.current!, modeRef.current, depthRef.current, activePageIdRef.current, dimColorRef, generationRef);
+        if (cancelled || !result) return;
+        setTierSettings(result.tierSettings);
+        setGraphStats(result.stats);
+        setLoading(false);
         setDataVersion((v) => v + 1);
       } catch {
         // event-driven rebuild failures are non-fatal
@@ -152,8 +154,9 @@ export function useGraphData(options: UseGraphDataOptions): UseGraphDataResult {
     listen("lit:layout-ready", async () => {
       if (cancelled) return;
       try {
+        const myGen = generationRef.current;
         const positions = await getGraphPositions();
-        if (cancelled) return;
+        if (cancelled || myGen !== generationRef.current) return;
         if (positions && Object.keys(positions).length > 0) {
           applyPositions(graphRef.current!, positions);
           setDataVersion((v) => v + 1);
