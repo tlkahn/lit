@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { buildGraph, resolveThemeColors, applyPositions, recolorSeed, NODE_SIZE, SEED_COLOR } from "./graphLayout";
+import { buildGraph, resolveThemeColors, applyPositions, recolorSeed, seedAttrs, NODE_SIZE, SEED_COLOR } from "./graphLayout";
 import type { SubgraphResult } from "./ipc";
 
 describe("graphLayout", () => {
@@ -238,6 +238,20 @@ describe("graphLayout", () => {
       const cy = graph.getNodeAttribute("c.md", "y") as number;
       expect(typeof cx).toBe("number");
       expect(typeof cy).toBe("number");
+    });
+  });
+
+  describe("seedAttrs", () => {
+    it("returns seed type and SEED_COLOR when isSeed is true", () => {
+      expect(seedAttrs(true, "#7c3aed")).toEqual({ type: "seed", color: SEED_COLOR });
+    });
+
+    it("returns filled type and accentColor when isSeed is false", () => {
+      expect(seedAttrs(false, "#7c3aed")).toEqual({ type: "filled", color: "#7c3aed" });
+    });
+
+    it("uses the provided accentColor, not a hardcoded value", () => {
+      expect(seedAttrs(false, "#ff0000").color).toBe("#ff0000");
     });
   });
 

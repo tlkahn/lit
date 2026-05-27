@@ -176,14 +176,13 @@ export function useGraphData(options: UseGraphDataOptions): UseGraphDataResult {
   }, []);
 
   useEffect(() => {
-    const prev = prevSeedRef.current;
-    prevSeedRef.current = activePageId;
-
     if (mode !== "full") return;
+    const prev = prevSeedRef.current;
     if (prev === activePageId) return;
     const graph = graphRef.current;
     if (!graph || graph.order === 0) return;
 
+    prevSeedRef.current = activePageId;
     const { accentColor } = resolveThemeColors();
     recolorSeed(graph, prev, activePageId, accentColor);
   }, [activePageId, mode]);
