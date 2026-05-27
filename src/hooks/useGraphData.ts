@@ -3,7 +3,7 @@ import Graph from "graphology";
 import { listen } from "@tauri-apps/api/event";
 import { getFullSubgraph, getGraphPositions, getGraphSubgraph } from "../lib/ipc";
 import type { SubgraphResult } from "../lib/ipc";
-import { applyPositions, populateGraph, resolveThemeColors } from "../lib/graphLayout";
+import { applyPositions, populateGraph, recolorSeed, resolveThemeColors } from "../lib/graphLayout";
 import { getQualitySettings, type TierSettings } from "../lib/qualityTiers";
 
 export interface UseGraphDataOptions {
@@ -20,6 +20,7 @@ export interface UseGraphDataResult {
   tierSettings: TierSettings;
   dimColorRef: MutableRefObject<string>;
   dataVersion: number;
+  seedVersion: number;
 }
 
 async function doRebuild(
@@ -82,8 +83,10 @@ export function useGraphData(options: UseGraphDataOptions): UseGraphDataResult {
   const [graphStats, setGraphStats] = useState<{ nodes: number; edges: number } | null>(null);
   const [tierSettings, setTierSettings] = useState<TierSettings>(DEFAULT_TIER);
   const [dataVersion, setDataVersion] = useState(0);
+  const [seedVersion, setSeedVersion] = useState(0);
 
   const generationRef = useRef(0);
+  const prevSeedRef = useRef(activePageId);
   const modeRef = useRef(mode);
   const depthRef = useRef(depth);
   const activePageIdRef = useRef(activePageId);
@@ -174,6 +177,20 @@ export function useGraphData(options: UseGraphDataOptions): UseGraphDataResult {
     };
   }, []);
 
+  useEffect(() => {
+    const prev = prevSeedRef.current;
+    prevSeedRef.current = activePageId;
+
+    if (mode !== "full") return;
+    if (prev === activePageId) return;
+    const graph = graphRef.current;
+    if (!graph || graph.order === 0) return;
+
+    const { accentColor } = resolveThemeColors();
+    recolorSeed(graph, prev, activePageId, accentColor);
+    setSeedVersion((v) => v + 1);
+  }, [activePageId, mode]);
+
   return {
     graphRef,
     loading,
@@ -182,5 +199,6 @@ export function useGraphData(options: UseGraphDataOptions): UseGraphDataResult {
     tierSettings,
     dimColorRef,
     dataVersion,
+    seedVersion,
   };
 }

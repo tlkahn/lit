@@ -610,4 +610,27 @@ describe("useGraphRenderer", () => {
       result.current.refresh();
     }).not.toThrow();
   });
+
+  // --- Cycle: seedVersion change triggers refresh WITHOUT camera reset ---
+
+  it("seedVersion change triggers sigma.refresh WITHOUT camera.animatedReset", async () => {
+    const useGraphRenderer = await importHook();
+    const opts = makeOptions({ dataVersion: 1, seedVersion: 0 });
+
+    const { rerender } = renderHook(
+      (props: UseGraphRendererOptions) => useGraphRenderer(props),
+      { initialProps: opts },
+    );
+
+    await waitFor(() => { expect(sigmaConstructorCount).toBe(1); });
+    mockSigmaRefresh.mockClear();
+    mockCameraAnimatedReset.mockClear();
+
+    rerender({ ...opts, seedVersion: 1 });
+
+    await waitFor(() => {
+      expect(mockSigmaRefresh).toHaveBeenCalled();
+    });
+    expect(mockCameraAnimatedReset).not.toHaveBeenCalled();
+  });
 });

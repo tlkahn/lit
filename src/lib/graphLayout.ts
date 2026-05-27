@@ -52,6 +52,22 @@ export function populateGraph(graph: Graph, subgraph: SubgraphResult, accentColo
   }
 }
 
+export function recolorSeed(
+  graph: Graph,
+  prevSeedId: string | null | undefined,
+  nextSeedId: string | null | undefined,
+  accentColor: string,
+): void {
+  if (prevSeedId && prevSeedId !== nextSeedId && graph.hasNode(prevSeedId)) {
+    graph.setNodeAttribute(prevSeedId, "type", "filled");
+    graph.setNodeAttribute(prevSeedId, "color", accentColor);
+  }
+  if (nextSeedId && graph.hasNode(nextSeedId)) {
+    graph.setNodeAttribute(nextSeedId, "type", "seed");
+    graph.setNodeAttribute(nextSeedId, "color", SEED_COLOR);
+  }
+}
+
 export function buildGraph(options: GraphBuildOptions): Graph {
   const { subgraph, accentColor, seedId } = options;
   const graph = new Graph();

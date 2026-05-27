@@ -940,6 +940,35 @@ describe("GraphView", () => {
     expect(invoke).not.toHaveBeenCalledWith("get_graph_subgraph", expect.anything());
   });
 
+  it("full mode + activePageId change recolors seed, no IPC refetch, no sigma kill", async () => {
+    const populateGraphSpy = vi.spyOn(graphLayout, "populateGraph");
+    const GraphView = (await import("./GraphView")).default;
+    const { rerender } = render(<GraphView activePageId="a.md" />);
+
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+    await waitFor(() => { expect(screen.queryByTestId("graph-loading")).not.toBeInTheDocument(); });
+
+    const graph = populateGraphSpy.mock.calls[0]![0] as import("graphology").default;
+    expect(graph.getNodeAttribute("a.md", "type")).toBe("seed");
+    expect(graph.getNodeAttribute("b.md", "type")).toBe("filled");
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    (invoke as unknown as ReturnType<typeof vi.fn>).mockClear();
+    mockSigmaKill.mockClear();
+    mockSigmaRefresh.mockClear();
+
+    await act(async () => {
+      rerender(<GraphView activePageId="b.md" />);
+    });
+
+    expect(graph.getNodeAttribute("a.md", "type")).toBe("filled");
+    expect(graph.getNodeAttribute("b.md", "type")).toBe("seed");
+    expect(mockSigmaKill).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalledWith("get_graph_subgraph", expect.anything());
+    expect(mockSigmaRefresh).toHaveBeenCalled();
+
+    populateGraphSpy.mockRestore();
+  });
 
   it("huge graph: clearing search query restores hide-all-edges reducer", async () => {
     const spy = vi.spyOn(graphLayout, "populateGraph").mockImplementation((graph) => {

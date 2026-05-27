@@ -848,6 +848,88 @@ describe("useGraphData", () => {
     });
   });
 
+  // Cycle: Seed recolor in full mode
+  describe("seed recolor", () => {
+    it("full mode + rerender with new activePageId → graph attrs updated, seedVersion bumped", async () => {
+      mockInvoke(makeInvokeHandler());
+      const useGraphData = await importHook();
+
+      const { result, rerender } = renderHook(
+        (props: UseGraphDataOptions) => useGraphData(props),
+        { initialProps: { mode: "full", depth: 1, activePageId: "a.md" } as UseGraphDataOptions },
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      const v1 = result.current.seedVersion;
+      expect(result.current.graphRef.current!.getNodeAttribute("a.md", "type")).toBe("seed");
+
+      rerender({ mode: "full", depth: 1, activePageId: "b.md" });
+
+      await waitFor(() => {
+        expect(result.current.seedVersion).toBeGreaterThan(v1);
+      });
+
+      expect(result.current.graphRef.current!.getNodeAttribute("a.md", "type")).toBe("filled");
+      expect(result.current.graphRef.current!.getNodeAttribute("b.md", "type")).toBe("seed");
+    });
+
+    it("full mode + same activePageId → seedVersion unchanged", async () => {
+      mockInvoke(makeInvokeHandler());
+      const useGraphData = await importHook();
+
+      const { result, rerender } = renderHook(
+        (props: UseGraphDataOptions) => useGraphData(props),
+        { initialProps: { mode: "full", depth: 1, activePageId: "a.md" } as UseGraphDataOptions },
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      const v1 = result.current.seedVersion;
+
+      rerender({ mode: "full", depth: 1, activePageId: "a.md" });
+
+      expect(result.current.seedVersion).toBe(v1);
+    });
+
+    it("local mode + new activePageId → seedVersion NOT bumped", async () => {
+      const handler = vi.fn((cmd: string, args?: Record<string, unknown>) => {
+        if (cmd === "get_graph_subgraph") {
+          const seeds = (args?.seeds as string[]) ?? [];
+          return seeds[0] === "b.md"
+            ? { nodes: [{ id: "b.md", title: "B" }], edges: [] }
+            : LOCAL_SUBGRAPH;
+        }
+        return {};
+      });
+      mockInvoke(handler);
+      const useGraphData = await importHook();
+
+      const { result, rerender } = renderHook(
+        (props: UseGraphDataOptions) => useGraphData(props),
+        { initialProps: { mode: "local", depth: 2, activePageId: "a.md" } as UseGraphDataOptions },
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      const v1 = result.current.seedVersion;
+
+      rerender({ mode: "local", depth: 2, activePageId: "b.md" });
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      expect(result.current.seedVersion).toBe(v1);
+    });
+  });
+
   // Cycle 13: Cleanup + stale effect cancellation
   describe("cleanup", () => {
     it("unsubscribes event listeners on unmount", async () => {
