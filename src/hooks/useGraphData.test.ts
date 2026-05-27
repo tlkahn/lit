@@ -426,6 +426,151 @@ describe("useGraphData", () => {
       expect(result.current.dataVersion).toBeGreaterThan(v1);
       expect(result.current.graphRef.current!.order).toBe(3);
     });
+
+    it("uses getGraphSubgraph with correct seed/depth in local mode", async () => {
+      let callCount = 0;
+      const updatedLocalSubgraph: SubgraphResult = {
+        nodes: [
+          { id: "a.md", title: "A" },
+          { id: "c.md", title: "C" },
+          { id: "d.md", title: "D" },
+        ],
+        edges: [["a.md", "c.md"], ["a.md", "d.md"]],
+      };
+
+      const handler = vi.fn((cmd: string, _args?: Record<string, unknown>) => {
+        if (cmd === "get_graph_subgraph") {
+          callCount++;
+          return callCount === 1 ? LOCAL_SUBGRAPH : updatedLocalSubgraph;
+        }
+        return {};
+      });
+      mockInvoke(handler);
+      mockListen();
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "local", depth: 2, activePageId: "a.md" }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      const v1 = result.current.dataVersion;
+
+      await act(async () => {
+        emitMockEvent("lit:graph-updated", null);
+      });
+
+      await waitFor(() => {
+        expect(result.current.graphRef.current!.hasNode("d.md")).toBe(true);
+      });
+
+      expect(handler).toHaveBeenLastCalledWith("get_graph_subgraph", {
+        seeds: ["a.md"],
+        depth: 2,
+        directed: null,
+      });
+      expect(result.current.graphStats).toEqual({ nodes: 3, edges: 2 });
+      expect(result.current.dataVersion).toBeGreaterThan(v1);
+    });
+
+    it("reads updated modeRef after switching from full to local", async () => {
+      const handler = vi.fn((cmd: string, args?: Record<string, unknown>) => {
+        if (cmd === "get_graph_subgraph") {
+          const seeds = (args?.seeds as string[]) ?? [];
+          return seeds.length > 0 ? LOCAL_SUBGRAPH : TWO_NODE_SUBGRAPH;
+        }
+        return {};
+      });
+      mockInvoke(handler);
+      mockListen();
+      const useGraphData = await importHook();
+
+      const { result, rerender } = renderHook(
+        (props: UseGraphDataOptions) => useGraphData(props),
+        { initialProps: { mode: "full", depth: 1, activePageId: null } as UseGraphDataOptions },
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      rerender({ mode: "local", depth: 2, activePageId: "a.md" });
+
+      await waitFor(() => {
+        expect(result.current.graphRef.current!.hasNode("c.md")).toBe(true);
+      });
+
+      handler.mockClear();
+
+      await act(async () => {
+        emitMockEvent("lit:graph-updated", null);
+      });
+
+      await waitFor(() => {
+        expect(handler).toHaveBeenCalledWith("get_graph_subgraph", {
+          seeds: ["a.md"],
+          depth: 2,
+          directed: null,
+        });
+      });
+
+      expect(result.current.graphRef.current!.hasNode("c.md")).toBe(true);
+      expect(result.current.graphRef.current!.hasNode("b.md")).toBe(false);
+    });
+
+    it("reads updated activePageIdRef after seed change", async () => {
+      const SUBGRAPH_B: SubgraphResult = {
+        nodes: [
+          { id: "b.md", title: "B" },
+          { id: "e.md", title: "E" },
+        ],
+        edges: [["b.md", "e.md"]],
+      };
+
+      const handler = vi.fn((cmd: string, args?: Record<string, unknown>) => {
+        if (cmd === "get_graph_subgraph") {
+          const seeds = (args?.seeds as string[]) ?? [];
+          if (seeds[0] === "b.md") return SUBGRAPH_B;
+          return LOCAL_SUBGRAPH;
+        }
+        return {};
+      });
+      mockInvoke(handler);
+      mockListen();
+      const useGraphData = await importHook();
+
+      const { result, rerender } = renderHook(
+        (props: UseGraphDataOptions) => useGraphData(props),
+        { initialProps: { mode: "local", depth: 2, activePageId: "a.md" } as UseGraphDataOptions },
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      rerender({ mode: "local", depth: 2, activePageId: "b.md" });
+
+      await waitFor(() => {
+        expect(result.current.graphRef.current!.hasNode("e.md")).toBe(true);
+      });
+
+      handler.mockClear();
+
+      await act(async () => {
+        emitMockEvent("lit:graph-updated", null);
+      });
+
+      await waitFor(() => {
+        expect(handler).toHaveBeenCalledWith("get_graph_subgraph", {
+          seeds: ["b.md"],
+          depth: 2,
+          directed: null,
+        });
+      });
+    });
   });
 
   // Cycle 11: lit:layout-ready
