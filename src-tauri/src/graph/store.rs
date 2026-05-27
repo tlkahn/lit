@@ -423,6 +423,24 @@ impl Store {
         Ok(edges)
     }
 
+    pub fn all_edges_full(&self) -> Result<Vec<(String, String, String, String, u32)>, GraphError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT source, target, context, raw_target, source_line FROM edges ORDER BY source, target"
+        )?;
+        let edges = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, u32>(4)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(edges)
+    }
+
     pub fn all_nodes_metadata(&self) -> Result<Vec<(String, bool)>, GraphError> {
         let mut stmt = self
             .conn

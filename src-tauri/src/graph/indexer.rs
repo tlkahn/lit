@@ -832,13 +832,21 @@ impl GraphIndex {
     }
 
     pub fn backlinks(&self, page_id: &str) -> Result<Vec<BacklinkEntry>, GraphError> {
-        let store = self.store.lock().unwrap();
-        store.backlinks(page_id)
+        let knowledge = self.knowledge.lock().unwrap();
+        match knowledge.backlinks(page_id) {
+            Ok(entries) => Ok(entries),
+            Err(GraphError::NodeNotFound { .. }) => Ok(vec![]),
+            Err(e) => Err(e),
+        }
     }
 
     pub fn forward_links(&self, page_id: &str) -> Result<Vec<LinkEntry>, GraphError> {
-        let store = self.store.lock().unwrap();
-        store.forward_links(page_id)
+        let knowledge = self.knowledge.lock().unwrap();
+        match knowledge.forward_links(page_id) {
+            Ok(entries) => Ok(entries),
+            Err(GraphError::NodeNotFound { .. }) => Ok(vec![]),
+            Err(e) => Err(e),
+        }
     }
 
     pub fn unlinked_mentions(&self, page_id: &str) -> Result<Vec<UnlinkedMention>, GraphError> {
@@ -848,10 +856,15 @@ impl GraphIndex {
 
         let store = self.store.lock().unwrap();
         let (title, aliases) = store.title_and_aliases(page_id)?;
-        let already_linked = store.backlink_source_ids(page_id)?;
         let all_paths = store.all_synced_paths()?;
         let titles = store.node_titles()?;
         drop(store);
+
+        let knowledge = self.knowledge.lock().unwrap();
+        let already_linked = knowledge
+            .backlink_source_ids(page_id)
+            .unwrap_or_default();
+        drop(knowledge);
 
         let mut names: Vec<String> = vec![title];
         names.extend(aliases);
@@ -3788,6 +3801,757 @@ mod tests {
             edges.iter().any(|(s, t)| s == "a.md" && t == "b.md"),
             "a.md should link to b.md, edges: {:?}",
             edges
+        );
+    }
+
+    // --- Issue #196: backlinks vs graph-view consistency ---
+    //
+    // These tests demonstrate edge cases where the two separate data sources
+    // (store SQL queries for backlinks vs in-memory KnowledgeGraph for graph
+    // view) can diverge, motivating a single-source-of-truth refactor.
+
+    #[test]
+    fn backlinks_match_graph_incoming_neighbors_after_cold_start() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Links to [[b]] and [[c]].");
+        write_md(dir.path(), "b.md", "Links to [[c]].");
+        write_md(dir.path(), "c.md", "Links to [[a]].");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        for target in &["a.md", "b.md", "c.md"] {
+            let bl_sources: HashSet<String> = gi
+                .backlinks(target)
+                .unwrap()
+                .into_iter()
+                .map(|e| e.source_id)
+                .collect();
+
+            let neighbors = gi.neighbors(target, 1, false).unwrap();
+            let neighbor_ids: HashSet<&str> = neighbors
+                .nodes
+                .iter()
+                .map(|n| n.id.as_str())
+                .collect();
+
+            for src in &bl_sources {
+                assert!(
+                    neighbor_ids.contains(src.as_str()),
+                    "backlink source {} for target {} missing from graph neighbors {:?}",
+                    src,
+                    target,
+                    neighbor_ids,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn backlinks_consistent_after_warm_start_with_new_linking_file() {
+        let dir = create_workspace();
+        write_md(dir.path(), "target.md", "I am the target.");
+        write_md(dir.path(), "existing-linker.md", "Links to [[target]].");
+
+        let gi1 = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        assert_eq!(gi1.backlinks("target.md").unwrap().len(), 1);
+        drop(gi1);
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        write_md(dir.path(), "new-linker.md", "Also links to [[target]].");
+
+        let gi2 = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let bl = gi2.backlinks("target.md").unwrap();
+        let bl_sources: HashSet<String> = bl.into_iter().map(|e| e.source_id).collect();
+        assert!(
+            bl_sources.contains("new-linker.md"),
+            "warm-start backlinks should include new-linker.md, got: {:?}",
+            bl_sources,
+        );
+
+        let neighbors = gi2.neighbors("target.md", 1, false).unwrap();
+        let neighbor_ids: HashSet<&str> = neighbors
+            .nodes
+            .iter()
+            .map(|n| n.id.as_str())
+            .collect();
+        assert!(
+            neighbor_ids.contains("new-linker.md"),
+            "warm-start graph neighbors should include new-linker.md, got: {:?}",
+            neighbor_ids,
+        );
+    }
+
+    #[test]
+    fn backlinks_appear_after_stub_resolved_by_batch_reindex() {
+        let dir = create_workspace();
+        write_md(dir.path(), "source.md", "Links to [[target]].");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        // Before target.md exists, backlinks for "target.md" should be empty
+        // because the edge points to the stub "target", not "target.md"
+        let bl_before = gi.backlinks("target.md").unwrap();
+        assert!(
+            bl_before.is_empty(),
+            "no backlinks for target.md when it doesn't exist yet"
+        );
+
+        // Create the real file and reindex
+        write_md(dir.path(), "target.md", "I exist now.");
+        gi.batch_reindex(
+            &DiffResult {
+                new: vec!["target.md".to_string()],
+                changed: vec![],
+                deleted: vec![],
+            },
+            true,
+        )
+        .unwrap();
+
+        // After reindex, backlinks("target.md") should include source.md
+        let bl_after = gi.backlinks("target.md").unwrap();
+        let bl_sources: HashSet<String> = bl_after.into_iter().map(|e| e.source_id).collect();
+        assert!(
+            bl_sources.contains("source.md"),
+            "backlinks for target.md should include source.md after stub resolution, got: {:?}",
+            bl_sources,
+        );
+
+        // Graph neighbors should also include source.md
+        let neighbors = gi.neighbors("target.md", 1, false).unwrap();
+        let neighbor_ids: HashSet<&str> = neighbors
+            .nodes
+            .iter()
+            .map(|n| n.id.as_str())
+            .collect();
+        assert!(
+            neighbor_ids.contains("source.md"),
+            "graph neighbors should include source.md after stub resolution, got: {:?}",
+            neighbor_ids,
+        );
+    }
+
+    #[test]
+    fn sync_with_disk_makes_new_backlinks_visible() {
+        let dir = create_workspace();
+        write_md(dir.path(), "target.md", "Target page.");
+        write_md(dir.path(), "linker-a.md", "Links to [[target]].");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        assert_eq!(gi.backlinks("target.md").unwrap().len(), 1);
+
+        // Add a new file that links to target — after build, so sync_with_disk sees it
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        write_md(dir.path(), "linker-b.md", "Also links to [[target]].");
+        gi.sync_with_disk(true).unwrap();
+
+        let bl = gi.backlinks("target.md").unwrap();
+        let bl_sources: HashSet<String> = bl.into_iter().map(|e| e.source_id).collect();
+        assert!(
+            bl_sources.contains("linker-b.md"),
+            "sync_with_disk should make linker-b.md visible as backlink, got: {:?}",
+            bl_sources,
+        );
+
+        let neighbors = gi.neighbors("target.md", 1, false).unwrap();
+        let neighbor_ids: HashSet<&str> = neighbors
+            .nodes
+            .iter()
+            .map(|n| n.id.as_str())
+            .collect();
+        assert!(
+            neighbor_ids.contains("linker-b.md"),
+            "graph neighbors should include linker-b.md after sync, got: {:?}",
+            neighbor_ids,
+        );
+    }
+
+    #[test]
+    fn sync_with_disk_resolves_stub_and_updates_backlinks() {
+        let dir = create_workspace();
+        write_md(dir.path(), "source.md", "Links to [[future-page]].");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        assert!(gi.backlinks("future-page.md").unwrap().is_empty());
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        write_md(dir.path(), "future-page.md", "I was created later.");
+        gi.sync_with_disk(true).unwrap();
+
+        let bl = gi.backlinks("future-page.md").unwrap();
+        let bl_sources: HashSet<String> = bl.into_iter().map(|e| e.source_id).collect();
+        assert!(
+            bl_sources.contains("source.md"),
+            "after sync, backlinks should show source.md linking to future-page.md, got: {:?}",
+            bl_sources,
+        );
+    }
+
+    #[test]
+    fn backlinks_work_with_special_chars_in_filenames() {
+        let dir = create_workspace();
+        let target_name = "Alpha: First Part + Beta: Second Part.md";
+        write_md(dir.path(), target_name, "Combined doc.");
+        write_md(
+            dir.path(),
+            "linker.md",
+            "Links to [[Alpha: First Part + Beta: Second Part]].",
+        );
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        let bl = gi.backlinks(target_name).unwrap();
+        assert_eq!(
+            bl.len(),
+            1,
+            "backlinks for file with special chars should work, got: {:?}",
+            bl,
+        );
+        assert_eq!(bl[0].source_id, "linker.md");
+    }
+
+    #[test]
+    fn backlinks_work_with_unicode_filenames() {
+        let dir = create_workspace();
+        let target_name = "知识图谱入门.md";
+        write_md(dir.path(), target_name, "Content.");
+        write_md(dir.path(), "reference.md", "See [[知识图谱入门]].");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        let bl = gi.backlinks(target_name).unwrap();
+        assert_eq!(bl.len(), 1);
+        assert_eq!(bl[0].source_id, "reference.md");
+
+        let neighbors = gi.neighbors(target_name, 1, false).unwrap();
+        let neighbor_ids: HashSet<&str> = neighbors
+            .nodes
+            .iter()
+            .map(|n| n.id.as_str())
+            .collect();
+        assert!(neighbor_ids.contains("reference.md"));
+    }
+
+    #[test]
+    fn warm_start_new_file_backlinks_match_graph() {
+        let dir = create_workspace();
+        write_md(dir.path(), "hub.md", "I am the hub. [[spoke-a]] [[spoke-b]]");
+        write_md(dir.path(), "spoke-a.md", "Links back to [[hub]].");
+        write_md(dir.path(), "spoke-b.md", "Links back to [[hub]].");
+
+        let gi1 = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        let bl = gi1.backlinks("hub.md").unwrap();
+        let bl_sources: HashSet<String> = bl.into_iter().map(|e| e.source_id).collect();
+        assert_eq!(bl_sources.len(), 2);
+        assert!(bl_sources.contains("spoke-a.md"));
+        assert!(bl_sources.contains("spoke-b.md"));
+        drop(gi1);
+
+        // Add a third spoke
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        write_md(dir.path(), "spoke-c.md", "Links back to [[hub]].");
+
+        let gi2 = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        let bl = gi2.backlinks("hub.md").unwrap();
+        let bl_sources: HashSet<String> = bl.into_iter().map(|e| e.source_id).collect();
+        assert_eq!(
+            bl_sources.len(),
+            3,
+            "warm start should index spoke-c's backlink, got: {:?}",
+            bl_sources,
+        );
+
+        let neighbors = gi2.neighbors("hub.md", 1, false).unwrap();
+        let neighbor_ids: HashSet<&str> = neighbors
+            .nodes
+            .iter()
+            .map(|n| n.id.as_str())
+            .collect();
+        assert!(
+            neighbor_ids.contains("spoke-c.md"),
+            "graph neighbors should also include spoke-c.md, got: {:?}",
+            neighbor_ids,
+        );
+    }
+
+    #[test]
+    fn backlinks_after_reindex_file_on_previously_unindexed_links() {
+        let dir = create_workspace();
+        write_md(dir.path(), "target.md", "Target.");
+        write_md(dir.path(), "source.md", "No links yet.");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        assert!(gi.backlinks("target.md").unwrap().is_empty());
+
+        // Source now links to target (simulates user editing and saving)
+        write_md(dir.path(), "source.md", "Now links to [[target]].");
+        gi.reindex_file("source.md", true).unwrap();
+
+        let bl = gi.backlinks("target.md").unwrap();
+        assert_eq!(bl.len(), 1);
+        assert_eq!(bl[0].source_id, "source.md");
+
+        let neighbors = gi.neighbors("target.md", 1, false).unwrap();
+        let neighbor_ids: HashSet<&str> = neighbors
+            .nodes
+            .iter()
+            .map(|n| n.id.as_str())
+            .collect();
+        assert!(neighbor_ids.contains("source.md"));
+    }
+
+    #[test]
+    fn backlinks_and_graph_agree_on_multi_hop_network() {
+        let dir = create_workspace();
+        // A -> B -> C, D -> B, D -> C
+        write_md(dir.path(), "a.md", "[[b]]");
+        write_md(dir.path(), "b.md", "[[c]]");
+        write_md(dir.path(), "c.md", "Leaf.");
+        write_md(dir.path(), "d.md", "[[b]] and [[c]]");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        // b.md should have backlinks from a.md and d.md
+        let bl_b: HashSet<String> = gi
+            .backlinks("b.md")
+            .unwrap()
+            .into_iter()
+            .map(|e| e.source_id)
+            .collect();
+        assert_eq!(bl_b.len(), 2, "b.md backlinks: {:?}", bl_b);
+        assert!(bl_b.contains("a.md"));
+        assert!(bl_b.contains("d.md"));
+
+        // c.md should have backlinks from b.md and d.md
+        let bl_c: HashSet<String> = gi
+            .backlinks("c.md")
+            .unwrap()
+            .into_iter()
+            .map(|e| e.source_id)
+            .collect();
+        assert_eq!(bl_c.len(), 2, "c.md backlinks: {:?}", bl_c);
+        assert!(bl_c.contains("b.md"));
+        assert!(bl_c.contains("d.md"));
+
+        // Graph neighbors of b.md (undirected, depth=1) should include a, c, d
+        let neighbors_b = gi.neighbors("b.md", 1, false).unwrap();
+        let n_ids: HashSet<&str> = neighbors_b
+            .nodes
+            .iter()
+            .map(|n| n.id.as_str())
+            .collect();
+        for expected in &["a.md", "c.md", "d.md"] {
+            assert!(
+                n_ids.contains(expected),
+                "graph neighbors of b.md missing {}, got: {:?}",
+                expected,
+                n_ids,
+            );
+        }
+
+        // Every backlink source should be a graph neighbor
+        for src in &bl_b {
+            assert!(
+                n_ids.contains(src.as_str()),
+                "backlink source {} not in graph neighbors of b.md",
+                src,
+            );
+        }
+    }
+
+    // --- Edge-case coverage for unified KnowledgeGraph read path ---
+    //
+    // Now that GraphIndex delegates backlinks/forward_links to
+    // KnowledgeGraph, these tests verify the store and graph agree on
+    // edge data and that viz dedup is correctly layered on top.
+
+    #[test]
+    fn duplicate_wikilinks_backlinks_match_store_edges() {
+        // A file mentions [[target]] twice. Both store and KG multigraph
+        // keep both edges; viz SubgraphResult deduplicates for display.
+        let dir = create_workspace();
+        write_md(dir.path(), "source.md", "First [[target]]. Second [[target]].");
+        write_md(dir.path(), "target.md", "Target.");
+        let store = Store::open_memory().unwrap();
+        index_workspace(&store, dir.path(), true).unwrap();
+
+        let store_bl = store.backlinks("target.md").unwrap();
+        let knowledge = KnowledgeGraph::from_store(&store).unwrap();
+        let kg_bl = knowledge.backlinks("target.md").unwrap();
+
+        let sub = knowledge.neighbors("target.md", 1, false).unwrap();
+        let viz_edge_count = sub
+            .edges
+            .iter()
+            .filter(|(s, t)| s == "source.md" && t == "target.md")
+            .count();
+
+        assert_eq!(store_bl.len(), 2, "store keeps both edge rows");
+        assert_eq!(kg_bl.len(), 2, "KG multigraph keeps both edges");
+        assert_eq!(
+            store_bl.len(),
+            kg_bl.len(),
+            "store and KG backlinks agree"
+        );
+        assert_eq!(viz_edge_count, 1, "viz deduplicates to 1 edge per pair");
+    }
+
+    #[test]
+    fn stub_edge_invisible_to_store_backlinks_for_real_node_id() {
+        // When [[target]] creates a stub edge (source→"target"), querying
+        // store.backlinks("target.md") returns nothing because the edge
+        // target is "target" not "target.md". Root cause of issue #196.
+        let dir = create_workspace();
+        write_md(dir.path(), "source.md", "Links to [[target]].");
+        // target.md does NOT exist yet
+        let store = Store::open_memory().unwrap();
+        index_workspace(&store, dir.path(), true).unwrap();
+
+        // Edge points to stub "target", not "target.md"
+        let all_edges = store.all_edges().unwrap();
+        assert!(
+            all_edges.iter().any(|(s, t)| s == "source.md" && t == "target"),
+            "edge should point to stub 'target', edges: {:?}",
+            all_edges,
+        );
+
+        // Backlinks for the stub ID works
+        let bl_stub = store.backlinks("target").unwrap();
+        assert_eq!(bl_stub.len(), 1, "backlinks('target') finds the stub edge");
+
+        // But if target.md is later created, the frontend will query
+        // backlinks("target.md") — which finds nothing
+        // (This is what happens in issue #196 before the source is re-indexed)
+        let bl_real = store.backlinks("target.md").unwrap();
+        assert!(
+            bl_real.is_empty(),
+            "backlinks('target.md') finds nothing because edge target is 'target' not 'target.md'"
+        );
+    }
+
+    #[test]
+    fn backlinks_returns_incoming_only_while_neighbors_returns_both() {
+        // Both backlinks() and neighbors() now read from KnowledgeGraph.
+        // backlinks() returns incoming edges only; neighbors(directed=false)
+        // returns both incoming and outgoing. By-design API difference.
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Links to [[b]].");
+        write_md(dir.path(), "b.md", "Links to [[c]].");
+        write_md(dir.path(), "c.md", "Leaf.");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        // b.md's backlinks: only a.md (incoming)
+        let bl: HashSet<String> = gi
+            .backlinks("b.md")
+            .unwrap()
+            .into_iter()
+            .map(|e| e.source_id)
+            .collect();
+        assert_eq!(bl.len(), 1);
+        assert!(bl.contains("a.md"));
+
+        // b.md's graph neighbors (undirected): a.md (incoming) + c.md (outgoing)
+        let neighbors = gi.neighbors("b.md", 1, false).unwrap();
+        let n_ids: HashSet<&str> = neighbors
+            .nodes
+            .iter()
+            .filter(|n| n.id != "b.md")
+            .map(|n| n.id.as_str())
+            .collect();
+        assert_eq!(n_ids.len(), 2);
+        assert!(n_ids.contains("a.md"));
+        assert!(n_ids.contains("c.md"));
+
+        // backlinks = incoming only (1), neighbors = both directions (2)
+        assert_ne!(
+            bl.len(),
+            n_ids.len(),
+            "backlinks ({}) != neighbors ({}) — by-design API difference",
+            bl.len(),
+            n_ids.len(),
+        );
+    }
+
+    #[test]
+    fn late_file_creation_backlinks_and_graph_agree() {
+        // Issue #196 scenario: source.md links to target, target.md is
+        // created later. After incremental reindex, both backlinks() and
+        // neighbors() (both via KG) see the resolved edge.
+        let dir = create_workspace();
+        write_md(dir.path(), "source.md", "See [[target]].");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        // Before target.md exists: graph can't find "target.md" as a node
+        assert!(gi.neighbors("target.md", 1, false).is_err());
+        assert!(gi.backlinks("target.md").unwrap().is_empty());
+
+        // Create target.md and do incremental reindex
+        write_md(dir.path(), "target.md", "Now I exist.");
+        gi.batch_reindex(
+            &DiffResult {
+                new: vec!["target.md".to_string()],
+                changed: vec![],
+                deleted: vec![],
+            },
+            true,
+        )
+        .unwrap();
+
+        // Graph should now show source.md as a neighbor of target.md
+        let neighbors = gi.neighbors("target.md", 1, false).unwrap();
+        let n_ids: HashSet<&str> = neighbors
+            .nodes
+            .iter()
+            .map(|n| n.id.as_str())
+            .collect();
+        let graph_sees_source = n_ids.contains("source.md");
+
+        // Backlinks should also show source.md
+        let bl: HashSet<String> = gi
+            .backlinks("target.md")
+            .unwrap()
+            .into_iter()
+            .map(|e| e.source_id)
+            .collect();
+        let backlinks_sees_source = bl.contains("source.md");
+
+        // CRITICAL: both must agree. If graph sees it but backlinks doesn't,
+        // that's the issue #196 bug.
+        assert!(
+            graph_sees_source,
+            "graph should see source.md as neighbor of target.md"
+        );
+        assert!(
+            backlinks_sees_source,
+            "backlinks should see source.md linking to target.md"
+        );
+        assert_eq!(
+            graph_sees_source, backlinks_sees_source,
+            "graph and backlinks must agree on whether source.md links to target.md"
+        );
+    }
+
+    #[test]
+    fn warm_start_resolves_stale_stub_edge() {
+        // Scenario: cold start creates stub edge (source→"target").
+        // Then target.md is created ON DISK but with the SAME mtime as the
+        // initial indexing timestamp (e.g., file restored from backup).
+        // On warm start, compute_diff sees target.md as new (not in sync
+        // table) and should re-resolve, but source.md is NOT in the diff
+        // and must be re-resolved via changed_stems.
+        // This test verifies both code paths produce consistent results.
+        let dir = create_workspace();
+        write_md(dir.path(), "source.md", "Links to [[target]].");
+        // Cold start — creates stub edge source.md → "target"
+        let gi1 = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        assert!(gi1.backlinks("target.md").unwrap().is_empty());
+        drop(gi1);
+
+        // Create target.md AFTER cold start
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        write_md(dir.path(), "target.md", "Created later.");
+
+        // Warm start — should detect target.md as new, re-resolve source.md
+        let gi2 = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        let bl = gi2.backlinks("target.md").unwrap();
+        let bl_sources: HashSet<String> = bl.into_iter().map(|e| e.source_id).collect();
+
+        let neighbors = gi2.neighbors("target.md", 1, false).unwrap();
+        let n_ids: HashSet<&str> = neighbors
+            .nodes
+            .iter()
+            .map(|n| n.id.as_str())
+            .collect();
+
+        // Both must agree
+        assert!(
+            bl_sources.contains("source.md"),
+            "warm start backlinks should include source.md, got: {:?}",
+            bl_sources,
+        );
+        assert!(
+            n_ids.contains("source.md"),
+            "warm start graph neighbors should include source.md, got: {:?}",
+            n_ids,
+        );
+    }
+
+    #[test]
+    fn store_and_kg_backlink_sources_agree() {
+        // After indexing a network, for every non-stub node, store.backlinks()
+        // unique sources must match knowledge.backlink_source_ids().
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "[[b]] [[c]]");
+        write_md(dir.path(), "b.md", "[[c]] [[a]]");
+        write_md(dir.path(), "c.md", "[[a]]");
+        write_md(dir.path(), "d.md", "[[a]] [[b]] [[c]]");
+        let store = Store::open_memory().unwrap();
+        index_workspace(&store, dir.path(), true).unwrap();
+
+        let knowledge = KnowledgeGraph::from_store(&store).unwrap();
+
+        for target in &["a.md", "b.md", "c.md"] {
+            let store_sources: HashSet<String> = store
+                .backlinks(target)
+                .unwrap()
+                .into_iter()
+                .map(|e| e.source_id)
+                .collect();
+
+            let kg_sources = knowledge.backlink_source_ids(target).unwrap();
+
+            assert_eq!(
+                store_sources, kg_sources,
+                "store and KG backlink sources must agree for {target}"
+            );
+        }
+    }
+
+    #[test]
+    fn warm_start_no_diff_preserves_stale_stub_then_resolves() {
+        // When the store has a stale stub edge and warm start sees no diff,
+        // the stub persists. Creating the target file and re-building
+        // triggers re-resolution so backlinks work.
+        let dir = create_workspace();
+        write_md(dir.path(), "source.md", "Links to [[target]].");
+
+        // Cold start — creates stub edge source.md → "target"
+        let gi1 = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        assert!(
+            gi1.backlinks("target.md").unwrap().is_empty(),
+            "before target.md exists, no backlinks for target.md"
+        );
+        drop(gi1);
+
+        // Warm start (no changes on disk) — should preserve existing state
+        let gi2 = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let bl = gi2.backlinks("target.md").unwrap();
+        assert!(
+            bl.is_empty(),
+            "warm start with stale stub: backlinks('target.md') still empty"
+        );
+        // But backlinks for the STUB id works
+        let bl_stub = gi2.backlinks("target").unwrap();
+        assert_eq!(
+            bl_stub.len(),
+            1,
+            "backlinks('target') works but 'target.md' doesn't — stale stub problem"
+        );
+        drop(gi2);
+
+        // NOW create target.md — this will be detected as "new" by compute_diff
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        write_md(dir.path(), "target.md", "I exist now.");
+
+        // Warm start WITH diff — should detect target.md as new
+        let gi3 = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        // After warm start re-resolution, backlinks should work
+        let bl = gi3.backlinks("target.md").unwrap();
+        let bl_sources: HashSet<String> = bl.into_iter().map(|e| e.source_id).collect();
+        assert!(
+            bl_sources.contains("source.md"),
+            "warm start should re-resolve stub edge so backlinks('target.md') includes source.md, got: {:?}",
+            bl_sources,
+        );
+    }
+
+    #[test]
+    fn stale_stub_in_store_blocks_backlinks_until_reresolution() {
+        // When edges point to a stub ID ("target") but the real node is
+        // "target.md", backlinks for "target.md" returns nothing until
+        // re-indexing resolves the stub edge to the real ID.
+        let dir = create_workspace();
+        write_md(dir.path(), "linker.md", "See also [[my-note]].");
+
+        let store = Store::open_memory().unwrap();
+        index_workspace(&store, dir.path(), true).unwrap();
+
+        // Edge exists: linker.md → stub "my-note"
+        let edges = store.all_edges().unwrap();
+        assert!(edges.iter().any(|(s, t)| s == "linker.md" && t == "my-note"));
+
+        // backlinks for stub ID works
+        assert_eq!(store.backlinks("my-note").unwrap().len(), 1);
+        // backlinks for real file ID does NOT work
+        assert!(store.backlinks("my-note.md").unwrap().is_empty());
+
+        // KnowledgeGraph also can't find my-note.md (it doesn't exist as a node)
+        let knowledge = KnowledgeGraph::from_store(&store).unwrap();
+        assert!(knowledge.neighbors("my-note.md", 1, false).is_err());
+
+        // Now create the real file and re-index
+        write_md(dir.path(), "my-note.md", "Content.");
+        let diff = DiffResult {
+            new: vec!["my-note.md".to_string()],
+            changed: vec![],
+            deleted: vec![],
+        };
+        let edges_raw = store.all_raw_edges().unwrap();
+        let mut reverse = ReverseStemIndex::build_from_edges(
+            &edges_raw
+                .iter()
+                .map(|(s, _, r)| (s.clone(), r.clone()))
+                .collect::<Vec<_>>(),
+        );
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
+
+        // NOW both paths should work
+        let bl = store.backlinks("my-note.md").unwrap();
+        assert_eq!(bl.len(), 1, "after re-resolution, backlinks should find linker.md");
+        assert_eq!(bl[0].source_id, "linker.md");
+
+        let knowledge = KnowledgeGraph::from_store(&store).unwrap();
+        let neighbors = knowledge.neighbors("my-note.md", 1, false).unwrap();
+        let n_ids: HashSet<&str> = neighbors
+            .nodes
+            .iter()
+            .map(|n| n.id.as_str())
+            .collect();
+        assert!(
+            n_ids.contains("linker.md"),
+            "after re-resolution, graph also finds linker.md"
+        );
+    }
+
+    #[test]
+    fn orphaned_edges_invisible_to_both_store_and_kg() {
+        // If an edge's source node is deleted from the nodes table without
+        // cleaning up edges, store.backlinks() (JOIN fails) and KG (edge
+        // not added during from_store) both silently drop it.
+        let dir = create_workspace();
+        write_md(dir.path(), "source.md", "Links to [[target]].");
+        write_md(dir.path(), "target.md", "Target.");
+        let store = Store::open_memory().unwrap();
+        index_workspace(&store, dir.path(), true).unwrap();
+
+        // Verify backlink exists
+        assert_eq!(store.backlinks("target.md").unwrap().len(), 1);
+
+        // Manually remove the source node but NOT its edges
+        // (simulates a partial cleanup bug)
+        store
+            .conn
+            .execute("DELETE FROM nodes WHERE id = 'source.md'", [])
+            .unwrap();
+
+        // Raw edge still exists
+        let all_edges = store.all_edges().unwrap();
+        assert!(
+            all_edges.iter().any(|(s, t)| s == "source.md" && t == "target.md"),
+            "raw edge should still exist after node deletion"
+        );
+
+        // But backlinks() uses JOIN → returns nothing
+        let bl = store.backlinks("target.md").unwrap();
+        assert!(
+            bl.is_empty(),
+            "backlinks() returns nothing when source node is missing (JOIN fails)"
+        );
+
+        // KnowledgeGraph built from same store also won't have the edge
+        // because all_edges returns the edge but id_to_index won't have
+        // the source node, so the edge is silently dropped
+        let knowledge = KnowledgeGraph::from_store(&store).unwrap();
+        let sub = knowledge.full_subgraph();
+        assert!(
+            !sub.edges.iter().any(|(s, _)| s == "source.md"),
+            "KnowledgeGraph also drops edges from missing nodes"
         );
     }
 }
