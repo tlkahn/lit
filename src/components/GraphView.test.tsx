@@ -956,9 +956,9 @@ describe("GraphView", () => {
     spy.mockRestore();
   });
 
-  // --- Incremental Graph Diff ---
+  // --- lit:graph-updated full rebuild ---
 
-  it("listens to lit:graph-updated and applies incremental diff (new node appears)", async () => {
+  it("lit:graph-updated re-fetches subgraph from backend", async () => {
     mockListen();
     let callCount = 0;
     mockInvoke((cmd) => {
@@ -1008,65 +1008,6 @@ describe("GraphView", () => {
 
     resetListenMock();
   });
-
-  it("lit:graph-updated after merge replaces source nodes with merged node", async () => {
-    mockListen();
-    let callCount = 0;
-    mockInvoke((cmd) => {
-      switch (cmd) {
-        case "get_graph_subgraph":
-          callCount++;
-          if (callCount <= 1) {
-            return {
-              nodes: [
-                { id: "a.md", title: "A" },
-                { id: "b.md", title: "B" },
-                { id: "c.md", title: "C" },
-              ],
-              edges: [["a.md", "b.md"], ["b.md", "c.md"]],
-              pagerank: { "a.md": 0.3, "b.md": 0.4, "c.md": 0.3 },
-              positions: {},
-            };
-          }
-          return {
-            nodes: [
-              { id: "Merged.md", title: "Merged" },
-              { id: "c.md", title: "C" },
-            ],
-            edges: [["Merged.md", "c.md"]],
-            pagerank: { "Merged.md": 0.6, "c.md": 0.4 },
-            positions: {},
-          };
-        default:
-          throw new Error(`Unknown command: ${cmd}`);
-      }
-    });
-
-    const GraphView = (await import("./GraphView")).default;
-    render(<GraphView />);
-    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
-
-    const { invoke } = await import("@tauri-apps/api/core");
-    (invoke as unknown as ReturnType<typeof vi.fn>).mockClear();
-    mockSigmaKill.mockClear();
-
-    await act(async () => {
-      emitMockEvent("lit:graph-updated", {});
-    });
-
-    await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: [], depth: 0, directed: null });
-    });
-
-    // Full rebuild via graph.clear() + populateGraph(); Sigma stays alive
-    await waitFor(() => {
-      expect(mockSigmaRefresh).toHaveBeenCalled();
-    });
-    expect(mockSigmaKill).not.toHaveBeenCalled();
-
-    resetListenMock();
-  });
-
 
 
   it("lit:graph-updated triggers full rebuild (not incremental diff)", async () => {
