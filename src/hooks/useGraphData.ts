@@ -49,7 +49,7 @@ async function doRebuild(
     graph,
     subgraph,
     accentColor,
-    currentMode === "local" ? (currentActivePageId ?? undefined) : undefined,
+    currentActivePageId ?? undefined,
   );
 
   const positions = subgraph.positions;
