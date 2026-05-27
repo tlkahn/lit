@@ -4,7 +4,6 @@ import userEvent from "@testing-library/user-event";
 import { mockInvoke, mockListen, emitMockEvent, resetListenMock } from "../test/tauri-mock";
 import * as graphLayout from "../lib/graphLayout";
 import * as qualityTiers from "../lib/qualityTiers";
-import { setPerfEnabled } from "../lib/perf";
 import { useGraphSelectionStore } from "../stores/graphSelection";
 import { useGraphViewState } from "../stores/graphViewState";
 
@@ -45,7 +44,6 @@ describe("GraphView", () => {
     lastSigmaOptions = {};
     useGraphSelectionStore.setState({ selectedNodes: [], selectionMode: "none" });
     useGraphViewState.setState({ mode: "full", depth: 2 });
-    setPerfEnabled(false);
     mockInvoke((cmd) => {
       switch (cmd) {
         case "get_graph_subgraph":
@@ -183,19 +181,18 @@ describe("GraphView", () => {
   it("uses theme CSS variables for graph node colors", async () => {
     document.documentElement.style.setProperty("--interactive-accent", "#ff0000");
 
-    const buildGraphSpy = vi.spyOn(graphLayout, "buildGraph");
+    const populateGraphSpy = vi.spyOn(graphLayout, "populateGraph");
 
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView />);
 
     await waitFor(() => {
-      expect(buildGraphSpy).toHaveBeenCalled();
+      expect(populateGraphSpy).toHaveBeenCalled();
     });
 
-    const callArgs = buildGraphSpy.mock.calls[0]![0];
-    expect(callArgs.accentColor).toBe("#ff0000");
+    expect(populateGraphSpy.mock.calls[0]![2]).toBe("#ff0000");
 
-    buildGraphSpy.mockRestore();
+    populateGraphSpy.mockRestore();
     document.documentElement.style.removeProperty("--interactive-accent");
   });
 
@@ -236,17 +233,17 @@ describe("GraphView", () => {
       }
     });
 
-    const buildGraphSpy = vi.spyOn(graphLayout, "buildGraph");
+    const populateGraphSpy = vi.spyOn(graphLayout, "populateGraph");
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView />);
 
     await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
 
-    const graph = buildGraphSpy.mock.results[0]!.value as import("graphology").default;
+    const graph = populateGraphSpy.mock.calls[0]![0] as import("graphology").default;
     expect(graph.getNodeAttribute("a.md", "x")).toBe(42);
     expect(graph.getNodeAttribute("a.md", "y")).toBe(42);
 
-    buildGraphSpy.mockRestore();
+    populateGraphSpy.mockRestore();
     localStorage.removeItem("lit-graph-pos:/test/ws:full");
   });
 
@@ -353,35 +350,35 @@ describe("GraphView", () => {
     });
   });
 
-  it("in local mode, buildGraph is called with seedId=activePageId", async () => {
-    const buildGraphSpy = vi.spyOn(graphLayout, "buildGraph");
+  it("in local mode, populateGraph is called with seedId=activePageId", async () => {
+    const populateGraphSpy = vi.spyOn(graphLayout, "populateGraph");
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView activePageId="a.md" />);
     await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
 
-    buildGraphSpy.mockClear();
+    populateGraphSpy.mockClear();
 
     await act(async () => {
       await userEvent.click(screen.getByRole("button", { name: "Local" }));
     });
 
     await waitFor(() => {
-      expect(buildGraphSpy).toHaveBeenCalled();
+      expect(populateGraphSpy).toHaveBeenCalled();
     });
-    expect(buildGraphSpy.mock.calls[0]![0].seedId).toBe("a.md");
-    buildGraphSpy.mockRestore();
+    expect(populateGraphSpy.mock.calls[0]![3]).toBe("a.md");
+    populateGraphSpy.mockRestore();
   });
 
-  it("in full mode, buildGraph is called without seedId", async () => {
-    const buildGraphSpy = vi.spyOn(graphLayout, "buildGraph");
+  it("in full mode, populateGraph is called without seedId", async () => {
+    const populateGraphSpy = vi.spyOn(graphLayout, "populateGraph");
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView />);
 
     await waitFor(() => {
-      expect(buildGraphSpy).toHaveBeenCalled();
+      expect(populateGraphSpy).toHaveBeenCalled();
     });
-    expect(buildGraphSpy.mock.calls[0]![0].seedId).toBeUndefined();
-    buildGraphSpy.mockRestore();
+    expect(populateGraphSpy.mock.calls[0]![3]).toBeUndefined();
+    populateGraphSpy.mockRestore();
   });
 
   it("enterNode sets nodeReducer on sigma", async () => {
@@ -746,13 +743,14 @@ describe("GraphView", () => {
 
   // --- Adaptive Quality Tiers ---
 
-  it("tierSettingsRef default is derived from getTierSettings('medium'), not hardcoded", async () => {
-    const spy = vi.spyOn(qualityTiers, "getTierSettings");
+  it("after init, tier matches getQualitySettings for graph size", async () => {
+    const spy = vi.spyOn(qualityTiers, "getQualitySettings");
 
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
 
-    expect(spy).toHaveBeenCalledWith("medium");
+    expect(spy).toHaveBeenCalledWith(2);
     spy.mockRestore();
   });
 
@@ -768,16 +766,9 @@ describe("GraphView", () => {
   });
 
   it("huge graph: default edgeReducer hides all edges", async () => {
-    const mockGraph = {
-      order: 25000, size: 30000,
-      neighbors: vi.fn().mockReturnValue([]),
-      source: vi.fn().mockReturnValue("a"),
-      target: vi.fn().mockReturnValue("b"),
-      getNodeAttribute: vi.fn().mockReturnValue("Node"),
-      degree: vi.fn().mockReturnValue(0),
-      forEachNode: vi.fn(),
-    };
-    const spy = vi.spyOn(graphLayout, "buildGraph").mockReturnValue(mockGraph as never);
+    const spy = vi.spyOn(graphLayout, "populateGraph").mockImplementation((graph) => {
+      for (let i = 0; i < 25000; i++) graph.addNode(`n${i}`, { label: `N${i}`, size: 5, x: 0, y: 0, color: "#ccc", type: "filled" });
+    });
 
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView />);
@@ -797,16 +788,9 @@ describe("GraphView", () => {
   });
 
   it("huge graph: leaveNode restores hide-all-edges reducer", async () => {
-    const mockGraph = {
-      order: 25000, size: 30000,
-      neighbors: vi.fn().mockReturnValue([]),
-      source: vi.fn().mockReturnValue("a"),
-      target: vi.fn().mockReturnValue("b"),
-      getNodeAttribute: vi.fn().mockReturnValue("Node"),
-      degree: vi.fn().mockReturnValue(0),
-      forEachNode: vi.fn(),
-    };
-    const spy = vi.spyOn(graphLayout, "buildGraph").mockReturnValue(mockGraph as never);
+    const spy = vi.spyOn(graphLayout, "populateGraph").mockImplementation((graph) => {
+      for (let i = 0; i < 25000; i++) graph.addNode(`n${i}`, { label: `N${i}`, size: 5, x: 0, y: 0, color: "#ccc", type: "filled" });
+    });
 
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView />);
@@ -835,16 +819,9 @@ describe("GraphView", () => {
   });
 
   it("huge graph: clickStage restores hide-all-edges reducer", async () => {
-    const mockGraph = {
-      order: 25000, size: 30000,
-      neighbors: vi.fn().mockReturnValue([]),
-      source: vi.fn().mockReturnValue("a"),
-      target: vi.fn().mockReturnValue("b"),
-      getNodeAttribute: vi.fn().mockReturnValue("Node"),
-      degree: vi.fn().mockReturnValue(0),
-      forEachNode: vi.fn(),
-    };
-    const spy = vi.spyOn(graphLayout, "buildGraph").mockReturnValue(mockGraph as never);
+    const spy = vi.spyOn(graphLayout, "populateGraph").mockImplementation((graph) => {
+      for (let i = 0; i < 25000; i++) graph.addNode(`n${i}`, { label: `N${i}`, size: 5, x: 0, y: 0, color: "#ccc", type: "filled" });
+    });
 
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView />);
@@ -868,16 +845,9 @@ describe("GraphView", () => {
   });
 
   it("huge graph: search close restores hide-all-edges reducer", async () => {
-    const mockGraph = {
-      order: 25000, size: 30000,
-      neighbors: vi.fn().mockReturnValue([]),
-      source: vi.fn().mockReturnValue("a"),
-      target: vi.fn().mockReturnValue("b"),
-      getNodeAttribute: vi.fn().mockReturnValue("Node"),
-      degree: vi.fn().mockReturnValue(0),
-      forEachNode: vi.fn(),
-    };
-    const spy = vi.spyOn(graphLayout, "buildGraph").mockReturnValue(mockGraph as never);
+    const spy = vi.spyOn(graphLayout, "populateGraph").mockImplementation((graph) => {
+      for (let i = 0; i < 25000; i++) graph.addNode(`n${i}`, { label: `N${i}`, size: 5, x: 0, y: 0, color: "#ccc", type: "filled" });
+    });
 
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView />);
@@ -908,16 +878,9 @@ describe("GraphView", () => {
   });
 
   it("medium graph: Sigma gets labelRenderedSizeThreshold=Infinity and no edge events", async () => {
-    const mockGraph = {
-      order: 3000, size: 4000,
-      neighbors: vi.fn().mockReturnValue([]),
-      source: vi.fn().mockReturnValue("a"),
-      target: vi.fn().mockReturnValue("b"),
-      getNodeAttribute: vi.fn().mockReturnValue("Node"),
-      degree: vi.fn().mockReturnValue(0),
-      forEachNode: vi.fn(),
-    };
-    const spy = vi.spyOn(graphLayout, "buildGraph").mockReturnValue(mockGraph as never);
+    const spy = vi.spyOn(graphLayout, "populateGraph").mockImplementation((graph) => {
+      for (let i = 0; i < 3000; i++) graph.addNode(`n${i}`, { label: `N${i}`, size: 5, x: 0, y: 0, color: "#ccc", type: "filled" });
+    });
 
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView />);
@@ -932,16 +895,9 @@ describe("GraphView", () => {
   });
 
   it("large graph: Sigma gets hideEdgesOnMove and hideLabelsOnMove", async () => {
-    const mockGraph = {
-      order: 10000, size: 15000,
-      neighbors: vi.fn().mockReturnValue([]),
-      source: vi.fn().mockReturnValue("a"),
-      target: vi.fn().mockReturnValue("b"),
-      getNodeAttribute: vi.fn().mockReturnValue("Node"),
-      degree: vi.fn().mockReturnValue(0),
-      forEachNode: vi.fn(),
-    };
-    const spy = vi.spyOn(graphLayout, "buildGraph").mockReturnValue(mockGraph as never);
+    const spy = vi.spyOn(graphLayout, "populateGraph").mockImplementation((graph) => {
+      for (let i = 0; i < 10000; i++) graph.addNode(`n${i}`, { label: `N${i}`, size: 5, x: 0, y: 0, color: "#ccc", type: "filled" });
+    });
 
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView />);
@@ -969,17 +925,6 @@ describe("GraphView", () => {
     expect(mockSigmaKill).not.toHaveBeenCalled();
   });
 
-  it("visible=true after hidden calls sigma.refresh()", async () => {
-    const GraphView = (await import("./GraphView")).default;
-    const { rerender } = render(<GraphView visible={true} />);
-    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
-
-    await act(async () => { rerender(<GraphView visible={false} />); });
-    mockSigmaRefresh.mockClear();
-    await act(async () => { rerender(<GraphView visible={true} />); });
-
-    expect(mockSigmaRefresh).toHaveBeenCalled();
-  });
 
   it("full mode does NOT re-init when activePageId changes", async () => {
     const GraphView = (await import("./GraphView")).default;
@@ -998,43 +943,11 @@ describe("GraphView", () => {
     expect(invoke).not.toHaveBeenCalledWith("get_graph_subgraph", expect.anything());
   });
 
-  it("local mode re-inits when seed changes while hidden, on becoming visible", async () => {
-    const GraphView = (await import("./GraphView")).default;
-    useGraphViewState.setState({ mode: "local" });
-    const { rerender } = render(<GraphView visible={true} activePageId="a.md" />);
-    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
-
-    const { invoke } = await import("@tauri-apps/api/core");
-    (invoke as unknown as ReturnType<typeof vi.fn>).mockClear();
-    mockSigmaKill.mockClear();
-
-    // Hide and change seed
-    await act(async () => {
-      rerender(<GraphView visible={false} activePageId="b.md" />);
-    });
-    // No re-init while hidden
-    expect(invoke).not.toHaveBeenCalledWith("get_graph_subgraph", expect.anything());
-
-    // Show again — should detect stale seed and re-init
-    await act(async () => {
-      rerender(<GraphView visible={true} activePageId="b.md" />);
-    });
-    await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: ["b.md"], depth: 2, directed: null });
-    });
-  });
 
   it("huge graph: clearing search query restores hide-all-edges reducer", async () => {
-    const mockGraph = {
-      order: 25000, size: 30000,
-      neighbors: vi.fn().mockReturnValue([]),
-      source: vi.fn().mockReturnValue("a"),
-      target: vi.fn().mockReturnValue("b"),
-      getNodeAttribute: vi.fn().mockReturnValue("Node"),
-      degree: vi.fn().mockReturnValue(0),
-      forEachNode: vi.fn(),
-    };
-    const spy = vi.spyOn(graphLayout, "buildGraph").mockReturnValue(mockGraph as never);
+    const spy = vi.spyOn(graphLayout, "populateGraph").mockImplementation((graph) => {
+      for (let i = 0; i < 25000; i++) graph.addNode(`n${i}`, { label: `N${i}`, size: 5, x: 0, y: 0, color: "#ccc", type: "filled" });
+    });
 
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView />);
@@ -1160,58 +1073,25 @@ describe("GraphView", () => {
       expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: [], depth: 0, directed: null });
     });
 
-    // Merge is a major change (>50% nodes differ), so sigma is re-initialized
+    // Full rebuild via graph.clear() + populateGraph(); Sigma stays alive
     await waitFor(() => {
-      expect(mockSigmaKill).toHaveBeenCalled();
+      expect(mockSigmaRefresh).toHaveBeenCalled();
     });
+    expect(mockSigmaKill).not.toHaveBeenCalled();
 
     resetListenMock();
   });
 
-  it("empty diff triggers no sigma refresh", async () => {
-    mockListen();
-    mockInvoke((cmd) => {
-      switch (cmd) {
-        case "get_graph_subgraph":
-          return {
-            nodes: [
-              { id: "a.md", title: "A" },
-              { id: "b.md", title: "B" },
-            ],
-            edges: [["a.md", "b.md"]],
-            pagerank: { "a.md": 0.4, "b.md": 0.6 },
-            positions: {},
-          };
-        default:
-          throw new Error(`Unknown command: ${cmd}`);
-      }
-    });
 
-    const GraphView = (await import("./GraphView")).default;
-    render(<GraphView />);
-    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
 
-    mockSigmaRefresh.mockClear();
-
-    await act(async () => {
-      emitMockEvent("lit:graph-updated", {});
-    });
-
-    await act(async () => {});
-
-    expect(mockSigmaRefresh).not.toHaveBeenCalled();
-
-    resetListenMock();
-  });
-
-  it("diff applied while hidden defers sigma.refresh() until visible", async () => {
+  it("lit:graph-updated triggers full rebuild (not incremental diff)", async () => {
     mockListen();
     let callCount = 0;
     mockInvoke((cmd) => {
       switch (cmd) {
         case "get_graph_subgraph":
           callCount++;
-          if (callCount <= 2) {
+          if (callCount <= 1) {
             return {
               nodes: [
                 { id: "a.md", title: "A" },
@@ -1226,10 +1106,10 @@ describe("GraphView", () => {
             nodes: [
               { id: "a.md", title: "A" },
               { id: "b.md", title: "B" },
-              { id: "d.md", title: "D" },
+              { id: "c.md", title: "C" },
             ],
-            edges: [["a.md", "b.md"], ["b.md", "d.md"]],
-            pagerank: { "a.md": 0.4, "b.md": 0.3, "d.md": 0.3 },
+            edges: [["a.md", "b.md"], ["a.md", "c.md"]],
+            pagerank: { "a.md": 0.4, "b.md": 0.3, "c.md": 0.3 },
             positions: {},
           };
         default:
@@ -1237,28 +1117,24 @@ describe("GraphView", () => {
       }
     });
 
+    const populateGraphSpy = vi.spyOn(graphLayout, "populateGraph");
     const GraphView = (await import("./GraphView")).default;
-    const { rerender } = render(<GraphView visible={true} />);
+    render(<GraphView />);
     await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
 
-    // Hide the graph
-    await act(async () => { rerender(<GraphView visible={false} />); });
+    const callsBefore = populateGraphSpy.mock.calls.length;
     mockSigmaRefresh.mockClear();
 
-    // Emit event while hidden
     await act(async () => {
       emitMockEvent("lit:graph-updated", {});
     });
 
-    await act(async () => {});
-
-    // sigma.refresh should NOT be called while hidden
-    expect(mockSigmaRefresh).not.toHaveBeenCalled();
-
-    // Show again — pending refresh should fire
-    await act(async () => { rerender(<GraphView visible={true} />); });
+    await waitFor(() => {
+      expect(populateGraphSpy.mock.calls.length).toBeGreaterThan(callsBefore);
+    });
     expect(mockSigmaRefresh).toHaveBeenCalled();
 
+    populateGraphSpy.mockRestore();
     resetListenMock();
   });
 
@@ -1282,12 +1158,12 @@ describe("GraphView", () => {
       }
     });
 
-    const buildGraphSpy = vi.spyOn(graphLayout, "buildGraph");
+    const populateGraphSpy = vi.spyOn(graphLayout, "populateGraph");
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView />);
     await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
 
-    const graph = buildGraphSpy.mock.results[0]!.value as import("graphology").default;
+    const graph = populateGraphSpy.mock.calls[0]![0] as import("graphology").default;
     expect(graph.getNodeAttribute("a.md", "x")).toBe(500);
     expect(graph.getNodeAttribute("a.md", "y")).toBe(500);
     const bx = graph.getNodeAttribute("b.md", "x") as number;
@@ -1297,7 +1173,7 @@ describe("GraphView", () => {
     expect(by).toBeGreaterThanOrEqual(485);
     expect(by).toBeLessThanOrEqual(515);
 
-    buildGraphSpy.mockRestore();
+    populateGraphSpy.mockRestore();
   });
 
   it("lit:layout-ready applies positions with neighbor fallback for uncached nodes", async () => {
@@ -1321,7 +1197,7 @@ describe("GraphView", () => {
       }
     });
 
-    const buildGraphSpy = vi.spyOn(graphLayout, "buildGraph");
+    const populateGraphSpy = vi.spyOn(graphLayout, "populateGraph");
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView />);
     await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
@@ -1334,7 +1210,7 @@ describe("GraphView", () => {
       expect(mockSigmaRefresh).toHaveBeenCalled();
     });
 
-    const graph = buildGraphSpy.mock.results[0]!.value as import("graphology").default;
+    const graph = populateGraphSpy.mock.calls[0]![0] as import("graphology").default;
     expect(graph.getNodeAttribute("a.md", "x")).toBe(300);
     expect(graph.getNodeAttribute("a.md", "y")).toBe(300);
     const bx = graph.getNodeAttribute("b.md", "x") as number;
@@ -1344,72 +1220,10 @@ describe("GraphView", () => {
     expect(by).toBeGreaterThanOrEqual(285);
     expect(by).toBeLessThanOrEqual(315);
 
-    buildGraphSpy.mockRestore();
+    populateGraphSpy.mockRestore();
     resetListenMock();
   });
 
-  it("concurrent events: second event skipped while first is in-flight", async () => {
-    mockListen();
-    const resolveIpcHolder: { fn: ((v: unknown) => void) | null } = { fn: null };
-    let ipcCallCount = 0;
-    mockInvoke((cmd) => {
-      switch (cmd) {
-        case "get_graph_subgraph":
-          ipcCallCount++;
-          if (ipcCallCount <= 2) {
-            return {
-              nodes: [
-                { id: "a.md", title: "A" },
-                { id: "b.md", title: "B" },
-              ],
-              edges: [["a.md", "b.md"]],
-              pagerank: { "a.md": 0.4, "b.md": 0.6 },
-              positions: {},
-            };
-          }
-          return new Promise((resolve) => { resolveIpcHolder.fn = resolve; });
-        default:
-          throw new Error(`Unknown command: ${cmd}`);
-      }
-    });
-
-    const GraphView = (await import("./GraphView")).default;
-    render(<GraphView />);
-    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
-
-    const { invoke } = await import("@tauri-apps/api/core");
-    (invoke as unknown as ReturnType<typeof vi.fn>).mockClear();
-    ipcCallCount = 2;
-
-    // First event — starts IPC fetch
-    await act(async () => {
-      emitMockEvent("lit:graph-updated", {});
-    });
-
-    // Second event — should be skipped (first still in-flight)
-    await act(async () => {
-      emitMockEvent("lit:graph-updated", {});
-    });
-
-    // Only one IPC call should have been made
-    const subgraphCalls = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(
-      (c: unknown[]) => c[0] === "get_graph_subgraph",
-    );
-    expect(subgraphCalls.length).toBe(1);
-
-    // Resolve to avoid dangling promise
-    resolveIpcHolder.fn?.({
-      nodes: [
-        { id: "a.md", title: "A" },
-        { id: "b.md", title: "B" },
-      ],
-      edges: [["a.md", "b.md"]],
-      pagerank: { "a.md": 0.4, "b.md": 0.6 },
-      positions: {},
-    });
-
-    resetListenMock();
-  });
 
   it("right-click node shows context menu with 'Export Local Network…'", async () => {
     const GraphView = (await import("./GraphView")).default;
@@ -1563,13 +1377,12 @@ describe("GraphView", () => {
 
   // --- Theme reactivity (immediate, no deferred path) ---
 
-  it("theme change while hidden still applies immediately", async () => {
+  it("theme change while mounted applies immediately", async () => {
     const { useThemeStore } = await import("../stores/theme");
     const GraphView = (await import("./GraphView")).default;
-    const { rerender } = render(<GraphView visible={true} />);
+    render(<GraphView />);
     await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
 
-    await act(async () => { rerender(<GraphView visible={false} />); });
     mockSigmaRefresh.mockClear();
 
     await act(async () => {
@@ -1585,7 +1398,7 @@ describe("GraphView", () => {
 
     const { useThemeStore } = await import("../stores/theme");
     const GraphView = (await import("./GraphView")).default;
-    render(<GraphView visible={true} />);
+    render(<GraphView />);
     await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
 
     mockSigmaRefresh.mockClear();
@@ -1603,13 +1416,12 @@ describe("GraphView", () => {
     document.documentElement.style.removeProperty("--text-normal");
   });
 
-  it("each theme change while hidden produces its own update", async () => {
+  it("each theme change while mounted produces its own update", async () => {
     const { useThemeStore } = await import("../stores/theme");
     const GraphView = (await import("./GraphView")).default;
-    const { rerender } = render(<GraphView visible={true} />);
+    render(<GraphView />);
     await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
 
-    await act(async () => { rerender(<GraphView visible={false} />); });
     mockSigmaRefresh.mockClear();
 
     await act(async () => {
