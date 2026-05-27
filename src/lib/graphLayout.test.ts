@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { buildGraph, resolveThemeColors, applyPositions, NODE_SIZE, SEED_COLOR } from "./graphLayout";
+import { buildGraph, resolveThemeColors, applyPositions, recolorSeed, NODE_SIZE, SEED_COLOR } from "./graphLayout";
 import type { SubgraphResult } from "./ipc";
 
 describe("graphLayout", () => {
@@ -238,6 +238,65 @@ describe("graphLayout", () => {
       const cy = graph.getNodeAttribute("c.md", "y") as number;
       expect(typeof cx).toBe("number");
       expect(typeof cy).toBe("number");
+    });
+  });
+
+  describe("recolorSeed", () => {
+    const accentColor = "#7c3aed";
+
+    function makeSeedGraph(): import("graphology").default {
+      const sub: SubgraphResult = {
+        nodes: [
+          { id: "a.md", title: "A" },
+          { id: "b.md", title: "B" },
+          { id: "c.md", title: "C" },
+        ],
+        edges: [],
+      };
+      return buildGraph({ subgraph: sub, accentColor, seedId: "a.md" });
+    }
+
+    it("recolors old seed to filled/accent and new seed to seed/SEED_COLOR", () => {
+      const graph = makeSeedGraph();
+      expect(graph.getNodeAttribute("a.md", "type")).toBe("seed");
+      expect(graph.getNodeAttribute("a.md", "color")).toBe(SEED_COLOR);
+
+      recolorSeed(graph, "a.md", "b.md", accentColor);
+
+      expect(graph.getNodeAttribute("a.md", "type")).toBe("filled");
+      expect(graph.getNodeAttribute("a.md", "color")).toBe(accentColor);
+      expect(graph.getNodeAttribute("b.md", "type")).toBe("seed");
+      expect(graph.getNodeAttribute("b.md", "color")).toBe(SEED_COLOR);
+    });
+
+    it("old seed missing from graph — no error, new seed still colored", () => {
+      const graph = makeSeedGraph();
+      recolorSeed(graph, "missing.md", "b.md", accentColor);
+
+      expect(graph.getNodeAttribute("b.md", "type")).toBe("seed");
+      expect(graph.getNodeAttribute("b.md", "color")).toBe(SEED_COLOR);
+    });
+
+    it("new seed missing from graph — no error, old seed still reset", () => {
+      const graph = makeSeedGraph();
+      recolorSeed(graph, "a.md", "missing.md", accentColor);
+
+      expect(graph.getNodeAttribute("a.md", "type")).toBe("filled");
+      expect(graph.getNodeAttribute("a.md", "color")).toBe(accentColor);
+    });
+
+    it("both null — no-op, no error", () => {
+      const graph = makeSeedGraph();
+      expect(() => recolorSeed(graph, null, null, accentColor)).not.toThrow();
+      expect(graph.getNodeAttribute("a.md", "type")).toBe("seed");
+      expect(graph.getNodeAttribute("a.md", "color")).toBe(SEED_COLOR);
+    });
+
+    it("same prev and next — node stays as seed", () => {
+      const graph = makeSeedGraph();
+      recolorSeed(graph, "a.md", "a.md", accentColor);
+      expect(graph.getNodeAttribute("a.md", "type")).toBe("seed");
+      expect(graph.getNodeAttribute("a.md", "color")).toBe(SEED_COLOR);
     });
   });
 

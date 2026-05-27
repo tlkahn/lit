@@ -56,12 +56,12 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
   const [splitDialogPath, setSplitDialogPath] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState<{ nodeIds: string[]; labels: string[] } | null>(null);
 
-  const { graphRef, loading, error, graphStats, tierSettings, dimColorRef, dataVersion } = useGraphData({
+  const { graphRef, loading, error, graphStats, tierSettings, dimColorRef, dataVersion, seedVersion } = useGraphData({
     mode, depth, activePageId: activePageId ?? null,
   });
 
   const { sigmaRef, hoveredNodeRef, selectedSetRef, defaultNodeReducer, tierSettingsRef, resetZoom } = useGraphRenderer({
-    containerRef, graphRef, tierSettings, dimColorRef, dataVersion,
+    containerRef, graphRef, tierSettings, dimColorRef, dataVersion, seedVersion,
     onNavigate, onContextMenu: (menu) => setContextMenu(menu),
   });
 
