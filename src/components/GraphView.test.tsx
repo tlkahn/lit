@@ -369,7 +369,7 @@ describe("GraphView", () => {
     populateGraphSpy.mockRestore();
   });
 
-  it("in full mode, populateGraph is called without seedId", async () => {
+  it("in full mode without activePageId, populateGraph is called without seedId", async () => {
     const populateGraphSpy = vi.spyOn(graphLayout, "populateGraph");
     const GraphView = (await import("./GraphView")).default;
     render(<GraphView />);
@@ -378,6 +378,18 @@ describe("GraphView", () => {
       expect(populateGraphSpy).toHaveBeenCalled();
     });
     expect(populateGraphSpy.mock.calls[0]![3]).toBeUndefined();
+    populateGraphSpy.mockRestore();
+  });
+
+  it("in full mode with activePageId, populateGraph is called with seedId", async () => {
+    const populateGraphSpy = vi.spyOn(graphLayout, "populateGraph");
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView activePageId="a.md" />);
+
+    await waitFor(() => {
+      expect(populateGraphSpy).toHaveBeenCalled();
+    });
+    expect(populateGraphSpy.mock.calls[0]![3]).toBe("a.md");
     populateGraphSpy.mockRestore();
   });
 

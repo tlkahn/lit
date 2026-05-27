@@ -89,6 +89,27 @@ describe("useGraphData", () => {
       expect(result.current.graphRef.current!.order).toBe(2);
       expect(result.current.graphRef.current!.size).toBe(1);
     });
+
+    it("passes seedId to populateGraph in full mode when activePageId is set", async () => {
+      mockInvoke(makeInvokeHandler());
+      const populateSpy = vi.spyOn(graphLayout, "populateGraph");
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "full", depth: 1, activePageId: "a.md" }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      expect(populateSpy).toHaveBeenCalledWith(
+        expect.any(Graph),
+        TWO_NODE_SUBGRAPH,
+        "#0969da",
+        "a.md",
+      );
+    });
   });
 
   // Cycle 3: Local mode fetch
