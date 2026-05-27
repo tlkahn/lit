@@ -820,7 +820,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
     });
   });
 
-  it("clicking Editor button from graph view hides graph wrapper", async () => {
+  it("clicking Editor button from graph view unmounts graph wrapper", async () => {
     setPage("Hello.md");
     render(<ContentArea />);
     await waitFor(() => {
@@ -832,7 +832,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
     });
     await userEvent.click(screen.getByRole("button", { name: "Editor" }));
     await waitFor(() => {
-      expect(screen.getByTestId("graph-view-wrapper").style.display).toBe("none");
+      expect(screen.queryByTestId("graph-view-wrapper")).not.toBeInTheDocument();
     });
   });
 
@@ -850,7 +850,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
     });
   });
 
-  it("dispatching lit:toggle-graph-view when already in graph hides graph wrapper", async () => {
+  it("dispatching lit:toggle-graph-view when already in graph unmounts graph wrapper", async () => {
     setPage("Hello.md");
     render(<ContentArea />);
     await waitFor(() => {
@@ -866,7 +866,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
       window.dispatchEvent(new CustomEvent("lit:toggle-graph-view"));
     });
     await waitFor(() => {
-      expect(screen.getByTestId("graph-view-wrapper").style.display).toBe("none");
+      expect(screen.queryByTestId("graph-view-wrapper")).not.toBeInTheDocument();
     });
   });
 
@@ -887,7 +887,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
     });
   });
 
-  it("toggling off graph and re-entering retains last mode (mount-once-then-hide)", async () => {
+  it("toggling off graph and re-entering retains last mode (conditional mount)", async () => {
     setPage("Hello.md");
     render(<ContentArea />);
     await waitFor(() => {
@@ -908,19 +908,19 @@ describe("ContentArea menu://open-in-external-editor", () => {
       window.dispatchEvent(new CustomEvent("lit:toggle-graph-view"));
     });
     await waitFor(() => {
-      expect(screen.getByTestId("graph-view-wrapper").style.display).toBe("none");
+      expect(screen.queryByTestId("graph-view-wrapper")).not.toBeInTheDocument();
     });
 
     await userEvent.click(screen.getByRole("button", { name: "Graph" }));
     await waitFor(() => {
-      expect(screen.getByTestId("graph-view-wrapper").style.display).not.toBe("none");
+      expect(screen.getByTestId("graph-view-wrapper")).toBeInTheDocument();
     });
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Local" }).getAttribute("aria-pressed")).toBe("true");
     });
   });
 
-  it("graph-view-wrapper stays in DOM after switching back to editor (mount-once-then-hide)", async () => {
+  it("graph-view-wrapper is removed from DOM after switching to editor (conditional mount)", async () => {
     setPage("Hello.md");
     render(<ContentArea />);
     await waitFor(() => {
@@ -936,9 +936,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
       expect(screen.getByTestId("editor")).toBeVisible();
     });
 
-    const wrapper = screen.getByTestId("graph-view-wrapper");
-    expect(wrapper).toBeInTheDocument();
-    expect(wrapper.style.display).toBe("none");
+    expect(screen.queryByTestId("graph-view-wrapper")).not.toBeInTheDocument();
   });
 
   it("graph-view-wrapper is NOT in DOM before first graph view switch", async () => {
@@ -950,7 +948,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
     expect(screen.queryByTestId("graph-view-wrapper")).not.toBeInTheDocument();
   });
 
-  it("Escape in graph view hides graph wrapper (via onExit)", async () => {
+  it("Escape in graph view unmounts graph wrapper (via onExit)", async () => {
     setPage("Hello.md");
     render(<ContentArea />);
     await waitFor(() => {
@@ -966,7 +964,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
       graphView.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     });
     await waitFor(() => {
-      expect(screen.getByTestId("graph-view-wrapper").style.display).toBe("none");
+      expect(screen.queryByTestId("graph-view-wrapper")).not.toBeInTheDocument();
     });
   });
 });

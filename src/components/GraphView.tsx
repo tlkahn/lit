@@ -19,7 +19,6 @@ import "./GraphView.css";
 
 export interface GraphViewProps {
   activePageId?: string | null;
-  visible?: boolean;
   onNavigate?: (pageId: string) => void;
   onExit?: () => void;
   onExportNetwork?: (nodeId: string) => void;

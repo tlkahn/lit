@@ -911,21 +911,6 @@ describe("GraphView", () => {
     spy.mockRestore();
   });
 
-  // --- Keep Sigma/Graphology Alive ---
-
-  it("visible=false keeps sigma alive", async () => {
-    const GraphView = (await import("./GraphView")).default;
-    const { rerender } = render(<GraphView visible={true} />);
-    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
-
-    await act(async () => {
-      rerender(<GraphView visible={false} />);
-    });
-
-    expect(mockSigmaKill).not.toHaveBeenCalled();
-  });
-
-
   it("full mode does NOT re-init when activePageId changes", async () => {
     const GraphView = (await import("./GraphView")).default;
     const { rerender } = render(<GraphView activePageId="a.md" />);

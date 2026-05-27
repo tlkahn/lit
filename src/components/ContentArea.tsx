@@ -62,7 +62,6 @@ export function ContentArea({ onExportNetwork }: { onExportNetwork?: (nodeId: st
   );
   const body = usePaneField(focusedPaneId, bodySel);
 
-  const [graphEverOpened, setGraphEverOpened] = useState(false);
   const [mindmapSelectedId, setMindmapSelectedId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [showFrontmatter, setShowFrontmatter] = useState(false);
@@ -235,10 +234,6 @@ export function ContentArea({ onExportNetwork }: { onExportNetwork?: (nodeId: st
       autoResizeTextarea();
     }
   }, [editingYaml, autoResizeTextarea]);
-
-  useEffect(() => {
-    if (viewMode === "graph" && !graphEverOpened) setGraphEverOpened(true);
-  }, [viewMode, graphEverOpened]);
 
   useEffect(() => {
     if (viewMode !== "editor") return;
@@ -504,12 +499,11 @@ export function ContentArea({ onExportNetwork }: { onExportNetwork?: (nodeId: st
           </Suspense>
         </div>
       )}
-      {graphEverOpened && (
-        <div data-testid="graph-view-wrapper" className="flex-1 min-h-0" style={viewMode !== "graph" ? { display: "none" } : undefined}>
+      {viewMode === "graph" && (
+        <div data-testid="graph-view-wrapper" className="flex-1 min-h-0">
           <Suspense fallback={<div className="flex items-center justify-center h-full text-text-faint">Loading…</div>}>
             <LazyGraphView
               activePageId={currentPanePage}
-              visible={viewMode === "graph"}
               onNavigate={(pageId) => {
                 selectPage(pageId);
                 setViewMode("editor");
