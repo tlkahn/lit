@@ -411,7 +411,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::Direction;
-use super::knowledge::GraphNode;
+use super::knowledge::{EdgeMeta, GraphNode};
 
 fn hash_position(id: &str) -> (f64, f64) {
     let mut h = DefaultHasher::new();
@@ -423,7 +423,7 @@ fn hash_position(id: &str) -> (f64, f64) {
 }
 
 pub fn compute_layout(
-    graph: &DiGraph<GraphNode, ()>,
+    graph: &DiGraph<GraphNode, EdgeMeta>,
     existing: Option<&HashMap<String, (f64, f64)>>,
     settings: &LayoutSettings,
 ) -> HashMap<String, (f64, f64)> {
@@ -496,7 +496,7 @@ pub fn compute_layout(
 mod tests {
     use super::*;
 
-    fn make_graph(ids: &[&str], edges: &[(usize, usize)]) -> DiGraph<GraphNode, ()> {
+    fn make_graph(ids: &[&str], edges: &[(usize, usize)]) -> DiGraph<GraphNode, EdgeMeta> {
         let mut g = DiGraph::new();
         let indices: Vec<NodeIndex> = ids
             .iter()
@@ -509,14 +509,18 @@ mod tests {
             })
             .collect();
         for &(s, t) in edges {
-            g.add_edge(indices[s], indices[t], ());
+            g.add_edge(indices[s], indices[t], EdgeMeta {
+                context: String::new(),
+                source_line: 0,
+                raw_target: String::new(),
+            });
         }
         g
     }
 
     #[test]
     fn compute_layout_empty_graph() {
-        let g: DiGraph<GraphNode, ()> = DiGraph::new();
+        let g: DiGraph<GraphNode, EdgeMeta> = DiGraph::new();
         let result = compute_layout(&g, None, &LayoutSettings::default());
         assert!(result.is_empty());
     }

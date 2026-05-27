@@ -1,12 +1,13 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use petgraph::graph::{DiGraph, NodeIndex};
+use petgraph::visit::EdgeRef;
 use petgraph::Direction;
 use serde::{Deserialize, Serialize};
 
 use super::error::GraphError;
 use super::store::Store;
-use super::types::Position;
+use super::types::{BacklinkEntry, LinkEntry, Position};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct GraphNode {
@@ -50,8 +51,15 @@ pub struct SubgraphBundle {
     pub positions: HashMap<String, Position>,
 }
 
+#[derive(Clone, Debug)]
+pub struct EdgeMeta {
+    pub context: String,
+    pub source_line: u32,
+    pub raw_target: String,
+}
+
 pub struct KnowledgeGraph {
-    graph: DiGraph<GraphNode, ()>,
+    graph: DiGraph<GraphNode, EdgeMeta>,
     id_to_index: HashMap<String, NodeIndex>,
 }
 
@@ -59,7 +67,7 @@ impl KnowledgeGraph {
     pub fn from_store(store: &Store) -> Result<Self, GraphError> {
         let nodes_meta = store.all_nodes_metadata()?;
         let titles = store.node_titles()?;
-        let store_edges = store.all_edges()?;
+        let store_edges = store.all_edges_full()?;
 
         let mut graph = DiGraph::new();
         let mut id_to_index = HashMap::new();
@@ -75,32 +83,43 @@ impl KnowledgeGraph {
             id_to_index.insert(id.clone(), idx);
         }
 
-        let mut seen_edges = HashSet::new();
-        for (source, target) in &store_edges {
+        for (source, target, context, raw_target, source_line) in &store_edges {
             if let (Some(&s_idx), Some(&t_idx)) =
                 (id_to_index.get(source), id_to_index.get(target))
             {
-                if seen_edges.insert((s_idx, t_idx)) {
-                    graph.add_edge(s_idx, t_idx, ());
-                }
+                graph.add_edge(
+                    s_idx,
+                    t_idx,
+                    EdgeMeta {
+                        context: context.clone(),
+                        source_line: *source_line,
+                        raw_target: raw_target.clone(),
+                    },
+                );
             }
         }
 
         Ok(Self { graph, id_to_index })
     }
 
-    pub fn graph_clone(&self) -> DiGraph<GraphNode, ()> {
+    pub fn graph_clone(&self) -> DiGraph<GraphNode, EdgeMeta> {
         self.graph.clone()
     }
 
     pub fn full_subgraph(&self) -> SubgraphResult {
         let nodes: Vec<GraphNode> = self.graph.node_weights().cloned().collect();
+        let mut seen = HashSet::new();
         let edges: Vec<(String, String)> = self
             .graph
             .edge_indices()
             .filter_map(|e| {
                 let (s, t) = self.graph.edge_endpoints(e)?;
-                Some((self.graph[s].id.clone(), self.graph[t].id.clone()))
+                let pair = (self.graph[s].id.clone(), self.graph[t].id.clone());
+                if seen.insert(pair.clone()) {
+                    Some(pair)
+                } else {
+                    None
+                }
             })
             .collect();
         SubgraphResult { nodes, edges }.without_stubs()
@@ -274,13 +293,19 @@ impl KnowledgeGraph {
     fn induced_subgraph(&self, visited: &HashSet<NodeIndex>) -> SubgraphResult {
         let nodes: Vec<GraphNode> = visited.iter().map(|&idx| self.graph[idx].clone()).collect();
 
+        let mut seen = HashSet::new();
         let edges: Vec<(String, String)> = self
             .graph
             .edge_indices()
             .filter_map(|e| {
                 let (s, t) = self.graph.edge_endpoints(e)?;
                 if visited.contains(&s) && visited.contains(&t) {
-                    Some((self.graph[s].id.clone(), self.graph[t].id.clone()))
+                    let pair = (self.graph[s].id.clone(), self.graph[t].id.clone());
+                    if seen.insert(pair.clone()) {
+                        Some(pair)
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
@@ -288,6 +313,63 @@ impl KnowledgeGraph {
             .collect();
 
         SubgraphResult { nodes, edges }.without_stubs()
+    }
+
+    pub fn backlinks(&self, id: &str) -> Result<Vec<BacklinkEntry>, GraphError> {
+        let &idx = self
+            .id_to_index
+            .get(id)
+            .ok_or_else(|| GraphError::NodeNotFound { id: id.into() })?;
+        let entries = self
+            .graph
+            .edges_directed(idx, Direction::Incoming)
+            .map(|edge| {
+                let source = &self.graph[edge.source()];
+                let meta = edge.weight();
+                BacklinkEntry {
+                    source_id: source.id.clone(),
+                    source_title: source.title.clone(),
+                    context: meta.context.clone(),
+                    source_line: meta.source_line,
+                }
+            })
+            .collect();
+        Ok(entries)
+    }
+
+    pub fn forward_links(&self, id: &str) -> Result<Vec<LinkEntry>, GraphError> {
+        let &idx = self
+            .id_to_index
+            .get(id)
+            .ok_or_else(|| GraphError::NodeNotFound { id: id.into() })?;
+        let entries = self
+            .graph
+            .edges_directed(idx, Direction::Outgoing)
+            .map(|edge| {
+                let target = &self.graph[edge.target()];
+                let meta = edge.weight();
+                LinkEntry {
+                    target_id: target.id.clone(),
+                    target_title: target.title.clone(),
+                    raw_target: meta.raw_target.clone(),
+                    context: meta.context.clone(),
+                }
+            })
+            .collect();
+        Ok(entries)
+    }
+
+    pub fn backlink_source_ids(&self, id: &str) -> Result<HashSet<String>, GraphError> {
+        let &idx = self
+            .id_to_index
+            .get(id)
+            .ok_or_else(|| GraphError::NodeNotFound { id: id.into() })?;
+        let ids = self
+            .graph
+            .neighbors_directed(idx, Direction::Incoming)
+            .map(|n| self.graph[n].id.clone())
+            .collect();
+        Ok(ids)
     }
 
     pub fn pagerank(&self, damping: f64) -> HashMap<String, f64> {
@@ -535,7 +617,7 @@ mod tests {
         store.insert_edge("A", "B", "ctx1", "", 0).unwrap();
         store.insert_edge("A", "B", "ctx2", "", 0).unwrap();
         let kg = KnowledgeGraph::from_store(&store).unwrap();
-        assert_eq!(kg.graph.edge_count(), 1);
+        assert_eq!(kg.graph.edge_count(), 2);
     }
 
     // --- without_stubs ---
@@ -1038,6 +1120,151 @@ mod tests {
         let cloned = kg.graph_clone();
         assert_eq!(cloned.node_count(), 6);
         assert_eq!(cloned.edge_count(), 5);
+    }
+
+    // --- backlinks ---
+
+    #[test]
+    fn backlinks_returns_incoming_edges() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
+        store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
+        store.upsert_node(&make_node("C", "Charlie"), 1).unwrap();
+        store.insert_edge("A", "B", "ctx1", "b", 10).unwrap();
+        store.insert_edge("C", "B", "ctx2", "b", 20).unwrap();
+        let kg = KnowledgeGraph::from_store(&store).unwrap();
+
+        let mut bl = kg.backlinks("B").unwrap();
+        bl.sort_by(|a, b| a.source_id.cmp(&b.source_id));
+        assert_eq!(bl.len(), 2);
+        assert_eq!(bl[0].source_id, "A");
+        assert_eq!(bl[0].source_title, "Alpha");
+        assert_eq!(bl[0].context, "ctx1");
+        assert_eq!(bl[0].source_line, 10);
+        assert_eq!(bl[1].source_id, "C");
+        assert_eq!(bl[1].source_title, "Charlie");
+        assert_eq!(bl[1].context, "ctx2");
+        assert_eq!(bl[1].source_line, 20);
+    }
+
+    #[test]
+    fn backlinks_node_not_found() {
+        let store = Store::open_memory().unwrap();
+        let kg = KnowledgeGraph::from_store(&store).unwrap();
+        match kg.backlinks("Z") {
+            Err(GraphError::NodeNotFound { id }) => assert_eq!(id, "Z"),
+            other => panic!("expected NodeNotFound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn backlinks_no_incoming() {
+        let (_, kg) = build_test_graph();
+        let bl = kg.backlinks("A").unwrap();
+        assert!(bl.is_empty());
+    }
+
+    // --- subgraph dedup ---
+
+    #[test]
+    fn full_subgraph_deduplicates_multi_edges() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
+        store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
+        store.insert_edge("A", "B", "ctx1", "b", 1).unwrap();
+        store.insert_edge("A", "B", "ctx2", "b", 5).unwrap();
+        let kg = KnowledgeGraph::from_store(&store).unwrap();
+
+        assert_eq!(kg.graph.edge_count(), 2, "multigraph has 2 edges");
+        let sub = kg.full_subgraph();
+        assert_eq!(sub.edges.len(), 1, "viz deduplicates to 1 edge");
+        assert_eq!(sub.edges[0], ("A".to_string(), "B".to_string()));
+    }
+
+    #[test]
+    fn induced_subgraph_deduplicates_multi_edges() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
+        store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
+        store.insert_edge("A", "B", "ctx1", "b", 1).unwrap();
+        store.insert_edge("A", "B", "ctx2", "b", 5).unwrap();
+        let kg = KnowledgeGraph::from_store(&store).unwrap();
+
+        let sub = kg.neighbors("A", 1, true).unwrap();
+        assert_eq!(sub.edges.len(), 1, "neighbors deduplicates to 1 edge");
+    }
+
+    // --- backlink_source_ids ---
+
+    #[test]
+    fn backlink_source_ids_returns_unique_sources() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
+        store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
+        store.upsert_node(&make_node("C", "Charlie"), 1).unwrap();
+        store.insert_edge("A", "C", "ctx1", "c", 1).unwrap();
+        store.insert_edge("B", "C", "ctx2", "c", 2).unwrap();
+        store.insert_edge("A", "C", "ctx3", "c", 3).unwrap(); // duplicate source A
+        let kg = KnowledgeGraph::from_store(&store).unwrap();
+
+        let ids = kg.backlink_source_ids("C").unwrap();
+        assert_eq!(ids, HashSet::from(["A".to_string(), "B".to_string()]));
+    }
+
+    #[test]
+    fn backlink_source_ids_node_not_found() {
+        let store = Store::open_memory().unwrap();
+        let kg = KnowledgeGraph::from_store(&store).unwrap();
+        assert!(kg.backlink_source_ids("Z").is_err());
+    }
+
+    #[test]
+    fn backlink_source_ids_no_incoming() {
+        let (_, kg) = build_test_graph();
+        let ids = kg.backlink_source_ids("A").unwrap();
+        assert!(ids.is_empty());
+    }
+
+    // --- forward_links ---
+
+    #[test]
+    fn forward_links_returns_outgoing_edges() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
+        store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
+        store.upsert_node(&make_node("C", "Charlie"), 1).unwrap();
+        store.insert_edge("A", "B", "ctx1", "b", 5).unwrap();
+        store.insert_edge("A", "C", "ctx2", "c", 15).unwrap();
+        let kg = KnowledgeGraph::from_store(&store).unwrap();
+
+        let mut fl = kg.forward_links("A").unwrap();
+        fl.sort_by(|a, b| a.target_id.cmp(&b.target_id));
+        assert_eq!(fl.len(), 2);
+        assert_eq!(fl[0].target_id, "B");
+        assert_eq!(fl[0].target_title, "Beta");
+        assert_eq!(fl[0].raw_target, "b");
+        assert_eq!(fl[0].context, "ctx1");
+        assert_eq!(fl[1].target_id, "C");
+        assert_eq!(fl[1].target_title, "Charlie");
+        assert_eq!(fl[1].raw_target, "c");
+        assert_eq!(fl[1].context, "ctx2");
+    }
+
+    #[test]
+    fn forward_links_node_not_found() {
+        let store = Store::open_memory().unwrap();
+        let kg = KnowledgeGraph::from_store(&store).unwrap();
+        match kg.forward_links("Z") {
+            Err(GraphError::NodeNotFound { id }) => assert_eq!(id, "Z"),
+            other => panic!("expected NodeNotFound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn forward_links_no_outgoing() {
+        let (_, kg) = build_test_graph();
+        let fl = kg.forward_links("E").unwrap();
+        assert!(fl.is_empty());
     }
 
     #[test]
