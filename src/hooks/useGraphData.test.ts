@@ -922,6 +922,45 @@ describe("useGraphData", () => {
         expect(result.current.loading).toBe(false);
       });
     });
+
+    it("after local-mode navigation, returning to full mode recolors from last full-mode seed", async () => {
+      const handler = vi.fn((cmd: string, args?: Record<string, unknown>) => {
+        if (cmd === "get_graph_subgraph") {
+          const seeds = (args?.seeds as string[]) ?? [];
+          return seeds.length > 0 ? LOCAL_SUBGRAPH : TWO_NODE_SUBGRAPH;
+        }
+        return {};
+      });
+      mockInvoke(handler);
+      const recolorSpy = vi.spyOn(graphLayout, "recolorSeed");
+      const useGraphData = await importHook();
+
+      const { result, rerender } = renderHook(
+        (props: UseGraphDataOptions) => useGraphData(props),
+        { initialProps: { mode: "full", depth: 1, activePageId: "a.md" } as UseGraphDataOptions },
+      );
+      await waitFor(() => { expect(result.current.loading).toBe(false); });
+      recolorSpy.mockClear();
+
+      // Switch to local, navigate a.md → b.md
+      rerender({ mode: "local", depth: 2, activePageId: "a.md" });
+      await waitFor(() => { expect(result.current.loading).toBe(false); });
+      rerender({ mode: "local", depth: 2, activePageId: "b.md" });
+      await waitFor(() => { expect(result.current.loading).toBe(false); });
+      recolorSpy.mockClear();
+
+      // Return to full mode with activePageId="b.md"
+      rerender({ mode: "full", depth: 1, activePageId: "b.md" });
+
+      // prev should be "a.md" (last full-mode seed), NOT "b.md" (local tracking)
+      await waitFor(() => {
+        expect(recolorSpy).toHaveBeenCalledWith(
+          expect.any(Object), "a.md", "b.md", expect.any(String),
+        );
+      });
+
+      recolorSpy.mockRestore();
+    });
   });
 
   // Cycle 13: Cleanup + stale effect cancellation

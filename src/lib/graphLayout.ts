@@ -27,6 +27,12 @@ export const NODE_SIZE = 4;
 
 export const SEED_COLOR = "#f59e0b";
 
+export function seedAttrs(isSeed: boolean, accentColor: string): { type: string; color: string } {
+  return isSeed
+    ? { type: "seed", color: SEED_COLOR }
+    : { type: "filled", color: accentColor };
+}
+
 export interface GraphBuildOptions {
   subgraph: SubgraphResult;
   accentColor: string;
@@ -36,10 +42,11 @@ export interface GraphBuildOptions {
 export function populateGraph(graph: Graph, subgraph: SubgraphResult, accentColor: string, seedId?: string): void {
   for (const node of subgraph.nodes) {
     const isSeed = seedId != null && node.id === seedId;
+    const { type, color } = seedAttrs(isSeed, accentColor);
     graph.addNode(node.id, {
       label: node.title,
-      color: isSeed ? SEED_COLOR : accentColor,
-      type: isSeed ? "seed" : "filled",
+      color,
+      type,
       size: NODE_SIZE,
       x: Math.random() * 100,
       y: Math.random() * 100,
@@ -59,12 +66,14 @@ export function recolorSeed(
   accentColor: string,
 ): void {
   if (prevSeedId && prevSeedId !== nextSeedId && graph.hasNode(prevSeedId)) {
-    graph.setNodeAttribute(prevSeedId, "type", "filled");
-    graph.setNodeAttribute(prevSeedId, "color", accentColor);
+    const { type, color } = seedAttrs(false, accentColor);
+    graph.setNodeAttribute(prevSeedId, "type", type);
+    graph.setNodeAttribute(prevSeedId, "color", color);
   }
   if (nextSeedId && graph.hasNode(nextSeedId)) {
-    graph.setNodeAttribute(nextSeedId, "type", "seed");
-    graph.setNodeAttribute(nextSeedId, "color", SEED_COLOR);
+    const { type, color } = seedAttrs(true, accentColor);
+    graph.setNodeAttribute(nextSeedId, "type", type);
+    graph.setNodeAttribute(nextSeedId, "color", color);
   }
 }
 
