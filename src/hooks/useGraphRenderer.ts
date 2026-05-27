@@ -19,7 +19,6 @@ export interface UseGraphRendererOptions {
   tierSettings: TierSettings;
   dimColorRef: MutableRefObject<string>;
   dataVersion: number;
-  seedVersion?: number;
   onNavigate?: (pageId: string) => void;
   onContextMenu?: (menu: { nodeId: string; x: number; y: number }) => void;
 }
@@ -35,7 +34,7 @@ export interface UseGraphRendererResult {
 }
 
 export function useGraphRenderer(options: UseGraphRendererOptions): UseGraphRendererResult {
-  const { containerRef, graphRef, tierSettings, dimColorRef, dataVersion, seedVersion, onNavigate, onContextMenu } = options;
+  const { containerRef, graphRef, tierSettings, dimColorRef, dataVersion, onNavigate, onContextMenu } = options;
 
   const sigmaRef = useRef<SigmaLike | null>(null);
   const hoveredNodeRef = useRef<string | null>(null);
@@ -45,7 +44,6 @@ export function useGraphRenderer(options: UseGraphRendererOptions): UseGraphRend
   const nudgeRef = useRef<NudgeController | null>(null);
   const unsubRef = useRef<(() => void) | null>(null);
   const prevDataVersionRef = useRef(dataVersion);
-  const prevSeedVersionRef = useRef(seedVersion ?? 0);
 
   const onNavigateRef = useRef(onNavigate);
   onNavigateRef.current = onNavigate;
@@ -200,14 +198,6 @@ export function useGraphRenderer(options: UseGraphRendererOptions): UseGraphRend
     sigmaRef.current.refresh();
     sigmaRef.current.getCamera().animatedReset();
   }, [dataVersion]);
-
-  useEffect(() => {
-    const sv = seedVersion ?? 0;
-    if (!sigmaRef.current) return;
-    if (sv === prevSeedVersionRef.current) return;
-    prevSeedVersionRef.current = sv;
-    sigmaRef.current.refresh();
-  }, [seedVersion]);
 
   return {
     sigmaRef,

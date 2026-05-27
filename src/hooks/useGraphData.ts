@@ -20,7 +20,6 @@ export interface UseGraphDataResult {
   tierSettings: TierSettings;
   dimColorRef: MutableRefObject<string>;
   dataVersion: number;
-  seedVersion: number;
 }
 
 async function doRebuild(
@@ -83,7 +82,6 @@ export function useGraphData(options: UseGraphDataOptions): UseGraphDataResult {
   const [graphStats, setGraphStats] = useState<{ nodes: number; edges: number } | null>(null);
   const [tierSettings, setTierSettings] = useState<TierSettings>(DEFAULT_TIER);
   const [dataVersion, setDataVersion] = useState(0);
-  const [seedVersion, setSeedVersion] = useState(0);
 
   const generationRef = useRef(0);
   const prevSeedRef = useRef(activePageId);
@@ -188,7 +186,6 @@ export function useGraphData(options: UseGraphDataOptions): UseGraphDataResult {
 
     const { accentColor } = resolveThemeColors();
     recolorSeed(graph, prev, activePageId, accentColor);
-    setSeedVersion((v) => v + 1);
   }, [activePageId, mode]);
 
   return {
@@ -199,6 +196,5 @@ export function useGraphData(options: UseGraphDataOptions): UseGraphDataResult {
     tierSettings,
     dimColorRef,
     dataVersion,
-    seedVersion,
   };
 }
