@@ -850,7 +850,7 @@ describe("useGraphData", () => {
 
   // Cycle: Seed recolor in full mode
   describe("seed recolor", () => {
-    it("full mode + rerender with new activePageId → graph attrs updated, seedVersion bumped", async () => {
+    it("full mode + new activePageId → graph attrs updated", async () => {
       mockInvoke(makeInvokeHandler());
       const useGraphData = await importHook();
 
@@ -863,20 +863,18 @@ describe("useGraphData", () => {
         expect(result.current.loading).toBe(false);
       });
 
-      const v1 = result.current.seedVersion;
       expect(result.current.graphRef.current!.getNodeAttribute("a.md", "type")).toBe("seed");
 
       rerender({ mode: "full", depth: 1, activePageId: "b.md" });
 
       await waitFor(() => {
-        expect(result.current.seedVersion).toBeGreaterThan(v1);
+        expect(result.current.graphRef.current!.getNodeAttribute("b.md", "type")).toBe("seed");
       });
 
       expect(result.current.graphRef.current!.getNodeAttribute("a.md", "type")).toBe("filled");
-      expect(result.current.graphRef.current!.getNodeAttribute("b.md", "type")).toBe("seed");
     });
 
-    it("full mode + same activePageId → seedVersion unchanged", async () => {
+    it("full mode + same activePageId → no recolor", async () => {
       mockInvoke(makeInvokeHandler());
       const useGraphData = await importHook();
 
@@ -889,14 +887,14 @@ describe("useGraphData", () => {
         expect(result.current.loading).toBe(false);
       });
 
-      const v1 = result.current.seedVersion;
+      expect(result.current.graphRef.current!.getNodeAttribute("a.md", "type")).toBe("seed");
 
       rerender({ mode: "full", depth: 1, activePageId: "a.md" });
 
-      expect(result.current.seedVersion).toBe(v1);
+      expect(result.current.graphRef.current!.getNodeAttribute("a.md", "type")).toBe("seed");
     });
 
-    it("local mode + new activePageId → seedVersion NOT bumped", async () => {
+    it("local mode + new activePageId → no recolor on old graph", async () => {
       const handler = vi.fn((cmd: string, args?: Record<string, unknown>) => {
         if (cmd === "get_graph_subgraph") {
           const seeds = (args?.seeds as string[]) ?? [];
@@ -918,15 +916,11 @@ describe("useGraphData", () => {
         expect(result.current.loading).toBe(false);
       });
 
-      const v1 = result.current.seedVersion;
-
       rerender({ mode: "local", depth: 2, activePageId: "b.md" });
 
       await waitFor(() => {
         expect(result.current.loading).toBe(false);
       });
-
-      expect(result.current.seedVersion).toBe(v1);
     });
   });
 

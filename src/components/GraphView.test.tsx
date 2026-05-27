@@ -965,7 +965,6 @@ describe("GraphView", () => {
     expect(graph.getNodeAttribute("b.md", "type")).toBe("seed");
     expect(mockSigmaKill).not.toHaveBeenCalled();
     expect(invoke).not.toHaveBeenCalledWith("get_graph_subgraph", expect.anything());
-    expect(mockSigmaRefresh).toHaveBeenCalled();
 
     populateGraphSpy.mockRestore();
   });
