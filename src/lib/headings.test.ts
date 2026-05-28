@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractHeadings } from "./headings";
+import { extractHeadings, stripInlineMarkdown } from "./headings";
 
 describe("extractHeadings", () => {
   it("returns [] for empty string", () => {
@@ -91,4 +91,68 @@ describe("extractHeadings", () => {
     ]);
   });
 
+  it("strips inline markdown from heading text", () => {
+    expect(extractHeadings("## **Bold** and [link](url)")).toEqual([
+      { level: 2, text: "Bold and link", line: 0, from: 0, to: 27 },
+    ]);
+  });
+
+});
+
+describe("stripInlineMarkdown", () => {
+  it("strips bold **", () => {
+    expect(stripInlineMarkdown("**bold**")).toBe("bold");
+  });
+
+  it("strips bold __", () => {
+    expect(stripInlineMarkdown("__bold__")).toBe("bold");
+  });
+
+  it("strips italic *", () => {
+    expect(stripInlineMarkdown("*italic*")).toBe("italic");
+  });
+
+  it("strips italic _", () => {
+    expect(stripInlineMarkdown("_italic_")).toBe("italic");
+  });
+
+  it("strips inline code", () => {
+    expect(stripInlineMarkdown("`code`")).toBe("code");
+  });
+
+  it("strips links", () => {
+    expect(stripInlineMarkdown("[text](url)")).toBe("text");
+  });
+
+  it("strips images", () => {
+    expect(stripInlineMarkdown("![alt](img)")).toBe("alt");
+  });
+
+  it("strips strikethrough", () => {
+    expect(stripInlineMarkdown("~~strike~~")).toBe("strike");
+  });
+
+  it("strips highlight", () => {
+    expect(stripInlineMarkdown("==highlight==")).toBe("highlight");
+  });
+
+  it("strips plain wikilinks", () => {
+    expect(stripInlineMarkdown("[[wikilink]]")).toBe("wikilink");
+  });
+
+  it("strips aliased wikilinks using alias", () => {
+    expect(stripInlineMarkdown("[[target|alias]]")).toBe("alias");
+  });
+
+  it("leaves plain text unchanged", () => {
+    expect(stripInlineMarkdown("plain text")).toBe("plain text");
+  });
+
+  it("strips mixed formatting", () => {
+    expect(stripInlineMarkdown("**bold** and *italic*")).toBe("bold and italic");
+  });
+
+  it("strips nested formatting", () => {
+    expect(stripInlineMarkdown("**_bold italic_**")).toBe("bold italic");
+  });
 });
