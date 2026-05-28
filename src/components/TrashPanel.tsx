@@ -72,7 +72,7 @@ export function TrashPanel() {
             }}
           >
             <div
-              className="w-full truncate rounded px-2 py-1 text-start text-sm text-text-normal hover:bg-bg-hover"
+              className="w-full select-none truncate rounded px-2 py-1 text-start text-sm text-text-normal hover:bg-bg-hover"
               title={item.original_path}
             >
               {item.original_path}
