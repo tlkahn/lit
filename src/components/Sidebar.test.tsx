@@ -34,9 +34,6 @@ beforeEach(() => {
     if (cmd === "open_in_external_editor") {
       return null;
     }
-    if (cmd === "set_preference") {
-      return undefined;
-    }
     throw new Error(`Unknown command: ${cmd}`);
   });
 });
@@ -524,19 +521,7 @@ describe("context menu theme-aware colors", () => {
 });
 
 describe("Sidebar background context menu", () => {
-  it("right-clicking search input does not show sidebar background menu", () => {
-    useWorkspaceStore.setState({
-      pages: [makePage("Alpha", "Alpha.md")],
-    });
-    render(<Sidebar />);
-
-    const searchInput = screen.getByLabelText("Search pages");
-    fireEvent.contextMenu(searchInput, { clientX: 100, clientY: 50 });
-
-    expect(screen.queryByTestId("sidebar-bg-menu")).not.toBeInTheDocument();
-  });
-
-  it("right-clicking sidebar background shows Hide Sidebar menu", () => {
+  it("right-clicking sidebar background does not show any menu", () => {
     useWorkspaceStore.setState({
       pages: [makePage("Alpha", "Alpha.md")],
     });
@@ -545,38 +530,7 @@ describe("Sidebar background context menu", () => {
     const aside = document.querySelector("aside")!;
     fireEvent.contextMenu(aside, { clientX: 100, clientY: 300 });
 
-    expect(screen.getByTestId("sidebar-bg-menu")).toBeInTheDocument();
-    expect(screen.getByText("Hide Sidebar")).toBeInTheDocument();
-  });
-
-  it("clicking Hide Sidebar calls setPreference", async () => {
-    useWorkspaceStore.setState({
-      pages: [],
-    });
-    const user = userEvent.setup();
-    render(<Sidebar />);
-
-    const aside = document.querySelector("aside")!;
-    fireEvent.contextMenu(aside, { clientX: 100, clientY: 300 });
-
-    await user.click(screen.getByText("Hide Sidebar"));
-
-    const call = invokedCommands.find((c) => c.cmd === "set_preference");
-    expect(call).toBeTruthy();
-    expect(call!.args).toEqual({ key: "workbench.sideBar.visible", value: false });
-  });
-
-  it("does not show sidebar background menu when right-clicking a page item", () => {
-    useWorkspaceStore.setState({
-      pages: [makePage("Alpha", "Alpha.md")],
-    });
-    render(<Sidebar />);
-
-    const pageButton = screen.getByText("Alpha");
-    fireEvent.contextMenu(pageButton, { clientX: 100, clientY: 200 });
-
     expect(screen.queryByTestId("sidebar-bg-menu")).not.toBeInTheDocument();
-    expect(screen.getByTestId("context-menu")).toBeInTheDocument();
   });
 });
 
