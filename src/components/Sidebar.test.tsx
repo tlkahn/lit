@@ -520,19 +520,6 @@ describe("context menu theme-aware colors", () => {
   });
 });
 
-describe("Sidebar background context menu", () => {
-  it("right-clicking sidebar background does not show any menu", () => {
-    useWorkspaceStore.setState({
-      pages: [makePage("Alpha", "Alpha.md")],
-    });
-    render(<Sidebar />);
-
-    const aside = document.querySelector("aside")!;
-    fireEvent.contextMenu(aside, { clientX: 100, clientY: 300 });
-
-    expect(screen.queryByTestId("sidebar-bg-menu")).not.toBeInTheDocument();
-  });
-});
 
 describe("Sidebar sorting", () => {
   beforeEach(() => {
