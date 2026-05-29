@@ -39,7 +39,7 @@ mock_command_stdin() {
   cat > "$MOCK_BIN/$cmd" <<'MOCK_EOF'
 #!/usr/bin/env bash
 MOCK_EOF
-  echo "echo \"\$@\" >> \"$MOCK_LOG\"" >> "$MOCK_BIN/$cmd"
+  echo "echo \"$cmd \$@\" >> \"$MOCK_LOG\"" >> "$MOCK_BIN/$cmd"
   if [ -n "$stdout" ]; then
     echo "cat <<'STDOUT_EOF'" >> "$MOCK_BIN/$cmd"
     echo "$stdout" >> "$MOCK_BIN/$cmd"
