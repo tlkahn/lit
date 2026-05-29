@@ -138,6 +138,7 @@ release_prebuild_cli() {
   echo "── Pre-building lit-cli..."
   (
     cd "$REPO_ROOT/src-tauri"
+    mkdir -p binaries
     touch binaries/lit-cli-aarch64-apple-darwin
     cargo build --release --bin lit-cli --target aarch64-apple-darwin
     cp target/aarch64-apple-darwin/release/lit-cli binaries/lit-cli-aarch64-apple-darwin
