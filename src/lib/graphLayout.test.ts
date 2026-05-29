@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { buildGraph, resolveThemeColors, applyPositions, recolorSeed, seedAttrs, NODE_SIZE, SEED_COLOR } from "./graphLayout";
+import { buildGraph, resolveThemeColors, applyPositions, recolorSeed, seedAttrs, NODE_SIZE, SEED_COLOR, SELECTED_COLOR } from "./graphLayout";
 import type { SubgraphResult } from "./ipc";
 
 describe("graphLayout", () => {
@@ -252,6 +252,13 @@ describe("graphLayout", () => {
 
     it("uses the provided accentColor, not a hardcoded value", () => {
       expect(seedAttrs(false, "#ff0000").color).toBe("#ff0000");
+    });
+  });
+
+  describe("SELECTED_COLOR", () => {
+    it("is amber-400 (#fbbf24), distinct from SEED_COLOR", () => {
+      expect(SELECTED_COLOR).toBe("#fbbf24");
+      expect(SELECTED_COLOR).not.toBe(SEED_COLOR);
     });
   });
 
