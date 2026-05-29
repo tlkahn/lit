@@ -1,4 +1,4 @@
-import { SEED_COLOR } from "./graphLayout";
+import { SELECTED_COLOR } from "./graphLayout";
 
 export interface ReducerContext {
   selectedSet: Set<string>;
@@ -20,7 +20,7 @@ export function defaultNodeReduce(
   ctx: ReducerContext,
 ): Record<string, unknown> {
   if (ctx.selectedSet.has(nodeId)) {
-    return { ...attrs, color: SEED_COLOR, forceLabel: true, highlighted: true };
+    return { ...attrs, color: SELECTED_COLOR, forceLabel: true, highlighted: true };
   }
   return { ...attrs, forceLabel: false };
 }
@@ -30,23 +30,19 @@ export function hoverNodeReduce(
   attrs: Record<string, unknown>,
   ctx: HoverContext,
 ): Record<string, unknown> {
-  const isSelected = ctx.selectedSet.has(nodeId);
+  if (ctx.selectedSet.has(nodeId)) {
+    return { ...attrs, color: SELECTED_COLOR, forceLabel: true, highlighted: true };
+  }
 
   if (nodeId === ctx.hoveredNode) {
-    return isSelected
-      ? { ...attrs, color: SEED_COLOR, forceLabel: true, highlighted: true }
-      : { ...attrs, forceLabel: true };
+    return { ...attrs, forceLabel: true };
   }
 
   if (ctx.neighbors.has(nodeId)) {
-    return isSelected
-      ? { ...attrs, color: SEED_COLOR, forceLabel: true, highlighted: true }
-      : { ...attrs, forceLabel: false };
+    return { ...attrs, forceLabel: false };
   }
 
-  return isSelected
-    ? { ...attrs, color: SEED_COLOR, forceLabel: true, highlighted: true }
-    : { ...attrs, color: ctx.dimColor, forceLabel: false };
+  return { ...attrs, color: ctx.dimColor, forceLabel: false };
 }
 
 export function searchNodeReduce(
@@ -54,15 +50,13 @@ export function searchNodeReduce(
   attrs: Record<string, unknown>,
   ctx: SearchContext,
 ): Record<string, unknown> {
-  if (ctx.matchSet.has(nodeId)) {
-    const isSelected = ctx.selectedSet.has(nodeId);
-    return isSelected
-      ? { ...attrs, color: SEED_COLOR, highlighted: true, forceLabel: true }
-      : { ...attrs, highlighted: true, forceLabel: true };
+  if (ctx.selectedSet.has(nodeId)) {
+    return { ...attrs, color: SELECTED_COLOR, highlighted: true, forceLabel: true };
   }
 
-  const isSelected = ctx.selectedSet.has(nodeId);
-  return isSelected
-    ? { ...attrs, color: SEED_COLOR, forceLabel: true, highlighted: true }
-    : { ...attrs, color: ctx.dimColor, forceLabel: false };
+  if (ctx.matchSet.has(nodeId)) {
+    return { ...attrs, highlighted: true, forceLabel: true };
+  }
+
+  return { ...attrs, color: ctx.dimColor, forceLabel: false };
 }

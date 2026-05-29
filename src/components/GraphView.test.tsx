@@ -1959,7 +1959,7 @@ describe("GraphView", () => {
     const reducer = nodeReducerCall![1] as (n: string, attrs: Record<string, unknown>) => Record<string, unknown>;
     const result = reducer("b.md", { color: "#000", label: "B" });
     expect(result.highlighted).toBe(true);
-    expect(result.color).toBe(graphLayout.SEED_COLOR);
+    expect(result.color).toBe(graphLayout.SELECTED_COLOR);
   });
 
   it("selected node that matches search query keeps highlighted: true", async () => {

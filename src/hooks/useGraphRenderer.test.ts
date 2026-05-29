@@ -339,7 +339,7 @@ describe("useGraphRenderer", () => {
     expect(reducer("b.md", { color: "#000" }).forceLabel).toBe(false);
   });
 
-  it("enterNode: hovered+selected node gets SEED_COLOR and highlighted", async () => {
+  it("enterNode: hovered+selected node gets SELECTED_COLOR and highlighted", async () => {
     const useGraphRenderer = await importHook();
     const opts = makeOptions();
 
@@ -358,7 +358,7 @@ describe("useGraphRenderer", () => {
     );
     const reducer = nodeReducerCall![1] as (n: string, attrs: Record<string, unknown>) => Record<string, unknown>;
     const out = reducer("a.md", { color: "#000" });
-    expect(out.color).toBe("#f59e0b");
+    expect(out.color).toBe("#fbbf24");
     expect(out.highlighted).toBe(true);
     expect(out.forceLabel).toBe(true);
   });

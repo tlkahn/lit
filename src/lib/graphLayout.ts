@@ -27,6 +27,8 @@ export const NODE_SIZE = 4;
 
 export const SEED_COLOR = "#f59e0b";
 
+export const SELECTED_COLOR = "#fbbf24";
+
 export function seedAttrs(isSeed: boolean, accentColor: string): { type: string; color: string } {
   return isSeed
     ? { type: "seed", color: SEED_COLOR }
