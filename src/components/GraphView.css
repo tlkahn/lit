@@ -12,6 +12,10 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+.graph-view-container *::selection {
+  background: transparent;
+}
+
 .graph-loading,
 .graph-error {
   position: absolute;
