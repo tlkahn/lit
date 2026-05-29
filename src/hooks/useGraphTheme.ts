@@ -1,20 +1,11 @@
 import { useCallback, useEffect, type RefObject, type MutableRefObject } from "react";
 import { useThemeStore } from "../stores/theme";
 import { resolveThemeColors } from "../lib/graphLayout";
-
-interface GraphLike {
-  forEachNode(callback: (node: string, attrs: Record<string, unknown>) => void): void;
-  setNodeAttribute(node: string, attr: string, value: unknown): void;
-}
-
-interface SigmaLike {
-  refresh(): void;
-  setSetting(key: string, value: unknown): void;
-}
+import type { SigmaLike, GraphLike } from "./graphTypes";
 
 export function useGraphTheme(
-  graphRef: RefObject<GraphLike | null>,
-  sigmaRef: RefObject<SigmaLike | null>,
+  graphRef: RefObject<Pick<GraphLike, "forEachNode" | "setNodeAttribute"> | null>,
+  sigmaRef: RefObject<Pick<SigmaLike, "refresh" | "setSetting"> | null>,
   dimColorRef: MutableRefObject<string>,
 ) {
   const activeThemeId = useThemeStore((s) => s.activeThemeId);

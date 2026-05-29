@@ -272,6 +272,36 @@ describe("useGraphLasso", () => {
     expect(useGraphSelectionStore.getState().selectedNodes).toEqual([]);
   });
 
+  it("does not select a hidden node even if its viewport position is inside the lasso", async () => {
+    sigmaRef.current!.getNodeDisplayData.mockImplementation((nodeId: string) => {
+      if (nodeId === "a.md") return { x: 150, y: 150, hidden: true };
+      if (nodeId === "b.md") return { x: 150, y: 150 };
+      return null;
+    });
+
+    const { useGraphLasso } = await import("./useGraphLasso");
+    const { result } = renderHook(() =>
+      useGraphLasso(containerRef, sigmaRef, graphRef, hoveredNodeRef),
+    );
+
+    act(() => {
+      result.current.handleLassoMouseDown({
+        shiftKey: true, clientX: 100, clientY: 100,
+      } as React.MouseEvent);
+    });
+    act(() => {
+      result.current.handleLassoMouseMove({
+        clientX: 200, clientY: 200,
+      } as React.MouseEvent);
+    });
+    act(() => {
+      result.current.handleLassoMouseUp();
+    });
+
+    expect(useGraphSelectionStore.getState().selectedNodes).not.toContain("a.md");
+    expect(useGraphSelectionStore.getState().selectedNodes).toContain("b.md");
+  });
+
   it("selects node whose viewport position is exactly on the lasso boundary", async () => {
     sigmaRef.current!.getNodeDisplayData.mockReturnValue({ x: 1, y: 1 });
     sigmaRef.current!.framedGraphToViewport.mockReturnValue({ x: 200, y: 200 });

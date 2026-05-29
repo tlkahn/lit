@@ -1,26 +1,15 @@
 import { useState, useCallback, useRef, useEffect, type RefObject } from "react";
 import { getMatchingNodes } from "../components/GraphSearch";
 import { searchNodeReduce } from "../lib/graphReducers";
-
-interface SigmaLike {
-  setSetting(key: string, value: unknown): void;
-  getCamera(): { animate(state: Record<string, number>): void };
-  getNodeDisplayData(node: string): { x: number; y: number } | undefined;
-}
-
-interface GraphLike {
-  forEachNode(cb: (node: string, attrs: Record<string, unknown>) => void): void;
-  source(edge: string): string;
-  target(edge: string): string;
-}
+import type { SigmaLike, GraphLike } from "./graphTypes";
 
 interface TierSettingsLike {
   defaultEdgesHidden: boolean;
 }
 
 export function useGraphSearch(
-  graphRef: RefObject<GraphLike | null>,
-  sigmaRef: RefObject<SigmaLike | null>,
+  graphRef: RefObject<Pick<GraphLike, "forEachNode" | "source" | "target"> | null>,
+  sigmaRef: RefObject<Pick<SigmaLike, "setSetting" | "getCamera" | "getNodeDisplayData"> | null>,
   tierSettingsRef: RefObject<TierSettingsLike>,
   defaultNodeReducer: (node: string, attrs: Record<string, unknown>) => Record<string, unknown>,
   onNavigateRef: RefObject<((pageId: string) => void) | undefined>,

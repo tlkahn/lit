@@ -14,6 +14,7 @@ import { useGraphTheme } from "../hooks/useGraphTheme";
 import { useGraphSearch } from "../hooks/useGraphSearch";
 import { useGraphData } from "../hooks/useGraphData";
 import { useGraphRenderer } from "../hooks/useGraphRenderer";
+import type { GraphLike } from "../hooks/graphTypes";
 import "./GraphSearch.css";
 import "./GraphView.css";
 
@@ -65,9 +66,18 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
     onNavigate, onContextMenu: (menu) => setContextMenu(menu),
   });
 
-  const { lassoState, handleLassoMouseDown, handleLassoMouseMove, handleLassoMouseUp } = useGraphLasso(containerRef, sigmaRef as React.RefObject<{ setSetting: (k: string, v: unknown) => void; getNodeDisplayData: (n: string) => { x: number; y: number } | undefined; framedGraphToViewport: (coords: { x: number; y: number }) => { x: number; y: number } } | null>, graphRef as React.RefObject<{ nodes: () => string[] } | null>, hoveredNodeRef);
-  useGraphTheme(graphRef as React.RefObject<{ forEachNode: (cb: (node: string, attrs: Record<string, unknown>) => void) => void; setNodeAttribute: (node: string, attr: string, value: unknown) => void } | null>, sigmaRef as React.RefObject<{ refresh: () => void; setSetting: (key: string, value: unknown) => void } | null>, dimColorRef);
-  const { searchOpen, setSearchOpen, searchOpenRef, searchQuery, searchMatches, handleSearchQueryChange, handleSearchClose, handleSearchNavigate } = useGraphSearch(graphRef as React.RefObject<{ forEachNode: (cb: (node: string, attrs: Record<string, unknown>) => void) => void; source: (edge: string) => string; target: (edge: string) => string } | null>, sigmaRef as React.RefObject<{ setSetting: (key: string, value: unknown) => void; getCamera: () => { animate: (state: Record<string, number>) => void }; getNodeDisplayData: (node: string) => { x: number; y: number } | undefined } | null>, tierSettingsRef, defaultNodeReducer, onNavigateRef, selectedSetRef, dimColorRef);
+  const graphLikeRef = graphRef as React.RefObject<GraphLike | null>;
+  const { lassoState, handleLassoMouseDown, handleLassoMouseMove, handleLassoMouseUp } =
+    useGraphLasso(containerRef, sigmaRef, graphLikeRef, hoveredNodeRef);
+  useGraphTheme(graphLikeRef, sigmaRef, dimColorRef);
+  const {
+    searchOpen, setSearchOpen, searchOpenRef,
+    searchQuery, searchMatches,
+    handleSearchQueryChange, handleSearchClose, handleSearchNavigate,
+  } = useGraphSearch(
+    graphLikeRef, sigmaRef,
+    tierSettingsRef, defaultNodeReducer, onNavigateRef, selectedSetRef, dimColorRef,
+  );
 
   const handleContainerKeyDown = useCallback((e: React.KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "f") {

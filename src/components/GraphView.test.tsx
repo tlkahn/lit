@@ -27,6 +27,7 @@ vi.mock("sigma", () => ({
     setSetting = mockSigmaSetSetting;
     getCamera = () => ({ animatedReset: mockCameraAnimatedReset, animate: mockCameraAnimate });
     getNodeDisplayData = mockGetNodeDisplayData;
+    framedGraphToViewport = (c: { x: number; y: number }) => c;
     refresh = mockSigmaRefresh;
     constructor(_graph: unknown, _container: unknown, options?: Record<string, unknown>) {
       lastSigmaOptions = options ?? {};
