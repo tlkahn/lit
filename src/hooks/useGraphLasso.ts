@@ -1,15 +1,6 @@
 import { useState, useCallback, useRef, type RefObject } from "react";
 import { useGraphSelectionStore } from "../stores/graphSelection";
-
-interface SigmaLike {
-  setSetting(key: string, value: unknown): void;
-  getNodeDisplayData(node: string): { x: number; y: number } | undefined;
-  framedGraphToViewport(coords: { x: number; y: number }): { x: number; y: number };
-}
-
-interface GraphLike {
-  nodes(): string[];
-}
+import type { SigmaLike, GraphLike } from "./graphTypes";
 
 export interface LassoState {
   startX: number;
@@ -20,8 +11,8 @@ export interface LassoState {
 
 export function useGraphLasso(
   containerRef: RefObject<HTMLDivElement | null>,
-  sigmaRef: RefObject<SigmaLike | null>,
-  graphRef: RefObject<GraphLike | null>,
+  sigmaRef: RefObject<Pick<SigmaLike, "setSetting" | "getNodeDisplayData" | "framedGraphToViewport"> | null>,
+  graphRef: RefObject<Pick<GraphLike, "nodes"> | null>,
   hoveredNodeRef: RefObject<string | null>,
 ) {
   const [lassoState, setLassoState] = useState<LassoState | null>(null);
@@ -67,7 +58,7 @@ export function useGraphLasso(
         const toAdd: string[] = [];
         for (const nodeId of graph.nodes()) {
           const pos = sigma.getNodeDisplayData(nodeId);
-          if (!pos) continue;
+          if (!pos || pos.hidden) continue;
           const vp = sigma.framedGraphToViewport(pos);
           if (vp.x >= left && vp.x <= right && vp.y >= top && vp.y <= bottom) {
             toAdd.push(nodeId);

@@ -5,14 +5,7 @@ import { defaultNodeReduce } from "../lib/graphReducers";
 import { SELECTED_COLOR } from "../lib/graphLayout";
 import { createNudgeController, type NudgeController } from "../lib/graphNudge";
 import { useGraphSelectionStore } from "../stores/graphSelection";
-
-interface SigmaLike {
-  kill: () => void;
-  on: (event: string, handler: (...args: unknown[]) => void) => void;
-  setSetting: (key: string, value: unknown) => void;
-  getCamera: () => { animatedReset: () => void };
-  refresh: () => void;
-}
+import type { SigmaLike } from "./graphTypes";
 
 export interface UseGraphRendererOptions {
   containerRef: RefObject<HTMLDivElement | null>;
