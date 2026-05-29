@@ -14,6 +14,9 @@ const mockSigmaRefresh = vi.fn();
 let sigmaConstructorCount = 0;
 let lastSigmaOptions: Record<string, unknown> = {};
 
+const mockRemoveAllRanges = vi.fn();
+vi.stubGlobal("getSelection", () => ({ removeAllRanges: mockRemoveAllRanges }));
+
 vi.mock("sigma", () => ({
   default: class MockSigma {
     kill = mockSigmaKill;
@@ -64,6 +67,7 @@ describe("useGraphRenderer", () => {
     vi.clearAllMocks();
     sigmaConstructorCount = 0;
     lastSigmaOptions = {};
+    mockRemoveAllRanges.mockClear();
     useGraphSelectionStore.setState({ selectedNodes: [], selectionMode: "none" });
     mockCreateNudgeController.mockReturnValue({
       enter: vi.fn(),
@@ -234,9 +238,9 @@ describe("useGraphRenderer", () => {
     expect(mockCreateNudgeController).not.toHaveBeenCalled();
   });
 
-  // --- Cycle 6: Registers all 5 Sigma event handlers ---
+  // --- Cycle 6: Registers all 6 Sigma event handlers ---
 
-  it("registers clickNode, rightClickNode, enterNode, leaveNode, clickStage", async () => {
+  it("registers clickNode, rightClickNode, enterNode, leaveNode, clickStage, rightClickStage", async () => {
     const useGraphRenderer = await importHook();
     const opts = makeOptions();
 
@@ -252,6 +256,7 @@ describe("useGraphRenderer", () => {
     expect(events).toContain("enterNode");
     expect(events).toContain("leaveNode");
     expect(events).toContain("clickStage");
+    expect(events).toContain("rightClickStage");
   });
 
   // --- Cycle 7: clickNode — plain click toggles selection ---
@@ -633,6 +638,99 @@ describe("useGraphRenderer", () => {
     expect(() => {
       result.current.refresh();
     }).not.toThrow();
+  });
+
+  // --- Cycle 18: rightClickStage handler ---
+
+  it("rightClickStage calls preventDefault on the original event", async () => {
+    const useGraphRenderer = await importHook();
+    const opts = makeOptions();
+
+    renderHook(() => useGraphRenderer(opts));
+
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const handler = mockSigmaOn.mock.calls.find((c) => c[0] === "rightClickStage")![1];
+    const preventDefault = vi.fn();
+    act(() => {
+      handler({ event: { original: { preventDefault } } });
+    });
+
+    expect(preventDefault).toHaveBeenCalled();
+  });
+
+  it("rightClickStage clears browser selection", async () => {
+    const useGraphRenderer = await importHook();
+    const opts = makeOptions();
+
+    renderHook(() => useGraphRenderer(opts));
+
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const handler = mockSigmaOn.mock.calls.find((c) => c[0] === "rightClickStage")![1];
+    mockRemoveAllRanges.mockClear();
+    act(() => {
+      handler({ event: { original: { preventDefault: vi.fn() } } });
+    });
+
+    expect(mockRemoveAllRanges).toHaveBeenCalled();
+  });
+
+  // --- Cycle 19: rightClickNode clears browser selection ---
+
+  it("rightClickNode clears browser selection", async () => {
+    const onContextMenu = vi.fn();
+    const useGraphRenderer = await importHook();
+    const opts = makeOptions({ onContextMenu });
+
+    renderHook(() => useGraphRenderer(opts));
+
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const handler = mockSigmaOn.mock.calls.find((c) => c[0] === "rightClickNode")![1];
+    mockRemoveAllRanges.mockClear();
+    act(() => {
+      handler({ node: "a.md", event: { original: { preventDefault: vi.fn(), clientX: 100, clientY: 200 } } });
+    });
+
+    expect(mockRemoveAllRanges).toHaveBeenCalled();
+  });
+
+  // --- Cycle 20: selectstart prevention ---
+
+  it("container gets a selectstart listener that calls preventDefault", async () => {
+    const useGraphRenderer = await importHook();
+    const opts = makeOptions();
+    const container = opts.containerRef.current!;
+    const addSpy = vi.spyOn(container, "addEventListener");
+
+    renderHook(() => useGraphRenderer(opts));
+
+    await waitFor(() => { expect(sigmaConstructorCount).toBe(1); });
+
+    const selectStartCall = addSpy.mock.calls.find((c) => c[0] === "selectstart");
+    expect(selectStartCall).toBeDefined();
+
+    const handler = selectStartCall![1] as EventListener;
+    const mockEvent = { preventDefault: vi.fn() } as unknown as Event;
+    handler(mockEvent);
+    expect(mockEvent.preventDefault).toHaveBeenCalled();
+  });
+
+  it("selectstart listener is removed on unmount", async () => {
+    const useGraphRenderer = await importHook();
+    const opts = makeOptions();
+    const container = opts.containerRef.current!;
+    const removeSpy = vi.spyOn(container, "removeEventListener");
+
+    const { unmount } = renderHook(() => useGraphRenderer(opts));
+
+    await waitFor(() => { expect(sigmaConstructorCount).toBe(1); });
+
+    unmount();
+
+    const selectStartCall = removeSpy.mock.calls.find((c) => c[0] === "selectstart");
+    expect(selectStartCall).toBeDefined();
   });
 
 });

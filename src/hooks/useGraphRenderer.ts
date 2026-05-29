@@ -44,6 +44,7 @@ export function useGraphRenderer(options: UseGraphRendererOptions): UseGraphRend
   tierSettingsRef.current = tierSettings;
   const nudgeRef = useRef<NudgeController | null>(null);
   const unsubRef = useRef<(() => void) | null>(null);
+  const selectStartRef = useRef<((e: Event) => void) | null>(null);
   const prevDataVersionRef = useRef(dataVersion);
 
   const onNavigateRef = useRef(onNavigate);
@@ -132,6 +133,7 @@ export function useGraphRenderer(options: UseGraphRendererOptions): UseGraphRend
 
       sigma.on("rightClickNode", (({ node, event }: { node: string; event: { original?: MouseEvent } }) => {
         if (event?.original) event.original.preventDefault();
+        window.getSelection()?.removeAllRanges();
         const orig = event?.original;
         onContextMenuRef.current?.({
           nodeId: node,
@@ -172,6 +174,15 @@ export function useGraphRenderer(options: UseGraphRendererOptions): UseGraphRend
         restoreDefaultReducers();
       }) as (...args: unknown[]) => void);
 
+      sigma.on("rightClickStage", (({ event }: { event: { original?: MouseEvent } }) => {
+        if (event?.original) event.original.preventDefault();
+        window.getSelection()?.removeAllRanges();
+      }) as (...args: unknown[]) => void);
+
+      const onSelectStart = (e: Event) => e.preventDefault();
+      container.addEventListener("selectstart", onSelectStart);
+      selectStartRef.current = onSelectStart;
+
       selectedSetRef.current = new Set(useGraphSelectionStore.getState().selectedNodes);
       unsubRef.current = useGraphSelectionStore.subscribe((state, prev) => {
         if (state.selectedNodes !== prev.selectedNodes) {
@@ -189,6 +200,10 @@ export function useGraphRenderer(options: UseGraphRendererOptions): UseGraphRend
       nudgeRef.current = null;
       unsubRef.current?.();
       unsubRef.current = null;
+      if (selectStartRef.current && containerRef.current) {
+        containerRef.current.removeEventListener("selectstart", selectStartRef.current);
+        selectStartRef.current = null;
+      }
       if (sigmaRef.current) {
         sigmaRef.current.kill();
         sigmaRef.current = null;
