@@ -9,6 +9,7 @@ pub mod external_editor;
 pub mod graph;
 pub mod oplog;
 pub mod license;
+pub mod context_menu;
 mod menu;
 pub mod preferences;
 pub mod seed;
@@ -123,6 +124,7 @@ pub fn run() {
         .manage(BibCache::new())
         .manage(commands::llm::LlmState::new())
         .manage(commands::merge_split::TitleSuggestState::new())
+        .manage(context_menu::PendingContextMenu::default())
         .setup(move |app| {
             let data_dir = app
                 .path()
@@ -261,9 +263,12 @@ pub fn run() {
             Ok(())
         })
         .on_menu_event(|app, event| {
-            if let Some(action) = menu::MenuAction::from_id(event.id().as_ref()) {
+            let id = event.id();
+            let id_str = id.as_ref();
+            if let Some(action) = menu::MenuAction::from_id(id_str) {
                 menu::execute_action(action, app);
             }
+            context_menu::handle_context_menu_event(app, id_str);
         })
         .invoke_handler(tauri::generate_handler![
             commands::app_info::get_app_info,
@@ -362,6 +367,7 @@ pub fn run() {
             commands::merge_split::cancel_title_suggestion,
             commands::merge_split::execute_split,
             commands::merge_split::merge_documents,
+            context_menu::show_trash_context_menu,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
