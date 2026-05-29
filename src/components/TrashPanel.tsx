@@ -1,6 +1,6 @@
-import { useEffect, useState, useRef, useCallback } from "react";
-import { createPortal } from "react-dom";
+import { useEffect } from "react";
 import { useWorkspaceStore } from "../stores/workspace";
+import { showTrashContextMenu, useTrashContextMenu } from "../lib/contextMenuIpc";
 
 export function TrashPanel() {
   const trashItems = useWorkspaceStore((s) => s.trashItems);
@@ -13,29 +13,10 @@ export function TrashPanel() {
     loadTrash();
   }, [loadTrash]);
 
-  const [menuTrashName, setMenuTrashName] = useState<string | null>(null);
-  const menuPosRef = useRef({ x: 0, y: 0 });
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  const handleMenuClose = useCallback(() => setMenuTrashName(null), []);
-
-  useEffect(() => {
-    if (!menuTrashName) return;
-    const handleClick = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        handleMenuClose();
-      }
-    };
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") handleMenuClose();
-    };
-    document.addEventListener("mousedown", handleClick);
-    document.addEventListener("keydown", handleKey);
-    return () => {
-      document.removeEventListener("mousedown", handleClick);
-      document.removeEventListener("keydown", handleKey);
-    };
-  }, [menuTrashName, handleMenuClose]);
+  useTrashContextMenu({
+    onRestore: (trashName) => restorePage(trashName),
+    onPurge: (trashName) => purgePage(trashName),
+  });
 
   if (trashItems.length === 0) {
     return (
@@ -67,8 +48,7 @@ export function TrashPanel() {
             className="group relative"
             onContextMenu={(e) => {
               e.preventDefault();
-              menuPosRef.current = { x: e.clientX, y: e.clientY };
-              setMenuTrashName(item.trash_name);
+              showTrashContextMenu(item.trash_name);
             }}
           >
             <div
@@ -77,34 +57,6 @@ export function TrashPanel() {
             >
               {item.original_path}
             </div>
-            {menuTrashName === item.trash_name && createPortal(
-              <div
-                ref={menuRef}
-                data-testid="trash-context-menu"
-                className="z-50 min-w-[160px] select-none rounded-lg border border-border/40 bg-bg-primary/80 p-1 shadow-xl shadow-black/20 backdrop-blur-xl backdrop-saturate-150 dark:border-border/10 dark:bg-bg-primary/70"
-                style={{ position: "fixed", left: `${menuPosRef.current.x}px`, top: `${menuPosRef.current.y}px` }}
-              >
-                <button
-                  onClick={() => {
-                    handleMenuClose();
-                    restorePage(item.trash_name);
-                  }}
-                  className="block w-full rounded-md px-3 py-1 text-start text-[13px] text-text-normal hover:bg-interactive-accent hover:text-text-on-accent"
-                >
-                  Restore
-                </button>
-                <button
-                  onClick={() => {
-                    handleMenuClose();
-                    purgePage(item.trash_name);
-                  }}
-                  className="block w-full rounded-md px-3 py-1 text-start text-[13px] text-text-error hover:bg-destructive hover:text-text-on-accent"
-                >
-                  Delete Permanently
-                </button>
-              </div>,
-              document.body,
-            )}
           </div>
         ))}
       </div>
