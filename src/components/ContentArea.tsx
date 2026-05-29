@@ -291,7 +291,7 @@ export function ContentArea({ onExportNetwork }: { onExportNetwork?: (nodeId: st
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
-    listen("menu://close-pane-or-window", () => {
+    listen("menu://close-pane", () => {
       executeCommand("pane.close");
     }).then((fn) => {
       if (cancelled) { fn(); } else { unlisten = fn; }

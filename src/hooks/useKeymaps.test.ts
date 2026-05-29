@@ -467,7 +467,7 @@ describe("useKeymaps", () => {
 
   // --- Cycle 12: close-menu event logic (unit-level, no component render) ---
 
-  it("close-pane-or-window logic with >1 pane executes pane.close", async () => {
+  it("close-pane logic with >1 pane executes pane.close", async () => {
     await loadHook();
     usePaneStore.setState(makeTwoLeafState());
 

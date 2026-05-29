@@ -395,6 +395,28 @@ describe("BufferStack", () => {
     expect(screen.queryByTestId("buffer-stack-popover")).toBeNull();
   });
 
+  // --- Empty pane close button in multi-pane ---
+
+  it("empty pane in multi-pane layout still has a close button", () => {
+    usePaneStore.setState({
+      root: {
+        type: "split",
+        id: "s1",
+        direction: "horizontal",
+        children: [
+          { type: "leaf", id: "p1", pagePath: "notes/foo.md" },
+          { type: "leaf", id: "p2", pagePath: null },
+          { type: "leaf", id: "p3", pagePath: "notes/baz.md" },
+        ],
+        sizes: [33, 34, 33],
+      },
+      focusedPaneId: "p1",
+    });
+    render(<BufferStack />);
+    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
+    expect(screen.getByTestId("buffer-stack-close-p2")).toBeInTheDocument();
+  });
+
   // --- Edge case tests ---
 
   it("single buffer renders no chip or popover", () => {

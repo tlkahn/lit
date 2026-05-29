@@ -969,7 +969,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
   });
 });
 
-describe("ContentArea menu://close-pane-or-window", () => {
+describe("ContentArea menu://close-pane", () => {
   beforeEach(() => {
     resetListenMock();
     mockListen();
@@ -996,7 +996,7 @@ describe("ContentArea menu://close-pane-or-window", () => {
     });
 
     act(() => {
-      emitMockEvent("menu://close-pane-or-window", {});
+      emitMockEvent("menu://close-pane", {});
     });
 
     expect(spy).toHaveBeenCalledWith("pane.close");
@@ -1012,7 +1012,7 @@ describe("ContentArea menu://close-pane-or-window", () => {
     render(<ContentArea />);
 
     act(() => {
-      emitMockEvent("menu://close-pane-or-window", {});
+      emitMockEvent("menu://close-pane", {});
     });
 
     expect(spy).toHaveBeenCalledWith("pane.close");

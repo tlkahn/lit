@@ -214,7 +214,7 @@ export function BufferStack() {
                     </span>
                   )}
                 </span>
-                {leaf.pagePath !== null && (
+                {(leaves.length > 1 || leaf.pagePath !== null) && (
                   <button
                     data-testid={`buffer-stack-close-${leaf.id}`}
                     className="ml-2 text-text-faint hover:text-text-normal"
