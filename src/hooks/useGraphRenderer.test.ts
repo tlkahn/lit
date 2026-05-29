@@ -339,6 +339,30 @@ describe("useGraphRenderer", () => {
     expect(reducer("b.md", { color: "#000" }).forceLabel).toBe(false);
   });
 
+  it("enterNode: hovered+selected node gets SEED_COLOR and highlighted", async () => {
+    const useGraphRenderer = await importHook();
+    const opts = makeOptions();
+
+    act(() => { useGraphSelectionStore.getState().toggleNode("a.md"); });
+
+    renderHook(() => useGraphRenderer(opts));
+
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const handler = mockSigmaOn.mock.calls.find((c) => c[0] === "enterNode")![1];
+    mockSigmaSetSetting.mockClear();
+    act(() => { handler({ node: "a.md" }); });
+
+    const nodeReducerCall = mockSigmaSetSetting.mock.calls.find(
+      (c) => c[0] === "nodeReducer",
+    );
+    const reducer = nodeReducerCall![1] as (n: string, attrs: Record<string, unknown>) => Record<string, unknown>;
+    const out = reducer("a.md", { color: "#000" });
+    expect(out.color).toBe("#f59e0b");
+    expect(out.highlighted).toBe(true);
+    expect(out.forceLabel).toBe(true);
+  });
+
   it("leaveNode clears hoveredNodeRef, resets cursor, restores default reducers", async () => {
     const useGraphRenderer = await importHook();
     const opts = makeOptions();

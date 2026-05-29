@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, type RefObject, type MutableRefObject }
 import type Graph from "graphology";
 import type { TierSettings } from "../lib/qualityTiers";
 import { defaultNodeReduce } from "../lib/graphReducers";
+import { SEED_COLOR } from "../lib/graphLayout";
 import { createNudgeController, type NudgeController } from "../lib/graphNudge";
 import { useGraphSelectionStore } from "../stores/graphSelection";
 
@@ -144,7 +145,11 @@ export function useGraphRenderer(options: UseGraphRendererOptions): UseGraphRend
         nudgeRef.current?.enter(node);
 
         sigma.setSetting("nodeReducer", (_n: string, attrs: Record<string, unknown>) => {
-          if (_n === node) return { ...attrs, forceLabel: true };
+          if (_n === node) {
+            return selectedSetRef.current.has(_n)
+              ? { ...attrs, color: SEED_COLOR, forceLabel: true, highlighted: true }
+              : { ...attrs, forceLabel: true };
+          }
           return defaultNodeReduce(_n, attrs, { selectedSet: selectedSetRef.current, dimColor: dimColorRef.current });
         });
 

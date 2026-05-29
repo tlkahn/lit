@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { defaultNodeReduce, hoverNodeReduce, searchNodeReduce } from "./graphReducers";
 import type { ReducerContext, HoverContext, SearchContext } from "./graphReducers";
+import { SEED_COLOR } from "./graphLayout";
 
 describe("defaultNodeReduce", () => {
   const baseAttrs = { color: "#000", label: "Test", size: 10 };
@@ -13,11 +14,12 @@ describe("defaultNodeReduce", () => {
     expect(result.label).toBe("Test");
   });
 
-  it("selected node: forceLabel true, highlighted true", () => {
+  it("selected node: forceLabel true, highlighted true, SEED_COLOR", () => {
     const ctx: ReducerContext = { selectedSet: new Set(["a"]), dimColor: "#ddd" };
     const result = defaultNodeReduce("a", baseAttrs, ctx);
     expect(result.forceLabel).toBe(true);
     expect(result.highlighted).toBe(true);
+    expect(result.color).toBe(SEED_COLOR);
     expect(result.label).toBe("Test");
   });
 
@@ -59,10 +61,11 @@ describe("hoverNodeReduce", () => {
     expect(result.color).toBe("#000");
   });
 
-  it("hovered + selected: forceLabel true, highlighted true", () => {
+  it("hovered + selected: forceLabel true, highlighted true, SEED_COLOR", () => {
     const result = hoverNodeReduce("h", baseAttrs, makeCtx({ selectedSet: new Set(["h"]) }));
     expect(result.forceLabel).toBe(true);
     expect(result.highlighted).toBe(true);
+    expect(result.color).toBe(SEED_COLOR);
   });
 
   it("neighbor, not selected: forceLabel false, original color", () => {
@@ -71,10 +74,11 @@ describe("hoverNodeReduce", () => {
     expect(result.color).toBe("#000");
   });
 
-  it("neighbor, selected: forceLabel true, highlighted true", () => {
+  it("neighbor, selected: forceLabel true, highlighted true, SEED_COLOR", () => {
     const result = hoverNodeReduce("n1", baseAttrs, makeCtx({ selectedSet: new Set(["n1"]) }));
     expect(result.forceLabel).toBe(true);
     expect(result.highlighted).toBe(true);
+    expect(result.color).toBe(SEED_COLOR);
   });
 
   it("non-neighbor, not selected: dimmed color, forceLabel false", () => {
@@ -83,9 +87,9 @@ describe("hoverNodeReduce", () => {
     expect(result.forceLabel).toBe(false);
   });
 
-  it("non-neighbor, selected: dimmed color, forceLabel true, highlighted true", () => {
+  it("non-neighbor, selected: SEED_COLOR, forceLabel true, highlighted true", () => {
     const result = hoverNodeReduce("far", baseAttrs, makeCtx({ selectedSet: new Set(["far"]) }));
-    expect(result.color).toBe("#ddd");
+    expect(result.color).toBe(SEED_COLOR);
     expect(result.forceLabel).toBe(true);
     expect(result.highlighted).toBe(true);
   });
@@ -107,11 +111,18 @@ describe("searchNodeReduce", () => {
     expect(result.color).toBe("#000");
   });
 
-  it("non-matching, selected: dimmed, forceLabel true, highlighted true", () => {
+  it("non-matching, selected: SEED_COLOR, forceLabel true, highlighted true", () => {
     const result = searchNodeReduce("other", baseAttrs, makeCtx({ selectedSet: new Set(["other"]) }));
-    expect(result.color).toBe("#ddd");
+    expect(result.color).toBe(SEED_COLOR);
     expect(result.forceLabel).toBe(true);
     expect(result.highlighted).toBe(true);
+  });
+
+  it("matching, selected: SEED_COLOR, highlighted true, forceLabel true", () => {
+    const result = searchNodeReduce("m1", baseAttrs, makeCtx({ selectedSet: new Set(["m1"]) }));
+    expect(result.color).toBe(SEED_COLOR);
+    expect(result.highlighted).toBe(true);
+    expect(result.forceLabel).toBe(true);
   });
 
   it("non-matching, unselected: dimmed, forceLabel false, no highlighted", () => {
