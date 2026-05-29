@@ -1,3 +1,5 @@
+import { SEED_COLOR } from "./graphLayout";
+
 export interface ReducerContext {
   selectedSet: Set<string>;
   dimColor: string;
@@ -18,7 +20,7 @@ export function defaultNodeReduce(
   ctx: ReducerContext,
 ): Record<string, unknown> {
   if (ctx.selectedSet.has(nodeId)) {
-    return { ...attrs, forceLabel: true, highlighted: true };
+    return { ...attrs, color: SEED_COLOR, forceLabel: true, highlighted: true };
   }
   return { ...attrs, forceLabel: false };
 }
@@ -32,18 +34,18 @@ export function hoverNodeReduce(
 
   if (nodeId === ctx.hoveredNode) {
     return isSelected
-      ? { ...attrs, forceLabel: true, highlighted: true }
+      ? { ...attrs, color: SEED_COLOR, forceLabel: true, highlighted: true }
       : { ...attrs, forceLabel: true };
   }
 
   if (ctx.neighbors.has(nodeId)) {
     return isSelected
-      ? { ...attrs, forceLabel: true, highlighted: true }
+      ? { ...attrs, color: SEED_COLOR, forceLabel: true, highlighted: true }
       : { ...attrs, forceLabel: false };
   }
 
   return isSelected
-    ? { ...attrs, color: ctx.dimColor, forceLabel: true, highlighted: true }
+    ? { ...attrs, color: SEED_COLOR, forceLabel: true, highlighted: true }
     : { ...attrs, color: ctx.dimColor, forceLabel: false };
 }
 
@@ -53,11 +55,14 @@ export function searchNodeReduce(
   ctx: SearchContext,
 ): Record<string, unknown> {
   if (ctx.matchSet.has(nodeId)) {
-    return { ...attrs, highlighted: true, forceLabel: true };
+    const isSelected = ctx.selectedSet.has(nodeId);
+    return isSelected
+      ? { ...attrs, color: SEED_COLOR, highlighted: true, forceLabel: true }
+      : { ...attrs, highlighted: true, forceLabel: true };
   }
 
   const isSelected = ctx.selectedSet.has(nodeId);
   return isSelected
-    ? { ...attrs, color: ctx.dimColor, forceLabel: true, highlighted: true }
+    ? { ...attrs, color: SEED_COLOR, forceLabel: true, highlighted: true }
     : { ...attrs, color: ctx.dimColor, forceLabel: false };
 }
