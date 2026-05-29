@@ -57,6 +57,7 @@ release_check_tools() {
 
 release_check_env() {
   local dry_run="${1:-0}"
+  local skip_website="${2:-0}"
   local missing=()
 
   for var in LIT_TRIAL_SIGNING_KEY_B64 LIT_LICENSE_VERIFYING_KEY_B64; do
@@ -71,6 +72,9 @@ release_check_env() {
         missing+=("$var")
       fi
     done
+    if [[ "$skip_website" -eq 0 && -z "${OPENAI_API_KEY:-}" ]]; then
+      missing+=("OPENAI_API_KEY")
+    fi
   fi
 
   if [[ ${#missing[@]} -gt 0 ]]; then
@@ -112,7 +116,7 @@ release_get_s3_bucket() {
     --region us-east-1 \
     --stack-name lit-production \
     --query "Stacks[0].Outputs[?OutputKey=='WebsiteBucketName'].OutputValue" \
-    --output text 2>&1)" || {
+    --output text)" || {
     echo "Error: failed to query S3 bucket from CloudFormation" >&2
     return 1
   }

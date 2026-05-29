@@ -1,6 +1,29 @@
 #!/usr/bin/env bash
 # Local release script — replicates the CI build-release + update-website pipeline.
 # Usage: bash scripts/release.sh [--dry-run] [--skip-website] <tag>
+#
+# Prerequisites:
+#   Tools: bun, cargo, codesign, aws, hugo, gh, jq
+#          (llm CLI also needed when website deploy is enabled)
+#   Apple signing: "Developer ID Application" certificate in login keychain,
+#                  or set APPLE_SIGNING_IDENTITY to the identity string.
+#   AWS: credentials configured via ~/.aws/credentials, env vars, or SSO.
+#   Git: access to private tlkahn/llm-rs dependency (SSH key or HTTPS token).
+#
+# Required environment variables:
+#   LIT_TRIAL_SIGNING_KEY_B64    base64-encoded trial signing key
+#   LIT_LICENSE_VERIFYING_KEY_B64 base64-encoded license verifying key
+#   APPLE_ID                     Apple ID for notarization (skip in --dry-run)
+#   APPLE_PASSWORD               App-specific password    (skip in --dry-run)
+#   APPLE_TEAM_ID                Apple Developer Team ID  (skip in --dry-run)
+#
+# Optional:
+#   APPLE_SIGNING_IDENTITY       override auto-detection from keychain
+#   OPENAI_API_KEY               for LLM-generated release notes (website deploy)
+#   LLM_DEFAULT_MODEL            defaults to gpt-4o-mini
+#
+# The llm binary staging step from CI is intentionally skipped — llm is a Cargo
+# library dependency (llm-rs), not a sidecar binary (not in externalBin).
 
 set -euo pipefail
 
@@ -19,7 +42,7 @@ echo "════════════════════════�
 
 release_validate_tag "$TAG"
 release_check_tools
-release_check_env "$DRY_RUN"
+release_check_env "$DRY_RUN" "$SKIP_WEBSITE"
 release_detect_signing_id
 
 if [[ "$DRY_RUN" -eq 0 ]]; then

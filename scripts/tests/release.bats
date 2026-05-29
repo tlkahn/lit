@@ -119,7 +119,7 @@ load test_helper
   source_lib
   unset LIT_TRIAL_SIGNING_KEY_B64
   unset LIT_LICENSE_VERIFYING_KEY_B64
-  run release_check_env 0
+  run release_check_env 0 1
   [ "$status" -eq 1 ]
   [[ "$output" == *"LIT_TRIAL_SIGNING_KEY_B64"* ]]
 }
@@ -128,7 +128,7 @@ load test_helper
   source_lib
   export LIT_TRIAL_SIGNING_KEY_B64="test-key"
   export LIT_LICENSE_VERIFYING_KEY_B64="test-key"
-  run release_check_env 1
+  run release_check_env 1 0
   [ "$status" -eq 0 ]
 }
 
@@ -139,7 +139,7 @@ load test_helper
   unset APPLE_ID
   unset APPLE_PASSWORD
   unset APPLE_TEAM_ID
-  run release_check_env 0
+  run release_check_env 0 1
   [ "$status" -eq 1 ]
   [[ "$output" == *"APPLE_ID"* ]]
 }
@@ -151,7 +151,33 @@ load test_helper
   export APPLE_ID="test@example.com"
   export APPLE_PASSWORD="test-password"
   export APPLE_TEAM_ID="TEAM123"
-  run release_check_env 0
+  export OPENAI_API_KEY="sk-test"
+  run release_check_env 0 0
+  [ "$status" -eq 0 ]
+}
+
+@test "release_check_env: OPENAI_API_KEY missing with website deploy fails" {
+  source_lib
+  export LIT_TRIAL_SIGNING_KEY_B64="test-key"
+  export LIT_LICENSE_VERIFYING_KEY_B64="test-key"
+  export APPLE_ID="test@example.com"
+  export APPLE_PASSWORD="test-password"
+  export APPLE_TEAM_ID="TEAM123"
+  unset OPENAI_API_KEY
+  run release_check_env 0 0
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"OPENAI_API_KEY"* ]]
+}
+
+@test "release_check_env: OPENAI_API_KEY not required with --skip-website" {
+  source_lib
+  export LIT_TRIAL_SIGNING_KEY_B64="test-key"
+  export LIT_LICENSE_VERIFYING_KEY_B64="test-key"
+  export APPLE_ID="test@example.com"
+  export APPLE_PASSWORD="test-password"
+  export APPLE_TEAM_ID="TEAM123"
+  unset OPENAI_API_KEY
+  run release_check_env 0 1
   [ "$status" -eq 0 ]
 }
 
