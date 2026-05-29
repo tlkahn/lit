@@ -1003,23 +1003,19 @@ describe("ContentArea menu://close-pane-or-window", () => {
     spy.mockRestore();
   });
 
-  it("calls getCurrentWindow().close() when only 1 pane exists", async () => {
+  it("calls pane.close (not window.close) when only 1 pane exists", () => {
     usePaneStore.setState({
-      root: { type: "leaf", id: "solo", pagePath: null },
+      root: { type: "leaf", id: "solo", pagePath: "notes/foo.md" },
       focusedPaneId: "solo",
     });
     const spy = vi.spyOn(commandRegistryModule, "executeCommand");
     render(<ContentArea />);
 
-    expect(screen.getByTestId("empty-state")).toBeInTheDocument();
-
-    const { getCurrentWindow } = await import("@tauri-apps/api/window");
     act(() => {
       emitMockEvent("menu://close-pane-or-window", {});
     });
 
-    expect(spy).not.toHaveBeenCalled();
-    expect(vi.mocked(getCurrentWindow).mock.results[0]?.value.close).toHaveBeenCalled();
+    expect(spy).toHaveBeenCalledWith("pane.close");
     spy.mockRestore();
   });
 });

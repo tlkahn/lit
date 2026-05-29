@@ -94,7 +94,20 @@ export function BufferStack() {
   const otherCount = openBuffers.length - 1;
 
   if (otherCount === 0) {
-    return <span data-testid="buffer-stack-label" title={displayPath} className="truncate max-w-[200px]">{displayPath}</span>;
+    return (
+      <span className="flex items-center gap-1">
+        <span data-testid="buffer-stack-label" title={displayPath} className="truncate max-w-[200px]">{displayPath}</span>
+        <button
+          data-testid={`buffer-stack-close-${focusedLeaf?.id}`}
+          className="text-text-faint hover:text-text-normal"
+          onClick={() => {
+            if (focusedLeaf) usePaneStore.getState().closePane(focusedLeaf.id);
+          }}
+        >
+          ×
+        </button>
+      </span>
+    );
   }
 
   return (
@@ -201,7 +214,7 @@ export function BufferStack() {
                     </span>
                   )}
                 </span>
-                {leaves.length > 1 && (
+                {leaf.pagePath !== null && (
                   <button
                     data-testid={`buffer-stack-close-${leaf.id}`}
                     className="ml-2 text-text-faint hover:text-text-normal"

@@ -144,10 +144,7 @@ function ensureCommandsRegistered() {
     id: "pane.close",
     label: "Close Pane",
     keywords: ["pane", "close"],
-    when: () => collectLeaves(usePaneStore.getState().root).length > 1,
     action: () => {
-      const leaves = collectLeaves(usePaneStore.getState().root);
-      if (leaves.length <= 1) return false;
       const { focusedPaneId } = usePaneStore.getState();
       usePaneStore.getState().closePane(focusedPaneId);
       transferDomFocus();

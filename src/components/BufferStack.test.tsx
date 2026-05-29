@@ -589,11 +589,21 @@ describe("BufferStack", () => {
 
   // --- Cycle 11: Close button on last pane ---
 
-  it("no close buttons remain after closing down to a single pane", () => {
-    usePaneStore.setState(twoBufferState());
+  it("close button present on single pane with content", () => {
+    usePaneStore.setState({
+      root: { type: "leaf" as const, id: "p1", pagePath: "notes/foo.md" },
+      focusedPaneId: "p1",
+    });
     render(<BufferStack />);
-    fireEvent.click(screen.getByTestId("buffer-stack-chip"));
-    fireEvent.click(screen.getByTestId("buffer-stack-close-p2"));
+    expect(screen.getByTestId("buffer-stack-close-p1")).toBeInTheDocument();
+  });
+
+  it("no close button on single pane without content", () => {
+    usePaneStore.setState({
+      root: { type: "leaf" as const, id: "p1", pagePath: null },
+      focusedPaneId: "p1",
+    });
+    render(<BufferStack />);
     expect(screen.queryAllByTestId(/^buffer-stack-close-/)).toHaveLength(0);
   });
 

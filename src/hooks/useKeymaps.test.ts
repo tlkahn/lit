@@ -388,24 +388,24 @@ describe("useKeymaps", () => {
 
   // --- Cycle 6: pane.close returns false when single pane ---
 
-  it("executing pane.close with 1 pane returns false and does not close", async () => {
+  it("executing pane.close on empty single pane is no-op", async () => {
     await loadHook();
     usePaneStore.setState(createInitialState());
-    const result = executeCommand("pane.close");
-    expect(result).toBe(false);
-    expect(usePaneStore.getState().root.type).toBe("leaf");
+    const before = usePaneStore.getState().root;
+    executeCommand("pane.close");
+    expect(usePaneStore.getState().root).toBe(before);
   });
 
   // --- Cycle 7: Command palette when guards ---
 
-  it("pane.close is hidden in command palette with 1 pane", async () => {
+  it("pane.close is visible in command palette even with 1 pane", async () => {
     await loadHook();
     usePaneStore.setState(createInitialState());
     const visible = getVisibleCommands("pane");
     const ids = visible.map((c) => c.id);
     expect(ids).toContain("pane.splitRight");
     expect(ids).toContain("pane.splitDown");
-    expect(ids).not.toContain("pane.close");
+    expect(ids).toContain("pane.close");
     expect(ids).not.toContain("pane.focusNext");
     expect(ids).not.toContain("pane.focusPrev");
   });
@@ -479,13 +479,15 @@ describe("useKeymaps", () => {
     expect(newLeaves).toHaveLength(1);
   });
 
-  it("close-pane-or-window logic with 1 pane does not close pane", async () => {
+  it("pane.close on single pane with content clears pagePath", async () => {
     await loadHook();
-    usePaneStore.setState(createInitialState());
+    const leaf = { type: "leaf" as const, id: "solo", pagePath: "notes/foo.md" };
+    usePaneStore.setState({ root: leaf, focusedPaneId: "solo" });
 
-    const result = executeCommand("pane.close");
-    expect(result).toBe(false);
-    expect(usePaneStore.getState().root.type).toBe("leaf");
+    executeCommand("pane.close");
+    const state = usePaneStore.getState();
+    expect(state.root).toEqual({ type: "leaf", id: "solo", pagePath: null });
+    expect(state.focusedPaneId).toBe("solo");
   });
 
   // --- Cycle C1: app.askQuestion command registration ---

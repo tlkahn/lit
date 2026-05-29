@@ -991,7 +991,17 @@ describe("Section C: Tree-Mutation Actions", () => {
         expect(usePaneStore.getState().focusedPaneId).toBe("left");
       });
 
-      it("close last pane → no-op", () => {
+      it("close last pane with content → clears pagePath", () => {
+        const root: PaneLeaf = { type: "leaf", id: "solo", pagePath: "notes/foo.md" };
+        usePaneStore.setState({ root, focusedPaneId: "solo" });
+        usePaneStore.getState().closePane("solo");
+
+        const state = usePaneStore.getState();
+        expect(state.root).toEqual({ type: "leaf", id: "solo", pagePath: null });
+        expect(state.focusedPaneId).toBe("solo");
+      });
+
+      it("close last pane already empty → no-op", () => {
         const root: PaneLeaf = { type: "leaf", id: "solo", pagePath: null };
         usePaneStore.setState({ root, focusedPaneId: "solo" });
         usePaneStore.getState().closePane("solo");

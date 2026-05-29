@@ -250,6 +250,13 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
 
   closePane: (paneId) => {
     const { root, focusedPaneId } = get();
+    const leaves = collectLeaves(root);
+    if (leaves.length === 1) {
+      const leaf = leaves[0]!;
+      if (leaf.id !== paneId || leaf.pagePath === null) return;
+      set({ root: { ...leaf, pagePath: null } });
+      return;
+    }
     const newRoot = removeLeaf(root, paneId);
     if (!newRoot) return;
     if (newRoot === root) return;
