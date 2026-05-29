@@ -4,6 +4,7 @@ import { useGraphSelectionStore } from "../stores/graphSelection";
 interface SigmaLike {
   setSetting(key: string, value: unknown): void;
   getNodeDisplayData(node: string): { x: number; y: number } | undefined;
+  framedGraphToViewport(coords: { x: number; y: number }): { x: number; y: number };
 }
 
 interface GraphLike {
@@ -66,7 +67,9 @@ export function useGraphLasso(
         const toAdd: string[] = [];
         for (const nodeId of graph.nodes()) {
           const pos = sigma.getNodeDisplayData(nodeId);
-          if (pos && pos.x >= left && pos.x <= right && pos.y >= top && pos.y <= bottom) {
+          if (!pos) continue;
+          const vp = sigma.framedGraphToViewport(pos);
+          if (vp.x >= left && vp.x <= right && vp.y >= top && vp.y <= bottom) {
             toAdd.push(nodeId);
           }
         }

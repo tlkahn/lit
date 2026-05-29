@@ -4,7 +4,7 @@ import { useGraphSelectionStore } from "../stores/graphSelection";
 
 describe("useGraphLasso", () => {
   let containerRef: { current: HTMLDivElement | null };
-  let sigmaRef: { current: { setSetting: ReturnType<typeof vi.fn>; getNodeDisplayData: ReturnType<typeof vi.fn> } | null };
+  let sigmaRef: { current: { setSetting: ReturnType<typeof vi.fn>; getNodeDisplayData: ReturnType<typeof vi.fn>; framedGraphToViewport: ReturnType<typeof vi.fn> } | null };
   let graphRef: { current: { nodes: () => string[] } | null };
   let hoveredNodeRef: { current: string | null };
 
@@ -18,7 +18,7 @@ describe("useGraphLasso", () => {
       width: 800, height: 600, x: 0, y: 0, toJSON: () => ({}),
     });
     containerRef = { current: div };
-    sigmaRef = { current: { setSetting: vi.fn(), getNodeDisplayData: vi.fn() } };
+    sigmaRef = { current: { setSetting: vi.fn(), getNodeDisplayData: vi.fn(), framedGraphToViewport: vi.fn((c: {x: number; y: number}) => c) } };
     graphRef = { current: { nodes: () => ["a.md", "b.md"] } };
     hoveredNodeRef = { current: null };
   });
@@ -209,5 +209,93 @@ describe("useGraphLasso", () => {
 
     expect(result.current.lassoState!.startX).toBe(100);
     expect(result.current.lassoState!.startY).toBe(100);
+  });
+
+  it("selects nodes using viewport-converted coordinates", async () => {
+    sigmaRef.current!.getNodeDisplayData.mockImplementation((nodeId: string) => {
+      if (nodeId === "a.md") return { x: 0.5, y: 0.5 };
+      if (nodeId === "b.md") return { x: 5.0, y: 5.0 };
+      return null;
+    });
+    sigmaRef.current!.framedGraphToViewport.mockImplementation((c: {x: number; y: number}) => {
+      if (c.x === 0.5 && c.y === 0.5) return { x: 150, y: 150 };
+      if (c.x === 5.0 && c.y === 5.0) return { x: 500, y: 500 };
+      return c;
+    });
+
+    const { useGraphLasso } = await import("./useGraphLasso");
+    const { result } = renderHook(() =>
+      useGraphLasso(containerRef, sigmaRef, graphRef, hoveredNodeRef),
+    );
+
+    act(() => {
+      result.current.handleLassoMouseDown({
+        shiftKey: true, clientX: 100, clientY: 100,
+      } as React.MouseEvent);
+    });
+    act(() => {
+      result.current.handleLassoMouseMove({
+        clientX: 200, clientY: 200,
+      } as React.MouseEvent);
+    });
+    act(() => {
+      result.current.handleLassoMouseUp();
+    });
+
+    expect(useGraphSelectionStore.getState().selectedNodes).toContain("a.md");
+    expect(useGraphSelectionStore.getState().selectedNodes).not.toContain("b.md");
+  });
+
+  it("does not select node whose framed-graph coords are inside lasso but viewport coords are outside", async () => {
+    sigmaRef.current!.getNodeDisplayData.mockReturnValue({ x: 150, y: 150 });
+    sigmaRef.current!.framedGraphToViewport.mockReturnValue({ x: 500, y: 500 });
+
+    const { useGraphLasso } = await import("./useGraphLasso");
+    const { result } = renderHook(() =>
+      useGraphLasso(containerRef, sigmaRef, graphRef, hoveredNodeRef),
+    );
+
+    act(() => {
+      result.current.handleLassoMouseDown({
+        shiftKey: true, clientX: 100, clientY: 100,
+      } as React.MouseEvent);
+    });
+    act(() => {
+      result.current.handleLassoMouseMove({
+        clientX: 200, clientY: 200,
+      } as React.MouseEvent);
+    });
+    act(() => {
+      result.current.handleLassoMouseUp();
+    });
+
+    expect(useGraphSelectionStore.getState().selectedNodes).toEqual([]);
+  });
+
+  it("selects node whose viewport position is exactly on the lasso boundary", async () => {
+    sigmaRef.current!.getNodeDisplayData.mockReturnValue({ x: 1, y: 1 });
+    sigmaRef.current!.framedGraphToViewport.mockReturnValue({ x: 200, y: 200 });
+
+    const { useGraphLasso } = await import("./useGraphLasso");
+    const { result } = renderHook(() =>
+      useGraphLasso(containerRef, sigmaRef, graphRef, hoveredNodeRef),
+    );
+
+    act(() => {
+      result.current.handleLassoMouseDown({
+        shiftKey: true, clientX: 100, clientY: 100,
+      } as React.MouseEvent);
+    });
+    act(() => {
+      result.current.handleLassoMouseMove({
+        clientX: 200, clientY: 200,
+      } as React.MouseEvent);
+    });
+    act(() => {
+      result.current.handleLassoMouseUp();
+    });
+
+    expect(useGraphSelectionStore.getState().selectedNodes).toContain("a.md");
+    expect(useGraphSelectionStore.getState().selectedNodes).toContain("b.md");
   });
 });
