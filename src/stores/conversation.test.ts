@@ -22,6 +22,7 @@ import {
   conversationDelete,
   conversationMessages,
   conversationAddMessage,
+  conversationDeleteMessagesAfter,
 } from "../lib/ipc";
 import type { ConversationRow, MessageRow } from "../lib/ipc";
 
@@ -37,6 +38,7 @@ const mockedConversationDelete = conversationDelete as ReturnType<typeof vi.fn>;
 const mockedConversationMessages = conversationMessages as ReturnType<typeof vi.fn>;
 const mockedConversationAddMessage = conversationAddMessage as ReturnType<typeof vi.fn>;
 const mockedStartLlmStream = startLlmStream as ReturnType<typeof vi.fn>;
+const mockedConversationDeleteMessagesAfter = conversationDeleteMessagesAfter as ReturnType<typeof vi.fn>;
 
 const FAKE_UUID = "00000000-0000-0000-0000-000000000001";
 
@@ -517,5 +519,262 @@ describe("conversation store", () => {
     expect(s.conversations).toEqual([fakeConversation]);
     expect(s.activeConversationId).toBe(FAKE_UUID);
     expect(s.messages).toEqual([fakeMessage]);
+  });
+
+  // --- Group E: retryLastMessage ---
+
+  it("retryLastMessage returns early with no active conversation", async () => {
+    await useConversationStore.getState().retryLastMessage({ model: "m" });
+
+    expect(mockedConversationDeleteMessagesAfter).not.toHaveBeenCalled();
+    expect(mockedStartLlmStream).not.toHaveBeenCalled();
+    expect(useConversationStore.getState().error).toBeNull();
+  });
+
+  it("retryLastMessage returns early when last message is not assistant", async () => {
+    const userMsg: MessageRow = {
+      id: 1, conversation_id: FAKE_UUID, role: "user",
+      content: "hello", seq: 1, created_at: "2025-01-01T00:00:00Z",
+    };
+    useConversationStore.setState({
+      activeConversationId: FAKE_UUID,
+      messages: [userMsg],
+    });
+
+    await useConversationStore.getState().retryLastMessage({ model: "m" });
+
+    expect(mockedConversationDeleteMessagesAfter).not.toHaveBeenCalled();
+    expect(mockedStartLlmStream).not.toHaveBeenCalled();
+  });
+
+  it("retryLastMessage returns early when already streaming", async () => {
+    const userMsg: MessageRow = {
+      id: 1, conversation_id: FAKE_UUID, role: "user",
+      content: "hello", seq: 1, created_at: "2025-01-01T00:00:00Z",
+    };
+    const assistantMsg: MessageRow = {
+      id: 2, conversation_id: FAKE_UUID, role: "assistant",
+      content: "hi", seq: 2, created_at: "2025-01-01T00:00:01Z",
+    };
+    useConversationStore.setState({
+      activeConversationId: FAKE_UUID,
+      messages: [userMsg, assistantMsg],
+    });
+    useLlmResponseStore.getState().startStream({ question: "prior" });
+
+    await useConversationStore.getState().retryLastMessage({ model: "m" });
+
+    expect(mockedConversationDeleteMessagesAfter).not.toHaveBeenCalled();
+    expect(mockedStartLlmStream).not.toHaveBeenCalled();
+  });
+
+  it("retryLastMessage deletes assistant msg, truncates, and re-streams", async () => {
+    const userMsg: MessageRow = {
+      id: 1, conversation_id: FAKE_UUID, role: "user",
+      content: "hello", seq: 1, created_at: "2025-01-01T00:00:00Z",
+    };
+    const assistantMsg: MessageRow = {
+      id: 2, conversation_id: FAKE_UUID, role: "assistant",
+      content: "hi", seq: 2, created_at: "2025-01-01T00:00:01Z",
+    };
+    useConversationStore.setState({
+      activeConversationId: FAKE_UUID,
+      messages: [userMsg, assistantMsg],
+    });
+    mockedConversationDeleteMessagesAfter.mockResolvedValue(undefined);
+
+    const persistedAssistant: MessageRow = {
+      id: 3, conversation_id: FAKE_UUID, role: "assistant",
+      content: "new response", seq: 2, created_at: "2025-01-01T00:00:02Z",
+    };
+    mockedConversationAddMessage.mockResolvedValue(persistedAssistant);
+
+    let capturedCallbacks: LlmStreamCallbacks | null = null;
+    mockedStartLlmStream.mockImplementation(async (_args: unknown, cbs: LlmStreamCallbacks) => {
+      capturedCallbacks = cbs;
+    });
+
+    await useConversationStore.getState().retryLastMessage({ model: "m" });
+
+    // Assert delete called with last user msg's seq
+    expect(mockedConversationDeleteMessagesAfter).toHaveBeenCalledWith(FAKE_UUID, 1);
+    // Assert local messages truncated to only user msg
+    expect(useConversationStore.getState().messages).toEqual([userMsg]);
+    // Assert startLlmStream called with the user message
+    expect(mockedStartLlmStream).toHaveBeenCalledWith(
+      {
+        model: "m",
+        text: "hello",
+        system: undefined,
+        messages: [{ role: "user", content: "hello" }],
+      },
+      expect.any(Object),
+    );
+    // Assert streaming state
+    expect(useLlmResponseStore.getState().status).toBe("streaming");
+    expect(useModalLockStore.getState().llmLocked).toBe(true);
+
+    // Complete the stream
+    useLlmResponseStore.setState({ responseText: "new response" });
+    await capturedCallbacks!.onDone();
+
+    expect(useConversationStore.getState().messages).toEqual([userMsg, persistedAssistant]);
+    expect(useLlmResponseStore.getState().status).toBe("done");
+    expect(useModalLockStore.getState().llmLocked).toBe(false);
+  });
+
+  it("retryLastMessage with multi-turn history preserves earlier messages", async () => {
+    const u1: MessageRow = { id: 1, conversation_id: FAKE_UUID, role: "user", content: "q1", seq: 1, created_at: "2025-01-01T00:00:00Z" };
+    const a2: MessageRow = { id: 2, conversation_id: FAKE_UUID, role: "assistant", content: "a1", seq: 2, created_at: "2025-01-01T00:00:01Z" };
+    const u3: MessageRow = { id: 3, conversation_id: FAKE_UUID, role: "user", content: "q2", seq: 3, created_at: "2025-01-01T00:00:02Z" };
+    const a4: MessageRow = { id: 4, conversation_id: FAKE_UUID, role: "assistant", content: "a2", seq: 4, created_at: "2025-01-01T00:00:03Z" };
+    useConversationStore.setState({
+      activeConversationId: FAKE_UUID,
+      messages: [u1, a2, u3, a4],
+    });
+    mockedConversationDeleteMessagesAfter.mockResolvedValue(undefined);
+    mockedStartLlmStream.mockResolvedValue(undefined);
+
+    await useConversationStore.getState().retryLastMessage({ model: "m" });
+
+    // Only a4 deleted — messages after call = [u1, a2, u3]
+    expect(mockedConversationDeleteMessagesAfter).toHaveBeenCalledWith(FAKE_UUID, 3);
+    expect(useConversationStore.getState().messages).toEqual([u1, a2, u3]);
+    // startLlmStream receives all 3 messages
+    expect(mockedStartLlmStream).toHaveBeenCalledWith(
+      {
+        model: "m",
+        text: "q2",
+        system: undefined,
+        messages: [
+          { role: "user", content: "q1" },
+          { role: "assistant", content: "a1" },
+          { role: "user", content: "q2" },
+        ],
+      },
+      expect.any(Object),
+    );
+  });
+
+  // --- Group F: editMessage ---
+
+  it("editMessage returns early with no active conversation", async () => {
+    await useConversationStore.getState().editMessage(1, "new", { model: "m" });
+
+    expect(mockedConversationDeleteMessagesAfter).not.toHaveBeenCalled();
+    expect(mockedStartLlmStream).not.toHaveBeenCalled();
+    expect(useConversationStore.getState().error).toBeNull();
+  });
+
+  it("editMessage returns early when already streaming", async () => {
+    useConversationStore.setState({ activeConversationId: FAKE_UUID, messages: [fakeMessage] });
+    useLlmResponseStore.getState().startStream({ question: "prior" });
+
+    await useConversationStore.getState().editMessage(1, "new", { model: "m" });
+
+    expect(mockedConversationDeleteMessagesAfter).not.toHaveBeenCalled();
+    expect(mockedStartLlmStream).not.toHaveBeenCalled();
+  });
+
+  it("editMessage deletes from seq, persists edited message, and re-streams", async () => {
+    const userMsg: MessageRow = {
+      id: 1, conversation_id: FAKE_UUID, role: "user",
+      content: "hello", seq: 1, created_at: "2025-01-01T00:00:00Z",
+    };
+    const assistantMsg: MessageRow = {
+      id: 2, conversation_id: FAKE_UUID, role: "assistant",
+      content: "hi", seq: 2, created_at: "2025-01-01T00:00:01Z",
+    };
+    useConversationStore.setState({
+      activeConversationId: FAKE_UUID,
+      messages: [userMsg, assistantMsg],
+    });
+    mockedConversationDeleteMessagesAfter.mockResolvedValue(undefined);
+
+    const editedUserMsg: MessageRow = {
+      id: 3, conversation_id: FAKE_UUID, role: "user",
+      content: "new content", seq: 1, created_at: "2025-01-01T00:00:02Z",
+    };
+    const persistedAssistant: MessageRow = {
+      id: 4, conversation_id: FAKE_UUID, role: "assistant",
+      content: "new response", seq: 2, created_at: "2025-01-01T00:00:03Z",
+    };
+
+    let addMessageCallCount = 0;
+    mockedConversationAddMessage.mockImplementation(async () => {
+      addMessageCallCount++;
+      if (addMessageCallCount === 1) return editedUserMsg;
+      return persistedAssistant;
+    });
+
+    let capturedCallbacks: LlmStreamCallbacks | null = null;
+    mockedStartLlmStream.mockImplementation(async (_args: unknown, cbs: LlmStreamCallbacks) => {
+      capturedCallbacks = cbs;
+    });
+
+    await useConversationStore.getState().editMessage(1, "new content", { model: "m" });
+
+    // Assert delete called with seq - 1 = 0
+    expect(mockedConversationDeleteMessagesAfter).toHaveBeenCalledWith(FAKE_UUID, 0);
+    // Assert edited user message persisted
+    expect(mockedConversationAddMessage).toHaveBeenCalledWith(FAKE_UUID, "user", "new content");
+    // Assert local messages = [editedUserMsg]
+    expect(useConversationStore.getState().messages).toEqual([editedUserMsg]);
+    // Assert startLlmStream called with edited content
+    expect(mockedStartLlmStream).toHaveBeenCalledWith(
+      {
+        model: "m",
+        text: "new content",
+        system: undefined,
+        messages: [{ role: "user", content: "new content" }],
+      },
+      expect.any(Object),
+    );
+
+    // Complete the stream
+    useLlmResponseStore.setState({ responseText: "new response" });
+    await capturedCallbacks!.onDone();
+
+    expect(useConversationStore.getState().messages).toEqual([editedUserMsg, persistedAssistant]);
+  });
+
+  it("editMessage on middle message preserves earlier history", async () => {
+    const u1: MessageRow = { id: 1, conversation_id: FAKE_UUID, role: "user", content: "q1", seq: 1, created_at: "2025-01-01T00:00:00Z" };
+    const a2: MessageRow = { id: 2, conversation_id: FAKE_UUID, role: "assistant", content: "a1", seq: 2, created_at: "2025-01-01T00:00:01Z" };
+    const u3: MessageRow = { id: 3, conversation_id: FAKE_UUID, role: "user", content: "q2", seq: 3, created_at: "2025-01-01T00:00:02Z" };
+    const a4: MessageRow = { id: 4, conversation_id: FAKE_UUID, role: "assistant", content: "a2", seq: 4, created_at: "2025-01-01T00:00:03Z" };
+    useConversationStore.setState({
+      activeConversationId: FAKE_UUID,
+      messages: [u1, a2, u3, a4],
+    });
+    mockedConversationDeleteMessagesAfter.mockResolvedValue(undefined);
+
+    const editedU3: MessageRow = {
+      id: 5, conversation_id: FAKE_UUID, role: "user",
+      content: "edited q", seq: 3, created_at: "2025-01-01T00:00:04Z",
+    };
+    mockedConversationAddMessage.mockResolvedValue(editedU3);
+    mockedStartLlmStream.mockResolvedValue(undefined);
+
+    await useConversationStore.getState().editMessage(3, "edited q", { model: "m" });
+
+    // Assert delete called with seq - 1 = 2
+    expect(mockedConversationDeleteMessagesAfter).toHaveBeenCalledWith(FAKE_UUID, 2);
+    // Assert local messages = [u1, a2, editedU3]
+    expect(useConversationStore.getState().messages).toEqual([u1, a2, editedU3]);
+    // Assert startLlmStream receives full history
+    expect(mockedStartLlmStream).toHaveBeenCalledWith(
+      {
+        model: "m",
+        text: "edited q",
+        system: undefined,
+        messages: [
+          { role: "user", content: "q1" },
+          { role: "assistant", content: "a1" },
+          { role: "user", content: "edited q" },
+        ],
+      },
+      expect.any(Object),
+    );
   });
 });
