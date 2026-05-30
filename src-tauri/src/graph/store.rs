@@ -1051,6 +1051,9 @@ impl Store {
         Ok(results)
     }
 
+    /// Delete messages strictly after `seq` (exclusive boundary).
+    ///
+    /// The message at `seq` is retained. To regenerate from turn N, pass `N - 1`.
     pub fn delete_messages_after(&self, conversation_id: &str, seq: i32) -> Result<(), GraphError> {
         self.conn.execute(
             "DELETE FROM conversation_messages WHERE conversation_id = ?1 AND seq > ?2",
@@ -3299,6 +3302,31 @@ mod tests {
 
         store.delete_messages_after("conv-1", 10).unwrap();
         assert_eq!(store.list_messages("conv-1").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn delete_messages_after_is_exclusive_of_boundary_seq() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+
+        store.add_message("conv-1", "user", "msg0", 0).unwrap();
+        store.add_message("conv-1", "assistant", "msg1", 1).unwrap();
+        store.add_message("conv-1", "user", "msg2", 2).unwrap();
+
+        // seq=1 is the boundary: it and everything before it must survive
+        store.delete_messages_after("conv-1", 1).unwrap();
+
+        let msgs = store.list_messages("conv-1").unwrap();
+        assert_eq!(msgs.len(), 2, "boundary seq and earlier are retained");
+        assert_eq!(msgs[0].seq, 0);
+        assert_eq!(msgs[1].seq, 1);
+        // seq=2 must be gone
+        assert!(
+            msgs.iter().all(|m| m.seq <= 1),
+            "messages strictly after the boundary seq must be deleted"
+        );
     }
 
     #[test]

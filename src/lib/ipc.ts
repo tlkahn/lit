@@ -908,6 +908,11 @@ export interface MessageRow {
   created_at: string;
 }
 
+/**
+ * Delete messages strictly after `seq` (exclusive boundary).
+ *
+ * The message at `seq` is retained. To regenerate from turn N, pass `N - 1`.
+ */
 export async function conversationDeleteMessagesAfter(
   conversationId: string,
   seq: number,
