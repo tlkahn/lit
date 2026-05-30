@@ -29,6 +29,12 @@ export const SEED_COLOR = "#f59e0b";
 
 export const SELECTED_COLOR = "#fbbf24";
 
+/** Derive a node label from its path: strip directory and the `.md` extension. Mirrors the Rust title fallback. */
+export function nodeLabelFromPath(p: string): string {
+  const base = p.split("/").pop() ?? p;
+  return base.endsWith(".md") ? base.slice(0, -3) : base;
+}
+
 export function seedAttrs(isSeed: boolean, accentColor: string): { type: string; color: string } {
   return isSeed
     ? { type: "seed", color: SEED_COLOR }

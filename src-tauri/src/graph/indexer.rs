@@ -342,6 +342,17 @@ pub struct DiffResult {
     pub deleted: Vec<String>,
 }
 
+/// Build the diff for renaming a file: the old node is removed and the new one
+/// added in a single atomic `batch_reindex`, so the index never carries a stale
+/// path for a renamed page.
+pub fn rename_reindex_diff(old_path: &str, new_path: &str) -> DiffResult {
+    DiffResult {
+        new: vec![new_path.to_string()],
+        changed: vec![],
+        deleted: vec![old_path.to_string()],
+    }
+}
+
 impl DiffResult {
     pub fn is_empty(&self) -> bool {
         self.new.is_empty() && self.changed.is_empty() && self.deleted.is_empty()
@@ -2315,6 +2326,67 @@ mod tests {
         assert!(sub.edges.iter().any(|e| e.0 == "d.md" && e.1 == "a.md"));
         assert!(!sub.edges.iter().any(|e| e.0 == "a.md" && e.1 == "b.md"));
         assert!(!sub.nodes.iter().any(|n| n.id == "c.md"));
+    }
+
+    #[test]
+    fn rename_reindex_diff_removes_old_adds_new() {
+        let diff = rename_reindex_diff("old.md", "new.md");
+        assert_eq!(
+            diff,
+            DiffResult {
+                new: vec!["new.md".to_string()],
+                changed: vec![],
+                deleted: vec!["old.md".to_string()],
+            }
+        );
+    }
+
+    #[test]
+    fn reindex_create_makes_node_queryable() {
+        // B1: create — new file becomes queryable via subgraph for its own id
+        let dir = create_workspace();
+        write_md(dir.path(), "seed.md", "Seed content.");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        write_md(dir.path(), "fresh.md", "");
+        gi.reindex_file("fresh.md", true).unwrap();
+
+        let sub = gi.subgraph(&["fresh.md"], 1, false).unwrap();
+        assert!(sub.nodes.iter().any(|n| n.id == "fresh.md"));
+    }
+
+    #[test]
+    fn reindex_rename_swaps_old_for_new() {
+        // B2: rename — old id no longer found, new id queryable
+        let dir = create_workspace();
+        write_md(dir.path(), "old.md", "Renamed content.");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        fs::rename(dir.path().join("old.md"), dir.path().join("new.md")).unwrap();
+        gi.batch_reindex(&rename_reindex_diff("old.md", "new.md"), true).unwrap();
+
+        assert!(matches!(
+            gi.subgraph(&["old.md"], 1, false),
+            Err(GraphError::NodeNotFound { .. })
+        ));
+        let sub = gi.subgraph(&["new.md"], 1, false).unwrap();
+        assert!(sub.nodes.iter().any(|n| n.id == "new.md"));
+    }
+
+    #[test]
+    fn reindex_delete_removes_node() {
+        // B3: delete — id no longer found
+        let dir = create_workspace();
+        write_md(dir.path(), "doomed.md", "Doomed content.");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        fs::remove_file(dir.path().join("doomed.md")).unwrap();
+        gi.remove_file("doomed.md", true).unwrap();
+
+        assert!(matches!(
+            gi.subgraph(&["doomed.md"], 1, false),
+            Err(GraphError::NodeNotFound { .. })
+        ));
     }
 
     #[test]

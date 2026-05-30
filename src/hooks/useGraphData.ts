@@ -3,7 +3,7 @@ import Graph from "graphology";
 import { listen } from "@tauri-apps/api/event";
 import { getFullSubgraph, getGraphPositions, getGraphSubgraph } from "../lib/ipc";
 import type { SubgraphResult } from "../lib/ipc";
-import { applyPositions, populateGraph, recolorSeed, resolveThemeColors } from "../lib/graphLayout";
+import { applyPositions, nodeLabelFromPath, populateGraph, recolorSeed, resolveThemeColors } from "../lib/graphLayout";
 import { getQualitySettings, type TierSettings } from "../lib/qualityTiers";
 
 export interface UseGraphDataOptions {
@@ -34,7 +34,23 @@ async function doRebuild(
 
   let subgraph: SubgraphResult;
   if (currentMode === "local" && currentActivePageId) {
-    subgraph = await getGraphSubgraph([currentActivePageId], currentDepth);
+    const seedId = currentActivePageId;
+    // Local view: the seed may be missing from the index (e.g. just-created page
+    // whose synchronous reindex/watcher hasn't propagated). Fall back to an empty
+    // subgraph and synthesize a seed-only node so the active page always renders.
+    let local: SubgraphResult;
+    try {
+      local = await getGraphSubgraph([seedId], currentDepth);
+    } catch {
+      local = { nodes: [], edges: [] };
+    }
+    if (!local.nodes.some((n) => n.id === seedId)) {
+      local = {
+        ...local,
+        nodes: [{ id: seedId, title: nodeLabelFromPath(seedId) }, ...local.nodes],
+      };
+    }
+    subgraph = local;
   } else {
     subgraph = await getFullSubgraph();
   }
