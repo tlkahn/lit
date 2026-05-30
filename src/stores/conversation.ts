@@ -112,9 +112,27 @@ export const useConversationStore = create<ConversationStore>((set, get) => ({
         messages,
       },
       {
-        onChunk: () => {},
-        onDone: () => {},
-        onError: () => {},
+        onChunk: (text: string) => {
+          useLlmResponseStore.getState().appendChunk(text);
+        },
+        onDone: async () => {
+          const responseText = useLlmResponseStore.getState().responseText;
+          try {
+            const assistantMsg = await conversationAddMessage(
+              convId,
+              "assistant",
+              responseText,
+            );
+            set((s) => ({ messages: [...s.messages, assistantMsg] }));
+          } finally {
+            useLlmResponseStore.getState().finishStream();
+            useModalLockStore.getState().setLlmLocked(false);
+          }
+        },
+        onError: (error: { message: string; retryable: boolean }) => {
+          useLlmResponseStore.getState().setError(error.message);
+          useModalLockStore.getState().setLlmLocked(false);
+        },
       },
     );
   },
