@@ -1,9 +1,10 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MindmapView } from "./MindmapView";
 import { buildHeadingTree } from "../lib/headingTree";
 import { extractHeadings } from "../lib/headings";
+import { mockInvoke, mockListen, emitMockEvent, resetListenMock } from "../test/tauri-mock";
 
 function makeTree(body: string) {
   return buildHeadingTree(extractHeadings(body));
@@ -22,6 +23,15 @@ const defaultProps = () => ({
 });
 
 describe("MindmapView", () => {
+  beforeEach(() => {
+    mockInvoke((cmd) => {
+      if (cmd === "show_mindmap_context_menu") return null;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    resetListenMock();
+    mockListen();
+  });
+
   it("SVG receives focus on mount", () => {
     const tree = makeTree("# A\n## B");
     const { container } = render(
@@ -73,27 +83,58 @@ describe("MindmapView", () => {
     expect(props.onNodeClick).toHaveBeenCalledWith(tree.children[0]!.children[0]!);
   });
 
-  it("right-clicking a node shows context menu with Edit option", () => {
+  it("right-click calls invoke with show_mindmap_context_menu (with export)", async () => {
     const tree = makeTree("# A\n## B");
-    const { container } = render(<MindmapView tree={tree} {...defaultProps()} />);
+    const { container } = render(<MindmapView tree={tree} {...defaultProps()} onExportNetwork={vi.fn()} />);
     const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
     fireEvent.contextMenu(nodeB);
-    const menu = container.querySelector("[data-mindmap-context-menu]");
-    expect(menu).toBeTruthy();
-    expect(menu!.textContent).toContain("Edit");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("show_mindmap_context_menu", {
+      nodeId: tree.children[0]!.children[0]!.id,
+      hasExport: true,
+    });
   });
 
-  it("clicking Edit in context menu enters edit mode", () => {
+  it("right-click calls invoke with hasExport false when onExportNetwork undefined", async () => {
     const tree = makeTree("# A\n## B");
     const { container } = render(<MindmapView tree={tree} {...defaultProps()} />);
     const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
     fireEvent.contextMenu(nodeB);
-    const editItem = container.querySelector("[data-mindmap-context-edit]") as HTMLElement;
-    expect(editItem).toBeTruthy();
-    fireEvent.click(editItem);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("show_mindmap_context_menu", {
+      nodeId: tree.children[0]!.children[0]!.id,
+      hasExport: false,
+    });
+  });
+
+  it("context-menu://mindmap/edit event enters edit mode", () => {
+    const tree = makeTree("# A\n## B");
+    const nodeB = tree.children[0]!.children[0]!;
+    const { container } = render(<MindmapView tree={tree} {...defaultProps()} />);
+    act(() => {
+      emitMockEvent("context-menu://mindmap/edit", { node_id: nodeB.id });
+    });
     const input = container.querySelector("[data-mindmap-edit]") as HTMLInputElement;
     expect(input).toBeTruthy();
     expect(input.value).toBe("B");
+  });
+
+  it("context-menu://mindmap/export-network event calls onExportNetwork", () => {
+    const tree = makeTree("# A\n## B");
+    const nodeB = tree.children[0]!.children[0]!;
+    const onExportNetwork = vi.fn();
+    render(<MindmapView tree={tree} {...defaultProps()} onExportNetwork={onExportNetwork} />);
+    act(() => {
+      emitMockEvent("context-menu://mindmap/export-network", { node_id: nodeB.id });
+    });
+    expect(onExportNetwork).toHaveBeenCalled();
+  });
+
+  it("no data-mindmap-context-menu DOM rendered after right-click", () => {
+    const tree = makeTree("# A\n## B");
+    const { container } = render(<MindmapView tree={tree} {...defaultProps()} />);
+    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
+    fireEvent.contextMenu(nodeB);
     expect(container.querySelector("[data-mindmap-context-menu]")).toBeNull();
   });
 
@@ -102,9 +143,9 @@ describe("MindmapView", () => {
     const props = defaultProps();
     const { container } = render(<MindmapView tree={tree} {...props} />);
     const user = userEvent.setup();
-    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
-    fireEvent.contextMenu(nodeB);
-    fireEvent.click(container.querySelector("[data-mindmap-context-edit]")!);
+    act(() => {
+      emitMockEvent("context-menu://mindmap/edit", { node_id: tree.children[0]!.children[0]!.id });
+    });
     const input = container.querySelector("[data-mindmap-edit]") as HTMLInputElement;
     await user.clear(input);
     await user.type(input, "New B{Enter}");
@@ -116,33 +157,13 @@ describe("MindmapView", () => {
     const props = defaultProps();
     const { container } = render(<MindmapView tree={tree} {...props} />);
     const user = userEvent.setup();
-    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
-    fireEvent.contextMenu(nodeB);
-    fireEvent.click(container.querySelector("[data-mindmap-context-edit]")!);
+    act(() => {
+      emitMockEvent("context-menu://mindmap/edit", { node_id: tree.children[0]!.children[0]!.id });
+    });
     const input = container.querySelector("[data-mindmap-edit]") as HTMLInputElement;
     await user.type(input, "changed{Escape}");
     expect(props.onNodeRename).not.toHaveBeenCalled();
     expect(container.querySelector("[data-mindmap-edit]")).toBeNull();
-  });
-
-  it("clicking outside the context menu dismisses it", () => {
-    const tree = makeTree("# A\n## B");
-    const { container } = render(<MindmapView tree={tree} {...defaultProps()} />);
-    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
-    fireEvent.contextMenu(nodeB);
-    expect(container.querySelector("[data-mindmap-context-menu]")).toBeTruthy();
-    fireEvent.pointerDown(container.querySelector("svg")!);
-    expect(container.querySelector("[data-mindmap-context-menu]")).toBeNull();
-  });
-
-  it("pressing Escape dismisses the context menu", () => {
-    const tree = makeTree("# A\n## B");
-    const { container } = render(<MindmapView tree={tree} {...defaultProps()} />);
-    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
-    fireEvent.contextMenu(nodeB);
-    expect(container.querySelector("[data-mindmap-context-menu]")).toBeTruthy();
-    fireEvent.keyDown(container.querySelector("[data-mindmap-context-menu]")!, { key: "Escape" });
-    expect(container.querySelector("[data-mindmap-context-menu]")).toBeNull();
   });
 
   it("double-clicking a node calls onNodeJump instead of entering edit mode", async () => {
@@ -220,24 +241,26 @@ describe("MindmapView", () => {
   it("edit input is rendered as HTML overlay, not inside SVG foreignObject", () => {
     const tree = makeTree("# A\n## B");
     const { container } = render(<MindmapView tree={tree} {...defaultProps()} />);
-    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
-    fireEvent.contextMenu(nodeB);
-    fireEvent.click(container.querySelector("[data-mindmap-context-edit]")!);
+    act(() => {
+      emitMockEvent("context-menu://mindmap/edit", { node_id: tree.children[0]!.children[0]!.id });
+    });
     const input = container.querySelector("[data-mindmap-edit]") as HTMLInputElement;
     expect(input).toBeTruthy();
     expect(input.closest("svg")).toBeNull();
     expect(input.closest("[class*='overflow-hidden']")).toBeTruthy();
   });
 
-  it("context menu does not appear during drag", () => {
+  it("right-click during drag does NOT call invoke", async () => {
     const tree = makeTree("# A\n## B\n## C");
     const { container } = render(<MindmapView tree={tree} {...defaultProps()} />);
     const svg = container.querySelector("[data-mindmap-svg]")!;
     const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
     firePointer(nodeB, "pointerdown", { clientX: 0, clientY: 0 });
     firePointer(svg, "pointermove", { clientX: 50, clientY: 50 });
+    const { invoke } = await import("@tauri-apps/api/core");
+    (invoke as unknown as ReturnType<typeof vi.fn>).mockClear();
     fireEvent.contextMenu(nodeB);
-    expect(container.querySelector("[data-mindmap-context-menu]")).toBeNull();
+    expect(invoke).not.toHaveBeenCalled();
   });
 });
 
@@ -255,6 +278,14 @@ function firePointer(el: Element, type: string, overrides: Record<string, unknow
 }
 
 describe("MindmapView drag-and-drop", () => {
+  beforeEach(() => {
+    mockInvoke((cmd) => {
+      if (cmd === "show_mindmap_context_menu") return null;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    resetListenMock();
+    mockListen();
+  });
 
   it("dragged node gets data-mindmap-dragging", () => {
     const tree = makeTree("# A\n## B\n## C");
@@ -381,6 +412,15 @@ describe("MindmapView drag-and-drop", () => {
 });
 
 describe("MindmapView selection", () => {
+  beforeEach(() => {
+    mockInvoke((cmd) => {
+      if (cmd === "show_mindmap_context_menu") return null;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    resetListenMock();
+    mockListen();
+  });
+
   it("selected node has data-mindmap-selected attribute", () => {
     const tree = makeTree("# A\n## B\n## C");
     const nodeB = tree.children[0]!.children[0]!;
@@ -436,6 +476,15 @@ describe("MindmapView selection", () => {
 });
 
 describe("MindmapView arrow-key navigation", () => {
+  beforeEach(() => {
+    mockInvoke((cmd) => {
+      if (cmd === "show_mindmap_context_menu") return null;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    resetListenMock();
+    mockListen();
+  });
+
   it("ArrowDown selects next sibling", () => {
     const tree = makeTree("# A\n## B\n## C");
     const nodeB = tree.children[0]!.children[0]!;
@@ -665,6 +714,14 @@ describe("MindmapView arrow-key navigation", () => {
 });
 
 describe("MindmapView Shift+Tab navigation", () => {
+  beforeEach(() => {
+    mockInvoke((cmd) => {
+      if (cmd === "show_mindmap_context_menu") return null;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    resetListenMock();
+    mockListen();
+  });
   it("Shift+Tab selects parent node", () => {
     const tree = makeTree("# A\n## B");
     const nodeB = tree.children[0]!.children[0]!;
@@ -723,9 +780,9 @@ describe("MindmapView Shift+Tab navigation", () => {
     const { container } = render(
       <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
     );
-    const nodeEl = container.querySelector(`[data-mindmap-node="${nodeB.id}"]`)!;
-    fireEvent.contextMenu(nodeEl);
-    fireEvent.click(container.querySelector("[data-mindmap-context-edit]")!);
+    act(() => {
+      emitMockEvent("context-menu://mindmap/edit", { node_id: nodeB.id });
+    });
     expect(container.querySelector("[data-mindmap-edit]")).toBeTruthy();
     const svg = container.querySelector("[data-mindmap-svg]")!;
     fireEvent.keyDown(svg, { key: "Tab", shiftKey: true });
@@ -734,6 +791,15 @@ describe("MindmapView Shift+Tab navigation", () => {
 });
 
 describe("MindmapView node creation", () => {
+  beforeEach(() => {
+    mockInvoke((cmd) => {
+      if (cmd === "show_mindmap_context_menu") return null;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    resetListenMock();
+    mockListen();
+  });
+
   it("Tab on selected node calls onInsertChild", () => {
     const tree = makeTree("# A\n## B\n## C");
     const nodeB = tree.children[0]!.children[0]!;
@@ -802,9 +868,9 @@ describe("MindmapView node creation", () => {
     const { container } = render(
       <MindmapView tree={tree} {...props} selectedId={nodeB.id} />,
     );
-    const nodeEl = container.querySelector(`[data-mindmap-node="${nodeB.id}"]`)!;
-    fireEvent.contextMenu(nodeEl);
-    fireEvent.click(container.querySelector("[data-mindmap-context-edit]")!);
+    act(() => {
+      emitMockEvent("context-menu://mindmap/edit", { node_id: nodeB.id });
+    });
     expect(container.querySelector("[data-mindmap-edit]")).toBeTruthy();
     const svg = container.querySelector("[data-mindmap-svg]")!;
     fireEvent.keyDown(svg, { key: "Tab" });
@@ -1027,6 +1093,15 @@ describe("MindmapView node creation", () => {
 });
 
 describe("MindmapView delete", () => {
+  beforeEach(() => {
+    mockInvoke((cmd) => {
+      if (cmd === "show_mindmap_context_menu") return null;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    resetListenMock();
+    mockListen();
+  });
+
   it("Delete key on leaf node calls onDeleteNode", () => {
     const tree = makeTree("# A\n## B\n## C");
     const nodeC = tree.children[0]!.children[1]!;
@@ -1186,6 +1261,15 @@ describe("MindmapView delete", () => {
 });
 
 describe("MindmapView fold/unfold", () => {
+  beforeEach(() => {
+    mockInvoke((cmd) => {
+      if (cmd === "show_mindmap_context_menu") return null;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    resetListenMock();
+    mockListen();
+  });
+
   it("Space on node with children hides child nodes", () => {
     const tree = makeTree("# A\n## B\n### C");
     const nodeB = tree.children[0]!.children[0]!;
@@ -1427,6 +1511,15 @@ describe("MindmapView fold/unfold", () => {
 });
 
 describe("MindmapView type-to-rename", () => {
+  beforeEach(() => {
+    mockInvoke((cmd) => {
+      if (cmd === "show_mindmap_context_menu") return null;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    resetListenMock();
+    mockListen();
+  });
+
   it("pressing a printable key on selected node enters edit mode with that character", () => {
     const tree = makeTree("# A\n## B");
     const nodeB = tree.children[0]!.children[0]!;
@@ -1538,6 +1631,15 @@ describe("MindmapView type-to-rename", () => {
 });
 
 describe("MindmapView edit-dismiss refocus", () => {
+  beforeEach(() => {
+    mockInvoke((cmd) => {
+      if (cmd === "show_mindmap_context_menu") return null;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    resetListenMock();
+    mockListen();
+  });
+
   it("SVG receives focus after Enter-confirm in edit mode", () => {
     const tree = makeTree("# A\n## B");
     const nodeB = tree.children[0]!.children[0]!;
@@ -1584,39 +1686,3 @@ describe("MindmapView edit-dismiss refocus", () => {
   });
 });
 
-describe("MindmapView export context menu", () => {
-  it("shows 'Export Local Network…' when onExportNetwork provided", () => {
-    const tree = makeTree("# A\n## B");
-    const { container } = render(
-      <MindmapView tree={tree} {...defaultProps()} onExportNetwork={vi.fn()} />,
-    );
-    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
-    fireEvent.contextMenu(nodeB);
-    const btn = container.querySelector("[data-mindmap-context-export]");
-    expect(btn).toBeTruthy();
-    expect(btn!.textContent).toBe("Export Local Network…");
-  });
-
-  it("does NOT show it when onExportNetwork is undefined", () => {
-    const tree = makeTree("# A\n## B");
-    const { container } = render(
-      <MindmapView tree={tree} {...defaultProps()} />,
-    );
-    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
-    fireEvent.contextMenu(nodeB);
-    expect(container.querySelector("[data-mindmap-context-export]")).toBeNull();
-  });
-
-  it("clicking it calls onExportNetwork and dismisses menu", () => {
-    const onExportNetwork = vi.fn();
-    const tree = makeTree("# A\n## B");
-    const { container } = render(
-      <MindmapView tree={tree} {...defaultProps()} onExportNetwork={onExportNetwork} />,
-    );
-    const nodeB = container.querySelector(`[data-mindmap-node="${tree.children[0]!.children[0]!.id}"]`)!;
-    fireEvent.contextMenu(nodeB);
-    fireEvent.click(container.querySelector("[data-mindmap-context-export]")!);
-    expect(onExportNetwork).toHaveBeenCalled();
-    expect(container.querySelector("[data-mindmap-context-menu]")).toBeNull();
-  });
-});

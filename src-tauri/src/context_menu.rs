@@ -19,6 +19,12 @@ pub const EVENT_CTX_SIDEBAR_EXTERNAL_EDITOR: &str = "context-menu://sidebar/exte
 pub const EVENT_CTX_SIDEBAR_EXPORT_NETWORK: &str = "context-menu://sidebar/export-network";
 pub const EVENT_CTX_SIDEBAR_TRASH: &str = "context-menu://sidebar/trash";
 
+pub const CTX_MINDMAP_EDIT: &str = "ctx_mindmap_edit";
+pub const CTX_MINDMAP_EXPORT_NETWORK: &str = "ctx_mindmap_export_network";
+
+pub const EVENT_CTX_MINDMAP_EDIT: &str = "context-menu://mindmap/edit";
+pub const EVENT_CTX_MINDMAP_EXPORT_NETWORK: &str = "context-menu://mindmap/export-network";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextMenuAction {
     TrashRestore,
@@ -27,6 +33,8 @@ pub enum ContextMenuAction {
     SidebarExternalEditor,
     SidebarExportNetwork,
     SidebarTrash,
+    MindmapEdit,
+    MindmapExportNetwork,
 }
 
 impl ContextMenuAction {
@@ -38,6 +46,8 @@ impl ContextMenuAction {
             CTX_SIDEBAR_EXTERNAL_EDITOR => Some(Self::SidebarExternalEditor),
             CTX_SIDEBAR_EXPORT_NETWORK => Some(Self::SidebarExportNetwork),
             CTX_SIDEBAR_TRASH => Some(Self::SidebarTrash),
+            CTX_MINDMAP_EDIT => Some(Self::MindmapEdit),
+            CTX_MINDMAP_EXPORT_NETWORK => Some(Self::MindmapExportNetwork),
             _ => None,
         }
     }
@@ -57,6 +67,11 @@ pub struct MenuItemSpec {
 #[derive(Debug, Clone, Serialize)]
 pub struct SidebarContextPayload {
     pub relative_path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MindmapContextPayload {
+    pub node_id: String,
 }
 
 pub fn sidebar_menu_items() -> Vec<MenuItemSpec> {
@@ -116,6 +131,37 @@ pub fn trash_menu_items() -> Vec<MenuItemSpec> {
     ]
 }
 
+pub fn mindmap_menu_items(has_export: bool) -> Vec<MenuItemSpec> {
+    let mut items = vec![MenuItemSpec {
+        id: CTX_MINDMAP_EDIT,
+        label: "Edit",
+        enabled: true,
+    }];
+    if has_export {
+        items.push(MenuItemSpec {
+            id: CTX_MINDMAP_EXPORT_NETWORK,
+            label: "Export Local Network\u{2026}",
+            enabled: true,
+        });
+    }
+    items
+}
+
+pub fn dispatch_mindmap_action(
+    action: ContextMenuAction,
+    node_id: &str,
+) -> (&'static str, MindmapContextPayload) {
+    let payload = MindmapContextPayload {
+        node_id: node_id.to_string(),
+    };
+    let event = match action {
+        ContextMenuAction::MindmapEdit => EVENT_CTX_MINDMAP_EDIT,
+        ContextMenuAction::MindmapExportNetwork => EVENT_CTX_MINDMAP_EXPORT_NETWORK,
+        _ => unreachable!("dispatch_mindmap_action called with non-mindmap action"),
+    };
+    (event, payload)
+}
+
 pub fn dispatch_context_action(
     action: ContextMenuAction,
     context: &str,
@@ -141,6 +187,7 @@ pub fn dispatch_context_action(
 pub enum ContextMenuContext {
     Trash { trash_name: String },
     Sidebar { relative_path: String },
+    Mindmap { node_id: String },
 }
 
 pub struct PendingContextMenu(pub Mutex<Option<ContextMenuContext>>);
@@ -220,7 +267,26 @@ pub fn handle_context_menu_event(app: &tauri::AppHandle, menu_id: &str) {
                 let _ = window.emit(event_name, &payload);
             }
         }
+        ContextMenuContext::Mindmap { node_id } => {
+            let (event_name, payload) = dispatch_mindmap_action(action, &node_id);
+            let windows = app.webview_windows();
+            for window in windows.values() {
+                let _ = window.emit(event_name, &payload);
+            }
+        }
     }
+}
+
+#[tauri::command]
+pub fn show_mindmap_context_menu(
+    node_id: String,
+    has_export: bool,
+    window: tauri::Window,
+    pending: tauri::State<PendingContextMenu>,
+) -> Result<(), String> {
+    *pending.0.lock().unwrap() = Some(ContextMenuContext::Mindmap { node_id });
+    let specs = mindmap_menu_items(has_export);
+    show_popup_menu(&specs, &window)
 }
 
 #[cfg(test)]
@@ -429,5 +495,114 @@ mod tests {
         let (event, payload) = dispatch_sidebar_action(ContextMenuAction::SidebarTrash, "old.md");
         assert_eq!(event, EVENT_CTX_SIDEBAR_TRASH);
         assert_eq!(payload.relative_path, "old.md");
+    }
+
+    #[test]
+    fn mindmap_context_menu_ids_are_defined() {
+        assert_eq!(CTX_MINDMAP_EDIT, "ctx_mindmap_edit");
+        assert_eq!(CTX_MINDMAP_EXPORT_NETWORK, "ctx_mindmap_export_network");
+    }
+
+    #[test]
+    fn mindmap_event_constants_are_defined() {
+        assert_eq!(EVENT_CTX_MINDMAP_EDIT, "context-menu://mindmap/edit");
+        assert_eq!(EVENT_CTX_MINDMAP_EXPORT_NETWORK, "context-menu://mindmap/export-network");
+    }
+
+    #[test]
+    fn from_id_maps_mindmap_ids() {
+        assert_eq!(
+            ContextMenuAction::from_id(CTX_MINDMAP_EDIT),
+            Some(ContextMenuAction::MindmapEdit)
+        );
+        assert_eq!(
+            ContextMenuAction::from_id(CTX_MINDMAP_EXPORT_NETWORK),
+            Some(ContextMenuAction::MindmapExportNetwork)
+        );
+    }
+
+    #[test]
+    fn mindmap_context_menu_ids_do_not_collide_with_app_menu_ids() {
+        use crate::menu;
+        let app_menu_ids = [
+            menu::MENU_ID_OPEN_WORKSPACE,
+            menu::MENU_ID_INSTALL_CLI,
+            menu::MENU_ID_OPEN_PREFERENCES,
+            menu::MENU_ID_OPEN_IN_EXTERNAL_EDITOR,
+            menu::MENU_ID_CLOSE,
+            menu::MENU_ID_EXPORT_MARKDOWN,
+            menu::MENU_ID_BUY_LICENSE,
+            menu::MENU_ID_ENTER_LICENSE_KEY,
+            menu::MENU_ID_LICENSE_INFO,
+            menu::MENU_ID_ABOUT,
+        ];
+        let ctx_ids = [CTX_MINDMAP_EDIT, CTX_MINDMAP_EXPORT_NETWORK];
+        for ctx_id in &ctx_ids {
+            for app_id in &app_menu_ids {
+                assert_ne!(ctx_id, app_id, "Mindmap menu ID {ctx_id} collides with app menu ID {app_id}");
+            }
+        }
+    }
+
+    #[test]
+    fn mindmap_ids_do_not_collide_with_trash_ids() {
+        let trash_ids = [CTX_TRASH_RESTORE, CTX_TRASH_PURGE];
+        let mindmap_ids = [CTX_MINDMAP_EDIT, CTX_MINDMAP_EXPORT_NETWORK];
+        for mid in &mindmap_ids {
+            for tid in &trash_ids {
+                assert_ne!(mid, tid, "Mindmap ID {mid} collides with trash ID {tid}");
+            }
+        }
+    }
+
+    #[test]
+    fn mindmap_ids_do_not_collide_with_sidebar_ids() {
+        let sidebar_ids = [
+            CTX_SIDEBAR_RENAME,
+            CTX_SIDEBAR_EXTERNAL_EDITOR,
+            CTX_SIDEBAR_EXPORT_NETWORK,
+            CTX_SIDEBAR_TRASH,
+        ];
+        let mindmap_ids = [CTX_MINDMAP_EDIT, CTX_MINDMAP_EXPORT_NETWORK];
+        for mid in &mindmap_ids {
+            for sid in &sidebar_ids {
+                assert_ne!(mid, sid, "Mindmap ID {mid} collides with sidebar ID {sid}");
+            }
+        }
+    }
+
+    #[test]
+    fn mindmap_menu_items_without_export_returns_one_spec() {
+        let items = mindmap_menu_items(false);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, CTX_MINDMAP_EDIT);
+        assert_eq!(items[0].label, "Edit");
+        assert!(items[0].enabled);
+    }
+
+    #[test]
+    fn mindmap_menu_items_with_export_returns_two_specs() {
+        let items = mindmap_menu_items(true);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].id, CTX_MINDMAP_EDIT);
+        assert_eq!(items[0].label, "Edit");
+        assert!(items[0].enabled);
+        assert_eq!(items[1].id, CTX_MINDMAP_EXPORT_NETWORK);
+        assert_eq!(items[1].label, "Export Local Network\u{2026}");
+        assert!(items[1].enabled);
+    }
+
+    #[test]
+    fn dispatch_mindmap_edit_returns_correct_event_and_payload() {
+        let (event, payload) = dispatch_mindmap_action(ContextMenuAction::MindmapEdit, "node-123");
+        assert_eq!(event, EVENT_CTX_MINDMAP_EDIT);
+        assert_eq!(payload.node_id, "node-123");
+    }
+
+    #[test]
+    fn dispatch_mindmap_export_network_returns_correct_event_and_payload() {
+        let (event, payload) = dispatch_mindmap_action(ContextMenuAction::MindmapExportNetwork, "node-456");
+        assert_eq!(event, EVENT_CTX_MINDMAP_EXPORT_NETWORK);
+        assert_eq!(payload.node_id, "node-456");
     }
 }
