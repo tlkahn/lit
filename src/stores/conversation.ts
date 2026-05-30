@@ -114,7 +114,7 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
   loadConversations: async (nodeId: string) => {
     try {
       const rows = await conversationList(nodeId);
-      set({ conversations: rows, error: null });
+      set({ conversations: rows, activeConversationId: null, messages: [], error: null });
     } catch (e) {
       set({ error: e instanceof Error ? e.message : String(e) });
     }

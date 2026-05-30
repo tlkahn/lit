@@ -535,6 +535,36 @@ describe("ConversationPanel", () => {
     expect(createConversationSpy).toHaveBeenCalledWith("page-1");
   });
 
+  // Bug 2A: Guard on createConversation returning null
+  it("handleSend does not call sendMessage when createConversation returns null", async () => {
+    const createConversationSpy = vi.fn().mockResolvedValue(null);
+    const sendMessageSpy = vi.fn();
+    useConversationStore.setState({
+      loadConversations: vi.fn().mockResolvedValue(undefined),
+      createConversation: createConversationSpy,
+      sendMessage: sendMessageSpy,
+      activeConversationId: null,
+      conversations: [],
+      messages: [],
+    });
+
+    let result: ReturnType<typeof render>;
+    await act(async () => {
+      result = render(<ConversationPanel pageId="page-1" />);
+    });
+
+    const textarea = result!.getByTestId("conversation-input") as HTMLTextAreaElement;
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: "my message" } });
+    });
+    await act(async () => {
+      fireEvent.click(result!.getByTestId("conversation-send-btn"));
+    });
+
+    expect(createConversationSpy).toHaveBeenCalled();
+    expect(sendMessageSpy).not.toHaveBeenCalled();
+  });
+
   it("focuses input when panel mounts with no active conversation", async () => {
     useConversationStore.setState({
       loadConversations: vi.fn().mockResolvedValue(undefined),

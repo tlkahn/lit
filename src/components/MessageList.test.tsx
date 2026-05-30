@@ -269,6 +269,15 @@ describe("MessageList", () => {
     expect(lastAssistant.querySelector("[data-testid='message-insert-btn']")).toBeNull();
   });
 
+  // Bug 3: Scroll container needs h-full for proper height constraint
+  it("scroll container has h-full class for proper height constraint", () => {
+    const { getByTestId } = render(
+      <MessageList messages={[]} onEdit={vi.fn()} onEditSubmit={vi.fn()} onRetry={vi.fn()} />,
+    );
+    const list = getByTestId("message-list");
+    expect(list.className).toContain("h-full");
+  });
+
   it("resumes auto-scroll when user scrolls back to bottom", () => {
     const msgs = [makeMessage({ id: 1, seq: 1, role: "user", content: "Q1" })];
     const { getByTestId, rerender } = render(

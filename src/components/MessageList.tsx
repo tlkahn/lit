@@ -43,7 +43,7 @@ export function MessageList({ messages, onEdit, onEditSubmit, onRetry }: Message
     <div
       ref={scrollRef}
       data-testid="message-list"
-      className="flex flex-col gap-2 overflow-y-auto p-2"
+      className="flex flex-col gap-2 overflow-y-auto p-2 h-full"
       onScroll={handleScroll}
     >
       {messages.map((msg, i) => (
