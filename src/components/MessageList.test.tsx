@@ -3,6 +3,7 @@ import { render, fireEvent, act } from "@testing-library/react";
 import { MessageList } from "./MessageList";
 import type { MessageRow } from "../lib/ipc";
 import { useLlmResponseStore } from "../stores/llmResponse";
+import { useEditorSelectionStore } from "../stores/editorSelection";
 
 function makeMessage(overrides: Partial<MessageRow> = {}): MessageRow {
   return {
@@ -214,6 +215,58 @@ describe("MessageList", () => {
     );
 
     expect(scrollToSpy).not.toHaveBeenCalled();
+  });
+
+  // Cycle 9: Editor action buttons integration
+  it("does not show editor action buttons on latest assistant message during streaming", () => {
+    useLlmResponseStore.getState().startStream({ question: "test" });
+    useLlmResponseStore.getState().appendChunk("partial");
+    const messages = [
+      makeMessage({ id: 1, seq: 1, role: "user", content: "Q1" }),
+      makeMessage({ id: 2, seq: 2, role: "assistant", content: "A1" }),
+    ];
+    const { container } = render(
+      <MessageList messages={messages} onEdit={vi.fn()} onEditSubmit={vi.fn()} onRetry={vi.fn()} />,
+    );
+    const lastAssistant = container.querySelectorAll("[data-testid='message-bubble-assistant']")[0]!;
+    fireEvent.mouseEnter(lastAssistant);
+    expect(lastAssistant.querySelector("[data-testid='message-insert-btn']")).toBeNull();
+    expect(lastAssistant.querySelector("[data-testid='message-replace-btn']")).toBeNull();
+  });
+
+  it("shows Insert at cursor on latest assistant message when status is done and no editor selection", () => {
+    useLlmResponseStore.getState().startStream({ question: "test" });
+    useLlmResponseStore.getState().appendChunk("response");
+    useLlmResponseStore.getState().finishStream();
+    useEditorSelectionStore.getState().setSelection(0, 0);
+    const messages = [
+      makeMessage({ id: 1, seq: 1, role: "user", content: "Q1" }),
+      makeMessage({ id: 2, seq: 2, role: "assistant", content: "A1" }),
+    ];
+    const { container } = render(
+      <MessageList messages={messages} onEdit={vi.fn()} onEditSubmit={vi.fn()} onRetry={vi.fn()} />,
+    );
+    const lastAssistant = container.querySelectorAll("[data-testid='message-bubble-assistant']")[0]!;
+    fireEvent.mouseEnter(lastAssistant);
+    expect(lastAssistant.querySelector("[data-testid='message-insert-btn']")).toBeTruthy();
+  });
+
+  it("shows Replace selection on latest assistant message when editor has selection", () => {
+    useLlmResponseStore.getState().startStream({ question: "test" });
+    useLlmResponseStore.getState().appendChunk("response");
+    useLlmResponseStore.getState().finishStream();
+    useEditorSelectionStore.getState().setSelection(0, 10);
+    const messages = [
+      makeMessage({ id: 1, seq: 1, role: "user", content: "Q1" }),
+      makeMessage({ id: 2, seq: 2, role: "assistant", content: "A1" }),
+    ];
+    const { container } = render(
+      <MessageList messages={messages} onEdit={vi.fn()} onEditSubmit={vi.fn()} onRetry={vi.fn()} />,
+    );
+    const lastAssistant = container.querySelectorAll("[data-testid='message-bubble-assistant']")[0]!;
+    fireEvent.mouseEnter(lastAssistant);
+    expect(lastAssistant.querySelector("[data-testid='message-replace-btn']")).toBeTruthy();
+    expect(lastAssistant.querySelector("[data-testid='message-insert-btn']")).toBeNull();
   });
 
   it("resumes auto-scroll when user scrolls back to bottom", () => {

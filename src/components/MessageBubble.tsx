@@ -1,16 +1,19 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import type { MessageRow } from "../lib/ipc";
+import type { MessageRow, Annotation } from "../lib/ipc";
 import { renderMarkdown } from "../lib/renderMarkdown";
 
 interface MessageBubbleProps {
   message: MessageRow;
   isLast?: boolean;
+  showEditorActions?: boolean;
+  hadSelection?: boolean;
+  fireSourceAnnotation?: Annotation | null;
   onEdit?: (seq: number) => void;
   onEditSubmit?: (seq: number, newContent: string) => void;
   onRetry?: () => void;
 }
 
-export function MessageBubble({ message, isLast, onEdit, onEditSubmit, onRetry }: MessageBubbleProps) {
+export function MessageBubble({ message, isLast, showEditorActions, hadSelection, fireSourceAnnotation, onEdit, onEditSubmit, onRetry }: MessageBubbleProps) {
   const [hovered, setHovered] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState(message.content);
@@ -57,6 +60,48 @@ export function MessageBubble({ message, isLast, onEdit, onEditSubmit, onRetry }
       {isAssistant && isLast && onRetry && (
         <button data-testid="message-retry-btn" onClick={onRetry} className="text-xs text-muted hover:text-normal px-1">
           Retry
+        </button>
+      )}
+      {isAssistant && showEditorActions && (
+        hadSelection ? (
+          <button
+            data-testid="message-replace-btn"
+            className="text-xs text-muted hover:text-normal px-1"
+            onClick={() => {
+              window.dispatchEvent(
+                new CustomEvent("lit:llm-insert-raw", { detail: { text: message.content } }),
+              );
+            }}
+          >
+            Replace selection
+          </button>
+        ) : (
+          <button
+            data-testid="message-insert-btn"
+            className="text-xs text-muted hover:text-normal px-1"
+            onClick={() => {
+              window.dispatchEvent(
+                new CustomEvent("lit:llm-insert-raw", { detail: { text: message.content } }),
+              );
+            }}
+          >
+            Insert at cursor
+          </button>
+        )
+      )}
+      {isAssistant && showEditorActions && fireSourceAnnotation && (
+        <button
+          data-testid="message-companion-btn"
+          className="text-xs text-muted hover:text-normal px-1"
+          onClick={() => {
+            window.dispatchEvent(
+              new CustomEvent("lit:insert-companion-annotation", {
+                detail: { sourceAnnotation: fireSourceAnnotation, responseText: message.content },
+              }),
+            );
+          }}
+        >
+          Insert as companion
         </button>
       )}
     </div>

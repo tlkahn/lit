@@ -3,6 +3,21 @@ import { render, fireEvent } from "@testing-library/react";
 import { MessageBubble } from "./MessageBubble";
 import type { MessageRow } from "../lib/ipc";
 
+function makeAnnotation() {
+  return {
+    form: "compact" as const,
+    annotation_type: "note" as const,
+    certainty: "neutral" as const,
+    scope: { kind: "words" as const, value: 1 },
+    body: "test",
+    date: null,
+    is_structured: false,
+    char_start: 0,
+    char_end: 10,
+    original: "test",
+  };
+}
+
 function makeMessage(overrides: Partial<MessageRow> = {}): MessageRow {
   return {
     id: 1,
@@ -175,5 +190,80 @@ describe("MessageBubble", () => {
     fireEvent.click(getByTestId("message-edit-btn"));
     const textarea = getByTestId("message-edit-textarea");
     expect(document.activeElement).toBe(textarea);
+  });
+
+  // Cycle 9: Editor action buttons on latest assistant message
+  it("shows Insert at cursor button on latest assistant message when no editor selection", () => {
+    const msg = makeMessage({ role: "assistant", content: "Generated text" });
+    const { container, getByTestId } = render(
+      <MessageBubble message={msg} isLast showEditorActions hadSelection={false} />,
+    );
+    fireEvent.mouseEnter(container.firstChild!);
+    expect(getByTestId("message-insert-btn")).toBeTruthy();
+    expect(getByTestId("message-insert-btn").textContent).toBe("Insert at cursor");
+  });
+
+  it("shows Replace selection button when editor has selection", () => {
+    const msg = makeMessage({ role: "assistant", content: "Generated text" });
+    const { container, getByTestId, queryByTestId } = render(
+      <MessageBubble message={msg} isLast showEditorActions hadSelection />,
+    );
+    fireEvent.mouseEnter(container.firstChild!);
+    expect(getByTestId("message-replace-btn")).toBeTruthy();
+    expect(getByTestId("message-replace-btn").textContent).toBe("Replace selection");
+    expect(queryByTestId("message-insert-btn")).toBeNull();
+  });
+
+  it("shows Insert as companion button when fireSourceAnnotation is set", () => {
+    const annotation = makeAnnotation();
+    const msg = makeMessage({ role: "assistant", content: "Generated text" });
+    const { container, getByTestId } = render(
+      <MessageBubble message={msg} isLast showEditorActions hadSelection={false} fireSourceAnnotation={annotation} />,
+    );
+    fireEvent.mouseEnter(container.firstChild!);
+    expect(getByTestId("message-companion-btn")).toBeTruthy();
+    expect(getByTestId("message-companion-btn").textContent).toBe("Insert as companion");
+  });
+
+  it("does not show Insert/Replace on non-latest assistant messages", () => {
+    const msg = makeMessage({ role: "assistant", content: "Old response" });
+    const { container, queryByTestId } = render(
+      <MessageBubble message={msg} isLast={false} showEditorActions={false} hadSelection={false} />,
+    );
+    fireEvent.mouseEnter(container.firstChild!);
+    expect(queryByTestId("message-insert-btn")).toBeNull();
+    expect(queryByTestId("message-replace-btn")).toBeNull();
+    expect(queryByTestId("message-companion-btn")).toBeNull();
+  });
+
+  it("dispatches lit:llm-insert-raw on Insert click", () => {
+    const handler = vi.fn();
+    window.addEventListener("lit:llm-insert-raw", handler as EventListener);
+    const msg = makeMessage({ role: "assistant", content: "Insert this" });
+    const { container, getByTestId } = render(
+      <MessageBubble message={msg} isLast showEditorActions hadSelection={false} />,
+    );
+    fireEvent.mouseEnter(container.firstChild!);
+    fireEvent.click(getByTestId("message-insert-btn"));
+    expect(handler).toHaveBeenCalledTimes(1);
+    const event = handler.mock.calls[0]![0] as CustomEvent;
+    expect(event.detail).toEqual({ text: "Insert this" });
+    window.removeEventListener("lit:llm-insert-raw", handler as EventListener);
+  });
+
+  it("dispatches lit:insert-companion-annotation on Companion click", () => {
+    const handler = vi.fn();
+    window.addEventListener("lit:insert-companion-annotation", handler as EventListener);
+    const annotation = makeAnnotation();
+    const msg = makeMessage({ role: "assistant", content: "Companion text" });
+    const { container, getByTestId } = render(
+      <MessageBubble message={msg} isLast showEditorActions hadSelection={false} fireSourceAnnotation={annotation} />,
+    );
+    fireEvent.mouseEnter(container.firstChild!);
+    fireEvent.click(getByTestId("message-companion-btn"));
+    expect(handler).toHaveBeenCalledTimes(1);
+    const event = handler.mock.calls[0]![0] as CustomEvent;
+    expect(event.detail).toEqual({ sourceAnnotation: annotation, responseText: "Companion text" });
+    window.removeEventListener("lit:insert-companion-annotation", handler as EventListener);
   });
 });
