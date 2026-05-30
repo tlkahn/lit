@@ -92,6 +92,12 @@ pub struct MindmapContextPayload {
     pub node_id: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct GraphContextPayload {
+    pub node_id: String,
+    pub node_ids: Vec<String>,
+}
+
 pub fn sidebar_menu_items() -> Vec<MenuItemSpec> {
     vec![
         MenuItemSpec {
@@ -221,6 +227,25 @@ pub fn dispatch_mindmap_action(
     (event, payload)
 }
 
+pub fn dispatch_graph_action(
+    action: ContextMenuAction,
+    node_id: &str,
+    node_ids: &[String],
+) -> (&'static str, GraphContextPayload) {
+    let payload = GraphContextPayload {
+        node_id: node_id.to_string(),
+        node_ids: node_ids.to_vec(),
+    };
+    let event = match action {
+        ContextMenuAction::GraphMerge => EVENT_CTX_GRAPH_MERGE,
+        ContextMenuAction::GraphSplit => EVENT_CTX_GRAPH_SPLIT,
+        ContextMenuAction::GraphDelete => EVENT_CTX_GRAPH_DELETE,
+        ContextMenuAction::GraphExportNetwork => EVENT_CTX_GRAPH_EXPORT_NETWORK,
+        _ => unreachable!("dispatch_graph_action called with non-graph action"),
+    };
+    (event, payload)
+}
+
 pub fn dispatch_context_action(
     action: ContextMenuAction,
     context: &str,
@@ -247,6 +272,7 @@ pub enum ContextMenuContext {
     Trash { trash_name: String },
     Sidebar { relative_path: String },
     Mindmap { node_id: String },
+    Graph { node_id: String, node_ids: Vec<String> },
 }
 
 pub struct PendingContextMenu(pub Mutex<Option<ContextMenuContext>>);
@@ -333,7 +359,37 @@ pub fn handle_context_menu_event(app: &tauri::AppHandle, menu_id: &str) {
                 let _ = window.emit(event_name, &payload);
             }
         }
+        ContextMenuContext::Graph { node_id, node_ids } => {
+            let (event_name, payload) = dispatch_graph_action(action, &node_id, &node_ids);
+            let windows = app.webview_windows();
+            for window in windows.values() {
+                let _ = window.emit(event_name, &payload);
+            }
+        }
     }
+}
+
+#[tauri::command]
+pub fn show_graph_context_menu(
+    node_id: String,
+    node_ids: Vec<String>,
+    selection_count: usize,
+    has_headings: bool,
+    has_export: bool,
+    window: tauri::Window,
+    pending: tauri::State<PendingContextMenu>,
+) -> Result<(), String> {
+    *pending.0.lock().unwrap() = Some(ContextMenuContext::Graph {
+        node_id,
+        node_ids,
+    });
+    let ctx = GraphMenuContext {
+        selection_count,
+        has_headings,
+        has_export,
+    };
+    let specs = graph_menu_items(&ctx);
+    show_popup_menu(&specs, &window)
 }
 
 #[tauri::command]
@@ -819,6 +875,80 @@ mod tests {
             for oid in &other_ids {
                 assert_ne!(gid, oid, "Graph ID {gid} collides with context menu ID {oid}");
             }
+        }
+    }
+
+    // --- Cycle 4.2: Graph IPC command with pre-computed context ---
+
+    #[test]
+    fn dispatch_graph_merge_returns_correct_event_and_payload() {
+        let (event, payload) = dispatch_graph_action(
+            ContextMenuAction::GraphMerge,
+            "node-1",
+            &["node-1".to_string(), "node-2".to_string(), "node-3".to_string()],
+        );
+        assert_eq!(event, EVENT_CTX_GRAPH_MERGE);
+        assert_eq!(payload.node_id, "node-1");
+        assert_eq!(payload.node_ids, vec!["node-1", "node-2", "node-3"]);
+    }
+
+    #[test]
+    fn dispatch_graph_split_returns_correct_event_and_payload() {
+        let (event, payload) = dispatch_graph_action(
+            ContextMenuAction::GraphSplit,
+            "node-42",
+            &[],
+        );
+        assert_eq!(event, EVENT_CTX_GRAPH_SPLIT);
+        assert_eq!(payload.node_id, "node-42");
+    }
+
+    #[test]
+    fn dispatch_graph_delete_returns_correct_event_and_payload() {
+        let (event, payload) = dispatch_graph_action(
+            ContextMenuAction::GraphDelete,
+            "node-5",
+            &["node-5".to_string(), "node-6".to_string()],
+        );
+        assert_eq!(event, EVENT_CTX_GRAPH_DELETE);
+        assert_eq!(payload.node_id, "node-5");
+        assert_eq!(payload.node_ids, vec!["node-5", "node-6"]);
+    }
+
+    #[test]
+    fn dispatch_graph_export_returns_correct_event_and_payload() {
+        let (event, payload) = dispatch_graph_action(
+            ContextMenuAction::GraphExportNetwork,
+            "node-99",
+            &[],
+        );
+        assert_eq!(event, EVENT_CTX_GRAPH_EXPORT_NETWORK);
+        assert_eq!(payload.node_id, "node-99");
+    }
+
+    #[test]
+    fn graph_context_payload_serializes_correctly() {
+        let payload = GraphContextPayload {
+            node_id: "abc".to_string(),
+            node_ids: vec!["abc".to_string(), "def".to_string()],
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["node_id"], "abc");
+        assert_eq!(json["node_ids"], serde_json::json!(["abc", "def"]));
+    }
+
+    #[test]
+    fn context_menu_context_graph_variant_stores_all_fields() {
+        let ctx = ContextMenuContext::Graph {
+            node_id: "n1".to_string(),
+            node_ids: vec!["n1".to_string(), "n2".to_string()],
+        };
+        match ctx {
+            ContextMenuContext::Graph { node_id, node_ids } => {
+                assert_eq!(node_id, "n1");
+                assert_eq!(node_ids, vec!["n1", "n2"]);
+            }
+            _ => panic!("Expected Graph variant"),
         }
     }
 }
