@@ -1,5 +1,9 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, forwardRef, useImperativeHandle } from "react";
 import { useLlmResponseStore } from "../stores/llmResponse";
+
+export interface ConversationInputHandle {
+  focus: () => void;
+}
 
 interface ConversationInputProps {
   onSend: (content: string) => void;
@@ -7,9 +11,14 @@ interface ConversationInputProps {
   onStop?: () => void;
 }
 
-export function ConversationInput({ onSend, onNewThread, onStop }: ConversationInputProps) {
+export const ConversationInput = forwardRef<ConversationInputHandle, ConversationInputProps>(
+  function ConversationInput({ onSend, onNewThread, onStop }, ref) {
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useImperativeHandle(ref, () => ({
+    focus: () => textareaRef.current?.focus(),
+  }));
   const status = useLlmResponseStore((s) => s.status);
   const isStreaming = status === "streaming";
 
@@ -69,4 +78,4 @@ export function ConversationInput({ onSend, onNewThread, onStop }: ConversationI
       )}
     </div>
   );
-}
+});
