@@ -45,13 +45,15 @@ pub fn build_context_layers(
 
     // Trim history: drop oldest pairs from front, keep most recent
     let mut kept_messages: Vec<ChatMessage> = messages.to_vec();
-    loop {
-        let total: usize = kept_messages.iter().map(|m| estimate_tokens(&m.content)).sum();
-        if total <= history_cap || kept_messages.len() < 2 {
-            break;
-        }
-        // Drop oldest pair (user + assistant)
+    let mut running_total: usize = kept_messages.iter().map(|m| estimate_tokens(&m.content)).sum();
+    while running_total > history_cap && kept_messages.len() >= 2 {
+        running_total -= estimate_tokens(&kept_messages[0].content);
+        running_total -= estimate_tokens(&kept_messages[1].content);
         kept_messages.drain(..2);
+    }
+    if kept_messages.len() == 1 && running_total > history_cap {
+        let budget_chars = history_cap * 4;
+        kept_messages[0].content = symmetric_trim(&kept_messages[0].content, budget_chars);
     }
 
     // Trim document content
@@ -268,6 +270,42 @@ mod tests {
             "gpt-4o",
         );
         assert!(result.truncation.is_some());
+    }
+
+    // Cycle 10: Single oversized message trimmed
+    #[test]
+    fn single_oversized_message_trimmed_to_budget() {
+        let huge_content = "x".repeat(800_000);
+        let messages = vec![ChatMessage {
+            role: "user".into(),
+            content: huge_content,
+        }];
+        let result = build_context_layers("Be helpful.", &messages, "", "", &[], "gpt-4o");
+        let kept_tokens: usize = result.messages.iter().map(|m| estimate_tokens(&m.content)).sum();
+        let budget = (context_window("gpt-4o") as f64 * 0.8) as usize;
+        let system_tokens = estimate_tokens("Be helpful.");
+        let history_cap = ((budget - system_tokens) as f64 * 0.4) as usize;
+        assert!(
+            kept_tokens <= history_cap,
+            "kept_tokens ({kept_tokens}) should be <= history_cap ({history_cap})"
+        );
+    }
+
+    #[test]
+    fn single_oversized_message_preserves_center() {
+        let huge_content = "x".repeat(800_000);
+        let center_idx = huge_content.len() / 2;
+        let center_region = huge_content[center_idx - 5..center_idx + 5].to_string();
+        let messages = vec![ChatMessage {
+            role: "user".into(),
+            content: huge_content,
+        }];
+        let result = build_context_layers("Be helpful.", &messages, "", "", &[], "gpt-4o");
+        assert_eq!(result.messages.len(), 1);
+        assert!(
+            result.messages[0].content.contains(&center_region),
+            "center of original should be preserved after symmetric trim"
+        );
     }
 
     // Additional: combined sections format

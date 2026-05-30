@@ -80,8 +80,8 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
       });
       finalSystem = built.system;
       finalMessages = built.messages;
-    } catch {
-      // fallback: use raw args — graph/page unavailable should never block chat
+    } catch (e) {
+      console.warn("llmBuildContext failed, using raw context:", e);
     }
 
     useLlmResponseStore.getState().startStream({ question: content });
