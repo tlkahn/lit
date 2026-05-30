@@ -210,6 +210,105 @@ describe("conversation store", () => {
     expect(useConversationStore.getState().error).toBeNull();
   });
 
+  it("sendMessage persists user message via IPC and appends to messages", async () => {
+    useConversationStore.setState({ activeConversationId: FAKE_UUID });
+    const persistedMsg: MessageRow = {
+      id: 10,
+      conversation_id: FAKE_UUID,
+      role: "user",
+      content: "hello",
+      seq: 1,
+      created_at: "2025-01-01T00:00:01Z",
+    };
+    mockedConversationAddMessage.mockResolvedValue(persistedMsg);
+    mockedStartLlmStream.mockResolvedValue(undefined);
+
+    await useConversationStore.getState().sendMessage({
+      content: "hello",
+      model: "test-model",
+    });
+
+    expect(mockedConversationAddMessage).toHaveBeenCalledWith(
+      FAKE_UUID,
+      "user",
+      "hello",
+    );
+    expect(useConversationStore.getState().messages).toContainEqual(persistedMsg);
+  });
+
+  it("sendMessage builds messages array and calls startLlmStream with correct args", async () => {
+    const priorMessages: MessageRow[] = [
+      { id: 1, conversation_id: FAKE_UUID, role: "user", content: "first q", seq: 1, created_at: "2025-01-01T00:00:00Z" },
+      { id: 2, conversation_id: FAKE_UUID, role: "assistant", content: "first a", seq: 2, created_at: "2025-01-01T00:00:01Z" },
+    ];
+    useConversationStore.setState({
+      activeConversationId: FAKE_UUID,
+      messages: priorMessages,
+    });
+
+    const newUserMsg: MessageRow = {
+      id: 3,
+      conversation_id: FAKE_UUID,
+      role: "user",
+      content: "new q",
+      seq: 3,
+      created_at: "2025-01-01T00:00:02Z",
+    };
+    mockedConversationAddMessage.mockResolvedValue(newUserMsg);
+    mockedStartLlmStream.mockResolvedValue(undefined);
+
+    await useConversationStore.getState().sendMessage({
+      content: "new q",
+      model: "test-model",
+      system: "be helpful",
+    });
+
+    expect(mockedStartLlmStream).toHaveBeenCalledWith(
+      {
+        model: "test-model",
+        text: "new q",
+        system: "be helpful",
+        messages: [
+          { role: "user", content: "first q" },
+          { role: "assistant", content: "first a" },
+          { role: "user", content: "new q" },
+        ],
+      },
+      expect.any(Object),
+    );
+  });
+
+  it("sendMessage sets streaming state and lock before calling startLlmStream", async () => {
+    useConversationStore.setState({ activeConversationId: FAKE_UUID });
+    const persistedMsg: MessageRow = {
+      id: 10,
+      conversation_id: FAKE_UUID,
+      role: "user",
+      content: "hello",
+      seq: 1,
+      created_at: "2025-01-01T00:00:01Z",
+    };
+    mockedConversationAddMessage.mockResolvedValue(persistedMsg);
+
+    let statusAtCallTime: string | undefined;
+    let llmLockedAtCallTime: boolean | undefined;
+    let startStreamQuestion: string | undefined;
+    mockedStartLlmStream.mockImplementation(async () => {
+      statusAtCallTime = useLlmResponseStore.getState().status;
+      llmLockedAtCallTime = useModalLockStore.getState().llmLocked;
+      startStreamQuestion = useLlmResponseStore.getState().question;
+    });
+
+    await useConversationStore.getState().sendMessage({
+      content: "hello",
+      model: "test-model",
+    });
+
+    expect(statusAtCallTime).toBe("streaming");
+    expect(llmLockedAtCallTime).toBe(true);
+    expect(startStreamQuestion).toBe("hello");
+  });
+
   it("deleteConversation on non-active preserves activeConversationId and messages", async () => {
     const otherConv: ConversationRow = { ...fakeConversation, id: "conv-other" };
     useConversationStore.setState({

@@ -4,10 +4,13 @@ import {
   conversationCreate,
   conversationDelete,
   conversationMessages,
+  conversationAddMessage,
   type ConversationRow,
   type MessageRow,
 } from "../lib/ipc";
+import { startLlmStream } from "../lib/llmClient";
 import { useLlmResponseStore } from "./llmResponse";
+import { useModalLockStore } from "./modalLock";
 
 interface SendMessageArgs {
   content: string;
@@ -82,12 +85,38 @@ export const useConversationStore = create<ConversationStore>((set, get) => ({
     });
   },
 
-  sendMessage: async (_args: SendMessageArgs) => {
-    if (get().activeConversationId === null) {
+  sendMessage: async (args: SendMessageArgs) => {
+    const convId = get().activeConversationId;
+    if (convId === null) {
       set({ error: "No active conversation" });
       return;
     }
     if (useLlmResponseStore.getState().status === "streaming") return;
+
+    const userMsg = await conversationAddMessage(convId, "user", args.content);
+    set((s) => ({ messages: [...s.messages, userMsg] }));
+
+    const messages = get().messages.map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
+
+    useLlmResponseStore.getState().startStream({ question: args.content });
+    useModalLockStore.getState().setLlmLocked(true);
+
+    await startLlmStream(
+      {
+        model: args.model,
+        text: args.content,
+        system: args.system,
+        messages,
+      },
+      {
+        onChunk: () => {},
+        onDone: () => {},
+        onError: () => {},
+      },
+    );
   },
 
   reset: () => set(initialState),
