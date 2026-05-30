@@ -428,6 +428,25 @@ describe("conversation store", () => {
     expect(useConversationStore.getState().messages).toEqual([persistedMsg]);
   });
 
+  it("sendMessage sets error and skips stream when user message persist fails", async () => {
+    useConversationStore.setState({ activeConversationId: FAKE_UUID });
+    mockedConversationAddMessage.mockRejectedValue(new Error("disk full"));
+
+    await useConversationStore.getState().sendMessage({
+      content: "hello",
+      model: "test-model",
+    });
+
+    // Assert error set on conversation store
+    expect(useConversationStore.getState().error).toBe("disk full");
+    // Assert startLlmStream was NOT called
+    expect(mockedStartLlmStream).not.toHaveBeenCalled();
+    // Assert llmLocked was never set to true
+    expect(useModalLockStore.getState().llmLocked).toBe(false);
+    // Assert llmResponse status is still idle
+    expect(useLlmResponseStore.getState().status).toBe("idle");
+  });
+
   it("deleteConversation on non-active preserves activeConversationId and messages", async () => {
     const otherConv: ConversationRow = { ...fakeConversation, id: "conv-other" };
     useConversationStore.setState({
