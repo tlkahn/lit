@@ -165,7 +165,10 @@ describe("ConversationPanel", () => {
     });
 
     expect(createConversationSpy).toHaveBeenCalledWith("page-1", "Hello there, how are you?".slice(0, 50));
-    expect(sendMessageSpy).toHaveBeenCalled();
+    expect(sendMessageSpy).toHaveBeenCalledWith(expect.objectContaining({
+      content: "Hello there, how are you?",
+      model: expect.any(String),
+    }));
   });
 
   it("sends message with model and system from preferences store", async () => {
@@ -195,11 +198,11 @@ describe("ConversationPanel", () => {
       fireEvent.click(result!.getByTestId("conversation-send-btn"));
     });
 
-    expect(sendMessageSpy).toHaveBeenCalledWith({
+    expect(sendMessageSpy).toHaveBeenCalledWith(expect.objectContaining({
       content: "test message",
       model: "gpt-4",
       system: "Be helpful",
-    });
+    }));
   });
 
   it("does not create new conversation on subsequent sends", async () => {
@@ -580,5 +583,167 @@ describe("ConversationPanel", () => {
 
     const textarea = result!.getByTestId("conversation-input");
     expect(document.activeElement).toBe(textarea);
+  });
+
+  // Regression 1: Editor context enrichment
+  it("sends textOverride with enriched prompt when editor has selection", async () => {
+    const sendMessageSpy = vi.fn();
+    useConversationStore.setState({
+      loadConversations: vi.fn().mockResolvedValue(undefined),
+      sendMessage: sendMessageSpy,
+      activeConversationId: "conv-1",
+      conversations: [makeConversation({ id: "conv-1" })],
+      messages: [],
+    });
+
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      detail.callback({
+        selectionText: "hello world",
+        selectionFrom: 0,
+        selectionTo: 11,
+        filePath: "test.md",
+      });
+    };
+    window.addEventListener("lit:llm-request-context", handler);
+
+    let result: ReturnType<typeof render>;
+    await act(async () => {
+      result = render(<ConversationPanel pageId="page-1" />);
+    });
+
+    const textarea = result!.getByTestId("conversation-input") as HTMLTextAreaElement;
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: "explain this" } });
+    });
+    await act(async () => {
+      fireEvent.click(result!.getByTestId("conversation-send-btn"));
+    });
+
+    expect(sendMessageSpy).toHaveBeenCalledWith(expect.objectContaining({
+      content: "explain this",
+      textOverride: "File: test.md\n\nContext:\nhello world\n\nexplain this",
+    }));
+
+    window.removeEventListener("lit:llm-request-context", handler);
+  });
+
+  it("sends no textOverride when editor has no selection", async () => {
+    const sendMessageSpy = vi.fn();
+    useConversationStore.setState({
+      loadConversations: vi.fn().mockResolvedValue(undefined),
+      sendMessage: sendMessageSpy,
+      activeConversationId: "conv-1",
+      conversations: [makeConversation({ id: "conv-1" })],
+      messages: [],
+    });
+
+    let result: ReturnType<typeof render>;
+    await act(async () => {
+      result = render(<ConversationPanel pageId="page-1" />);
+    });
+
+    const textarea = result!.getByTestId("conversation-input") as HTMLTextAreaElement;
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: "general question" } });
+    });
+    await act(async () => {
+      fireEvent.click(result!.getByTestId("conversation-send-btn"));
+    });
+
+    expect(sendMessageSpy).toHaveBeenCalledWith(expect.objectContaining({
+      content: "general question",
+      textOverride: undefined,
+    }));
+  });
+
+  // Regression 2: Panel works without pageId
+  it("renders without pageId and loads conversations with _global", async () => {
+    const loadSpy = vi.fn().mockResolvedValue(undefined);
+    useConversationStore.setState({
+      loadConversations: loadSpy,
+      activeConversationId: null,
+      conversations: [],
+      messages: [],
+    });
+
+    await act(async () => {
+      render(<ConversationPanel />);
+    });
+    expect(loadSpy).toHaveBeenCalledWith("_global");
+  });
+
+  it("reloads when pageId transitions from undefined to a real page", async () => {
+    const loadSpy = vi.fn().mockResolvedValue(undefined);
+    useConversationStore.setState({
+      loadConversations: loadSpy,
+      activeConversationId: null,
+      conversations: [],
+      messages: [],
+    });
+
+    const { rerender } = render(<ConversationPanel />);
+    await act(async () => {});
+
+    expect(loadSpy).toHaveBeenCalledWith("_global");
+    loadSpy.mockClear();
+
+    await act(async () => {
+      rerender(<ConversationPanel pageId="page-1" />);
+    });
+    expect(loadSpy).toHaveBeenCalledWith("page-1");
+  });
+
+  it("first send without pageId creates conversation with _global as node_id", async () => {
+    const createConversationSpy = vi.fn().mockResolvedValue("new-conv-id");
+    const sendMessageSpy = vi.fn();
+    useConversationStore.setState({
+      loadConversations: vi.fn().mockResolvedValue(undefined),
+      createConversation: createConversationSpy,
+      sendMessage: sendMessageSpy,
+      activeConversationId: null,
+      conversations: [],
+      messages: [],
+    });
+
+    let result: ReturnType<typeof render>;
+    await act(async () => {
+      result = render(<ConversationPanel />);
+    });
+
+    const textarea = result!.getByTestId("conversation-input") as HTMLTextAreaElement;
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: "hello" } });
+    });
+    await act(async () => {
+      fireEvent.click(result!.getByTestId("conversation-send-btn"));
+    });
+
+    expect(createConversationSpy).toHaveBeenCalledWith("_global", "hello");
+  });
+
+  it("new thread without pageId uses _global", async () => {
+    const createConversationSpy = vi.fn().mockImplementation(async () => {
+      useConversationStore.setState({ activeConversationId: "new-id", messages: [] });
+      return "new-id";
+    });
+    useConversationStore.setState({
+      loadConversations: vi.fn().mockResolvedValue(undefined),
+      createConversation: createConversationSpy,
+      activeConversationId: "conv-1",
+      conversations: [makeConversation({ id: "conv-1" })],
+      messages: [],
+    });
+
+    let result: ReturnType<typeof render>;
+    await act(async () => {
+      result = render(<ConversationPanel />);
+    });
+
+    await act(async () => {
+      fireEvent.click(result!.getByTestId("new-thread-btn"));
+    });
+
+    expect(createConversationSpy).toHaveBeenCalledWith("_global");
   });
 });

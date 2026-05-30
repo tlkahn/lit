@@ -104,7 +104,7 @@ describe("BottomPanel", () => {
     expect(panel.style.height).toBe("0px");
   });
 
-  it("renders without pageId — no ConversationPanel or Backlinks mount", () => {
+  it("renders without pageId — ConversationPanel mounts but Backlinks do not", () => {
     render(<BottomPanel />);
 
     act(() => {
@@ -115,7 +115,7 @@ describe("BottomPanel", () => {
       });
     });
 
-    expect(screen.queryByTestId("conversation-panel")).toBeNull();
+    expect(screen.getByTestId("conversation-panel")).toBeInTheDocument();
     expect(screen.queryByText("No other pages link to this page")).toBeNull();
   });
 

@@ -20,6 +20,7 @@ interface StreamArgs {
 
 interface SendMessageArgs extends StreamArgs {
   content: string;
+  textOverride?: string;
 }
 
 interface ConversationStore {
@@ -180,7 +181,7 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
     }
     set((s) => ({ messages: [...s.messages, userMsg] }));
 
-    await _streamAndPersist(convId, args.content, {
+    await _streamAndPersist(convId, args.textOverride ?? args.content, {
       model: args.model,
       system: args.system,
     });

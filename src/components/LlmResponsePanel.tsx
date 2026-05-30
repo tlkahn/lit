@@ -3,21 +3,13 @@ import { useLlmResponseStore } from "../stores/llmResponse";
 import { useEditorSelectionStore } from "../stores/editorSelection";
 import { cancelStream } from "../lib/llmOrchestrator";
 import { renderMarkdown } from "../lib/renderMarkdown";
-import { DEFAULT_EDITOR_CONTEXT, type EditorContext } from "../types";
+import { type EditorContext } from "../types";
+import { requestEditorContext } from "../lib/editorContext";
+export { requestEditorContext } from "../lib/editorContext";
 
 interface LlmResponsePanelProps {
   contentHeight?: number;
   onSubmit?: (question: string, context: EditorContext) => void;
-}
-
-export function requestEditorContext(): EditorContext {
-  const context = { ...DEFAULT_EDITOR_CONTEXT };
-  window.dispatchEvent(
-    new CustomEvent("lit:llm-request-context", {
-      detail: { callback: (ctx: EditorContext) => { Object.assign(context, ctx); } },
-    }),
-  );
-  return context;
 }
 
 function QuestionInput({ onSubmit, disabled, autoFocus }: {
