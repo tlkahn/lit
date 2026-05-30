@@ -88,13 +88,14 @@ pub fn symmetric_trim(text: &str, budget_chars: usize) -> String {
         return text.to_string();
     }
     let trim_total = char_count - budget_chars;
-    let trim_each = trim_total / 2;
+    let trim_start = trim_total / 2;
+    let trim_end = trim_total - trim_start;
 
     let start_byte = text.char_indices()
-        .nth(trim_each)
+        .nth(trim_start)
         .map(|(i, _)| i)
         .unwrap_or(0);
-    let end_char_idx = char_count - trim_each;
+    let end_char_idx = char_count - trim_end;
     let end_byte = text.char_indices()
         .nth(end_char_idx)
         .map(|(i, _)| i)
@@ -536,6 +537,28 @@ data: [DONE]\n\n";
         assert!(events.contains(&LlmEvent::Chunk { text: "Hello".into() }));
         assert!(events.contains(&LlmEvent::Chunk { text: " world".into() }));
         assert!(events.contains(&LlmEvent::Done));
+    }
+
+    #[test]
+    fn symmetric_trim_exact_budget_odd_trim() {
+        let input = "abcdefghijk"; // 11 chars
+        let result = symmetric_trim(input, 8);
+        assert_eq!(result.chars().count(), 8, "expected exactly 8 chars, got {}", result.chars().count());
+    }
+
+    #[test]
+    fn symmetric_trim_exact_budget_even_trim() {
+        let input = "abcdefghij"; // 10 chars
+        let result = symmetric_trim(input, 6);
+        assert_eq!(result.chars().count(), 6, "expected exactly 6 chars, got {}", result.chars().count());
+    }
+
+    #[test]
+    fn symmetric_trim_odd_trim_cjk() {
+        let input = "a你b好c世d界e魂f"; // 11 chars (mixed ASCII + CJK)
+        assert_eq!(input.chars().count(), 11);
+        let result = symmetric_trim(input, 8);
+        assert_eq!(result.chars().count(), 8, "expected exactly 8 chars, got {}", result.chars().count());
     }
 
     #[test]

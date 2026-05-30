@@ -1328,6 +1328,32 @@ describe("conversation store", () => {
     expect(useConversationStore.getState().error).toBeNull();
   });
 
+  it("sendMessage logs warning when llmBuildContext rejects", async () => {
+    useConversationStore.setState({ activeConversationId: FAKE_UUID });
+    const persistedMsg: MessageRow = {
+      id: 10, conversation_id: FAKE_UUID, role: "user",
+      content: "hello", seq: 1, created_at: "2025-01-01T00:00:01Z",
+    };
+    mockedConversationAddMessage.mockResolvedValue(persistedMsg);
+    const testError = new Error("graph unavailable");
+    mockedLlmBuildContext.mockRejectedValue(testError);
+    mockedStartLlmStream.mockResolvedValue(undefined);
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await useConversationStore.getState().sendMessage({
+      content: "hello",
+      model: "test-model",
+      nodeId: "page-42",
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "llmBuildContext failed, using raw context:",
+      testError,
+    );
+    warnSpy.mockRestore();
+  });
+
   it("sendMessage defaults nodeId to _global and neighborsDepth to 1 when omitted", async () => {
     useConversationStore.setState({ activeConversationId: FAKE_UUID });
     const persistedMsg: MessageRow = {
