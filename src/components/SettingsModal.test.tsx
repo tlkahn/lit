@@ -29,6 +29,7 @@ const defaults = {
   llmAnthropicBaseUrl: "",
   llmSystemPrompt: "",
   llmTemperature: 0.7,
+  neighborsDepth: 1,
   llmPromptLlm: "Execute the following instruction using the provided context.",
   llmPromptTodo: "Complete the following task using the provided context.",
   llmPromptTr: "Translate the following text. If a hint is provided, follow it.",
@@ -682,6 +683,37 @@ describe("SettingsModal", () => {
     });
   });
 
+  // --- neighborsDepth (SettingsSlider) ---
+
+  describe("neighborsDepth", () => {
+    it("renders slider", () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const input = container.querySelector("[data-testid='settings-neighborsDepth']");
+      expect(input).toBeTruthy();
+      expect(input!.getAttribute("type")).toBe("range");
+    });
+
+    it("displays current value", () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const readout = container.querySelector("[data-testid='settings-neighborsDepth-value']");
+      expect(readout).toBeTruthy();
+      expect(readout!.textContent).toBe("1");
+    });
+
+    it("changing slider calls setPreference", async () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const input = container.querySelector("[data-testid='settings-neighborsDepth']")!;
+      fireEvent.change(input, { target: { value: "2" } });
+      expect(usePreferencesStore.getState().neighborsDepth).toBe(2);
+      await vi.waitFor(() => {
+        expect(invokeCalls).toContainEqual({
+          cmd: "set_preference",
+          args: { key: "llm.neighborsDepth", value: 2 },
+        });
+      });
+    });
+  });
+
   // --- LLM search ---
 
   it("search 'model' includes LLM settings", () => {
@@ -814,7 +846,7 @@ describe("SettingsModal", () => {
 
   // --- Registry-driven rendering safety net ---
 
-  it("all 22 control data-testid values exist", () => {
+  it("all 23 control data-testid values exist", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const expectedIds = [
       "settings-darkMode-auto",
@@ -838,6 +870,7 @@ describe("SettingsModal", () => {
       "settings-llmAnthropicBaseUrl",
       "settings-llmSystemPrompt",
       "settings-llmTemperature",
+      "settings-neighborsDepth",
       "settings-experimentalUnlinkedReferences",
     ];
     for (const id of expectedIds) {
@@ -928,7 +961,7 @@ describe("SettingsModal", () => {
     expect(container.querySelector("[data-testid='settings-no-results']")!.textContent).toContain("No matching settings");
   });
 
-  it("empty search shows all 22 controls", () => {
+  it("empty search shows all 23 controls", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
     fireEvent.change(search, { target: { value: "fold" } });
@@ -956,6 +989,7 @@ describe("SettingsModal", () => {
       "settings-llmAnthropicBaseUrl",
       "settings-llmSystemPrompt",
       "settings-llmTemperature",
+      "settings-neighborsDepth",
       "settings-experimentalUnlinkedReferences",
     ];
     for (const id of expectedIds) {
@@ -1060,6 +1094,7 @@ describe("SettingsModal", () => {
       "settings-llmAnthropicBaseUrl",
       "settings-llmSystemPrompt",
       "settings-llmTemperature",
+      "settings-neighborsDepth",
       "settings-experimentalUnlinkedReferences",
     ];
     for (const id of expectedIds) {

@@ -14,6 +14,7 @@ describe("PreferencesStore", () => {
       crossrefEnableCiteproc: true,
       mediaThumbnails: true,
       experimentalUnlinkedReferences: true,
+      neighborsDepth: 1,
       loaded: false,
     });
   });
@@ -779,5 +780,71 @@ describe("PreferencesStore", () => {
 
       expect(usePreferencesStore.getState().llmPromptLlm).toBe("Updated prompt");
     });
+  });
+
+  it("defaults neighborsDepth to 1", () => {
+    const state = usePreferencesStore.getState();
+    expect(state.neighborsDepth).toBe(1);
+  });
+
+  it("maps llm.neighborsDepth from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "llm.neighborsDepth": 2,
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().neighborsDepth).toBe(2);
+  });
+
+  it("defaults neighborsDepth to 1 when key missing from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().neighborsDepth).toBe(1);
+  });
+
+  it("updates neighborsDepth on preferences://changed event", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().neighborsDepth).toBe(1);
+
+    emitMockEvent("preferences://changed", {
+      "workbench.colorTheme": null,
+      "workbench.darkMode": "auto",
+      "workbench.sideBar.location": "left",
+      "llm.neighborsDepth": 0,
+    });
+
+    expect(usePreferencesStore.getState().neighborsDepth).toBe(0);
   });
 });

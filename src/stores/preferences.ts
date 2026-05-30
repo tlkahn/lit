@@ -28,6 +28,7 @@ export interface PreferencesState {
   llmAnthropicBaseUrl: string;
   llmSystemPrompt: string;
   llmTemperature: number;
+  neighborsDepth: number;
   llmPromptLlm: string;
   llmPromptTodo: string;
   llmPromptTr: string;
@@ -84,6 +85,7 @@ function mapPreferences(prefs: Preferences) {
     llmAnthropicBaseUrl: (prefs["llm.anthropic.baseUrl"] as string) ?? "",
     llmSystemPrompt: (prefs["llm.systemPrompt"] as string) ?? "",
     llmTemperature: (prefs["llm.temperature"] as number) ?? 0.7,
+    neighborsDepth: (prefs["llm.neighborsDepth"] as number) ?? 1,
     llmPromptLlm: (prefs["llm.prompts.llm"] as string) ?? "Execute the following instruction using the provided context.",
     llmPromptTodo: (prefs["llm.prompts.todo"] as string) ?? "Complete the following task using the provided context.",
     llmPromptTr: (prefs["llm.prompts.tr"] as string) ?? "Translate the following text. If a hint is provided, follow it.",
@@ -115,6 +117,7 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   llmAnthropicBaseUrl: "",
   llmSystemPrompt: "",
   llmTemperature: 0.7,
+  neighborsDepth: 1,
   llmPromptLlm: "Execute the following instruction using the provided context.",
   llmPromptTodo: "Complete the following task using the provided context.",
   llmPromptTr: "Translate the following text. If a hint is provided, follow it.",
