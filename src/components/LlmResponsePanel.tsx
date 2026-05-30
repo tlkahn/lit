@@ -1,18 +1,13 @@
 import { useRef, useEffect, useState } from "react";
-import { marked } from "marked";
-import DOMPurify from "dompurify";
 import { useLlmResponseStore } from "../stores/llmResponse";
 import { useEditorSelectionStore } from "../stores/editorSelection";
 import { cancelStream } from "../lib/llmOrchestrator";
+import { renderMarkdown } from "../lib/renderMarkdown";
 import { DEFAULT_EDITOR_CONTEXT, type EditorContext } from "../types";
 
 interface LlmResponsePanelProps {
   contentHeight?: number;
   onSubmit?: (question: string, context: EditorContext) => void;
-}
-
-function renderMarkdown(text: string): string {
-  return DOMPurify.sanitize(marked.parse(text, { async: false }) as string);
 }
 
 export function requestEditorContext(): EditorContext {
