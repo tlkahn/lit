@@ -1047,6 +1047,8 @@ impl GraphIndex {
 
     pub fn add_message(&self, conversation_id: &str, role: &str, content: &str) -> Result<MessageRow, GraphError> {
         let store = self.store.lock().unwrap();
+        store.get_conversation(conversation_id)?
+            .ok_or_else(|| GraphError::ConversationNotFound { id: conversation_id.to_string() })?;
         store.add_message(conversation_id, role, content)
     }
 
@@ -4728,5 +4730,17 @@ mod tests {
         let err = gi.get_conversation("nonexistent").unwrap_err();
         assert!(err.to_string().contains("conversation not found"));
         assert!(err.to_string().contains("nonexistent"));
+    }
+
+    #[test]
+    fn gi_add_message_to_nonexistent_conversation_returns_clear_error() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "---\ntitle: A\n---\nHello");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), false).unwrap();
+
+        let err = gi.add_message("nonexistent-conv", "user", "Hello").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("conversation not found"), "expected 'conversation not found', got: {msg}");
+        assert!(msg.contains("nonexistent-conv"), "expected conversation ID in error, got: {msg}");
     }
 }
