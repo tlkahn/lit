@@ -11,7 +11,10 @@ use tracing::{info, debug};
 use crate::graph::indexer::GraphIndex;
 use crate::llm::{self, ChatMessage, LlmEvent, TruncationInfo};
 use crate::llm_context::{build_context_layers, BuiltContext, Neighbor};
+use crate::workspace::write_hash::WriteHashRegistry;
 use super::credential::{self, CredentialStore};
+
+pub const GLOBAL_NODE_ID: &str = "_global";
 
 pub struct LlmState {
     active: Arc<Mutex<Option<JoinHandle<()>>>>,
@@ -224,14 +227,14 @@ pub fn build_context_inner(
     messages: &[ChatMessage],
     graph_index: Option<&GraphIndex>,
     workspace_root: Option<&Path>,
+    registry: &WriteHashRegistry,
 ) -> Result<BuiltContext, String> {
-    let (doc_content, doc_title, neighbors) = if node_id == "_global" || workspace_root.is_none() {
+    let (doc_content, doc_title, neighbors) = if node_id == GLOBAL_NODE_ID || workspace_root.is_none() {
         (String::new(), String::new(), vec![])
     } else {
         let root = workspace_root.unwrap();
         let (doc_content, doc_title) = {
-            let registry = crate::workspace::write_hash::WriteHashRegistry::new();
-            match crate::workspace::ops::read_page(root, node_id, &registry) {
+            match crate::workspace::ops::read_page(root, node_id, registry) {
                 Ok(page) => (page.body, page.meta.title),
                 Err(_) => (String::new(), String::new()),
             }
@@ -323,25 +326,32 @@ pub struct BuildContextArgs {
 }
 
 #[tauri::command]
-pub fn llm_build_context(
+pub async fn llm_build_context(
     args: BuildContextArgs,
     window: Window,
     workspace_state: tauri::State<'_, crate::commands::workspace::WorkspaceRegistry>,
     graph_state: tauri::State<'_, Arc<super::graph::GraphRegistry>>,
+    registry: tauri::State<'_, Arc<WriteHashRegistry>>,
 ) -> Result<BuiltContext, String> {
     let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label()).ok();
     let gi_arc = root.as_ref().and_then(|r| {
         graph_state.indices.lock().unwrap().get(r).cloned()
     });
-    build_context_inner(
-        &args.node_id,
-        &args.system_prompt,
-        args.neighbors_depth,
-        &args.model,
-        &args.messages,
-        gi_arc.as_deref(),
-        root.as_deref(),
-    )
+    let registry = Arc::clone(&registry);
+    tauri::async_runtime::spawn_blocking(move || {
+        build_context_inner(
+            &args.node_id,
+            &args.system_prompt,
+            args.neighbors_depth,
+            &args.model,
+            &args.messages,
+            gi_arc.as_deref(),
+            root.as_deref(),
+            &registry,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]
@@ -529,6 +539,11 @@ mod tests {
         assert!(!state.has_active_task(), "state should auto-clear after task completes");
     }
 
+    #[test]
+    fn global_node_id_constant_equals_underscore_global() {
+        assert_eq!(GLOBAL_NODE_ID, "_global");
+    }
+
     // --- build_context_inner ---
 
     #[test]
@@ -537,7 +552,8 @@ mod tests {
             ChatMessage { role: "user".into(), content: "Hello".into() },
             ChatMessage { role: "assistant".into(), content: "Hi".into() },
         ];
-        let result = build_context_inner("_global", "Be helpful", 0, "gpt-4o", &msgs, None, None).unwrap();
+        let registry = WriteHashRegistry::new();
+        let result = build_context_inner(GLOBAL_NODE_ID, "Be helpful", 0, "gpt-4o", &msgs, None, None, &registry).unwrap();
         assert!(result.system.contains("Be helpful"));
         assert!(!result.system.contains("## Current document"));
         assert!(!result.system.contains("## Linked notes"));
@@ -550,7 +566,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("note.md"), "---\ntitle: My Note\n---\nThe body.").unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
-        let r = build_context_inner("note.md", "Sys", 0, "gpt-4o", &[], Some(&gi), Some(dir.path())).unwrap();
+        let registry = WriteHashRegistry::new();
+        let r = build_context_inner("note.md", "Sys", 0, "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry).unwrap();
         assert!(r.system.contains("## Current document:"), "should contain document section");
         assert!(r.system.contains("The body."));
     }
@@ -559,7 +576,8 @@ mod tests {
     fn build_context_inner_missing_page_graceful() {
         let dir = tempfile::tempdir().unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
-        let r = build_context_inner("ghost.md", "Sys", 0, "gpt-4o", &[], Some(&gi), Some(dir.path()));
+        let registry = WriteHashRegistry::new();
+        let r = build_context_inner("ghost.md", "Sys", 0, "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry);
         assert!(r.is_ok());
         assert!(!r.unwrap().system.contains("## Current document"));
     }
@@ -571,7 +589,8 @@ mod tests {
         std::fs::write(dir.path().join("b.md"), "First paragraph of B.\n\nMore of B.").unwrap();
         std::fs::write(dir.path().join("c.md"), "First paragraph of C.\n\nLinks to [[a]].").unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
-        let r = build_context_inner("a.md", "Sys", 1, "gpt-4o", &[], Some(&gi), Some(dir.path())).unwrap();
+        let registry = WriteHashRegistry::new();
+        let r = build_context_inner("a.md", "Sys", 1, "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry).unwrap();
         assert!(r.system.contains("## Linked notes"), "should have linked notes section");
         assert!(r.system.contains("forward link"), "b should appear as forward link");
         assert!(r.system.contains("backlink"), "c should appear as backlink");
@@ -583,7 +602,8 @@ mod tests {
         std::fs::write(dir.path().join("a.md"), "Body A. Links to [[b]].").unwrap();
         std::fs::write(dir.path().join("b.md"), "Body B.").unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
-        let r = build_context_inner("a.md", "Sys", 0, "gpt-4o", &[], Some(&gi), Some(dir.path())).unwrap();
+        let registry = WriteHashRegistry::new();
+        let r = build_context_inner("a.md", "Sys", 0, "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry).unwrap();
         assert!(!r.system.contains("## Linked notes"));
     }
 
@@ -593,7 +613,8 @@ mod tests {
         std::fs::write(dir.path().join("a.md"), "Links to [[b]].").unwrap();
         std::fs::write(dir.path().join("b.md"), "First paragraph of B.\n\nLinks to [[a]].").unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
-        let r = build_context_inner("a.md", "Sys", 1, "gpt-4o", &[], Some(&gi), Some(dir.path())).unwrap();
+        let registry = WriteHashRegistry::new();
+        let r = build_context_inner("a.md", "Sys", 1, "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry).unwrap();
         let neighbor_count = r.system.matches("###").count();
         assert_eq!(neighbor_count, 1, "mutual link should produce exactly one neighbor entry");
     }
@@ -605,7 +626,8 @@ mod tests {
         std::fs::write(dir.path().join("b.md"), "First para B.\n\nLinks to [[c]].").unwrap();
         std::fs::write(dir.path().join("c.md"), "First para C.").unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
-        let r = build_context_inner("a.md", "Sys", 2, "gpt-4o", &[], Some(&gi), Some(dir.path())).unwrap();
+        let registry = WriteHashRegistry::new();
+        let r = build_context_inner("a.md", "Sys", 2, "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry).unwrap();
         assert!(r.system.contains("c"), "2-hop neighbor c.md should appear");
     }
 
@@ -619,8 +641,31 @@ mod tests {
         }
         std::fs::write(dir.path().join("hub.md"), &body).unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
-        let r = build_context_inner("hub.md", "Sys", 1, "gpt-4o", &[], Some(&gi), Some(dir.path())).unwrap();
+        let registry = WriteHashRegistry::new();
+        let r = build_context_inner("hub.md", "Sys", 1, "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry).unwrap();
         let count = r.system.matches("###").count();
         assert!(count <= 20, "neighbor count {count} should be capped at 20");
+    }
+
+    #[test]
+    fn build_context_inner_records_hash_via_provided_registry() {
+        let dir = tempfile::tempdir().unwrap();
+        let content = "---\ntitle: Hash Test\n---\nBody content.";
+        std::fs::write(dir.path().join("note.md"), content).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let registry = WriteHashRegistry::new();
+        let _ = build_context_inner("note.md", "Sys", 0, "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry).unwrap();
+        assert!(registry.check(&dir.path().join("note.md"), content), "registry should record hash for the read page");
+    }
+
+    #[test]
+    fn build_context_inner_is_send() {
+        fn assert_send<T: Send>(_: T) {}
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "body").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let registry = WriteHashRegistry::new();
+        let result = build_context_inner("a.md", "Sys", 0, "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry);
+        assert_send(result);
     }
 }

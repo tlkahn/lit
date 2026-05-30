@@ -12,6 +12,7 @@ vi.mock("../lib/ipc", () => ({
   conversationGet: vi.fn(),
   conversationAddMessage: vi.fn(),
   conversationDeleteMessagesAfter: vi.fn(),
+  GLOBAL_NODE_ID: "_global",
 }));
 
 vi.mock("../lib/llmClient", () => ({

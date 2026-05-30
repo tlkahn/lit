@@ -7,6 +7,7 @@ import {
   conversationAddMessage,
   conversationDeleteMessagesAfter,
   llmBuildContext,
+  GLOBAL_NODE_ID,
   type ConversationRow,
   type MessageRow,
 } from "../lib/ipc";
@@ -65,7 +66,7 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
       content: m.content,
     }));
 
-    const nodeId = streamArgs.nodeId ?? "_global";
+    const nodeId = streamArgs.nodeId ?? GLOBAL_NODE_ID;
     const neighborsDepth = streamArgs.neighborsDepth ?? 1;
 
     let finalSystem = streamArgs.system;

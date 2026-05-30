@@ -1,6 +1,7 @@
 import { useEffect, useCallback, useRef } from "react";
 import { useConversationStore } from "../stores/conversation";
 import { usePreferencesStore } from "../stores/preferences";
+import { GLOBAL_NODE_ID } from "../lib/ipc";
 import { requestEditorContext } from "../lib/editorContext";
 import { formatLlmPrompt } from "../lib/promptFormatter";
 import { ThreadHeader } from "./ThreadHeader";
@@ -13,7 +14,7 @@ interface ConversationPanelProps {
 }
 
 export function ConversationPanel({ pageId, contentHeight }: ConversationPanelProps) {
-  const nodeId = pageId ?? "_global";
+  const nodeId = pageId ?? GLOBAL_NODE_ID;
   const conversations = useConversationStore((s) => s.conversations);
   const activeConversationId = useConversationStore((s) => s.activeConversationId);
   const messages = useConversationStore((s) => s.messages);
