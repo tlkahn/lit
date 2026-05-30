@@ -28,6 +28,7 @@ export function ConversationPanel({ pageId, contentHeight }: ConversationPanelPr
 
   const llmModel = usePreferencesStore((s) => s.llmModel);
   const llmSystemPrompt = usePreferencesStore((s) => s.llmSystemPrompt);
+  const neighborsDepth = usePreferencesStore((s) => s.neighborsDepth);
 
   const inputRef = useRef<ConversationInputHandle>(null);
 
@@ -60,9 +61,11 @@ export function ConversationPanel({ pageId, contentHeight }: ConversationPanelPr
       content,
       model: llmModel,
       system: llmSystemPrompt || undefined,
+      nodeId,
+      neighborsDepth,
       textOverride: enriched !== content ? enriched : undefined,
     });
-  }, [nodeId, createConversation, sendMessage, llmModel, llmSystemPrompt]);
+  }, [nodeId, createConversation, sendMessage, llmModel, llmSystemPrompt, neighborsDepth]);
 
   const handleNewThread = useCallback(async () => {
     await createConversation(nodeId);
@@ -76,7 +79,9 @@ export function ConversationPanel({ pageId, contentHeight }: ConversationPanelPr
   const streamArgs = useCallback(() => ({
     model: llmModel,
     system: llmSystemPrompt || undefined,
-  }), [llmModel, llmSystemPrompt]);
+    nodeId,
+    neighborsDepth,
+  }), [llmModel, llmSystemPrompt, nodeId, neighborsDepth]);
 
   const handleEditSubmit = useCallback((seq: number, newContent: string) => {
     editMessage(seq, newContent, streamArgs());

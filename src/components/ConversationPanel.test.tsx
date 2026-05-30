@@ -345,6 +345,8 @@ describe("ConversationPanel", () => {
     expect(editMessageSpy).toHaveBeenCalledWith(1, "edited question", {
       model: "gpt-4",
       system: "Be helpful",
+      nodeId: "page-1",
+      neighborsDepth: 1,
     });
   });
 
@@ -378,6 +380,8 @@ describe("ConversationPanel", () => {
     expect(retryLastMessageSpy).toHaveBeenCalledWith({
       model: "gpt-4",
       system: "Be helpful",
+      nodeId: "page-1",
+      neighborsDepth: 1,
     });
   });
 
