@@ -7,7 +7,7 @@ use tracing::{debug, info};
 use super::error::GraphError;
 use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, ConversationRow, IndexableAnnotation, LinkEntry, MessageRow, ParsedNode, Stats, TagPageResult, TagSearchResult};
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 9;
+pub const CURRENT_SCHEMA_VERSION: i64 = 10;
 
 fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rusqlite::Error> {
     Ok(AnnotationSearchResult {
@@ -233,6 +233,30 @@ impl Store {
             )?;
         }
 
+        if version < 10 {
+            info!(from = version, to = 10, "migrating schema: adding ON DELETE CASCADE to conversations FK");
+            self.conn.execute_batch("PRAGMA foreign_keys=OFF;")?;
+            self.conn.execute_batch(
+                "BEGIN TRANSACTION;
+                CREATE TABLE conversations_new (
+                    id TEXT PRIMARY KEY,
+                    node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+                    anchor_type TEXT,
+                    anchor_id INTEGER,
+                    title TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                INSERT INTO conversations_new SELECT * FROM conversations;
+                DROP TABLE conversations;
+                ALTER TABLE conversations_new RENAME TO conversations;
+                CREATE INDEX idx_conversations_node_id ON conversations(node_id);
+                UPDATE meta SET value = '10' WHERE key = 'schema_version';
+                COMMIT;"
+            )?;
+            self.conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+        }
+
         Ok(())
     }
 
@@ -261,8 +285,15 @@ impl Store {
         let tags_text = node.tags.join(" ");
 
         self.conn.execute(
-            "INSERT OR REPLACE INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub, tags_text)
-             VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6)",
+            "INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub, tags_text)
+             VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6)
+             ON CONFLICT(id) DO UPDATE SET
+                title = excluded.title,
+                first_paragraph = excluded.first_paragraph,
+                frontmatter = excluded.frontmatter,
+                mtime = excluded.mtime,
+                is_stub = excluded.is_stub,
+                tags_text = excluded.tags_text",
             rusqlite::params![node.id, node.title, node.first_paragraph, fm_json, mtime, tags_text],
         )?;
 
@@ -2156,8 +2187,8 @@ mod tests {
     // --- Cycle 2: Schema v6 ---
 
     #[test]
-    fn schema_version_is_nine() {
-        assert_eq!(CURRENT_SCHEMA_VERSION, 9);
+    fn schema_version_is_ten() {
+        assert_eq!(CURRENT_SCHEMA_VERSION, 10);
     }
 
     #[test]
@@ -3204,5 +3235,129 @@ mod tests {
         store.add_message("conv-1", "user", "Hello", 0).unwrap();
         let msgs = store.list_messages("conv-1").unwrap();
         assert_eq!(msgs.len(), 1);
+    }
+
+    #[test]
+    fn upsert_node_preserves_conversations() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "Old Title", &["tag1"], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, Some("Chat")).unwrap();
+        store.add_message("conv-1", "user", "Hello", 0).unwrap();
+
+        let node2 = make_node("a.md", "New Title", &["tag2"], json!({}));
+        store.upsert_node(&node2, 2).unwrap();
+
+        let title: String = store.conn.query_row(
+            "SELECT title FROM nodes WHERE id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(title, "New Title");
+
+        let conv = store.get_conversation("conv-1").unwrap().expect("conversation survives");
+        assert_eq!(conv.node_id, "a.md");
+        let msgs = store.list_messages("conv-1").unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].content, "Hello");
+    }
+
+    #[test]
+    fn v9_to_v10_migration_adds_cascade_to_conversations() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
+            conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+            conn.execute_batch(
+                "CREATE TABLE nodes (
+                    id TEXT PRIMARY KEY, title TEXT, first_paragraph TEXT,
+                    frontmatter JSON, mtime INTEGER, is_stub INTEGER DEFAULT 0, tags_text TEXT DEFAULT ''
+                );
+                CREATE TABLE tags (node_id TEXT, tag TEXT);
+                CREATE TABLE aliases (node_id TEXT, alias TEXT);
+                CREATE TABLE edges (source TEXT, target TEXT, context TEXT, raw_target TEXT DEFAULT '', source_line INTEGER DEFAULT 0);
+                CREATE TABLE sync (path TEXT PRIMARY KEY, mtime INTEGER);
+                CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+                CREATE TABLE annotations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    node_id TEXT NOT NULL, annotation_type TEXT NOT NULL,
+                    certainty TEXT NOT NULL, body TEXT, date TEXT,
+                    source_line INTEGER NOT NULL, char_start INTEGER NOT NULL, char_end INTEGER NOT NULL,
+                    scope_kind TEXT NOT NULL, scope_value TEXT NOT NULL
+                );
+                CREATE VIRTUAL TABLE annotations_fts USING fts5(
+                    body, node_id UNINDEXED, annotation_type UNINDEXED,
+                    tokenize = 'trigram case_sensitive 0'
+                );
+                CREATE TABLE node_positions (
+                    node_id TEXT PRIMARY KEY, x REAL NOT NULL, y REAL NOT NULL
+                );
+                CREATE TABLE conversations (
+                    id TEXT PRIMARY KEY,
+                    node_id TEXT NOT NULL REFERENCES nodes(id),
+                    anchor_type TEXT,
+                    anchor_id INTEGER,
+                    title TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX idx_conversations_node_id ON conversations(node_id);
+                CREATE TABLE conversation_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                    role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
+                    content TEXT NOT NULL,
+                    seq INTEGER NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX idx_conv_messages_conv_id ON conversation_messages(conversation_id);
+                INSERT INTO meta(key, value) VALUES ('schema_version', '9');
+                INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub)
+                    VALUES ('a.md', 'Alpha', 'First paragraph', '{}', 1, 0);
+                INSERT INTO conversations(id, node_id, anchor_type, anchor_id, title, created_at, updated_at)
+                    VALUES ('conv-1', 'a.md', NULL, NULL, 'Chat', '2025-01-01', '2025-01-01');
+                INSERT INTO conversation_messages(conversation_id, role, content, seq, created_at)
+                    VALUES ('conv-1', 'user', 'Hello', 0, '2025-01-01');",
+            ).unwrap();
+        }
+
+        let store = Store::open(&db_path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), 10);
+
+        let title: String = store.conn.query_row(
+            "SELECT title FROM nodes WHERE id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(title, "Alpha");
+
+        let conv = store.get_conversation("conv-1").unwrap().expect("conversation survives migration");
+        assert_eq!(conv.node_id, "a.md");
+        let msgs = store.list_messages("conv-1").unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].content, "Hello");
+
+        store.conn.execute("DELETE FROM nodes WHERE id = 'a.md'", []).unwrap();
+        assert_eq!(store.get_conversation("conv-1").unwrap(), None);
+        let msg_count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM conversation_messages", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(msg_count, 0);
+    }
+
+    #[test]
+    fn delete_node_cascades_conversations_via_fk() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, Some("Chat")).unwrap();
+        store.add_message("conv-1", "user", "Hello", 0).unwrap();
+
+        store.conn.execute("DELETE FROM nodes WHERE id = 'a.md'", []).unwrap();
+
+        assert_eq!(store.get_conversation("conv-1").unwrap(), None);
+        let msg_count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM conversation_messages", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(msg_count, 0);
     }
 }
