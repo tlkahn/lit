@@ -8,7 +8,7 @@ import {
   type ConversationRow,
   type MessageRow,
 } from "../lib/ipc";
-import { startLlmStream } from "../lib/llmClient";
+import { startLlmStream, cancelLlmStream } from "../lib/llmClient";
 import { useLlmResponseStore } from "./llmResponse";
 import { useModalLockStore } from "./modalLock";
 
@@ -32,6 +32,7 @@ interface ConversationStore {
   selectConversation: (id: string) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
   sendMessage: (args: SendMessageArgs) => Promise<void>;
+  cancelConversationStream: () => Promise<void>;
   reset: () => void;
 }
 
@@ -156,6 +157,12 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
       model: args.model,
       system: args.system,
     });
+  },
+
+  cancelConversationStream: async () => {
+    useLlmResponseStore.getState().stopStream();
+    useModalLockStore.getState().setLlmLocked(false);
+    await cancelLlmStream();
   },
 
   reset: () => set(initialState),
