@@ -70,12 +70,13 @@ pub fn create_page(
     parent_dir: Option<String>,
     window: tauri::Window,
     state: State<WorkspaceRegistry>,
+    registry: State<Arc<WriteHashRegistry>>,
     oplog_state: State<Arc<OpLogRegistry>>,
     graph_state: State<Arc<GraphRegistry>>,
     app_handle: tauri::AppHandle,
 ) -> Result<PageMeta, String> {
     let root = get_workspace_root(&state, window.label())?;
-    let meta = ops::create_page(&root, &name, parent_dir.as_deref()).map_err(|e| e.to_string())?;
+    let meta = ops::create_page(&root, &name, parent_dir.as_deref(), &registry).map_err(|e| e.to_string())?;
 
     if let Ok(oplog) = oplog_state.get_oplog(&root) {
         let store = oplog.lock().unwrap();
@@ -106,12 +107,13 @@ pub fn rename_page(
     new_name: String,
     window: tauri::Window,
     state: State<WorkspaceRegistry>,
+    registry: State<Arc<WriteHashRegistry>>,
     oplog_state: State<Arc<OpLogRegistry>>,
     graph_state: State<Arc<GraphRegistry>>,
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
     let root = get_workspace_root(&state, window.label())?;
-    let new_path = ops::rename_page(&root, &old_path, &new_name).map_err(|e| e.to_string())?;
+    let new_path = ops::rename_page(&root, &old_path, &new_name, &registry).map_err(|e| e.to_string())?;
 
     if let Ok(oplog) = oplog_state.get_oplog(&root) {
         let store = oplog.lock().unwrap();
@@ -144,6 +146,7 @@ pub fn delete_page(
     relative_path: String,
     window: tauri::Window,
     state: State<WorkspaceRegistry>,
+    registry: State<Arc<WriteHashRegistry>>,
     oplog_state: State<Arc<OpLogRegistry>>,
     graph_state: State<Arc<GraphRegistry>>,
     app_handle: tauri::AppHandle,
@@ -153,7 +156,7 @@ pub fn delete_page(
     let before_content = std::fs::read_to_string(root.join(&relative_path)).ok();
     let rel = relative_path.clone();
 
-    ops::delete_page(&root, &relative_path).map_err(|e| e.to_string())?;
+    ops::delete_page(&root, &relative_path, &registry).map_err(|e| e.to_string())?;
 
     if let Ok(oplog) = oplog_state.get_oplog(&root) {
         let store = oplog.lock().unwrap();
