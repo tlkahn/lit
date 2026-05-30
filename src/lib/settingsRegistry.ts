@@ -242,6 +242,17 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "LLM",
+    label: "Neighbor Context Depth",
+    storeField: "neighborsDepth",
+    jsonKey: "llm.neighborsDepth",
+    controlType: "slider",
+    testId: "settings-neighborsDepth",
+    min: 0,
+    max: 2,
+    step: 1,
+  },
+  {
+    category: "LLM",
     label: "LLM Prompt",
     storeField: "llmPromptLlm",
     jsonKey: "llm.prompts.llm",
