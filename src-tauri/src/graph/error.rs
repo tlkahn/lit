@@ -29,6 +29,12 @@ impl From<rusqlite::Error> for GraphError {
     }
 }
 
+impl From<serde_json::Error> for GraphError {
+    fn from(e: serde_json::Error) -> Self {
+        GraphError::Other(e.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -70,6 +76,16 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("conversation not found"));
         assert!(msg.contains("conv-abc"));
+    }
+
+    #[test]
+    fn from_serde_json_error() {
+        let serde_err = serde_json::from_str::<String>("not valid json").unwrap_err();
+        let err: GraphError = serde_err.into();
+        match &err {
+            GraphError::Other(msg) => assert!(!msg.is_empty()),
+            _ => panic!("expected Other variant, got: {err:?}"),
+        }
     }
 
     #[test]

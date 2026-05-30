@@ -1059,6 +1059,9 @@ impl GraphIndex {
         store.list_messages(conversation_id)
     }
 
+    /// Delete messages strictly after `seq` (exclusive boundary).
+    ///
+    /// The message at `seq` is retained. To regenerate from turn N, pass `N - 1`.
     pub fn delete_messages_after(&self, conversation_id: &str, seq: i32) -> Result<(), GraphError> {
         let store = self.store.lock().unwrap();
         store.delete_messages_after(conversation_id, seq)
