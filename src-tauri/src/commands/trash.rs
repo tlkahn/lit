@@ -2,6 +2,7 @@ use crate::commands::graph::GraphRegistry;
 use crate::commands::workspace::{get_workspace_root, WorkspaceRegistry};
 use crate::workspace::trash;
 use crate::workspace::trash::TrashEntry;
+use crate::workspace::write_hash::WriteHashRegistry;
 use std::sync::Arc;
 use tauri::State;
 
@@ -10,11 +11,14 @@ pub fn trash_page(
     relative_path: String,
     window: tauri::Window,
     state: State<WorkspaceRegistry>,
+    registry: State<Arc<WriteHashRegistry>>,
     graph_state: State<Arc<GraphRegistry>>,
     app_handle: tauri::AppHandle,
 ) -> Result<TrashEntry, String> {
     let root = get_workspace_root(&state, window.label())?;
     let entry = trash::trash_page(&root, &relative_path).map_err(|e| e.to_string())?;
+
+    registry.record_delete(&root.join(&relative_path));
 
     let indices = graph_state.indices.lock().unwrap();
     if let Some(gi) = indices.get(&root) {
@@ -32,11 +36,16 @@ pub fn restore_page(
     trash_name: String,
     window: tauri::Window,
     state: State<WorkspaceRegistry>,
+    registry: State<Arc<WriteHashRegistry>>,
     graph_state: State<Arc<GraphRegistry>>,
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
     let root = get_workspace_root(&state, window.label())?;
     let original_path = trash::restore_page(&root, &trash_name).map_err(|e| e.to_string())?;
+
+    let dest = root.join(&original_path);
+    let content = std::fs::read_to_string(&dest).unwrap_or_default();
+    registry.record(&dest, &content);
 
     let indices = graph_state.indices.lock().unwrap();
     if let Some(gi) = indices.get(&root) {

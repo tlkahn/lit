@@ -1,17 +1,19 @@
 use std::collections::hash_map::DefaultHasher;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
 pub struct WriteHashRegistry {
     hashes: Mutex<HashMap<PathBuf, u64>>,
+    pending_deletes: Mutex<HashSet<PathBuf>>,
 }
 
 impl WriteHashRegistry {
     pub fn new() -> Self {
         Self {
             hashes: Mutex::new(HashMap::new()),
+            pending_deletes: Mutex::new(HashSet::new()),
         }
     }
 
@@ -27,6 +29,15 @@ impl WriteHashRegistry {
             Some(&recorded) => recorded == hash,
             None => false,
         }
+    }
+
+    pub fn record_delete(&self, path: &std::path::Path) {
+        self.hashes.lock().unwrap().remove(path);
+        self.pending_deletes.lock().unwrap().insert(path.to_path_buf());
+    }
+
+    pub fn consume_delete(&self, path: &std::path::Path) -> bool {
+        self.pending_deletes.lock().unwrap().remove(path)
     }
 }
 
@@ -71,5 +82,39 @@ mod tests {
         registry.record(path, "hello world");
         assert!(registry.check(path, "hello world"));
         assert!(registry.check(path, "hello world"));
+    }
+
+    #[test]
+    fn record_delete_then_consume_returns_true() {
+        let registry = WriteHashRegistry::new();
+        let path = Path::new("test.md");
+        registry.record_delete(path);
+        assert!(registry.consume_delete(path));
+    }
+
+    #[test]
+    fn consume_delete_without_record_returns_false() {
+        let registry = WriteHashRegistry::new();
+        let path = Path::new("unknown.md");
+        assert!(!registry.consume_delete(path));
+    }
+
+    #[test]
+    fn consume_delete_is_one_shot() {
+        let registry = WriteHashRegistry::new();
+        let path = Path::new("test.md");
+        registry.record_delete(path);
+        assert!(registry.consume_delete(path));
+        assert!(!registry.consume_delete(path));
+    }
+
+    #[test]
+    fn record_delete_clears_stale_hash() {
+        let registry = WriteHashRegistry::new();
+        let path = Path::new("test.md");
+        registry.record(path, "hello world");
+        assert!(registry.check(path, "hello world"));
+        registry.record_delete(path);
+        assert!(!registry.check(path, "hello world"));
     }
 }
