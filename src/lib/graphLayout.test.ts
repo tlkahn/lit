@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { buildGraph, resolveThemeColors, applyPositions, recolorSeed, seedAttrs, NODE_SIZE, SEED_COLOR, SELECTED_COLOR } from "./graphLayout";
+import { buildGraph, resolveThemeColors, applyPositions, recolorSeed, seedAttrs, nodeLabelFromPath, NODE_SIZE, SEED_COLOR, SELECTED_COLOR } from "./graphLayout";
 import type { SubgraphResult } from "./ipc";
 
 describe("graphLayout", () => {
@@ -113,6 +113,20 @@ describe("graphLayout", () => {
       };
       const graph = buildGraph({ subgraph, ...defaults });
       expect(graph.size).toBe(1);
+    });
+  });
+
+  describe("nodeLabelFromPath", () => {
+    it("strips directory and .md extension", () => {
+      expect(nodeLabelFromPath("notes/My Page.md")).toBe("My Page");
+    });
+
+    it("strips .md from a top-level file", () => {
+      expect(nodeLabelFromPath("Inbox.md")).toBe("Inbox");
+    });
+
+    it("returns the basename for a path without .md", () => {
+      expect(nodeLabelFromPath("a/b/c")).toBe("c");
     });
   });
 

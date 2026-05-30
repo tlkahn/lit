@@ -57,6 +57,8 @@ pub fn create_page(
     window: tauri::Window,
     state: State<WorkspaceRegistry>,
     oplog_state: State<Arc<OpLogRegistry>>,
+    graph_state: State<Arc<GraphRegistry>>,
+    app_handle: tauri::AppHandle,
 ) -> Result<PageMeta, String> {
     let root = get_workspace_root(&state, window.label())?;
     let meta = ops::create_page(&root, &name, parent_dir.as_deref()).map_err(|e| e.to_string())?;
@@ -77,6 +79,14 @@ pub fn create_page(
         );
     }
 
+    let indices = graph_state.indices.lock().unwrap();
+    if let Some(gi) = indices.get(&root) {
+        let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
+        let result = gi.reindex_file(&meta.relative_path, ann_enabled);
+        drop(indices);
+        crate::commands::graph::emit_reindex_result(&app_handle, result);
+    }
+
     Ok(meta)
 }
 
@@ -87,6 +97,8 @@ pub fn rename_page(
     window: tauri::Window,
     state: State<WorkspaceRegistry>,
     oplog_state: State<Arc<OpLogRegistry>>,
+    graph_state: State<Arc<GraphRegistry>>,
+    app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
     let root = get_workspace_root(&state, window.label())?;
     let new_path = ops::rename_page(&root, &old_path, &new_name).map_err(|e| e.to_string())?;
@@ -100,11 +112,22 @@ pub fn rename_page(
                 seq: 0,
                 action_type: "rename_file".into(),
                 path: new_path.clone(),
-                old_path: Some(old_path),
+                old_path: Some(old_path.clone()),
                 before_content: None,
                 after_content: None,
             }],
         );
+    }
+
+    let indices = graph_state.indices.lock().unwrap();
+    if let Some(gi) = indices.get(&root) {
+        let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
+        let result = gi.batch_reindex(
+            &crate::graph::indexer::rename_reindex_diff(&old_path, &new_path),
+            ann_enabled,
+        );
+        drop(indices);
+        crate::commands::graph::emit_reindex_result(&app_handle, result);
     }
 
     Ok(new_path)
@@ -116,10 +139,13 @@ pub fn delete_page(
     window: tauri::Window,
     state: State<WorkspaceRegistry>,
     oplog_state: State<Arc<OpLogRegistry>>,
+    graph_state: State<Arc<GraphRegistry>>,
+    app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
     let root = get_workspace_root(&state, window.label())?;
 
     let before_content = std::fs::read_to_string(root.join(&relative_path)).ok();
+    let rel = relative_path.clone();
 
     ops::delete_page(&root, &relative_path).map_err(|e| e.to_string())?;
 
@@ -137,6 +163,14 @@ pub fn delete_page(
                 after_content: None,
             }],
         );
+    }
+
+    let indices = graph_state.indices.lock().unwrap();
+    if let Some(gi) = indices.get(&root) {
+        let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
+        let result = gi.remove_file(&rel, ann_enabled);
+        drop(indices);
+        crate::commands::graph::emit_reindex_result(&app_handle, result);
     }
 
     Ok(())
