@@ -7,7 +7,7 @@ use tracing::{debug, info};
 use super::error::GraphError;
 use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, ConversationRow, IndexableAnnotation, LinkEntry, MessageRow, ParsedNode, Stats, TagPageResult, TagSearchResult};
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 10;
+pub const CURRENT_SCHEMA_VERSION: i64 = 11;
 
 fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rusqlite::Error> {
     Ok(AnnotationSearchResult {
@@ -33,6 +33,7 @@ fn map_conversation_row(row: &rusqlite::Row) -> Result<ConversationRow, rusqlite
         title: row.get(4)?,
         created_at: row.get(5)?,
         updated_at: row.get(6)?,
+        anchor_key: row.get(7)?,
     })
 }
 
@@ -272,6 +273,26 @@ impl Store {
                 COMMIT;"
             )?;
             self.conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+        }
+
+        if version < 11 {
+            info!(from = version, to = 11, "migrating schema: adding uuid to annotations, anchor_key to conversations");
+            self.conn.execute_batch(
+                "ALTER TABLE annotations ADD COLUMN uuid TEXT;
+                 ALTER TABLE conversations ADD COLUMN anchor_key TEXT;
+                 CREATE INDEX IF NOT EXISTS idx_conversations_anchor ON conversations(node_id, anchor_type, anchor_key);
+                 UPDATE meta SET value = '11' WHERE key = 'schema_version';"
+            )?;
+            let mut stmt = self.conn.prepare("SELECT rowid FROM annotations WHERE uuid IS NULL")?;
+            let rowids: Vec<i64> = stmt.query_map([], |row| row.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            for rowid in rowids {
+                let id = uuid::Uuid::new_v4().to_string();
+                self.conn.execute(
+                    "UPDATE annotations SET uuid = ?1 WHERE rowid = ?2",
+                    rusqlite::params![id, rowid],
+                )?;
+            }
         }
 
         Ok(())
@@ -786,9 +807,11 @@ impl Store {
         self.conn.execute("DELETE FROM annotations_fts WHERE node_id = ?1", [node_id])?;
         self.conn.execute("DELETE FROM annotations WHERE node_id = ?1", [node_id])?;
         for ann in annotations {
+            let uuid_val = ann.uuid.clone()
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             self.conn.execute(
-                "INSERT INTO annotations(node_id, annotation_type, certainty, body, date, source_line, char_start, char_end, scope_kind, scope_value)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                "INSERT INTO annotations(node_id, annotation_type, certainty, body, date, source_line, char_start, char_end, scope_kind, scope_value, uuid)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 rusqlite::params![
                     node_id,
                     ann.annotation_type,
@@ -800,6 +823,7 @@ impl Store {
                     ann.char_end,
                     ann.scope_kind,
                     ann.scope_value,
+                    uuid_val,
                 ],
             )?;
             if ann.body.is_some() {
@@ -974,7 +998,7 @@ impl Store {
         self.conn.query_row(
             "INSERT INTO conversations(id, node_id, anchor_type, anchor_id, title, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-             RETURNING id, node_id, anchor_type, anchor_id, title, created_at, updated_at",
+             RETURNING id, node_id, anchor_type, anchor_id, title, created_at, updated_at, anchor_key",
             rusqlite::params![id, node_id, anchor_type, anchor_id, title],
             |row| map_conversation_row(row),
         ).map_err(|e| e.into())
@@ -982,7 +1006,7 @@ impl Store {
 
     pub fn get_conversation(&self, id: &str) -> Result<Option<ConversationRow>, GraphError> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, node_id, anchor_type, anchor_id, title, created_at, updated_at
+            "SELECT id, node_id, anchor_type, anchor_id, title, created_at, updated_at, anchor_key
              FROM conversations WHERE id = ?1"
         )?;
         let mut rows = stmt.query([id])?;
@@ -994,7 +1018,7 @@ impl Store {
 
     pub fn list_conversations(&self, node_id: &str) -> Result<Vec<ConversationRow>, GraphError> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, node_id, anchor_type, anchor_id, title, created_at, updated_at
+            "SELECT id, node_id, anchor_type, anchor_id, title, created_at, updated_at, anchor_key
              FROM conversations WHERE node_id = ?1
              ORDER BY updated_at DESC"
         )?;
@@ -1222,6 +1246,7 @@ mod tests {
                 char_end: 10,
                 scope_kind: "file".into(),
                 scope_value: "a.md".into(),
+                uuid: None,
             }]).unwrap();
             use super::super::types::Position;
             let mut positions = HashMap::new();
@@ -2334,8 +2359,39 @@ mod tests {
     // --- Cycle 2: Schema v6 ---
 
     #[test]
-    fn schema_version_is_ten() {
-        assert_eq!(CURRENT_SCHEMA_VERSION, 10);
+    fn schema_version_is_eleven() {
+        assert_eq!(CURRENT_SCHEMA_VERSION, 11);
+    }
+
+    #[test]
+    fn migration_v11_adds_uuid_and_anchor_key() {
+        let store = Store::open_memory().unwrap();
+
+        let has_uuid: bool = store.conn
+            .prepare("SELECT uuid FROM annotations LIMIT 0")
+            .is_ok();
+        assert!(has_uuid, "annotations table should have uuid column");
+
+        let has_anchor_key: bool = store.conn
+            .prepare("SELECT anchor_key FROM conversations LIMIT 0")
+            .is_ok();
+        assert!(has_anchor_key, "conversations table should have anchor_key column");
+    }
+
+    #[test]
+    fn migration_v11_backfills_existing_annotation_uuids() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.upsert_annotations("a.md", &[make_annotation("note", Some("hello"))]).unwrap();
+
+        let uuid: String = store.conn.query_row(
+            "SELECT uuid FROM annotations WHERE node_id = 'a.md' LIMIT 1",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(uuid.len(), 36, "uuid should be 36-char hyphenated v4 format");
+        assert_eq!(&uuid[14..15], "4", "uuid version nibble should be 4");
     }
 
     #[test]
@@ -2426,6 +2482,7 @@ mod tests {
             char_end: 10,
             scope_kind: "words".into(),
             scope_value: "1".into(),
+            uuid: None,
         }
     }
 
@@ -2523,6 +2580,7 @@ mod tests {
             char_end: 50,
             scope_kind: "words".into(),
             scope_value: "2".into(),
+            uuid: None,
         };
         store.upsert_annotations("a.md", &[ann]).unwrap();
 
@@ -3133,7 +3191,7 @@ mod tests {
         store.create_conversation("conv-1", "a.md", Some("file"), Some(42), Some("Test Title")).unwrap();
 
         let row = store.conn.query_row(
-            "SELECT id, node_id, anchor_type, anchor_id, title, created_at, updated_at
+            "SELECT id, node_id, anchor_type, anchor_id, title, created_at, updated_at, anchor_key
              FROM conversations WHERE id = ?1",
             ["conv-1"],
             |row| map_conversation_row(row),
@@ -3581,7 +3639,7 @@ mod tests {
         }
 
         let store = Store::open(&db_path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 10);
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
 
         let title: String = store.conn.query_row(
             "SELECT title FROM nodes WHERE id = 'a.md'", [], |r| r.get(0),

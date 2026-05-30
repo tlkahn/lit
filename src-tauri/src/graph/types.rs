@@ -79,6 +79,7 @@ pub struct IndexableAnnotation {
     pub char_end: usize,
     pub scope_kind: String,
     pub scope_value: String,
+    pub uuid: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -123,6 +124,7 @@ pub struct ConversationRow {
     pub title: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    pub anchor_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -322,6 +324,7 @@ mod tests {
             char_end: 50,
             scope_kind: "words".into(),
             scope_value: "2".into(),
+            uuid: None,
         };
         let json_str = serde_json::to_string(&ia).expect("serialize");
         let back: IndexableAnnotation = serde_json::from_str(&json_str).expect("deserialize");
@@ -361,6 +364,7 @@ mod tests {
             title: Some("Discussion about X".into()),
             created_at: "2026-05-30T12:00:00Z".into(),
             updated_at: "2026-05-30T12:30:00Z".into(),
+            anchor_key: None,
         };
         let json_str = serde_json::to_string(&row).expect("serialize");
         let back: ConversationRow = serde_json::from_str(&json_str).expect("deserialize");

@@ -408,6 +408,7 @@ pub fn extract_annotations(content: &str) -> Vec<super::types::IndexableAnnotati
                 char_end: ann.char_end,
                 scope_kind,
                 scope_value,
+                uuid: None,
             }
         })
         .collect()
