@@ -41,8 +41,13 @@ async function doRebuild(
     let local: SubgraphResult;
     try {
       local = await getGraphSubgraph([seedId], currentDepth);
-    } catch {
-      local = { nodes: [], edges: [] };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.startsWith("node not found:")) {
+        local = { nodes: [], edges: [] };
+      } else {
+        throw e;
+      }
     }
     if (!local.nodes.some((n) => n.id === seedId)) {
       local = {

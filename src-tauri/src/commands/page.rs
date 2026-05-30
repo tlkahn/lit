@@ -1,6 +1,7 @@
 use crate::commands::graph::GraphRegistry;
 use crate::commands::oplog::OpLogRegistry;
 use crate::commands::workspace::{get_workspace_root, WorkspaceRegistry};
+use crate::graph::indexer::GraphIndex;
 use crate::oplog::store::Action;
 use crate::workspace::ops;
 use crate::workspace::page::{PageContent, PageMeta};
@@ -8,6 +9,23 @@ use crate::workspace::write_hash::WriteHashRegistry;
 use indexmap::IndexMap;
 use std::sync::Arc;
 use tauri::State;
+
+fn reindex_and_emit(
+    graph_state: &State<Arc<GraphRegistry>>,
+    app_handle: &tauri::AppHandle,
+    root: &std::path::PathBuf,
+    op: impl FnOnce(&GraphIndex, bool) -> Result<(), crate::graph::error::GraphError>,
+) {
+    let gi = {
+        let indices = graph_state.indices.lock().unwrap();
+        indices.get(root).cloned()
+    };
+    if let Some(gi) = gi {
+        let ann = crate::preferences::annotations_enabled(app_handle);
+        let result = op(&gi, ann);
+        crate::commands::graph::emit_reindex_result(app_handle, result);
+    }
+}
 
 #[tauri::command]
 pub fn parse_raw_yaml(raw_yaml: String) -> Result<IndexMap<String, serde_yaml::Value>, String> {
@@ -39,13 +57,9 @@ pub fn write_page(
     let root = get_workspace_root(&state, window.label())?;
     ops::write_page(&root, &relative_path, &body, &frontmatter, &registry).map_err(|e| e.to_string())?;
 
-    let indices = graph_state.indices.lock().unwrap();
-    if let Some(gi) = indices.get(&root) {
-        let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
-        let result = gi.reindex_file(&relative_path, ann_enabled);
-        drop(indices);
-        crate::commands::graph::emit_reindex_result(&app_handle, result);
-    }
+    reindex_and_emit(&graph_state, &app_handle, &root, |gi, ann| {
+        gi.reindex_file(&relative_path, ann)
+    });
 
     Ok(())
 }
@@ -79,13 +93,9 @@ pub fn create_page(
         );
     }
 
-    let indices = graph_state.indices.lock().unwrap();
-    if let Some(gi) = indices.get(&root) {
-        let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
-        let result = gi.add_file(&meta.relative_path, ann_enabled);
-        drop(indices);
-        crate::commands::graph::emit_reindex_result(&app_handle, result);
-    }
+    reindex_and_emit(&graph_state, &app_handle, &root, |gi, ann| {
+        gi.add_file(&meta.relative_path, ann)
+    });
 
     Ok(meta)
 }
@@ -119,16 +129,12 @@ pub fn rename_page(
         );
     }
 
-    let indices = graph_state.indices.lock().unwrap();
-    if let Some(gi) = indices.get(&root) {
-        let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
-        let result = gi.batch_reindex(
+    reindex_and_emit(&graph_state, &app_handle, &root, |gi, ann| {
+        gi.batch_reindex(
             &crate::graph::indexer::rename_reindex_diff(&old_path, &new_path),
-            ann_enabled,
-        );
-        drop(indices);
-        crate::commands::graph::emit_reindex_result(&app_handle, result);
-    }
+            ann,
+        )
+    });
 
     Ok(new_path)
 }
@@ -165,13 +171,9 @@ pub fn delete_page(
         );
     }
 
-    let indices = graph_state.indices.lock().unwrap();
-    if let Some(gi) = indices.get(&root) {
-        let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
-        let result = gi.remove_file(&rel, ann_enabled);
-        drop(indices);
-        crate::commands::graph::emit_reindex_result(&app_handle, result);
-    }
+    reindex_and_emit(&graph_state, &app_handle, &root, |gi, ann| {
+        gi.remove_file(&rel, ann)
+    });
 
     Ok(())
 }
