@@ -54,6 +54,7 @@ export const ConversationInput = forwardRef<ConversationInputHandle, Conversatio
           }
           if ((e.metaKey || e.ctrlKey) && e.key === "n") {
             e.preventDefault();
+            e.stopPropagation();
             onNewThread?.();
           }
         }}

@@ -482,6 +482,59 @@ describe("ConversationPanel", () => {
     expect(document.activeElement).toBe(textarea);
   });
 
+  // Cycle 24: Cmd+N from anywhere in panel
+  it("Cmd+N on ConversationPanel container creates new thread", async () => {
+    const createConversationSpy = vi.fn().mockImplementation(async () => {
+      useConversationStore.setState({ activeConversationId: "new-id", messages: [] });
+      return "new-id";
+    });
+    useConversationStore.setState({
+      loadConversations: vi.fn().mockResolvedValue(undefined),
+      createConversation: createConversationSpy,
+      activeConversationId: "conv-1",
+      conversations: [makeConversation({ id: "conv-1" })],
+      messages: [],
+    });
+
+    let result: ReturnType<typeof render>;
+    await act(async () => {
+      result = render(<ConversationPanel pageId="page-1" />);
+    });
+
+    const panel = result!.getByTestId("conversation-panel");
+    await act(async () => {
+      fireEvent.keyDown(panel, { key: "n", metaKey: true });
+    });
+
+    expect(createConversationSpy).toHaveBeenCalledWith("page-1");
+  });
+
+  it("Ctrl+N on ConversationPanel container creates new thread", async () => {
+    const createConversationSpy = vi.fn().mockImplementation(async () => {
+      useConversationStore.setState({ activeConversationId: "new-id", messages: [] });
+      return "new-id";
+    });
+    useConversationStore.setState({
+      loadConversations: vi.fn().mockResolvedValue(undefined),
+      createConversation: createConversationSpy,
+      activeConversationId: "conv-1",
+      conversations: [makeConversation({ id: "conv-1" })],
+      messages: [],
+    });
+
+    let result: ReturnType<typeof render>;
+    await act(async () => {
+      result = render(<ConversationPanel pageId="page-1" />);
+    });
+
+    const panel = result!.getByTestId("conversation-panel");
+    await act(async () => {
+      fireEvent.keyDown(panel, { key: "n", ctrlKey: true });
+    });
+
+    expect(createConversationSpy).toHaveBeenCalledWith("page-1");
+  });
+
   it("focuses input when panel mounts with no active conversation", async () => {
     useConversationStore.setState({
       loadConversations: vi.fn().mockResolvedValue(undefined),
