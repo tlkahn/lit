@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, useEffect, useCallback } from "react";
+import { useMemo, useRef, useState, useEffect } from "react";
 import { hierarchy, tree as d3tree } from "d3-hierarchy";
 import { linkHorizontal } from "d3-shape";
 import { findNode, findParent, findNextSibling, findPrevSibling, firstChild, migrateFoldIds, setsEqual, type HeadingNode } from "../lib/headingTree";
@@ -7,6 +7,7 @@ import type { ContentBounds } from "../lib/mindmapZoom";
 import { computeNodeWidth, wrapText, computeNodeHeight, MAX_NODE_WIDTH, LINE_HEIGHT_RATIO } from "../lib/mindmapLayout";
 import { useMindmapDrag } from "../hooks/useMindmapDrag";
 import { useMindmapZoom } from "../hooks/useMindmapZoom";
+import { showMindmapContextMenu, useMindmapContextMenu } from "../lib/contextMenuIpc";
 import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog";
 
 interface MindmapViewProps {
@@ -48,12 +49,9 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
   const [isNewNode, setIsNewNode] = useState(false);
   const deletedNewNodeRef = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [contextMenu, setContextMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [foldedIds, setFoldedIds] = useState<Set<string>>(() => initialFoldedIds ?? new Set());
   const foldTreeRef = useRef(tree);
-
-  const dismissContextMenu = useCallback(() => setContextMenu(null), []);
 
   useEffect(() => {
     if (!pendingEditId) return;
@@ -73,12 +71,20 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
     }
   }, [tree, pendingDeleteId]);
 
-  useEffect(() => {
-    if (!contextMenu) return;
-    const onPointerDown = () => dismissContextMenu();
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [contextMenu, dismissContextMenu]);
+  useMindmapContextMenu({
+    onEdit: (nodeId: string) => {
+      const node = findNode(tree, nodeId);
+      if (node) {
+        deletedNewNodeRef.current = false;
+        setEditingId(node.id);
+        setEditText(node.text);
+        setIsNewNode(false);
+      }
+    },
+    onExportNetwork: () => {
+      onExportNetwork?.();
+    },
+  });
 
   const allNodes = useMemo(() => {
     const nodes: HeadingNode[] = [];
@@ -407,10 +413,7 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
                 onContextMenu={(e) => {
                   e.preventDefault();
                   if (!dragState.isDragging) {
-                    const rect = containerRef.current?.getBoundingClientRect();
-                    const ox = rect?.left ?? 0;
-                    const oy = rect?.top ?? 0;
-                    setContextMenu({ nodeId: d.data.id, x: e.clientX - ox, y: e.clientY - oy });
+                    showMindmapContextMenu(d.data.id, !!onExportNetwork);
                   }
                 }}
                 onPointerDown={(e) => handlers.onPointerDown(d.data.id, e)}
@@ -552,46 +555,6 @@ export function MindmapView({ tree, selectedId, onNodeClick, onNodeRename, onNod
             style={{ left, top, width, height, fontSize: fontSize * t.k, lineHeight: `${height}px` }}
             data-mindmap-edit
           />
-        );
-      })()}
-      {contextMenu && (() => {
-        const menuNode = allNodes.find(n => n.id === contextMenu.nodeId);
-        if (!menuNode) return null;
-        return (
-          <div
-            data-mindmap-context-menu
-            className="absolute z-50 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 rounded shadow-lg py-1 min-w-[120px]"
-            style={{ left: contextMenu.x, top: contextMenu.y }}
-            onPointerDown={(e) => e.stopPropagation()}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") dismissContextMenu();
-            }}
-          >
-            <button
-              data-mindmap-context-edit
-              className="w-full text-start px-3 py-1.5 text-sm text-neutral-800 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-700"
-              onClick={() => {
-                deletedNewNodeRef.current = false;
-                setEditingId(menuNode.id);
-                setEditText(menuNode.text);
-                setContextMenu(null);
-              }}
-            >
-              Edit
-            </button>
-            {onExportNetwork && (
-              <button
-                data-mindmap-context-export
-                className="w-full text-start px-3 py-1.5 text-sm text-neutral-800 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-700"
-                onClick={() => {
-                  onExportNetwork();
-                  setContextMenu(null);
-                }}
-              >
-                Export Local Network…
-              </button>
-            )}
-          </div>
         );
       })()}
       <div className="absolute bottom-4 right-4 flex gap-1">

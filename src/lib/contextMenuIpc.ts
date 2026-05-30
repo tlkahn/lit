@@ -69,6 +69,46 @@ export function useSidebarContextMenu(handlers: SidebarContextMenuHandlers) {
   }, []);
 }
 
+export async function showMindmapContextMenu(nodeId: string, hasExport: boolean): Promise<void> {
+  return invoke<void>("show_mindmap_context_menu", { nodeId, hasExport });
+}
+
+interface MindmapContextPayload {
+  node_id: string;
+}
+
+interface MindmapContextMenuHandlers {
+  onEdit: (nodeId: string) => void;
+  onExportNetwork: (nodeId: string) => void;
+}
+
+export function useMindmapContextMenu(handlers: MindmapContextMenuHandlers) {
+  const handlersRef = useRef(handlers);
+  handlersRef.current = handlers;
+
+  useEffect(() => {
+    let cancelled = false;
+    const unlisteners: Array<Promise<() => void>> = [];
+
+    unlisteners.push(
+      listen<MindmapContextPayload>("context-menu://mindmap/edit", (event) => {
+        if (!cancelled) handlersRef.current.onEdit(event.payload.node_id);
+      }),
+    );
+
+    unlisteners.push(
+      listen<MindmapContextPayload>("context-menu://mindmap/export-network", (event) => {
+        if (!cancelled) handlersRef.current.onExportNetwork(event.payload.node_id);
+      }),
+    );
+
+    return () => {
+      cancelled = true;
+      for (const p of unlisteners) p.then((u) => u());
+    };
+  }, []);
+}
+
 export function useTrashContextMenu(handlers: TrashContextMenuHandlers) {
   const handlersRef = useRef(handlers);
   handlersRef.current = handlers;

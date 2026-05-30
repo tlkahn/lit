@@ -72,6 +72,82 @@ describe("contextMenuIpc", () => {
   });
 });
 
+describe("showMindmapContextMenu", () => {
+  it("calls invoke with correct command and args (hasExport true)", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "show_mindmap_context_menu") return null;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    const { showMindmapContextMenu } = await import("./contextMenuIpc");
+    await showMindmapContextMenu("node-123", true);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("show_mindmap_context_menu", {
+      nodeId: "node-123",
+      hasExport: true,
+    });
+  });
+
+  it("passes hasExport false correctly", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "show_mindmap_context_menu") return null;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    const { showMindmapContextMenu } = await import("./contextMenuIpc");
+    await showMindmapContextMenu("node-456", false);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("show_mindmap_context_menu", {
+      nodeId: "node-456",
+      hasExport: false,
+    });
+  });
+});
+
+describe("useMindmapContextMenu", () => {
+  beforeEach(() => {
+    resetListenMock();
+    mockListen();
+  });
+
+  it("fires onEdit callback with node_id on edit event", async () => {
+    const { useMindmapContextMenu } = await import("./contextMenuIpc");
+    const handlers = { onEdit: vi.fn(), onExportNetwork: vi.fn() };
+
+    const { renderHook } = await import("@testing-library/react");
+    renderHook(() => useMindmapContextMenu(handlers));
+
+    emitMockEvent("context-menu://mindmap/edit", { node_id: "node-123" });
+
+    expect(handlers.onEdit).toHaveBeenCalledWith("node-123");
+    expect(handlers.onExportNetwork).not.toHaveBeenCalled();
+  });
+
+  it("fires onExportNetwork callback with node_id on export-network event", async () => {
+    const { useMindmapContextMenu } = await import("./contextMenuIpc");
+    const handlers = { onEdit: vi.fn(), onExportNetwork: vi.fn() };
+
+    const { renderHook } = await import("@testing-library/react");
+    renderHook(() => useMindmapContextMenu(handlers));
+
+    emitMockEvent("context-menu://mindmap/export-network", { node_id: "node-456" });
+
+    expect(handlers.onExportNetwork).toHaveBeenCalledWith("node-456");
+    expect(handlers.onEdit).not.toHaveBeenCalled();
+  });
+
+  it("cleans up listeners on unmount", async () => {
+    const { useMindmapContextMenu } = await import("./contextMenuIpc");
+    const handlers = { onEdit: vi.fn(), onExportNetwork: vi.fn() };
+
+    const { renderHook } = await import("@testing-library/react");
+    const { unmount } = renderHook(() => useMindmapContextMenu(handlers));
+
+    unmount();
+
+    emitMockEvent("context-menu://mindmap/edit", { node_id: "node-123" });
+    expect(handlers.onEdit).not.toHaveBeenCalled();
+  });
+});
+
 describe("showSidebarContextMenu", () => {
   it("calls invoke with correct command and args", async () => {
     mockInvoke((cmd) => {
