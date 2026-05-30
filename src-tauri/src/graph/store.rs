@@ -24,6 +24,18 @@ fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rus
     })
 }
 
+fn map_conversation_row(row: &rusqlite::Row) -> Result<ConversationRow, rusqlite::Error> {
+    Ok(ConversationRow {
+        id: row.get(0)?,
+        node_id: row.get(1)?,
+        anchor_type: row.get(2)?,
+        anchor_id: row.get(3)?,
+        title: row.get(4)?,
+        created_at: row.get(5)?,
+        updated_at: row.get(6)?,
+    })
+}
+
 pub struct Store {
     pub(crate) conn: Connection,
 }
@@ -953,15 +965,7 @@ impl Store {
         )?;
         let mut rows = stmt.query([id])?;
         match rows.next()? {
-            Some(row) => Ok(Some(ConversationRow {
-                id: row.get(0)?,
-                node_id: row.get(1)?,
-                anchor_type: row.get(2)?,
-                anchor_id: row.get(3)?,
-                title: row.get(4)?,
-                created_at: row.get(5)?,
-                updated_at: row.get(6)?,
-            })),
+            Some(row) => Ok(Some(map_conversation_row(row)?)),
             None => Ok(None),
         }
     }
@@ -973,17 +977,7 @@ impl Store {
              ORDER BY updated_at DESC"
         )?;
         let results = stmt
-            .query_map([node_id], |row| {
-                Ok(ConversationRow {
-                    id: row.get(0)?,
-                    node_id: row.get(1)?,
-                    anchor_type: row.get(2)?,
-                    anchor_id: row.get(3)?,
-                    title: row.get(4)?,
-                    created_at: row.get(5)?,
-                    updated_at: row.get(6)?,
-                })
-            })?
+            .query_map([node_id], |row| map_conversation_row(row))?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(results)
     }
@@ -993,7 +987,8 @@ impl Store {
         Ok(())
     }
 
-    pub fn touch_conversation(&self, id: &str) -> Result<(), GraphError> {
+    #[cfg(test)]
+    fn touch_conversation(&self, id: &str) -> Result<(), GraphError> {
         self.conn.execute(
             "UPDATE conversations SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
             [id],
@@ -3073,6 +3068,31 @@ mod tests {
     fn delete_conversation_nonexistent_is_noop() {
         let store = Store::open_memory().unwrap();
         store.delete_conversation("nonexistent").unwrap();
+    }
+
+    // --- Conversations: map_conversation_row ---
+
+    #[test]
+    fn map_conversation_row_maps_all_fields() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.create_conversation("conv-1", "a.md", Some("file"), Some(42), Some("Test Title")).unwrap();
+
+        let row = store.conn.query_row(
+            "SELECT id, node_id, anchor_type, anchor_id, title, created_at, updated_at
+             FROM conversations WHERE id = ?1",
+            ["conv-1"],
+            |row| map_conversation_row(row),
+        ).unwrap();
+
+        assert_eq!(row.id, "conv-1");
+        assert_eq!(row.node_id, "a.md");
+        assert_eq!(row.anchor_type.as_deref(), Some("file"));
+        assert_eq!(row.anchor_id, Some(42));
+        assert_eq!(row.title.as_deref(), Some("Test Title"));
+        assert!(!row.created_at.is_empty());
+        assert!(!row.updated_at.is_empty());
     }
 
     // --- Conversations: touch_conversation ---
