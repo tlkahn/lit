@@ -12,7 +12,7 @@ use super::knowledge::{GraphNode, KnowledgeGraph, SubgraphBundle, SubgraphResult
 use super::links::{extract_wikilinks, WikiLink};
 use super::resolve::StemLookup;
 use super::store::Store;
-use super::types::{extract_aliases, extract_tags, BacklinkEntry, LinkEntry, ParsedNode, SearchResult, Stats, UnlinkedMention};
+use super::types::{extract_aliases, extract_tags, BacklinkEntry, ConversationRow, LinkEntry, MessageRow, ParsedNode, SearchResult, Stats, UnlinkedMention};
 use crate::workspace::frontmatter::parse_frontmatter;
 use crate::workspace::normalize::filename_to_page_name;
 
@@ -1029,6 +1029,55 @@ impl GraphIndex {
     pub fn list_annotations(&self, node_id: Option<&str>, type_filter: Option<&str>, limit: i64) -> Result<Vec<super::types::AnnotationSearchResult>, GraphError> {
         let store = self.store.lock().unwrap();
         store.list_annotations(node_id, type_filter, limit)
+    }
+
+    // --- Conversation wrappers ---
+
+    pub fn create_conversation(
+        &self,
+        id: &str,
+        node_id: &str,
+        anchor_type: Option<&str>,
+        anchor_id: Option<i64>,
+        title: Option<&str>,
+    ) -> Result<ConversationRow, GraphError> {
+        let store = self.store.lock().unwrap();
+        store.create_conversation(id, node_id, anchor_type, anchor_id, title)?;
+        store.get_conversation(id)?
+            .ok_or_else(|| GraphError::ConversationNotFound { id: id.to_string() })
+    }
+
+    pub fn add_message(&self, conversation_id: &str, role: &str, content: &str) -> Result<MessageRow, GraphError> {
+        let store = self.store.lock().unwrap();
+        let seq = store.next_message_seq(conversation_id)?;
+        let rowid = store.add_message(conversation_id, role, content, seq)?;
+        store.get_message_by_id(rowid)
+    }
+
+    pub fn list_messages(&self, conversation_id: &str) -> Result<Vec<MessageRow>, GraphError> {
+        let store = self.store.lock().unwrap();
+        store.list_messages(conversation_id)
+    }
+
+    pub fn delete_messages_after(&self, conversation_id: &str, seq: i32) -> Result<(), GraphError> {
+        let store = self.store.lock().unwrap();
+        store.delete_messages_after(conversation_id, seq)
+    }
+
+    pub fn delete_conversation(&self, id: &str) -> Result<(), GraphError> {
+        let store = self.store.lock().unwrap();
+        store.delete_conversation(id)
+    }
+
+    pub fn list_conversations(&self, node_id: &str) -> Result<Vec<ConversationRow>, GraphError> {
+        let store = self.store.lock().unwrap();
+        store.list_conversations(node_id)
+    }
+
+    pub fn get_conversation(&self, id: &str) -> Result<ConversationRow, GraphError> {
+        let store = self.store.lock().unwrap();
+        store.get_conversation(id)?
+            .ok_or_else(|| GraphError::ConversationNotFound { id: id.to_string() })
     }
 
     pub fn top_by_pagerank(&self, n: usize) -> Result<Vec<(String, f64)>, GraphError> {
@@ -4553,5 +4602,132 @@ mod tests {
             !sub.edges.iter().any(|(s, _)| s == "source.md"),
             "KnowledgeGraph also drops edges from missing nodes"
         );
+    }
+
+    // --- Conversations: GraphIndex wrappers ---
+
+    #[test]
+    fn gi_create_conversation_returns_full_row() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "---\ntitle: A\n---\nHello");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), false).unwrap();
+
+        let row = gi.create_conversation("conv-1", "a.md", Some("annotation"), Some(42), Some("My Chat")).unwrap();
+        assert_eq!(row.id, "conv-1");
+        assert_eq!(row.node_id, "a.md");
+        assert_eq!(row.anchor_type.as_deref(), Some("annotation"));
+        assert_eq!(row.anchor_id, Some(42));
+        assert_eq!(row.title.as_deref(), Some("My Chat"));
+        assert!(!row.created_at.is_empty());
+        assert!(!row.updated_at.is_empty());
+    }
+
+    #[test]
+    fn gi_delete_messages_after_truncates() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "---\ntitle: A\n---\nHello");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), false).unwrap();
+        gi.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        gi.add_message("conv-1", "user", "msg0").unwrap();
+        gi.add_message("conv-1", "assistant", "msg1").unwrap();
+        gi.add_message("conv-1", "user", "msg2").unwrap();
+        gi.add_message("conv-1", "assistant", "msg3").unwrap();
+
+        gi.delete_messages_after("conv-1", 1).unwrap();
+
+        let msgs = gi.list_messages("conv-1").unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].seq, 0);
+        assert_eq!(msgs[1].seq, 1);
+    }
+
+    #[test]
+    fn gi_list_messages_ordered_by_seq() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "---\ntitle: A\n---\nHello");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), false).unwrap();
+        gi.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        gi.add_message("conv-1", "user", "msg0").unwrap();
+        gi.add_message("conv-1", "assistant", "msg1").unwrap();
+        gi.add_message("conv-1", "user", "msg2").unwrap();
+
+        let msgs = gi.list_messages("conv-1").unwrap();
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[0].seq, 0);
+        assert_eq!(msgs[1].seq, 1);
+        assert_eq!(msgs[2].seq, 2);
+        assert_eq!(msgs[0].content, "msg0");
+    }
+
+    #[test]
+    fn gi_add_message_auto_seq() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "---\ntitle: A\n---\nHello");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), false).unwrap();
+        gi.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+
+        let msg0 = gi.add_message("conv-1", "user", "Hello").unwrap();
+        assert_eq!(msg0.seq, 0);
+        assert_eq!(msg0.role, "user");
+        assert_eq!(msg0.content, "Hello");
+        assert_eq!(msg0.conversation_id, "conv-1");
+
+        let msg1 = gi.add_message("conv-1", "assistant", "Hi there").unwrap();
+        assert_eq!(msg1.seq, 1);
+        assert_eq!(msg1.role, "assistant");
+        assert_eq!(msg1.content, "Hi there");
+    }
+
+    #[test]
+    fn gi_delete_conversation_then_get_returns_not_found() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "---\ntitle: A\n---\nHello");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), false).unwrap();
+        gi.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+
+        gi.delete_conversation("conv-1").unwrap();
+
+        let err = gi.get_conversation("conv-1").unwrap_err();
+        assert!(err.to_string().contains("conversation not found"));
+    }
+
+    #[test]
+    fn gi_list_conversations_returns_all_for_node() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "---\ntitle: A\n---\nHello");
+        write_md(dir.path(), "b.md", "---\ntitle: B\n---\nWorld");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), false).unwrap();
+        gi.create_conversation("c1", "a.md", None, None, Some("First")).unwrap();
+        gi.create_conversation("c2", "a.md", None, None, Some("Second")).unwrap();
+        gi.create_conversation("c3", "b.md", None, None, Some("Other")).unwrap();
+
+        let list = gi.list_conversations("a.md").unwrap();
+        assert_eq!(list.len(), 2);
+        let ids: Vec<&str> = list.iter().map(|c| c.id.as_str()).collect();
+        assert!(ids.contains(&"c1"));
+        assert!(ids.contains(&"c2"));
+    }
+
+    #[test]
+    fn gi_get_conversation_found() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "---\ntitle: A\n---\nHello");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), false).unwrap();
+        gi.create_conversation("conv-1", "a.md", None, None, Some("Chat")).unwrap();
+
+        let row = gi.get_conversation("conv-1").unwrap();
+        assert_eq!(row.id, "conv-1");
+        assert_eq!(row.title.as_deref(), Some("Chat"));
+    }
+
+    #[test]
+    fn gi_get_conversation_not_found() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "---\ntitle: A\n---\nHello");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), false).unwrap();
+
+        let err = gi.get_conversation("nonexistent").unwrap_err();
+        assert!(err.to_string().contains("conversation not found"));
+        assert!(err.to_string().contains("nonexistent"));
     }
 }

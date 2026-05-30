@@ -1059,6 +1059,32 @@ impl Store {
         Ok(())
     }
 
+    pub fn next_message_seq(&self, conversation_id: &str) -> Result<i32, GraphError> {
+        self.conn.query_row(
+            "SELECT COALESCE(MAX(seq), -1) + 1 FROM conversation_messages WHERE conversation_id = ?1",
+            [conversation_id],
+            |row| row.get(0),
+        ).map_err(|e| e.into())
+    }
+
+    pub fn get_message_by_id(&self, id: i64) -> Result<MessageRow, GraphError> {
+        self.conn.query_row(
+            "SELECT id, conversation_id, role, content, seq, created_at
+             FROM conversation_messages WHERE id = ?1",
+            [id],
+            |row| {
+                Ok(MessageRow {
+                    id: row.get(0)?,
+                    conversation_id: row.get(1)?,
+                    role: row.get(2)?,
+                    content: row.get(3)?,
+                    seq: row.get(4)?,
+                    created_at: row.get(5)?,
+                })
+            },
+        ).map_err(|e| e.into())
+    }
+
     // --- Transactions ---
 
     pub fn begin_transaction(&self) -> Result<(), GraphError> {
@@ -3093,6 +3119,50 @@ mod tests {
         assert_eq!(row.title.as_deref(), Some("Test Title"));
         assert!(!row.created_at.is_empty());
         assert!(!row.updated_at.is_empty());
+    }
+
+    // --- Conversations: get_message_by_id ---
+
+    #[test]
+    fn get_message_by_id_returns_inserted_message() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        let rowid = store.add_message("conv-1", "user", "Hello world", 0).unwrap();
+
+        let msg = store.get_message_by_id(rowid).unwrap();
+        assert_eq!(msg.id, rowid);
+        assert_eq!(msg.conversation_id, "conv-1");
+        assert_eq!(msg.role, "user");
+        assert_eq!(msg.content, "Hello world");
+        assert_eq!(msg.seq, 0);
+        assert!(!msg.created_at.is_empty());
+    }
+
+    // --- Conversations: next_message_seq ---
+
+    #[test]
+    fn next_message_seq_empty_conversation_returns_zero() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+
+        assert_eq!(store.next_message_seq("conv-1").unwrap(), 0);
+    }
+
+    #[test]
+    fn next_message_seq_after_three_messages_returns_three() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.add_message("conv-1", "user", "msg0", 0).unwrap();
+        store.add_message("conv-1", "assistant", "msg1", 1).unwrap();
+        store.add_message("conv-1", "user", "msg2", 2).unwrap();
+
+        assert_eq!(store.next_message_seq("conv-1").unwrap(), 3);
     }
 
     // --- Conversations: touch_conversation ---

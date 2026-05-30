@@ -12,6 +12,7 @@ pub mod page;
 pub mod preferences;
 pub mod theme;
 pub mod trash;
+pub mod conversation;
 pub mod llm;
 pub mod oplog;
 pub mod pdf_viewer;
