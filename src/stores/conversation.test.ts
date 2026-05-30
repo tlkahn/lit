@@ -11,18 +11,30 @@ vi.mock("../lib/ipc", () => ({
   conversationDeleteMessagesAfter: vi.fn(),
 }));
 
+vi.mock("../lib/llmClient", () => ({
+  startLlmStream: vi.fn(),
+  cancelLlmStream: vi.fn(),
+}));
+
 import {
   conversationList,
   conversationCreate,
   conversationDelete,
   conversationMessages,
+  conversationAddMessage,
 } from "../lib/ipc";
 import type { ConversationRow, MessageRow } from "../lib/ipc";
+
+import { startLlmStream } from "../lib/llmClient";
+import { useLlmResponseStore } from "./llmResponse";
+import { useModalLockStore } from "./modalLock";
 
 const mockedConversationList = conversationList as ReturnType<typeof vi.fn>;
 const mockedConversationCreate = conversationCreate as ReturnType<typeof vi.fn>;
 const mockedConversationDelete = conversationDelete as ReturnType<typeof vi.fn>;
 const mockedConversationMessages = conversationMessages as ReturnType<typeof vi.fn>;
+const mockedConversationAddMessage = conversationAddMessage as ReturnType<typeof vi.fn>;
+const mockedStartLlmStream = startLlmStream as ReturnType<typeof vi.fn>;
 
 const FAKE_UUID = "00000000-0000-0000-0000-000000000001";
 
@@ -48,6 +60,8 @@ const fakeMessage: MessageRow = {
 describe("conversation store", () => {
   beforeEach(() => {
     useConversationStore.getState().reset();
+    useLlmResponseStore.getState().reset();
+    useModalLockStore.setState({ llmLocked: false });
     vi.clearAllMocks();
   });
 
@@ -168,6 +182,32 @@ describe("conversation store", () => {
     expect(s.conversations).toEqual([]);
     expect(s.activeConversationId).toBeNull();
     expect(s.messages).toEqual([]);
+  });
+
+  // --- Group B: sendMessage ---
+
+  it("sendMessage sets error when no active conversation", async () => {
+    await useConversationStore.getState().sendMessage({
+      content: "hello",
+      model: "test-model",
+    });
+
+    const s = useConversationStore.getState();
+    expect(s.error).toBe("No active conversation");
+    expect(mockedConversationAddMessage).not.toHaveBeenCalled();
+  });
+
+  it("sendMessage silently returns when already streaming", async () => {
+    useConversationStore.setState({ activeConversationId: FAKE_UUID });
+    useLlmResponseStore.getState().startStream({ question: "prior" });
+
+    await useConversationStore.getState().sendMessage({
+      content: "hello",
+      model: "test-model",
+    });
+
+    expect(mockedStartLlmStream).not.toHaveBeenCalled();
+    expect(useConversationStore.getState().error).toBeNull();
   });
 
   it("deleteConversation on non-active preserves activeConversationId and messages", async () => {

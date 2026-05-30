@@ -7,6 +7,13 @@ import {
   type ConversationRow,
   type MessageRow,
 } from "../lib/ipc";
+import { useLlmResponseStore } from "./llmResponse";
+
+interface SendMessageArgs {
+  content: string;
+  model: string;
+  system?: string;
+}
 
 interface ConversationStore {
   activeConversationId: string | null;
@@ -18,6 +25,7 @@ interface ConversationStore {
   createConversation: (nodeId: string) => Promise<string | null>;
   selectConversation: (id: string) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
+  sendMessage: (args: SendMessageArgs) => Promise<void>;
   reset: () => void;
 }
 
@@ -28,7 +36,7 @@ const initialState = {
   error: null as string | null,
 };
 
-export const useConversationStore = create<ConversationStore>((set) => ({
+export const useConversationStore = create<ConversationStore>((set, get) => ({
   ...initialState,
 
   loadConversations: async (nodeId: string) => {
@@ -72,6 +80,14 @@ export const useConversationStore = create<ConversationStore>((set) => ({
         messages: isActive ? [] : s.messages,
       };
     });
+  },
+
+  sendMessage: async (_args: SendMessageArgs) => {
+    if (get().activeConversationId === null) {
+      set({ error: "No active conversation" });
+      return;
+    }
+    if (useLlmResponseStore.getState().status === "streaming") return;
   },
 
   reset: () => set(initialState),
