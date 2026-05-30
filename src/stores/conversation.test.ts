@@ -99,6 +99,19 @@ describe("conversation store", () => {
     expect(s.messages).toEqual([]);
   });
 
+  it("createConversation sets error and returns null on IPC failure", async () => {
+    vi.spyOn(crypto, "randomUUID").mockReturnValue(FAKE_UUID as `${string}-${string}-${string}-${string}-${string}`);
+    mockedConversationCreate.mockRejectedValue(new Error("insert failed"));
+
+    const id = await useConversationStore.getState().createConversation("node-1");
+
+    expect(id).toBeNull();
+    const s = useConversationStore.getState();
+    expect(s.error).toBe("insert failed");
+    expect(s.conversations).toEqual([]);
+    expect(s.activeConversationId).toBeNull();
+  });
+
   it("selectConversation sets activeConversationId and loads messages", async () => {
     const msgs: MessageRow[] = [
       fakeMessage,
@@ -112,6 +125,32 @@ describe("conversation store", () => {
     const s = useConversationStore.getState();
     expect(s.activeConversationId).toBe(FAKE_UUID);
     expect(s.messages).toEqual(msgs);
+  });
+
+  it("selectConversation clears stale messages before loading new ones", async () => {
+    const oldMessage: MessageRow = { ...fakeMessage, content: "old" };
+    useConversationStore.setState({
+      activeConversationId: "old-conv",
+      messages: [oldMessage],
+    });
+
+    const newMessages: MessageRow[] = [
+      { ...fakeMessage, conversation_id: FAKE_UUID, content: "new" },
+    ];
+    mockedConversationMessages.mockResolvedValue(newMessages);
+
+    const intermediate: MessageRow[][] = [];
+    const unsub = useConversationStore.subscribe((s) => {
+      intermediate.push([...s.messages]);
+    });
+
+    await useConversationStore.getState().selectConversation(FAKE_UUID);
+    unsub();
+
+    // First state update should have cleared messages (not kept old ones)
+    expect(intermediate[0]).toEqual([]);
+    // Final state has the new messages
+    expect(useConversationStore.getState().messages).toEqual(newMessages);
   });
 
   it("deleteConversation removes active conversation and clears messages", async () => {
