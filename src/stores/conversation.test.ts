@@ -1057,6 +1057,138 @@ describe("conversation store", () => {
     expect(s.messages).toEqual([fakeMessage]);
   });
 
+  // --- Group J: Stream cancellation race conditions ---
+
+  it("race: onDone from cancelled stream does not persist when a new stream has started", async () => {
+    useConversationStore.setState({ activeConversationId: FAKE_UUID });
+    const userMsgA: MessageRow = {
+      id: 10, conversation_id: FAKE_UUID, role: "user",
+      content: "question A", seq: 1, created_at: "2025-01-01T00:00:01Z",
+    };
+    const userMsgB: MessageRow = {
+      id: 11, conversation_id: FAKE_UUID, role: "user",
+      content: "question B", seq: 2, created_at: "2025-01-01T00:00:02Z",
+    };
+
+    let addMessageCallCount = 0;
+    mockedConversationAddMessage.mockImplementation(async () => {
+      addMessageCallCount++;
+      if (addMessageCallCount === 1) return userMsgA;
+      return userMsgB;
+    });
+
+    const capturedCallbacksList: LlmStreamCallbacks[] = [];
+    mockedStartLlmStream.mockImplementation(async (_args: unknown, cbs: LlmStreamCallbacks) => {
+      capturedCallbacksList.push(cbs);
+    });
+    mockedCancelLlmStream.mockResolvedValue(undefined);
+
+    // Start stream A
+    await useConversationStore.getState().sendMessage({ content: "question A", model: "m" });
+    const callbacksA = capturedCallbacksList[0]!;
+
+    // Cancel stream A
+    await useConversationStore.getState().cancelConversationStream();
+
+    // Start stream B
+    await useConversationStore.getState().sendMessage({ content: "question B", model: "m" });
+
+    // Stale onDone from stream A fires
+    useLlmResponseStore.setState({ responseText: "stale response A" });
+    await callbacksA.onDone();
+
+    // Should NOT have persisted stale assistant message — only 2 user messages
+    expect(mockedConversationAddMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it("race: onError from cancelled stream does not corrupt active stream", async () => {
+    useConversationStore.setState({ activeConversationId: FAKE_UUID });
+    const userMsgA: MessageRow = {
+      id: 10, conversation_id: FAKE_UUID, role: "user",
+      content: "question A", seq: 1, created_at: "2025-01-01T00:00:01Z",
+    };
+    const userMsgB: MessageRow = {
+      id: 11, conversation_id: FAKE_UUID, role: "user",
+      content: "question B", seq: 2, created_at: "2025-01-01T00:00:02Z",
+    };
+
+    let addMessageCallCount = 0;
+    mockedConversationAddMessage.mockImplementation(async () => {
+      addMessageCallCount++;
+      if (addMessageCallCount === 1) return userMsgA;
+      return userMsgB;
+    });
+
+    const capturedCallbacksList: LlmStreamCallbacks[] = [];
+    mockedStartLlmStream.mockImplementation(async (_args: unknown, cbs: LlmStreamCallbacks) => {
+      capturedCallbacksList.push(cbs);
+    });
+    mockedCancelLlmStream.mockResolvedValue(undefined);
+
+    // Start stream A
+    await useConversationStore.getState().sendMessage({ content: "question A", model: "m" });
+    const callbacksA = capturedCallbacksList[0]!;
+
+    // Cancel stream A
+    await useConversationStore.getState().cancelConversationStream();
+
+    // Start stream B
+    await useConversationStore.getState().sendMessage({ content: "question B", model: "m" });
+
+    // Stale onError from stream A fires
+    callbacksA.onError({ message: "stale error", retryable: false });
+
+    // Stream B should still be active — not corrupted by stale error
+    expect(useLlmResponseStore.getState().status).toBe("streaming");
+    expect(useModalLockStore.getState().llmLocked).toBe(true);
+    expect(useLlmResponseStore.getState().errorMessage).not.toBe("stale error");
+  });
+
+  it("race: onChunk from cancelled stream does not corrupt active stream response", async () => {
+    useConversationStore.setState({ activeConversationId: FAKE_UUID });
+    const userMsgA: MessageRow = {
+      id: 10, conversation_id: FAKE_UUID, role: "user",
+      content: "question A", seq: 1, created_at: "2025-01-01T00:00:01Z",
+    };
+    const userMsgB: MessageRow = {
+      id: 11, conversation_id: FAKE_UUID, role: "user",
+      content: "question B", seq: 2, created_at: "2025-01-01T00:00:02Z",
+    };
+
+    let addMessageCallCount = 0;
+    mockedConversationAddMessage.mockImplementation(async () => {
+      addMessageCallCount++;
+      if (addMessageCallCount === 1) return userMsgA;
+      return userMsgB;
+    });
+
+    const capturedCallbacksList: LlmStreamCallbacks[] = [];
+    mockedStartLlmStream.mockImplementation(async (_args: unknown, cbs: LlmStreamCallbacks) => {
+      capturedCallbacksList.push(cbs);
+    });
+    mockedCancelLlmStream.mockResolvedValue(undefined);
+
+    // Start stream A
+    await useConversationStore.getState().sendMessage({ content: "question A", model: "m" });
+    const callbacksA = capturedCallbacksList[0]!;
+
+    // Cancel stream A
+    await useConversationStore.getState().cancelConversationStream();
+
+    // Start stream B
+    await useConversationStore.getState().sendMessage({ content: "question B", model: "m" });
+    const callbacksB = capturedCallbacksList[1]!;
+
+    // Stream B sends a chunk
+    callbacksB.onChunk("chunk-B");
+
+    // Stale chunk from stream A arrives
+    callbacksA.onChunk("stale-chunk-A");
+
+    // responseText should only contain stream B's chunk
+    expect(useLlmResponseStore.getState().responseText).toBe("chunk-B");
+  });
+
   it("editMessage on middle message preserves earlier history", async () => {
     const u1: MessageRow = { id: 1, conversation_id: FAKE_UUID, role: "user", content: "q1", seq: 1, created_at: "2025-01-01T00:00:00Z" };
     const a2: MessageRow = { id: 2, conversation_id: FAKE_UUID, role: "assistant", content: "a1", seq: 2, created_at: "2025-01-01T00:00:01Z" };
