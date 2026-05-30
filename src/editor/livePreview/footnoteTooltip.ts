@@ -2,9 +2,8 @@ import type { EditorState, Extension } from "@codemirror/state";
 import type { EditorView, Tooltip } from "@codemirror/view";
 import { hoverTooltip } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
-import { marked } from "marked";
-import DOMPurify from "dompurify";
 import { buildFootnoteMap, type FootnoteMap } from "./footnoteNumbering";
+import { renderMarkdown } from "../../lib/renderMarkdown";
 
 export function getFootnoteDefBody(
   state: EditorState,
@@ -28,7 +27,7 @@ export function getFootnoteDefBody(
 }
 
 export function renderFootnoteBody(bodyText: string): string {
-  return DOMPurify.sanitize(marked.parse(bodyText, { async: false }) as string);
+  return renderMarkdown(bodyText);
 }
 
 export function footnoteTooltipSource(

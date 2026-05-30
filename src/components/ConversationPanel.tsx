@@ -12,7 +12,7 @@ interface ConversationPanelProps {
   contentHeight?: number;
 }
 
-export function ConversationPanel({ pageId }: ConversationPanelProps) {
+export function ConversationPanel({ pageId, contentHeight }: ConversationPanelProps) {
   const nodeId = pageId ?? "_global";
   const conversations = useConversationStore((s) => s.conversations);
   const activeConversationId = useConversationStore((s) => s.activeConversationId);
@@ -86,6 +86,8 @@ export function ConversationPanel({ pageId }: ConversationPanelProps) {
     retryLastMessage(streamArgs());
   }, [retryLastMessage, streamArgs]);
 
+  const handleEdit = useCallback((_seq: number) => {}, []);
+
   const handleStop = useCallback(() => {
     cancelConversationStream();
   }, [cancelConversationStream]);
@@ -106,10 +108,14 @@ export function ConversationPanel({ pageId }: ConversationPanelProps) {
         onNewThread={handleNewThread}
         onStop={handleStop}
       />
-      <div className="flex-1 overflow-hidden">
+      <div
+        data-testid="conversation-scroll-container"
+        className="flex-1 overflow-hidden"
+        style={contentHeight != null ? { height: contentHeight } : undefined}
+      >
         <MessageList
           messages={messages}
-          onEdit={() => {}}
+          onEdit={handleEdit}
           onEditSubmit={handleEditSubmit}
           onRetry={handleRetry}
         />

@@ -61,6 +61,14 @@ describe("getFootnoteDefBody", () => {
 });
 
 describe("renderFootnoteBody", () => {
+  it("delegates to renderMarkdown", async () => {
+    const mod = await import("../../lib/renderMarkdown");
+    const spy = vi.spyOn(mod, "renderMarkdown");
+    renderFootnoteBody("**test**");
+    expect(spy).toHaveBeenCalledWith("**test**");
+    spy.mockRestore();
+  });
+
   it("plain text returns paragraph HTML", () => {
     const html = renderFootnoteBody("hello world");
     expect(html).toContain("<p>");

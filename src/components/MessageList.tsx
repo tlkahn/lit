@@ -16,7 +16,10 @@ const SCROLL_THRESHOLD = 40;
 
 export function MessageList({ messages, onEdit, onEditSubmit, onRetry }: MessageListProps) {
   const lastAssistantIdx = messages.findLastIndex((m) => m.role === "assistant");
-  const { status, responseText, errorMessage, fireSourceAnnotation } = useLlmResponseStore();
+  const status = useLlmResponseStore((s) => s.status);
+  const responseText = useLlmResponseStore((s) => s.responseText);
+  const errorMessage = useLlmResponseStore((s) => s.errorMessage);
+  const fireSourceAnnotation = useLlmResponseStore((s) => s.fireSourceAnnotation);
   const editorFrom = useEditorSelectionStore((s) => s.from);
   const editorTo = useEditorSelectionStore((s) => s.to);
   const hadSelection = editorFrom !== editorTo;

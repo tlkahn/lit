@@ -722,6 +722,40 @@ describe("ConversationPanel", () => {
     expect(createConversationSpy).toHaveBeenCalledWith("_global", "hello");
   });
 
+  it("applies contentHeight as inline height style to the scroll container", async () => {
+    useConversationStore.setState({
+      loadConversations: vi.fn().mockResolvedValue(undefined),
+      activeConversationId: null,
+      conversations: [],
+      messages: [],
+    });
+
+    let result: ReturnType<typeof render>;
+    await act(async () => {
+      result = render(<ConversationPanel pageId="page-1" contentHeight={400} />);
+    });
+
+    const scrollContainer = result!.getByTestId("conversation-scroll-container");
+    expect(scrollContainer.style.height).toBe("400px");
+  });
+
+  it("does not apply inline height when contentHeight is undefined", async () => {
+    useConversationStore.setState({
+      loadConversations: vi.fn().mockResolvedValue(undefined),
+      activeConversationId: null,
+      conversations: [],
+      messages: [],
+    });
+
+    let result: ReturnType<typeof render>;
+    await act(async () => {
+      result = render(<ConversationPanel pageId="page-1" />);
+    });
+
+    const scrollContainer = result!.getByTestId("conversation-scroll-container");
+    expect(scrollContainer.style.height).toBe("");
+  });
+
   it("new thread without pageId uses _global", async () => {
     const createConversationSpy = vi.fn().mockImplementation(async () => {
       useConversationStore.setState({ activeConversationId: "new-id", messages: [] });

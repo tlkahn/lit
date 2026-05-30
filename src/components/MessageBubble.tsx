@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo, memo } from "react";
 import type { MessageRow, Annotation } from "../lib/ipc";
 import { renderMarkdown } from "../lib/renderMarkdown";
 
@@ -13,13 +13,14 @@ interface MessageBubbleProps {
   onRetry?: () => void;
 }
 
-export function MessageBubble({ message, isLast, showEditorActions, hadSelection, fireSourceAnnotation, onEdit, onEditSubmit, onRetry }: MessageBubbleProps) {
+function MessageBubbleInner({ message, isLast, showEditorActions, hadSelection, fireSourceAnnotation, onEdit, onEditSubmit, onRetry }: MessageBubbleProps) {
   const [hovered, setHovered] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState(message.content);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isUser = message.role === "user";
   const isAssistant = message.role === "assistant";
+  const html = useMemo(() => renderMarkdown(message.content), [message.content]);
 
   useEffect(() => {
     if (editing && textareaRef.current) {
@@ -139,8 +140,10 @@ export function MessageBubble({ message, isLast, showEditorActions, hadSelection
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      <div dangerouslySetInnerHTML={{ __html: renderMarkdown(message.content) }} />
+      <div dangerouslySetInnerHTML={{ __html: html }} />
       {actions}
     </div>
   );
 }
+
+export const MessageBubble = memo(MessageBubbleInner);

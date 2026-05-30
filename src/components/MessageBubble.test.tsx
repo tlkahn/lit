@@ -1,7 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@testing-library/react";
+import { useState } from "react";
 import { MessageBubble } from "./MessageBubble";
 import type { MessageRow } from "../lib/ipc";
+import * as renderMarkdownModule from "../lib/renderMarkdown";
 
 function makeAnnotation() {
   return {
@@ -249,6 +251,38 @@ describe("MessageBubble", () => {
     const event = handler.mock.calls[0]![0] as CustomEvent;
     expect(event.detail).toEqual({ text: "Insert this" });
     window.removeEventListener("lit:llm-insert-raw", handler as EventListener);
+  });
+
+  it("does not re-call renderMarkdown when re-rendered with same content", () => {
+    const spy = vi.spyOn(renderMarkdownModule, "renderMarkdown");
+    const msg = makeMessage({ role: "assistant", content: "**hello**" });
+    const { rerender } = render(<MessageBubble message={msg} />);
+    const initialCount = spy.mock.calls.length;
+    rerender(<MessageBubble message={msg} />);
+    expect(spy.mock.calls.length).toBe(initialCount);
+    spy.mockRestore();
+  });
+
+  it("skips re-render when parent re-renders with identical props", () => {
+    const spy = vi.spyOn(renderMarkdownModule, "renderMarkdown");
+    const msg = makeMessage({ role: "assistant", content: "**stable**" });
+    const onEdit = () => {};
+
+    function Parent() {
+      const [, setTick] = useState(0);
+      return (
+        <>
+          <button data-testid="force-rerender" onClick={() => setTick((t) => t + 1)} />
+          <MessageBubble message={msg} onEdit={onEdit} />
+        </>
+      );
+    }
+
+    const { getByTestId } = render(<Parent />);
+    const countAfterMount = spy.mock.calls.length;
+    fireEvent.click(getByTestId("force-rerender"));
+    expect(spy.mock.calls.length).toBe(countAfterMount);
+    spy.mockRestore();
   });
 
   it("dispatches lit:insert-companion-annotation on Companion click", () => {
