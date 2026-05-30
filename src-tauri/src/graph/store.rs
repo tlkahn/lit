@@ -101,7 +101,12 @@ impl Store {
                 "schema version from the future — resetting store"
             );
             self.conn.execute_batch(
-                "DROP TABLE IF EXISTS nodes;
+                "DROP TABLE IF EXISTS conversation_messages;
+                 DROP TABLE IF EXISTS conversations;
+                 DROP TABLE IF EXISTS annotations_fts;
+                 DROP TABLE IF EXISTS annotations;
+                 DROP TABLE IF EXISTS node_positions;
+                 DROP TABLE IF EXISTS nodes;
                  DROP TABLE IF EXISTS tags;
                  DROP TABLE IF EXISTS aliases;
                  DROP TABLE IF EXISTS edges;
@@ -334,21 +339,30 @@ impl Store {
     }
 
     pub fn delete_node(&self, id: &str) -> Result<(), GraphError> {
-        self.conn.execute("DELETE FROM conversations WHERE node_id = ?1", [id])?;
-        self.conn.execute("DELETE FROM annotations_fts WHERE node_id = ?1", [id])?;
-        self.conn.execute("DELETE FROM annotations WHERE node_id = ?1", [id])?;
-        self.conn.execute("DELETE FROM nodes WHERE id = ?1", [id])?;
-        self.conn
-            .execute("DELETE FROM tags WHERE node_id = ?1", [id])?;
-        self.conn
-            .execute("DELETE FROM aliases WHERE node_id = ?1", [id])?;
-        self.conn
-            .execute("DELETE FROM edges WHERE source = ?1 OR target = ?1", [id])?;
-        self.conn
-            .execute("DELETE FROM sync WHERE path = ?1", [id])?;
-        self.conn
-            .execute("DELETE FROM node_positions WHERE node_id = ?1", [id])?;
-        Ok(())
+        self.conn.execute_batch("SAVEPOINT delete_node")?;
+        let result = (|| -> Result<(), GraphError> {
+            self.conn.execute("DELETE FROM conversations WHERE node_id = ?1", [id])?;
+            self.conn.execute("DELETE FROM annotations_fts WHERE node_id = ?1", [id])?;
+            self.conn.execute("DELETE FROM annotations WHERE node_id = ?1", [id])?;
+            self.conn.execute("DELETE FROM nodes WHERE id = ?1", [id])?;
+            self.conn.execute("DELETE FROM tags WHERE node_id = ?1", [id])?;
+            self.conn.execute("DELETE FROM aliases WHERE node_id = ?1", [id])?;
+            self.conn.execute("DELETE FROM edges WHERE source = ?1 OR target = ?1", [id])?;
+            self.conn.execute("DELETE FROM sync WHERE path = ?1", [id])?;
+            self.conn.execute("DELETE FROM node_positions WHERE node_id = ?1", [id])?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                self.conn.execute_batch("RELEASE delete_node")?;
+                Ok(())
+            }
+            Err(e) => {
+                self.conn.execute_batch("ROLLBACK TO delete_node")?;
+                self.conn.execute_batch("RELEASE delete_node")?;
+                Err(e)
+            }
+        }
     }
 
     // --- Positions ---
@@ -994,14 +1008,31 @@ impl Store {
         content: &str,
         seq: i32,
     ) -> Result<i64, GraphError> {
-        self.conn.execute(
-            "INSERT INTO conversation_messages(conversation_id, role, content, seq, created_at)
-             VALUES (?1, ?2, ?3, ?4, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
-            rusqlite::params![conversation_id, role, content, seq],
-        )?;
-        let rowid = self.conn.last_insert_rowid();
-        self.touch_conversation(conversation_id)?;
-        Ok(rowid)
+        self.conn.execute_batch("SAVEPOINT add_message")?;
+        let result = (|| -> Result<i64, GraphError> {
+            self.conn.execute(
+                "INSERT INTO conversation_messages(conversation_id, role, content, seq, created_at)
+                 VALUES (?1, ?2, ?3, ?4, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
+                rusqlite::params![conversation_id, role, content, seq],
+            )?;
+            let rowid = self.conn.last_insert_rowid();
+            self.conn.execute(
+                "UPDATE conversations SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
+                [conversation_id],
+            )?;
+            Ok(rowid)
+        })();
+        match result {
+            Ok(rowid) => {
+                self.conn.execute_batch("RELEASE add_message")?;
+                Ok(rowid)
+            }
+            Err(e) => {
+                self.conn.execute_batch("ROLLBACK TO add_message")?;
+                self.conn.execute_batch("RELEASE add_message")?;
+                Err(e)
+            }
+        }
     }
 
     pub fn list_messages(&self, conversation_id: &str) -> Result<Vec<MessageRow>, GraphError> {
@@ -1139,6 +1170,49 @@ mod tests {
         let store = Store::open(&db_path).unwrap();
         assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
         assert!(!store.has_data().unwrap(), "store should be empty after schema reset");
+    }
+
+    #[test]
+    fn schema_version_from_future_resets_all_tables() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("graph.db");
+
+        {
+            let store = Store::open(&db_path).unwrap();
+            let node = make_node("a.md", "A", &["t"], json!({"aliases": ["X"]}));
+            store.upsert_node(&node, 1000).unwrap();
+            store.upsert_annotations("a.md", &[IndexableAnnotation {
+                annotation_type: "highlight".into(),
+                certainty: "certain".into(),
+                body: Some("test body".into()),
+                date: None,
+                source_line: 1,
+                char_start: 0,
+                char_end: 10,
+                scope_kind: "file".into(),
+                scope_value: "a.md".into(),
+            }]).unwrap();
+            use super::super::types::Position;
+            let mut positions = HashMap::new();
+            positions.insert("a.md".into(), Position { x: 1.0, y: 2.0 });
+            store.save_positions(&positions).unwrap();
+            store.create_conversation("conv-1", "a.md", None, None, Some("Chat")).unwrap();
+            store.add_message("conv-1", "user", "Hello", 0).unwrap();
+
+            store.conn.execute(
+                "UPDATE meta SET value = '999' WHERE key = 'schema_version'", [],
+            ).unwrap();
+        }
+
+        let store = Store::open(&db_path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+
+        for table in &["annotations", "annotations_fts", "node_positions", "conversations", "conversation_messages"] {
+            let count: i64 = store.conn.query_row(
+                &format!("SELECT COUNT(*) FROM {}", table), [], |r| r.get(0),
+            ).unwrap();
+            assert_eq!(count, 0, "table {} should be empty after future-schema reset", table);
+        }
     }
 
     #[test]
@@ -1444,6 +1518,48 @@ mod tests {
     fn delete_node_noop_for_nonexistent() {
         let store = Store::open_memory().unwrap();
         store.delete_node("nonexistent.md").unwrap();
+    }
+
+    #[test]
+    fn delete_node_is_atomic() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &["t"], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.insert_edge("a.md", "b.md", "ctx", "", 0).unwrap();
+        {
+            use super::super::types::Position;
+            let mut positions = HashMap::new();
+            positions.insert("a.md".into(), Position { x: 1.0, y: 2.0 });
+            store.save_positions(&positions).unwrap();
+        }
+
+        store.conn.execute_batch(
+            "CREATE TRIGGER test_block_position_delete
+             BEFORE DELETE ON node_positions
+             BEGIN
+                 SELECT RAISE(ABORT, 'blocked by test trigger');
+             END;"
+        ).unwrap();
+
+        let result = store.delete_node("a.md");
+        assert!(result.is_err(), "delete_node should fail when trigger blocks");
+
+        let node_count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM nodes WHERE id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(node_count, 1, "node should survive rollback");
+
+        let tag_count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM tags WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(tag_count, 1, "tags should survive rollback");
+
+        let edge_count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM edges WHERE source = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(edge_count, 1, "edges should survive rollback");
+
+        store.conn.execute_batch("DROP TRIGGER test_block_position_delete;").unwrap();
     }
 
     // --- Phase 6: Edge operations ---
@@ -3093,6 +3209,32 @@ mod tests {
 
         store.delete_messages_after("conv-1", 10).unwrap();
         assert_eq!(store.list_messages("conv-1").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn add_message_is_atomic() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, Some("Chat")).unwrap();
+
+        store.conn.execute_batch(
+            "CREATE TRIGGER test_block_touch_conversation
+             BEFORE UPDATE OF updated_at ON conversations
+             BEGIN
+                 SELECT RAISE(ABORT, 'blocked by test trigger');
+             END;"
+        ).unwrap();
+
+        let result = store.add_message("conv-1", "user", "Hello", 0);
+        assert!(result.is_err(), "add_message should fail when touch trigger blocks");
+
+        let msg_count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM conversation_messages", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(msg_count, 0, "message INSERT should be rolled back");
+
+        store.conn.execute_batch("DROP TRIGGER test_block_touch_conversation;").unwrap();
     }
 
     // --- Conversations: CASCADE and delete_node ---
