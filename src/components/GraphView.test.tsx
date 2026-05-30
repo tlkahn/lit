@@ -45,6 +45,8 @@ describe("GraphView", () => {
     lastSigmaOptions = {};
     useGraphSelectionStore.setState({ selectedNodes: [], selectionMode: "none" });
     useGraphViewState.setState({ mode: "full", depth: 2 });
+    resetListenMock();
+    mockListen();
     mockInvoke((cmd) => {
       switch (cmd) {
         case "get_graph_subgraph":
@@ -59,6 +61,10 @@ describe("GraphView", () => {
           };
         case "get_graph_positions":
           return {};
+        case "show_graph_context_menu":
+          return null;
+        case "read_page":
+          return { meta: { title: "A", relative_path: "a.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "## Heading\ncontent", raw_yaml: "" };
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -1191,6 +1197,381 @@ describe("GraphView", () => {
     resetListenMock();
   });
 
+  // --- Native context menu IPC tests ---
+
+  it("right-click node calls show_graph_context_menu with correct args", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView onExportNetwork={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    expect(rightClickHandler).toBeDefined();
+
+    await act(async () => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("show_graph_context_menu", {
+        nodeId: "a.md",
+        nodeIds: ["a.md"],
+        selectionCount: 0,
+        hasHeadings: true,
+        hasExport: true,
+      });
+    });
+  });
+
+  it("right-click with multi-selection sends correct nodeIds and count", async () => {
+    useGraphSelectionStore.setState({ selectedNodes: ["a.md", "b.md"], selectionMode: "click" });
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView onExportNetwork={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+
+    await act(async () => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("show_graph_context_menu", expect.objectContaining({
+        nodeIds: ["a.md", "b.md"],
+        selectionCount: 2,
+      }));
+    });
+  });
+
+  it("right-click node without headings sends hasHeadings=false", async () => {
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [
+              { id: "a.md", title: "A" },
+              { id: "b.md", title: "B" },
+            ],
+            edges: [["a.md", "b.md"]],
+            pagerank: { "a.md": 0.4, "b.md": 0.6 },
+            positions: {},
+          };
+        case "show_graph_context_menu":
+          return null;
+        case "read_page":
+          return { meta: { title: "A", relative_path: "a.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "no headings here", raw_yaml: "" };
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView onExportNetwork={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+
+    await act(async () => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("show_graph_context_menu", expect.objectContaining({
+        hasHeadings: false,
+      }));
+    });
+  });
+
+  it("right-click without onExportNetwork sends hasExport=false", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+
+    await act(async () => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("show_graph_context_menu", expect.objectContaining({
+        hasExport: false,
+      }));
+    });
+  });
+
+  it("merge event opens MergePreviewDialog", async () => {
+    mockInvoke((cmd, args) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [
+              { id: "a.md", title: "A" },
+              { id: "b.md", title: "B" },
+            ],
+            edges: [["a.md", "b.md"]],
+            pagerank: { "a.md": 0.4, "b.md": 0.6 },
+            positions: {},
+          };
+        case "show_graph_context_menu":
+          return null;
+        case "read_page": {
+          const path = (args as { relativePath: string }).relativePath;
+          return { meta: { title: path === "a.md" ? "A" : "B", relative_path: path, frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "## Heading\ncontent", raw_yaml: "" };
+        }
+        case "preview_merge":
+          return { title: "Merged", body: "merged body", frontmatter: {}, source_titles: ["A", "B"] };
+        case "cancel_title_suggestion":
+          return undefined;
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView onExportNetwork={vi.fn()} onMergeConfirm={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await act(async () => {
+      emitMockEvent("context-menu://graph/merge", { node_id: "a.md", node_ids: ["a.md", "b.md"] });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("merge-preview-dialog")).toBeTruthy();
+    });
+  });
+
+  it("merge event without onMergeConfirm dispatches lit:open-merge-preview", async () => {
+    const dispatchSpy = vi.spyOn(window, "dispatchEvent");
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView onExportNetwork={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await act(async () => {
+      emitMockEvent("context-menu://graph/merge", { node_id: "a.md", node_ids: ["a.md"] });
+    });
+
+    await waitFor(() => {
+      expect(dispatchSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "lit:open-merge-preview" }),
+      );
+    });
+
+    dispatchSpy.mockRestore();
+  });
+
+  it("split event opens SplitPreviewDialog", async () => {
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [
+              { id: "a.md", title: "A" },
+              { id: "b.md", title: "B" },
+            ],
+            edges: [["a.md", "b.md"]],
+            pagerank: { "a.md": 0.4, "b.md": 0.6 },
+            positions: {},
+          };
+        case "show_graph_context_menu":
+          return null;
+        case "read_page":
+          return { meta: { title: "A", relative_path: "a.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "## Heading\ncontent", raw_yaml: "" };
+        case "preview_split":
+          return { preamble: null, sections: [{ title: "Heading", body: "content", frontmatter: {} }] };
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView onExportNetwork={vi.fn()} onSplitConfirm={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await act(async () => {
+      emitMockEvent("context-menu://graph/split", { node_id: "a.md", node_ids: ["a.md"] });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("split-preview-dialog")).toBeTruthy();
+    });
+  });
+
+  it("delete event opens GraphDeleteDialog", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await act(async () => {
+      emitMockEvent("context-menu://graph/delete", { node_id: "a.md", node_ids: ["a.md"] });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("confirm-delete-dialog")).toBeTruthy();
+    });
+  });
+
+  it("export event calls onExportNetwork", async () => {
+    const onExportNetwork = vi.fn();
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView onExportNetwork={onExportNetwork} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await act(async () => {
+      emitMockEvent("context-menu://graph/export-network", { node_id: "a.md", node_ids: [] });
+    });
+
+    await waitFor(() => {
+      expect(onExportNetwork).toHaveBeenCalledWith("a.md");
+    });
+  });
+
+  it("no DOM context menu rendered after right-click", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    const { container } = render(<GraphView onExportNetwork={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+
+    await act(async () => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    expect(container.querySelector("[data-graph-context-menu]")).toBeNull();
+  });
+
+  it("merge event → dialog confirm → fires onMergeConfirm", async () => {
+    mockInvoke((cmd, args) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [
+              { id: "a.md", title: "A" },
+              { id: "b.md", title: "B" },
+            ],
+            edges: [["a.md", "b.md"]],
+            pagerank: { "a.md": 0.4, "b.md": 0.6 },
+            positions: {},
+          };
+        case "show_graph_context_menu":
+          return null;
+        case "read_page": {
+          const path = (args as { relativePath: string }).relativePath;
+          return { meta: { title: path === "a.md" ? "A" : "B", relative_path: path, frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "content", raw_yaml: "" };
+        }
+        case "preview_merge":
+          return { title: "Merged", body: "merged body", frontmatter: {}, source_titles: ["A", "B"] };
+        case "cancel_title_suggestion":
+          return undefined;
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const onMergeConfirm = vi.fn();
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView onExportNetwork={vi.fn()} onMergeConfirm={onMergeConfirm} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await act(async () => {
+      emitMockEvent("context-menu://graph/merge", { node_id: "a.md", node_ids: ["a.md", "b.md"] });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("merge-preview-dialog")).toBeTruthy();
+    });
+
+    const confirmBtn = screen.getByTestId("merge-confirm-btn");
+    await act(async () => {
+      fireEvent.click(confirmBtn);
+    });
+
+    expect(onMergeConfirm).toHaveBeenCalledWith(
+      expect.objectContaining({ body: "merged body" }),
+      expect.any(Array),
+      expect.any(Array),
+    );
+  });
+
+  it("split event → dialog confirm → fires onSplitConfirm", async () => {
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [
+              { id: "a.md", title: "A" },
+              { id: "b.md", title: "B" },
+            ],
+            edges: [["a.md", "b.md"]],
+            pagerank: { "a.md": 0.4, "b.md": 0.6 },
+            positions: {},
+          };
+        case "show_graph_context_menu":
+          return null;
+        case "read_page":
+          return { meta: { title: "A", relative_path: "a.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "## Heading\ncontent", raw_yaml: "" };
+        case "preview_split":
+          return { preamble: null, sections: [{ title: "Heading", body: "content", frontmatter: {} }] };
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const onSplitConfirm = vi.fn();
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView onExportNetwork={vi.fn()} onSplitConfirm={onSplitConfirm} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await act(async () => {
+      emitMockEvent("context-menu://graph/split", { node_id: "a.md", node_ids: ["a.md"] });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("split-preview-dialog")).toBeTruthy();
+    });
+
+    const confirmBtn = screen.getByTestId("split-confirm-btn");
+    await act(async () => {
+      fireEvent.click(confirmBtn);
+    });
+
+    expect(onSplitConfirm).toHaveBeenCalledWith("a.md", expect.objectContaining({ sections: expect.any(Array) }));
+  });
+
+  it("delete event → dialog cancel → dismisses", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await act(async () => {
+      emitMockEvent("context-menu://graph/delete", { node_id: "a.md", node_ids: ["a.md"] });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("confirm-delete-dialog")).toBeTruthy();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("confirm-delete-cancel"));
+    });
+
+    expect(screen.queryByTestId("confirm-delete-dialog")).toBeNull();
+  });
 
   it("right-click node shows context menu with 'Export Local Network…'", async () => {
     const GraphView = (await import("./GraphView")).default;
