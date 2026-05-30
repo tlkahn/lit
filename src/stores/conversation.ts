@@ -15,7 +15,7 @@ interface ConversationStore {
   error: string | null;
 
   loadConversations: (nodeId: string) => Promise<void>;
-  createConversation: (nodeId: string) => Promise<string>;
+  createConversation: (nodeId: string) => Promise<string | null>;
   selectConversation: (id: string) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
   reset: () => void;
@@ -42,17 +42,22 @@ export const useConversationStore = create<ConversationStore>((set) => ({
 
   createConversation: async (nodeId: string) => {
     const id = crypto.randomUUID();
-    const row = await conversationCreate(id, nodeId);
-    set((s) => ({
-      conversations: [...s.conversations, row],
-      activeConversationId: id,
-      messages: [],
-    }));
-    return id;
+    try {
+      const row = await conversationCreate(id, nodeId);
+      set((s) => ({
+        conversations: [...s.conversations, row],
+        activeConversationId: id,
+        messages: [],
+      }));
+      return id;
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : String(e) });
+      return null;
+    }
   },
 
   selectConversation: async (id: string) => {
-    set({ activeConversationId: id });
+    set({ activeConversationId: id, messages: [] });
     const msgs = await conversationMessages(id);
     set({ messages: msgs });
   },
