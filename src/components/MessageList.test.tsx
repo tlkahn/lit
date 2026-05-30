@@ -4,6 +4,7 @@ import { MessageList } from "./MessageList";
 import type { MessageRow } from "../lib/ipc";
 import { useLlmResponseStore } from "../stores/llmResponse";
 import { useEditorSelectionStore } from "../stores/editorSelection";
+import * as renderMarkdownModule from "../lib/renderMarkdown";
 
 function makeMessage(overrides: Partial<MessageRow> = {}): MessageRow {
   return {
@@ -276,6 +277,24 @@ describe("MessageList", () => {
     );
     const list = getByTestId("message-list");
     expect(list.className).toContain("h-full");
+  });
+
+  it("does not re-render when an unrelated llmResponseStore field changes", () => {
+    useLlmResponseStore.getState().startStream({ question: "test" });
+    useLlmResponseStore.getState().appendChunk("streaming text");
+    const spy = vi.spyOn(renderMarkdownModule, "renderMarkdown");
+    const { getByTestId } = render(
+      <MessageList messages={[]} onEdit={vi.fn()} onEditSubmit={vi.fn()} onRetry={vi.fn()} />,
+    );
+    expect(getByTestId("streaming-bubble")).toBeTruthy();
+    const countAfterMount = spy.mock.calls.length;
+
+    act(() => {
+      useLlmResponseStore.setState({ question: "changed question" });
+    });
+
+    expect(spy.mock.calls.length).toBe(countAfterMount);
+    spy.mockRestore();
   });
 
   it("resumes auto-scroll when user scrolls back to bottom", () => {
