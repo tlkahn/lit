@@ -44,7 +44,8 @@ export function ConversationPanel({ pageId }: ConversationPanelProps) {
   const handleSend = useCallback(async (content: string) => {
     const convId = useConversationStore.getState().activeConversationId;
     if (convId === null) {
-      await createConversation(pageId, content.slice(0, 50));
+      const newId = await createConversation(pageId, content.slice(0, 50));
+      if (newId === null) return;
     }
     await sendMessage({
       content,

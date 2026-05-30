@@ -6,7 +6,7 @@ export interface ConversationInputHandle {
 }
 
 interface ConversationInputProps {
-  onSend: (content: string) => void;
+  onSend: (content: string) => void | Promise<void>;
   onNewThread?: () => void;
   onStop?: () => void;
 }
@@ -29,11 +29,15 @@ export const ConversationInput = forwardRef<ConversationInputHandle, Conversatio
     el.style.height = el.scrollHeight + "px";
   }, [value]);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     const trimmed = value.trim();
     if (!trimmed) return;
-    onSend(trimmed);
-    setValue("");
+    try {
+      await onSend(trimmed);
+      setValue("");
+    } catch {
+      // preserve textarea content on failure
+    }
   };
 
   return (

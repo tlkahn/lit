@@ -92,6 +92,35 @@ describe("conversation store", () => {
     expect(s.error).toBeNull();
   });
 
+  it("loadConversations resets activeConversationId to null", async () => {
+    useConversationStore.setState({
+      activeConversationId: "stale-conv-from-page-a",
+      messages: [fakeMessage],
+      conversations: [fakeConversation],
+    });
+    const newRows: ConversationRow[] = [
+      { ...fakeConversation, id: "conv-page-b", node_id: "node-b" },
+    ];
+    mockedConversationList.mockResolvedValue(newRows);
+
+    await useConversationStore.getState().loadConversations("node-b");
+
+    expect(useConversationStore.getState().activeConversationId).toBeNull();
+  });
+
+  it("loadConversations clears messages", async () => {
+    useConversationStore.setState({
+      activeConversationId: "stale-conv",
+      messages: [fakeMessage, { ...fakeMessage, id: 2, seq: 2 }],
+      conversations: [fakeConversation],
+    });
+    mockedConversationList.mockResolvedValue([]);
+
+    await useConversationStore.getState().loadConversations("node-2");
+
+    expect(useConversationStore.getState().messages).toEqual([]);
+  });
+
   it("loadConversations sets error on IPC failure and preserves conversations", async () => {
     useConversationStore.setState({ conversations: [fakeConversation] });
     mockedConversationList.mockRejectedValue(new Error("db exploded"));

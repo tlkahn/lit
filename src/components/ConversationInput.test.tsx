@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, fireEvent } from "@testing-library/react";
+import { render, fireEvent, act } from "@testing-library/react";
 import { ConversationInput } from "./ConversationInput";
 import { useLlmResponseStore } from "../stores/llmResponse";
 
@@ -23,11 +23,13 @@ describe("ConversationInput", () => {
     expect(onSend).toHaveBeenCalledWith("hello world");
   });
 
-  it("clears textarea after send", () => {
+  it("clears textarea after send", async () => {
     const { getByTestId } = render(<ConversationInput onSend={vi.fn()} />);
     const textarea = getByTestId("conversation-input") as HTMLTextAreaElement;
     fireEvent.change(textarea, { target: { value: "hello" } });
-    fireEvent.click(getByTestId("conversation-send-btn"));
+    await act(async () => {
+      fireEvent.click(getByTestId("conversation-send-btn"));
+    });
     expect(textarea.value).toBe("");
   });
 
@@ -114,6 +116,39 @@ describe("ConversationInput", () => {
     );
     expect(getByTestId("conversation-send-btn")).toBeTruthy();
     expect(queryByTestId("conversation-stop-btn")).toBeNull();
+  });
+
+  // Bug 2B: Defer textarea clear until onSend resolves
+  it("does not clear textarea when onSend rejects", async () => {
+    const onSend = vi.fn().mockRejectedValue(new Error("creation failed"));
+    const { getByTestId } = render(<ConversationInput onSend={onSend} />);
+    const textarea = getByTestId("conversation-input") as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "my important message" } });
+    await act(async () => {
+      fireEvent.click(getByTestId("conversation-send-btn"));
+    });
+    expect(textarea.value).toBe("my important message");
+  });
+
+  it("clears textarea only after onSend resolves", async () => {
+    let resolveOnSend!: () => void;
+    const onSend = vi.fn().mockImplementation(() => new Promise<void>((r) => { resolveOnSend = r; }));
+    const { getByTestId } = render(<ConversationInput onSend={onSend} />);
+    const textarea = getByTestId("conversation-input") as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "pending message" } });
+
+    // Click send — onSend is now pending
+    await act(async () => {
+      fireEvent.click(getByTestId("conversation-send-btn"));
+    });
+    // Textarea should NOT be cleared yet (promise still pending)
+    expect(textarea.value).toBe("pending message");
+
+    // Now resolve onSend
+    await act(async () => {
+      resolveOnSend();
+    });
+    expect(textarea.value).toBe("");
   });
 
   it("calls onStop when Stop clicked", () => {
