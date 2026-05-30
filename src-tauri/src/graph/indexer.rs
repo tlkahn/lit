@@ -1042,16 +1042,12 @@ impl GraphIndex {
         title: Option<&str>,
     ) -> Result<ConversationRow, GraphError> {
         let store = self.store.lock().unwrap();
-        store.create_conversation(id, node_id, anchor_type, anchor_id, title)?;
-        store.get_conversation(id)?
-            .ok_or_else(|| GraphError::ConversationNotFound { id: id.to_string() })
+        store.create_conversation(id, node_id, anchor_type, anchor_id, title)
     }
 
     pub fn add_message(&self, conversation_id: &str, role: &str, content: &str) -> Result<MessageRow, GraphError> {
         let store = self.store.lock().unwrap();
-        let seq = store.next_message_seq(conversation_id)?;
-        let rowid = store.add_message(conversation_id, role, content, seq)?;
-        store.get_message_by_id(rowid)
+        store.add_message(conversation_id, role, content)
     }
 
     pub fn list_messages(&self, conversation_id: &str) -> Result<Vec<MessageRow>, GraphError> {
