@@ -41,7 +41,7 @@ pub fn restore_page(
     let indices = graph_state.indices.lock().unwrap();
     if let Some(gi) = indices.get(&root) {
         let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
-        let result = gi.reindex_file(&original_path, ann_enabled);
+        let result = gi.add_file(&original_path, ann_enabled);
         drop(indices);
         crate::commands::graph::emit_reindex_result(&app_handle, result);
     }

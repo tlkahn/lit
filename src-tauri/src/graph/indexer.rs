@@ -738,6 +738,11 @@ impl GraphIndex {
         self.batch_reindex(&DiffResult { new: vec![], changed: vec![relative_path.to_string()], deleted: vec![] }, annotations_enabled)
     }
 
+    /// For newly created or restored files. Uses `new` semantics so stub promotion runs.
+    pub fn add_file(&self, relative_path: &str, annotations_enabled: bool) -> Result<(), GraphError> {
+        self.batch_reindex(&DiffResult { new: vec![relative_path.to_string()], changed: vec![], deleted: vec![] }, annotations_enabled)
+    }
+
     pub fn remove_file(&self, relative_path: &str, annotations_enabled: bool) -> Result<(), GraphError> {
         self.batch_reindex(&DiffResult { new: vec![], changed: vec![], deleted: vec![relative_path.to_string()] }, annotations_enabled)
     }
@@ -2415,6 +2420,39 @@ mod tests {
         assert!(!b_real.is_stub);
         // Edge a.md -> b.md should exist
         assert!(sub.edges.iter().any(|e| e.0 == "a.md" && e.1 == "b.md"));
+    }
+
+    #[test]
+    fn create_page_scenario_promotes_stub() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Links to [[b]].");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        write_md(dir.path(), "b.md", "I exist now.");
+        gi.add_file("b.md", true).unwrap();
+
+        let sub = gi.full_subgraph();
+        assert!(!sub.nodes.iter().any(|n| n.id == "b"), "stub 'b' should be gone");
+        let b_real = sub.nodes.iter().find(|n| n.id == "b.md").unwrap();
+        assert!(!b_real.is_stub);
+        assert!(sub.edges.iter().any(|e| e.0 == "a.md" && e.1 == "b.md"));
+    }
+
+    #[test]
+    fn reindex_file_does_not_promote_stub_documents_limitation() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Links to [[b]].");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        write_md(dir.path(), "b.md", "I exist now.");
+        gi.reindex_file("b.md", true).unwrap();
+
+        // reindex_file uses `changed` semantics — stub promotion is skipped,
+        // so the edge a.md -> b.md is NOT resolved (still points at stub "b",
+        // which without_stubs filters out).
+        let sub = gi.full_subgraph();
+        assert!(sub.nodes.iter().any(|n| n.id == "b.md"), "b.md exists as real node");
+        assert!(!sub.edges.iter().any(|e| e.0 == "a.md" && e.1 == "b.md"), "edge not resolved because stub persists");
     }
 
     #[test]
