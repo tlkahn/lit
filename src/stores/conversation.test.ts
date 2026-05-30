@@ -794,6 +794,177 @@ describe("conversation store", () => {
     expect(useConversationStore.getState().messages).toEqual([persistedUserMsg]);
   });
 
+  // --- Group H: _streamAndPersist error recovery ---
+
+  it("sendMessage unlocks and sets error when startLlmStream rejects", async () => {
+    useConversationStore.setState({ activeConversationId: FAKE_UUID });
+    const persistedMsg: MessageRow = {
+      id: 10, conversation_id: FAKE_UUID, role: "user",
+      content: "hello", seq: 1, created_at: "2025-01-01T00:00:01Z",
+    };
+    mockedConversationAddMessage.mockResolvedValue(persistedMsg);
+    mockedStartLlmStream.mockRejectedValue(new Error("ipc exploded"));
+
+    await useConversationStore.getState().sendMessage({
+      content: "hello",
+      model: "test-model",
+    });
+
+    expect(useModalLockStore.getState().llmLocked).toBe(false);
+    expect(useLlmResponseStore.getState().status).toBe("error");
+    expect(useLlmResponseStore.getState().errorMessage).toBe("ipc exploded");
+    expect(useConversationStore.getState().error).toBe("ipc exploded");
+  });
+
+  it("retryLastMessage unlocks and sets error when startLlmStream rejects", async () => {
+    const userMsg: MessageRow = {
+      id: 1, conversation_id: FAKE_UUID, role: "user",
+      content: "hello", seq: 1, created_at: "2025-01-01T00:00:00Z",
+    };
+    const assistantMsg: MessageRow = {
+      id: 2, conversation_id: FAKE_UUID, role: "assistant",
+      content: "hi", seq: 2, created_at: "2025-01-01T00:00:01Z",
+    };
+    useConversationStore.setState({
+      activeConversationId: FAKE_UUID,
+      messages: [userMsg, assistantMsg],
+    });
+    mockedConversationDeleteMessagesAfter.mockResolvedValue(undefined);
+    mockedStartLlmStream.mockRejectedValue(new Error("ipc exploded"));
+
+    await useConversationStore.getState().retryLastMessage({ model: "m" });
+
+    expect(useModalLockStore.getState().llmLocked).toBe(false);
+    expect(useLlmResponseStore.getState().status).toBe("error");
+    expect(useLlmResponseStore.getState().errorMessage).toBe("ipc exploded");
+    expect(useConversationStore.getState().error).toBe("ipc exploded");
+    // Messages stay truncated (delete already happened)
+    expect(useConversationStore.getState().messages).toEqual([userMsg]);
+  });
+
+  it("editMessage unlocks and sets error when startLlmStream rejects", async () => {
+    const userMsg: MessageRow = {
+      id: 1, conversation_id: FAKE_UUID, role: "user",
+      content: "hello", seq: 1, created_at: "2025-01-01T00:00:00Z",
+    };
+    const assistantMsg: MessageRow = {
+      id: 2, conversation_id: FAKE_UUID, role: "assistant",
+      content: "hi", seq: 2, created_at: "2025-01-01T00:00:01Z",
+    };
+    useConversationStore.setState({
+      activeConversationId: FAKE_UUID,
+      messages: [userMsg, assistantMsg],
+    });
+    mockedConversationDeleteMessagesAfter.mockResolvedValue(undefined);
+
+    const editedUserMsg: MessageRow = {
+      id: 3, conversation_id: FAKE_UUID, role: "user",
+      content: "new content", seq: 1, created_at: "2025-01-01T00:00:02Z",
+    };
+    mockedConversationAddMessage.mockResolvedValue(editedUserMsg);
+    mockedStartLlmStream.mockRejectedValue(new Error("ipc exploded"));
+
+    await useConversationStore.getState().editMessage(1, "new content", { model: "m" });
+
+    expect(useModalLockStore.getState().llmLocked).toBe(false);
+    expect(useLlmResponseStore.getState().status).toBe("error");
+    expect(useLlmResponseStore.getState().errorMessage).toBe("ipc exploded");
+    expect(useConversationStore.getState().error).toBe("ipc exploded");
+    // Edited user message is still in store
+    expect(useConversationStore.getState().messages).toEqual([editedUserMsg]);
+  });
+
+  // --- Group I: editMessage addMessage error handling ---
+
+  it("editMessage sets error and skips stream when addMessage fails after delete", async () => {
+    const userMsg: MessageRow = {
+      id: 1, conversation_id: FAKE_UUID, role: "user",
+      content: "hello", seq: 1, created_at: "2025-01-01T00:00:00Z",
+    };
+    const assistantMsg: MessageRow = {
+      id: 2, conversation_id: FAKE_UUID, role: "assistant",
+      content: "hi", seq: 2, created_at: "2025-01-01T00:00:01Z",
+    };
+    useConversationStore.setState({
+      activeConversationId: FAKE_UUID,
+      messages: [userMsg, assistantMsg],
+    });
+    mockedConversationDeleteMessagesAfter.mockResolvedValue(undefined);
+    mockedConversationAddMessage.mockRejectedValue(new Error("disk full"));
+
+    await useConversationStore.getState().editMessage(1, "new content", { model: "m" });
+
+    expect(useConversationStore.getState().error).toBe("disk full");
+    expect(mockedStartLlmStream).not.toHaveBeenCalled();
+    expect(useModalLockStore.getState().llmLocked).toBe(false);
+    expect(useLlmResponseStore.getState().status).toBe("idle");
+    // Messages are the post-delete set (truncated but no new user msg)
+    expect(useConversationStore.getState().messages).toEqual([]);
+  });
+
+  it("onDone after cancel does not persist assistant message", async () => {
+    useConversationStore.setState({ activeConversationId: FAKE_UUID });
+    const persistedUserMsg: MessageRow = {
+      id: 10,
+      conversation_id: FAKE_UUID,
+      role: "user",
+      content: "hello",
+      seq: 1,
+      created_at: "2025-01-01T00:00:01Z",
+    };
+    mockedConversationAddMessage.mockResolvedValue(persistedUserMsg);
+
+    let capturedCallbacks: LlmStreamCallbacks | null = null;
+    mockedStartLlmStream.mockImplementation(async (_args: unknown, cbs: LlmStreamCallbacks) => {
+      capturedCallbacks = cbs;
+    });
+    mockedCancelLlmStream.mockResolvedValue(undefined);
+
+    await useConversationStore.getState().sendMessage({
+      content: "hello",
+      model: "test-model",
+    });
+
+    // Cancel the stream
+    await useConversationStore.getState().cancelConversationStream();
+
+    // Simulate the backend emitting onDone after cancel (race condition)
+    useLlmResponseStore.setState({ responseText: "partial\n\n**[Stopped]**" });
+    await capturedCallbacks!.onDone();
+
+    // Assert no assistant message was persisted (only the user message)
+    expect(mockedConversationAddMessage).toHaveBeenCalledTimes(1);
+    expect(useConversationStore.getState().messages).toEqual([persistedUserMsg]);
+  });
+
+  it("selectConversation sets error when IPC fails", async () => {
+    mockedConversationMessages.mockRejectedValue(new Error("db read failed"));
+
+    await useConversationStore.getState().selectConversation(FAKE_UUID);
+
+    const s = useConversationStore.getState();
+    expect(s.error).toBe("db read failed");
+    expect(s.messages).toEqual([]);
+    expect(s.activeConversationId).toBe(FAKE_UUID);
+  });
+
+  it("deleteConversation sets error and preserves state when IPC fails", async () => {
+    useConversationStore.setState({
+      conversations: [fakeConversation],
+      activeConversationId: FAKE_UUID,
+      messages: [fakeMessage],
+    });
+    mockedConversationDelete.mockRejectedValue(new Error("db locked"));
+
+    await useConversationStore.getState().deleteConversation(FAKE_UUID);
+
+    const s = useConversationStore.getState();
+    expect(s.error).toBe("db locked");
+    expect(s.conversations).toEqual([fakeConversation]);
+    expect(s.activeConversationId).toBe(FAKE_UUID);
+    expect(s.messages).toEqual([fakeMessage]);
+  });
+
   it("editMessage on middle message preserves earlier history", async () => {
     const u1: MessageRow = { id: 1, conversation_id: FAKE_UUID, role: "user", content: "q1", seq: 1, created_at: "2025-01-01T00:00:00Z" };
     const a2: MessageRow = { id: 2, conversation_id: FAKE_UUID, role: "assistant", content: "a1", seq: 2, created_at: "2025-01-01T00:00:01Z" };

@@ -47,11 +47,15 @@ const initialState = {
 };
 
 export const useConversationStore = create<ConversationStore>((set, get) => {
+  let _streamCancelled = false;
+
   const _streamAndPersist = async (
     convId: string,
     content: string,
     streamArgs: StreamArgs,
   ) => {
+    _streamCancelled = false;
+
     const messages = get().messages.map((m) => ({
       role: m.role,
       content: m.content,
@@ -60,39 +64,48 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
     useLlmResponseStore.getState().startStream({ question: content });
     useModalLockStore.getState().setLlmLocked(true);
 
-    await startLlmStream(
-      {
-        model: streamArgs.model,
-        text: content,
-        system: streamArgs.system,
-        messages,
-      },
-      {
-        onChunk: (text: string) => {
-          useLlmResponseStore.getState().appendChunk(text);
+    try {
+      await startLlmStream(
+        {
+          model: streamArgs.model,
+          text: content,
+          system: streamArgs.system,
+          messages,
         },
-        onDone: async () => {
-          const responseText = useLlmResponseStore.getState().responseText;
-          try {
-            const assistantMsg = await conversationAddMessage(
-              convId,
-              "assistant",
-              responseText,
-            );
-            set((s) => ({ messages: [...s.messages, assistantMsg] }));
-          } catch (e) {
-            set({ error: e instanceof Error ? e.message : String(e) });
-          } finally {
-            useLlmResponseStore.getState().finishStream();
+        {
+          onChunk: (text: string) => {
+            useLlmResponseStore.getState().appendChunk(text);
+          },
+          onDone: async () => {
+            if (_streamCancelled) return;
+            const responseText = useLlmResponseStore.getState().responseText;
+            try {
+              const assistantMsg = await conversationAddMessage(
+                convId,
+                "assistant",
+                responseText,
+              );
+              set((s) => ({ messages: [...s.messages, assistantMsg] }));
+            } catch (e) {
+              set({ error: e instanceof Error ? e.message : String(e) });
+            } finally {
+              useLlmResponseStore.getState().finishStream();
+              useModalLockStore.getState().setLlmLocked(false);
+            }
+          },
+          onError: (error: { message: string; retryable: boolean }) => {
+            useLlmResponseStore.getState().setError(error.message);
             useModalLockStore.getState().setLlmLocked(false);
-          }
+          },
         },
-        onError: (error: { message: string; retryable: boolean }) => {
-          useLlmResponseStore.getState().setError(error.message);
-          useModalLockStore.getState().setLlmLocked(false);
-        },
-      },
-    );
+      );
+    } catch (e) {
+      useLlmResponseStore.getState().setError(
+        e instanceof Error ? e.message : String(e),
+      );
+      useModalLockStore.getState().setLlmLocked(false);
+      set({ error: e instanceof Error ? e.message : String(e) });
+    }
   };
 
   return {
@@ -125,12 +138,21 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
 
   selectConversation: async (id: string) => {
     set({ activeConversationId: id, messages: [] });
-    const msgs = await conversationMessages(id);
-    set({ messages: msgs });
+    try {
+      const msgs = await conversationMessages(id);
+      set({ messages: msgs });
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : String(e) });
+    }
   },
 
   deleteConversation: async (id: string) => {
-    await conversationDelete(id);
+    try {
+      await conversationDelete(id);
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : String(e) });
+      return;
+    }
     set((s) => {
       const isActive = s.activeConversationId === id;
       return {
@@ -190,13 +212,20 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
     await conversationDeleteMessagesAfter(convId, seq - 1);
     set((s) => ({ messages: s.messages.filter((m) => m.seq < seq) }));
 
-    const userMsg = await conversationAddMessage(convId, "user", newContent);
+    let userMsg: Awaited<ReturnType<typeof conversationAddMessage>>;
+    try {
+      userMsg = await conversationAddMessage(convId, "user", newContent);
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : String(e) });
+      return;
+    }
     set((s) => ({ messages: [...s.messages, userMsg] }));
 
     await _streamAndPersist(convId, newContent, args);
   },
 
   cancelConversationStream: async () => {
+    _streamCancelled = true;
     useLlmResponseStore.getState().stopStream();
     useModalLockStore.getState().setLlmLocked(false);
     await cancelLlmStream();
