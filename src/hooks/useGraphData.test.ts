@@ -211,6 +211,25 @@ describe("useGraphData", () => {
       expect(graph.hasNode("x.md")).toBe(true);
       expect(graph.hasNode("y.md")).toBe(true);
     });
+
+    it("propagates non-node-not-found errors instead of swallowing them", async () => {
+      mockInvoke((cmd: string) => {
+        if (cmd === "get_graph_subgraph") throw new Error("connection lost");
+        return {};
+      });
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "local", depth: 2, activePageId: "a.md" }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      expect(result.current.error).toBe("connection lost");
+      expect(result.current.graphRef.current!.order).toBe(0);
+    });
   });
 
   // Cycle 4: Theme color resolution + dimColorRef
