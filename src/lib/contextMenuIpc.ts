@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef } from "react";
+import { readPage, previewSplit } from "./ipc";
+import type { PageContent, SplitPlan } from "./ipc";
 
 export async function showTrashContextMenu(trashName: string): Promise<void> {
   return invoke<void>("show_trash_context_menu", { trashName });
@@ -126,6 +128,84 @@ export function useTrashContextMenu(handlers: TrashContextMenuHandlers) {
     unlisteners.push(
       listen<TrashContextPayload>("context-menu://trash/purge", (event) => {
         if (!cancelled) handlersRef.current.onPurge(event.payload.trash_name);
+      }),
+    );
+
+    return () => {
+      cancelled = true;
+      for (const p of unlisteners) p.then((u) => u());
+    };
+  }, []);
+}
+
+interface GraphContextMenuArgs {
+  nodeId: string;
+  nodeIds: string[];
+  selectionCount: number;
+  hasHeadings: boolean;
+  hasExport: boolean;
+}
+
+export async function showGraphContextMenu(args: GraphContextMenuArgs): Promise<void> {
+  return invoke<void>("show_graph_context_menu", { ...args });
+}
+
+interface GraphContextPayload {
+  node_id: string;
+  node_ids: string[];
+}
+
+interface GraphContextMenuHandlers {
+  onMergeRequest: (docs: PageContent[]) => void;
+  onSplitRequest: (plan: SplitPlan, nodeId: string) => void;
+  onDeleteRequest: (nodeIds: string[], labels: string[]) => void;
+  onExportNetwork: (nodeId: string) => void;
+  getNodeLabel: (nodeId: string) => string;
+}
+
+export function useGraphContextMenu(handlers: GraphContextMenuHandlers) {
+  const handlersRef = useRef(handlers);
+  handlersRef.current = handlers;
+
+  useEffect(() => {
+    let cancelled = false;
+    const unlisteners: Array<Promise<() => void>> = [];
+
+    unlisteners.push(
+      listen<GraphContextPayload>("context-menu://graph/merge", (event) => {
+        if (cancelled) return;
+        const { node_ids } = event.payload;
+        Promise.all(node_ids.map((id) => readPage(id))).then((docs) => {
+          if (!cancelled) handlersRef.current.onMergeRequest(docs);
+        });
+      }),
+    );
+
+    unlisteners.push(
+      listen<GraphContextPayload>("context-menu://graph/split", (event) => {
+        if (cancelled) return;
+        const { node_id } = event.payload;
+        readPage(node_id).then((page) => {
+          if (cancelled) return;
+          return previewSplit(page.body, page.meta.title, page.meta.frontmatter).then((plan) => {
+            if (!cancelled) handlersRef.current.onSplitRequest(plan, node_id);
+          });
+        });
+      }),
+    );
+
+    unlisteners.push(
+      listen<GraphContextPayload>("context-menu://graph/delete", (event) => {
+        if (cancelled) return;
+        const { node_ids } = event.payload;
+        const labels = node_ids.map((id) => handlersRef.current.getNodeLabel(id));
+        handlersRef.current.onDeleteRequest(node_ids, labels);
+      }),
+    );
+
+    unlisteners.push(
+      listen<GraphContextPayload>("context-menu://graph/export-network", (event) => {
+        if (!cancelled) handlersRef.current.onExportNetwork(event.payload.node_id);
       }),
     );
 

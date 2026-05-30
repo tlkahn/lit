@@ -163,6 +163,158 @@ describe("showSidebarContextMenu", () => {
   });
 });
 
+describe("showGraphContextMenu", () => {
+  it("calls invoke with correct command and args", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "show_graph_context_menu") return null;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    const { showGraphContextMenu } = await import("./contextMenuIpc");
+    await showGraphContextMenu({
+      nodeId: "node-1",
+      nodeIds: ["node-1", "node-2"],
+      selectionCount: 2,
+      hasHeadings: false,
+      hasExport: true,
+    });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("show_graph_context_menu", {
+      nodeId: "node-1",
+      nodeIds: ["node-1", "node-2"],
+      selectionCount: 2,
+      hasHeadings: false,
+      hasExport: true,
+    });
+  });
+});
+
+describe("useGraphContextMenu", () => {
+  beforeEach(() => {
+    resetListenMock();
+    mockListen();
+  });
+
+  it("fires onMergeRequest with docs after reading pages for all node_ids", async () => {
+    const page1 = { meta: { title: "A" }, body: "body-a", raw_yaml: "" };
+    const page2 = { meta: { title: "B" }, body: "body-b", raw_yaml: "" };
+    mockInvoke((cmd, args) => {
+      if (cmd === "read_page") {
+        const rel = (args as Record<string, unknown>).relativePath as string;
+        if (rel === "n1") return page1;
+        if (rel === "n2") return page2;
+      }
+      return null;
+    });
+
+    const { useGraphContextMenu } = await import("./contextMenuIpc");
+    const handlers = {
+      onMergeRequest: vi.fn(),
+      onSplitRequest: vi.fn(),
+      onDeleteRequest: vi.fn(),
+      onExportNetwork: vi.fn(),
+      getNodeLabel: vi.fn((id: string) => id),
+    };
+
+    const { renderHook, waitFor } = await import("@testing-library/react");
+    renderHook(() => useGraphContextMenu(handlers));
+
+    emitMockEvent("context-menu://graph/merge", { node_id: "n1", node_ids: ["n1", "n2"] });
+
+    await waitFor(() => {
+      expect(handlers.onMergeRequest).toHaveBeenCalledWith([page1, page2]);
+    });
+  });
+
+  it("fires onSplitRequest with plan and nodeId after readPage and previewSplit", async () => {
+    const page = {
+      meta: { title: "Doc", frontmatter: { tag: "x" } },
+      body: "## Heading\ncontent",
+      raw_yaml: "",
+    };
+    const plan = { preamble: null, sections: [{ title: "Heading", body: "content" }] };
+    mockInvoke((cmd) => {
+      if (cmd === "read_page") return page;
+      if (cmd === "preview_split") return plan;
+      return null;
+    });
+
+    const { useGraphContextMenu } = await import("./contextMenuIpc");
+    const handlers = {
+      onMergeRequest: vi.fn(),
+      onSplitRequest: vi.fn(),
+      onDeleteRequest: vi.fn(),
+      onExportNetwork: vi.fn(),
+      getNodeLabel: vi.fn((id: string) => id),
+    };
+
+    const { renderHook, waitFor } = await import("@testing-library/react");
+    renderHook(() => useGraphContextMenu(handlers));
+
+    emitMockEvent("context-menu://graph/split", { node_id: "node-42", node_ids: [] });
+
+    await waitFor(() => {
+      expect(handlers.onSplitRequest).toHaveBeenCalledWith(plan, "node-42");
+    });
+  });
+
+  it("fires onDeleteRequest with nodeIds and labels", async () => {
+    const { useGraphContextMenu } = await import("./contextMenuIpc");
+    const handlers = {
+      onMergeRequest: vi.fn(),
+      onSplitRequest: vi.fn(),
+      onDeleteRequest: vi.fn(),
+      onExportNetwork: vi.fn(),
+      getNodeLabel: vi.fn((id: string) => (id === "n1" ? "Alpha" : "Beta")),
+    };
+
+    const { renderHook } = await import("@testing-library/react");
+    renderHook(() => useGraphContextMenu(handlers));
+
+    emitMockEvent("context-menu://graph/delete", { node_id: "n1", node_ids: ["n1", "n2"] });
+
+    expect(handlers.onDeleteRequest).toHaveBeenCalledWith(["n1", "n2"], ["Alpha", "Beta"]);
+    expect(handlers.getNodeLabel).toHaveBeenCalledWith("n1");
+    expect(handlers.getNodeLabel).toHaveBeenCalledWith("n2");
+  });
+
+  it("fires onExportNetwork with nodeId on export event", async () => {
+    const { useGraphContextMenu } = await import("./contextMenuIpc");
+    const handlers = {
+      onMergeRequest: vi.fn(),
+      onSplitRequest: vi.fn(),
+      onDeleteRequest: vi.fn(),
+      onExportNetwork: vi.fn(),
+      getNodeLabel: vi.fn((id: string) => id),
+    };
+
+    const { renderHook } = await import("@testing-library/react");
+    renderHook(() => useGraphContextMenu(handlers));
+
+    emitMockEvent("context-menu://graph/export-network", { node_id: "node-99", node_ids: [] });
+
+    expect(handlers.onExportNetwork).toHaveBeenCalledWith("node-99");
+  });
+
+  it("cleans up listeners on unmount", async () => {
+    const { useGraphContextMenu } = await import("./contextMenuIpc");
+    const handlers = {
+      onMergeRequest: vi.fn(),
+      onSplitRequest: vi.fn(),
+      onDeleteRequest: vi.fn(),
+      onExportNetwork: vi.fn(),
+      getNodeLabel: vi.fn((id: string) => id),
+    };
+
+    const { renderHook } = await import("@testing-library/react");
+    const { unmount } = renderHook(() => useGraphContextMenu(handlers));
+
+    unmount();
+
+    emitMockEvent("context-menu://graph/delete", { node_id: "n1", node_ids: ["n1"] });
+    expect(handlers.onDeleteRequest).not.toHaveBeenCalled();
+  });
+});
+
 describe("useSidebarContextMenu", () => {
   beforeEach(() => {
     resetListenMock();
