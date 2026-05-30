@@ -80,6 +80,8 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
               responseText,
             );
             set((s) => ({ messages: [...s.messages, assistantMsg] }));
+          } catch (e) {
+            set({ error: e instanceof Error ? e.message : String(e) });
           } finally {
             useLlmResponseStore.getState().finishStream();
             useModalLockStore.getState().setLlmLocked(false);

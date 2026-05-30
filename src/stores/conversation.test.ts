@@ -738,6 +738,62 @@ describe("conversation store", () => {
     expect(useConversationStore.getState().messages).toEqual([editedUserMsg, persistedAssistant]);
   });
 
+  // --- Group G: Edge cases ---
+
+  it("reset clears all state back to initial values", () => {
+    useConversationStore.setState({
+      activeConversationId: FAKE_UUID,
+      messages: [fakeMessage],
+      conversations: [fakeConversation],
+      error: "some error",
+    });
+
+    useConversationStore.getState().reset();
+
+    const s = useConversationStore.getState();
+    expect(s.activeConversationId).toBeNull();
+    expect(s.messages).toEqual([]);
+    expect(s.conversations).toEqual([]);
+    expect(s.error).toBeNull();
+  });
+
+  it("onDone sets error on conversation store when assistant persist fails", async () => {
+    useConversationStore.setState({ activeConversationId: FAKE_UUID });
+    const persistedUserMsg: MessageRow = {
+      id: 10,
+      conversation_id: FAKE_UUID,
+      role: "user",
+      content: "hello",
+      seq: 1,
+      created_at: "2025-01-01T00:00:01Z",
+    };
+
+    let addMessageCallCount = 0;
+    mockedConversationAddMessage.mockImplementation(async () => {
+      addMessageCallCount++;
+      if (addMessageCallCount === 1) return persistedUserMsg;
+      throw new Error("persist failed");
+    });
+
+    let capturedCallbacks: LlmStreamCallbacks | null = null;
+    mockedStartLlmStream.mockImplementation(async (_args: unknown, cbs: LlmStreamCallbacks) => {
+      capturedCallbacks = cbs;
+    });
+
+    await useConversationStore.getState().sendMessage({
+      content: "hello",
+      model: "test-model",
+    });
+
+    useLlmResponseStore.setState({ responseText: "the response" });
+    await capturedCallbacks!.onDone();
+
+    expect(useLlmResponseStore.getState().status).toBe("done");
+    expect(useModalLockStore.getState().llmLocked).toBe(false);
+    expect(useConversationStore.getState().error).toBe("persist failed");
+    expect(useConversationStore.getState().messages).toEqual([persistedUserMsg]);
+  });
+
   it("editMessage on middle message preserves earlier history", async () => {
     const u1: MessageRow = { id: 1, conversation_id: FAKE_UUID, role: "user", content: "q1", seq: 1, created_at: "2025-01-01T00:00:00Z" };
     const a2: MessageRow = { id: 2, conversation_id: FAKE_UUID, role: "assistant", content: "a1", seq: 2, created_at: "2025-01-01T00:00:01Z" };
