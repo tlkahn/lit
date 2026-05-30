@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback } from "react";
 import type { PageContent, MergePlan, SplitPlan } from "../lib/ipc";
+import { readPage } from "../lib/ipc";
+import { showGraphContextMenu, useGraphContextMenu } from "../lib/contextMenuIpc";
 import { useGraphSelectionStore } from "../stores/graphSelection";
 import { useGraphViewState } from "../stores/graphViewState";
 import { usePreferencesStore } from "../stores/preferences";
@@ -9,7 +11,6 @@ import { MergePreviewDialog } from "./MergePreviewDialog";
 import { SplitPreviewDialog } from "./SplitPreviewDialog";
 import { useGraphLasso } from "../hooks/useGraphLasso";
 import { GraphDeleteDialog } from "./GraphDeleteDialog";
-import { GraphContextMenu } from "./GraphContextMenu";
 import { useGraphTheme } from "../hooks/useGraphTheme";
 import { useGraphSearch } from "../hooks/useGraphSearch";
 import { useGraphData } from "../hooks/useGraphData";
@@ -47,9 +48,6 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
   const selectionCount = useGraphSelectionStore((s) => s.selectedNodes.length);
   const llmEnabled = usePreferencesStore((s) => s.llmOpenaiApiKeySet || s.llmAnthropicApiKeySet);
 
-  const [contextMenu, setContextMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null);
-  const contextMenuOpenRef = useRef(false);
-  useEffect(() => { contextMenuOpenRef.current = contextMenu !== null; }, [contextMenu]);
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
   const [mergeDialogDocs, setMergeDialogDocs] = useState<PageContent[]>([]);
   const [splitDialogOpen, setSplitDialogOpen] = useState(false);
@@ -63,7 +61,19 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
 
   const { sigmaRef, hoveredNodeRef, selectedSetRef, defaultNodeReducer, tierSettingsRef, resetZoom } = useGraphRenderer({
     containerRef, graphRef, tierSettings, dimColorRef, dataVersion,
-    onNavigate, onContextMenu: (menu) => setContextMenu(menu),
+    onNavigate, onContextMenu: async (menu) => {
+      const page = await readPage(menu.nodeId);
+      const hasHeadings = /^#{2,}\s/m.test(page.body);
+      const { selectedNodes } = useGraphSelectionStore.getState();
+      const nodeIds = selectedNodes.length >= 1 ? [...selectedNodes] : [menu.nodeId];
+      await showGraphContextMenu({
+        nodeId: menu.nodeId,
+        nodeIds,
+        selectionCount: selectedNodes.length,
+        hasHeadings,
+        hasExport: !!onExportNetworkRef.current,
+      });
+    },
   });
 
   const graphLikeRef = graphRef as React.RefObject<GraphLike | null>;
@@ -79,12 +89,43 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
     tierSettingsRef, defaultNodeReducer, onNavigateRef, selectedSetRef, dimColorRef,
   );
 
+  useGraphContextMenu({
+    onMergeRequest: (docs) => {
+      if (onMergeConfirmRef.current) {
+        setMergeDialogDocs(docs);
+        setMergeDialogOpen(true);
+      } else {
+        window.dispatchEvent(new CustomEvent("lit:open-merge-preview", { detail: { docs } }));
+      }
+    },
+    onSplitRequest: (plan, nodeId) => {
+      if (onSplitConfirmRef.current) {
+        setSplitDialogPlan(plan);
+        setSplitDialogPath(nodeId);
+        setSplitDialogOpen(true);
+      } else {
+        window.dispatchEvent(new CustomEvent("lit:open-split-preview", { detail: { plan, originalPath: nodeId } }));
+      }
+    },
+    onDeleteRequest: (nodeIds, labels) => {
+      setDeleteConfirm({ nodeIds, labels });
+    },
+    onExportNetwork: (nodeId) => {
+      onExportNetworkRef.current?.(nodeId);
+    },
+    getNodeLabel: (nodeId) => {
+      try {
+        return (graphRef.current?.getNodeAttribute(nodeId, "label") as string) || nodeId;
+      } catch { return nodeId; }
+    },
+  });
+
   const handleContainerKeyDown = useCallback((e: React.KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "f") {
       e.preventDefault();
       setSearchOpen(true);
     } else if (e.key === "Escape") {
-      if (searchOpenRef.current || contextMenuOpenRef.current) return;
+      if (searchOpenRef.current) return;
       const { selectedNodes, clearSelection } = useGraphSelectionStore.getState();
       if (selectedNodes.length > 0) {
         clearSelection();
@@ -158,32 +199,6 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
           }}
         />
       )}
-      <GraphContextMenu
-        contextMenu={contextMenu}
-        onClose={() => setContextMenu(null)}
-        selectionCount={selectionCount}
-        llmEnabled={llmEnabled}
-        graphRef={graphRef as React.RefObject<{ getNodeAttribute: (node: string, attr: string) => unknown } | null>}
-        onDeleteRequest={(nodeIds, labels) => setDeleteConfirm({ nodeIds, labels })}
-        onMergeRequest={(docs) => {
-          if (onMergeConfirm) {
-            setMergeDialogDocs(docs);
-            setMergeDialogOpen(true);
-          } else {
-            window.dispatchEvent(new CustomEvent("lit:open-merge-preview", { detail: { docs } }));
-          }
-        }}
-        onSplitRequest={(plan, path) => {
-          if (onSplitConfirm) {
-            setSplitDialogPlan(plan);
-            setSplitDialogPath(path);
-            setSplitDialogOpen(true);
-          } else {
-            window.dispatchEvent(new CustomEvent("lit:open-split-preview", { detail: { plan, originalPath: path } }));
-          }
-        }}
-        onExportNetwork={onExportNetwork ? (nodeId) => { onExportNetworkRef.current?.(nodeId); } : undefined}
-      />
       {mergeDialogOpen && (
         <MergePreviewDialog
           open={mergeDialogOpen}
