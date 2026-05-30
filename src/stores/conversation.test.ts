@@ -9,6 +9,7 @@ vi.mock("../lib/ipc", () => ({
   conversationGet: vi.fn(),
   conversationAddMessage: vi.fn(),
   conversationDeleteMessagesAfter: vi.fn(),
+  llmBuildContext: vi.fn(),
 }));
 
 vi.mock("../lib/llmClient", () => ({
@@ -23,6 +24,7 @@ import {
   conversationMessages,
   conversationAddMessage,
   conversationDeleteMessagesAfter,
+  llmBuildContext,
 } from "../lib/ipc";
 import type { ConversationRow, MessageRow } from "../lib/ipc";
 
@@ -39,6 +41,7 @@ const mockedConversationMessages = conversationMessages as ReturnType<typeof vi.
 const mockedConversationAddMessage = conversationAddMessage as ReturnType<typeof vi.fn>;
 const mockedStartLlmStream = startLlmStream as ReturnType<typeof vi.fn>;
 const mockedConversationDeleteMessagesAfter = conversationDeleteMessagesAfter as ReturnType<typeof vi.fn>;
+const mockedLlmBuildContext = llmBuildContext as ReturnType<typeof vi.fn>;
 
 const FAKE_UUID = "00000000-0000-0000-0000-000000000001";
 
@@ -1227,5 +1230,129 @@ describe("conversation store", () => {
       },
       expect.any(Object),
     );
+  });
+
+  // --- Group K: llmBuildContext integration ---
+
+  it("sendMessage calls llmBuildContext with correct args when nodeId and neighborsDepth are provided", async () => {
+    useConversationStore.setState({ activeConversationId: FAKE_UUID });
+    const persistedMsg: MessageRow = {
+      id: 10, conversation_id: FAKE_UUID, role: "user",
+      content: "hello", seq: 1, created_at: "2025-01-01T00:00:01Z",
+    };
+    mockedConversationAddMessage.mockResolvedValue(persistedMsg);
+    mockedLlmBuildContext.mockResolvedValue({
+      system: "built system",
+      messages: [{ role: "user", content: "hello" }],
+      truncation: null,
+    });
+    mockedStartLlmStream.mockResolvedValue(undefined);
+
+    await useConversationStore.getState().sendMessage({
+      content: "hello",
+      model: "test-model",
+      system: "raw system",
+      nodeId: "page-42",
+      neighborsDepth: 2,
+    });
+
+    expect(mockedLlmBuildContext).toHaveBeenCalledWith({
+      nodeId: "page-42",
+      systemPrompt: "raw system",
+      neighborsDepth: 2,
+      model: "test-model",
+      messages: [{ role: "user", content: "hello" }],
+    });
+  });
+
+  it("sendMessage passes built context to startLlmStream when llmBuildContext succeeds", async () => {
+    useConversationStore.setState({ activeConversationId: FAKE_UUID });
+    const persistedMsg: MessageRow = {
+      id: 10, conversation_id: FAKE_UUID, role: "user",
+      content: "hello", seq: 1, created_at: "2025-01-01T00:00:01Z",
+    };
+    mockedConversationAddMessage.mockResolvedValue(persistedMsg);
+    mockedLlmBuildContext.mockResolvedValue({
+      system: "enriched system with doc context",
+      messages: [{ role: "user", content: "trimmed hello" }],
+      truncation: { original_tokens: 100, kept_tokens: 80 },
+    });
+    mockedStartLlmStream.mockResolvedValue(undefined);
+
+    await useConversationStore.getState().sendMessage({
+      content: "hello",
+      model: "test-model",
+      system: "raw system",
+      nodeId: "page-42",
+      neighborsDepth: 2,
+    });
+
+    expect(mockedStartLlmStream).toHaveBeenCalledWith(
+      {
+        model: "test-model",
+        text: "hello",
+        system: "enriched system with doc context",
+        messages: [{ role: "user", content: "trimmed hello" }],
+      },
+      expect.any(Object),
+    );
+  });
+
+  it("sendMessage falls back to raw args when llmBuildContext rejects", async () => {
+    useConversationStore.setState({ activeConversationId: FAKE_UUID });
+    const persistedMsg: MessageRow = {
+      id: 10, conversation_id: FAKE_UUID, role: "user",
+      content: "hello", seq: 1, created_at: "2025-01-01T00:00:01Z",
+    };
+    mockedConversationAddMessage.mockResolvedValue(persistedMsg);
+    mockedLlmBuildContext.mockRejectedValue(new Error("graph unavailable"));
+    mockedStartLlmStream.mockResolvedValue(undefined);
+
+    await useConversationStore.getState().sendMessage({
+      content: "hello",
+      model: "test-model",
+      system: "raw system",
+      nodeId: "page-42",
+      neighborsDepth: 2,
+    });
+
+    expect(mockedStartLlmStream).toHaveBeenCalledWith(
+      {
+        model: "test-model",
+        text: "hello",
+        system: "raw system",
+        messages: [{ role: "user", content: "hello" }],
+      },
+      expect.any(Object),
+    );
+    expect(useConversationStore.getState().error).toBeNull();
+  });
+
+  it("sendMessage defaults nodeId to _global and neighborsDepth to 1 when omitted", async () => {
+    useConversationStore.setState({ activeConversationId: FAKE_UUID });
+    const persistedMsg: MessageRow = {
+      id: 10, conversation_id: FAKE_UUID, role: "user",
+      content: "hello", seq: 1, created_at: "2025-01-01T00:00:01Z",
+    };
+    mockedConversationAddMessage.mockResolvedValue(persistedMsg);
+    mockedLlmBuildContext.mockResolvedValue({
+      system: "built",
+      messages: [{ role: "user", content: "hello" }],
+      truncation: null,
+    });
+    mockedStartLlmStream.mockResolvedValue(undefined);
+
+    await useConversationStore.getState().sendMessage({
+      content: "hello",
+      model: "test-model",
+    });
+
+    expect(mockedLlmBuildContext).toHaveBeenCalledWith({
+      nodeId: "_global",
+      systemPrompt: undefined,
+      neighborsDepth: 1,
+      model: "test-model",
+      messages: [{ role: "user", content: "hello" }],
+    });
   });
 });

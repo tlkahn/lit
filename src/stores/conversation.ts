@@ -6,6 +6,7 @@ import {
   conversationMessages,
   conversationAddMessage,
   conversationDeleteMessagesAfter,
+  llmBuildContext,
   type ConversationRow,
   type MessageRow,
 } from "../lib/ipc";
@@ -16,6 +17,8 @@ import { useModalLockStore } from "./modalLock";
 interface StreamArgs {
   model: string;
   system?: string;
+  nodeId?: string;
+  neighborsDepth?: number;
 }
 
 interface SendMessageArgs extends StreamArgs {
@@ -62,6 +65,25 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
       content: m.content,
     }));
 
+    const nodeId = streamArgs.nodeId ?? "_global";
+    const neighborsDepth = streamArgs.neighborsDepth ?? 1;
+
+    let finalSystem = streamArgs.system;
+    let finalMessages: Array<{ role: string; content: string }> = messages;
+    try {
+      const built = await llmBuildContext({
+        nodeId,
+        systemPrompt: streamArgs.system,
+        neighborsDepth,
+        model: streamArgs.model,
+        messages,
+      });
+      finalSystem = built.system;
+      finalMessages = built.messages;
+    } catch {
+      // fallback: use raw args — graph/page unavailable should never block chat
+    }
+
     useLlmResponseStore.getState().startStream({ question: content });
     useModalLockStore.getState().setLlmLocked(true);
 
@@ -70,8 +92,8 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
         {
           model: streamArgs.model,
           text: content,
-          system: streamArgs.system,
-          messages,
+          system: finalSystem,
+          messages: finalMessages,
         },
         {
           onChunk: (text: string) => {
@@ -186,6 +208,8 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
     await _streamAndPersist(convId, args.textOverride ?? args.content, {
       model: args.model,
       system: args.system,
+      nodeId: args.nodeId,
+      neighborsDepth: args.neighborsDepth,
     });
   },
 
