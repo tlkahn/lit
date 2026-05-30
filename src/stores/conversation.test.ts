@@ -25,9 +25,11 @@ import {
 } from "../lib/ipc";
 import type { ConversationRow, MessageRow } from "../lib/ipc";
 
-import { startLlmStream, type LlmStreamCallbacks } from "../lib/llmClient";
+import { startLlmStream, cancelLlmStream, type LlmStreamCallbacks } from "../lib/llmClient";
 import { useLlmResponseStore } from "./llmResponse";
 import { useModalLockStore } from "./modalLock";
+
+const mockedCancelLlmStream = cancelLlmStream as ReturnType<typeof vi.fn>;
 
 const mockedConversationList = conversationList as ReturnType<typeof vi.fn>;
 const mockedConversationCreate = conversationCreate as ReturnType<typeof vi.fn>;
@@ -445,6 +447,47 @@ describe("conversation store", () => {
     expect(useModalLockStore.getState().llmLocked).toBe(false);
     // Assert llmResponse status is still idle
     expect(useLlmResponseStore.getState().status).toBe("idle");
+  });
+
+  // --- Group C: cancelConversationStream (cycle 17) ---
+
+  it("cancelConversationStream stops stream, unlocks, and cancels LLM without persisting", async () => {
+    useConversationStore.setState({ activeConversationId: FAKE_UUID });
+    const persistedMsg: MessageRow = {
+      id: 10,
+      conversation_id: FAKE_UUID,
+      role: "user",
+      content: "hello",
+      seq: 1,
+      created_at: "2025-01-01T00:00:01Z",
+    };
+    mockedConversationAddMessage.mockResolvedValue(persistedMsg);
+
+    let capturedCallbacks: LlmStreamCallbacks | null = null;
+    mockedStartLlmStream.mockImplementation(async (_args: unknown, cbs: LlmStreamCallbacks) => {
+      capturedCallbacks = cbs;
+    });
+    mockedCancelLlmStream.mockResolvedValue(undefined);
+
+    await useConversationStore.getState().sendMessage({
+      content: "hello",
+      model: "test-model",
+    });
+
+    // Simulate a chunk arriving
+    capturedCallbacks!.onChunk("partial ");
+
+    // Act
+    await useConversationStore.getState().cancelConversationStream();
+
+    // Assert stream stopped
+    expect(useLlmResponseStore.getState().status).toBe("done");
+    // Assert modal unlocked
+    expect(useModalLockStore.getState().llmLocked).toBe(false);
+    // Assert cancel IPC called
+    expect(mockedCancelLlmStream).toHaveBeenCalled();
+    // Assert no assistant message persisted (only the user message)
+    expect(mockedConversationAddMessage).toHaveBeenCalledTimes(1);
   });
 
   it("deleteConversation on non-active preserves activeConversationId and messages", async () => {
