@@ -79,8 +79,15 @@ export function ConversationPanel({ pageId }: ConversationPanelProps) {
     cancelConversationStream();
   }, [cancelConversationStream]);
 
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "n") {
+      e.preventDefault();
+      handleNewThread();
+    }
+  }, [handleNewThread]);
+
   return (
-    <div data-testid="conversation-panel" className="flex flex-col h-full">
+    <div data-testid="conversation-panel" className="flex flex-col h-full" onKeyDown={handleKeyDown}>
       <ThreadHeader
         conversations={conversations}
         activeConversationId={activeConversationId}
