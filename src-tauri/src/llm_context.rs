@@ -26,22 +26,37 @@ pub fn build_context_layers(
     let system_tokens = estimate_tokens(system_prompt);
     let remainder = budget.saturating_sub(system_tokens);
 
-    let history_cap = (remainder as f64 * 0.4) as usize;
     let doc_cap = (remainder as f64 * 0.4) as usize;
     let neighbor_cap = (remainder as f64 * 0.2) as usize;
 
+    // Trim document content first so we know actual usage
+    let doc_budget_chars = doc_cap * 4;
+    let trimmed_doc = symmetric_trim(document_content, doc_budget_chars);
+    let doc_actual = estimate_tokens(&trimmed_doc);
+    let truncation = if trimmed_doc.len() < document_content.len() {
+        Some(TruncationInfo {
+            original_tokens: estimate_tokens(document_content),
+            kept_tokens: doc_actual,
+        })
+    } else {
+        None
+    };
+
     // Trim neighbors: drop from end (least relevant) until fits
     let mut kept_neighbors: Vec<&Neighbor> = Vec::new();
-    let mut neighbor_tokens = 0;
+    let mut neighbor_actual = 0;
     for n in neighbors {
         let entry = format!("### {} ({})\n{}", n.title, n.relation, n.excerpt);
         let entry_tokens = estimate_tokens(&entry);
-        if neighbor_tokens + entry_tokens > neighbor_cap {
+        if neighbor_actual + entry_tokens > neighbor_cap {
             break;
         }
-        neighbor_tokens += entry_tokens;
+        neighbor_actual += entry_tokens;
         kept_neighbors.push(n);
     }
+
+    // History gets the entire remainder after doc and neighbors
+    let history_cap = remainder.saturating_sub(doc_actual).saturating_sub(neighbor_actual);
 
     // Trim history: drop oldest pairs from front, keep most recent
     let mut kept_messages: Vec<ChatMessage> = messages.to_vec();
@@ -55,18 +70,6 @@ pub fn build_context_layers(
         let budget_chars = history_cap * 4;
         kept_messages[0].content = symmetric_trim(&kept_messages[0].content, budget_chars);
     }
-
-    // Trim document content
-    let doc_budget_chars = doc_cap * 4;
-    let trimmed_doc = symmetric_trim(document_content, doc_budget_chars);
-    let truncation = if trimmed_doc.len() < document_content.len() {
-        Some(TruncationInfo {
-            original_tokens: estimate_tokens(document_content),
-            kept_tokens: estimate_tokens(&trimmed_doc),
-        })
-    } else {
-        None
-    };
 
     // Assemble system string
     let mut system = system_prompt.to_string();
@@ -284,7 +287,8 @@ mod tests {
         let kept_tokens: usize = result.messages.iter().map(|m| estimate_tokens(&m.content)).sum();
         let budget = (context_window("gpt-4o") as f64 * 0.8) as usize;
         let system_tokens = estimate_tokens("Be helpful.");
-        let history_cap = ((budget - system_tokens) as f64 * 0.4) as usize;
+        // With empty doc and no neighbors, history gets the full remainder
+        let history_cap = budget - system_tokens;
         assert!(
             kept_tokens <= history_cap,
             "kept_tokens ({kept_tokens}) should be <= history_cap ({history_cap})"
@@ -305,6 +309,46 @@ mod tests {
         assert!(
             result.messages[0].content.contains(&center_region),
             "center of original should be preserved after symmetric trim"
+        );
+    }
+
+    // Waterfall: empty doc/neighbors → history gets full remainder
+    #[test]
+    fn empty_doc_redistributes_budget_to_history() {
+        let mut messages = Vec::new();
+        for i in 0..100 {
+            messages.push(ChatMessage {
+                role: "user".into(),
+                content: format!("Message {}: {}", i, "word ".repeat(1000)),
+            });
+            messages.push(ChatMessage {
+                role: "assistant".into(),
+                content: format!("Reply {}: {}", i, "word ".repeat(1000)),
+            });
+        }
+        // With document content
+        let result_with_doc = build_context_layers(
+            "Be helpful.",
+            &messages,
+            &"word ".repeat(50_000),
+            "Big Doc",
+            &[],
+            "gpt-4o",
+        );
+        // Without document content (global chat)
+        let result_no_doc = build_context_layers(
+            "Be helpful.",
+            &messages,
+            "",
+            "",
+            &[],
+            "gpt-4o",
+        );
+        assert!(
+            result_no_doc.messages.len() > result_with_doc.messages.len(),
+            "global chat should keep more history ({} vs {})",
+            result_no_doc.messages.len(),
+            result_with_doc.messages.len(),
         );
     }
 
