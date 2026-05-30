@@ -5,6 +5,7 @@ import {
   conversationDelete,
   conversationMessages,
   conversationAddMessage,
+  conversationDeleteMessagesAfter,
   type ConversationRow,
   type MessageRow,
 } from "../lib/ipc";
@@ -32,6 +33,8 @@ interface ConversationStore {
   selectConversation: (id: string) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
   sendMessage: (args: SendMessageArgs) => Promise<void>;
+  retryLastMessage: (args: StreamArgs) => Promise<void>;
+  editMessage: (seq: number, newContent: string, args: StreamArgs) => Promise<void>;
   cancelConversationStream: () => Promise<void>;
   reset: () => void;
 }
@@ -157,6 +160,38 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
       model: args.model,
       system: args.system,
     });
+  },
+
+  retryLastMessage: async (args: StreamArgs) => {
+    const convId = get().activeConversationId;
+    if (convId === null) return;
+    if (useLlmResponseStore.getState().status === "streaming") return;
+
+    const msgs = get().messages;
+    if (msgs.length === 0 || msgs.at(-1)?.role !== "assistant") return;
+
+    const lastUserIdx = msgs.findLastIndex((m) => m.role === "user");
+    const lastUserMsg = lastUserIdx >= 0 ? msgs[lastUserIdx] : undefined;
+    if (!lastUserMsg) return;
+
+    await conversationDeleteMessagesAfter(convId, lastUserMsg.seq);
+    set((s) => ({ messages: s.messages.filter((m) => m.seq <= lastUserMsg.seq) }));
+
+    await _streamAndPersist(convId, lastUserMsg.content, args);
+  },
+
+  editMessage: async (seq: number, newContent: string, args: StreamArgs) => {
+    const convId = get().activeConversationId;
+    if (convId === null) return;
+    if (useLlmResponseStore.getState().status === "streaming") return;
+
+    await conversationDeleteMessagesAfter(convId, seq - 1);
+    set((s) => ({ messages: s.messages.filter((m) => m.seq < seq) }));
+
+    const userMsg = await conversationAddMessage(convId, "user", newContent);
+    set((s) => ({ messages: [...s.messages, userMsg] }));
+
+    await _streamAndPersist(convId, newContent, args);
   },
 
   cancelConversationStream: async () => {
