@@ -108,7 +108,7 @@ describe("conversation store", () => {
     const id = await useConversationStore.getState().createConversation("node-1");
 
     expect(id).toBe(FAKE_UUID);
-    expect(mockedConversationCreate).toHaveBeenCalledWith(FAKE_UUID, "node-1");
+    expect(mockedConversationCreate).toHaveBeenCalledWith(FAKE_UUID, "node-1", undefined, undefined, undefined);
     const s = useConversationStore.getState();
     expect(s.activeConversationId).toBe(FAKE_UUID);
     expect(s.conversations).toEqual([fakeConversation]);
@@ -184,6 +184,17 @@ describe("conversation store", () => {
     expect(s.conversations).toEqual([]);
     expect(s.activeConversationId).toBeNull();
     expect(s.messages).toEqual([]);
+  });
+
+  it("createConversation passes title to IPC when provided", async () => {
+    vi.spyOn(crypto, "randomUUID").mockReturnValue(FAKE_UUID as `${string}-${string}-${string}-${string}-${string}`);
+    const titledConv: ConversationRow = { ...fakeConversation, title: "My question" };
+    mockedConversationCreate.mockResolvedValue(titledConv);
+
+    await useConversationStore.getState().createConversation("node-1", "My question");
+
+    expect(mockedConversationCreate).toHaveBeenCalledWith(FAKE_UUID, "node-1", undefined, undefined, "My question");
+    expect(useConversationStore.getState().conversations[0]?.title).toBe("My question");
   });
 
   // --- Group B: sendMessage ---
