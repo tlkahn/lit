@@ -75,6 +75,7 @@ import {
   hasApiKey,
   deleteApiKey,
   llmPromptStreaming,
+  llmBuildContext,
   llmCancel,
   testLlmConnection,
   undoLastOperation,
@@ -385,6 +386,15 @@ describe("ipc", () => {
           return true;
         case "delete_api_key":
           return null;
+        case "llm_build_context": {
+          const a = args as Record<string, unknown>;
+          const innerArgs = a?.args as Record<string, unknown>;
+          return {
+            system: innerArgs?.system_prompt || "assembled",
+            messages: innerArgs?.messages ?? [],
+            truncation: null,
+          };
+        }
         case "llm_prompt_streaming":
           return null;
         case "llm_cancel":
@@ -1377,6 +1387,61 @@ describe("ipc", () => {
       model: "claude-sonnet-4-6",
       baseUrl: null,
     });
+  });
+
+  it("llmBuildContext invokes llm_build_context with args", async () => {
+    await llmBuildContext({
+      nodeId: "notes/a.md",
+      systemPrompt: "be helpful",
+      neighborsDepth: 2,
+      model: "claude-sonnet-4-6",
+      messages: [{ role: "user", content: "hi" }],
+    });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("llm_build_context", {
+      args: {
+        node_id: "notes/a.md",
+        system_prompt: "be helpful",
+        neighbors_depth: 2,
+        model: "claude-sonnet-4-6",
+        messages: [{ role: "user", content: "hi" }],
+      },
+    });
+  });
+
+  it("llmBuildContext defaults systemPrompt to empty string", async () => {
+    await llmBuildContext({
+      nodeId: "notes/a.md",
+      neighborsDepth: 0,
+      model: "claude-sonnet-4-6",
+      messages: [],
+    });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("llm_build_context", {
+      args: {
+        node_id: "notes/a.md",
+        system_prompt: "",
+        neighbors_depth: 0,
+        model: "claude-sonnet-4-6",
+        messages: [],
+      },
+    });
+  });
+
+  it("llmBuildContext returns BuiltContext shape", async () => {
+    const result = await llmBuildContext({
+      nodeId: "notes/a.md",
+      systemPrompt: "test system",
+      neighborsDepth: 1,
+      model: "claude-sonnet-4-6",
+      messages: [{ role: "user", content: "hello" }],
+    });
+    expect(result).toHaveProperty("system");
+    expect(result).toHaveProperty("messages");
+    expect(result).toHaveProperty("truncation");
+    expect(result.system).toBe("test system");
+    expect(result.messages).toEqual([{ role: "user", content: "hello" }]);
+    expect(result.truncation).toBeNull();
   });
 
   it("trashPage calls trash_page with relativePath", async () => {

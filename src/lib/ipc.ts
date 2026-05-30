@@ -256,6 +256,30 @@ export async function llmPromptStreaming(args: LlmPromptStreamingArgs): Promise<
   });
 }
 
+export interface BuiltContext {
+  system: string;
+  messages: Array<{ role: string; content: string }>;
+  truncation: { original_tokens: number; kept_tokens: number } | null;
+}
+
+export async function llmBuildContext(args: {
+  nodeId: string;
+  systemPrompt?: string;
+  neighborsDepth: number;
+  model: string;
+  messages: Array<{ role: string; content: string }>;
+}): Promise<BuiltContext> {
+  return invoke<BuiltContext>("llm_build_context", {
+    args: {
+      node_id: args.nodeId,
+      system_prompt: args.systemPrompt ?? "",
+      neighbors_depth: args.neighborsDepth,
+      model: args.model,
+      messages: args.messages,
+    },
+  });
+}
+
 export async function llmCancel(): Promise<void> {
   return invoke<void>("llm_cancel");
 }
