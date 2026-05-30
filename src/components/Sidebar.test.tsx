@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { mockInvoke } from "../test/tauri-mock";
+import { mockInvoke, mockListen, emitMockEvent, resetListenMock } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
 import { Sidebar, SIDEBAR_WIDTH_PX } from "./Sidebar";
 
@@ -9,6 +9,8 @@ let invokedCommands: { cmd: string; args: unknown }[] = [];
 
 beforeEach(() => {
   invokedCommands = [];
+  resetListenMock();
+  mockListen();
   useWorkspaceStore.setState({
     workspacePath: "/workspace",
     pages: [],
@@ -32,6 +34,9 @@ beforeEach(() => {
       };
     }
     if (cmd === "open_in_external_editor") {
+      return null;
+    }
+    if (cmd === "show_sidebar_context_menu") {
       return null;
     }
     throw new Error(`Unknown command: ${cmd}`);
@@ -135,62 +140,12 @@ describe("Sidebar context menu during search", () => {
     expect(screen.queryByText("Other")).not.toBeInTheDocument();
 
     await user.pointer({ keys: "[MouseRight]", target: screen.getByText("Café Notes") });
-    expect(screen.getByText("Rename")).toBeInTheDocument();
+
+    const call = invokedCommands.find((c) => c.cmd === "show_sidebar_context_menu");
+    expect(call).toBeTruthy();
 
     expect(screen.getByText("Café Notes")).toBeInTheDocument();
     expect(screen.queryByText("Other")).not.toBeInTheDocument();
-  });
-});
-
-describe("Sidebar context menu – Open in External Editor", () => {
-  it("right-click shows 'Open in External Editor' button", async () => {
-    useWorkspaceStore.setState({
-      pages: [
-        {
-          title: "Notes",
-          relative_path: "Notes.md",
-          frontmatter: {},
-          created_at: 1000,
-          modified_at: 1000,
-          file_type: 'markdown' as const,
-        },
-      ],
-    });
-
-    const user = userEvent.setup();
-    render(<Sidebar />);
-
-    const pageButton = screen.getByText("Notes");
-    await user.pointer({ keys: "[MouseRight]", target: pageButton });
-
-    expect(screen.getByText("Open in External Editor")).toBeInTheDocument();
-  });
-
-  it("clicking 'Open in External Editor' calls invoke with correct args", async () => {
-    useWorkspaceStore.setState({
-      pages: [
-        {
-          title: "Notes",
-          relative_path: "Notes.md",
-          frontmatter: {},
-          created_at: 1000,
-          modified_at: 1000,
-          file_type: 'markdown' as const,
-        },
-      ],
-    });
-
-    const user = userEvent.setup();
-    render(<Sidebar />);
-
-    const pageButton = screen.getByText("Notes");
-    await user.pointer({ keys: "[MouseRight]", target: pageButton });
-    fireEvent.pointerMove(document);
-    await user.click(screen.getByText("Open in External Editor"));
-
-    const call = invokedCommands.find((c) => c.cmd === "open_in_external_editor");
-    expect(call).toBeTruthy();
-    expect(call!.args).toEqual({ relativePath: "Notes.md", line: 1, col: 1 });
   });
 });
 
@@ -334,7 +289,7 @@ describe("Sidebar virtualization", () => {
     expect(screen.getByText("Inside Doc")).toBeInTheDocument();
   });
 
-  it("context menu still works on virtualized page items", async () => {
+  it("context menu calls invoke with show_sidebar_context_menu", async () => {
     useWorkspaceStore.setState({
       pages: [makePage("Notes", "Notes.md")],
     });
@@ -345,181 +300,74 @@ describe("Sidebar virtualization", () => {
     const pageButton = screen.getByText("Notes");
     await user.pointer({ keys: "[MouseRight]", target: pageButton });
 
-    expect(screen.getByText("Rename")).toBeInTheDocument();
-    expect(screen.getByText("Move to Trash")).toBeInTheDocument();
-    expect(screen.getByText("Open in External Editor")).toBeInTheDocument();
+    const call = invokedCommands.find((c) => c.cmd === "show_sidebar_context_menu");
+    expect(call).toBeTruthy();
+    expect(call!.args).toEqual({ relativePath: "Notes.md" });
   });
 });
 
-describe("context menu positioning", () => {
-  it("renders at cursor coordinates with fixed positioning", () => {
+describe("Sidebar context menu events", () => {
+  it("rename event triggers inline rename mode", async () => {
     useWorkspaceStore.setState({
-      pages: [makePage("Alpha", "Alpha.md")],
+      pages: [makePage("Notes", "Notes.md")],
     });
+
     render(<Sidebar />);
 
-    const pageButton = screen.getByText("Alpha");
-    fireEvent.contextMenu(pageButton, { clientX: 150, clientY: 200 });
+    act(() => {
+      emitMockEvent("context-menu://sidebar/rename", { relative_path: "Notes.md" });
+    });
 
-    const menu = screen.getByTestId("context-menu");
-    expect(menu.style.position).toBe("fixed");
-    expect(menu.style.left).toBe("150px");
-    expect(menu.style.top).toBe("200px");
+    expect(screen.getByDisplayValue("Notes")).toBeInTheDocument();
   });
 
-  it("repositions when right-clicking a different item", () => {
+  it("external-editor event calls open_in_external_editor", async () => {
     useWorkspaceStore.setState({
-      pages: [makePage("Alpha", "Alpha.md"), makePage("Beta", "Beta.md")],
+      pages: [makePage("Notes", "Notes.md")],
     });
+
     render(<Sidebar />);
 
-    fireEvent.contextMenu(screen.getByText("Alpha"), { clientX: 100, clientY: 150 });
-    let menu = screen.getByTestId("context-menu");
-    expect(menu.style.left).toBe("100px");
-    expect(menu.style.top).toBe("150px");
+    act(() => {
+      emitMockEvent("context-menu://sidebar/external-editor", { relative_path: "Notes.md" });
+    });
 
-    fireEvent.contextMenu(screen.getByText("Beta"), { clientX: 200, clientY: 300 });
-    menu = screen.getByTestId("context-menu");
-    expect(menu.style.left).toBe("200px");
-    expect(menu.style.top).toBe("300px");
+    const call = invokedCommands.find((c) => c.cmd === "open_in_external_editor");
+    expect(call).toBeTruthy();
+    expect(call!.args).toEqual({ relativePath: "Notes.md", line: 1, col: 1 });
+  });
+
+  it("export-network event calls onExportNetwork prop", async () => {
+    const onExportNetwork = vi.fn();
+    useWorkspaceStore.setState({
+      pages: [makePage("Notes", "Notes.md")],
+    });
+
+    render(<Sidebar onExportNetwork={onExportNetwork} />);
+
+    act(() => {
+      emitMockEvent("context-menu://sidebar/export-network", { relative_path: "Notes.md" });
+    });
+
+    expect(onExportNetwork).toHaveBeenCalledWith("Notes.md");
+  });
+
+  it("trash event calls deletePage", async () => {
+    const deletePage = vi.fn();
+    useWorkspaceStore.setState({
+      pages: [makePage("Notes", "Notes.md")],
+      deletePage,
+    });
+
+    render(<Sidebar />);
+
+    act(() => {
+      emitMockEvent("context-menu://sidebar/trash", { relative_path: "Notes.md" });
+    });
+
+    expect(deletePage).toHaveBeenCalledWith("Notes.md");
   });
 });
-
-describe("context menu viewport clamping", () => {
-  it("clamps when menu overflows bottom", () => {
-    useWorkspaceStore.setState({
-      pages: [makePage("Alpha", "Alpha.md")],
-    });
-
-    const origGetBCR = HTMLElement.prototype.getBoundingClientRect;
-    HTMLElement.prototype.getBoundingClientRect = function () {
-      if (this.dataset?.testid === "context-menu") {
-        return { x: 0, y: 0, width: 120, height: 100, top: 0, left: 0, bottom: 100, right: 120 } as DOMRect;
-      }
-      return origGetBCR.call(this);
-    };
-
-    try {
-      render(<Sidebar />);
-      fireEvent.contextMenu(screen.getByText("Alpha"), { clientX: 100, clientY: 720 });
-      const menu = screen.getByTestId("context-menu");
-      expect(parseInt(menu.style.top)).toBeLessThanOrEqual(window.innerHeight - 100);
-    } finally {
-      HTMLElement.prototype.getBoundingClientRect = origGetBCR;
-    }
-  });
-
-  it("clamps when menu overflows right", () => {
-    useWorkspaceStore.setState({
-      pages: [makePage("Alpha", "Alpha.md")],
-    });
-
-    const origGetBCR = HTMLElement.prototype.getBoundingClientRect;
-    HTMLElement.prototype.getBoundingClientRect = function () {
-      if (this.dataset?.testid === "context-menu") {
-        return { x: 0, y: 0, width: 120, height: 100, top: 0, left: 0, bottom: 100, right: 120 } as DOMRect;
-      }
-      return origGetBCR.call(this);
-    };
-
-    try {
-      render(<Sidebar />);
-      fireEvent.contextMenu(screen.getByText("Alpha"), { clientX: 960, clientY: 200 });
-      const menu = screen.getByTestId("context-menu");
-      expect(parseInt(menu.style.left)).toBeLessThanOrEqual(window.innerWidth - 120);
-    } finally {
-      HTMLElement.prototype.getBoundingClientRect = origGetBCR;
-    }
-  });
-});
-
-describe("context menu hover suppression", () => {
-  it("has pointer-events:none immediately after opening", () => {
-    useWorkspaceStore.setState({
-      pages: [makePage("Alpha", "Alpha.md")],
-    });
-    render(<Sidebar />);
-
-    fireEvent.contextMenu(screen.getByText("Alpha"), { clientX: 150, clientY: 200 });
-    const menu = screen.getByTestId("context-menu");
-    expect(menu.style.pointerEvents).toBe("none");
-  });
-
-  it("re-enables pointer-events after pointermove", () => {
-    useWorkspaceStore.setState({
-      pages: [makePage("Alpha", "Alpha.md")],
-    });
-    render(<Sidebar />);
-
-    fireEvent.contextMenu(screen.getByText("Alpha"), { clientX: 150, clientY: 200 });
-    const menu = screen.getByTestId("context-menu");
-    expect(menu.style.pointerEvents).toBe("none");
-
-    fireEvent.pointerMove(document);
-    expect(menu.style.pointerEvents).toBe("");
-  });
-
-  it("menu items clickable after pointermove", async () => {
-    useWorkspaceStore.setState({
-      pages: [makePage("Alpha", "Alpha.md")],
-    });
-    render(<Sidebar />);
-
-    fireEvent.contextMenu(screen.getByText("Alpha"), { clientX: 150, clientY: 200 });
-    fireEvent.pointerMove(document);
-
-    const user = userEvent.setup();
-    await user.click(screen.getByText("Rename"));
-    expect(screen.getByDisplayValue("Alpha")).toBeInTheDocument();
-  });
-});
-
-describe("context menu theme-aware colors", () => {
-  beforeEach(() => {
-    useWorkspaceStore.setState({
-      pages: [makePage("Alpha", "Alpha.md")],
-    });
-  });
-
-  function openMenu() {
-    render(<Sidebar />);
-    fireEvent.contextMenu(screen.getByText("Alpha"), { clientX: 150, clientY: 200 });
-  }
-
-  it("normal items use hover:text-text-on-accent, not hover:text-white", () => {
-    openMenu();
-    const rename = screen.getByText("Rename");
-    const openExt = screen.getByText("Open in External Editor");
-    for (const btn of [rename, openExt]) {
-      expect(btn.className).toContain("hover:text-text-on-accent");
-      expect(btn.className).not.toContain("hover:text-white");
-    }
-  });
-
-  it("Move to Trash uses hover:bg-destructive, not hover:bg-red-500", () => {
-    openMenu();
-    const del = screen.getByText("Move to Trash");
-    expect(del.className).toContain("hover:bg-destructive");
-    expect(del.className).not.toContain("hover:bg-red-500");
-  });
-
-  it("menu container border uses theme token, not hardcoded white", () => {
-    openMenu();
-    const menu = screen.getByTestId("context-menu");
-    expect(menu.className).toContain("dark:border-border/10");
-    expect(menu.className).not.toContain("dark:border-white/10");
-  });
-
-  it("separator uses theme border token", () => {
-    openMenu();
-    const menu = screen.getByTestId("context-menu");
-    const sep = menu.querySelector(".border-t");
-    expect(sep).toBeTruthy();
-    expect(sep!.className).toContain("dark:border-border/10");
-    expect(sep!.className).not.toContain("dark:border-white/10");
-  });
-});
-
 
 describe("Sidebar sorting", () => {
   beforeEach(() => {
@@ -614,82 +462,5 @@ describe("Sidebar sorting", () => {
     const items = Array.from(list.querySelectorAll("[data-index]"));
     const titles = items.map((el) => el.textContent);
     expect(titles).toEqual(["Zebra", "Apple"]);
-  });
-});
-
-describe("context menu dismissal", () => {
-  it("Escape closes the menu", () => {
-    useWorkspaceStore.setState({
-      pages: [makePage("Alpha", "Alpha.md")],
-    });
-    render(<Sidebar />);
-
-    fireEvent.contextMenu(screen.getByText("Alpha"), { clientX: 150, clientY: 200 });
-    expect(screen.getByTestId("context-menu")).toBeInTheDocument();
-
-    fireEvent.keyDown(document, { key: "Escape" });
-    expect(screen.queryByTestId("context-menu")).not.toBeInTheDocument();
-  });
-
-  it("clicking outside closes the menu", () => {
-    useWorkspaceStore.setState({
-      pages: [makePage("Alpha", "Alpha.md")],
-    });
-    render(<Sidebar />);
-
-    fireEvent.contextMenu(screen.getByText("Alpha"), { clientX: 150, clientY: 200 });
-    expect(screen.getByTestId("context-menu")).toBeInTheDocument();
-
-    fireEvent.mouseDown(document);
-    expect(screen.queryByTestId("context-menu")).not.toBeInTheDocument();
-  });
-});
-
-describe("Sidebar context menu – Export Local Network", () => {
-  it("right-click shows 'Export Local Network…' button", async () => {
-    useWorkspaceStore.setState({
-      pages: [makePage("Notes", "Notes.md")],
-    });
-    const user = userEvent.setup();
-    render(<Sidebar />);
-
-    const pageButton = screen.getByText("Notes");
-    await user.pointer({ keys: "[MouseRight]", target: pageButton });
-
-    expect(screen.getByText("Export Local Network…")).toBeInTheDocument();
-  });
-
-  it("calls onExportNetwork prop with page path when clicked", async () => {
-    const onExportNetwork = vi.fn();
-    useWorkspaceStore.setState({
-      pages: [makePage("Notes", "Notes.md")],
-    });
-    const user = userEvent.setup();
-    render(<Sidebar onExportNetwork={onExportNetwork} />);
-
-    const pageButton = screen.getByText("Notes");
-    await user.pointer({ keys: "[MouseRight]", target: pageButton });
-    fireEvent.pointerMove(document);
-    await user.click(screen.getByText("Export Local Network…"));
-
-    expect(onExportNetwork).toHaveBeenCalledWith("Notes.md");
-  });
-
-  it("menu closes once (via PageItem) when Export Local Network is clicked", async () => {
-    const onExportNetwork = vi.fn();
-    useWorkspaceStore.setState({
-      pages: [makePage("Notes", "Notes.md")],
-    });
-    const user = userEvent.setup();
-    render(<Sidebar onExportNetwork={onExportNetwork} />);
-
-    const pageButton = screen.getByText("Notes");
-    await user.pointer({ keys: "[MouseRight]", target: pageButton });
-    expect(screen.getByTestId("context-menu")).toBeInTheDocument();
-
-    fireEvent.pointerMove(document);
-    await user.click(screen.getByText("Export Local Network…"));
-
-    expect(screen.queryByTestId("context-menu")).not.toBeInTheDocument();
   });
 });
