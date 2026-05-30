@@ -12,10 +12,13 @@ import { startLlmStream } from "../lib/llmClient";
 import { useLlmResponseStore } from "./llmResponse";
 import { useModalLockStore } from "./modalLock";
 
-interface SendMessageArgs {
-  content: string;
+interface StreamArgs {
   model: string;
   system?: string;
+}
+
+interface SendMessageArgs extends StreamArgs {
+  content: string;
 }
 
 interface ConversationStore {
@@ -39,7 +42,54 @@ const initialState = {
   error: null as string | null,
 };
 
-export const useConversationStore = create<ConversationStore>((set, get) => ({
+export const useConversationStore = create<ConversationStore>((set, get) => {
+  const _streamAndPersist = async (
+    convId: string,
+    content: string,
+    streamArgs: StreamArgs,
+  ) => {
+    const messages = get().messages.map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
+
+    useLlmResponseStore.getState().startStream({ question: content });
+    useModalLockStore.getState().setLlmLocked(true);
+
+    await startLlmStream(
+      {
+        model: streamArgs.model,
+        text: content,
+        system: streamArgs.system,
+        messages,
+      },
+      {
+        onChunk: (text: string) => {
+          useLlmResponseStore.getState().appendChunk(text);
+        },
+        onDone: async () => {
+          const responseText = useLlmResponseStore.getState().responseText;
+          try {
+            const assistantMsg = await conversationAddMessage(
+              convId,
+              "assistant",
+              responseText,
+            );
+            set((s) => ({ messages: [...s.messages, assistantMsg] }));
+          } finally {
+            useLlmResponseStore.getState().finishStream();
+            useModalLockStore.getState().setLlmLocked(false);
+          }
+        },
+        onError: (error: { message: string; retryable: boolean }) => {
+          useLlmResponseStore.getState().setError(error.message);
+          useModalLockStore.getState().setLlmLocked(false);
+        },
+      },
+    );
+  };
+
+  return {
   ...initialState,
 
   loadConversations: async (nodeId: string) => {
@@ -93,49 +143,21 @@ export const useConversationStore = create<ConversationStore>((set, get) => ({
     }
     if (useLlmResponseStore.getState().status === "streaming") return;
 
-    const userMsg = await conversationAddMessage(convId, "user", args.content);
+    let userMsg: Awaited<ReturnType<typeof conversationAddMessage>>;
+    try {
+      userMsg = await conversationAddMessage(convId, "user", args.content);
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : String(e) });
+      return;
+    }
     set((s) => ({ messages: [...s.messages, userMsg] }));
 
-    const messages = get().messages.map((m) => ({
-      role: m.role,
-      content: m.content,
-    }));
-
-    useLlmResponseStore.getState().startStream({ question: args.content });
-    useModalLockStore.getState().setLlmLocked(true);
-
-    await startLlmStream(
-      {
-        model: args.model,
-        text: args.content,
-        system: args.system,
-        messages,
-      },
-      {
-        onChunk: (text: string) => {
-          useLlmResponseStore.getState().appendChunk(text);
-        },
-        onDone: async () => {
-          const responseText = useLlmResponseStore.getState().responseText;
-          try {
-            const assistantMsg = await conversationAddMessage(
-              convId,
-              "assistant",
-              responseText,
-            );
-            set((s) => ({ messages: [...s.messages, assistantMsg] }));
-          } finally {
-            useLlmResponseStore.getState().finishStream();
-            useModalLockStore.getState().setLlmLocked(false);
-          }
-        },
-        onError: (error: { message: string; retryable: boolean }) => {
-          useLlmResponseStore.getState().setError(error.message);
-          useModalLockStore.getState().setLlmLocked(false);
-        },
-      },
-    );
+    await _streamAndPersist(convId, args.content, {
+      model: args.model,
+      system: args.system,
+    });
   },
 
   reset: () => set(initialState),
-}));
+};
+});
