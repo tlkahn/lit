@@ -48,14 +48,14 @@ const initialState = {
 };
 
 export const useConversationStore = create<ConversationStore>((set, get) => {
-  let _streamCancelled = false;
+  let _streamGeneration = 0;
 
   const _streamAndPersist = async (
     convId: string,
     content: string,
     streamArgs: StreamArgs,
   ) => {
-    _streamCancelled = false;
+    const myGeneration = ++_streamGeneration;
 
     const messages = get().messages.map((m) => ({
       role: m.role,
@@ -75,10 +75,11 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
         },
         {
           onChunk: (text: string) => {
+            if (myGeneration !== _streamGeneration) return;
             useLlmResponseStore.getState().appendChunk(text);
           },
           onDone: async () => {
-            if (_streamCancelled) return;
+            if (myGeneration !== _streamGeneration) return;
             const responseText = useLlmResponseStore.getState().responseText;
             try {
               const assistantMsg = await conversationAddMessage(
@@ -95,6 +96,7 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
             }
           },
           onError: (error: { message: string; retryable: boolean }) => {
+            if (myGeneration !== _streamGeneration) return;
             useLlmResponseStore.getState().setError(error.message);
             useModalLockStore.getState().setLlmLocked(false);
           },
@@ -226,7 +228,7 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
   },
 
   cancelConversationStream: async () => {
-    _streamCancelled = true;
+    _streamGeneration++;
     useLlmResponseStore.getState().stopStream();
     useModalLockStore.getState().setLlmLocked(false);
     await cancelLlmStream();
