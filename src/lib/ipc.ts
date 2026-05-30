@@ -886,3 +886,71 @@ export async function mergeDocuments(
     outputDir: outputDir ?? null,
   });
 }
+
+// Conversation commands
+
+export interface ConversationRow {
+  id: string;
+  node_id: string;
+  anchor_type: string | null;
+  anchor_id: number | null;
+  title: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MessageRow {
+  id: number;
+  conversation_id: string;
+  role: string;
+  content: string;
+  seq: number;
+  created_at: string;
+}
+
+export async function conversationDeleteMessagesAfter(
+  conversationId: string,
+  seq: number,
+): Promise<void> {
+  return invoke<void>("conversation_delete_messages_after", { conversationId, seq });
+}
+
+export async function conversationDelete(conversationId: string): Promise<void> {
+  return invoke<void>("conversation_delete", { conversationId });
+}
+
+export async function conversationAddMessage(
+  conversationId: string,
+  role: string,
+  content: string,
+): Promise<MessageRow> {
+  return invoke<MessageRow>("conversation_add_message", { conversationId, role, content });
+}
+
+export async function conversationMessages(conversationId: string): Promise<MessageRow[]> {
+  return invoke<MessageRow[]>("conversation_messages", { conversationId });
+}
+
+export async function conversationGet(conversationId: string): Promise<ConversationRow> {
+  return invoke<ConversationRow>("conversation_get", { conversationId });
+}
+
+export async function conversationList(nodeId: string): Promise<ConversationRow[]> {
+  return invoke<ConversationRow[]>("conversation_list", { nodeId });
+}
+
+export async function conversationCreate(
+  id: string,
+  nodeId: string,
+  anchorType?: string,
+  anchorId?: number,
+  title?: string,
+): Promise<ConversationRow> {
+  return invoke<ConversationRow>("conversation_create", {
+    id,
+    nodeId,
+    anchorType: anchorType ?? null,
+    anchorId: anchorId ?? null,
+    title: title ?? null,
+  });
+}
