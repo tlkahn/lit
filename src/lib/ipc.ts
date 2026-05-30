@@ -230,6 +230,8 @@ export async function deleteApiKey(provider: string): Promise<void> {
   return invoke<void>("delete_api_key", { provider });
 }
 
+export const GLOBAL_NODE_ID = "_global" as const;
+
 // LLM commands
 
 export interface LlmPromptStreamingArgs {

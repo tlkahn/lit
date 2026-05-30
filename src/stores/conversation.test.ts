@@ -10,6 +10,7 @@ vi.mock("../lib/ipc", () => ({
   conversationAddMessage: vi.fn(),
   conversationDeleteMessagesAfter: vi.fn(),
   llmBuildContext: vi.fn(),
+  GLOBAL_NODE_ID: "_global",
 }));
 
 vi.mock("../lib/llmClient", () => ({
@@ -25,6 +26,7 @@ import {
   conversationAddMessage,
   conversationDeleteMessagesAfter,
   llmBuildContext,
+  GLOBAL_NODE_ID,
 } from "../lib/ipc";
 import type { ConversationRow, MessageRow } from "../lib/ipc";
 
@@ -1374,7 +1376,7 @@ describe("conversation store", () => {
     });
 
     expect(mockedLlmBuildContext).toHaveBeenCalledWith({
-      nodeId: "_global",
+      nodeId: GLOBAL_NODE_ID,
       systemPrompt: undefined,
       neighborsDepth: 1,
       model: "test-model",

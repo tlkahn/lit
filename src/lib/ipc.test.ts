@@ -76,6 +76,7 @@ import {
   deleteApiKey,
   llmPromptStreaming,
   llmBuildContext,
+  GLOBAL_NODE_ID,
   llmCancel,
   testLlmConnection,
   undoLastOperation,
@@ -1442,6 +1443,10 @@ describe("ipc", () => {
     expect(result.system).toBe("test system");
     expect(result.messages).toEqual([{ role: "user", content: "hello" }]);
     expect(result.truncation).toBeNull();
+  });
+
+  it("GLOBAL_NODE_ID equals _global", () => {
+    expect(GLOBAL_NODE_ID).toBe("_global");
   });
 
   it("trashPage calls trash_page with relativePath", async () => {
