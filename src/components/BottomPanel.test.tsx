@@ -6,8 +6,7 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { usePreferencesStore } from "../stores/preferences";
 import { useBottomPanelStore } from "../stores/bottomPanel";
 import { useLlmResponseStore } from "../stores/llmResponse";
-import { handleQuestionSubmit } from "../lib/llmOrchestrator";
-import { formatLlmPrompt } from "../lib/promptFormatter";
+import { useConversationStore } from "../stores/conversation";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { annotationDataField, setAnnotationData } from "../editor/livePreview/annotationState";
@@ -22,20 +21,21 @@ vi.mock("../lib/ipc", async (importOriginal) => {
     getUnlinkedMentions: vi.fn(async () => []),
     parseAnnotations: vi.fn(async () => []),
     resolveAnnotationScope: vi.fn(async () => null),
+    conversationList: vi.fn(async () => []),
+    conversationCreate: vi.fn(async () => "conv-new"),
+    conversationDelete: vi.fn(async () => {}),
+    conversationMessages: vi.fn(async () => []),
+    conversationGet: vi.fn(async () => ({})),
+    conversationAddMessage: vi.fn(async () => ({})),
+    conversationDeleteMessagesAfter: vi.fn(async () => {}),
   };
 });
 
-vi.mock("../lib/llmOrchestrator", () => ({
-  handleQuestionSubmit: vi.fn(() => Promise.resolve()),
+vi.mock("../lib/llmClient", () => ({
+  startLlmStream: vi.fn(),
+  cancelLlmStream: vi.fn(),
 }));
 
-vi.mock("../lib/promptFormatter", async (importOriginal) => {
-  const orig = await importOriginal() as Record<string, unknown>;
-  return {
-    ...orig,
-    formatLlmPrompt: vi.fn(orig.formatLlmPrompt as (...args: unknown[]) => unknown),
-  };
-});
 
 function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
   return {
@@ -88,6 +88,7 @@ beforeEach(() => {
   });
   vi.mocked(getBacklinks).mockResolvedValue([]);
   vi.mocked(getUnlinkedMentions).mockResolvedValue([]);
+  useConversationStore.getState().reset();
 });
 
 afterEach(() => {
@@ -103,10 +104,7 @@ describe("BottomPanel", () => {
     expect(panel.style.height).toBe("0px");
   });
 
-  it("renders without pageId — only LLM panel mounts, no Backlinks", () => {
-    useLlmResponseStore.getState().startStream({ question: "test" });
-    useLlmResponseStore.getState().appendChunk("response text");
-
+  it("renders without pageId — no ConversationPanel or Backlinks mount", () => {
     render(<BottomPanel />);
 
     act(() => {
@@ -117,8 +115,7 @@ describe("BottomPanel", () => {
       });
     });
 
-    expect(screen.getByTestId("llm-response-panel")).toBeInTheDocument();
-    expect(screen.getByText("response text")).toBeInTheDocument();
+    expect(screen.queryByTestId("conversation-panel")).toBeNull();
     expect(screen.queryByText("No other pages link to this page")).toBeNull();
   });
 
@@ -719,18 +716,15 @@ describe("BottomPanel", () => {
     });
   });
 
-  describe("LLM response panel integration", () => {
+  describe("Conversation panel mounting", () => {
     beforeEach(() => {
       useLlmResponseStore.getState().reset();
-      vi.mocked(handleQuestionSubmit).mockClear();
-      vi.mocked(formatLlmPrompt).mockClear();
     });
 
-    it("renders LlmResponsePanel when activeTab is llm-response and hasOpenedLlm", () => {
-      useLlmResponseStore.getState().startStream({ question: "test q" });
-      useLlmResponseStore.getState().appendChunk("streamed text");
-
-      render(<BottomPanel pageId="target.md" />);
+    it("renders ConversationPanel when activeTab is llm-response and hasOpenedLlm", async () => {
+      await act(async () => {
+        render(<BottomPanel pageId="target.md" />);
+      });
 
       act(() => {
         useBottomPanelStore.setState({
@@ -740,15 +734,13 @@ describe("BottomPanel", () => {
         });
       });
 
-      expect(screen.getByTestId("llm-response-panel")).toBeInTheDocument();
-      expect(screen.getByText("streamed text")).toBeInTheDocument();
+      expect(screen.getByTestId("conversation-panel")).toBeInTheDocument();
     });
 
-    it("does not mount LlmResponsePanel until hasOpenedLlm is true", () => {
-      useLlmResponseStore.getState().startStream({ question: "q" });
-      useLlmResponseStore.getState().appendChunk("text");
-
-      render(<BottomPanel pageId="target.md" />);
+    it("does not mount ConversationPanel until hasOpenedLlm is true", async () => {
+      await act(async () => {
+        render(<BottomPanel pageId="target.md" />);
+      });
 
       act(() => {
         useBottomPanelStore.setState({
@@ -758,14 +750,13 @@ describe("BottomPanel", () => {
         });
       });
 
-      expect(screen.queryByTestId("llm-response-panel")).toBeNull();
+      expect(screen.queryByTestId("conversation-panel")).toBeNull();
     });
 
-    it("hides LlmResponsePanel via display:none when another tab is active", () => {
-      useLlmResponseStore.getState().startStream({ question: "q" });
-      useLlmResponseStore.getState().appendChunk("text");
-
-      render(<BottomPanel pageId="target.md" />);
+    it("hides ConversationPanel via display:none when another tab is active", async () => {
+      await act(async () => {
+        render(<BottomPanel pageId="target.md" />);
+      });
 
       act(() => {
         useBottomPanelStore.setState({
@@ -775,17 +766,23 @@ describe("BottomPanel", () => {
         });
       });
 
-      const llmWrapper = screen.getByTestId("llm-response-panel").parentElement!;
-      expect(llmWrapper.style.display).not.toBe("none");
+      const convWrapper = screen.getByTestId("conversation-panel").parentElement!;
+      expect(convWrapper.style.display).not.toBe("none");
 
       act(() => {
         useBottomPanelStore.setState({ activeTab: "linked" });
       });
 
-      expect(llmWrapper.style.display).toBe("none");
+      expect(convWrapper.style.display).toBe("none");
     });
+  });
 
-    function openLlmPanel() {
+  describe("ConversationPanel integration", () => {
+    it("renders ConversationPanel in the LLM tab slot", async () => {
+      await act(async () => {
+        render(<BottomPanel pageId="target.md" />);
+      });
+
       act(() => {
         useBottomPanelStore.setState({
           unfolded: true,
@@ -793,87 +790,26 @@ describe("BottomPanel", () => {
           hasOpenedLlm: true,
         });
       });
-    }
 
-    async function submitQuestion(question: string) {
-      const input = screen.getByTestId("llm-question-input");
-      fireEvent.change(input, { target: { value: question } });
-      const btn = screen.getByTestId("llm-submit-btn");
-      fireEvent.click(btn);
-      await act(async () => {});
-    }
-
-    it("passes onSubmit to LlmResponsePanel so question submit reaches the orchestrator", async () => {
-      render(<BottomPanel pageId="target.md" />);
-      openLlmPanel();
-      await submitQuestion("what is this?");
-      expect(handleQuestionSubmit).toHaveBeenCalled();
+      expect(screen.getByTestId("conversation-panel")).toBeInTheDocument();
+      expect(screen.getByTestId("conversation-input")).toBeInTheDocument();
     });
 
-    it("reads llmModel from preferences and passes it to handleQuestionSubmit", async () => {
-      usePreferencesStore.setState({ llmModel: "gpt-4o" });
-      render(<BottomPanel pageId="target.md" />);
-      openLlmPanel();
-      await submitQuestion("test");
-      expect(handleQuestionSubmit).toHaveBeenCalledWith(
-        expect.objectContaining({ model: "gpt-4o" }),
-      );
-    });
-
-    it("reads llmSystemPrompt from preferences and passes it as system arg", async () => {
-      usePreferencesStore.setState({ llmSystemPrompt: "You are a scholar." });
-      render(<BottomPanel pageId="target.md" />);
-      openLlmPanel();
-      await submitQuestion("test");
-      expect(handleQuestionSubmit).toHaveBeenCalledWith(
-        expect.objectContaining({ system: "You are a scholar." }),
-      );
-    });
-
-    it("passes system as undefined when llmSystemPrompt is empty", async () => {
-      usePreferencesStore.setState({ llmSystemPrompt: "" });
-      render(<BottomPanel pageId="target.md" />);
-      openLlmPanel();
-      await submitQuestion("test");
-      expect(handleQuestionSubmit).toHaveBeenCalledWith(
-        expect.objectContaining({ system: undefined }),
-      );
-    });
-
-    it("calls formatLlmPrompt with question, selection context, and filePath", async () => {
-      const handler = (e: Event) => {
-        const { callback } = (e as CustomEvent).detail;
-        callback({
-          selectionText: "selected text",
-          selectionFrom: 5,
-          selectionTo: 18,
-          filePath: "notes/test.md",
-        });
-      };
-      window.addEventListener("lit:llm-request-context", handler);
-
-      render(<BottomPanel pageId="target.md" />);
-      openLlmPanel();
-      await submitQuestion("explain this");
-
-      expect(formatLlmPrompt).toHaveBeenCalledWith({
-        question: "explain this",
-        context: "selected text",
-        filePath: "notes/test.md",
+    it("passes pageId and contentHeight to ConversationPanel", async () => {
+      await act(async () => {
+        render(<BottomPanel pageId="target.md" />);
       });
 
-      window.removeEventListener("lit:llm-request-context", handler);
-    });
+      act(() => {
+        useBottomPanelStore.setState({
+          unfolded: true,
+          activeTab: "llm-response",
+          hasOpenedLlm: true,
+          panelHeight: 350,
+        });
+      });
 
-    it("passes formatted text from formatLlmPrompt to handleQuestionSubmit", async () => {
-      vi.mocked(formatLlmPrompt).mockReturnValue("formatted prompt text");
-      render(<BottomPanel pageId="target.md" />);
-      openLlmPanel();
-      await submitQuestion("test");
-      expect(handleQuestionSubmit).toHaveBeenCalledWith(
-        expect.objectContaining({ text: "formatted prompt text" }),
-      );
+      expect(screen.getByTestId("conversation-panel")).toBeInTheDocument();
     });
-
   });
 });

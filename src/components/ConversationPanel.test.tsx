@@ -454,4 +454,48 @@ describe("ConversationPanel", () => {
 
     expect(result!.queryByTestId("conversation-error")).toBeNull();
   });
+
+  // Cycle 23: Auto-focus on new thread
+  it("focuses input after creating a new thread", async () => {
+    const createConversationSpy = vi.fn().mockImplementation(async () => {
+      useConversationStore.setState({ activeConversationId: "new-id", messages: [] });
+      return "new-id";
+    });
+    useConversationStore.setState({
+      loadConversations: vi.fn().mockResolvedValue(undefined),
+      createConversation: createConversationSpy,
+      activeConversationId: "conv-1",
+      conversations: [makeConversation({ id: "conv-1" })],
+      messages: [],
+    });
+
+    let result: ReturnType<typeof render>;
+    await act(async () => {
+      result = render(<ConversationPanel pageId="page-1" />);
+    });
+
+    await act(async () => {
+      fireEvent.click(result!.getByTestId("new-thread-btn"));
+    });
+
+    const textarea = result!.getByTestId("conversation-input");
+    expect(document.activeElement).toBe(textarea);
+  });
+
+  it("focuses input when panel mounts with no active conversation", async () => {
+    useConversationStore.setState({
+      loadConversations: vi.fn().mockResolvedValue(undefined),
+      activeConversationId: null,
+      conversations: [],
+      messages: [],
+    });
+
+    let result: ReturnType<typeof render>;
+    await act(async () => {
+      result = render(<ConversationPanel pageId="page-1" />);
+    });
+
+    const textarea = result!.getByTestId("conversation-input");
+    expect(document.activeElement).toBe(textarea);
+  });
 });

@@ -2,10 +2,7 @@ import { useEffect, useCallback, useRef } from "react";
 import { BacklinksPanel } from "./BacklinksPanel";
 import { UnlinkedMentionsPanel } from "./UnlinkedMentionsPanel";
 import { AnnotationPanel } from "./AnnotationPanel";
-import { LlmResponsePanel } from "./LlmResponsePanel";
-import { handleQuestionSubmit } from "../lib/llmOrchestrator";
-import { formatLlmPrompt } from "../lib/promptFormatter";
-import type { EditorContext } from "../types";
+import { ConversationPanel } from "./ConversationPanel";
 import { usePreferencesStore } from "../stores/preferences";
 import { useBottomPanelStore } from "../stores/bottomPanel";
 import { MIN_PANEL_HEIGHT } from "../stores/bottomPanel";
@@ -27,25 +24,6 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
   const setPanelHeight = useBottomPanelStore((s) => s.setPanelHeight);
 
   const annotationEnabled = usePreferencesStore((s) => s.annotationEnabled);
-  const llmModel = usePreferencesStore((s) => s.llmModel);
-  const llmSystemPrompt = usePreferencesStore((s) => s.llmSystemPrompt);
-
-  const handleLlmSubmit = useCallback(
-    (question: string, context: EditorContext) => {
-      const text = formatLlmPrompt({
-        question,
-        context: context.selectionText,
-        filePath: context.filePath,
-      });
-      handleQuestionSubmit({
-        question,
-        model: llmModel,
-        text,
-        system: llmSystemPrompt || undefined,
-      });
-    },
-    [llmModel, llmSystemPrompt],
-  );
 
   const panelRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -187,9 +165,9 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
             <AnnotationPanel pageId={pageId} onCountChange={setAnnotationCount} contentHeight={panelHeight} />
           </div>
         )}
-        {hasOpenedLlm && (
+        {hasOpenedLlm && pageId && (
           <div style={{ display: activeTab === "llm-response" ? undefined : "none" }}>
-            <LlmResponsePanel contentHeight={panelHeight} onSubmit={handleLlmSubmit} />
+            <ConversationPanel pageId={pageId} contentHeight={panelHeight} />
           </div>
         )}
       </div>

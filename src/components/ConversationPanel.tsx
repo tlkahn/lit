@@ -1,9 +1,9 @@
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useRef } from "react";
 import { useConversationStore } from "../stores/conversation";
 import { usePreferencesStore } from "../stores/preferences";
 import { ThreadHeader } from "./ThreadHeader";
 import { MessageList } from "./MessageList";
-import { ConversationInput } from "./ConversationInput";
+import { ConversationInput, type ConversationInputHandle } from "./ConversationInput";
 
 interface ConversationPanelProps {
   pageId: string;
@@ -26,6 +26,8 @@ export function ConversationPanel({ pageId }: ConversationPanelProps) {
   const llmModel = usePreferencesStore((s) => s.llmModel);
   const llmSystemPrompt = usePreferencesStore((s) => s.llmSystemPrompt);
 
+  const inputRef = useRef<ConversationInputHandle>(null);
+
   useEffect(() => {
     loadConversations(pageId).then(() => {
       const state = useConversationStore.getState();
@@ -35,6 +37,7 @@ export function ConversationPanel({ pageId }: ConversationPanelProps) {
         );
         selectConversation(sorted[0]!.id);
       }
+      inputRef.current?.focus();
     });
   }, [pageId, loadConversations, selectConversation]);
 
@@ -50,8 +53,9 @@ export function ConversationPanel({ pageId }: ConversationPanelProps) {
     });
   }, [pageId, createConversation, sendMessage, llmModel, llmSystemPrompt]);
 
-  const handleNewThread = useCallback(() => {
-    createConversation(pageId);
+  const handleNewThread = useCallback(async () => {
+    await createConversation(pageId);
+    inputRef.current?.focus();
   }, [pageId, createConversation]);
 
   const handleSelect = useCallback((id: string) => {
@@ -98,6 +102,7 @@ export function ConversationPanel({ pageId }: ConversationPanelProps) {
         </div>
       )}
       <ConversationInput
+        ref={inputRef}
         onSend={handleSend}
         onNewThread={handleNewThread}
         onStop={handleStop}
