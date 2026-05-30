@@ -366,6 +366,7 @@ pub fn run() {
             commands::llm::llm_prompt_streaming,
             commands::llm::llm_cancel,
             commands::llm::llm_test_connection,
+            commands::llm::llm_build_context,
             commands::oplog::undo_last_operation,
             commands::oplog::list_undo_history,
             commands::oplog::can_undo,

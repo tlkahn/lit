@@ -1,13 +1,13 @@
 use crate::llm::{ChatMessage, TruncationInfo, estimate_tokens, context_window, symmetric_trim};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct Neighbor {
     pub title: String,
     pub excerpt: String,
     pub relation: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct BuiltContext {
     pub system: String,
     pub messages: Vec<ChatMessage>,
@@ -96,6 +96,13 @@ pub fn build_context_layers(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn built_context_serializes() {
+        let ctx = BuiltContext { system: "sys".into(), messages: vec![], truncation: None };
+        let json = serde_json::to_value(&ctx).unwrap();
+        assert_eq!(json["system"], "sys");
+    }
 
     // Cycle 1: Empty passthrough
     #[test]

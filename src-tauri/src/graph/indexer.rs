@@ -849,6 +849,11 @@ impl GraphIndex {
         }
     }
 
+    pub fn get_first_paragraphs(&self, ids: &[String]) -> Result<std::collections::HashMap<String, String>, GraphError> {
+        let store = self.store.lock().unwrap();
+        store.get_first_paragraphs(ids)
+    }
+
     pub fn unlinked_mentions(&self, page_id: &str) -> Result<Vec<UnlinkedMention>, GraphError> {
         use grep_regex::RegexMatcherBuilder;
         use rayon::prelude::*;
@@ -1272,6 +1277,20 @@ mod tests {
             fs::create_dir_all(parent).unwrap();
         }
         fs::write(abs, content).unwrap();
+    }
+
+    // --- get_first_paragraphs ---
+
+    #[test]
+    fn graph_index_get_first_paragraphs() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "First paragraph of A.\n\nMore text.");
+        write_md(dir.path(), "b.md", "First paragraph of B.");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let ids = vec!["a.md".into(), "b.md".into()];
+        let result = gi.get_first_paragraphs(&ids).unwrap();
+        assert_eq!(result.len(), 2);
+        assert!(result["a.md"].contains("First paragraph of A"));
     }
 
     // --- parse_md_file ---

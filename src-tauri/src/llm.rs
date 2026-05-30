@@ -6,7 +6,7 @@ use std::collections::HashMap;
 const DEFAULT_OPENAI_URL: &str = "https://api.openai.com";
 const DEFAULT_ANTHROPIC_URL: &str = "https://api.anthropic.com";
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
@@ -218,6 +218,14 @@ pub fn create_provider(model: &str, base_url: Option<&str>) -> Box<dyn Provider>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chat_message_serializes() {
+        let msg = ChatMessage { role: "user".into(), content: "hello".into() };
+        let json = serde_json::to_value(&msg).unwrap();
+        assert_eq!(json["role"], "user");
+        assert_eq!(json["content"], "hello");
+    }
 
     #[test]
     fn create_provider_anthropic_sonnet() {
