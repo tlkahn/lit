@@ -491,6 +491,69 @@ describe("conversation store", () => {
     expect(useLlmResponseStore.getState().status).toBe("idle");
   });
 
+  it("sendMessage with textOverride persists raw content to DB but passes textOverride to LLM", async () => {
+    useConversationStore.setState({ activeConversationId: FAKE_UUID });
+    const persistedMsg: MessageRow = {
+      id: 10,
+      conversation_id: FAKE_UUID,
+      role: "user",
+      content: "explain this",
+      seq: 1,
+      created_at: "2025-01-01T00:00:01Z",
+    };
+    mockedConversationAddMessage.mockResolvedValue(persistedMsg);
+    mockedStartLlmStream.mockResolvedValue(undefined);
+
+    await useConversationStore.getState().sendMessage({
+      content: "explain this",
+      textOverride: "File: test.md\n\nContext:\nhello world\n\nexplain this",
+      model: "test-model",
+    });
+
+    expect(mockedConversationAddMessage).toHaveBeenCalledWith(
+      FAKE_UUID,
+      "user",
+      "explain this",
+    );
+    expect(mockedStartLlmStream).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "File: test.md\n\nContext:\nhello world\n\nexplain this",
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("sendMessage without textOverride passes content for both DB and LLM", async () => {
+    useConversationStore.setState({ activeConversationId: FAKE_UUID });
+    const persistedMsg: MessageRow = {
+      id: 10,
+      conversation_id: FAKE_UUID,
+      role: "user",
+      content: "plain question",
+      seq: 1,
+      created_at: "2025-01-01T00:00:01Z",
+    };
+    mockedConversationAddMessage.mockResolvedValue(persistedMsg);
+    mockedStartLlmStream.mockResolvedValue(undefined);
+
+    await useConversationStore.getState().sendMessage({
+      content: "plain question",
+      model: "test-model",
+    });
+
+    expect(mockedConversationAddMessage).toHaveBeenCalledWith(
+      FAKE_UUID,
+      "user",
+      "plain question",
+    );
+    expect(mockedStartLlmStream).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "plain question",
+      }),
+      expect.any(Object),
+    );
+  });
+
   // --- Group C: cancelConversationStream (cycle 17) ---
 
   it("cancelConversationStream stops stream, unlocks, and cancels LLM without persisting", async () => {

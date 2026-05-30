@@ -1,16 +1,19 @@
 import { useEffect, useCallback, useRef } from "react";
 import { useConversationStore } from "../stores/conversation";
 import { usePreferencesStore } from "../stores/preferences";
+import { requestEditorContext } from "../lib/editorContext";
+import { formatLlmPrompt } from "../lib/promptFormatter";
 import { ThreadHeader } from "./ThreadHeader";
 import { MessageList } from "./MessageList";
 import { ConversationInput, type ConversationInputHandle } from "./ConversationInput";
 
 interface ConversationPanelProps {
-  pageId: string;
+  pageId?: string;
   contentHeight?: number;
 }
 
 export function ConversationPanel({ pageId }: ConversationPanelProps) {
+  const nodeId = pageId ?? "_global";
   const conversations = useConversationStore((s) => s.conversations);
   const activeConversationId = useConversationStore((s) => s.activeConversationId);
   const messages = useConversationStore((s) => s.messages);
@@ -29,7 +32,7 @@ export function ConversationPanel({ pageId }: ConversationPanelProps) {
   const inputRef = useRef<ConversationInputHandle>(null);
 
   useEffect(() => {
-    loadConversations(pageId).then(() => {
+    loadConversations(nodeId).then(() => {
       const state = useConversationStore.getState();
       if (state.activeConversationId === null && state.conversations.length > 0) {
         const sorted = [...state.conversations].sort(
@@ -39,25 +42,32 @@ export function ConversationPanel({ pageId }: ConversationPanelProps) {
       }
       inputRef.current?.focus();
     });
-  }, [pageId, loadConversations, selectConversation]);
+  }, [nodeId, loadConversations, selectConversation]);
 
   const handleSend = useCallback(async (content: string) => {
     const convId = useConversationStore.getState().activeConversationId;
     if (convId === null) {
-      const newId = await createConversation(pageId, content.slice(0, 50));
+      const newId = await createConversation(nodeId, content.slice(0, 50));
       if (newId === null) return;
     }
+    const editorCtx = requestEditorContext();
+    const enriched = formatLlmPrompt({
+      question: content,
+      context: editorCtx.selectionText || undefined,
+      filePath: editorCtx.filePath || undefined,
+    });
     await sendMessage({
       content,
       model: llmModel,
       system: llmSystemPrompt || undefined,
+      textOverride: enriched !== content ? enriched : undefined,
     });
-  }, [pageId, createConversation, sendMessage, llmModel, llmSystemPrompt]);
+  }, [nodeId, createConversation, sendMessage, llmModel, llmSystemPrompt]);
 
   const handleNewThread = useCallback(async () => {
-    await createConversation(pageId);
+    await createConversation(nodeId);
     inputRef.current?.focus();
-  }, [pageId, createConversation]);
+  }, [nodeId, createConversation]);
 
   const handleSelect = useCallback((id: string) => {
     selectConversation(id);

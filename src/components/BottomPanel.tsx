@@ -165,9 +165,9 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
             <AnnotationPanel pageId={pageId} onCountChange={setAnnotationCount} contentHeight={panelHeight} />
           </div>
         )}
-        {hasOpenedLlm && pageId && (
+        {hasOpenedLlm && (
           <div style={{ display: activeTab === "llm-response" ? undefined : "none" }}>
-            <ConversationPanel pageId={pageId} contentHeight={panelHeight} />
+            <ConversationPanel pageId={pageId ?? undefined} contentHeight={panelHeight} />
           </div>
         )}
       </div>
