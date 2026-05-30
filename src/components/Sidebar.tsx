@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect, useMemo, useDeferredValue, useCallback, memo } from "react";
-import { createPortal } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useWorkspaceStore } from "../stores/workspace";
 import { openInExternalEditor } from "../lib/ipc";
+import { showSidebarContextMenu, useSidebarContextMenu } from "../lib/contextMenuIpc";
 import { localeFilter } from "../lib/localeSearch";
 import { useSidebarTab } from "../hooks/useSidebarTab";
 import { useFlatTree, type FolderNode } from "../hooks/useFlatTree";
@@ -32,75 +32,22 @@ function buildTree(pages: PageMeta[]): FolderNode {
 const PageItem = memo(function PageItem({
   page,
   isActive,
-  showMenu,
   isRenaming,
   onSelect,
-  onDelete,
-  onMenuOpen,
-  onMenuClose,
-  onRenameStart,
   onRenameCommit,
   onRenameCancel,
-  onExportNetwork,
   depth,
 }: {
   page: PageMeta;
   isActive: boolean;
-  showMenu: boolean;
   isRenaming: boolean;
   onSelect: (path: string) => void;
-  onDelete: (path: string) => void;
-  onMenuOpen: (path: string) => void;
-  onMenuClose: () => void;
-  onRenameStart: (path: string) => void;
   onRenameCommit: (path: string, newName: string) => void;
   onRenameCancel: () => void;
-  onExportNetwork: (path: string) => void;
   depth: number;
 }) {
   const [renameValue, setRenameValue] = useState(page.title);
   const inputRef = useRef<HTMLInputElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const menuPosRef = useRef({ x: 0, y: 0 });
-
-  useEffect(() => {
-    if (!showMenu) return;
-    const handleClick = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        onMenuClose();
-      }
-    };
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onMenuClose();
-    };
-    document.addEventListener("mousedown", handleClick);
-    document.addEventListener("keydown", handleKey);
-    return () => {
-      document.removeEventListener("mousedown", handleClick);
-      document.removeEventListener("keydown", handleKey);
-    };
-  }, [showMenu, onMenuClose]);
-
-  useEffect(() => {
-    if (!showMenu || !menuRef.current) return;
-    const menu = menuRef.current;
-    const rect = menu.getBoundingClientRect();
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    let left = menuPosRef.current.x;
-    let top = menuPosRef.current.y;
-    if (left + rect.width > vw) left = vw - rect.width;
-    if (top + rect.height > vh) top = vh - rect.height;
-    if (left < 0) left = 0;
-    if (top < 0) top = 0;
-    menu.style.left = `${left}px`;
-    menu.style.top = `${top}px`;
-
-    menu.style.pointerEvents = "none";
-    const onMove = () => { menu.style.pointerEvents = ""; };
-    document.addEventListener("pointermove", onMove, { once: true });
-    return () => { document.removeEventListener("pointermove", onMove); };
-  }, [showMenu]);
 
   useEffect(() => {
     if (isRenaming) {
@@ -127,8 +74,7 @@ const PageItem = memo(function PageItem({
       onContextMenu={(e) => {
         e.preventDefault();
         if (!isRenaming) {
-          menuPosRef.current = { x: e.clientX, y: e.clientY };
-          onMenuOpen(page.relative_path);
+          showSidebarContextMenu(page.relative_path);
         }
       }}
     >
@@ -151,65 +97,16 @@ const PageItem = memo(function PageItem({
           className={`w-full select-none truncate rounded px-2 py-1 text-start text-sm ${
             isActive
               ? "bg-nav-active-bg text-nav-active-text"
-              : showMenu
-                ? "bg-bg-hover text-text-normal"
-                : "text-text-normal hover:bg-bg-hover"
+              : "text-text-normal hover:bg-bg-hover"
           }`}
           style={{ paddingInlineStart: `${depth * 12 + 8}px` }}
           title={page.relative_path}
         >
           {page.file_type === 'pdf' && (
-            <span className="nerd-font mr-1 opacity-60" aria-label="PDF file">{''}</span>
+            <span className="nerd-font mr-1 opacity-60" aria-label="PDF file">{''}</span>
           )}
           {page.title}
         </button>
-      )}
-      {showMenu && createPortal(
-        <div
-          ref={menuRef}
-          data-testid="context-menu"
-          className="z-50 min-w-[160px] select-none rounded-lg border border-border/40 bg-bg-primary/80 p-1 shadow-xl shadow-black/20 backdrop-blur-xl backdrop-saturate-150 dark:border-border/10 dark:bg-bg-primary/70"
-          style={{ position: "fixed", left: `${menuPosRef.current.x}px`, top: `${menuPosRef.current.y}px` }}
-        >
-          <button
-            onClick={() => {
-              onMenuClose();
-              onRenameStart(page.relative_path);
-            }}
-            className="block w-full rounded-md px-3 py-1 text-start text-[13px] text-text-normal hover:bg-interactive-accent hover:text-text-on-accent"
-          >
-            Rename
-          </button>
-          <button
-            onClick={() => {
-              onMenuClose();
-              openInExternalEditor(page.relative_path, 1, 1);
-            }}
-            className="block w-full rounded-md px-3 py-1 text-start text-[13px] text-text-normal hover:bg-interactive-accent hover:text-text-on-accent"
-          >
-            Open in External Editor
-          </button>
-          <button
-            onClick={() => {
-              onMenuClose();
-              onExportNetwork(page.relative_path);
-            }}
-            className="block w-full rounded-md px-3 py-1 text-start text-[13px] text-text-normal hover:bg-interactive-accent hover:text-text-on-accent"
-          >
-            Export Local Network…
-          </button>
-          <div className="mx-2 my-1 border-t border-border/40 dark:border-border/10" />
-          <button
-            onClick={() => {
-              onMenuClose();
-              onDelete(page.relative_path);
-            }}
-            className="block w-full rounded-md px-3 py-1 text-start text-[13px] text-text-error hover:bg-destructive hover:text-text-on-accent"
-          >
-            Move to Trash
-          </button>
-        </div>,
-        document.body,
       )}
     </div>
   );
@@ -227,7 +124,6 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
   const { tab, setTab } = useSidebarTab();
   const [search, setSearch] = useState("");
   const deferredSearch = useDeferredValue(search);
-  const [menuPath, setMenuPath] = useState<string | null>(null);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
 
   const filtered = useMemo(
@@ -247,7 +143,6 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
     overscan: 10,
   });
 
-  const handleMenuClose = useCallback(() => setMenuPath(null), []);
   const handleRenameCancel = useCallback(() => setRenamingPath(null), []);
 
   const handleRenameCommit = useCallback((path: string, newName: string) => {
@@ -255,9 +150,15 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
     renamePageAction(path, newName);
   }, [renamePageAction]);
 
-  const handleDelete = useCallback((path: string) => {
-    deletePageAction(path);
-  }, [deletePageAction]);
+  const onExportNetworkRef = useRef(onExportNetwork);
+  onExportNetworkRef.current = onExportNetwork;
+
+  useSidebarContextMenu({
+    onRename: (relativePath) => setRenamingPath(relativePath),
+    onExternalEditor: (relativePath) => openInExternalEditor(relativePath, 1, 1),
+    onExportNetwork: (relativePath) => onExportNetworkRef.current?.(relativePath),
+    onTrash: (relativePath) => deletePageAction(relativePath),
+  });
 
   return (
     <aside className="flex h-full shrink-0 flex-col border-e border-border bg-bg-secondary" style={{ width: SIDEBAR_WIDTH_PX }}>
@@ -315,7 +216,6 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
             <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
               {virtualizer.getVirtualItems().map((virtualRow) => {
                 const row = rows[virtualRow.index]!;
-                const hasMenu = row.type === "page" && menuPath === row.page.relative_path;
                 return (
                   <div
                     key={row.key}
@@ -325,7 +225,6 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
                       top: 0,
                       left: 0,
                       width: "100%",
-                      zIndex: hasMenu ? 50 : undefined,
                       transform: `translateY(${virtualRow.start}px)`,
                     }}
                   >
@@ -342,18 +241,10 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
                       <PageItem
                         page={row.page}
                         isActive={currentPagePath === row.page.relative_path}
-                        showMenu={menuPath === row.page.relative_path}
                         isRenaming={renamingPath === row.page.relative_path}
                         onSelect={selectPage}
-                        onDelete={handleDelete}
-                        onMenuOpen={setMenuPath}
-                        onMenuClose={handleMenuClose}
-                        onRenameStart={setRenamingPath}
                         onRenameCommit={handleRenameCommit}
                         onRenameCancel={handleRenameCancel}
-                        onExportNetwork={(path) => {
-                          onExportNetwork?.(path);
-                        }}
                         depth={row.depth}
                       />
                     )}

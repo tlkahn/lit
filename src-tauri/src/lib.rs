@@ -368,6 +368,7 @@ pub fn run() {
             commands::merge_split::execute_split,
             commands::merge_split::merge_documents,
             context_menu::show_trash_context_menu,
+            context_menu::show_sidebar_context_menu,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
