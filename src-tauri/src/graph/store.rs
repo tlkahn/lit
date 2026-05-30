@@ -625,6 +625,27 @@ impl Store {
         Ok(results)
     }
 
+    pub fn get_first_paragraphs(&self, ids: &[String]) -> Result<HashMap<String, String>, GraphError> {
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
+        let sql = format!(
+            "SELECT id, first_paragraph FROM nodes WHERE id IN ({}) AND first_paragraph IS NOT NULL",
+            placeholders.join(", ")
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let params: Vec<&dyn rusqlite::types::ToSql> =
+            ids.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
+        let map = stmt
+            .query_map(params.as_slice(), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(map)
+    }
+
     // --- Meta ---
 
     pub fn get_meta(&self, key: &str) -> Result<Option<String>, GraphError> {
@@ -3596,5 +3617,34 @@ mod tests {
             "SELECT COUNT(*) FROM conversation_messages", [], |r| r.get(0),
         ).unwrap();
         assert_eq!(msg_count, 0);
+    }
+
+    #[test]
+    fn get_first_paragraphs_empty_ids() {
+        let store = Store::open_memory().unwrap();
+        let result = store.get_first_paragraphs(&[]).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn get_first_paragraphs_returns_data() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("a.md", "A", &[], json!({})), 1).unwrap();
+        store.upsert_node(&make_node("b.md", "B", &[], json!({})), 1).unwrap();
+        let ids = vec!["a.md".into(), "b.md".into()];
+        let result = store.get_first_paragraphs(&ids).unwrap();
+        assert_eq!(result.len(), 2);
+        assert!(result["a.md"].contains("A"));
+        assert!(result["b.md"].contains("B"));
+    }
+
+    #[test]
+    fn get_first_paragraphs_missing_ids_omitted() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("a.md", "A", &[], json!({})), 1).unwrap();
+        let ids = vec!["a.md".into(), "ghost.md".into()];
+        let result = store.get_first_paragraphs(&ids).unwrap();
+        assert_eq!(result.len(), 1);
+        assert!(!result.contains_key("ghost.md"));
     }
 }

@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tokio::task::JoinHandle;
 
@@ -7,7 +8,9 @@ use tauri::{Emitter, Window};
 
 use tracing::{info, debug};
 
+use crate::graph::indexer::GraphIndex;
 use crate::llm::{self, ChatMessage, LlmEvent, TruncationInfo};
+use crate::llm_context::{build_context_layers, BuiltContext, Neighbor};
 use super::credential::{self, CredentialStore};
 
 pub struct LlmState {
@@ -213,6 +216,134 @@ pub async fn llm_test_connection(
     test_connection_inner(&model, api_key.as_deref(), base_url.as_deref()).await
 }
 
+pub fn build_context_inner(
+    node_id: &str,
+    system_prompt: &str,
+    neighbors_depth: usize,
+    model: &str,
+    messages: &[ChatMessage],
+    graph_index: Option<&GraphIndex>,
+    workspace_root: Option<&Path>,
+) -> Result<BuiltContext, String> {
+    let (doc_content, doc_title, neighbors) = if node_id == "_global" || workspace_root.is_none() {
+        (String::new(), String::new(), vec![])
+    } else {
+        let root = workspace_root.unwrap();
+        let (doc_content, doc_title) = {
+            let registry = crate::workspace::write_hash::WriteHashRegistry::new();
+            match crate::workspace::ops::read_page(root, node_id, &registry) {
+                Ok(page) => (page.body, page.meta.title),
+                Err(_) => (String::new(), String::new()),
+            }
+        };
+
+        let neighbors = if neighbors_depth == 0 || graph_index.is_none() {
+            vec![]
+        } else {
+            let gi = graph_index.unwrap();
+            let mut seen = HashSet::new();
+            let mut neighbor_entries: Vec<(String, String, String, String)> = Vec::new();
+
+            if let Ok(flinks) = gi.forward_links(node_id) {
+                for link in flinks {
+                    if seen.insert(link.target_id.clone()) {
+                        neighbor_entries.push((
+                            link.target_id,
+                            link.target_title,
+                            "forward link".into(),
+                            link.context,
+                        ));
+                    }
+                }
+            }
+            if let Ok(blinks) = gi.backlinks(node_id) {
+                for bl in blinks {
+                    if seen.insert(bl.source_id.clone()) {
+                        neighbor_entries.push((
+                            bl.source_id,
+                            bl.source_title,
+                            format!("backlink from line {}", bl.source_line),
+                            bl.context,
+                        ));
+                    }
+                }
+            }
+
+            if neighbors_depth >= 2 {
+                if let Ok(subgraph) = gi.neighbors(node_id, 2, false) {
+                    for node in subgraph.nodes {
+                        if node.id != node_id && seen.insert(node.id.clone()) {
+                            neighbor_entries.push((
+                                node.id,
+                                node.title,
+                                "2-hop neighbor".into(),
+                                String::new(),
+                            ));
+                        }
+                    }
+                }
+            }
+
+            neighbor_entries.truncate(20);
+
+            let ids: Vec<String> = neighbor_entries.iter().map(|(id, ..)| id.clone()).collect();
+            let first_paragraphs = gi.get_first_paragraphs(&ids).unwrap_or_default();
+
+            neighbor_entries
+                .into_iter()
+                .map(|(id, title, relation, context)| {
+                    let excerpt = first_paragraphs
+                        .get(&id)
+                        .filter(|s| !s.is_empty())
+                        .cloned()
+                        .unwrap_or(context);
+                    Neighbor { title, excerpt, relation }
+                })
+                .collect()
+        };
+
+        (doc_content, doc_title, neighbors)
+    };
+
+    Ok(build_context_layers(
+        system_prompt, messages, &doc_content, &doc_title, &neighbors, model,
+    ))
+}
+
+#[derive(Deserialize)]
+pub struct BuildContextArgs {
+    pub node_id: String,
+    #[serde(default)]
+    pub system_prompt: String,
+    #[serde(default)]
+    pub neighbors_depth: usize,
+    pub model: String,
+    #[serde(default)]
+    pub messages: Vec<ChatMessage>,
+}
+
+#[tauri::command]
+pub fn llm_build_context(
+    args: BuildContextArgs,
+    window: Window,
+    workspace_state: tauri::State<'_, crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: tauri::State<'_, Arc<super::graph::GraphRegistry>>,
+) -> Result<BuiltContext, String> {
+    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label()).ok();
+    let gi_arc = root.as_ref().and_then(|r| {
+        graph_state.indices.lock().unwrap().get(r).cloned()
+    });
+    build_context_inner(
+        &args.node_id,
+        &args.system_prompt,
+        args.neighbors_depth,
+        &args.model,
+        &args.messages,
+        gi_arc.as_deref(),
+        root.as_deref(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -396,5 +527,100 @@ mod tests {
 
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         assert!(!state.has_active_task(), "state should auto-clear after task completes");
+    }
+
+    // --- build_context_inner ---
+
+    #[test]
+    fn build_context_inner_global() {
+        let msgs = vec![
+            ChatMessage { role: "user".into(), content: "Hello".into() },
+            ChatMessage { role: "assistant".into(), content: "Hi".into() },
+        ];
+        let result = build_context_inner("_global", "Be helpful", 0, "gpt-4o", &msgs, None, None).unwrap();
+        assert!(result.system.contains("Be helpful"));
+        assert!(!result.system.contains("## Current document"));
+        assert!(!result.system.contains("## Linked notes"));
+        assert_eq!(result.messages.len(), 2);
+        assert_eq!(result.messages[0].content, "Hello");
+    }
+
+    #[test]
+    fn build_context_inner_reads_page() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("note.md"), "---\ntitle: My Note\n---\nThe body.").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let r = build_context_inner("note.md", "Sys", 0, "gpt-4o", &[], Some(&gi), Some(dir.path())).unwrap();
+        assert!(r.system.contains("## Current document:"), "should contain document section");
+        assert!(r.system.contains("The body."));
+    }
+
+    #[test]
+    fn build_context_inner_missing_page_graceful() {
+        let dir = tempfile::tempdir().unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let r = build_context_inner("ghost.md", "Sys", 0, "gpt-4o", &[], Some(&gi), Some(dir.path()));
+        assert!(r.is_ok());
+        assert!(!r.unwrap().system.contains("## Current document"));
+    }
+
+    #[test]
+    fn build_context_inner_depth_1_neighbors() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "Body A. Links to [[b]].").unwrap();
+        std::fs::write(dir.path().join("b.md"), "First paragraph of B.\n\nMore of B.").unwrap();
+        std::fs::write(dir.path().join("c.md"), "First paragraph of C.\n\nLinks to [[a]].").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let r = build_context_inner("a.md", "Sys", 1, "gpt-4o", &[], Some(&gi), Some(dir.path())).unwrap();
+        assert!(r.system.contains("## Linked notes"), "should have linked notes section");
+        assert!(r.system.contains("forward link"), "b should appear as forward link");
+        assert!(r.system.contains("backlink"), "c should appear as backlink");
+    }
+
+    #[test]
+    fn build_context_inner_depth_0_no_neighbors() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "Body A. Links to [[b]].").unwrap();
+        std::fs::write(dir.path().join("b.md"), "Body B.").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let r = build_context_inner("a.md", "Sys", 0, "gpt-4o", &[], Some(&gi), Some(dir.path())).unwrap();
+        assert!(!r.system.contains("## Linked notes"));
+    }
+
+    #[test]
+    fn build_context_inner_depth_1_dedupes() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "Links to [[b]].").unwrap();
+        std::fs::write(dir.path().join("b.md"), "First paragraph of B.\n\nLinks to [[a]].").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let r = build_context_inner("a.md", "Sys", 1, "gpt-4o", &[], Some(&gi), Some(dir.path())).unwrap();
+        let neighbor_count = r.system.matches("###").count();
+        assert_eq!(neighbor_count, 1, "mutual link should produce exactly one neighbor entry");
+    }
+
+    #[test]
+    fn build_context_inner_depth_2_hops() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "Links to [[b]].").unwrap();
+        std::fs::write(dir.path().join("b.md"), "First para B.\n\nLinks to [[c]].").unwrap();
+        std::fs::write(dir.path().join("c.md"), "First para C.").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let r = build_context_inner("a.md", "Sys", 2, "gpt-4o", &[], Some(&gi), Some(dir.path())).unwrap();
+        assert!(r.system.contains("c"), "2-hop neighbor c.md should appear");
+    }
+
+    #[test]
+    fn build_context_inner_neighbor_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut body = String::new();
+        for i in 0..25 {
+            body.push_str(&format!("[[n{i}]] "));
+            std::fs::write(dir.path().join(format!("n{i}.md")), format!("Para {i}.")).unwrap();
+        }
+        std::fs::write(dir.path().join("hub.md"), &body).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let r = build_context_inner("hub.md", "Sys", 1, "gpt-4o", &[], Some(&gi), Some(dir.path())).unwrap();
+        let count = r.system.matches("###").count();
+        assert!(count <= 20, "neighbor count {count} should be capped at 20");
     }
 }
