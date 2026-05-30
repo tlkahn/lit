@@ -25,7 +25,7 @@ import {
 } from "../lib/ipc";
 import type { ConversationRow, MessageRow } from "../lib/ipc";
 
-import { startLlmStream } from "../lib/llmClient";
+import { startLlmStream, type LlmStreamCallbacks } from "../lib/llmClient";
 import { useLlmResponseStore } from "./llmResponse";
 import { useModalLockStore } from "./modalLock";
 
@@ -307,6 +307,125 @@ describe("conversation store", () => {
     expect(statusAtCallTime).toBe("streaming");
     expect(llmLockedAtCallTime).toBe(true);
     expect(startStreamQuestion).toBe("hello");
+  });
+
+  // --- Stage 3: Streaming Callbacks (cycles 13–15) ---
+
+  it("sendMessage onChunk appends to llmResponse", async () => {
+    useConversationStore.setState({ activeConversationId: FAKE_UUID });
+    const persistedMsg: MessageRow = {
+      id: 10,
+      conversation_id: FAKE_UUID,
+      role: "user",
+      content: "hello",
+      seq: 1,
+      created_at: "2025-01-01T00:00:01Z",
+    };
+    mockedConversationAddMessage.mockResolvedValue(persistedMsg);
+
+    let capturedCallbacks: LlmStreamCallbacks | null = null;
+    mockedStartLlmStream.mockImplementation(async (_args: unknown, cbs: LlmStreamCallbacks) => {
+      capturedCallbacks = cbs;
+    });
+
+    await useConversationStore.getState().sendMessage({
+      content: "hello",
+      model: "test-model",
+    });
+
+    capturedCallbacks!.onChunk("hello");
+    expect(useLlmResponseStore.getState().responseText).toBe("hello");
+  });
+
+  it("sendMessage onDone persists assistant message and unlocks", async () => {
+    useConversationStore.setState({ activeConversationId: FAKE_UUID });
+    const persistedUserMsg: MessageRow = {
+      id: 10,
+      conversation_id: FAKE_UUID,
+      role: "user",
+      content: "hello",
+      seq: 1,
+      created_at: "2025-01-01T00:00:01Z",
+    };
+    const persistedAssistantMsg: MessageRow = {
+      id: 11,
+      conversation_id: FAKE_UUID,
+      role: "assistant",
+      content: "the response",
+      seq: 2,
+      created_at: "2025-01-01T00:00:02Z",
+    };
+
+    let callCount = 0;
+    mockedConversationAddMessage.mockImplementation(async () => {
+      callCount++;
+      if (callCount === 1) return persistedUserMsg;
+      return persistedAssistantMsg;
+    });
+
+    let capturedCallbacks: LlmStreamCallbacks | null = null;
+    mockedStartLlmStream.mockImplementation(async (_args: unknown, cbs: LlmStreamCallbacks) => {
+      capturedCallbacks = cbs;
+    });
+
+    await useConversationStore.getState().sendMessage({
+      content: "hello",
+      model: "test-model",
+    });
+
+    // Simulate chunks arriving, building up responseText
+    useLlmResponseStore.setState({ responseText: "the response" });
+
+    // Invoke onDone
+    await capturedCallbacks!.onDone();
+
+    // Assert assistant message persisted
+    expect(mockedConversationAddMessage).toHaveBeenCalledWith(
+      FAKE_UUID,
+      "assistant",
+      "the response",
+    );
+    // Assert assistant message appended to store
+    expect(useConversationStore.getState().messages).toContainEqual(persistedAssistantMsg);
+    // Assert stream finished
+    expect(useLlmResponseStore.getState().status).toBe("done");
+    // Assert modal unlocked
+    expect(useModalLockStore.getState().llmLocked).toBe(false);
+  });
+
+  it("sendMessage onError sets error on llmResponse and unlocks", async () => {
+    useConversationStore.setState({ activeConversationId: FAKE_UUID });
+    const persistedMsg: MessageRow = {
+      id: 10,
+      conversation_id: FAKE_UUID,
+      role: "user",
+      content: "hello",
+      seq: 1,
+      created_at: "2025-01-01T00:00:01Z",
+    };
+    mockedConversationAddMessage.mockResolvedValue(persistedMsg);
+
+    let capturedCallbacks: LlmStreamCallbacks | null = null;
+    mockedStartLlmStream.mockImplementation(async (_args: unknown, cbs: LlmStreamCallbacks) => {
+      capturedCallbacks = cbs;
+    });
+
+    await useConversationStore.getState().sendMessage({
+      content: "hello",
+      model: "test-model",
+    });
+
+    capturedCallbacks!.onError({ message: "rate limited", retryable: true });
+
+    // Assert llmResponse store shows error
+    expect(useLlmResponseStore.getState().status).toBe("error");
+    expect(useLlmResponseStore.getState().errorMessage).toBe("rate limited");
+    // Assert modal unlocked
+    expect(useModalLockStore.getState().llmLocked).toBe(false);
+    // Assert conversationAddMessage was NOT called a second time (no assistant persist)
+    expect(mockedConversationAddMessage).toHaveBeenCalledTimes(1);
+    // User message should remain in messages
+    expect(useConversationStore.getState().messages).toEqual([persistedMsg]);
   });
 
   it("deleteConversation on non-active preserves activeConversationId and messages", async () => {
