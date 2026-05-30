@@ -949,13 +949,14 @@ impl Store {
         anchor_type: Option<&str>,
         anchor_id: Option<i64>,
         title: Option<&str>,
-    ) -> Result<(), GraphError> {
-        self.conn.execute(
+    ) -> Result<ConversationRow, GraphError> {
+        self.conn.query_row(
             "INSERT INTO conversations(id, node_id, anchor_type, anchor_id, title, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
+             VALUES (?1, ?2, ?3, ?4, ?5, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+             RETURNING id, node_id, anchor_type, anchor_id, title, created_at, updated_at",
             rusqlite::params![id, node_id, anchor_type, anchor_id, title],
-        )?;
-        Ok(())
+            |row| map_conversation_row(row),
+        ).map_err(|e| e.into())
     }
 
     pub fn get_conversation(&self, id: &str) -> Result<Option<ConversationRow>, GraphError> {
@@ -1001,26 +1002,37 @@ impl Store {
         conversation_id: &str,
         role: &str,
         content: &str,
-        seq: i32,
-    ) -> Result<i64, GraphError> {
+    ) -> Result<MessageRow, GraphError> {
         self.conn.execute_batch("SAVEPOINT add_message")?;
-        let result = (|| -> Result<i64, GraphError> {
-            self.conn.execute(
+        let result = (|| -> Result<MessageRow, GraphError> {
+            let msg = self.conn.query_row(
                 "INSERT INTO conversation_messages(conversation_id, role, content, seq, created_at)
-                 VALUES (?1, ?2, ?3, ?4, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
-                rusqlite::params![conversation_id, role, content, seq],
+                 VALUES (?1, ?2, ?3,
+                         (SELECT COALESCE(MAX(seq), -1) + 1 FROM conversation_messages WHERE conversation_id = ?1),
+                         strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+                 RETURNING id, conversation_id, role, content, seq, created_at",
+                rusqlite::params![conversation_id, role, content],
+                |row| {
+                    Ok(MessageRow {
+                        id: row.get(0)?,
+                        conversation_id: row.get(1)?,
+                        role: row.get(2)?,
+                        content: row.get(3)?,
+                        seq: row.get(4)?,
+                        created_at: row.get(5)?,
+                    })
+                },
             )?;
-            let rowid = self.conn.last_insert_rowid();
             self.conn.execute(
                 "UPDATE conversations SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
                 [conversation_id],
             )?;
-            Ok(rowid)
+            Ok(msg)
         })();
         match result {
-            Ok(rowid) => {
+            Ok(msg) => {
                 self.conn.execute_batch("RELEASE add_message")?;
-                Ok(rowid)
+                Ok(msg)
             }
             Err(e) => {
                 self.conn.execute_batch("ROLLBACK TO add_message")?;
@@ -1060,32 +1072,6 @@ impl Store {
             rusqlite::params![conversation_id, seq],
         )?;
         Ok(())
-    }
-
-    pub fn next_message_seq(&self, conversation_id: &str) -> Result<i32, GraphError> {
-        self.conn.query_row(
-            "SELECT COALESCE(MAX(seq), -1) + 1 FROM conversation_messages WHERE conversation_id = ?1",
-            [conversation_id],
-            |row| row.get(0),
-        ).map_err(|e| e.into())
-    }
-
-    pub fn get_message_by_id(&self, id: i64) -> Result<MessageRow, GraphError> {
-        self.conn.query_row(
-            "SELECT id, conversation_id, role, content, seq, created_at
-             FROM conversation_messages WHERE id = ?1",
-            [id],
-            |row| {
-                Ok(MessageRow {
-                    id: row.get(0)?,
-                    conversation_id: row.get(1)?,
-                    role: row.get(2)?,
-                    content: row.get(3)?,
-                    seq: row.get(4)?,
-                    created_at: row.get(5)?,
-                })
-            },
-        ).map_err(|e| e.into())
     }
 
     // --- Transactions ---
@@ -1221,7 +1207,7 @@ mod tests {
             positions.insert("a.md".into(), Position { x: 1.0, y: 2.0 });
             store.save_positions(&positions).unwrap();
             store.create_conversation("conv-1", "a.md", None, None, Some("Chat")).unwrap();
-            store.add_message("conv-1", "user", "Hello", 0).unwrap();
+            store.add_message("conv-1", "user", "Hello").unwrap();
 
             store.conn.execute(
                 "UPDATE meta SET value = '999' WHERE key = 'schema_version'", [],
@@ -3032,6 +3018,23 @@ mod tests {
         assert!(store.create_conversation("conv-1", "a.md", None, None, None).is_err());
     }
 
+    #[test]
+    fn create_conversation_returns_row_directly() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let row: ConversationRow = store.create_conversation("conv-1", "a.md", Some("annotation"), Some(7), Some("Chat")).unwrap();
+        assert_eq!(row.id, "conv-1");
+        assert_eq!(row.node_id, "a.md");
+        assert_eq!(row.anchor_type, Some("annotation".into()));
+        assert_eq!(row.anchor_id, Some(7));
+        assert_eq!(row.title, Some("Chat".into()));
+        assert!(!row.created_at.is_empty());
+        assert!(row.created_at.ends_with('Z'));
+        assert_eq!(row.created_at, row.updated_at);
+    }
+
     // --- Conversations: get_conversation ---
 
     #[test]
@@ -3126,48 +3129,6 @@ mod tests {
 
     // --- Conversations: get_message_by_id ---
 
-    #[test]
-    fn get_message_by_id_returns_inserted_message() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
-        let rowid = store.add_message("conv-1", "user", "Hello world", 0).unwrap();
-
-        let msg = store.get_message_by_id(rowid).unwrap();
-        assert_eq!(msg.id, rowid);
-        assert_eq!(msg.conversation_id, "conv-1");
-        assert_eq!(msg.role, "user");
-        assert_eq!(msg.content, "Hello world");
-        assert_eq!(msg.seq, 0);
-        assert!(!msg.created_at.is_empty());
-    }
-
-    // --- Conversations: next_message_seq ---
-
-    #[test]
-    fn next_message_seq_empty_conversation_returns_zero() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
-
-        assert_eq!(store.next_message_seq("conv-1").unwrap(), 0);
-    }
-
-    #[test]
-    fn next_message_seq_after_three_messages_returns_three() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
-        store.add_message("conv-1", "user", "msg0", 0).unwrap();
-        store.add_message("conv-1", "assistant", "msg1", 1).unwrap();
-        store.add_message("conv-1", "user", "msg2", 2).unwrap();
-
-        assert_eq!(store.next_message_seq("conv-1").unwrap(), 3);
-    }
-
     // --- Conversations: touch_conversation ---
 
     #[test]
@@ -3190,14 +3151,30 @@ mod tests {
     // --- Conversations: add_message ---
 
     #[test]
+    fn add_message_returns_message_row_directly() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+
+        let msg: MessageRow = store.add_message("conv-1", "user", "Hello world").unwrap();
+        assert_eq!(msg.conversation_id, "conv-1");
+        assert_eq!(msg.role, "user");
+        assert_eq!(msg.content, "Hello world");
+        assert_eq!(msg.seq, 0);
+        assert!(!msg.created_at.is_empty());
+        assert!(msg.created_at.ends_with('Z'));
+    }
+
+    #[test]
     fn add_message_inserts_row() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
         store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
 
-        let id = store.add_message("conv-1", "user", "Hello", 0).unwrap();
-        assert!(id > 0);
+        let msg = store.add_message("conv-1", "user", "Hello").unwrap();
+        assert!(msg.id > 0);
 
         let msgs = store.list_messages("conv-1").unwrap();
         assert_eq!(msgs.len(), 1);
@@ -3209,7 +3186,7 @@ mod tests {
     #[test]
     fn add_message_to_nonexistent_conversation_fails() {
         let store = Store::open_memory().unwrap();
-        assert!(store.add_message("nonexistent", "user", "Hello", 0).is_err());
+        assert!(store.add_message("nonexistent", "user", "Hello").is_err());
     }
 
     #[test]
@@ -3218,7 +3195,7 @@ mod tests {
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
         store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
-        assert!(store.add_message("conv-1", "invalid_role", "Hello", 0).is_err());
+        assert!(store.add_message("conv-1", "invalid_role", "Hello").is_err());
     }
 
     #[test]
@@ -3233,7 +3210,7 @@ mod tests {
             [],
         ).unwrap();
 
-        store.add_message("conv-1", "user", "Hello", 0).unwrap();
+        store.add_message("conv-1", "user", "Hello").unwrap();
         let row = store.get_conversation("conv-1").unwrap().unwrap();
         assert_ne!(row.updated_at, "2000-01-01T00:00:00Z");
     }
@@ -3256,9 +3233,9 @@ mod tests {
         store.upsert_node(&node, 1).unwrap();
         store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
 
-        store.add_message("conv-1", "user", "First", 0).unwrap();
-        store.add_message("conv-1", "assistant", "Second", 1).unwrap();
-        store.add_message("conv-1", "user", "Third", 2).unwrap();
+        store.add_message("conv-1", "user", "First").unwrap();
+        store.add_message("conv-1", "assistant", "Second").unwrap();
+        store.add_message("conv-1", "user", "Third").unwrap();
 
         let msgs = store.list_messages("conv-1").unwrap();
         assert_eq!(msgs.len(), 3);
@@ -3279,10 +3256,10 @@ mod tests {
         store.upsert_node(&node, 1).unwrap();
         store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
 
-        store.add_message("conv-1", "user", "msg0", 0).unwrap();
-        store.add_message("conv-1", "assistant", "msg1", 1).unwrap();
-        store.add_message("conv-1", "user", "msg2", 2).unwrap();
-        store.add_message("conv-1", "assistant", "msg3", 3).unwrap();
+        store.add_message("conv-1", "user", "msg0").unwrap();
+        store.add_message("conv-1", "assistant", "msg1").unwrap();
+        store.add_message("conv-1", "user", "msg2").unwrap();
+        store.add_message("conv-1", "assistant", "msg3").unwrap();
 
         store.delete_messages_after("conv-1", 1).unwrap();
 
@@ -3298,7 +3275,7 @@ mod tests {
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
         store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
-        store.add_message("conv-1", "user", "msg0", 0).unwrap();
+        store.add_message("conv-1", "user", "msg0").unwrap();
 
         store.delete_messages_after("conv-1", 10).unwrap();
         assert_eq!(store.list_messages("conv-1").unwrap().len(), 1);
@@ -3311,9 +3288,9 @@ mod tests {
         store.upsert_node(&node, 1).unwrap();
         store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
 
-        store.add_message("conv-1", "user", "msg0", 0).unwrap();
-        store.add_message("conv-1", "assistant", "msg1", 1).unwrap();
-        store.add_message("conv-1", "user", "msg2", 2).unwrap();
+        store.add_message("conv-1", "user", "msg0").unwrap();
+        store.add_message("conv-1", "assistant", "msg1").unwrap();
+        store.add_message("conv-1", "user", "msg2").unwrap();
 
         // seq=1 is the boundary: it and everything before it must survive
         store.delete_messages_after("conv-1", 1).unwrap();
@@ -3344,7 +3321,7 @@ mod tests {
              END;"
         ).unwrap();
 
-        let result = store.add_message("conv-1", "user", "Hello", 0);
+        let result = store.add_message("conv-1", "user", "Hello");
         assert!(result.is_err(), "add_message should fail when touch trigger blocks");
 
         let msg_count: i64 = store.conn.query_row(
@@ -3363,7 +3340,7 @@ mod tests {
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
         store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
-        store.add_message("conv-1", "user", "msg", 0).unwrap();
+        store.add_message("conv-1", "user", "msg").unwrap();
 
         store.delete_conversation("conv-1").unwrap();
 
@@ -3380,7 +3357,7 @@ mod tests {
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
         store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
-        store.add_message("conv-1", "user", "msg", 0).unwrap();
+        store.add_message("conv-1", "user", "msg").unwrap();
 
         store.delete_node("a.md").unwrap();
 
@@ -3401,10 +3378,10 @@ mod tests {
         store.upsert_node(&node, 1).unwrap();
 
         store.create_conversation("conv-1", "a.md", None, None, Some("Chat")).unwrap();
-        store.add_message("conv-1", "user", "Q1", 0).unwrap();
-        store.add_message("conv-1", "assistant", "A1", 1).unwrap();
-        store.add_message("conv-1", "user", "Q2", 2).unwrap();
-        store.add_message("conv-1", "assistant", "A2", 3).unwrap();
+        store.add_message("conv-1", "user", "Q1").unwrap();
+        store.add_message("conv-1", "assistant", "A1").unwrap();
+        store.add_message("conv-1", "user", "Q2").unwrap();
+        store.add_message("conv-1", "assistant", "A2").unwrap();
 
         let msgs = store.list_messages("conv-1").unwrap();
         assert_eq!(msgs.len(), 4);
@@ -3413,7 +3390,7 @@ mod tests {
         let msgs = store.list_messages("conv-1").unwrap();
         assert_eq!(msgs.len(), 2);
 
-        store.add_message("conv-1", "user", "Q2-branch", 2).unwrap();
+        store.add_message("conv-1", "user", "Q2-branch").unwrap();
         let msgs = store.list_messages("conv-1").unwrap();
         assert_eq!(msgs.len(), 3);
         assert_eq!(msgs[2].content, "Q2-branch");
@@ -3492,7 +3469,7 @@ mod tests {
         assert_eq!(title, "Alpha");
 
         store.create_conversation("conv-1", "a.md", None, None, Some("Test")).unwrap();
-        store.add_message("conv-1", "user", "Hello", 0).unwrap();
+        store.add_message("conv-1", "user", "Hello").unwrap();
         let msgs = store.list_messages("conv-1").unwrap();
         assert_eq!(msgs.len(), 1);
     }
@@ -3503,7 +3480,7 @@ mod tests {
         let node = make_node("a.md", "Old Title", &["tag1"], json!({}));
         store.upsert_node(&node, 1).unwrap();
         store.create_conversation("conv-1", "a.md", None, None, Some("Chat")).unwrap();
-        store.add_message("conv-1", "user", "Hello", 0).unwrap();
+        store.add_message("conv-1", "user", "Hello").unwrap();
 
         let node2 = make_node("a.md", "New Title", &["tag2"], json!({}));
         store.upsert_node(&node2, 2).unwrap();
@@ -3610,7 +3587,7 @@ mod tests {
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
         store.create_conversation("conv-1", "a.md", None, None, Some("Chat")).unwrap();
-        store.add_message("conv-1", "user", "Hello", 0).unwrap();
+        store.add_message("conv-1", "user", "Hello").unwrap();
 
         store.conn.execute("DELETE FROM nodes WHERE id = 'a.md'", []).unwrap();
 
