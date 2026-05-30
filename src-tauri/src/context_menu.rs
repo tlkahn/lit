@@ -25,6 +25,16 @@ pub const CTX_MINDMAP_EXPORT_NETWORK: &str = "ctx_mindmap_export_network";
 pub const EVENT_CTX_MINDMAP_EDIT: &str = "context-menu://mindmap/edit";
 pub const EVENT_CTX_MINDMAP_EXPORT_NETWORK: &str = "context-menu://mindmap/export-network";
 
+pub const CTX_GRAPH_MERGE: &str = "ctx_graph_merge";
+pub const CTX_GRAPH_SPLIT: &str = "ctx_graph_split";
+pub const CTX_GRAPH_DELETE: &str = "ctx_graph_delete";
+pub const CTX_GRAPH_EXPORT_NETWORK: &str = "ctx_graph_export_network";
+
+pub const EVENT_CTX_GRAPH_MERGE: &str = "context-menu://graph/merge";
+pub const EVENT_CTX_GRAPH_SPLIT: &str = "context-menu://graph/split";
+pub const EVENT_CTX_GRAPH_DELETE: &str = "context-menu://graph/delete";
+pub const EVENT_CTX_GRAPH_EXPORT_NETWORK: &str = "context-menu://graph/export-network";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextMenuAction {
     TrashRestore,
@@ -35,6 +45,10 @@ pub enum ContextMenuAction {
     SidebarTrash,
     MindmapEdit,
     MindmapExportNetwork,
+    GraphMerge,
+    GraphSplit,
+    GraphDelete,
+    GraphExportNetwork,
 }
 
 impl ContextMenuAction {
@@ -48,6 +62,10 @@ impl ContextMenuAction {
             CTX_SIDEBAR_TRASH => Some(Self::SidebarTrash),
             CTX_MINDMAP_EDIT => Some(Self::MindmapEdit),
             CTX_MINDMAP_EXPORT_NETWORK => Some(Self::MindmapExportNetwork),
+            CTX_GRAPH_MERGE => Some(Self::GraphMerge),
+            CTX_GRAPH_SPLIT => Some(Self::GraphSplit),
+            CTX_GRAPH_DELETE => Some(Self::GraphDelete),
+            CTX_GRAPH_EXPORT_NETWORK => Some(Self::GraphExportNetwork),
             _ => None,
         }
     }
@@ -60,7 +78,7 @@ pub struct TrashContextPayload {
 
 pub struct MenuItemSpec {
     pub id: &'static str,
-    pub label: &'static str,
+    pub label: String,
     pub enabled: bool,
 }
 
@@ -78,22 +96,22 @@ pub fn sidebar_menu_items() -> Vec<MenuItemSpec> {
     vec![
         MenuItemSpec {
             id: CTX_SIDEBAR_RENAME,
-            label: "Rename",
+            label: "Rename".into(),
             enabled: true,
         },
         MenuItemSpec {
             id: CTX_SIDEBAR_EXTERNAL_EDITOR,
-            label: "Open in External Editor",
+            label: "Open in External Editor".into(),
             enabled: true,
         },
         MenuItemSpec {
             id: CTX_SIDEBAR_EXPORT_NETWORK,
-            label: "Export Local Network\u{2026}",
+            label: "Export Local Network\u{2026}".into(),
             enabled: true,
         },
         MenuItemSpec {
             id: CTX_SIDEBAR_TRASH,
-            label: "Move to Trash",
+            label: "Move to Trash".into(),
             enabled: true,
         },
     ]
@@ -120,12 +138,12 @@ pub fn trash_menu_items() -> Vec<MenuItemSpec> {
     vec![
         MenuItemSpec {
             id: CTX_TRASH_RESTORE,
-            label: "Restore",
+            label: "Restore".into(),
             enabled: true,
         },
         MenuItemSpec {
             id: CTX_TRASH_PURGE,
-            label: "Delete Permanently",
+            label: "Delete Permanently".into(),
             enabled: true,
         },
     ]
@@ -134,13 +152,54 @@ pub fn trash_menu_items() -> Vec<MenuItemSpec> {
 pub fn mindmap_menu_items(has_export: bool) -> Vec<MenuItemSpec> {
     let mut items = vec![MenuItemSpec {
         id: CTX_MINDMAP_EDIT,
-        label: "Edit",
+        label: "Edit".into(),
         enabled: true,
     }];
     if has_export {
         items.push(MenuItemSpec {
             id: CTX_MINDMAP_EXPORT_NETWORK,
-            label: "Export Local Network\u{2026}",
+            label: "Export Local Network\u{2026}".into(),
+            enabled: true,
+        });
+    }
+    items
+}
+
+pub struct GraphMenuContext {
+    pub selection_count: usize,
+    pub has_headings: bool,
+    pub has_export: bool,
+}
+
+pub fn graph_menu_items(ctx: &GraphMenuContext) -> Vec<MenuItemSpec> {
+    let mut items = Vec::new();
+    if ctx.selection_count >= 2 {
+        items.push(MenuItemSpec {
+            id: CTX_GRAPH_MERGE,
+            label: format!("Merge {} documents", ctx.selection_count),
+            enabled: true,
+        });
+    }
+    if ctx.selection_count <= 1 {
+        items.push(MenuItemSpec {
+            id: CTX_GRAPH_SPLIT,
+            label: "Split document".into(),
+            enabled: ctx.has_headings,
+        });
+    }
+    items.push(MenuItemSpec {
+        id: CTX_GRAPH_DELETE,
+        label: if ctx.selection_count >= 2 {
+            format!("Delete {} documents", ctx.selection_count)
+        } else {
+            "Delete document".into()
+        },
+        enabled: true,
+    });
+    if ctx.has_export {
+        items.push(MenuItemSpec {
+            id: CTX_GRAPH_EXPORT_NETWORK,
+            label: "Export Local Network\u{2026}".into(),
             enabled: true,
         });
     }
@@ -205,7 +264,7 @@ fn show_popup_menu(
     let app = window.app_handle();
     let items: Vec<MenuItem<Wry>> = specs
         .iter()
-        .map(|s| MenuItem::with_id(app, s.id, s.label, s.enabled, None::<&str>))
+        .map(|s| MenuItem::with_id(app, s.id, &s.label, s.enabled, None::<&str>))
         .collect::<Result<_, _>>()
         .map_err(|e| e.to_string())?;
     let item_refs: Vec<&dyn tauri::menu::IsMenuItem<Wry>> =
@@ -604,5 +663,162 @@ mod tests {
         let (event, payload) = dispatch_mindmap_action(ContextMenuAction::MindmapExportNetwork, "node-456");
         assert_eq!(event, EVENT_CTX_MINDMAP_EXPORT_NETWORK);
         assert_eq!(payload.node_id, "node-456");
+    }
+
+    // --- Cycle 4.1: Graph context menu ---
+
+    #[test]
+    fn graph_context_menu_ids_are_defined() {
+        assert_eq!(CTX_GRAPH_MERGE, "ctx_graph_merge");
+        assert_eq!(CTX_GRAPH_SPLIT, "ctx_graph_split");
+        assert_eq!(CTX_GRAPH_DELETE, "ctx_graph_delete");
+        assert_eq!(CTX_GRAPH_EXPORT_NETWORK, "ctx_graph_export_network");
+    }
+
+    #[test]
+    fn graph_event_constants_are_defined() {
+        assert_eq!(EVENT_CTX_GRAPH_MERGE, "context-menu://graph/merge");
+        assert_eq!(EVENT_CTX_GRAPH_SPLIT, "context-menu://graph/split");
+        assert_eq!(EVENT_CTX_GRAPH_DELETE, "context-menu://graph/delete");
+        assert_eq!(EVENT_CTX_GRAPH_EXPORT_NETWORK, "context-menu://graph/export-network");
+    }
+
+    #[test]
+    fn from_id_maps_graph_ids() {
+        assert_eq!(
+            ContextMenuAction::from_id(CTX_GRAPH_MERGE),
+            Some(ContextMenuAction::GraphMerge)
+        );
+        assert_eq!(
+            ContextMenuAction::from_id(CTX_GRAPH_SPLIT),
+            Some(ContextMenuAction::GraphSplit)
+        );
+        assert_eq!(
+            ContextMenuAction::from_id(CTX_GRAPH_DELETE),
+            Some(ContextMenuAction::GraphDelete)
+        );
+        assert_eq!(
+            ContextMenuAction::from_id(CTX_GRAPH_EXPORT_NETWORK),
+            Some(ContextMenuAction::GraphExportNetwork)
+        );
+    }
+
+    #[test]
+    fn graph_menu_items_multi_selection_shows_merge_hides_split() {
+        let ctx = GraphMenuContext {
+            selection_count: 3,
+            has_headings: false,
+            has_export: false,
+        };
+        let items = graph_menu_items(&ctx);
+        assert!(items.iter().any(|i| i.id == CTX_GRAPH_MERGE
+            && i.label == "Merge 3 documents"
+            && i.enabled));
+        assert!(!items.iter().any(|i| i.id == CTX_GRAPH_SPLIT));
+        assert!(items.iter().any(|i| i.id == CTX_GRAPH_DELETE
+            && i.label == "Delete 3 documents"));
+        assert!(!items.iter().any(|i| i.id == CTX_GRAPH_EXPORT_NETWORK));
+    }
+
+    #[test]
+    fn graph_menu_items_no_selection_with_headings_shows_split_enabled() {
+        let ctx = GraphMenuContext {
+            selection_count: 0,
+            has_headings: true,
+            has_export: false,
+        };
+        let items = graph_menu_items(&ctx);
+        assert!(!items.iter().any(|i| i.id == CTX_GRAPH_MERGE));
+        assert!(items.iter().any(|i| i.id == CTX_GRAPH_SPLIT && i.enabled));
+        assert!(items.iter().any(|i| i.id == CTX_GRAPH_DELETE
+            && i.label == "Delete document"));
+    }
+
+    #[test]
+    fn graph_menu_items_single_selection_without_headings_split_disabled() {
+        let ctx = GraphMenuContext {
+            selection_count: 1,
+            has_headings: false,
+            has_export: false,
+        };
+        let items = graph_menu_items(&ctx);
+        assert!(items.iter().any(|i| i.id == CTX_GRAPH_SPLIT && !i.enabled));
+    }
+
+    #[test]
+    fn graph_menu_items_with_export() {
+        let ctx = GraphMenuContext {
+            selection_count: 0,
+            has_headings: false,
+            has_export: true,
+        };
+        let items = graph_menu_items(&ctx);
+        assert!(items.iter().any(|i| i.id == CTX_GRAPH_EXPORT_NETWORK
+            && i.label == "Export Local Network\u{2026}"
+            && i.enabled));
+    }
+
+    #[test]
+    fn graph_menu_items_without_export() {
+        let ctx = GraphMenuContext {
+            selection_count: 0,
+            has_headings: false,
+            has_export: false,
+        };
+        let items = graph_menu_items(&ctx);
+        assert!(!items.iter().any(|i| i.id == CTX_GRAPH_EXPORT_NETWORK));
+    }
+
+    #[test]
+    fn graph_ids_do_not_collide_with_app_menu_ids() {
+        use crate::menu;
+        let app_menu_ids = [
+            menu::MENU_ID_OPEN_WORKSPACE,
+            menu::MENU_ID_INSTALL_CLI,
+            menu::MENU_ID_OPEN_PREFERENCES,
+            menu::MENU_ID_OPEN_IN_EXTERNAL_EDITOR,
+            menu::MENU_ID_CLOSE,
+            menu::MENU_ID_EXPORT_MARKDOWN,
+            menu::MENU_ID_BUY_LICENSE,
+            menu::MENU_ID_ENTER_LICENSE_KEY,
+            menu::MENU_ID_LICENSE_INFO,
+            menu::MENU_ID_ABOUT,
+        ];
+        let graph_ids = [
+            CTX_GRAPH_MERGE,
+            CTX_GRAPH_SPLIT,
+            CTX_GRAPH_DELETE,
+            CTX_GRAPH_EXPORT_NETWORK,
+        ];
+        for gid in &graph_ids {
+            for aid in &app_menu_ids {
+                assert_ne!(gid, aid, "Graph ID {gid} collides with app menu ID {aid}");
+            }
+        }
+    }
+
+    #[test]
+    fn graph_ids_do_not_collide_with_other_context_menu_ids() {
+        let other_ids = [
+            CTX_TRASH_RESTORE,
+            CTX_TRASH_PURGE,
+            CTX_SIDEBAR_RENAME,
+            CTX_SIDEBAR_EXTERNAL_EDITOR,
+            CTX_SIDEBAR_EXPORT_NETWORK,
+            CTX_SIDEBAR_TRASH,
+            CTX_MINDMAP_EDIT,
+            CTX_MINDMAP_EXPORT_NETWORK,
+        ];
+        let graph_ids = [
+            CTX_GRAPH_MERGE,
+            CTX_GRAPH_SPLIT,
+            CTX_GRAPH_DELETE,
+            CTX_GRAPH_EXPORT_NETWORK,
+        ];
+        for gid in &graph_ids {
+            for oid in &other_ids {
+                assert_ne!(gid, oid, "Graph ID {gid} collides with context menu ID {oid}");
+            }
+        }
     }
 }
