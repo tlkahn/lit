@@ -94,6 +94,7 @@ import {
   conversationAddMessage,
   conversationDelete,
   conversationDeleteMessagesAfter,
+  type MessageRole,
 } from "./ipc";
 
 const sampleMeta = {
@@ -1576,6 +1577,12 @@ describe("ipc", () => {
     expect(rows[0]!.title).toBe("Chat 1");
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("conversation_list", { nodeId: "notes/a.md" });
+  });
+
+  it("MessageRole type constrains role field", async () => {
+    const msg = await conversationAddMessage("conv-1", "user", "hi");
+    const role: MessageRole = msg.role;
+    expect(role).toBe("user");
   });
 
   it("conversationCreate returns ConversationRow", async () => {
