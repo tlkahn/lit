@@ -6,7 +6,7 @@ use std::collections::HashMap;
 const DEFAULT_OPENAI_URL: &str = "https://api.openai.com";
 const DEFAULT_ANTHROPIC_URL: &str = "https://api.anthropic.com";
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
@@ -82,6 +82,27 @@ pub struct TruncationInfo {
     pub kept_tokens: usize,
 }
 
+pub fn symmetric_trim(text: &str, budget_chars: usize) -> String {
+    let char_count = text.chars().count();
+    if char_count <= budget_chars {
+        return text.to_string();
+    }
+    let trim_total = char_count - budget_chars;
+    let trim_each = trim_total / 2;
+
+    let start_byte = text.char_indices()
+        .nth(trim_each)
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    let end_char_idx = char_count - trim_each;
+    let end_byte = text.char_indices()
+        .nth(end_char_idx)
+        .map(|(i, _)| i)
+        .unwrap_or(text.len());
+
+    text[start_byte..end_byte].to_string()
+}
+
 pub fn apply_token_budget(prompt: Prompt, model: &str) -> (Prompt, Option<TruncationInfo>) {
     let budget = (context_window(model) as f64 * 0.8) as usize;
     let size = estimate_prompt_size(&prompt);
@@ -95,26 +116,7 @@ pub fn apply_token_budget(prompt: Prompt, model: &str) -> (Prompt, Option<Trunca
     let text_budget_chars = text_budget_tokens * 4;
 
     let original_tokens = estimate_tokens(&prompt.text);
-    let text = &prompt.text;
-    let char_count = text.chars().count();
-    let truncated = if char_count > text_budget_chars {
-        let trim_total = char_count - text_budget_chars;
-        let trim_each = trim_total / 2;
-
-        let start_byte = text.char_indices()
-            .nth(trim_each)
-            .map(|(i, _)| i)
-            .unwrap_or(0);
-        let end_char_idx = char_count - trim_each;
-        let end_byte = text.char_indices()
-            .nth(end_char_idx)
-            .map(|(i, _)| i)
-            .unwrap_or(text.len());
-
-        text[start_byte..end_byte].to_string()
-    } else {
-        text.clone()
-    };
+    let truncated = symmetric_trim(&prompt.text, text_budget_chars);
 
     let kept_tokens = estimate_tokens(&truncated);
     let mut result = Prompt::new(&truncated);

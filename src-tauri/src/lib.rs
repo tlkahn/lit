@@ -4,6 +4,7 @@ pub mod pdf;
 pub mod cli;
 mod commands;
 pub mod llm;
+pub mod llm_context;
 pub mod export;
 pub mod external_editor;
 pub mod graph;
