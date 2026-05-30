@@ -899,10 +899,12 @@ export interface ConversationRow {
   updated_at: string;
 }
 
+export type MessageRole = "user" | "assistant" | "system";
+
 export interface MessageRow {
   id: number;
   conversation_id: string;
-  role: string;
+  role: MessageRole;
   content: string;
   seq: number;
   created_at: string;
@@ -926,7 +928,7 @@ export async function conversationDelete(conversationId: string): Promise<void> 
 
 export async function conversationAddMessage(
   conversationId: string,
-  role: string,
+  role: MessageRole,
   content: string,
 ): Promise<MessageRow> {
   return invoke<MessageRow>("conversation_add_message", { conversationId, role, content });

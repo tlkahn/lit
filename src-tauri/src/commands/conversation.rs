@@ -20,8 +20,7 @@ pub fn conversation_create(
             anchor_id,
             title.as_deref(),
         )?;
-        serde_json::to_value(row)
-            .map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+        Ok(serde_json::to_value(row)?)
     })
 }
 
@@ -34,8 +33,7 @@ pub fn conversation_get(
 ) -> Result<serde_json::Value, String> {
     super::graph::with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
         let row = gi.get_conversation(&conversation_id)?;
-        serde_json::to_value(row)
-            .map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+        Ok(serde_json::to_value(row)?)
     })
 }
 
@@ -48,8 +46,7 @@ pub fn conversation_list(
 ) -> Result<serde_json::Value, String> {
     super::graph::with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
         let rows = gi.list_conversations(&node_id)?;
-        serde_json::to_value(rows)
-            .map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+        Ok(serde_json::to_value(rows)?)
     })
 }
 
@@ -59,10 +56,9 @@ pub fn conversation_delete(
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
     graph_state: State<Arc<super::graph::GraphRegistry>>,
     conversation_id: String,
-) -> Result<serde_json::Value, String> {
+) -> Result<(), String> {
     super::graph::with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
-        gi.delete_conversation(&conversation_id)?;
-        Ok(serde_json::Value::Null)
+        gi.delete_conversation(&conversation_id)
     })
 }
 
@@ -75,8 +71,7 @@ pub fn conversation_messages(
 ) -> Result<serde_json::Value, String> {
     super::graph::with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
         let rows = gi.list_messages(&conversation_id)?;
-        serde_json::to_value(rows)
-            .map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+        Ok(serde_json::to_value(rows)?)
     })
 }
 
@@ -91,8 +86,7 @@ pub fn conversation_add_message(
 ) -> Result<serde_json::Value, String> {
     super::graph::with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
         let row = gi.add_message(&conversation_id, &role, &content)?;
-        serde_json::to_value(row)
-            .map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+        Ok(serde_json::to_value(row)?)
     })
 }
 
@@ -103,9 +97,8 @@ pub fn conversation_delete_messages_after(
     graph_state: State<Arc<super::graph::GraphRegistry>>,
     conversation_id: String,
     seq: i32,
-) -> Result<serde_json::Value, String> {
+) -> Result<(), String> {
     super::graph::with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
-        gi.delete_messages_after(&conversation_id, seq)?;
-        Ok(serde_json::Value::Null)
+        gi.delete_messages_after(&conversation_id, seq)
     })
 }
