@@ -5,9 +5,9 @@ use rusqlite::Connection;
 use tracing::{debug, info};
 
 use super::error::GraphError;
-use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, IndexableAnnotation, LinkEntry, ParsedNode, Stats, TagPageResult, TagSearchResult};
+use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, ConversationRow, IndexableAnnotation, LinkEntry, MessageRow, ParsedNode, Stats, TagPageResult, TagSearchResult};
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 8;
+pub const CURRENT_SCHEMA_VERSION: i64 = 9;
 
 fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rusqlite::Error> {
     Ok(AnnotationSearchResult {
@@ -205,6 +205,34 @@ impl Store {
             )?;
         }
 
+        if version < 9 {
+            info!(from = version, to = 9, "migrating schema: adding conversations");
+            self.conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS conversations (
+                    id TEXT PRIMARY KEY,
+                    node_id TEXT NOT NULL REFERENCES nodes(id),
+                    anchor_type TEXT,
+                    anchor_id INTEGER,
+                    title TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_conversations_node_id ON conversations(node_id);
+
+                CREATE TABLE IF NOT EXISTS conversation_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                    role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
+                    content TEXT NOT NULL,
+                    seq INTEGER NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_conv_messages_conv_id ON conversation_messages(conversation_id);
+
+                UPDATE meta SET value = '9' WHERE key = 'schema_version';"
+            )?;
+        }
+
         Ok(())
     }
 
@@ -275,6 +303,7 @@ impl Store {
     }
 
     pub fn delete_node(&self, id: &str) -> Result<(), GraphError> {
+        self.conn.execute("DELETE FROM conversations WHERE node_id = ?1", [id])?;
         self.conn.execute("DELETE FROM annotations_fts WHERE node_id = ?1", [id])?;
         self.conn.execute("DELETE FROM annotations WHERE node_id = ?1", [id])?;
         self.conn.execute("DELETE FROM nodes WHERE id = ?1", [id])?;
@@ -854,6 +883,125 @@ impl Store {
         }
     }
 
+    // --- Conversations ---
+
+    pub fn create_conversation(
+        &self,
+        id: &str,
+        node_id: &str,
+        anchor_type: Option<&str>,
+        anchor_id: Option<i64>,
+        title: Option<&str>,
+    ) -> Result<(), GraphError> {
+        self.conn.execute(
+            "INSERT INTO conversations(id, node_id, anchor_type, anchor_id, title, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
+            rusqlite::params![id, node_id, anchor_type, anchor_id, title],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_conversation(&self, id: &str) -> Result<Option<ConversationRow>, GraphError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, node_id, anchor_type, anchor_id, title, created_at, updated_at
+             FROM conversations WHERE id = ?1"
+        )?;
+        let mut rows = stmt.query([id])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(ConversationRow {
+                id: row.get(0)?,
+                node_id: row.get(1)?,
+                anchor_type: row.get(2)?,
+                anchor_id: row.get(3)?,
+                title: row.get(4)?,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })),
+            None => Ok(None),
+        }
+    }
+
+    pub fn list_conversations(&self, node_id: &str) -> Result<Vec<ConversationRow>, GraphError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, node_id, anchor_type, anchor_id, title, created_at, updated_at
+             FROM conversations WHERE node_id = ?1
+             ORDER BY updated_at DESC"
+        )?;
+        let results = stmt
+            .query_map([node_id], |row| {
+                Ok(ConversationRow {
+                    id: row.get(0)?,
+                    node_id: row.get(1)?,
+                    anchor_type: row.get(2)?,
+                    anchor_id: row.get(3)?,
+                    title: row.get(4)?,
+                    created_at: row.get(5)?,
+                    updated_at: row.get(6)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(results)
+    }
+
+    pub fn delete_conversation(&self, id: &str) -> Result<(), GraphError> {
+        self.conn.execute("DELETE FROM conversations WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    pub fn touch_conversation(&self, id: &str) -> Result<(), GraphError> {
+        self.conn.execute(
+            "UPDATE conversations SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
+            [id],
+        )?;
+        Ok(())
+    }
+
+    pub fn add_message(
+        &self,
+        conversation_id: &str,
+        role: &str,
+        content: &str,
+        seq: i32,
+    ) -> Result<i64, GraphError> {
+        self.conn.execute(
+            "INSERT INTO conversation_messages(conversation_id, role, content, seq, created_at)
+             VALUES (?1, ?2, ?3, ?4, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
+            rusqlite::params![conversation_id, role, content, seq],
+        )?;
+        let rowid = self.conn.last_insert_rowid();
+        self.touch_conversation(conversation_id)?;
+        Ok(rowid)
+    }
+
+    pub fn list_messages(&self, conversation_id: &str) -> Result<Vec<MessageRow>, GraphError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, conversation_id, role, content, seq, created_at
+             FROM conversation_messages WHERE conversation_id = ?1
+             ORDER BY seq"
+        )?;
+        let results = stmt
+            .query_map([conversation_id], |row| {
+                Ok(MessageRow {
+                    id: row.get(0)?,
+                    conversation_id: row.get(1)?,
+                    role: row.get(2)?,
+                    content: row.get(3)?,
+                    seq: row.get(4)?,
+                    created_at: row.get(5)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(results)
+    }
+
+    pub fn delete_messages_after(&self, conversation_id: &str, seq: i32) -> Result<(), GraphError> {
+        self.conn.execute(
+            "DELETE FROM conversation_messages WHERE conversation_id = ?1 AND seq > ?2",
+            rusqlite::params![conversation_id, seq],
+        )?;
+        Ok(())
+    }
+
     // --- Transactions ---
 
     pub fn begin_transaction(&self) -> Result<(), GraphError> {
@@ -996,11 +1144,11 @@ mod tests {
         let db_path = dir.path().join("test.db");
         {
             let store = Store::open(&db_path).unwrap();
-            assert_eq!(store.schema_version().unwrap(), 8);
+            assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
         }
         {
             let store = Store::open(&db_path).unwrap();
-            assert_eq!(store.schema_version().unwrap(), 8);
+            assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
         }
     }
 
@@ -1030,7 +1178,7 @@ mod tests {
     #[test]
     fn schema_version_readable_via_get_meta() {
         let store = Store::open_memory().unwrap();
-        assert_eq!(store.get_meta("schema_version").unwrap(), Some("8".into()));
+        assert_eq!(store.get_meta("schema_version").unwrap(), Some(CURRENT_SCHEMA_VERSION.to_string()));
     }
 
     // --- Phase 5: Node CRUD ---
@@ -1737,7 +1885,7 @@ mod tests {
         }
 
         let store = Store::open(&db_path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 8);
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
 
         let tags_text: String = store
             .conn
@@ -1784,7 +1932,7 @@ mod tests {
         }
 
         let store = Store::open(&db_path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 8);
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
 
         let raw_edges = store.all_raw_edges().unwrap();
         assert_eq!(raw_edges.len(), 1);
@@ -1835,7 +1983,7 @@ mod tests {
         }
 
         let store = Store::open(&db_path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 8);
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
 
         let fts_count: i64 = store
             .conn
@@ -2008,8 +2156,8 @@ mod tests {
     // --- Cycle 2: Schema v6 ---
 
     #[test]
-    fn schema_version_is_eight() {
-        assert_eq!(CURRENT_SCHEMA_VERSION, 8);
+    fn schema_version_is_nine() {
+        assert_eq!(CURRENT_SCHEMA_VERSION, 9);
     }
 
     #[test]
@@ -2066,7 +2214,7 @@ mod tests {
         }
 
         let store = Store::open(&db_path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 8);
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
         let ann_count: i64 = store
             .conn
             .query_row(
@@ -2470,7 +2618,7 @@ mod tests {
         }
 
         let store = Store::open(&db_path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 8);
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
 
         let results = store.search_annotations("丝绸之路", None, 10).unwrap();
         assert_eq!(results.len(), 1);
@@ -2654,5 +2802,407 @@ mod tests {
         store.delete_node("A").unwrap();
         let loaded = store.load_positions().unwrap();
         assert!(!loaded.contains_key("A"));
+    }
+
+    // --- Conversations: v9 migration ---
+
+    #[test]
+    fn migration_v9_creates_conversation_tables() {
+        let store = Store::open_memory().unwrap();
+        let tables: Vec<String> = {
+            let mut stmt = store
+                .conn
+                .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+                .unwrap();
+            stmt.query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        assert!(tables.contains(&"conversations".to_string()));
+        assert!(tables.contains(&"conversation_messages".to_string()));
+    }
+
+    // --- Conversations: create_conversation ---
+
+    #[test]
+    fn create_conversation_inserts_row() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, Some("My Chat")).unwrap();
+
+        let row = store.get_conversation("conv-1").unwrap().expect("should exist");
+        assert_eq!(row.id, "conv-1");
+        assert_eq!(row.node_id, "a.md");
+        assert_eq!(row.title, Some("My Chat".into()));
+    }
+
+    #[test]
+    fn create_conversation_sets_timestamps() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+
+        let row = store.get_conversation("conv-1").unwrap().unwrap();
+        assert!(!row.created_at.is_empty());
+        assert!(!row.updated_at.is_empty());
+        assert!(row.created_at.ends_with('Z'));
+        assert_eq!(row.created_at, row.updated_at);
+    }
+
+    #[test]
+    fn create_conversation_duplicate_id_fails() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        assert!(store.create_conversation("conv-1", "a.md", None, None, None).is_err());
+    }
+
+    // --- Conversations: get_conversation ---
+
+    #[test]
+    fn get_conversation_returns_none_for_missing() {
+        let store = Store::open_memory().unwrap();
+        assert_eq!(store.get_conversation("nonexistent").unwrap(), None);
+    }
+
+    #[test]
+    fn get_conversation_returns_inserted_row() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.create_conversation("conv-1", "a.md", Some("annotation"), Some(42), Some("Title")).unwrap();
+
+        let row = store.get_conversation("conv-1").unwrap().unwrap();
+        assert_eq!(row.id, "conv-1");
+        assert_eq!(row.node_id, "a.md");
+        assert_eq!(row.anchor_type, Some("annotation".into()));
+        assert_eq!(row.anchor_id, Some(42));
+        assert_eq!(row.title, Some("Title".into()));
+    }
+
+    // --- Conversations: list_conversations ---
+
+    #[test]
+    fn list_conversations_empty() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        assert!(store.list_conversations("a.md").unwrap().is_empty());
+    }
+
+    #[test]
+    fn list_conversations_returns_matching() {
+        let store = Store::open_memory().unwrap();
+        let node_a = make_node("a.md", "A", &[], json!({}));
+        let node_b = make_node("b.md", "B", &[], json!({}));
+        store.upsert_node(&node_a, 1).unwrap();
+        store.upsert_node(&node_b, 1).unwrap();
+        store.create_conversation("conv-a1", "a.md", None, None, None).unwrap();
+        store.create_conversation("conv-a2", "a.md", None, None, None).unwrap();
+        store.create_conversation("conv-b1", "b.md", None, None, None).unwrap();
+
+        let list = store.list_conversations("a.md").unwrap();
+        assert_eq!(list.len(), 2);
+        assert!(list.iter().all(|c| c.node_id == "a.md"));
+    }
+
+    // --- Conversations: delete_conversation ---
+
+    #[test]
+    fn delete_conversation_removes_row() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.delete_conversation("conv-1").unwrap();
+        assert_eq!(store.get_conversation("conv-1").unwrap(), None);
+    }
+
+    #[test]
+    fn delete_conversation_nonexistent_is_noop() {
+        let store = Store::open_memory().unwrap();
+        store.delete_conversation("nonexistent").unwrap();
+    }
+
+    // --- Conversations: touch_conversation ---
+
+    #[test]
+    fn touch_conversation_updates_timestamp() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+
+        store.conn.execute(
+            "UPDATE conversations SET updated_at = '2000-01-01T00:00:00Z' WHERE id = 'conv-1'",
+            [],
+        ).unwrap();
+
+        store.touch_conversation("conv-1").unwrap();
+        let row = store.get_conversation("conv-1").unwrap().unwrap();
+        assert_ne!(row.updated_at, "2000-01-01T00:00:00Z");
+    }
+
+    // --- Conversations: add_message ---
+
+    #[test]
+    fn add_message_inserts_row() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+
+        let id = store.add_message("conv-1", "user", "Hello", 0).unwrap();
+        assert!(id > 0);
+
+        let msgs = store.list_messages("conv-1").unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].role, "user");
+        assert_eq!(msgs[0].content, "Hello");
+        assert_eq!(msgs[0].seq, 0);
+    }
+
+    #[test]
+    fn add_message_to_nonexistent_conversation_fails() {
+        let store = Store::open_memory().unwrap();
+        assert!(store.add_message("nonexistent", "user", "Hello", 0).is_err());
+    }
+
+    #[test]
+    fn add_message_invalid_role_fails() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        assert!(store.add_message("conv-1", "invalid_role", "Hello", 0).is_err());
+    }
+
+    #[test]
+    fn add_message_touches_conversation() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+
+        store.conn.execute(
+            "UPDATE conversations SET updated_at = '2000-01-01T00:00:00Z' WHERE id = 'conv-1'",
+            [],
+        ).unwrap();
+
+        store.add_message("conv-1", "user", "Hello", 0).unwrap();
+        let row = store.get_conversation("conv-1").unwrap().unwrap();
+        assert_ne!(row.updated_at, "2000-01-01T00:00:00Z");
+    }
+
+    // --- Conversations: list_messages ---
+
+    #[test]
+    fn list_messages_empty() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        assert!(store.list_messages("conv-1").unwrap().is_empty());
+    }
+
+    #[test]
+    fn list_messages_returns_in_order() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+
+        store.add_message("conv-1", "user", "First", 0).unwrap();
+        store.add_message("conv-1", "assistant", "Second", 1).unwrap();
+        store.add_message("conv-1", "user", "Third", 2).unwrap();
+
+        let msgs = store.list_messages("conv-1").unwrap();
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[0].seq, 0);
+        assert_eq!(msgs[0].content, "First");
+        assert_eq!(msgs[1].seq, 1);
+        assert_eq!(msgs[1].content, "Second");
+        assert_eq!(msgs[2].seq, 2);
+        assert_eq!(msgs[2].content, "Third");
+    }
+
+    // --- Conversations: delete_messages_after ---
+
+    #[test]
+    fn delete_messages_after_removes_later_messages() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+
+        store.add_message("conv-1", "user", "msg0", 0).unwrap();
+        store.add_message("conv-1", "assistant", "msg1", 1).unwrap();
+        store.add_message("conv-1", "user", "msg2", 2).unwrap();
+        store.add_message("conv-1", "assistant", "msg3", 3).unwrap();
+
+        store.delete_messages_after("conv-1", 1).unwrap();
+
+        let msgs = store.list_messages("conv-1").unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].seq, 0);
+        assert_eq!(msgs[1].seq, 1);
+    }
+
+    #[test]
+    fn delete_messages_after_noop_when_no_match() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.add_message("conv-1", "user", "msg0", 0).unwrap();
+
+        store.delete_messages_after("conv-1", 10).unwrap();
+        assert_eq!(store.list_messages("conv-1").unwrap().len(), 1);
+    }
+
+    // --- Conversations: CASCADE and delete_node ---
+
+    #[test]
+    fn delete_conversation_cascades_messages() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.add_message("conv-1", "user", "msg", 0).unwrap();
+
+        store.delete_conversation("conv-1").unwrap();
+
+        let count: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM conversation_messages", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn delete_node_removes_conversations() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.add_message("conv-1", "user", "msg", 0).unwrap();
+
+        store.delete_node("a.md").unwrap();
+
+        assert_eq!(store.get_conversation("conv-1").unwrap(), None);
+        let msg_count: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM conversation_messages", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(msg_count, 0);
+    }
+
+    // --- Conversations: integration tests ---
+
+    #[test]
+    fn full_conversation_flow() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        store.create_conversation("conv-1", "a.md", None, None, Some("Chat")).unwrap();
+        store.add_message("conv-1", "user", "Q1", 0).unwrap();
+        store.add_message("conv-1", "assistant", "A1", 1).unwrap();
+        store.add_message("conv-1", "user", "Q2", 2).unwrap();
+        store.add_message("conv-1", "assistant", "A2", 3).unwrap();
+
+        let msgs = store.list_messages("conv-1").unwrap();
+        assert_eq!(msgs.len(), 4);
+
+        store.delete_messages_after("conv-1", 1).unwrap();
+        let msgs = store.list_messages("conv-1").unwrap();
+        assert_eq!(msgs.len(), 2);
+
+        store.add_message("conv-1", "user", "Q2-branch", 2).unwrap();
+        let msgs = store.list_messages("conv-1").unwrap();
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[2].content, "Q2-branch");
+
+        let convs = store.list_conversations("a.md").unwrap();
+        assert_eq!(convs.len(), 1);
+
+        store.delete_conversation("conv-1").unwrap();
+        assert!(store.list_conversations("a.md").unwrap().is_empty());
+        assert!(store.list_messages("conv-1").unwrap().is_empty());
+    }
+
+    #[test]
+    fn create_conversation_file_and_annotation_scoped() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        store.create_conversation("file-conv", "a.md", None, None, None).unwrap();
+        let file_row = store.get_conversation("file-conv").unwrap().unwrap();
+        assert_eq!(file_row.anchor_type, None);
+        assert_eq!(file_row.anchor_id, None);
+
+        store.create_conversation("ann-conv", "a.md", Some("annotation"), Some(7), Some("On note")).unwrap();
+        let ann_row = store.get_conversation("ann-conv").unwrap().unwrap();
+        assert_eq!(ann_row.anchor_type, Some("annotation".into()));
+        assert_eq!(ann_row.anchor_id, Some(7));
+        assert_eq!(ann_row.title, Some("On note".into()));
+    }
+
+    #[test]
+    fn v8_to_v9_migration_preserves_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
+            conn.execute_batch(
+                "CREATE TABLE nodes (
+                    id TEXT PRIMARY KEY, title TEXT, first_paragraph TEXT,
+                    frontmatter JSON, mtime INTEGER, is_stub INTEGER DEFAULT 0, tags_text TEXT DEFAULT ''
+                );
+                CREATE TABLE tags (node_id TEXT, tag TEXT);
+                CREATE TABLE aliases (node_id TEXT, alias TEXT);
+                CREATE TABLE edges (source TEXT, target TEXT, context TEXT, raw_target TEXT DEFAULT '', source_line INTEGER DEFAULT 0);
+                CREATE TABLE sync (path TEXT PRIMARY KEY, mtime INTEGER);
+                CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+                CREATE TABLE annotations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    node_id TEXT NOT NULL, annotation_type TEXT NOT NULL,
+                    certainty TEXT NOT NULL, body TEXT, date TEXT,
+                    source_line INTEGER NOT NULL, char_start INTEGER NOT NULL, char_end INTEGER NOT NULL,
+                    scope_kind TEXT NOT NULL, scope_value TEXT NOT NULL
+                );
+                CREATE VIRTUAL TABLE annotations_fts USING fts5(
+                    body, node_id UNINDEXED, annotation_type UNINDEXED,
+                    tokenize = 'trigram case_sensitive 0'
+                );
+                CREATE TABLE node_positions (
+                    node_id TEXT PRIMARY KEY, x REAL NOT NULL, y REAL NOT NULL
+                );
+                INSERT INTO meta(key, value) VALUES ('schema_version', '8');
+                INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub)
+                    VALUES ('a.md', 'Alpha', 'First paragraph', '{}', 1, 0);",
+            ).unwrap();
+        }
+
+        let store = Store::open(&db_path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+
+        let title: String = store
+            .conn
+            .query_row("SELECT title FROM nodes WHERE id = 'a.md'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(title, "Alpha");
+
+        store.create_conversation("conv-1", "a.md", None, None, Some("Test")).unwrap();
+        store.add_message("conv-1", "user", "Hello", 0).unwrap();
+        let msgs = store.list_messages("conv-1").unwrap();
+        assert_eq!(msgs.len(), 1);
     }
 }

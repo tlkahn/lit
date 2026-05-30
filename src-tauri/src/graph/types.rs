@@ -114,6 +114,27 @@ pub struct Position {
     pub y: f64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ConversationRow {
+    pub id: String,
+    pub node_id: String,
+    pub anchor_type: Option<String>,
+    pub anchor_id: Option<i64>,
+    pub title: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MessageRow {
+    pub id: i64,
+    pub conversation_id: String,
+    pub role: String,
+    pub content: String,
+    pub seq: i32,
+    pub created_at: String,
+}
+
 pub fn extract_aliases(fm: &serde_json::Value) -> Vec<String> {
     match fm.get("aliases") {
         Some(serde_json::Value::Array(arr)) => {
@@ -328,6 +349,37 @@ mod tests {
         let json_str = serde_json::to_string(&result).expect("serialize");
         let back: TagPageResult = serde_json::from_str(&json_str).expect("deserialize");
         assert_eq!(back, result);
+    }
+
+    #[test]
+    fn conversation_row_round_trips() {
+        let row = ConversationRow {
+            id: "conv-123".into(),
+            node_id: "a.md".into(),
+            anchor_type: Some("annotation".into()),
+            anchor_id: Some(42),
+            title: Some("Discussion about X".into()),
+            created_at: "2026-05-30T12:00:00Z".into(),
+            updated_at: "2026-05-30T12:30:00Z".into(),
+        };
+        let json_str = serde_json::to_string(&row).expect("serialize");
+        let back: ConversationRow = serde_json::from_str(&json_str).expect("deserialize");
+        assert_eq!(back, row);
+    }
+
+    #[test]
+    fn message_row_round_trips() {
+        let row = MessageRow {
+            id: 1,
+            conversation_id: "conv-123".into(),
+            role: "user".into(),
+            content: "Hello, world!".into(),
+            seq: 0,
+            created_at: "2026-05-30T12:00:00Z".into(),
+        };
+        let json_str = serde_json::to_string(&row).expect("serialize");
+        let back: MessageRow = serde_json::from_str(&json_str).expect("deserialize");
+        assert_eq!(back, row);
     }
 
     #[test]
