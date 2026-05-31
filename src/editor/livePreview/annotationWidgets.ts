@@ -57,6 +57,20 @@ export const llmLockedField = StateField.define<boolean>({
   },
 });
 
+// --- Annotation thread keys (Phase 6) ---
+
+export const setAnnotationThreadKeys = StateEffect.define<Set<string>>();
+
+export const annotationThreadKeysField = StateField.define<Set<string>>({
+  create: () => new Set(),
+  update(value, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(setAnnotationThreadKeys)) return effect.value;
+    }
+    return value;
+  },
+});
+
 // --- Fire button ---
 
 export function createFireButton(ann: Annotation, isFiring?: boolean, llmLocked?: boolean): HTMLSpanElement | null {

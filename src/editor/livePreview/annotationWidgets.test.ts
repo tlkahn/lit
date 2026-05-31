@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { PillWidget, CalloutWidget, MarkerWidget, toggleAnnotationFoldEffect, annotationFoldField, firingAnnotationsField, setFiringAnnotation, clearFiringAnnotation, createFireButton, llmLockedField, setLlmLockedEffect } from "./annotationWidgets";
+import { PillWidget, CalloutWidget, MarkerWidget, toggleAnnotationFoldEffect, annotationFoldField, firingAnnotationsField, setFiringAnnotation, clearFiringAnnotation, createFireButton, llmLockedField, setLlmLockedEffect, annotationThreadKeysField, setAnnotationThreadKeys } from "./annotationWidgets";
 import type { Annotation } from "../../lib/ipc";
 import { useModalLockStore } from "../../stores/modalLock";
 
@@ -735,5 +735,31 @@ describe("widget eq with llmLocked", () => {
   it("CalloutWidget eq returns false when llmLocked differs", () => {
     const ann = makeAnnotation();
     expect(new CalloutWidget(ann, false, 0, false, false).eq(new CalloutWidget(ann, false, 0, false, true))).toBe(false);
+  });
+});
+
+describe("annotationThreadKeysField", () => {
+  it("initial state is an empty Set", () => {
+    const state = EditorState.create({ extensions: [annotationThreadKeysField] });
+    expect(state.field(annotationThreadKeysField).size).toBe(0);
+  });
+
+  it("setAnnotationThreadKeys effect replaces the set", () => {
+    const state = EditorState.create({ extensions: [annotationThreadKeysField] });
+    const tr = state.update({ effects: setAnnotationThreadKeys.of(new Set(["uuid-a", "uuid-b"])) });
+    const keys = tr.state.field(annotationThreadKeysField);
+    expect(keys.has("uuid-a")).toBe(true);
+    expect(keys.has("uuid-b")).toBe(true);
+    expect(keys.size).toBe(2);
+  });
+
+  it("effect replaces (not merges) the set", () => {
+    const state = EditorState.create({ extensions: [annotationThreadKeysField] });
+    const tr1 = state.update({ effects: setAnnotationThreadKeys.of(new Set(["uuid-a"])) });
+    const tr2 = tr1.state.update({ effects: setAnnotationThreadKeys.of(new Set(["uuid-b"])) });
+    const keys = tr2.state.field(annotationThreadKeysField);
+    expect(keys.has("uuid-a")).toBe(false);
+    expect(keys.has("uuid-b")).toBe(true);
+    expect(keys.size).toBe(1);
   });
 });
