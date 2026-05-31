@@ -26,6 +26,7 @@ interface StreamArgs {
   nodeId?: string;
   neighborsDepth?: number;
   fireSourceAnnotation?: Annotation | null;
+  textOverride?: string;
 }
 
 interface SendMessageArgs extends StreamArgs {
@@ -308,7 +309,7 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
     await conversationDeleteMessagesAfter(convId, lastUserMsg.seq);
     set((s) => ({ messages: s.messages.filter((m) => m.seq <= lastUserMsg.seq) }));
 
-    await _streamAndPersist(convId, lastUserMsg.content, args);
+    await _streamAndPersist(convId, args.textOverride ?? lastUserMsg.content, args);
   },
 
   editMessage: async (seq: number, newContent: string, args: StreamArgs) => {
@@ -328,7 +329,7 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
     }
     set((s) => ({ messages: [...s.messages, userMsg] }));
 
-    await _streamAndPersist(convId, newContent, args);
+    await _streamAndPersist(convId, args.textOverride ?? newContent, args);
   },
 
   cancelConversationStream: async () => {

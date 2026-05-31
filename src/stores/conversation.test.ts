@@ -776,6 +776,60 @@ describe("conversation store", () => {
     );
   });
 
+  it("retryLastMessage with textOverride sends enriched text to LLM but keeps DB content unchanged", async () => {
+    const userMsg: MessageRow = {
+      id: 1, conversation_id: FAKE_UUID, role: "user",
+      content: "explain this", seq: 1, created_at: "2025-01-01T00:00:00Z",
+    };
+    const assistantMsg: MessageRow = {
+      id: 2, conversation_id: FAKE_UUID, role: "assistant",
+      content: "sure", seq: 2, created_at: "2025-01-01T00:00:01Z",
+    };
+    useConversationStore.setState({
+      activeConversationId: FAKE_UUID,
+      messages: [userMsg, assistantMsg],
+    });
+    mockedConversationDeleteMessagesAfter.mockResolvedValue(undefined);
+    mockedStartLlmStream.mockResolvedValue(undefined);
+
+    await useConversationStore.getState().retryLastMessage({
+      model: "m",
+      textOverride: "File: test.md\n\nContext:\nhello world\n\nexplain this",
+    });
+
+    expect(useConversationStore.getState().messages).toEqual([userMsg]);
+    expect(mockedStartLlmStream).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "File: test.md\n\nContext:\nhello world\n\nexplain this",
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("retryLastMessage without textOverride uses raw stored content", async () => {
+    const userMsg: MessageRow = {
+      id: 1, conversation_id: FAKE_UUID, role: "user",
+      content: "plain question", seq: 1, created_at: "2025-01-01T00:00:00Z",
+    };
+    const assistantMsg: MessageRow = {
+      id: 2, conversation_id: FAKE_UUID, role: "assistant",
+      content: "answer", seq: 2, created_at: "2025-01-01T00:00:01Z",
+    };
+    useConversationStore.setState({
+      activeConversationId: FAKE_UUID,
+      messages: [userMsg, assistantMsg],
+    });
+    mockedConversationDeleteMessagesAfter.mockResolvedValue(undefined);
+    mockedStartLlmStream.mockResolvedValue(undefined);
+
+    await useConversationStore.getState().retryLastMessage({ model: "m" });
+
+    expect(mockedStartLlmStream).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "plain question" }),
+      expect.any(Object),
+    );
+  });
+
   // --- Group F: editMessage ---
 
   it("editMessage returns early with no active conversation", async () => {
@@ -856,6 +910,81 @@ describe("conversation store", () => {
     await capturedCallbacks!.onDone();
 
     expect(useConversationStore.getState().messages).toEqual([editedUserMsg, persistedAssistant]);
+  });
+
+  it("editMessage with textOverride persists raw content to DB but sends enriched text to LLM", async () => {
+    const userMsg: MessageRow = {
+      id: 1, conversation_id: FAKE_UUID, role: "user",
+      content: "hello", seq: 1, created_at: "2025-01-01T00:00:00Z",
+    };
+    const assistantMsg: MessageRow = {
+      id: 2, conversation_id: FAKE_UUID, role: "assistant",
+      content: "hi", seq: 2, created_at: "2025-01-01T00:00:01Z",
+    };
+    useConversationStore.setState({
+      activeConversationId: FAKE_UUID,
+      messages: [userMsg, assistantMsg],
+    });
+    mockedConversationDeleteMessagesAfter.mockResolvedValue(undefined);
+
+    const editedUserMsg: MessageRow = {
+      id: 3, conversation_id: FAKE_UUID, role: "user",
+      content: "explain this", seq: 1, created_at: "2025-01-01T00:00:02Z",
+    };
+    mockedConversationAddMessage.mockResolvedValue(editedUserMsg);
+    mockedStartLlmStream.mockResolvedValue(undefined);
+
+    await useConversationStore.getState().editMessage(1, "explain this", {
+      model: "m",
+      textOverride: "File: test.md\n\nContext:\nselected text\n\nexplain this",
+    });
+
+    expect(mockedConversationAddMessage).toHaveBeenCalledWith(
+      FAKE_UUID,
+      "user",
+      "explain this",
+    );
+    expect(mockedStartLlmStream).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "File: test.md\n\nContext:\nselected text\n\nexplain this",
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("editMessage without textOverride passes raw content for both DB and LLM", async () => {
+    const userMsg: MessageRow = {
+      id: 1, conversation_id: FAKE_UUID, role: "user",
+      content: "hello", seq: 1, created_at: "2025-01-01T00:00:00Z",
+    };
+    const assistantMsg: MessageRow = {
+      id: 2, conversation_id: FAKE_UUID, role: "assistant",
+      content: "hi", seq: 2, created_at: "2025-01-01T00:00:01Z",
+    };
+    useConversationStore.setState({
+      activeConversationId: FAKE_UUID,
+      messages: [userMsg, assistantMsg],
+    });
+    mockedConversationDeleteMessagesAfter.mockResolvedValue(undefined);
+
+    const editedUserMsg: MessageRow = {
+      id: 3, conversation_id: FAKE_UUID, role: "user",
+      content: "plain edit", seq: 1, created_at: "2025-01-01T00:00:02Z",
+    };
+    mockedConversationAddMessage.mockResolvedValue(editedUserMsg);
+    mockedStartLlmStream.mockResolvedValue(undefined);
+
+    await useConversationStore.getState().editMessage(1, "plain edit", { model: "m" });
+
+    expect(mockedConversationAddMessage).toHaveBeenCalledWith(
+      FAKE_UUID,
+      "user",
+      "plain edit",
+    );
+    expect(mockedStartLlmStream).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "plain edit" }),
+      expect.any(Object),
+    );
   });
 
   // --- Group G: Edge cases ---

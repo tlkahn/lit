@@ -84,11 +84,35 @@ export function ConversationPanel({ pageId }: ConversationPanelProps) {
   }), [llmModel, llmSystemPrompt, nodeId, neighborsDepth]);
 
   const handleEditSubmit = useCallback((seq: number, newContent: string) => {
-    editMessage(seq, newContent, streamArgs());
+    const editorCtx = requestEditorContext();
+    const enriched = formatLlmPrompt({
+      question: newContent,
+      context: editorCtx.selectionText || undefined,
+      filePath: editorCtx.filePath || undefined,
+    });
+
+    editMessage(seq, newContent, {
+      ...streamArgs(),
+      textOverride: enriched !== newContent ? enriched : undefined,
+    });
   }, [editMessage, streamArgs]);
 
   const handleRetry = useCallback(() => {
-    retryLastMessage(streamArgs());
+    const msgs = useConversationStore.getState().messages;
+    const lastUserMsg = [...msgs].reverse().find((m) => m.role === "user");
+    if (!lastUserMsg) return;
+
+    const editorCtx = requestEditorContext();
+    const enriched = formatLlmPrompt({
+      question: lastUserMsg.content,
+      context: editorCtx.selectionText || undefined,
+      filePath: editorCtx.filePath || undefined,
+    });
+
+    retryLastMessage({
+      ...streamArgs(),
+      textOverride: enriched !== lastUserMsg.content ? enriched : undefined,
+    });
   }, [retryLastMessage, streamArgs]);
 
   const handleEdit = useCallback((_seq: number) => {}, []);
