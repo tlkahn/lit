@@ -20,7 +20,6 @@ function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
     char_start: 6,
     char_end: 20,
     original: "%%!q | why? %%",
-    uuid: null,
     ...overrides,
   };
 }

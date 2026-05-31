@@ -1,7 +1,7 @@
 import { type Extension, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, type ViewUpdate, keymap } from "@codemirror/view";
 import { syntaxTree, ensureSyntaxTree } from "@codemirror/language";
-import { parseAnnotations, annotationFindUuid, type Annotation } from "../../lib/ipc";
+import { parseAnnotations, annotationFindUuid, listAnnotations, type Annotation } from "../../lib/ipc";
 import { type AnnotationDisplayMode } from "../../stores/preferences";
 import { isCursorOnLine } from "./proximity";
 import { PillWidget, MarkerWidget, CalloutWidget, annotationFoldField, firingAnnotationsField, llmLockedField, setLlmLockedEffect, annotationThreadKeysField, setAnnotationThreadKeys } from "./annotationWidgets";
@@ -63,18 +63,35 @@ export const annotationPlugin = ViewPlugin.fromClass(
       }, 150);
     }
 
-    private fireIPC() {
+    private async fireIPC() {
       const docStr = this.view.state.doc.toString();
       this.lastDocStr = docStr;
-      parseAnnotations(docStr)
-        .then((annotations) => {
-          if (this.view.state.doc.toString() !== this.lastDocStr) return;
-          const prev = this.view.state.field(annotationDataField);
-          if (annotations.length === 0 && prev.length === 0) return;
-          this.view.dispatch({ effects: setAnnotationData.of(annotations) });
-          window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
-        })
-        .catch(() => {});
+      try {
+        const annotations = await parseAnnotations(docStr);
+        if (this.view.state.doc.toString() !== this.lastDocStr) return;
+
+        const nodeId = useWorkspaceStore.getState().currentPagePath;
+        if (nodeId && annotations.length > 0) {
+          try {
+            const indexed = await listAnnotations(nodeId);
+            if (this.view.state.doc.toString() !== this.lastDocStr) return;
+            const uuidMap = new Map<string, string>();
+            for (const ia of indexed) {
+              uuidMap.set(`${ia.annotation_type}:${ia.char_start}`, ia.uuid);
+            }
+            for (const ann of annotations) {
+              const key = `${ann.annotation_type}:${ann.char_start}`;
+              const uuid = uuidMap.get(key);
+              if (uuid) ann.uuid = uuid;
+            }
+          } catch { /* best-effort enrichment */ }
+        }
+
+        const prev = this.view.state.field(annotationDataField);
+        if (annotations.length === 0 && prev.length === 0) return;
+        this.view.dispatch({ effects: setAnnotationData.of(annotations) });
+        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+      } catch { /* IPC failure is non-fatal */ }
     }
 
     destroy() {

@@ -25,7 +25,6 @@ function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
     char_start: 5,
     char_end: 18,
     original: "%%!n | test%%",
-    uuid: null,
     ...overrides,
   };
 }

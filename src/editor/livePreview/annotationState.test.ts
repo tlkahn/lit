@@ -26,7 +26,7 @@ import {
 import { Annotation as AnnotationGrammar } from "../markdown/annotation";
 import { Comment as CommentGrammar } from "../markdown/comment";
 import type { Annotation, ConversationRow } from "../../lib/ipc";
-import { parseAnnotations, annotationFindUuid } from "../../lib/ipc";
+import { parseAnnotations, annotationFindUuid, listAnnotations } from "../../lib/ipc";
 import { type AnnotationDisplayMode } from "../../stores/preferences";
 import { useModalLockStore } from "../../stores/modalLock";
 import { useWorkspaceStore } from "../../stores/workspace";
@@ -36,9 +36,11 @@ import { useBottomPanelStore } from "../../stores/bottomPanel";
 vi.mock("../../lib/ipc", () => ({
   parseAnnotations: vi.fn(async () => []),
   annotationFindUuid: vi.fn(async () => null),
+  listAnnotations: vi.fn(async () => []),
 }));
 
 const mockFindUuid = annotationFindUuid as ReturnType<typeof vi.fn>;
+const mockListAnnotations = listAnnotations as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -56,7 +58,6 @@ function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
     char_start: 0,
     char_end: 10,
     original: "%%!n | x%%",
-    uuid: null,
     ...overrides,
   };
 }
@@ -364,6 +365,155 @@ describe("annotationPlugin", () => {
 
     const data = view.state.field(annotationDataField);
     expect(data).toEqual(testAnnotations);
+
+    view.destroy();
+  });
+
+  it("enriches parsed annotations with UUIDs from listAnnotations", async () => {
+    const parsedAnn = makeAnnotation({ annotation_type: "note", char_start: 5, char_end: 15 });
+    vi.mocked(parseAnnotations).mockResolvedValue([parsedAnn]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+    mockListAnnotations.mockResolvedValue([
+      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: null, date: null, source_line: 1, char_start: 5, char_end: 15, uuid: "enriched-uuid-1" },
+    ]);
+
+    const state = EditorState.create({
+      doc: "hello world!!!",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const data = view.state.field(annotationDataField);
+    view.destroy();
+
+    expect(data).toHaveLength(1);
+    expect(data[0]!.uuid).toBe("enriched-uuid-1");
+  });
+
+  it("does not call listAnnotations when currentPagePath is null", async () => {
+    const parsedAnn = makeAnnotation({ annotation_type: "note", char_start: 0, char_end: 10 });
+    vi.mocked(parseAnnotations).mockResolvedValue([parsedAnn]);
+    useWorkspaceStore.setState({ currentPagePath: null });
+
+    const state = EditorState.create({
+      doc: "hello world",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockListAnnotations).not.toHaveBeenCalled();
+    const data = view.state.field(annotationDataField);
+    expect(data).toHaveLength(1);
+    expect(data[0]!.uuid).toBeUndefined();
+
+    view.destroy();
+  });
+
+  it("dispatches annotations without uuid when listAnnotations rejects", async () => {
+    const parsedAnn = makeAnnotation({ annotation_type: "note", char_start: 0, char_end: 10 });
+    vi.mocked(parseAnnotations).mockResolvedValue([parsedAnn]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+    mockListAnnotations.mockRejectedValue(new Error("db error"));
+
+    const state = EditorState.create({
+      doc: "hello world",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const data = view.state.field(annotationDataField);
+    expect(data).toHaveLength(1);
+    expect(data[0]!.uuid).toBeUndefined();
+
+    view.destroy();
+  });
+
+  it("discards stale enrichment when doc changes during listAnnotations", async () => {
+    const parsedAnn = makeAnnotation({ annotation_type: "note", char_start: 0, char_end: 5 });
+    vi.mocked(parseAnnotations).mockResolvedValue([parsedAnn]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+
+    let resolveList!: (v: unknown[]) => void;
+    mockListAnnotations.mockImplementation(
+      () => new Promise((r) => { resolveList = r; }),
+    );
+
+    const state = EditorState.create({
+      doc: "hello",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    view.dispatch({ changes: { from: 5, insert: " changed" } });
+
+    resolveList([
+      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: null, date: null, source_line: 1, char_start: 0, char_end: 5, uuid: "stale-uuid" },
+    ]);
+    await vi.advanceTimersByTimeAsync(0);
+
+    const data = view.state.field(annotationDataField);
+    const hasStaleUuid = data.some((a) => a.uuid === "stale-uuid");
+    expect(hasStaleUuid).toBe(false);
+
+    view.destroy();
+  });
+
+  it("integration: enriched uuid enables thread indicator on PillWidget", async () => {
+    const doc = "first line\ntext %%!n | body%% more";
+    const parsedAnn = makeAnnotation({
+      annotation_type: "note",
+      body: "body",
+      char_start: 16,
+      char_end: 29,
+      original: "%%!n | body%%",
+    });
+    vi.mocked(parseAnnotations).mockResolvedValue([parsedAnn]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+    mockListAnnotations.mockResolvedValue([
+      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: "body", date: null, source_line: 2, char_start: 16, char_end: 29, uuid: "enriched-thread-uuid" },
+    ]);
+    useConversationStore.setState({
+      conversations: [
+        makeConversationRow({ anchor_type: "annotation", anchor_key: "enriched-thread-uuid" }),
+      ],
+    });
+
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: 0 },
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationExtension(),
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    ensureSyntaxTree(view.state, view.state.doc.length);
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const decoSources = view.state.facet(EditorView.decorations);
+    const widgets: { from: number; to: number; widget: unknown }[] = [];
+    for (const source of decoSources) {
+      if (typeof source === "function") continue;
+      const iter = source.iter();
+      while (iter.value) {
+        widgets.push({ from: iter.from, to: iter.to, widget: iter.value.spec?.widget ?? null });
+        iter.next();
+      }
+    }
+
+    const pill = widgets.find((w) => w.from === 16 && w.to === 29);
+    expect(pill).toBeTruthy();
+    expect(pill!.widget).toBeInstanceOf(PillWidget);
+    expect((pill!.widget as PillWidget).hasThread).toBe(true);
 
     view.destroy();
   });

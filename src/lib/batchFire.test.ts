@@ -35,7 +35,6 @@ function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
     char_start: 0,
     char_end: 20,
     original: "%%! llm | explain %%",
-    uuid: null,
     ...overrides,
   };
 }

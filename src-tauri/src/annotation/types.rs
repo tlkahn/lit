@@ -184,7 +184,7 @@ pub struct Annotation {
     pub char_start: usize,
     pub char_end: usize,
     pub original: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uuid: Option<String>,
 }
 
@@ -506,5 +506,45 @@ mod tests {
         let json_sent = serde_json::to_string(&scope_sent).unwrap();
         let parsed_sent: Scope = serde_json::from_str(&json_sent).unwrap();
         assert_eq!(parsed_sent, Scope::Sentence(2));
+    }
+
+    #[test]
+    fn annotation_json_omits_uuid_when_none() {
+        let ann = Annotation {
+            form: AnnotationForm::Compact,
+            annotation_type: AnnotationType::Note,
+            certainty: Certainty::Neutral,
+            scope: Scope::Sentence(1),
+            body: None,
+            date: None,
+            is_structured: false,
+            char_start: 0,
+            char_end: 10,
+            original: "%%: n %%".to_string(),
+            uuid: None,
+        };
+        let json = serde_json::to_string(&ann).unwrap();
+        assert!(!json.contains("uuid"), "JSON should omit uuid when None, got: {json}");
+    }
+
+    #[test]
+    fn annotation_json_includes_uuid_when_some() {
+        let ann = Annotation {
+            form: AnnotationForm::Compact,
+            annotation_type: AnnotationType::Note,
+            certainty: Certainty::Neutral,
+            scope: Scope::Sentence(1),
+            body: None,
+            date: None,
+            is_structured: false,
+            char_start: 0,
+            char_end: 10,
+            original: "%%: n %%".to_string(),
+            uuid: Some("abc".to_string()),
+        };
+        let json = serde_json::to_string(&ann).unwrap();
+        assert!(json.contains(r#""uuid":"abc""#), "JSON should include uuid when Some, got: {json}");
+        let parsed: Annotation = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.uuid, Some("abc".to_string()));
     }
 }

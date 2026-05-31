@@ -948,8 +948,7 @@ impl Store {
         )?;
         for &new_idx in &diff.inserts {
             let ann = &annotations[new_idx];
-            let uuid_val = ann.uuid.clone()
-                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            let uuid_val = uuid::Uuid::new_v4().to_string();
             insert_stmt.execute(rusqlite::params![
                 node_id,
                 ann.annotation_type,
@@ -1448,7 +1447,6 @@ mod tests {
                 char_end: 10,
                 scope_kind: "file".into(),
                 scope_value: "a.md".into(),
-                uuid: None,
             }]).unwrap();
             use super::super::types::Position;
             let mut positions = HashMap::new();
@@ -2684,8 +2682,22 @@ mod tests {
             char_end: 10,
             scope_kind: "words".into(),
             scope_value: "1".into(),
-            uuid: None,
         }
+    }
+
+    #[test]
+    fn upsert_annotations_generates_v4_uuid() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        store.upsert_annotations("a.md", &[make_annotation("note", Some("hello"))]).unwrap();
+
+        let uuid: String = store.conn.query_row(
+            "SELECT uuid FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(uuid.len(), 36, "uuid should be 36-char hyphenated v4 format");
+        assert_eq!(&uuid[14..15], "4", "uuid version nibble should be 4");
     }
 
     #[test]
@@ -2932,7 +2944,6 @@ mod tests {
             char_end: 50,
             scope_kind: "words".into(),
             scope_value: "2".into(),
-            uuid: None,
         };
         store.upsert_annotations("a.md", &[ann]).unwrap();
 
