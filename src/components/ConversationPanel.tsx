@@ -10,10 +10,9 @@ import { ConversationInput, type ConversationInputHandle } from "./ConversationI
 
 interface ConversationPanelProps {
   pageId?: string;
-  contentHeight?: number;
 }
 
-export function ConversationPanel({ pageId, contentHeight }: ConversationPanelProps) {
+export function ConversationPanel({ pageId }: ConversationPanelProps) {
   const nodeId = pageId ?? GLOBAL_NODE_ID;
   const conversations = useConversationStore((s) => s.conversations);
   const activeConversationId = useConversationStore((s) => s.activeConversationId);
@@ -116,8 +115,7 @@ export function ConversationPanel({ pageId, contentHeight }: ConversationPanelPr
       />
       <div
         data-testid="conversation-scroll-container"
-        className="flex-1 overflow-hidden"
-        style={contentHeight != null ? { height: contentHeight } : undefined}
+        className="flex-1 overflow-hidden min-h-0"
       >
         <MessageList
           messages={messages}

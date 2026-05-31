@@ -2,6 +2,47 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { useBottomPanelStore } from "./bottomPanel";
 import { useLlmResponseStore } from "./llmResponse";
 
+describe("bottomPanel setUnfolded", () => {
+  beforeEach(() => {
+    useBottomPanelStore.setState({
+      activeTab: "linked",
+      unfolded: false,
+      linkedCount: null,
+      unlinkedCount: null,
+      annotationCount: 0,
+      hasOpenedUnlinked: false,
+      hasOpenedAnnotations: false,
+      hasOpenedLlm: false,
+    });
+  });
+
+  it("sets hasOpenedLlm when unfolding with llm-response tab active", () => {
+    useBottomPanelStore.setState({ activeTab: "llm-response", hasOpenedLlm: false });
+    useBottomPanelStore.getState().setUnfolded(true);
+    expect(useBottomPanelStore.getState().hasOpenedLlm).toBe(true);
+    expect(useBottomPanelStore.getState().unfolded).toBe(true);
+  });
+
+  it("sets hasOpenedUnlinked when unfolding with unlinked tab active", () => {
+    useBottomPanelStore.setState({ activeTab: "unlinked", hasOpenedUnlinked: false });
+    useBottomPanelStore.getState().setUnfolded(true);
+    expect(useBottomPanelStore.getState().hasOpenedUnlinked).toBe(true);
+  });
+
+  it("sets hasOpenedAnnotations when unfolding with annotations tab active", () => {
+    useBottomPanelStore.setState({ activeTab: "annotations", hasOpenedAnnotations: false });
+    useBottomPanelStore.getState().setUnfolded(true);
+    expect(useBottomPanelStore.getState().hasOpenedAnnotations).toBe(true);
+  });
+
+  it("does not set hasOpened flags when folding", () => {
+    useBottomPanelStore.setState({ activeTab: "llm-response", unfolded: true, hasOpenedLlm: false });
+    useBottomPanelStore.getState().setUnfolded(false);
+    expect(useBottomPanelStore.getState().hasOpenedLlm).toBe(false);
+    expect(useBottomPanelStore.getState().unfolded).toBe(false);
+  });
+});
+
 describe("bottomPanel resetForPage", () => {
   beforeEach(() => {
     useBottomPanelStore.setState({

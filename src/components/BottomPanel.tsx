@@ -151,23 +151,23 @@ export function BottomPanel({ pageId }: BottomPanelProps) {
         style={{ height: panelHeight }}
       >
         {pageId && (
-          <div style={{ display: activeTab === "linked" ? undefined : "none" }}>
+          <div style={{ display: activeTab === "linked" ? undefined : "none", height: "100%" }}>
             <BacklinksPanel pageId={pageId} onCountChange={setLinkedCount} contentHeight={panelHeight} />
           </div>
         )}
         {pageId && hasOpenedUnlinked && (
-          <div style={{ display: activeTab === "unlinked" ? undefined : "none" }}>
+          <div style={{ display: activeTab === "unlinked" ? undefined : "none", height: "100%" }}>
             <UnlinkedMentionsPanel pageId={pageId} onCountChange={setUnlinkedCount} contentHeight={panelHeight} />
           </div>
         )}
         {pageId && annotationEnabled && hasOpenedAnnotations && (
-          <div style={{ display: activeTab === "annotations" ? undefined : "none" }}>
+          <div style={{ display: activeTab === "annotations" ? undefined : "none", height: "100%" }}>
             <AnnotationPanel pageId={pageId} onCountChange={setAnnotationCount} contentHeight={panelHeight} />
           </div>
         )}
         {hasOpenedLlm && (
-          <div style={{ display: activeTab === "llm-response" ? undefined : "none" }}>
-            <ConversationPanel pageId={pageId ?? undefined} contentHeight={panelHeight} />
+          <div style={{ display: activeTab === "llm-response" ? undefined : "none", height: "100%" }}>
+            <ConversationPanel pageId={pageId ?? undefined} />
           </div>
         )}
       </div>

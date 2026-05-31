@@ -62,7 +62,18 @@ export const useBottomPanelStore = create<BottomPanelState>((set, get) => ({
     set(updates);
   },
 
-  setUnfolded: (v: boolean) => set({ unfolded: v }),
+  setUnfolded: (v: boolean) => {
+    if (v) {
+      const { activeTab } = get();
+      const updates: Partial<BottomPanelState> = { unfolded: true };
+      if (activeTab === "llm-response") updates.hasOpenedLlm = true;
+      else if (activeTab === "unlinked") updates.hasOpenedUnlinked = true;
+      else if (activeTab === "annotations") updates.hasOpenedAnnotations = true;
+      set(updates);
+    } else {
+      set({ unfolded: false });
+    }
+  },
 
   setPanelHeight: (h: number) => {
     set({ panelHeight: h });

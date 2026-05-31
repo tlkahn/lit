@@ -22,6 +22,7 @@
   --color-bg-primary-alt: var(--background-primary-alt);
   --color-bg-secondary: var(--background-secondary);
   --color-border: var(--background-modifier-border);
+  --color-bg-tertiary: var(--background-secondary-alt);
   --color-bg-hover: var(--background-modifier-hover);
   --color-text-normal: var(--text-normal);
   --color-text-muted: var(--text-muted);
