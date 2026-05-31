@@ -36,7 +36,6 @@ export interface PreferencesState {
   llmPromptN: string;
   llmPromptCf: string;
   llmPromptApp: string;
-  llmDeleteAnnotationThreads: boolean;
   llmOpenaiApiKeySet: boolean;
   llmAnthropicApiKeySet: boolean;
   llmDeleteAnnotationThreads: boolean;
@@ -128,7 +127,6 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   llmPromptN: "Elaborate on the following note given the surrounding context.",
   llmPromptCf: "Explain the connection described in the following cross-reference.",
   llmPromptApp: "Provide critical commentary on the following text.",
-  llmDeleteAnnotationThreads: false,
   llmOpenaiApiKeySet: false,
   llmAnthropicApiKeySet: false,
   llmDeleteAnnotationThreads: false,
