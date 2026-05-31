@@ -816,6 +816,7 @@ export interface AnnotationSearchResult {
   source_line: number;
   char_start: number;
   char_end: number;
+  uuid: string;
 }
 
 export async function searchAnnotations(

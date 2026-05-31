@@ -7,7 +7,7 @@ use tracing::{debug, info};
 use super::error::GraphError;
 use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, ConversationRow, IndexableAnnotation, LinkEntry, MessageRow, ParsedNode, Stats, TagPageResult, TagSearchResult};
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 11;
+pub const CURRENT_SCHEMA_VERSION: i64 = 12;
 
 fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rusqlite::Error> {
     Ok(AnnotationSearchResult {
@@ -21,6 +21,7 @@ fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rus
         source_line: row.get(7)?,
         char_start: row.get(8)?,
         char_end: row.get(9)?,
+        uuid: row.get(10)?,
     })
 }
 
@@ -46,6 +47,7 @@ struct ExistingAnnotation {
     annotation_type: String,
     body: Option<String>,
     char_start: i64,
+    uuid: String,
 }
 
 struct AnnotationDiff {
@@ -345,6 +347,39 @@ impl Store {
                     rusqlite::params![id, rowid],
                 )?;
             }
+        }
+
+        if version < 12 {
+            info!(from = version, to = 12, "migrating schema: enforcing NOT NULL on annotations.uuid");
+            self.conn.execute_batch("PRAGMA foreign_keys=OFF;")?;
+            self.conn.execute_batch(
+                "BEGIN TRANSACTION;
+                CREATE TABLE annotations_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    node_id TEXT NOT NULL,
+                    annotation_type TEXT NOT NULL,
+                    certainty TEXT NOT NULL,
+                    body TEXT,
+                    date TEXT,
+                    source_line INTEGER NOT NULL,
+                    char_start INTEGER NOT NULL,
+                    char_end INTEGER NOT NULL,
+                    scope_kind TEXT NOT NULL,
+                    scope_value TEXT NOT NULL,
+                    uuid TEXT NOT NULL
+                );
+                INSERT INTO annotations_new SELECT id, node_id, annotation_type, certainty, body, date, source_line, char_start, char_end, scope_kind, scope_value, uuid FROM annotations;
+                DROP TABLE annotations;
+                ALTER TABLE annotations_new RENAME TO annotations;
+                CREATE INDEX idx_annotations_node_id ON annotations(node_id);
+                CREATE INDEX idx_annotations_type ON annotations(annotation_type);
+                DELETE FROM annotations_fts;
+                INSERT INTO annotations_fts(rowid, body, node_id, annotation_type)
+                    SELECT id, body, node_id, annotation_type FROM annotations WHERE body IS NOT NULL;
+                UPDATE meta SET value = '12' WHERE key = 'schema_version';
+                COMMIT;"
+            )?;
+            self.conn.execute_batch("PRAGMA foreign_keys=ON;")?;
         }
 
         Ok(())
@@ -857,7 +892,7 @@ impl Store {
 
     fn fetch_existing_annotations(&self, node_id: &str) -> Result<Vec<ExistingAnnotation>, GraphError> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, annotation_type, body, char_start FROM annotations WHERE node_id = ?1",
+            "SELECT id, annotation_type, body, char_start, uuid FROM annotations WHERE node_id = ?1",
         )?;
         let rows = stmt.query_map([node_id], |row| {
             Ok(ExistingAnnotation {
@@ -865,6 +900,7 @@ impl Store {
                 annotation_type: row.get(1)?,
                 body: row.get(2)?,
                 char_start: row.get(3)?,
+                uuid: row.get(4)?,
             })
         })?;
         Ok(rows.filter_map(|r| r.ok()).collect())
@@ -952,7 +988,7 @@ impl Store {
 
             let where_clause = conditions.join(" AND ");
             let sql = format!(
-                "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end
+                "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end, a.uuid
                  FROM annotations a
                  JOIN nodes n ON n.id = a.node_id
                  WHERE {where_clause}
@@ -976,7 +1012,7 @@ impl Store {
 
             let (sql, params_count) = if type_filter.is_some() {
                 (
-                    "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end
+                    "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end, a.uuid
                      FROM annotations_fts f
                      JOIN annotations a ON a.id = f.rowid
                      JOIN nodes n ON n.id = a.node_id
@@ -987,7 +1023,7 @@ impl Store {
                 )
             } else {
                 (
-                    "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end
+                    "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end, a.uuid
                      FROM annotations_fts f
                      JOIN annotations a ON a.id = f.rowid
                      JOIN nodes n ON n.id = a.node_id
@@ -1020,7 +1056,7 @@ impl Store {
         match (node_id, type_filter) {
             (Some(nid), Some(tf)) => {
                 let mut stmt = self.conn.prepare(
-                    "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end
+                    "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end, a.uuid
                      FROM annotations a
                      JOIN nodes n ON n.id = a.node_id
                      WHERE a.node_id = ?1 AND a.annotation_type = ?2
@@ -1034,7 +1070,7 @@ impl Store {
             }
             (Some(nid), None) => {
                 let mut stmt = self.conn.prepare(
-                    "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end
+                    "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end, a.uuid
                      FROM annotations a
                      JOIN nodes n ON n.id = a.node_id
                      WHERE a.node_id = ?1
@@ -1048,7 +1084,7 @@ impl Store {
             }
             (None, Some(tf)) => {
                 let mut stmt = self.conn.prepare(
-                    "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end
+                    "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end, a.uuid
                      FROM annotations a
                      JOIN nodes n ON n.id = a.node_id
                      WHERE a.annotation_type = ?1
@@ -1062,7 +1098,7 @@ impl Store {
             }
             (None, None) => {
                 let mut stmt = self.conn.prepare(
-                    "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end
+                    "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end, a.uuid
                      FROM annotations a
                      JOIN nodes n ON n.id = a.node_id
                      ORDER BY a.node_id, a.source_line
@@ -2510,8 +2546,8 @@ mod tests {
     // --- Cycle 2: Schema v6 ---
 
     #[test]
-    fn schema_version_is_eleven() {
-        assert_eq!(CURRENT_SCHEMA_VERSION, 11);
+    fn schema_version_is_twelve() {
+        assert_eq!(CURRENT_SCHEMA_VERSION, 12);
     }
 
     #[test]
@@ -4172,5 +4208,59 @@ mod tests {
         let result = store.get_first_paragraphs(&ids).unwrap();
         assert_eq!(result.len(), 1);
         assert!(!result.contains_key("ghost.md"));
+    }
+
+    // --- Cycle A: v12 migration enforces NOT NULL on uuid ---
+
+    #[test]
+    fn migration_v12_enforces_uuid_not_null() {
+        let store = Store::open_memory().unwrap();
+
+        let mut stmt = store.conn.prepare("PRAGMA table_info(annotations)").unwrap();
+        let columns: Vec<(String, i64)> = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(1)?, row.get::<_, i64>(3)?))
+        }).unwrap().filter_map(|r| r.ok()).collect();
+
+        let uuid_col = columns.iter().find(|(name, _)| name == "uuid");
+        assert!(uuid_col.is_some(), "annotations table should have uuid column");
+        assert_eq!(uuid_col.unwrap().1, 1, "uuid column should have notnull=1");
+
+        assert_eq!(CURRENT_SCHEMA_VERSION, 12);
+    }
+
+    // --- Cycle C: search/list annotations return uuid ---
+
+    #[test]
+    fn search_annotations_returns_uuid() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let ann = super::IndexableAnnotation {
+            body: Some("Silk Road trade route".into()),
+            ..make_annotation("note", None)
+        };
+        store.upsert_annotations("a.md", &[ann]).unwrap();
+
+        let results = store.search_annotations("Silk Road", None, 10).unwrap();
+        assert_eq!(results.len(), 1);
+        let uuid = &results[0].uuid;
+        assert_eq!(uuid.len(), 36, "uuid should be 36-char hyphenated format");
+        assert!(uuid.contains('-'), "uuid should contain hyphens");
+    }
+
+    #[test]
+    fn list_annotations_returns_uuid() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        store.upsert_annotations("a.md", &[make_annotation("note", Some("hello"))]).unwrap();
+
+        let results = store.list_annotations(Some("a.md"), None, 10).unwrap();
+        assert_eq!(results.len(), 1);
+        let uuid = &results[0].uuid;
+        assert_eq!(uuid.len(), 36);
+        assert!(uuid.contains('-'));
     }
 }

@@ -42,6 +42,7 @@ const mockResults: AnnotationSearchResult[] = [
     source_line: 10,
     char_start: 100,
     char_end: 150,
+    uuid: "test-uuid-1",
   },
   {
     annotation_id: 2,
@@ -54,6 +55,7 @@ const mockResults: AnnotationSearchResult[] = [
     source_line: 25,
     char_start: 200,
     char_end: 260,
+    uuid: "test-uuid-2",
   },
 ];
 

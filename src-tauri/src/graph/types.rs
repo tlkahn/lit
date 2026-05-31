@@ -94,6 +94,7 @@ pub struct AnnotationSearchResult {
     pub source_line: u32,
     pub char_start: usize,
     pub char_end: usize,
+    pub uuid: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -399,6 +400,7 @@ mod tests {
             source_line: 3,
             char_start: 10,
             char_end: 30,
+            uuid: "550e8400-e29b-41d4-a716-446655440000".into(),
         };
         let json_str = serde_json::to_string(&asr).expect("serialize");
         let back: AnnotationSearchResult = serde_json::from_str(&json_str).expect("deserialize");

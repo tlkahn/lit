@@ -304,6 +304,7 @@ describe("ipc", () => {
                 source_line: 3,
                 char_start: 10,
                 char_end: 30,
+                uuid: "test-uuid-1",
               },
             ];
           }
@@ -319,6 +320,7 @@ describe("ipc", () => {
               source_line: 5,
               char_start: 10,
               char_end: 50,
+              uuid: "test-uuid-1",
             },
           ];
         }
@@ -337,6 +339,7 @@ describe("ipc", () => {
                 source_line: 1,
                 char_start: 0,
                 char_end: 20,
+                uuid: "test-uuid-2",
               },
             ];
           }
@@ -352,6 +355,7 @@ describe("ipc", () => {
               source_line: 1,
               char_start: 0,
               char_end: 10,
+              uuid: "test-uuid-1",
             },
             {
               annotation_id: 2,
@@ -364,6 +368,7 @@ describe("ipc", () => {
               source_line: 3,
               char_start: 20,
               char_end: 40,
+              uuid: "test-uuid-2",
             },
           ];
         }
@@ -1194,6 +1199,7 @@ describe("ipc", () => {
     expect(results[0]!.node_id).toBe("a.md");
     expect(results[0]!.body).toBe("Silk Road flourished");
     expect(results[0]!.annotation_type).toBe("note");
+    expect(results[0]!.uuid).toBe("test-uuid-1");
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("search_annotations", {
       query: "Silk Road",
