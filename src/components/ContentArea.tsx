@@ -30,7 +30,7 @@ export function parseYamlErrorLocation(msg: string): { line: number; column: num
   return { line: parseInt(match[1]!, 10), column: parseInt(match[2]!, 10) };
 }
 
-export function ContentArea({ onExportNetwork }: { onExportNetwork?: (nodeId: string) => void } = {}) {
+export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onExportNetwork?: (nodeId: string) => void; renderBottomPanel?: boolean } = {}) {
   const focusedPaneId = usePaneStore((s) => s.focusedPaneId);
   const focusedLeaf = usePaneStore((s) => findLeaf(s.root, s.focusedPaneId));
   const currentPanePage = focusedLeaf?.pagePath ?? null;
@@ -310,7 +310,7 @@ export function ContentArea({ onExportNetwork }: { onExportNetwork?: (nodeId: st
             Select a page to start editing
           </p>
         </div>
-        <BottomPanel />
+        {renderBottomPanel && <BottomPanel />}
       </main>
     );
   }
@@ -508,7 +508,7 @@ export function ContentArea({ onExportNetwork }: { onExportNetwork?: (nodeId: st
           </Suspense>
         </div>
       )}
-      <BottomPanel pageId={currentPanePage ?? undefined} />
+      {renderBottomPanel && <BottomPanel pageId={currentPanePage ?? undefined} />}
     </main>
   );
 }

@@ -35,6 +35,9 @@ import { useModalLock } from "./hooks/useModalLock";
 import { useSubgraphExport } from "./hooks/useSubgraphExport";
 import { SubgraphExportPicker } from "./components/SubgraphExportPicker";
 import { useBottomPanelEvents } from "./hooks/useBottomPanelEvents";
+import { useBottomPanelPosition } from "./hooks/useBottomPanelPosition";
+import { useBottomPanelStore } from "./stores/bottomPanel";
+import { BottomPanel } from "./components/BottomPanel";
 import { getCurrentEditorView } from "./lib/editorViewRef";
 import { annotationToFields, getEditCursorOffset, type AnnotationBuilderEventDetail, type EditRawInfo } from "./lib/annotationDsl";
 import type { Annotation, ExportProgress, ExportSummary, PageContent, SplitPlan } from "./lib/ipc";
@@ -74,6 +77,10 @@ function App() {
   const llmEnabled = usePreferencesStore((s) => s.llmOpenaiApiKeySet || s.llmAnthropicApiKeySet);
   const focusModeActive = useFocusModeStore((s) => s.active);
   const toggleFocusMode = useFocusModeStore((s) => s.toggleFocusMode);
+  const { mode: bottomPanelMode } = useBottomPanelPosition();
+  const panelWidth = useBottomPanelStore((s) => s.panelWidth);
+  const focusedLeaf = usePaneStore((s) => findLeaf(s.root, s.focusedPaneId));
+  const currentPanePage = focusedLeaf?.pagePath ?? null;
 
   useEffect(() => {
     Promise.all([loadPreferences(), initThemes()]);
@@ -424,9 +431,17 @@ function App() {
           </div>
           <div className="flex min-h-0 flex-1 flex-col">
             <ErrorBoundary fallback={ContentErrorFallback} resetKey={currentPagePath}>
-              <ContentArea onExportNetwork={exportFlow.requestExport} />
+              <ContentArea onExportNetwork={exportFlow.requestExport} renderBottomPanel={bottomPanelMode !== "side"} />
             </ErrorBoundary>
           </div>
+          {bottomPanelMode === "side" && (
+            <div
+              data-testid="sidebar-bottom-panel"
+              style={{ width: `${panelWidth}px`, flexShrink: 0, overflow: "hidden", transition: "width 150ms ease-out" }}
+            >
+              <BottomPanel pageId={currentPanePage ?? undefined} />
+            </div>
+          )}
         </div>
         <StatusBar />
         <HeadingQuickSwitcher
