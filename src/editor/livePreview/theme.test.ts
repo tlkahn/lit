@@ -67,6 +67,14 @@ describe("horizontal rule theme spec", () => {
   });
 });
 
+describe("inline code theme spec", () => {
+  it(".cm-preview-code-inline has no fontSize to avoid size changes on toggle", () => {
+    const rule = livePreviewThemeSpec[".cm-preview-code-inline"] as Record<string, string>;
+    expect(rule).toBeDefined();
+    expect(rule).not.toHaveProperty("fontSize");
+  });
+});
+
 describe("strikethrough theme spec", () => {
   it("livePreviewThemeSpec contains .cm-preview-strikethrough key", () => {
     expect(livePreviewThemeSpec[".cm-preview-strikethrough"]).toBeDefined();

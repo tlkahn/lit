@@ -374,29 +374,32 @@ function addFencedCodeDecos(
   node: ReturnType<typeof syntaxTree>["topNode"],
   decos: { from: number; to: number; deco: Decoration }[],
 ) {
-  if (isCursorOnLine(state, from, to)) return;
-
   const codeMarks = node.getChildren("CodeMark");
   const codeInfo = node.getChild("CodeInfo");
   if (codeInfo && state.doc.sliceString(codeInfo.from, codeInfo.to).trim().toLowerCase() === "mermaid") return;
+
+  const cursorOnBlock = isCursorOnLine(state, from, to);
   const codeText = node.getChild("CodeText");
 
   const openMark = codeMarks[0];
   if (openMark) {
     const openEnd = codeInfo ? codeInfo.to : openMark.to;
     const line = state.doc.lineAt(openEnd);
-    decos.push({ from: openMark.from, to: line.to, deco: Decoration.replace({}) });
+    if (!cursorOnBlock) {
+      decos.push({ from: openMark.from, to: line.to, deco: Decoration.replace({}) });
+    }
     decos.push({ from: line.from, to: line.from, deco: Decoration.line({ class: "cm-code-fence-top" }) });
   }
 
   const closeMark = codeMarks.length >= 2 ? codeMarks[codeMarks.length - 1] : undefined;
   if (closeMark) {
     const line = state.doc.lineAt(closeMark.from);
-    decos.push({ from: line.from, to: closeMark.to, deco: Decoration.replace({}) });
+    if (!cursorOnBlock) {
+      decos.push({ from: line.from, to: closeMark.to, deco: Decoration.replace({}) });
+    }
     decos.push({ from: line.from, to: line.from, deco: Decoration.line({ class: "cm-code-fence-bottom" }) });
   }
 
-  // Mark code content lines
   if (codeText) {
     const firstLine = state.doc.lineAt(codeText.from);
     const lastLine = state.doc.lineAt(codeText.to);
@@ -510,7 +513,7 @@ function addInlineCodeDecos(
   node: ReturnType<typeof syntaxTree>["topNode"],
   decos: { from: number; to: number; deco: Decoration }[],
 ) {
-  if (isCursorInRange(state, from, to)) return;
+  const cursorInside = isCursorInRange(state, from, to);
 
   const marks = node.getChildren("CodeMark");
   let contentFrom = from;
@@ -518,7 +521,9 @@ function addInlineCodeDecos(
 
   for (const mark of marks) {
     if (mark.from >= from && mark.to <= to) {
-      decos.push({ from: mark.from, to: mark.to, deco: Decoration.replace({}) });
+      if (!cursorInside) {
+        decos.push({ from: mark.from, to: mark.to, deco: Decoration.replace({}) });
+      }
       if (mark.from === from) contentFrom = mark.to;
       if (mark.to === to) contentTo = mark.from;
     }
