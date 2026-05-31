@@ -11,6 +11,7 @@ const defaults = {
   colorTheme: null,
   sidebarVisible: true,
   sidebarLocation: "left" as const,
+  bottomPanelPosition: "bottom" as const,
   foldingEnabled: true,
   foldingShowControls: "mouseover" as const,
   crossrefEnabled: true,
@@ -313,6 +314,29 @@ describe("SettingsModal", () => {
         expect(invokeCalls).toContainEqual({
           cmd: "set_preference",
           args: { key: "workbench.sideBar.location", value: "right" },
+        });
+      });
+    });
+  });
+
+  // --- bottomPanelPosition (SegmentedControl) ---
+
+  describe("bottomPanelPosition", () => {
+    it("reflects store value", () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const bottomBtn = container.querySelector("[data-testid='settings-bottomPanelPosition-bottom']")!;
+      expect(bottomBtn.getAttribute("aria-pressed")).toBe("true");
+    });
+
+    it("clicking option calls setPreference", async () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const sideBtn = container.querySelector("[data-testid='settings-bottomPanelPosition-side']")!;
+      fireEvent.click(sideBtn);
+      expect(usePreferencesStore.getState().bottomPanelPosition).toBe("side");
+      await vi.waitFor(() => {
+        expect(invokeCalls).toContainEqual({
+          cmd: "set_preference",
+          args: { key: "workbench.bottomPanel.position", value: "side" },
         });
       });
     });
@@ -846,13 +870,14 @@ describe("SettingsModal", () => {
 
   // --- Registry-driven rendering safety net ---
 
-  it("all 23 control data-testid values exist", () => {
+  it("all 24 control data-testid values exist", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const expectedIds = [
       "settings-darkMode-auto",
       "settings-colorTheme",
       "settings-sidebarVisible",
       "settings-sidebarLocation-left",
+      "settings-bottomPanelPosition-bottom",
       "settings-foldingEnabled",
       "settings-foldingShowControls-mouseover",
       "settings-mediaThumbnails",
@@ -961,7 +986,7 @@ describe("SettingsModal", () => {
     expect(container.querySelector("[data-testid='settings-no-results']")!.textContent).toContain("No matching settings");
   });
 
-  it("empty search shows all 23 controls", () => {
+  it("empty search shows all 24 controls", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
     fireEvent.change(search, { target: { value: "fold" } });
@@ -972,6 +997,7 @@ describe("SettingsModal", () => {
       "settings-colorTheme",
       "settings-sidebarVisible",
       "settings-sidebarLocation-left",
+      "settings-bottomPanelPosition-bottom",
       "settings-foldingEnabled",
       "settings-foldingShowControls-mouseover",
       "settings-mediaThumbnails",
@@ -1077,6 +1103,7 @@ describe("SettingsModal", () => {
       "settings-colorTheme",
       "settings-sidebarVisible",
       "settings-sidebarLocation-left",
+      "settings-bottomPanelPosition-bottom",
       "settings-foldingEnabled",
       "settings-foldingShowControls-mouseover",
       "settings-mediaThumbnails",

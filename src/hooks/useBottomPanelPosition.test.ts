@@ -12,16 +12,16 @@ describe("useBottomPanelPosition", () => {
     });
   });
 
-  it("returns mode 'bottom' and side 'right' by default", () => {
+  it("returns mode 'bottom' and effectiveSide 'right' by default", () => {
     const { result } = renderHook(() => useBottomPanelPosition());
     expect(result.current.mode).toBe("bottom");
-    expect(result.current.side).toBe("right");
+    expect(result.current.effectiveSide).toBe("right");
   });
 
-  it("returns side 'left' when sidebar is on right", () => {
+  it("returns effectiveSide 'left' when sidebar is on right", () => {
     usePreferencesStore.setState({ sidebarLocation: "right" });
     const { result } = renderHook(() => useBottomPanelPosition());
-    expect(result.current.side).toBe("left");
+    expect(result.current.effectiveSide).toBe("left");
   });
 
   it("returns mode 'side' when preference is 'side'", () => {
@@ -43,12 +43,12 @@ describe("useBottomPanelPosition", () => {
 
   it("reacts to sidebarLocation changes", () => {
     const { result } = renderHook(() => useBottomPanelPosition());
-    expect(result.current.side).toBe("right");
+    expect(result.current.effectiveSide).toBe("right");
 
     act(() => {
       usePreferencesStore.setState({ sidebarLocation: "right" });
     });
 
-    expect(result.current.side).toBe("left");
+    expect(result.current.effectiveSide).toBe("left");
   });
 });

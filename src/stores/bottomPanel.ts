@@ -91,13 +91,15 @@ export const useBottomPanelStore = create<BottomPanelState>((set, get) => ({
   },
 
   setPanelHeight: (h: number) => {
-    set({ panelHeight: h });
-    localStorage.setItem(STORAGE_KEY, String(h));
+    const clamped = Math.max(h, MIN_PANEL_HEIGHT);
+    set({ panelHeight: clamped });
+    localStorage.setItem(STORAGE_KEY, String(clamped));
   },
 
   setPanelWidth: (w: number) => {
-    set({ panelWidth: w });
-    localStorage.setItem(WIDTH_STORAGE_KEY, String(w));
+    const clamped = Math.max(w, MIN_PANEL_WIDTH);
+    set({ panelWidth: clamped });
+    localStorage.setItem(WIDTH_STORAGE_KEY, String(clamped));
   },
 
   setLinkedCount: (v: number | null) => set({ linkedCount: v }),
@@ -119,4 +121,11 @@ export const useBottomPanelStore = create<BottomPanelState>((set, get) => ({
   },
 }));
 
-export { MIN_PANEL_HEIGHT, STORAGE_KEY, MIN_PANEL_WIDTH, WIDTH_STORAGE_KEY };
+export {
+  DEFAULT_PANEL_HEIGHT,
+  DEFAULT_PANEL_WIDTH,
+  MIN_PANEL_HEIGHT,
+  STORAGE_KEY,
+  MIN_PANEL_WIDTH,
+  WIDTH_STORAGE_KEY,
+};
