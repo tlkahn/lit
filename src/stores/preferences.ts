@@ -7,6 +7,8 @@ export type FoldingShowControls = "mouseover" | "always" | "never";
 
 export type AnnotationDisplayMode = "pill" | "footnote";
 
+export type BottomPanelPosition = "bottom" | "side";
+
 export interface PreferencesState {
   darkMode: DarkModePref;
   colorTheme: string | null;
@@ -36,6 +38,7 @@ export interface PreferencesState {
   llmPromptN: string;
   llmPromptCf: string;
   llmPromptApp: string;
+  bottomPanelPosition: BottomPanelPosition;
   llmOpenaiApiKeySet: boolean;
   llmAnthropicApiKeySet: boolean;
   llmDeleteAnnotationThreads: boolean;
@@ -57,6 +60,10 @@ function applyAnnotationDisplayMode(val: unknown): AnnotationDisplayMode {
   return "pill";
 }
 
+function applyBottomPanelPosition(val: unknown): BottomPanelPosition {
+  return val === "side" ? "side" : "bottom";
+}
+
 function applyDarkMode(val: unknown): DarkModePref {
   if (val === "light" || val === "dark" || val === "auto") return val;
   if (val === true) return "dark";
@@ -70,6 +77,7 @@ function mapPreferences(prefs: Preferences) {
     colorTheme: prefs["workbench.colorTheme"] ?? null,
     sidebarVisible: (prefs["workbench.sideBar.visible"] as boolean) ?? true,
     sidebarLocation: applySidebarLocation(prefs["workbench.sideBar.location"] ?? "left"),
+    bottomPanelPosition: applyBottomPanelPosition(prefs["workbench.bottomPanel.position"]),
     foldingEnabled: prefs["editor.folding.enabled"] ?? true,
     foldingShowControls: applyFoldingShowControls(prefs["editor.folding.showFoldingControls"] ?? "mouseover"),
     crossrefEnabled: (prefs["crossref.enabled"] as boolean) ?? true,
@@ -103,6 +111,7 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   colorTheme: null,
   sidebarVisible: true,
   sidebarLocation: "left",
+  bottomPanelPosition: "bottom",
   foldingEnabled: true,
   foldingShowControls: "mouseover",
   crossrefEnabled: true,

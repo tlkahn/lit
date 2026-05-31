@@ -79,6 +79,18 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
       { value: "right", label: "Right" },
     ],
   },
+  {
+    category: "Appearance",
+    label: "Bottom Panel Position",
+    storeField: "bottomPanelPosition",
+    jsonKey: "workbench.bottomPanel.position",
+    controlType: "segmented",
+    testId: "settings-bottomPanelPosition",
+    options: [
+      { value: "bottom", label: "Bottom" },
+      { value: "side", label: "Side" },
+    ],
+  },
   // Editor
   {
     category: "Editor",

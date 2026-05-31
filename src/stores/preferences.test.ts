@@ -9,6 +9,7 @@ describe("PreferencesStore", () => {
       colorTheme: null,
       sidebarVisible: true,
       sidebarLocation: "left",
+      bottomPanelPosition: "bottom",
       crossrefEnabled: true,
       crossrefLiveRendering: true,
       crossrefEnableCiteproc: true,
@@ -912,5 +913,89 @@ describe("PreferencesStore", () => {
     });
 
     expect(usePreferencesStore.getState().llmDeleteAnnotationThreads).toBe(true);
+  });
+
+  it("defaults bottomPanelPosition to 'bottom'", () => {
+    const state = usePreferencesStore.getState();
+    expect(state.bottomPanelPosition).toBe("bottom");
+  });
+
+  it("maps workbench.bottomPanel.position: 'side' from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "workbench.bottomPanel.position": "side",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().bottomPanelPosition).toBe("side");
+  });
+
+  it("defaults bottomPanelPosition to 'bottom' when key missing from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().bottomPanelPosition).toBe("bottom");
+  });
+
+  it("treats unknown bottomPanelPosition values as 'bottom'", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "workbench.bottomPanel.position": "invalid",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().bottomPanelPosition).toBe("bottom");
+  });
+
+  it("updates bottomPanelPosition on preferences://changed event", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().bottomPanelPosition).toBe("bottom");
+
+    emitMockEvent("preferences://changed", {
+      "workbench.colorTheme": null,
+      "workbench.darkMode": "auto",
+      "workbench.sideBar.location": "left",
+      "workbench.bottomPanel.position": "side",
+    });
+
+    expect(usePreferencesStore.getState().bottomPanelPosition).toBe("side");
   });
 });

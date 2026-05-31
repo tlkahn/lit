@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { useBottomPanelStore } from "./bottomPanel";
+import { useBottomPanelStore, WIDTH_STORAGE_KEY } from "./bottomPanel";
 import { useLlmResponseStore } from "./llmResponse";
 
 describe("bottomPanel setUnfolded", () => {
@@ -99,5 +99,26 @@ describe("bottomPanel resetForPage", () => {
     expect(s.annotationCount).toBe(0);
     expect(s.hasOpenedAnnotations).toBe(false);
     expect(s.hasOpenedLlm).toBe(true);
+  });
+});
+
+describe("bottomPanel panelWidth", () => {
+  beforeEach(() => {
+    localStorage.removeItem(WIDTH_STORAGE_KEY);
+    useBottomPanelStore.setState({ panelWidth: 320 });
+  });
+
+  it("defaults panelWidth to 320", () => {
+    expect(useBottomPanelStore.getState().panelWidth).toBe(320);
+  });
+
+  it("setPanelWidth updates state", () => {
+    useBottomPanelStore.getState().setPanelWidth(400);
+    expect(useBottomPanelStore.getState().panelWidth).toBe(400);
+  });
+
+  it("setPanelWidth persists to localStorage", () => {
+    useBottomPanelStore.getState().setPanelWidth(450);
+    expect(localStorage.getItem(WIDTH_STORAGE_KEY)).toBe("450");
   });
 });

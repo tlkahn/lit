@@ -7,8 +7,8 @@ import {
 } from "./settingsRegistry";
 
 describe("SETTINGS_REGISTRY", () => {
-  it("has 31 entries", () => {
-    expect(SETTINGS_REGISTRY).toHaveLength(31);
+  it("has 32 entries", () => {
+    expect(SETTINGS_REGISTRY).toHaveLength(32);
   });
 
   it("every entry has required fields defined", () => {
@@ -59,6 +59,13 @@ describe("SETTINGS_REGISTRY", () => {
     expect(entry!.category).toBe("LLM");
   });
 
+  it("bottomPanelPosition entry has controlType 'segmented'", () => {
+    const entry = SETTINGS_REGISTRY.find((e) => e.storeField === "bottomPanelPosition");
+    expect(entry).toBeDefined();
+    expect(entry!.category).toBe("Appearance");
+    expect(entry!.controlType).toBe("segmented");
+  });
+
   it("all 7 type-specific prompt entries exist", () => {
     const promptFields = [
       "llmPromptLlm", "llmPromptTodo", "llmPromptTr",
@@ -90,7 +97,7 @@ describe("groupByCategory", () => {
   it("returns Map with 7 keys and correct counts", () => {
     const grouped = groupByCategory(SETTINGS_REGISTRY);
     expect(grouped.size).toBe(7);
-    expect(grouped.get("Appearance")).toHaveLength(4);
+    expect(grouped.get("Appearance")).toHaveLength(5);
     expect(grouped.get("Editor")).toHaveLength(3);
     expect(grouped.get("Cross-references")).toHaveLength(3);
     expect(grouped.get("Annotations")).toHaveLength(4);
@@ -118,7 +125,7 @@ describe("filterSettings", () => {
 
   it("returns all entries with empty indices for empty query", () => {
     const results = filterSettings(SETTINGS_REGISTRY, "");
-    expect(results).toHaveLength(31);
+    expect(results).toHaveLength(32);
     for (const r of results) {
       expect(r.indices).toEqual([]);
     }
