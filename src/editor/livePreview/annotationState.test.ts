@@ -798,6 +798,31 @@ describe("llmLockBridgePlugin", () => {
     useModalLockStore.setState({ llmLocked: false });
   });
 
+  it("does not dispatch synchronously in constructor when store is already locked", () => {
+    useModalLockStore.setState({ llmLocked: true });
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+    expect(view.state.field(llmLockedField)).toBe(false);
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+    view.destroy();
+  });
+
+  it("deferred dispatch sets llmLockedField after microtask when store is already locked", async () => {
+    useModalLockStore.setState({ llmLocked: true });
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+    expect(view.state.field(llmLockedField)).toBe(false);
+    await new Promise<void>((r) => queueMicrotask(r));
+    expect(view.state.field(llmLockedField)).toBe(true);
+    view.destroy();
+  });
+
   it("sets llmLockedField when store.llmLocked changes to true", () => {
     const view = new EditorView({
       state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),

@@ -205,7 +205,11 @@ const llmLockBridgePlugin = ViewPlugin.fromClass(
     private unsub: () => void;
     constructor(private view: EditorView) {
       const initial = useModalLockStore.getState().llmLocked;
-      if (initial) this.view.dispatch({ effects: setLlmLockedEffect.of(true) });
+      if (initial) {
+        queueMicrotask(() => {
+          this.view.dispatch({ effects: setLlmLockedEffect.of(true) });
+        });
+      }
       this.unsub = useModalLockStore.subscribe((s) => {
         if (s.llmLocked !== this.view.state.field(llmLockedField)) {
           this.view.dispatch({ effects: setLlmLockedEffect.of(s.llmLocked) });
