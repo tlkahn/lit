@@ -11,6 +11,7 @@ import {
   displayModeField,
   setDisplayMode,
   findAnnotationAtCursor,
+  deriveThreadKeys,
 } from "./annotationState";
 import {
   annotationFoldField,
@@ -24,7 +25,7 @@ import {
 } from "./annotationWidgets";
 import { Annotation as AnnotationGrammar } from "../markdown/annotation";
 import { Comment as CommentGrammar } from "../markdown/comment";
-import type { Annotation } from "../../lib/ipc";
+import type { Annotation, ConversationRow } from "../../lib/ipc";
 import { parseAnnotations, annotationFindUuid } from "../../lib/ipc";
 import { type AnnotationDisplayMode } from "../../stores/preferences";
 import { useModalLockStore } from "../../stores/modalLock";
@@ -765,10 +766,10 @@ describe("findAnnotationAtCursor", () => {
 });
 
 describe("annotationExtension", () => {
-  it("returns array with 14 extensions", () => {
+  it("returns array with 15 extensions", () => {
     const ext = annotationExtension();
     expect(Array.isArray(ext)).toBe(true);
-    expect((ext as unknown[]).length).toBe(14);
+    expect((ext as unknown[]).length).toBe(15);
   });
 
   it("includes annotationDataField", () => {
@@ -992,5 +993,194 @@ describe("openAnnotationThreadPlugin", () => {
 
     view.destroy();
     vi.useRealTimers();
+  });
+});
+
+// --- Conversation Thread Bridge Plugin ---
+
+function makeConversationRow(overrides: Partial<ConversationRow> = {}): ConversationRow {
+  return {
+    id: "conv-" + Math.random().toString(36).slice(2, 8),
+    node_id: "node-1",
+    anchor_type: null,
+    anchor_id: null,
+    anchor_key: null,
+    title: null,
+    created_at: "2025-01-01T00:00:00Z",
+    updated_at: "2025-01-01T00:00:00Z",
+    ...overrides,
+  };
+}
+
+describe("conversationThreadBridgePlugin", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    useConversationStore.setState({ conversations: [] });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("hydrates thread keys from pre-loaded conversations on creation", async () => {
+    useConversationStore.setState({
+      conversations: [
+        makeConversationRow({ anchor_type: "annotation", anchor_key: "uuid-a" }),
+        makeConversationRow({ anchor_type: "annotation", anchor_key: "uuid-b" }),
+      ],
+    });
+
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const keys = view.state.field(annotationThreadKeysField);
+    expect(keys.has("uuid-a")).toBe(true);
+    expect(keys.has("uuid-b")).toBe(true);
+    expect(keys.size).toBe(2);
+
+    view.destroy();
+  });
+
+  it("updates thread keys when store conversations change", async () => {
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(view.state.field(annotationThreadKeysField).size).toBe(0);
+
+    useConversationStore.setState({
+      conversations: [
+        makeConversationRow({ anchor_type: "annotation", anchor_key: "uuid-new" }),
+      ],
+    });
+
+    const keys = view.state.field(annotationThreadKeysField);
+    expect(keys.has("uuid-new")).toBe(true);
+
+    view.destroy();
+  });
+
+  it("does not dispatch when derived set is unchanged", async () => {
+    useConversationStore.setState({
+      conversations: [
+        makeConversationRow({ anchor_type: "annotation", anchor_key: "uuid-stable" }),
+      ],
+    });
+
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    const keysBefore = view.state.field(annotationThreadKeysField);
+
+    useConversationStore.setState({
+      conversations: [
+        makeConversationRow({ anchor_type: "annotation", anchor_key: "uuid-stable" }),
+        makeConversationRow({ anchor_type: "general", anchor_key: null }),
+      ],
+    });
+
+    const keysAfter = view.state.field(annotationThreadKeysField);
+    expect(keysAfter).toBe(keysBefore);
+
+    view.destroy();
+  });
+
+  it("removes keys when conversations shrink", async () => {
+    useConversationStore.setState({
+      conversations: [
+        makeConversationRow({ anchor_type: "annotation", anchor_key: "uuid-gone" }),
+      ],
+    });
+
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(view.state.field(annotationThreadKeysField).has("uuid-gone")).toBe(true);
+
+    useConversationStore.setState({ conversations: [] });
+
+    expect(view.state.field(annotationThreadKeysField).size).toBe(0);
+
+    view.destroy();
+  });
+
+  it("does not throw after destroy when store mutates", async () => {
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    view.destroy();
+
+    expect(() => {
+      useConversationStore.setState({
+        conversations: [
+          makeConversationRow({ anchor_type: "annotation", anchor_key: "uuid-after-destroy" }),
+        ],
+      });
+    }).not.toThrow();
+  });
+
+  it("does NOT dispatch synchronously in constructor", () => {
+    useConversationStore.setState({
+      conversations: [
+        makeConversationRow({ anchor_type: "annotation", anchor_key: "uuid-sync" }),
+      ],
+    });
+
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+
+    expect(view.state.field(annotationThreadKeysField).size).toBe(0);
+
+    view.destroy();
+  });
+});
+
+describe("deriveThreadKeys", () => {
+  it("extracts keys from annotation conversations", () => {
+    const rows = [
+      makeConversationRow({ anchor_type: "annotation", anchor_key: "uuid-1" }),
+      makeConversationRow({ anchor_type: "annotation", anchor_key: "uuid-2" }),
+    ];
+    const keys = deriveThreadKeys(rows);
+    expect(keys).toEqual(new Set(["uuid-1", "uuid-2"]));
+  });
+
+  it("excludes non-annotation conversations", () => {
+    const rows = [
+      makeConversationRow({ anchor_type: "general", anchor_key: "key-1" }),
+      makeConversationRow({ anchor_type: "annotation", anchor_key: "uuid-only" }),
+      makeConversationRow({ anchor_type: null, anchor_key: null }),
+    ];
+    const keys = deriveThreadKeys(rows);
+    expect(keys).toEqual(new Set(["uuid-only"]));
+  });
+
+  it("excludes annotation conversations with null anchor_key", () => {
+    const rows = [
+      makeConversationRow({ anchor_type: "annotation", anchor_key: null }),
+    ];
+    const keys = deriveThreadKeys(rows);
+    expect(keys.size).toBe(0);
+  });
+
+  it("returns empty set for empty array", () => {
+    expect(deriveThreadKeys([]).size).toBe(0);
   });
 });

@@ -4,7 +4,9 @@ import { syntaxTree, ensureSyntaxTree } from "@codemirror/language";
 import { parseAnnotations, annotationFindUuid, type Annotation } from "../../lib/ipc";
 import { type AnnotationDisplayMode } from "../../stores/preferences";
 import { isCursorOnLine } from "./proximity";
-import { PillWidget, MarkerWidget, CalloutWidget, annotationFoldField, firingAnnotationsField, llmLockedField, setLlmLockedEffect, annotationThreadKeysField } from "./annotationWidgets";
+import { PillWidget, MarkerWidget, CalloutWidget, annotationFoldField, firingAnnotationsField, llmLockedField, setLlmLockedEffect, annotationThreadKeysField, setAnnotationThreadKeys } from "./annotationWidgets";
+import { setsEqual } from "../../lib/headingTree";
+import type { ConversationRow } from "../../lib/ipc";
 import { useModalLockStore } from "../../stores/modalLock";
 import { useWorkspaceStore } from "../../stores/workspace";
 import { useConversationStore } from "../../stores/conversation";
@@ -252,6 +254,44 @@ const openAnnotationThreadPlugin = ViewPlugin.fromClass(
   },
 );
 
+export function deriveThreadKeys(conversations: ConversationRow[]): Set<string> {
+  return new Set(
+    conversations
+      .filter(c => c.anchor_type === "annotation" && c.anchor_key != null)
+      .map(c => c.anchor_key!),
+  );
+}
+
+const conversationThreadBridgePlugin = ViewPlugin.fromClass(
+  class {
+    private unsub: () => void;
+    private lastKeys: Set<string>;
+
+    constructor(private view: EditorView) {
+      const initial = deriveThreadKeys(useConversationStore.getState().conversations);
+      this.lastKeys = initial;
+      if (initial.size > 0) {
+        queueMicrotask(() => {
+          this.view.dispatch({ effects: setAnnotationThreadKeys.of(initial) });
+        });
+      }
+      this.unsub = useConversationStore.subscribe((s) => {
+        const next = deriveThreadKeys(s.conversations);
+        if (!setsEqual(this.lastKeys, next)) {
+          this.lastKeys = next;
+          this.view.dispatch({ effects: setAnnotationThreadKeys.of(next) });
+        }
+      });
+    }
+    update(update: ViewUpdate) {
+      this.view = update.view;
+    }
+    destroy() {
+      this.unsub();
+    }
+  },
+);
+
 export function annotationExtension(): Extension {
   return [
     displayModeField,
@@ -268,5 +308,6 @@ export function annotationExtension(): Extension {
     fireAnnotationPlugin,
     companionInsertPlugin,
     openAnnotationThreadPlugin,
+    conversationThreadBridgePlugin,
   ];
 }
