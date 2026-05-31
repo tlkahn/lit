@@ -1036,6 +1036,11 @@ impl GraphIndex {
         store.list_annotations(node_id, type_filter, limit)
     }
 
+    pub fn find_annotation_uuid(&self, node_id: &str, annotation_type: &str, body: Option<&str>, char_start_hint: usize) -> Result<Option<String>, GraphError> {
+        let store = self.store.lock().unwrap();
+        store.find_annotation_uuid(node_id, annotation_type, body, char_start_hint)
+    }
+
     // --- Conversation wrappers ---
 
     pub fn create_conversation(
@@ -1079,6 +1084,16 @@ impl GraphIndex {
     pub fn list_conversations(&self, node_id: &str) -> Result<Vec<ConversationRow>, GraphError> {
         let store = self.store.lock().unwrap();
         store.list_conversations(node_id)
+    }
+
+    pub fn find_conversation_by_anchor(&self, node_id: &str, anchor_type: &str, anchor_key: &str) -> Result<Option<ConversationRow>, GraphError> {
+        let store = self.store.lock().unwrap();
+        store.find_conversation_by_anchor(node_id, anchor_type, anchor_key)
+    }
+
+    pub fn delete_conversations_by_anchor(&self, node_id: &str, anchor_type: &str, anchor_key: &str) -> Result<(), GraphError> {
+        let store = self.store.lock().unwrap();
+        store.delete_conversations_by_anchor(node_id, anchor_type, anchor_key)
     }
 
     pub fn get_conversation(&self, id: &str) -> Result<ConversationRow, GraphError> {
