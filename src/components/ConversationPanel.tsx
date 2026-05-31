@@ -2,8 +2,7 @@ import { useEffect, useCallback, useRef } from "react";
 import { useConversationStore } from "../stores/conversation";
 import { usePreferencesStore } from "../stores/preferences";
 import { GLOBAL_NODE_ID } from "../lib/ipc";
-import { requestEditorContext } from "../lib/editorContext";
-import { formatLlmPrompt } from "../lib/promptFormatter";
+import { enrichWithEditorContext } from "../lib/editorContext";
 import { ThreadHeader } from "./ThreadHeader";
 import { MessageList } from "./MessageList";
 import { ConversationInput, type ConversationInputHandle } from "./ConversationInput";
@@ -51,19 +50,13 @@ export function ConversationPanel({ pageId }: ConversationPanelProps) {
       const newId = await createConversation(nodeId, content.slice(0, 50));
       if (newId === null) return;
     }
-    const editorCtx = requestEditorContext();
-    const enriched = formatLlmPrompt({
-      question: content,
-      context: editorCtx.selectionText || undefined,
-      filePath: editorCtx.filePath || undefined,
-    });
     await sendMessage({
       content,
       model: llmModel,
       system: llmSystemPrompt || undefined,
       nodeId,
       neighborsDepth,
-      textOverride: enriched !== content ? enriched : undefined,
+      textOverride: enrichWithEditorContext(content),
     });
   }, [nodeId, createConversation, sendMessage, llmModel, llmSystemPrompt, neighborsDepth]);
 
@@ -84,16 +77,9 @@ export function ConversationPanel({ pageId }: ConversationPanelProps) {
   }), [llmModel, llmSystemPrompt, nodeId, neighborsDepth]);
 
   const handleEditSubmit = useCallback((seq: number, newContent: string) => {
-    const editorCtx = requestEditorContext();
-    const enriched = formatLlmPrompt({
-      question: newContent,
-      context: editorCtx.selectionText || undefined,
-      filePath: editorCtx.filePath || undefined,
-    });
-
     editMessage(seq, newContent, {
       ...streamArgs(),
-      textOverride: enriched !== newContent ? enriched : undefined,
+      textOverride: enrichWithEditorContext(newContent),
     });
   }, [editMessage, streamArgs]);
 
@@ -102,16 +88,9 @@ export function ConversationPanel({ pageId }: ConversationPanelProps) {
     const lastUserMsg = [...msgs].reverse().find((m) => m.role === "user");
     if (!lastUserMsg) return;
 
-    const editorCtx = requestEditorContext();
-    const enriched = formatLlmPrompt({
-      question: lastUserMsg.content,
-      context: editorCtx.selectionText || undefined,
-      filePath: editorCtx.filePath || undefined,
-    });
-
     retryLastMessage({
       ...streamArgs(),
-      textOverride: enriched !== lastUserMsg.content ? enriched : undefined,
+      textOverride: enrichWithEditorContext(lastUserMsg.content),
     });
   }, [retryLastMessage, streamArgs]);
 

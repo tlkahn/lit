@@ -1,6 +1,17 @@
 import { getCurrentEditorView } from "./editorViewRef";
 import { useWorkspaceStore } from "../stores/workspace";
 import { DEFAULT_EDITOR_CONTEXT, type EditorContext } from "../types";
+import { formatLlmPrompt } from "./promptFormatter";
+
+export function enrichWithEditorContext(text: string): string | undefined {
+  const ctx = requestEditorContext();
+  const enriched = formatLlmPrompt({
+    question: text,
+    context: ctx.selectionText || undefined,
+    filePath: ctx.filePath || undefined,
+  });
+  return enriched !== text ? enriched : undefined;
+}
 
 export function requestEditorContext(): EditorContext {
   const view = getCurrentEditorView();
