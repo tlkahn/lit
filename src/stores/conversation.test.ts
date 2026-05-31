@@ -1625,6 +1625,116 @@ describe("conversation store", () => {
     expect(useConversationStore.getState().error).toBe("delete failed");
   });
 
+  // --- Group R: cleanupAnnotationThread local state (Concern 1) ---
+
+  it("cleanupAnnotationThread removes matching conversation from local conversations array", async () => {
+    usePreferencesStore.setState({ llmDeleteAnnotationThreads: true });
+    mockedConversationDeleteByAnchor.mockResolvedValue(undefined);
+    const annConv: ConversationRow = {
+      ...fakeConversation,
+      id: "ann-conv-1",
+      anchor_type: "annotation",
+      anchor_key: "ann-uuid-1",
+    };
+    const otherConv: ConversationRow = { ...fakeConversation, id: "other-conv" };
+    useConversationStore.setState({
+      conversations: [annConv, otherConv],
+    });
+
+    await useConversationStore.getState().cleanupAnnotationThread("node-1", "ann-uuid-1");
+
+    expect(useConversationStore.getState().conversations).toEqual([otherConv]);
+  });
+
+  it("cleanupAnnotationThread clears activeConversationId when deleted conversation was active", async () => {
+    usePreferencesStore.setState({ llmDeleteAnnotationThreads: true });
+    mockedConversationDeleteByAnchor.mockResolvedValue(undefined);
+    const annConv: ConversationRow = {
+      ...fakeConversation,
+      id: "ann-conv-1",
+      anchor_type: "annotation",
+      anchor_key: "ann-uuid-1",
+    };
+    useConversationStore.setState({
+      conversations: [annConv],
+      activeConversationId: "ann-conv-1",
+      messages: [fakeMessage],
+    });
+
+    await useConversationStore.getState().cleanupAnnotationThread("node-1", "ann-uuid-1");
+
+    const s = useConversationStore.getState();
+    expect(s.activeConversationId).toBeNull();
+    expect(s.messages).toEqual([]);
+    expect(s.conversations).toEqual([]);
+  });
+
+  it("cleanupAnnotationThread preserves activeConversationId when it points to a different conversation", async () => {
+    usePreferencesStore.setState({ llmDeleteAnnotationThreads: true });
+    mockedConversationDeleteByAnchor.mockResolvedValue(undefined);
+    const annConv: ConversationRow = {
+      ...fakeConversation,
+      id: "ann-conv-1",
+      anchor_type: "annotation",
+      anchor_key: "ann-uuid-1",
+    };
+    const otherConv: ConversationRow = { ...fakeConversation, id: "other-conv" };
+    const otherMsg: MessageRow = { ...fakeMessage, conversation_id: "other-conv" };
+    useConversationStore.setState({
+      conversations: [annConv, otherConv],
+      activeConversationId: "other-conv",
+      messages: [otherMsg],
+    });
+
+    await useConversationStore.getState().cleanupAnnotationThread("node-1", "ann-uuid-1");
+
+    const s = useConversationStore.getState();
+    expect(s.activeConversationId).toBe("other-conv");
+    expect(s.messages).toEqual([otherMsg]);
+    expect(s.conversations).toEqual([otherConv]);
+  });
+
+  // --- Group S: findOrCreateAnnotationThread error detection (Concern 2) ---
+
+  it("findOrCreateAnnotationThread returns null when selectConversation fails to load messages", async () => {
+    const existingConv: ConversationRow = {
+      ...fakeConversation,
+      id: "existing-conv-id",
+      anchor_type: "annotation",
+      anchor_key: "ann-uuid-1",
+    };
+    mockedConversationFindByAnchor.mockResolvedValue(existingConv);
+    mockedConversationMessages.mockRejectedValue(new Error("messages load failed"));
+
+    const id = await useConversationStore.getState().findOrCreateAnnotationThread("node-1", "ann-uuid-1");
+
+    expect(id).toBeNull();
+    expect(useConversationStore.getState().error).toBe("messages load failed");
+  });
+
+  it("sendAnnotationFire does not send message when selectConversation fails on existing thread", async () => {
+    const existingConv: ConversationRow = {
+      ...fakeConversation,
+      id: "existing-conv-id",
+      anchor_type: "annotation",
+      anchor_key: "ann-uuid-1",
+    };
+    mockedConversationFindByAnchor.mockResolvedValue(existingConv);
+    mockedConversationMessages.mockRejectedValue(new Error("messages load failed"));
+
+    await useConversationStore.getState().sendAnnotationFire({
+      nodeId: "node-1",
+      annotationUuid: "ann-uuid-1",
+      annotation: fakeAnnotation,
+      content: "fire content",
+      model: "test-model",
+    });
+
+    expect(mockedConversationAddMessage).not.toHaveBeenCalled();
+    expect(mockedStartLlmStream).not.toHaveBeenCalled();
+    expect(useConversationStore.getState().error).toBe("messages load failed");
+  });
+
   it("sendMessage defaults nodeId to _global and neighborsDepth to 1 when omitted", async () => {
     useConversationStore.setState({ activeConversationId: FAKE_UUID });
     const persistedMsg: MessageRow = {

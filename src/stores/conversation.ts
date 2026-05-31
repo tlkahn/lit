@@ -239,10 +239,12 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
   },
 
   findOrCreateAnnotationThread: async (nodeId: string, annotationUuid: string, title?: string) => {
+    set({ error: null });
     try {
       const existing = await conversationFindByAnchor(nodeId, "annotation", annotationUuid);
       if (existing) {
         await get().selectConversation(existing.id);
+        if (get().error) return null;
         return existing.id;
       }
       return await get().createConversation(nodeId, title, "annotation", annotationUuid);
@@ -320,6 +322,19 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
     if (!usePreferencesStore.getState().llmDeleteAnnotationThreads) return;
     try {
       await conversationDeleteByAnchor(nodeId, "annotation", annotationUuid);
+      set((s) => {
+        const match = (c: ConversationRow) =>
+          c.node_id === nodeId &&
+          c.anchor_type === "annotation" &&
+          c.anchor_key === annotationUuid;
+        const matchedId = s.conversations.find(match)?.id;
+        const isActive = matchedId != null && s.activeConversationId === matchedId;
+        return {
+          conversations: s.conversations.filter((c) => !match(c)),
+          activeConversationId: isActive ? null : s.activeConversationId,
+          messages: isActive ? [] : s.messages,
+        };
+      });
     } catch (e) {
       set({ error: e instanceof Error ? e.message : String(e) });
     }
