@@ -3,7 +3,7 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import Graph from "graphology";
 import { mockInvoke, mockListen, emitMockEvent } from "../test/tauri-mock";
 import * as graphLayout from "../lib/graphLayout";
-import type { SubgraphResult } from "../lib/ipc";
+import { NODE_NOT_FOUND_PREFIX, type SubgraphResult } from "../lib/ipc";
 import type { UseGraphDataOptions } from "./useGraphData";
 
 const TWO_NODE_SUBGRAPH: SubgraphResult = {
@@ -155,6 +155,80 @@ describe("useGraphData", () => {
         "#0969da",
         "a.md",
       );
+    });
+  });
+
+  // Cycle 3b: Local mode resilience — missing active seed
+  describe("local mode resilience", () => {
+    it("falls back to a synthetic seed node when get_graph_subgraph throws node-not-found", async () => {
+      mockInvoke((cmd: string) => {
+        if (cmd === "get_graph_subgraph") throw new Error(`${NODE_NOT_FOUND_PREFIX} notes/a.md`);
+        return {};
+      });
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "local", depth: 2, activePageId: "notes/a.md" }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      expect(result.current.error).toBe(null);
+      const graph = result.current.graphRef.current!;
+      expect(graph.hasNode("notes/a.md")).toBe(true);
+      expect(graph.getNodeAttribute("notes/a.md", "label")).toBe("a");
+    });
+
+    it("injects the active node when the returned subgraph omits it", async () => {
+      const subgraphWithoutSeed: SubgraphResult = {
+        nodes: [
+          { id: "x.md", title: "X" },
+          { id: "y.md", title: "Y" },
+        ],
+        edges: [["x.md", "y.md"]],
+      };
+      mockInvoke((cmd: string) => {
+        if (cmd === "get_graph_subgraph") return subgraphWithoutSeed;
+        return {};
+      });
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "local", depth: 2, activePageId: "notes/new page.md" }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      expect(result.current.error).toBe(null);
+      const graph = result.current.graphRef.current!;
+      expect(graph.hasNode("notes/new page.md")).toBe(true);
+      expect(graph.getNodeAttribute("notes/new page.md", "label")).toBe("new page");
+      // existing nodes preserved
+      expect(graph.hasNode("x.md")).toBe(true);
+      expect(graph.hasNode("y.md")).toBe(true);
+    });
+
+    it("propagates non-node-not-found errors instead of swallowing them", async () => {
+      mockInvoke((cmd: string) => {
+        if (cmd === "get_graph_subgraph") throw new Error("connection lost");
+        return {};
+      });
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "local", depth: 2, activePageId: "a.md" }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      expect(result.current.error).toBe("connection lost");
+      expect(result.current.graphRef.current!.order).toBe(0);
     });
   });
 

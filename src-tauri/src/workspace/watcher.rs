@@ -95,8 +95,12 @@ impl FileWatcher {
                         match event.kind {
                             DebouncedEventKind::Any => {
                                 let exists = path.exists();
-                                if exists && !is_external_change(path, &registry) {
-                                    eprintln!("[watcher] self-write filtered: {}", relative);
+                                if should_skip_event(path, exists, &registry) {
+                                    if exists {
+                                        eprintln!("[watcher] self-write filtered: {}", relative);
+                                    } else {
+                                        eprintln!("[watcher] self-delete filtered: {}", relative);
+                                    }
                                     continue;
                                 }
 
@@ -161,6 +165,14 @@ pub fn is_external_change(path: &Path, registry: &WriteHashRegistry) -> bool {
         Err(_) => return true,
     };
     !registry.check(path, &content)
+}
+
+pub fn should_skip_event(path: &Path, exists: bool, registry: &WriteHashRegistry) -> bool {
+    if exists {
+        !is_external_change(path, registry)
+    } else {
+        registry.consume_delete(path)
+    }
 }
 
 pub(crate) fn accumulate_diff(events: &[(&str, FileChangeKind)]) -> crate::graph::indexer::DiffResult {
@@ -337,6 +349,21 @@ mod tests {
         let registry = WriteHashRegistry::new();
         let path = Path::new("/nonexistent/file.md");
         assert!(is_external_change(path, &registry));
+    }
+
+    #[test]
+    fn should_skip_self_delete() {
+        let registry = WriteHashRegistry::new();
+        let path = Path::new("/workspace/deleted.md");
+        registry.record_delete(path);
+        assert!(should_skip_event(path, false, &registry));
+    }
+
+    #[test]
+    fn should_not_skip_external_delete() {
+        let registry = WriteHashRegistry::new();
+        let path = Path::new("/workspace/deleted.md");
+        assert!(!should_skip_event(path, false, &registry));
     }
 
     // --- accumulate_diff ---

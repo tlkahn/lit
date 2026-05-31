@@ -70,6 +70,7 @@ pub fn create_page(
     root: &Path,
     name: &str,
     parent_dir: Option<&str>,
+    registry: &WriteHashRegistry,
 ) -> Result<PageMeta, WorkspaceError> {
     validate_page_name(name)?;
     let filename = page_name_to_filename(name);
@@ -86,6 +87,7 @@ pub fn create_page(
         fs::create_dir_all(parent)?;
     }
     fs::write(&full_path, "")?;
+    registry.record(&full_path, "");
 
     let metadata = fs::metadata(&full_path)?;
     let created_at = metadata
@@ -113,6 +115,7 @@ pub fn rename_page(
     root: &Path,
     old_path: &str,
     new_name: &str,
+    registry: &WriteHashRegistry,
 ) -> Result<String, WorkspaceError> {
     validate_page_name(new_name)?;
     let old_full = root.join(old_path);
@@ -136,7 +139,11 @@ pub fn rename_page(
     if let Some(parent) = new_full.parent() {
         fs::create_dir_all(parent)?;
     }
+    let content = fs::read_to_string(&old_full)?;
     fs::rename(&old_full, &new_full)?;
+    registry.record(&new_full, &content);
+    registry.record_delete(&old_full);
+
     Ok(normalize_to_nfc(&new_relative))
 }
 
@@ -150,12 +157,13 @@ pub fn acknowledge_file_hash(root: &Path, relative_path: &str, registry: &WriteH
     Ok(())
 }
 
-pub fn delete_page(root: &Path, relative_path: &str) -> Result<(), WorkspaceError> {
+pub fn delete_page(root: &Path, relative_path: &str, registry: &WriteHashRegistry) -> Result<(), WorkspaceError> {
     let full_path = root.join(relative_path);
     if !full_path.exists() {
         return Err(WorkspaceError::PageNotFound(relative_path.to_string()));
     }
     fs::remove_file(&full_path)?;
+    registry.record_delete(&full_path);
     Ok(())
 }
 
@@ -263,7 +271,8 @@ mod tests {
     #[test]
     fn create_page_basic() {
         let dir = TempDir::new().unwrap();
-        let meta = create_page(dir.path(), "New Page", None).unwrap();
+        let registry = WriteHashRegistry::new();
+        let meta = create_page(dir.path(), "New Page", None, &registry).unwrap();
         assert_eq!(meta.title, "New Page");
         assert_eq!(meta.relative_path, "New Page.md");
         assert!(dir.path().join("New Page.md").exists());
@@ -272,7 +281,8 @@ mod tests {
     #[test]
     fn create_page_in_subdirectory() {
         let dir = TempDir::new().unwrap();
-        let meta = create_page(dir.path(), "Entry", Some("journal")).unwrap();
+        let registry = WriteHashRegistry::new();
+        let meta = create_page(dir.path(), "Entry", Some("journal"), &registry).unwrap();
         assert_eq!(meta.relative_path, "journal/Entry.md");
         assert!(dir.path().join("journal/Entry.md").exists());
     }
@@ -280,24 +290,36 @@ mod tests {
     #[test]
     fn create_duplicate_page() {
         let dir = TempDir::new().unwrap();
-        create_page(dir.path(), "Dupe", None).unwrap();
-        let result = create_page(dir.path(), "Dupe", None);
+        let registry = WriteHashRegistry::new();
+        create_page(dir.path(), "Dupe", None, &registry).unwrap();
+        let result = create_page(dir.path(), "Dupe", None, &registry);
         assert!(result.is_err());
     }
 
     #[test]
     fn create_page_forbidden_chars() {
         let dir = TempDir::new().unwrap();
-        let result = create_page(dir.path(), "bad/name", None);
+        let registry = WriteHashRegistry::new();
+        let result = create_page(dir.path(), "bad/name", None, &registry);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn create_page_records_hash() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        create_page(dir.path(), "Hashed", None, &registry).unwrap();
+        let full_path = dir.path().join("Hashed.md");
+        assert!(registry.check(&full_path, ""));
     }
 
     #[test]
     fn rename_page_success() {
         let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
         fs::write(dir.path().join("old.md"), "content").unwrap();
 
-        let new_path = rename_page(dir.path(), "old.md", "new").unwrap();
+        let new_path = rename_page(dir.path(), "old.md", "new", &registry).unwrap();
         assert_eq!(new_path, "new.md");
         assert!(!dir.path().join("old.md").exists());
         assert!(dir.path().join("new.md").exists());
@@ -310,27 +332,79 @@ mod tests {
     #[test]
     fn rename_to_existing() {
         let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
         fs::write(dir.path().join("a.md"), "a").unwrap();
         fs::write(dir.path().join("b.md"), "b").unwrap();
 
-        let result = rename_page(dir.path(), "a.md", "b");
+        let result = rename_page(dir.path(), "a.md", "b", &registry);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn rename_page_records_new_path_hash() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        fs::write(dir.path().join("old.md"), "content").unwrap();
+
+        rename_page(dir.path(), "old.md", "new", &registry).unwrap();
+        let new_full = dir.path().join("new.md");
+        assert!(registry.check(&new_full, "content"));
+    }
+
+    #[test]
+    fn rename_page_records_old_path_delete() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        fs::write(dir.path().join("old.md"), "content").unwrap();
+
+        rename_page(dir.path(), "old.md", "new", &registry).unwrap();
+        let old_full = dir.path().join("old.md");
+        assert!(registry.consume_delete(&old_full));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rename_unreadable_file_propagates_error() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        let file_path = dir.path().join("locked.md");
+        fs::write(&file_path, "content").unwrap();
+        fs::set_permissions(&file_path, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let result = rename_page(dir.path(), "locked.md", "new", &registry);
+        assert!(result.is_err());
+
+        fs::set_permissions(&file_path, fs::Permissions::from_mode(0o644)).unwrap();
     }
 
     #[test]
     fn delete_page_success() {
         let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
         fs::write(dir.path().join("doomed.md"), "bye").unwrap();
 
-        delete_page(dir.path(), "doomed.md").unwrap();
+        delete_page(dir.path(), "doomed.md", &registry).unwrap();
         assert!(!dir.path().join("doomed.md").exists());
     }
 
     #[test]
     fn delete_nonexistent_page() {
         let dir = TempDir::new().unwrap();
-        let result = delete_page(dir.path(), "nope.md");
+        let registry = WriteHashRegistry::new();
+        let result = delete_page(dir.path(), "nope.md", &registry);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn delete_page_records_pending_delete() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        fs::write(dir.path().join("doomed.md"), "bye").unwrap();
+
+        delete_page(dir.path(), "doomed.md", &registry).unwrap();
+        let full_path = dir.path().join("doomed.md");
+        assert!(registry.consume_delete(&full_path));
     }
 
     #[test]
@@ -358,7 +432,7 @@ mod tests {
     fn create_and_read_page_with_emoji_title() {
         let dir = TempDir::new().unwrap();
         let registry = WriteHashRegistry::new();
-        let meta = create_page(dir.path(), "🚀 Launch", None).unwrap();
+        let meta = create_page(dir.path(), "🚀 Launch", None, &registry).unwrap();
         assert_eq!(meta.title, "🚀 Launch");
         assert_eq!(meta.relative_path, "🚀 Launch.md");
         assert!(dir.path().join("🚀 Launch.md").exists());

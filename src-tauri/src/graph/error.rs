@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+pub const NODE_NOT_FOUND_PREFIX: &str = "node not found:";
+
 #[derive(Debug, thiserror::Error)]
 pub enum GraphError {
     #[error("database error: {message}")]
@@ -86,6 +88,14 @@ mod tests {
             GraphError::Other(msg) => assert!(!msg.is_empty()),
             _ => panic!("expected Other variant, got: {err:?}"),
         }
+    }
+
+    #[test]
+    fn node_not_found_starts_with_prefix_constant() {
+        let err = GraphError::NodeNotFound {
+            id: "test-node".into(),
+        };
+        assert!(err.to_string().starts_with(NODE_NOT_FOUND_PREFIX));
     }
 
     #[test]

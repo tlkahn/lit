@@ -1,13 +1,44 @@
 use crate::commands::graph::GraphRegistry;
 use crate::commands::oplog::OpLogRegistry;
 use crate::commands::workspace::{get_workspace_root, WorkspaceRegistry};
+use crate::graph::indexer::GraphIndex;
+use crate::graph::rewriter::LinkRedirect;
 use crate::oplog::store::Action;
 use crate::workspace::ops;
 use crate::workspace::page::{PageContent, PageMeta};
 use crate::workspace::write_hash::WriteHashRegistry;
 use indexmap::IndexMap;
+use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::State;
+
+pub(super) fn lookup_graph_index(registry: &GraphRegistry, root: &PathBuf) -> Option<Arc<GraphIndex>> {
+    let indices = registry.indices.lock().unwrap();
+    indices.get(root).cloned()
+}
+
+fn compute_candidate_paths(gi: &GraphIndex, redirects: &[LinkRedirect]) -> HashSet<String> {
+    let stems: Vec<String> = redirects
+        .iter()
+        .map(|r| crate::graph::indexer::normalize_stem(&r.old_target))
+        .collect();
+    gi.affected_sources(&stems)
+}
+
+pub(super) fn reindex_and_emit(
+    graph_state: &State<Arc<GraphRegistry>>,
+    app_handle: &tauri::AppHandle,
+    root: &std::path::PathBuf,
+    op: impl FnOnce(&GraphIndex, bool) -> Result<Vec<(String, String)>, crate::graph::error::GraphError>,
+) {
+    let gi = lookup_graph_index(graph_state, root);
+    if let Some(gi) = gi {
+        let ann = crate::preferences::annotations_enabled(app_handle);
+        let result = op(&gi, ann);
+        crate::commands::graph::emit_reindex_side_effects(app_handle, &result);
+    }
+}
 
 #[tauri::command]
 pub fn parse_raw_yaml(raw_yaml: String) -> Result<IndexMap<String, serde_yaml::Value>, String> {
@@ -39,13 +70,9 @@ pub fn write_page(
     let root = get_workspace_root(&state, window.label())?;
     ops::write_page(&root, &relative_path, &body, &frontmatter, &registry).map_err(|e| e.to_string())?;
 
-    let indices = graph_state.indices.lock().unwrap();
-    if let Some(gi) = indices.get(&root) {
-        let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
-        let result = gi.reindex_file(&relative_path, ann_enabled);
-        drop(indices);
-        crate::commands::graph::emit_reindex_side_effects(&app_handle, &result);
-    }
+    reindex_and_emit(&graph_state, &app_handle, &root, |gi, ann| {
+        gi.reindex_file(&relative_path, ann)
+    });
 
     Ok(())
 }
@@ -56,10 +83,13 @@ pub fn create_page(
     parent_dir: Option<String>,
     window: tauri::Window,
     state: State<WorkspaceRegistry>,
+    registry: State<Arc<WriteHashRegistry>>,
     oplog_state: State<Arc<OpLogRegistry>>,
+    graph_state: State<Arc<GraphRegistry>>,
+    app_handle: tauri::AppHandle,
 ) -> Result<PageMeta, String> {
     let root = get_workspace_root(&state, window.label())?;
-    let meta = ops::create_page(&root, &name, parent_dir.as_deref()).map_err(|e| e.to_string())?;
+    let meta = ops::create_page(&root, &name, parent_dir.as_deref(), &registry).map_err(|e| e.to_string())?;
 
     if let Ok(oplog) = oplog_state.get_oplog(&root) {
         let store = oplog.lock().unwrap();
@@ -77,6 +107,10 @@ pub fn create_page(
         );
     }
 
+    reindex_and_emit(&graph_state, &app_handle, &root, |gi, ann| {
+        gi.add_file(&meta.relative_path, ann)
+    });
+
     Ok(meta)
 }
 
@@ -86,10 +120,13 @@ pub fn rename_page(
     new_name: String,
     window: tauri::Window,
     state: State<WorkspaceRegistry>,
+    registry: State<Arc<WriteHashRegistry>>,
     oplog_state: State<Arc<OpLogRegistry>>,
+    graph_state: State<Arc<GraphRegistry>>,
+    app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
     let root = get_workspace_root(&state, window.label())?;
-    let new_path = ops::rename_page(&root, &old_path, &new_name).map_err(|e| e.to_string())?;
+    let new_path = ops::rename_page(&root, &old_path, &new_name, &registry).map_err(|e| e.to_string())?;
 
     if let Ok(oplog) = oplog_state.get_oplog(&root) {
         let store = oplog.lock().unwrap();
@@ -100,12 +137,19 @@ pub fn rename_page(
                 seq: 0,
                 action_type: "rename_file".into(),
                 path: new_path.clone(),
-                old_path: Some(old_path),
+                old_path: Some(old_path.clone()),
                 before_content: None,
                 after_content: None,
             }],
         );
     }
+
+    reindex_and_emit(&graph_state, &app_handle, &root, |gi, ann| {
+        gi.batch_reindex(
+            &crate::graph::indexer::rename_reindex_diff(&old_path, &new_path),
+            ann,
+        )
+    });
 
     Ok(new_path)
 }
@@ -115,13 +159,17 @@ pub fn delete_page(
     relative_path: String,
     window: tauri::Window,
     state: State<WorkspaceRegistry>,
+    registry: State<Arc<WriteHashRegistry>>,
     oplog_state: State<Arc<OpLogRegistry>>,
+    graph_state: State<Arc<GraphRegistry>>,
+    app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
     let root = get_workspace_root(&state, window.label())?;
 
     let before_content = std::fs::read_to_string(root.join(&relative_path)).ok();
+    let rel = relative_path.clone();
 
-    ops::delete_page(&root, &relative_path).map_err(|e| e.to_string())?;
+    ops::delete_page(&root, &relative_path, &registry).map_err(|e| e.to_string())?;
 
     if let Ok(oplog) = oplog_state.get_oplog(&root) {
         let store = oplog.lock().unwrap();
@@ -139,6 +187,10 @@ pub fn delete_page(
         );
     }
 
+    reindex_and_emit(&graph_state, &app_handle, &root, |gi, ann| {
+        gi.remove_file(&rel, ann)
+    });
+
     Ok(())
 }
 
@@ -155,16 +207,8 @@ pub fn rewrite_vault_links(
     let root = get_workspace_root(&workspace_state, window.label())?;
 
     let planned = {
-        let candidate_paths = {
-            let indices = graph_state.indices.lock().unwrap();
-            indices.get(&root).map(|gi| {
-                let stems: Vec<String> = redirects
-                    .iter()
-                    .map(|r| crate::graph::indexer::normalize_stem(&r.old_target))
-                    .collect();
-                gi.affected_sources(&stems)
-            })
-        };
+        let candidate_paths = lookup_graph_index(&graph_state, &root)
+            .map(|gi| compute_candidate_paths(&gi, &redirects));
         match candidate_paths {
             Some(ref paths) => crate::graph::rewriter::plan_vault_rewrites_for_paths(&root, &redirects, paths)?,
             None => crate::graph::rewriter::plan_vault_rewrites(&root, &redirects)?,
@@ -180,10 +224,7 @@ pub fn rewrite_vault_links(
 
     let summary = crate::graph::rewriter::apply_planned_rewrites(&root, &planned)?;
 
-    let gi = {
-        let indices = graph_state.indices.lock().unwrap();
-        indices.get(&root).cloned()
-    };
+    let gi = lookup_graph_index(&graph_state, &root);
     let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
 
     let mut reindex_err: Option<crate::graph::error::GraphError> = None;
@@ -327,5 +368,48 @@ mod tests {
         let planned = plan_vault_rewrites(tmp.path(), &[]).unwrap();
         assert_eq!(planned.files_scanned, 0);
         assert!(planned.rewrites.is_empty());
+    }
+
+    #[test]
+    fn lookup_releases_lock_before_affected_sources() {
+        use super::{compute_candidate_paths, lookup_graph_index};
+        use crate::commands::graph::GraphRegistry;
+        use crate::graph::indexer::GraphIndex;
+        use std::sync::{Arc, Barrier};
+
+        let tmp = tempfile::tempdir().unwrap();
+        write_file(tmp.path(), "a.md", "[[Target]]");
+
+        let gi = GraphIndex::build(tmp.path().to_path_buf(), false).unwrap();
+        let registry = GraphRegistry::new();
+        registry
+            .indices
+            .lock()
+            .unwrap()
+            .insert(tmp.path().to_path_buf(), Arc::new(gi));
+
+        let root = tmp.path().to_path_buf();
+        let barrier = Arc::new(Barrier::new(2));
+        let reg_ref = &registry;
+        let root_ref = &root;
+
+        std::thread::scope(|s| {
+            let b = barrier.clone();
+            s.spawn(move || {
+                let gi = lookup_graph_index(reg_ref, root_ref).unwrap();
+                b.wait();
+                let redirects = vec![LinkRedirect {
+                    old_target: "Target".into(),
+                    new_target: "NewTarget".into(),
+                }];
+                let _paths = compute_candidate_paths(&gi, &redirects);
+            });
+
+            barrier.wait();
+            assert!(
+                registry.indices.try_lock().is_ok(),
+                "indices mutex must be free while compute_candidate_paths runs"
+            );
+        });
     }
 }
