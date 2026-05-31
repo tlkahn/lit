@@ -1021,6 +1021,13 @@ export async function conversationFindByAnchor(
   });
 }
 
+export async function conversationUpdateTitle(
+  conversationId: string,
+  title: string,
+): Promise<void> {
+  return invoke<void>("conversation_update_title", { conversationId, title });
+}
+
 export async function conversationDeleteByAnchor(
   nodeId: string,
   anchorType: string,

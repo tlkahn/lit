@@ -1268,6 +1268,14 @@ impl Store {
         Ok(())
     }
 
+    pub fn update_conversation_title(&self, id: &str, title: &str) -> Result<(), GraphError> {
+        self.conn.execute(
+            "UPDATE conversations SET title = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
+            rusqlite::params![id, title],
+        )?;
+        Ok(())
+    }
+
     #[cfg(test)]
     fn touch_conversation(&self, id: &str) -> Result<(), GraphError> {
         self.conn.execute(

@@ -351,6 +351,7 @@ pub fn run() {
             commands::conversation::conversation_delete_messages_after,
             commands::conversation::conversation_find_by_anchor,
             commands::conversation::conversation_delete_by_anchor,
+            commands::conversation::conversation_update_title,
             commands::export::export_data,
             commands::export::export_subgraph,
             commands::license::get_license_status,

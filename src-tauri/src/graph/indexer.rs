@@ -1127,6 +1127,11 @@ impl GraphIndex {
         store.delete_conversations_by_anchor(node_id, anchor_type, anchor_key)
     }
 
+    pub fn update_conversation_title(&self, id: &str, title: &str) -> Result<(), GraphError> {
+        let store = self.store.lock().unwrap();
+        store.update_conversation_title(id, title)
+    }
+
     pub fn get_conversation(&self, id: &str) -> Result<ConversationRow, GraphError> {
         let store = self.store.lock().unwrap();
         store.get_conversation(id)?

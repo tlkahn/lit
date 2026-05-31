@@ -122,6 +122,19 @@ pub fn conversation_find_by_anchor(
 }
 
 #[tauri::command]
+pub fn conversation_update_title(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<super::graph::GraphRegistry>>,
+    conversation_id: String,
+    title: String,
+) -> Result<(), String> {
+    super::graph::with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+        gi.update_conversation_title(&conversation_id, &title)
+    })
+}
+
+#[tauri::command]
 pub fn conversation_delete_by_anchor(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,

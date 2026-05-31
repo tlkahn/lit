@@ -8,6 +8,7 @@ import {
   conversationDeleteMessagesAfter,
   conversationFindByAnchor,
   conversationDeleteByAnchor,
+  conversationUpdateTitle,
   llmBuildContext,
   GLOBAL_NODE_ID,
   type Annotation,
@@ -230,6 +231,18 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
       return;
     }
     set((s) => ({ messages: [...s.messages, userMsg] }));
+
+    const conv = get().conversations.find((c) => c.id === convId);
+    if (conv && !conv.title) {
+      const title = args.content.slice(0, 50);
+      conversationUpdateTitle(convId, title).then(() => {
+        set((s) => ({
+          conversations: s.conversations.map((c) =>
+            c.id === convId ? { ...c, title } : c,
+          ),
+        }));
+      }).catch(() => {});
+    }
 
     await _streamAndPersist(convId, args.textOverride ?? args.content, {
       model: args.model,
