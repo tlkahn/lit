@@ -33,7 +33,7 @@ function makeMessage(overrides: Partial<MessageRow> = {}): MessageRow {
 }
 
 describe("MessageBubble", () => {
-  // Cycle 2: Basic rendering
+  // Basic rendering
   it("renders user message content with data-testid message-bubble-user", () => {
     const msg = makeMessage({ role: "user", content: "Hello from user" });
     const { getByTestId } = render(<MessageBubble message={msg} />);
@@ -71,27 +71,24 @@ describe("MessageBubble", () => {
     expect(bubble.textContent).toContain("Safe");
   });
 
-  // Cycle 3: Hover actions — Copy
-  it("does not show action buttons by default", () => {
+  // Always-visible actions (no hover needed)
+  it("shows action buttons without hover (always visible)", () => {
     const msg = makeMessage({ role: "user", content: "Hello" });
-    const { container } = render(<MessageBubble message={msg} />);
-    expect(container.querySelector("[data-testid='message-copy-btn']")).toBeNull();
-  });
-
-  it("shows copy button on mouseEnter", () => {
-    const msg = makeMessage({ role: "user", content: "Hello" });
-    const { container, getByTestId } = render(<MessageBubble message={msg} />);
-    fireEvent.mouseEnter(container.firstChild!);
+    const { getByTestId } = render(<MessageBubble message={msg} onEdit={() => {}} />);
     expect(getByTestId("message-copy-btn")).toBeTruthy();
+    expect(getByTestId("message-edit-btn")).toBeTruthy();
   });
 
-  it("hides actions on mouseLeave", () => {
+  // Copy button glyph
+  it("copy button has nerd-font glyph and aria-label", () => {
     const msg = makeMessage({ role: "user", content: "Hello" });
-    const { container } = render(<MessageBubble message={msg} />);
-    fireEvent.mouseEnter(container.firstChild!);
-    expect(container.querySelector("[data-testid='message-copy-btn']")).toBeTruthy();
-    fireEvent.mouseLeave(container.firstChild!);
-    expect(container.querySelector("[data-testid='message-copy-btn']")).toBeNull();
+    const { getByTestId } = render(<MessageBubble message={msg} />);
+    const btn = getByTestId("message-copy-btn");
+    expect(btn.getAttribute("aria-label")).toBe("Copy");
+    const span = btn.querySelector(".nerd-font");
+    expect(span).toBeTruthy();
+    expect(span!.textContent).toBe("");
+    expect(span!.getAttribute("aria-hidden")).toBe("true");
   });
 
   it("copies message content to clipboard", () => {
@@ -99,46 +96,61 @@ describe("MessageBubble", () => {
     Object.assign(navigator, { clipboard: { writeText } });
 
     const msg = makeMessage({ role: "assistant", content: "copy this" });
-    const { container, getByTestId } = render(<MessageBubble message={msg} />);
-    fireEvent.mouseEnter(container.firstChild!);
+    const { getByTestId } = render(<MessageBubble message={msg} />);
     fireEvent.click(getByTestId("message-copy-btn"));
     expect(writeText).toHaveBeenCalledWith("copy this");
   });
 
-  // Cycle 4: Hover actions — Edit and Retry
-  it("shows edit button on hover for user messages only", () => {
+  // Edit button glyph
+  it("edit button has nerd-font glyph and aria-label", () => {
     const msg = makeMessage({ role: "user", content: "Hello" });
-    const { container, getByTestId } = render(<MessageBubble message={msg} onEdit={() => {}} />);
-    fireEvent.mouseEnter(container.firstChild!);
+    const { getByTestId } = render(<MessageBubble message={msg} onEdit={() => {}} />);
+    const btn = getByTestId("message-edit-btn");
+    expect(btn.getAttribute("aria-label")).toBe("Edit");
+    const span = btn.querySelector(".nerd-font");
+    expect(span).toBeTruthy();
+    expect(span!.textContent).toBe("");
+  });
+
+  it("shows edit button for user messages only", () => {
+    const msg = makeMessage({ role: "user", content: "Hello" });
+    const { getByTestId } = render(<MessageBubble message={msg} onEdit={() => {}} />);
     expect(getByTestId("message-edit-btn")).toBeTruthy();
   });
 
   it("does not show edit button for assistant messages", () => {
     const msg = makeMessage({ role: "assistant", content: "Hello" });
-    const { container } = render(<MessageBubble message={msg} onEdit={() => {}} />);
-    fireEvent.mouseEnter(container.firstChild!);
-    expect(container.querySelector("[data-testid='message-edit-btn']")).toBeNull();
+    const { queryByTestId } = render(<MessageBubble message={msg} onEdit={() => {}} />);
+    expect(queryByTestId("message-edit-btn")).toBeNull();
   });
 
-  it("shows retry button on hover for assistant messages when isLast is true", () => {
+  // Retry button glyph
+  it("retry button has nerd-font glyph and aria-label", () => {
     const msg = makeMessage({ role: "assistant", content: "Hello" });
-    const { container, getByTestId } = render(<MessageBubble message={msg} isLast onRetry={() => {}} />);
-    fireEvent.mouseEnter(container.firstChild!);
+    const { getByTestId } = render(<MessageBubble message={msg} isLast onRetry={() => {}} />);
+    const btn = getByTestId("message-retry-btn");
+    expect(btn.getAttribute("aria-label")).toBe("Retry");
+    const span = btn.querySelector(".nerd-font");
+    expect(span).toBeTruthy();
+    expect(span!.textContent).toBe("");
+  });
+
+  it("shows retry button for assistant messages when isLast is true", () => {
+    const msg = makeMessage({ role: "assistant", content: "Hello" });
+    const { getByTestId } = render(<MessageBubble message={msg} isLast onRetry={() => {}} />);
     expect(getByTestId("message-retry-btn")).toBeTruthy();
   });
 
   it("does not show retry button when isLast is false", () => {
     const msg = makeMessage({ role: "assistant", content: "Hello" });
-    const { container } = render(<MessageBubble message={msg} isLast={false} onRetry={() => {}} />);
-    fireEvent.mouseEnter(container.firstChild!);
-    expect(container.querySelector("[data-testid='message-retry-btn']")).toBeNull();
+    const { queryByTestId } = render(<MessageBubble message={msg} isLast={false} onRetry={() => {}} />);
+    expect(queryByTestId("message-retry-btn")).toBeNull();
   });
 
   it("calls onEdit callback with seq when edit clicked", () => {
     const onEdit = vi.fn();
     const msg = makeMessage({ role: "user", seq: 3 });
-    const { container, getByTestId } = render(<MessageBubble message={msg} onEdit={onEdit} />);
-    fireEvent.mouseEnter(container.firstChild!);
+    const { getByTestId } = render(<MessageBubble message={msg} onEdit={onEdit} />);
     fireEvent.click(getByTestId("message-edit-btn"));
     expect(onEdit).toHaveBeenCalledWith(3);
   });
@@ -146,17 +158,15 @@ describe("MessageBubble", () => {
   it("calls onRetry callback when retry clicked", () => {
     const onRetry = vi.fn();
     const msg = makeMessage({ role: "assistant" });
-    const { container, getByTestId } = render(<MessageBubble message={msg} isLast onRetry={onRetry} />);
-    fireEvent.mouseEnter(container.firstChild!);
+    const { getByTestId } = render(<MessageBubble message={msg} isLast onRetry={onRetry} />);
     fireEvent.click(getByTestId("message-retry-btn"));
     expect(onRetry).toHaveBeenCalled();
   });
 
-  // Cycle 5: Inline edit mode
+  // Inline edit mode
   it("entering edit mode shows textarea pre-filled with message content", () => {
     const msg = makeMessage({ role: "user", content: "original text" });
-    const { container, getByTestId } = render(<MessageBubble message={msg} onEdit={() => {}} onEditSubmit={() => {}} />);
-    fireEvent.mouseEnter(container.firstChild!);
+    const { getByTestId } = render(<MessageBubble message={msg} onEdit={() => {}} onEditSubmit={() => {}} />);
     fireEvent.click(getByTestId("message-edit-btn"));
     const textarea = getByTestId("message-edit-textarea") as HTMLTextAreaElement;
     expect(textarea.value).toBe("original text");
@@ -165,8 +175,7 @@ describe("MessageBubble", () => {
   it("Cmd+Enter in edit textarea calls onEditSubmit with seq and new content", () => {
     const onEditSubmit = vi.fn();
     const msg = makeMessage({ role: "user", content: "original", seq: 5 });
-    const { container, getByTestId } = render(<MessageBubble message={msg} onEdit={() => {}} onEditSubmit={onEditSubmit} />);
-    fireEvent.mouseEnter(container.firstChild!);
+    const { getByTestId } = render(<MessageBubble message={msg} onEdit={() => {}} onEditSubmit={onEditSubmit} />);
     fireEvent.click(getByTestId("message-edit-btn"));
     const textarea = getByTestId("message-edit-textarea");
     fireEvent.change(textarea, { target: { value: "edited content" } });
@@ -176,8 +185,7 @@ describe("MessageBubble", () => {
 
   it("Escape cancels edit mode and restores original display", () => {
     const msg = makeMessage({ role: "user", content: "original text" });
-    const { container, getByTestId, queryByTestId } = render(<MessageBubble message={msg} onEdit={() => {}} onEditSubmit={() => {}} />);
-    fireEvent.mouseEnter(container.firstChild!);
+    const { getByTestId, queryByTestId } = render(<MessageBubble message={msg} onEdit={() => {}} onEditSubmit={() => {}} />);
     fireEvent.click(getByTestId("message-edit-btn"));
     expect(getByTestId("message-edit-textarea")).toBeTruthy();
     fireEvent.keyDown(getByTestId("message-edit-textarea"), { key: "Escape" });
@@ -187,52 +195,58 @@ describe("MessageBubble", () => {
 
   it("edit textarea auto-focuses on entering edit mode", () => {
     const msg = makeMessage({ role: "user", content: "focus me" });
-    const { container, getByTestId } = render(<MessageBubble message={msg} onEdit={() => {}} onEditSubmit={() => {}} />);
-    fireEvent.mouseEnter(container.firstChild!);
+    const { getByTestId } = render(<MessageBubble message={msg} onEdit={() => {}} onEditSubmit={() => {}} />);
     fireEvent.click(getByTestId("message-edit-btn"));
     const textarea = getByTestId("message-edit-textarea");
     expect(document.activeElement).toBe(textarea);
   });
 
-  // Cycle 9: Editor action buttons on latest assistant message
-  it("shows Insert at cursor button on latest assistant message when no editor selection", () => {
+  // Insert at cursor button glyph
+  it("insert-at-cursor button has nerd-font glyph and aria-label", () => {
     const msg = makeMessage({ role: "assistant", content: "Generated text" });
-    const { container, getByTestId } = render(
+    const { getByTestId } = render(
       <MessageBubble message={msg} isLast showEditorActions hadSelection={false} />,
     );
-    fireEvent.mouseEnter(container.firstChild!);
-    expect(getByTestId("message-insert-btn")).toBeTruthy();
-    expect(getByTestId("message-insert-btn").textContent).toBe("Insert at cursor");
+    const btn = getByTestId("message-insert-btn");
+    expect(btn.getAttribute("aria-label")).toBe("Insert at cursor");
+    const span = btn.querySelector(".nerd-font");
+    expect(span).toBeTruthy();
+    expect(span!.textContent).toBe("");
   });
 
-  it("shows Replace selection button when editor has selection", () => {
+  // Replace selection button glyph
+  it("replace-selection button has nerd-font glyph and aria-label", () => {
     const msg = makeMessage({ role: "assistant", content: "Generated text" });
-    const { container, getByTestId, queryByTestId } = render(
+    const { getByTestId, queryByTestId } = render(
       <MessageBubble message={msg} isLast showEditorActions hadSelection />,
     );
-    fireEvent.mouseEnter(container.firstChild!);
-    expect(getByTestId("message-replace-btn")).toBeTruthy();
-    expect(getByTestId("message-replace-btn").textContent).toBe("Replace selection");
+    const btn = getByTestId("message-replace-btn");
+    expect(btn.getAttribute("aria-label")).toBe("Replace selection");
+    const span = btn.querySelector(".nerd-font");
+    expect(span).toBeTruthy();
+    expect(span!.textContent).toBe("");
     expect(queryByTestId("message-insert-btn")).toBeNull();
   });
 
-  it("shows Insert as companion button when fireSourceAnnotation is set", () => {
+  // Insert as companion button glyph
+  it("companion button has nerd-font glyph and aria-label", () => {
     const annotation = makeAnnotation();
     const msg = makeMessage({ role: "assistant", content: "Generated text" });
-    const { container, getByTestId } = render(
+    const { getByTestId } = render(
       <MessageBubble message={msg} isLast showEditorActions hadSelection={false} fireSourceAnnotation={annotation} />,
     );
-    fireEvent.mouseEnter(container.firstChild!);
-    expect(getByTestId("message-companion-btn")).toBeTruthy();
-    expect(getByTestId("message-companion-btn").textContent).toBe("Insert as companion");
+    const btn = getByTestId("message-companion-btn");
+    expect(btn.getAttribute("aria-label")).toBe("Insert as companion");
+    const span = btn.querySelector(".nerd-font");
+    expect(span).toBeTruthy();
+    expect(span!.textContent).toBe("");
   });
 
   it("does not show Insert/Replace on non-latest assistant messages", () => {
     const msg = makeMessage({ role: "assistant", content: "Old response" });
-    const { container, queryByTestId } = render(
+    const { queryByTestId } = render(
       <MessageBubble message={msg} isLast={false} showEditorActions={false} hadSelection={false} />,
     );
-    fireEvent.mouseEnter(container.firstChild!);
     expect(queryByTestId("message-insert-btn")).toBeNull();
     expect(queryByTestId("message-replace-btn")).toBeNull();
     expect(queryByTestId("message-companion-btn")).toBeNull();
@@ -242,15 +256,24 @@ describe("MessageBubble", () => {
     const handler = vi.fn();
     window.addEventListener("lit:llm-insert-raw", handler as EventListener);
     const msg = makeMessage({ role: "assistant", content: "Insert this" });
-    const { container, getByTestId } = render(
+    const { getByTestId } = render(
       <MessageBubble message={msg} isLast showEditorActions hadSelection={false} />,
     );
-    fireEvent.mouseEnter(container.firstChild!);
     fireEvent.click(getByTestId("message-insert-btn"));
     expect(handler).toHaveBeenCalledTimes(1);
     const event = handler.mock.calls[0]![0] as CustomEvent;
     expect(event.detail).toEqual({ text: "Insert this" });
     window.removeEventListener("lit:llm-insert-raw", handler as EventListener);
+  });
+
+  // Edit mode hides actions (regression)
+  it("entering edit mode hides all action buttons", () => {
+    const msg = makeMessage({ role: "user", content: "Hello" });
+    const { getByTestId, queryByTestId } = render(<MessageBubble message={msg} onEdit={() => {}} onEditSubmit={() => {}} />);
+    expect(getByTestId("message-copy-btn")).toBeTruthy();
+    fireEvent.click(getByTestId("message-edit-btn"));
+    expect(queryByTestId("message-copy-btn")).toBeNull();
+    expect(queryByTestId("message-edit-btn")).toBeNull();
   });
 
   it("does not re-call renderMarkdown when re-rendered with same content", () => {
@@ -290,10 +313,9 @@ describe("MessageBubble", () => {
     window.addEventListener("lit:insert-companion-annotation", handler as EventListener);
     const annotation = makeAnnotation();
     const msg = makeMessage({ role: "assistant", content: "Companion text" });
-    const { container, getByTestId } = render(
+    const { getByTestId } = render(
       <MessageBubble message={msg} isLast showEditorActions hadSelection={false} fireSourceAnnotation={annotation} />,
     );
-    fireEvent.mouseEnter(container.firstChild!);
     fireEvent.click(getByTestId("message-companion-btn"));
     expect(handler).toHaveBeenCalledTimes(1);
     const event = handler.mock.calls[0]![0] as CustomEvent;
