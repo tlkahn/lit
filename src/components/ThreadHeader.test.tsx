@@ -10,6 +10,7 @@ function makeConversation(overrides: Partial<ConversationRow> = {}): Conversatio
     node_id: "node-1",
     anchor_type: null,
     anchor_id: null,
+    anchor_key: null,
     title: "Test conversation",
     created_at: "2025-01-01T00:00:00Z",
     updated_at: "2025-01-01T00:00:00Z",

@@ -52,6 +52,7 @@ const fakeConversation: ConversationRow = {
   node_id: "node-1",
   anchor_type: null,
   anchor_id: null,
+  anchor_key: null,
   title: null,
   created_at: "2025-01-01T00:00:00Z",
   updated_at: "2025-01-01T00:00:00Z",
@@ -144,7 +145,7 @@ describe("conversation store", () => {
     const id = await useConversationStore.getState().createConversation("node-1");
 
     expect(id).toBe(FAKE_UUID);
-    expect(mockedConversationCreate).toHaveBeenCalledWith(FAKE_UUID, "node-1", undefined, undefined, undefined);
+    expect(mockedConversationCreate).toHaveBeenCalledWith(FAKE_UUID, "node-1", undefined, undefined, undefined, undefined);
     const s = useConversationStore.getState();
     expect(s.activeConversationId).toBe(FAKE_UUID);
     expect(s.conversations).toEqual([fakeConversation]);
@@ -229,7 +230,7 @@ describe("conversation store", () => {
 
     await useConversationStore.getState().createConversation("node-1", "My question");
 
-    expect(mockedConversationCreate).toHaveBeenCalledWith(FAKE_UUID, "node-1", undefined, undefined, "My question");
+    expect(mockedConversationCreate).toHaveBeenCalledWith(FAKE_UUID, "node-1", undefined, undefined, undefined, "My question");
     expect(useConversationStore.getState().conversations[0]?.title).toBe("My question");
   });
 

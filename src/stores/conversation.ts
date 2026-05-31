@@ -149,7 +149,7 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
   createConversation: async (nodeId: string, title?: string) => {
     const id = crypto.randomUUID();
     try {
-      const row = await conversationCreate(id, nodeId, undefined, undefined, title);
+      const row = await conversationCreate(id, nodeId, undefined, undefined, undefined, title);
       set((s) => ({
         conversations: [...s.conversations, row],
         activeConversationId: id,
