@@ -63,33 +63,18 @@ function MessageBubbleInner({ message, isLast, showEditorActions, hadSelection, 
         </button>
       )}
       {isAssistant && showEditorActions && (
-        hadSelection ? (
-          <button
-            data-testid="message-replace-btn"
-            aria-label="Replace selection"
-            className="text-xs text-muted hover:text-normal px-1"
-            onClick={() => {
-              window.dispatchEvent(
-                new CustomEvent("lit:llm-insert-raw", { detail: { text: message.content } }),
-              );
-            }}
-          >
-            <span className="nerd-font" aria-hidden="true">{''}</span>
-          </button>
-        ) : (
-          <button
-            data-testid="message-insert-btn"
-            aria-label="Insert at cursor"
-            className="text-xs text-muted hover:text-normal px-1"
-            onClick={() => {
-              window.dispatchEvent(
-                new CustomEvent("lit:llm-insert-raw", { detail: { text: message.content } }),
-              );
-            }}
-          >
-            <span className="nerd-font" aria-hidden="true">{''}</span>
-          </button>
-        )
+        <button
+          data-testid={hadSelection ? "message-replace-btn" : "message-insert-btn"}
+          aria-label={hadSelection ? "Replace selection" : "Insert at cursor"}
+          className="text-xs text-muted hover:text-normal px-1"
+          onClick={() => {
+            window.dispatchEvent(
+              new CustomEvent("lit:llm-insert-raw", { detail: { text: message.content } }),
+            );
+          }}
+        >
+          <span className="nerd-font" aria-hidden="true">{hadSelection ? '' : ''}</span>
+        </button>
       )}
       {isAssistant && showEditorActions && fireSourceAnnotation && (
         <button

@@ -77,12 +77,10 @@ describe("MessageList", () => {
     const assistantBubbles = container.querySelectorAll("[data-testid='message-bubble-assistant']");
     expect(assistantBubbles).toHaveLength(2);
 
-    // Hover first assistant — no retry button
-    fireEvent.mouseEnter(assistantBubbles[0]!);
+    // First assistant — no retry button (not the last)
     expect(assistantBubbles[0]!.querySelector("[data-testid='message-retry-btn']")).toBeNull();
 
-    // Hover last assistant — retry button appears
-    fireEvent.mouseEnter(assistantBubbles[1]!);
+    // Last assistant — retry button visible
     expect(assistantBubbles[1]!.querySelector("[data-testid='message-retry-btn']")).toBeTruthy();
   });
 
@@ -230,7 +228,6 @@ describe("MessageList", () => {
       <MessageList messages={messages} onEdit={vi.fn()} onEditSubmit={vi.fn()} onRetry={vi.fn()} />,
     );
     const lastAssistant = container.querySelectorAll("[data-testid='message-bubble-assistant']")[0]!;
-    fireEvent.mouseEnter(lastAssistant);
     expect(lastAssistant.querySelector("[data-testid='message-insert-btn']")).toBeNull();
     expect(lastAssistant.querySelector("[data-testid='message-replace-btn']")).toBeNull();
   });
@@ -248,7 +245,6 @@ describe("MessageList", () => {
       <MessageList messages={messages} onEdit={vi.fn()} onEditSubmit={vi.fn()} onRetry={vi.fn()} />,
     );
     const lastAssistant = container.querySelectorAll("[data-testid='message-bubble-assistant']")[0]!;
-    fireEvent.mouseEnter(lastAssistant);
     expect(lastAssistant.querySelector("[data-testid='message-insert-btn']")).toBeTruthy();
   });
 
@@ -265,7 +261,6 @@ describe("MessageList", () => {
       <MessageList messages={messages} onEdit={vi.fn()} onEditSubmit={vi.fn()} onRetry={vi.fn()} />,
     );
     const lastAssistant = container.querySelectorAll("[data-testid='message-bubble-assistant']")[0]!;
-    fireEvent.mouseEnter(lastAssistant);
     expect(lastAssistant.querySelector("[data-testid='message-replace-btn']")).toBeTruthy();
     expect(lastAssistant.querySelector("[data-testid='message-insert-btn']")).toBeNull();
   });

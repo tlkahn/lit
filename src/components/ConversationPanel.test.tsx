@@ -352,7 +352,6 @@ describe("ConversationPanel", () => {
     });
 
     const userBubble = result!.getByTestId("message-bubble-user");
-    fireEvent.mouseEnter(userBubble);
     const editBtn = result!.getByTestId("message-edit-btn");
     fireEvent.click(editBtn);
 
@@ -390,8 +389,6 @@ describe("ConversationPanel", () => {
       result = render(<ConversationPanel pageId="page-1" />);
     });
 
-    const assistantBubble = result!.getByTestId("message-bubble-assistant");
-    fireEvent.mouseEnter(assistantBubble);
     const retryBtn = result!.getByTestId("message-retry-btn");
     fireEvent.click(retryBtn);
 
