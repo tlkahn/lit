@@ -39,6 +39,7 @@ export interface PreferencesState {
   llmDeleteAnnotationThreads: boolean;
   llmOpenaiApiKeySet: boolean;
   llmAnthropicApiKeySet: boolean;
+  llmDeleteAnnotationThreads: boolean;
   loaded: boolean;
   loadPreferences: () => Promise<void>;
 }
@@ -130,6 +131,7 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   llmDeleteAnnotationThreads: false,
   llmOpenaiApiKeySet: false,
   llmAnthropicApiKeySet: false,
+  llmDeleteAnnotationThreads: false,
   loaded: false,
 
   loadPreferences: async () => {

@@ -253,6 +253,14 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "LLM",
+    label: "Delete Annotation Threads",
+    storeField: "llmDeleteAnnotationThreads",
+    jsonKey: "llm.deleteAnnotationThreads",
+    controlType: "toggle",
+    testId: "settings-llmDeleteAnnotationThreads",
+  },
+  {
+    category: "LLM",
     label: "LLM Prompt",
     storeField: "llmPromptLlm",
     jsonKey: "llm.prompts.llm",
