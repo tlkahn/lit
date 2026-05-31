@@ -7,6 +7,7 @@ import { usePreferencesStore } from "./stores/preferences";
 import { useLicenseStore } from "./stores/license";
 import { usePaneStore } from "./stores/panes";
 import { useConversationStore } from "./stores/conversation";
+import { useBottomPanelStore } from "./stores/bottomPanel";
 import { _resetForTesting as resetRegistry } from "./lib/paneContentRegistry";
 import { _resetForTesting as resetEditorViewRef } from "./lib/editorViewRef";
 import { SIDEBAR_WIDTH_PX } from "./components/Sidebar";
@@ -753,5 +754,80 @@ describe("App", () => {
     await waitFor(() => {
       expect(screen.getByTestId("license-entry-dialog")).toBeInTheDocument();
     });
+  });
+
+  it("does not render sidebar-mode bottom panel when bottomPanelPosition is 'bottom'", () => {
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+    usePreferencesStore.setState({ bottomPanelPosition: "bottom" });
+    render(<App />);
+    expect(screen.queryByTestId("sidebar-bottom-panel")).not.toBeInTheDocument();
+  });
+
+  it("renders BottomPanel as a sidebar when bottomPanelPosition is 'side'", () => {
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+    usePreferencesStore.setState({ bottomPanelPosition: "side" });
+    render(<App />);
+    expect(screen.getByTestId("sidebar-bottom-panel")).toBeInTheDocument();
+  });
+
+  it("only one BottomPanel exists in DOM when mode is 'side'", () => {
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: samplePages, graphReady: true });
+    usePreferencesStore.setState({ bottomPanelPosition: "side" });
+    render(<App />);
+    expect(screen.getAllByTestId("bottom-panel")).toHaveLength(1);
+  });
+
+  it("sidebar-mode panel container has correct width, flexShrink, and transition", () => {
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+    usePreferencesStore.setState({ bottomPanelPosition: "side" });
+    useBottomPanelStore.setState({ panelWidth: 400 });
+    render(<App />);
+    const container = screen.getByTestId("sidebar-bottom-panel");
+    expect(container.style.width).toBe("400px");
+    expect(container.style.flexShrink).toBe("0");
+    expect(container.style.transition).toBe("width 150ms ease-out");
+  });
+
+  it("sidebar-mode panel appears after editor column when sidebar is on left", () => {
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+    usePreferencesStore.setState({ bottomPanelPosition: "side", sidebarLocation: "left" });
+    render(<App />);
+    const sidebarPanel = screen.getByTestId("sidebar-bottom-panel");
+    const flexRow = sidebarPanel.parentElement!;
+    expect(flexRow.className).toContain("flex-row");
+    expect(flexRow.className).not.toContain("flex-row-reverse");
+    const children = Array.from(flexRow.children);
+    expect(children.indexOf(sidebarPanel)).toBe(children.length - 1);
+  });
+
+  it("sidebar-mode panel appears on the left when sidebar is on the right", () => {
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+    usePreferencesStore.setState({ bottomPanelPosition: "side", sidebarLocation: "right" });
+    render(<App />);
+    const sidebarPanel = screen.getByTestId("sidebar-bottom-panel");
+    const flexRow = sidebarPanel.parentElement!;
+    expect(flexRow.className).toContain("flex-row-reverse");
+    const children = Array.from(flexRow.children);
+    expect(children.indexOf(sidebarPanel)).toBe(children.length - 1);
+  });
+
+  it("sidebar-mode BottomPanel is nested inside the sidebar container", () => {
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: samplePages, graphReady: true });
+    usePaneStore.setState({
+      root: { type: "leaf", id: "test-pane", pagePath: "Test Page.md" },
+      focusedPaneId: "test-pane",
+    });
+    usePreferencesStore.setState({ bottomPanelPosition: "side" });
+    render(<App />);
+    const bottomPanel = screen.getByTestId("bottom-panel");
+    expect(bottomPanel.closest("[data-testid='sidebar-bottom-panel']")).toBeTruthy();
+  });
+
+  it("sidebar-mode container exists when panel is collapsed", () => {
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+    usePreferencesStore.setState({ bottomPanelPosition: "side" });
+    useBottomPanelStore.setState({ unfolded: false });
+    render(<App />);
+    expect(screen.getByTestId("sidebar-bottom-panel")).toBeInTheDocument();
   });
 });

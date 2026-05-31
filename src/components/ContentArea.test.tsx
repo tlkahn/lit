@@ -645,6 +645,35 @@ describe("ContentArea bottom panel", () => {
       expect(screen.getByTestId("bottom-panel")).toBeInTheDocument();
     });
   });
+
+  it("renders BottomPanel when renderBottomPanel is true (explicit)", async () => {
+    setPage("Hello.md");
+    render(<ContentArea renderBottomPanel={true} />);
+    await waitFor(() => {
+      expect(screen.getByTestId("bottom-panel")).toBeInTheDocument();
+    });
+  });
+
+  it("does NOT render BottomPanel when renderBottomPanel is false", async () => {
+    setPage("Hello.md");
+    render(<ContentArea renderBottomPanel={false} />);
+    await waitFor(() => {
+      expect(screen.getByTestId("editor")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("bottom-panel")).not.toBeInTheDocument();
+  });
+
+  it("does NOT render BottomPanel in empty state when renderBottomPanel is false", () => {
+    render(<ContentArea renderBottomPanel={false} />);
+    expect(screen.getByTestId("empty-state")).toBeInTheDocument();
+    expect(screen.queryByTestId("bottom-panel")).not.toBeInTheDocument();
+  });
+
+  it("renders BottomPanel in empty state by default", () => {
+    render(<ContentArea />);
+    expect(screen.getByTestId("empty-state")).toBeInTheDocument();
+    expect(screen.getByTestId("bottom-panel")).toBeInTheDocument();
+  });
 });
 
 describe("ContentArea jump recording on page switch", () => {
