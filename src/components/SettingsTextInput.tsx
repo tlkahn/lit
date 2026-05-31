@@ -8,7 +8,7 @@ interface SettingsTextInputProps {
 
 export function SettingsTextInput({ value, onChange, testId, label, onCommit }: SettingsTextInputProps) {
   return (
-    <div className="flex items-center justify-between gap-2">
+    <div className="flex items-center justify-between gap-2 min-w-0 flex-wrap">
       {label && <span className="text-sm text-text-normal">{label}</span>}
       <input
         type="text"

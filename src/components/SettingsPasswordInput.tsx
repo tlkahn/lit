@@ -18,7 +18,7 @@ export function SettingsPasswordInput({ testId, label, hasKey, onSave, onDelete 
   };
 
   return (
-    <div className="flex items-center justify-between gap-2">
+    <div className="flex items-center justify-between gap-2 min-w-0 flex-wrap">
       {label && <span className="text-sm text-text-normal">{label}</span>}
       <div className="flex items-center gap-2">
         {hasKey && (

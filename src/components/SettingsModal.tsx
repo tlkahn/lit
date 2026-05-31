@@ -362,7 +362,7 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
           </div>
         </div>
 
-        <div data-testid="settings-modal-content" className="order-3 flex-1 overflow-y-auto flex flex-row">
+        <div data-testid="settings-modal-content" className="order-3 flex-1 overflow-y-auto overflow-x-hidden flex flex-row">
           {jsonMode ? (
             <div className="flex-1 px-5 pb-5">
               <SettingsJsonEditor initialJson={rawJson} onSave={handleJsonSave} error={jsonError} />
@@ -421,7 +421,7 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
                   );
                 })}
               </nav>
-              <div className="flex-1 overflow-y-auto px-5 pb-5">
+              <div className="flex-1 min-w-0 overflow-y-auto px-5 pb-5">
                 {activeCategory === "Keyboard Shortcuts" ? (
                   <KeyboardShortcutsPanel />
                 ) : filteredResults.length === 0 && searchQuery !== "" ? (
