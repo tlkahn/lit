@@ -268,6 +268,7 @@ pub fn index_workspace_with_progress(
         store.upsert_node(node, mtime)?;
         nodes_indexed += 1;
 
+        // Always call upsert even with empty vec so orphaned annotations get cleaned up.
         {
             let anns = if annotations_enabled {
                 bodies.get(&node.id)
@@ -484,6 +485,7 @@ pub fn incremental_reindex(
                 stem_lookup.insert(&node.id, &new_aliases);
                 nodes_indexed += 1;
 
+                // Always call upsert even with empty vec so orphaned annotations get cleaned up.
                 {
                     let anns = if annotations_enabled {
                         super::extract::extract_annotations(&body)

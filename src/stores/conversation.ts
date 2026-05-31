@@ -342,9 +342,7 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
   },
 
   handleAnnotationsRemoved: async (items) => {
-    for (const item of items) {
-      await get().cleanupAnnotationThread(item.node_id, item.uuid);
-    }
+    await Promise.all(items.map((item) => get().cleanupAnnotationThread(item.node_id, item.uuid)));
   },
 
   reset: () => set(initialState),
