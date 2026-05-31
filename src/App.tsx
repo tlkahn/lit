@@ -77,7 +77,7 @@ function App() {
   const llmEnabled = usePreferencesStore((s) => s.llmOpenaiApiKeySet || s.llmAnthropicApiKeySet);
   const focusModeActive = useFocusModeStore((s) => s.active);
   const toggleFocusMode = useFocusModeStore((s) => s.toggleFocusMode);
-  const { mode: bottomPanelMode } = useBottomPanelPosition();
+  const { mode: bottomPanelMode, effectiveSide } = useBottomPanelPosition();
   const panelWidth = useBottomPanelStore((s) => s.panelWidth);
   const focusedLeaf = usePaneStore((s) => findLeaf(s.root, s.focusedPaneId));
   const currentPanePage = focusedLeaf?.pagePath ?? null;
@@ -439,7 +439,7 @@ function App() {
               data-testid="sidebar-bottom-panel"
               style={{ width: `${panelWidth}px`, flexShrink: 0, overflow: "hidden", transition: "width 150ms ease-out" }}
             >
-              <BottomPanel pageId={currentPanePage ?? undefined} />
+              <BottomPanel pageId={currentPanePage ?? undefined} direction={effectiveSide} />
             </div>
           )}
         </div>

@@ -4,7 +4,7 @@ import { BottomPanel } from "./BottomPanel";
 import { getBacklinks, getUnlinkedMentions } from "../lib/ipc";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePreferencesStore } from "../stores/preferences";
-import { useBottomPanelStore } from "../stores/bottomPanel";
+import { useBottomPanelStore, MIN_PANEL_WIDTH } from "../stores/bottomPanel";
 import { useLlmResponseStore } from "../stores/llmResponse";
 import { useConversationStore } from "../stores/conversation";
 import { EditorState } from "@codemirror/state";
@@ -810,6 +810,433 @@ describe("BottomPanel", () => {
       });
 
       expect(screen.getByTestId("conversation-panel")).toBeInTheDocument();
+    });
+  });
+
+  describe("vertical (direction) mode", () => {
+    function mockParentBoundingRect(panel: HTMLElement, height: number, width = 800) {
+      const parent = panel.parentElement!;
+      parent.getBoundingClientRect = () =>
+        ({
+          x: 0,
+          y: 0,
+          width,
+          height,
+          top: 0,
+          right: width,
+          bottom: height,
+          left: 0,
+          toJSON: () => ({}),
+        }) as DOMRect;
+    }
+
+    describe("prop defaults", () => {
+      it("direction defaults to 'bottom' — height-based sizing", () => {
+        render(<BottomPanel pageId="target.md" />);
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
+        const panel = screen.getByTestId("bottom-panel");
+        expect(panel.style.height).toBe("200px");
+        expect(panel.style.width).toBe("");
+      });
+
+      it("explicit direction='bottom' is same as default", () => {
+        render(<BottomPanel pageId="target.md" direction="bottom" />);
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
+        const panel = screen.getByTestId("bottom-panel");
+        expect(panel.style.height).toBe("200px");
+        expect(panel.style.width).toBe("");
+      });
+    });
+
+    describe("vertical sizing", () => {
+      it("direction='right' unfolded uses width, not height", () => {
+        useBottomPanelStore.setState({ panelWidth: 400 });
+        render(<BottomPanel pageId="target.md" direction="right" />);
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
+        const panel = screen.getByTestId("bottom-panel");
+        expect(panel.style.width).toBe("400px");
+        expect(panel.style.height).toBe("");
+      });
+
+      it("direction='right' folded has width 0", () => {
+        render(<BottomPanel pageId="target.md" direction="right" />);
+        const panel = screen.getByTestId("bottom-panel");
+        expect(panel.style.width).toBe("0px");
+      });
+
+      it("direction='left' unfolded uses width", () => {
+        useBottomPanelStore.setState({ panelWidth: 400 });
+        render(<BottomPanel pageId="target.md" direction="left" />);
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
+        const panel = screen.getByTestId("bottom-panel");
+        expect(panel.style.width).toBe("400px");
+        expect(panel.style.height).toBe("");
+      });
+    });
+
+    describe("resize handle orientation", () => {
+      it("direction='right' handle has ew-resize cursor on left edge", () => {
+        render(<BottomPanel pageId="target.md" direction="right" />);
+        const handle = screen.getByTestId("resize-handle");
+        expect(handle.style.cursor).toBe("ew-resize");
+        expect(handle.style.width).toBe("4px");
+        expect(handle.style.left).toBe("0px");
+        expect(handle.style.top).toBe("0px");
+        expect(handle.style.bottom).toBe("0px");
+      });
+
+      it("direction='left' handle has ew-resize cursor on right edge", () => {
+        render(<BottomPanel pageId="target.md" direction="left" />);
+        const handle = screen.getByTestId("resize-handle");
+        expect(handle.style.cursor).toBe("ew-resize");
+        expect(handle.style.width).toBe("4px");
+        expect(handle.style.right).toBe("0px");
+        expect(handle.style.top).toBe("0px");
+        expect(handle.style.bottom).toBe("0px");
+      });
+
+      it("direction='bottom' handle unchanged (ns-resize)", () => {
+        render(<BottomPanel pageId="target.md" direction="bottom" />);
+        const handle = screen.getByTestId("resize-handle");
+        expect(handle.style.cursor).toBe("ns-resize");
+        expect(handle.style.height).toBe("4px");
+        expect(handle.style.top).toBe("0px");
+        expect(handle.style.left).toBe("0px");
+        expect(handle.style.right).toBe("0px");
+      });
+    });
+
+    describe("horizontal drag: direction='right'", () => {
+      it("drag left increases width", () => {
+        useBottomPanelStore.setState({ panelWidth: 320 });
+        render(<BottomPanel pageId="target.md" direction="right" />);
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
+        const panel = screen.getByTestId("bottom-panel");
+        mockParentBoundingRect(panel, 600, 800);
+
+        const handle = screen.getByTestId("resize-handle");
+        act(() => {
+          fireEvent.mouseDown(handle, { clientX: 500 });
+          fireEvent.mouseMove(document, { clientX: 400 });
+        });
+        expect(panel.style.width).toBe("400px");
+      });
+
+      it("drag right decreases width", () => {
+        useBottomPanelStore.setState({ panelWidth: 320 });
+        render(<BottomPanel pageId="target.md" direction="right" />);
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
+        const panel = screen.getByTestId("bottom-panel");
+        mockParentBoundingRect(panel, 600, 800);
+
+        const handle = screen.getByTestId("resize-handle");
+        act(() => {
+          fireEvent.mouseDown(handle, { clientX: 500 });
+          fireEvent.mouseMove(document, { clientX: 550 });
+        });
+        expect(panel.style.width).toBe("270px");
+      });
+    });
+
+    describe("horizontal drag: direction='left'", () => {
+      it("drag right increases width", () => {
+        useBottomPanelStore.setState({ panelWidth: 320 });
+        render(<BottomPanel pageId="target.md" direction="left" />);
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
+        const panel = screen.getByTestId("bottom-panel");
+        mockParentBoundingRect(panel, 600, 1000);
+
+        const handle = screen.getByTestId("resize-handle");
+        act(() => {
+          fireEvent.mouseDown(handle, { clientX: 320 });
+          fireEvent.mouseMove(document, { clientX: 420 });
+        });
+        expect(panel.style.width).toBe("420px");
+      });
+
+      it("drag left decreases width", () => {
+        useBottomPanelStore.setState({ panelWidth: 320 });
+        render(<BottomPanel pageId="target.md" direction="left" />);
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
+        const panel = screen.getByTestId("bottom-panel");
+        mockParentBoundingRect(panel, 600, 800);
+
+        const handle = screen.getByTestId("resize-handle");
+        act(() => {
+          fireEvent.mouseDown(handle, { clientX: 320 });
+          fireEvent.mouseMove(document, { clientX: 270 });
+        });
+        expect(panel.style.width).toBe("270px");
+      });
+    });
+
+    describe("width clamping", () => {
+      it("clamps to MIN_PANEL_WIDTH", () => {
+        useBottomPanelStore.setState({ panelWidth: 320 });
+        render(<BottomPanel pageId="target.md" direction="right" />);
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
+        const panel = screen.getByTestId("bottom-panel");
+        mockParentBoundingRect(panel, 600, 800);
+
+        const handle = screen.getByTestId("resize-handle");
+        act(() => {
+          fireEvent.mouseDown(handle, { clientX: 500 });
+          fireEvent.mouseMove(document, { clientX: 800 });
+        });
+        expect(panel.style.width).toBe(`${MIN_PANEL_WIDTH}px`);
+      });
+
+      it("clamps to 50% of parent width", () => {
+        useBottomPanelStore.setState({ panelWidth: 320 });
+        render(<BottomPanel pageId="target.md" direction="right" />);
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
+        const panel = screen.getByTestId("bottom-panel");
+        mockParentBoundingRect(panel, 600, 800);
+
+        const handle = screen.getByTestId("resize-handle");
+        act(() => {
+          fireEvent.mouseDown(handle, { clientX: 500 });
+          fireEvent.mouseMove(document, { clientX: 0 });
+        });
+        expect(panel.style.width).toBe("400px");
+      });
+    });
+
+    describe("persist width on mouseUp", () => {
+      it("updates localStorage and store on mouseUp", () => {
+        useBottomPanelStore.setState({ panelWidth: 320 });
+        render(<BottomPanel pageId="target.md" direction="right" />);
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
+        const panel = screen.getByTestId("bottom-panel");
+        mockParentBoundingRect(panel, 600, 800);
+
+        const handle = screen.getByTestId("resize-handle");
+        act(() => {
+          fireEvent.mouseDown(handle, { clientX: 500 });
+          fireEvent.mouseMove(document, { clientX: 400 });
+          fireEvent.mouseUp(document);
+        });
+        expect(localStorage.getItem("lit-bottom-panel-width")).toBe("400");
+        expect(useBottomPanelStore.getState().panelWidth).toBe(400);
+      });
+    });
+
+    describe("transition in vertical mode", () => {
+      it("resting state uses width transition", () => {
+        render(<BottomPanel pageId="target.md" direction="right" />);
+        const panel = screen.getByTestId("bottom-panel");
+        expect(panel.style.transition).toBe("width 150ms ease-out");
+      });
+
+      it("disables transition during drag and restores after", () => {
+        useBottomPanelStore.setState({ panelWidth: 320 });
+        render(<BottomPanel pageId="target.md" direction="right" />);
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
+        const panel = screen.getByTestId("bottom-panel");
+        mockParentBoundingRect(panel, 600, 800);
+
+        expect(panel.style.transition).toBe("width 150ms ease-out");
+
+        const handle = screen.getByTestId("resize-handle");
+        act(() => {
+          fireEvent.mouseDown(handle, { clientX: 500 });
+        });
+        expect(panel.style.transition).toBe("none");
+
+        act(() => {
+          fireEvent.mouseUp(document);
+        });
+        expect(panel.style.transition).toBe("width 150ms ease-out");
+      });
+    });
+
+    describe("shadow direction", () => {
+      it("direction='bottom' has upward shadow", () => {
+        render(<BottomPanel pageId="target.md" direction="bottom" />);
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
+        const panel = screen.getByTestId("bottom-panel");
+        expect(panel.className).toContain("shadow-[0_-2px_4px_rgba(0,0,0,0.08)]");
+      });
+
+      it("direction='right' has leftward shadow", () => {
+        render(<BottomPanel pageId="target.md" direction="right" />);
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
+        const panel = screen.getByTestId("bottom-panel");
+        expect(panel.className).toContain("shadow-[-2px_0_4px_rgba(0,0,0,0.08)]");
+      });
+
+      it("direction='left' has rightward shadow", () => {
+        render(<BottomPanel pageId="target.md" direction="left" />);
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
+        const panel = screen.getByTestId("bottom-panel");
+        expect(panel.className).toContain("shadow-[2px_0_4px_rgba(0,0,0,0.08)]");
+      });
+    });
+
+    describe("window resize re-clamp (vertical)", () => {
+      it("re-clamps width when parent shrinks", () => {
+        useBottomPanelStore.setState({ panelWidth: 400 });
+        render(<BottomPanel pageId="target.md" direction="right" />);
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
+        const panel = screen.getByTestId("bottom-panel");
+        mockParentBoundingRect(panel, 600, 800);
+
+        expect(panel.style.width).toBe("400px");
+
+        mockParentBoundingRect(panel, 600, 500);
+        act(() => {
+          window.dispatchEvent(new Event("resize"));
+        });
+        expect(panel.style.width).toBe("250px");
+      });
+
+      it("does NOT re-clamp when folded", () => {
+        localStorage.setItem("lit-bottom-panel-width", "400");
+        useBottomPanelStore.setState({ panelWidth: 400 });
+        render(<BottomPanel pageId="target.md" direction="right" />);
+        const panel = screen.getByTestId("bottom-panel");
+        mockParentBoundingRect(panel, 600, 500);
+
+        act(() => {
+          window.dispatchEvent(new Event("resize"));
+        });
+        expect(panel.style.width).toBe("0px");
+        expect(localStorage.getItem("lit-bottom-panel-width")).toBe("400");
+      });
+
+      it("persists re-clamped width to localStorage", () => {
+        useBottomPanelStore.setState({ panelWidth: 400 });
+        render(<BottomPanel pageId="target.md" direction="right" />);
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
+        const panel = screen.getByTestId("bottom-panel");
+        mockParentBoundingRect(panel, 600, 800);
+
+        mockParentBoundingRect(panel, 600, 500);
+        act(() => {
+          window.dispatchEvent(new Event("resize"));
+        });
+        expect(localStorage.getItem("lit-bottom-panel-width")).toBe("250");
+      });
+    });
+
+    describe("clamp on unfold (vertical)", () => {
+      it("clamps stored width to 50% of parent on unfold", () => {
+        useBottomPanelStore.setState({ panelWidth: 400 });
+        render(<BottomPanel pageId="target.md" direction="right" />);
+        const panel = screen.getByTestId("bottom-panel");
+        mockParentBoundingRect(panel, 600, 500);
+
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
+        expect(panel.style.width).toBe("250px");
+      });
+    });
+
+    describe("content area dimension", () => {
+      it("tabpanel uses style.width in vertical mode", () => {
+        useBottomPanelStore.setState({ panelWidth: 320 });
+        render(<BottomPanel pageId="target.md" direction="right" />);
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
+        const tabpanel = screen.getByRole("tabpanel");
+        expect(tabpanel.style.width).toBe("320px");
+        expect(tabpanel.style.height).toBe("");
+      });
+
+      it("contentRef width updates via DOM during drag", () => {
+        useBottomPanelStore.setState({ panelWidth: 320 });
+        render(<BottomPanel pageId="target.md" direction="right" />);
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
+        const panel = screen.getByTestId("bottom-panel");
+        mockParentBoundingRect(panel, 600, 1000);
+
+        const tabpanel = screen.getByRole("tabpanel");
+        expect(tabpanel.style.width).toBe("320px");
+
+        const handle = screen.getByTestId("resize-handle");
+        act(() => {
+          fireEvent.mouseDown(handle, { clientX: 500 });
+          fireEvent.mouseMove(document, { clientX: 400 });
+        });
+        expect(tabpanel.style.width).toBe("420px");
+      });
+    });
+
+    describe("folded guard (vertical)", () => {
+      it("drag on folded panel keeps width at 0", () => {
+        useBottomPanelStore.setState({ panelWidth: 320 });
+        render(<BottomPanel pageId="target.md" direction="right" />);
+        const panel = screen.getByTestId("bottom-panel");
+        mockParentBoundingRect(panel, 600, 800);
+
+        const handle = screen.getByTestId("resize-handle");
+        act(() => {
+          fireEvent.mouseDown(handle, { clientX: 500 });
+          fireEvent.mouseMove(document, { clientX: 400 });
+        });
+        expect(panel.style.width).toBe("0px");
+      });
+    });
+
+    describe("user-select during vertical drag", () => {
+      it("sets body user-select to none during drag and clears after", () => {
+        useBottomPanelStore.setState({ panelWidth: 320 });
+        render(<BottomPanel pageId="target.md" direction="right" />);
+        act(() => {
+          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+        });
+        const panel = screen.getByTestId("bottom-panel");
+        mockParentBoundingRect(panel, 600, 800);
+
+        const handle = screen.getByTestId("resize-handle");
+        act(() => {
+          fireEvent.mouseDown(handle, { clientX: 500 });
+        });
+        expect(document.body.style.userSelect).toBe("none");
+
+        act(() => {
+          fireEvent.mouseUp(document);
+        });
+        expect(document.body.style.userSelect).toBe("");
+      });
     });
   });
 });
