@@ -9,6 +9,8 @@ vi.mock("../lib/ipc", () => ({
   conversationGet: vi.fn(),
   conversationAddMessage: vi.fn(),
   conversationDeleteMessagesAfter: vi.fn(),
+  conversationFindByAnchor: vi.fn(),
+  conversationDeleteByAnchor: vi.fn(),
   llmBuildContext: vi.fn(),
   GLOBAL_NODE_ID: "_global",
 }));
@@ -25,14 +27,17 @@ import {
   conversationMessages,
   conversationAddMessage,
   conversationDeleteMessagesAfter,
+  conversationFindByAnchor,
+  conversationDeleteByAnchor,
   llmBuildContext,
   GLOBAL_NODE_ID,
 } from "../lib/ipc";
-import type { ConversationRow, MessageRow } from "../lib/ipc";
+import type { ConversationRow, MessageRow, Annotation } from "../lib/ipc";
 
 import { startLlmStream, cancelLlmStream, type LlmStreamCallbacks } from "../lib/llmClient";
 import { useLlmResponseStore } from "./llmResponse";
 import { useModalLockStore } from "./modalLock";
+import { usePreferencesStore } from "./preferences";
 
 const mockedCancelLlmStream = cancelLlmStream as ReturnType<typeof vi.fn>;
 
@@ -43,6 +48,8 @@ const mockedConversationMessages = conversationMessages as ReturnType<typeof vi.
 const mockedConversationAddMessage = conversationAddMessage as ReturnType<typeof vi.fn>;
 const mockedStartLlmStream = startLlmStream as ReturnType<typeof vi.fn>;
 const mockedConversationDeleteMessagesAfter = conversationDeleteMessagesAfter as ReturnType<typeof vi.fn>;
+const mockedConversationFindByAnchor = conversationFindByAnchor as ReturnType<typeof vi.fn>;
+const mockedConversationDeleteByAnchor = conversationDeleteByAnchor as ReturnType<typeof vi.fn>;
 const mockedLlmBuildContext = llmBuildContext as ReturnType<typeof vi.fn>;
 
 const FAKE_UUID = "00000000-0000-0000-0000-000000000001";
@@ -67,11 +74,25 @@ const fakeMessage: MessageRow = {
   created_at: "2025-01-01T00:00:00Z",
 };
 
+const fakeAnnotation: Annotation = {
+  form: "compact",
+  annotation_type: "note",
+  certainty: "firm",
+  scope: { kind: "words", value: 3 },
+  body: "annotation body",
+  date: null,
+  is_structured: false,
+  char_start: 0,
+  char_end: 10,
+  original: "[n::test]",
+};
+
 describe("conversation store", () => {
   beforeEach(() => {
     useConversationStore.getState().reset();
     useLlmResponseStore.getState().reset();
     useModalLockStore.setState({ llmLocked: false });
+    usePreferencesStore.setState({ llmDeleteAnnotationThreads: false });
     vi.clearAllMocks();
   });
 
@@ -1355,6 +1376,253 @@ describe("conversation store", () => {
       testError,
     );
     warnSpy.mockRestore();
+  });
+
+  // --- Group L: createConversation with anchor args (Cycle 4.1) ---
+
+  it("createConversation passes anchorType and anchorKey to IPC", async () => {
+    vi.spyOn(crypto, "randomUUID").mockReturnValue(FAKE_UUID as `${string}-${string}-${string}-${string}-${string}`);
+    const anchoredConv: ConversationRow = {
+      ...fakeConversation,
+      anchor_type: "annotation",
+      anchor_key: "uuid-abc",
+      title: "My thread",
+    };
+    mockedConversationCreate.mockResolvedValue(anchoredConv);
+
+    await useConversationStore.getState().createConversation("node-1", "My thread", "annotation", "uuid-abc");
+
+    expect(mockedConversationCreate).toHaveBeenCalledWith(FAKE_UUID, "node-1", "annotation", undefined, "uuid-abc", "My thread");
+  });
+
+  // --- Group M: findOrCreateAnnotationThread (Cycle 4.2) ---
+
+  it("findOrCreateAnnotationThread creates new thread when none exists", async () => {
+    vi.spyOn(crypto, "randomUUID").mockReturnValue(FAKE_UUID as `${string}-${string}-${string}-${string}-${string}`);
+    mockedConversationFindByAnchor.mockResolvedValue(null);
+    mockedConversationCreate.mockResolvedValue({
+      ...fakeConversation,
+      anchor_type: "annotation",
+      anchor_key: "ann-uuid-1",
+    });
+
+    const id = await useConversationStore.getState().findOrCreateAnnotationThread("node-1", "ann-uuid-1", "My thread");
+
+    expect(id).toBe(FAKE_UUID);
+    expect(mockedConversationFindByAnchor).toHaveBeenCalledWith("node-1", "annotation", "ann-uuid-1");
+    expect(mockedConversationCreate).toHaveBeenCalledWith(FAKE_UUID, "node-1", "annotation", undefined, "ann-uuid-1", "My thread");
+  });
+
+  it("findOrCreateAnnotationThread reuses existing thread and loads messages", async () => {
+    const existingConv: ConversationRow = {
+      ...fakeConversation,
+      id: "existing-conv-id",
+      anchor_type: "annotation",
+      anchor_key: "ann-uuid-1",
+    };
+    const msgs: MessageRow[] = [fakeMessage];
+    mockedConversationFindByAnchor.mockResolvedValue(existingConv);
+    mockedConversationMessages.mockResolvedValue(msgs);
+
+    const id = await useConversationStore.getState().findOrCreateAnnotationThread("node-1", "ann-uuid-1");
+
+    expect(id).toBe("existing-conv-id");
+    expect(mockedConversationMessages).toHaveBeenCalledWith("existing-conv-id");
+    expect(mockedConversationCreate).not.toHaveBeenCalled();
+    expect(useConversationStore.getState().messages).toEqual(msgs);
+  });
+
+  it("findOrCreateAnnotationThread returns null when create fails", async () => {
+    mockedConversationFindByAnchor.mockResolvedValue(null);
+    mockedConversationCreate.mockRejectedValue(new Error("create failed"));
+
+    const id = await useConversationStore.getState().findOrCreateAnnotationThread("node-1", "ann-uuid-1");
+
+    expect(id).toBeNull();
+    expect(useConversationStore.getState().error).toBe("create failed");
+  });
+
+  it("findOrCreateAnnotationThread returns null when find fails", async () => {
+    mockedConversationFindByAnchor.mockRejectedValue(new Error("db error"));
+
+    const id = await useConversationStore.getState().findOrCreateAnnotationThread("node-1", "ann-uuid-1");
+
+    expect(id).toBeNull();
+    expect(useConversationStore.getState().error).toBe("db error");
+  });
+
+  // --- Group N: fireSourceAnnotation threading (Cycle 4.3a) ---
+
+  it("sendMessage passes fireSourceAnnotation to llmResponse startStream", async () => {
+    useConversationStore.setState({ activeConversationId: FAKE_UUID });
+    const persistedMsg: MessageRow = {
+      id: 10, conversation_id: FAKE_UUID, role: "user",
+      content: "hello", seq: 1, created_at: "2025-01-01T00:00:01Z",
+    };
+    mockedConversationAddMessage.mockResolvedValue(persistedMsg);
+
+    let capturedAnnotation: Annotation | null | undefined;
+    mockedStartLlmStream.mockImplementation(async () => {
+      capturedAnnotation = useLlmResponseStore.getState().fireSourceAnnotation;
+    });
+
+    await useConversationStore.getState().sendMessage({
+      content: "hello",
+      model: "test-model",
+      fireSourceAnnotation: fakeAnnotation,
+    });
+
+    expect(capturedAnnotation).toBe(fakeAnnotation);
+  });
+
+  // --- Group O: sendAnnotationFire (Cycle 4.3b) ---
+
+  it("sendAnnotationFire creates thread and sends message with fireSourceAnnotation", async () => {
+    vi.spyOn(crypto, "randomUUID").mockReturnValue(FAKE_UUID as `${string}-${string}-${string}-${string}-${string}`);
+    mockedConversationFindByAnchor.mockResolvedValue(null);
+    mockedConversationCreate.mockResolvedValue({
+      ...fakeConversation,
+      anchor_type: "annotation",
+      anchor_key: "ann-uuid-1",
+    });
+    const persistedMsg: MessageRow = {
+      id: 10, conversation_id: FAKE_UUID, role: "user",
+      content: "fire content", seq: 1, created_at: "2025-01-01T00:00:01Z",
+    };
+    mockedConversationAddMessage.mockResolvedValue(persistedMsg);
+
+    let capturedAnnotation: Annotation | null | undefined;
+    mockedStartLlmStream.mockImplementation(async () => {
+      capturedAnnotation = useLlmResponseStore.getState().fireSourceAnnotation;
+    });
+
+    await useConversationStore.getState().sendAnnotationFire({
+      nodeId: "node-1",
+      annotationUuid: "ann-uuid-1",
+      annotation: fakeAnnotation,
+      content: "fire content",
+      model: "test-model",
+    });
+
+    expect(mockedConversationCreate).toHaveBeenCalled();
+    expect(mockedConversationAddMessage).toHaveBeenCalledWith(FAKE_UUID, "user", "fire content");
+    expect(mockedStartLlmStream).toHaveBeenCalled();
+    expect(capturedAnnotation).toBe(fakeAnnotation);
+  });
+
+  it("sendAnnotationFire reuses existing thread and appends message", async () => {
+    const existingConv: ConversationRow = {
+      ...fakeConversation,
+      id: "existing-conv-id",
+      anchor_type: "annotation",
+      anchor_key: "ann-uuid-1",
+    };
+    const priorMsg: MessageRow = {
+      id: 1, conversation_id: "existing-conv-id", role: "user",
+      content: "prior", seq: 1, created_at: "2025-01-01T00:00:00Z",
+    };
+    mockedConversationFindByAnchor.mockResolvedValue(existingConv);
+    mockedConversationMessages.mockResolvedValue([priorMsg]);
+
+    const newUserMsg: MessageRow = {
+      id: 2, conversation_id: "existing-conv-id", role: "user",
+      content: "fire content", seq: 2, created_at: "2025-01-01T00:00:01Z",
+    };
+    mockedConversationAddMessage.mockResolvedValue(newUserMsg);
+    mockedStartLlmStream.mockResolvedValue(undefined);
+
+    await useConversationStore.getState().sendAnnotationFire({
+      nodeId: "node-1",
+      annotationUuid: "ann-uuid-1",
+      annotation: fakeAnnotation,
+      content: "fire content",
+      model: "test-model",
+    });
+
+    expect(mockedConversationCreate).not.toHaveBeenCalled();
+    expect(mockedStartLlmStream).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          { role: "user", content: "prior" },
+          { role: "user", content: "fire content" },
+        ],
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("sendAnnotationFire passes textOverride to LLM but persists raw content", async () => {
+    vi.spyOn(crypto, "randomUUID").mockReturnValue(FAKE_UUID as `${string}-${string}-${string}-${string}-${string}`);
+    mockedConversationFindByAnchor.mockResolvedValue(null);
+    mockedConversationCreate.mockResolvedValue(fakeConversation);
+    const persistedMsg: MessageRow = {
+      id: 10, conversation_id: FAKE_UUID, role: "user",
+      content: "raw content", seq: 1, created_at: "2025-01-01T00:00:01Z",
+    };
+    mockedConversationAddMessage.mockResolvedValue(persistedMsg);
+    mockedStartLlmStream.mockResolvedValue(undefined);
+
+    await useConversationStore.getState().sendAnnotationFire({
+      nodeId: "node-1",
+      annotationUuid: "ann-uuid-1",
+      annotation: fakeAnnotation,
+      content: "raw content",
+      textOverride: "enriched content with context",
+      model: "test-model",
+    });
+
+    expect(mockedConversationAddMessage).toHaveBeenCalledWith(FAKE_UUID, "user", "raw content");
+    expect(mockedStartLlmStream).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "enriched content with context" }),
+      expect.any(Object),
+    );
+  });
+
+  it("sendAnnotationFire returns early when findOrCreate fails", async () => {
+    mockedConversationFindByAnchor.mockRejectedValue(new Error("db error"));
+
+    await useConversationStore.getState().sendAnnotationFire({
+      nodeId: "node-1",
+      annotationUuid: "ann-uuid-1",
+      annotation: fakeAnnotation,
+      content: "fire content",
+      model: "test-model",
+    });
+
+    expect(mockedConversationAddMessage).not.toHaveBeenCalled();
+    expect(mockedStartLlmStream).not.toHaveBeenCalled();
+  });
+
+  // --- Group P: llmDeleteAnnotationThreads preference (Cycle 4.4a) ---
+
+  it("llmDeleteAnnotationThreads defaults to false", () => {
+    expect(usePreferencesStore.getState().llmDeleteAnnotationThreads).toBe(false);
+  });
+
+  // --- Group Q: cleanupAnnotationThread (Cycle 4.4b) ---
+
+  it("cleanupAnnotationThread deletes thread when preference enabled", async () => {
+    usePreferencesStore.setState({ llmDeleteAnnotationThreads: true });
+    mockedConversationDeleteByAnchor.mockResolvedValue(undefined);
+
+    await useConversationStore.getState().cleanupAnnotationThread("node-1", "ann-uuid-1");
+
+    expect(mockedConversationDeleteByAnchor).toHaveBeenCalledWith("node-1", "annotation", "ann-uuid-1");
+  });
+
+  it("cleanupAnnotationThread does nothing when preference disabled", async () => {
+    await useConversationStore.getState().cleanupAnnotationThread("node-1", "ann-uuid-1");
+
+    expect(mockedConversationDeleteByAnchor).not.toHaveBeenCalled();
+  });
+
+  it("cleanupAnnotationThread sets error when delete fails", async () => {
+    usePreferencesStore.setState({ llmDeleteAnnotationThreads: true });
+    mockedConversationDeleteByAnchor.mockRejectedValue(new Error("delete failed"));
+
+    await useConversationStore.getState().cleanupAnnotationThread("node-1", "ann-uuid-1");
+
+    expect(useConversationStore.getState().error).toBe("delete failed");
   });
 
   it("sendMessage defaults nodeId to _global and neighborsDepth to 1 when omitted", async () => {
