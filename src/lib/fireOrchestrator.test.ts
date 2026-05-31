@@ -5,6 +5,7 @@ import type { Annotation } from "./ipc";
 import { useModalLockStore } from "../stores/modalLock";
 import { usePreferencesStore } from "../stores/preferences";
 import { useLlmResponseStore } from "../stores/llmResponse";
+import { useBottomPanelStore } from "../stores/bottomPanel";
 import { firingAnnotationsField } from "../editor/livePreview/annotationWidgets";
 
 vi.mock("./ipc", () => ({
@@ -25,6 +26,8 @@ import { useWorkspaceStore } from "../stores/workspace";
 const mockResolve = resolveAnnotationScopeWithMode as ReturnType<typeof vi.fn>;
 const mockStream = startLlmStream as ReturnType<typeof vi.fn>;
 const mockFindUuid = annotationFindUuid as ReturnType<typeof vi.fn>;
+
+const flushPromises = () => new Promise(resolve => setTimeout(resolve, 0));
 
 function makeView(doc = "hello world", withFiringField = false): EditorView {
   const extensions = withFiringField ? [firingAnnotationsField] : [];
@@ -55,6 +58,8 @@ beforeEach(() => {
   useModalLockStore.setState({ llmLocked: false, openCount: 0, locked: false });
   useLlmResponseStore.getState().reset();
   useWorkspaceStore.setState({ currentPagePath: "test/page.md" });
+  useBottomPanelStore.setState({ activeTab: "linked", unfolded: false });
+  mockFindUuid.mockResolvedValue("fake-uuid-123");
 });
 
 describe("buildFirePrompt", () => {
@@ -398,6 +403,7 @@ describe("fireAnnotation", () => {
     const ann = makeAnnotation({ annotation_type: "question", char_start: 0 });
 
     await fireAnnotation({ view, annotation: ann });
+    await flushPromises();
 
     expect(useModalLockStore.getState().llmLocked).toBe(false);
     expect(view.state.field(firingAnnotationsField).has(0)).toBe(false);
@@ -416,6 +422,7 @@ describe("fireAnnotation", () => {
     const ann = makeAnnotation({ annotation_type: "question", char_start: 0 });
 
     await fireAnnotation({ view, annotation: ann });
+    await flushPromises();
 
     expect(useModalLockStore.getState().llmLocked).toBe(false);
     expect(view.state.field(firingAnnotationsField).has(0)).toBe(false);
@@ -463,6 +470,70 @@ describe("fireAnnotation", () => {
     await fireAnnotation({ view, annotation: ann });
 
     expect(useLlmResponseStore.getState().status).toBe("idle");
+    view.destroy();
+  });
+
+  // --- Cycle 6.2: Persisting fire opens LLM panel ---
+
+  it("persisting type: opens LLM panel", async () => {
+    useConversationStore.setState({ sendAnnotationFire: vi.fn(async () => {}) });
+    const view = makeView();
+    const ann = makeAnnotation({ annotation_type: "question" });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    expect(useBottomPanelStore.getState().activeTab).toBe("llm-response");
+    expect(useBottomPanelStore.getState().unfolded).toBe(true);
+    view.destroy();
+  });
+
+  // --- Cycle 6.3: Subscription-based firing cleanup ---
+
+  it("persisting type: stream completion clears firing", async () => {
+    useConversationStore.setState({
+      sendAnnotationFire: vi.fn(async () => {
+        useLlmResponseStore.getState().startStream({ question: "test" });
+      }),
+    });
+    const completeSpy = vi.fn();
+    window.addEventListener("lit:fire-complete", completeSpy);
+    const view = makeView("hello world", true);
+    const ann = makeAnnotation({ annotation_type: "question", char_start: 0 });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    expect(view.state.field(firingAnnotationsField).has(0)).toBe(true);
+    expect(completeSpy).not.toHaveBeenCalled();
+
+    useLlmResponseStore.getState().finishStream();
+
+    expect(view.state.field(firingAnnotationsField).has(0)).toBe(false);
+    expect(completeSpy).toHaveBeenCalledOnce();
+    window.removeEventListener("lit:fire-complete", completeSpy);
+    view.destroy();
+  });
+
+  it("persisting type: stream error clears firing", async () => {
+    useConversationStore.setState({
+      sendAnnotationFire: vi.fn(async () => {
+        useLlmResponseStore.getState().startStream({ question: "test" });
+      }),
+    });
+    const completeSpy = vi.fn();
+    window.addEventListener("lit:fire-complete", completeSpy);
+    const view = makeView("hello world", true);
+    const ann = makeAnnotation({ annotation_type: "question", char_start: 0 });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    expect(view.state.field(firingAnnotationsField).has(0)).toBe(true);
+    expect(completeSpy).not.toHaveBeenCalled();
+
+    useLlmResponseStore.getState().setError("stream failed");
+
+    expect(view.state.field(firingAnnotationsField).has(0)).toBe(false);
+    expect(completeSpy).toHaveBeenCalledOnce();
+    window.removeEventListener("lit:fire-complete", completeSpy);
     view.destroy();
   });
 
