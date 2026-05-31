@@ -1044,10 +1044,11 @@ impl GraphIndex {
         node_id: &str,
         anchor_type: Option<&str>,
         anchor_id: Option<i64>,
+        anchor_key: Option<&str>,
         title: Option<&str>,
     ) -> Result<ConversationRow, GraphError> {
         let store = self.store.lock().unwrap();
-        store.create_conversation(id, node_id, anchor_type, anchor_id, title)
+        store.create_conversation(id, node_id, anchor_type, anchor_id, anchor_key, title)
     }
 
     pub fn add_message(&self, conversation_id: &str, role: &str, content: &str) -> Result<MessageRow, GraphError> {
@@ -4632,7 +4633,7 @@ mod tests {
         write_md(dir.path(), "a.md", "---\ntitle: A\n---\nHello");
         let gi = GraphIndex::build(dir.path().to_path_buf(), false).unwrap();
 
-        let row = gi.create_conversation("conv-1", "a.md", Some("annotation"), Some(42), Some("My Chat")).unwrap();
+        let row = gi.create_conversation("conv-1", "a.md", Some("annotation"), Some(42), None, Some("My Chat")).unwrap();
         assert_eq!(row.id, "conv-1");
         assert_eq!(row.node_id, "a.md");
         assert_eq!(row.anchor_type.as_deref(), Some("annotation"));
@@ -4647,7 +4648,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "---\ntitle: A\n---\nHello");
         let gi = GraphIndex::build(dir.path().to_path_buf(), false).unwrap();
-        gi.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        gi.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
         gi.add_message("conv-1", "user", "msg0").unwrap();
         gi.add_message("conv-1", "assistant", "msg1").unwrap();
         gi.add_message("conv-1", "user", "msg2").unwrap();
@@ -4666,7 +4667,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "---\ntitle: A\n---\nHello");
         let gi = GraphIndex::build(dir.path().to_path_buf(), false).unwrap();
-        gi.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        gi.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
         gi.add_message("conv-1", "user", "msg0").unwrap();
         gi.add_message("conv-1", "assistant", "msg1").unwrap();
         gi.add_message("conv-1", "user", "msg2").unwrap();
@@ -4684,7 +4685,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "---\ntitle: A\n---\nHello");
         let gi = GraphIndex::build(dir.path().to_path_buf(), false).unwrap();
-        gi.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        gi.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
 
         let msg0 = gi.add_message("conv-1", "user", "Hello").unwrap();
         assert_eq!(msg0.seq, 0);
@@ -4703,7 +4704,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "---\ntitle: A\n---\nHello");
         let gi = GraphIndex::build(dir.path().to_path_buf(), false).unwrap();
-        gi.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        gi.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
 
         gi.delete_conversation("conv-1").unwrap();
 
@@ -4717,9 +4718,9 @@ mod tests {
         write_md(dir.path(), "a.md", "---\ntitle: A\n---\nHello");
         write_md(dir.path(), "b.md", "---\ntitle: B\n---\nWorld");
         let gi = GraphIndex::build(dir.path().to_path_buf(), false).unwrap();
-        gi.create_conversation("c1", "a.md", None, None, Some("First")).unwrap();
-        gi.create_conversation("c2", "a.md", None, None, Some("Second")).unwrap();
-        gi.create_conversation("c3", "b.md", None, None, Some("Other")).unwrap();
+        gi.create_conversation("c1", "a.md", None, None, None, Some("First")).unwrap();
+        gi.create_conversation("c2", "a.md", None, None, None, Some("Second")).unwrap();
+        gi.create_conversation("c3", "b.md", None, None, None, Some("Other")).unwrap();
 
         let list = gi.list_conversations("a.md").unwrap();
         assert_eq!(list.len(), 2);
@@ -4733,7 +4734,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "---\ntitle: A\n---\nHello");
         let gi = GraphIndex::build(dir.path().to_path_buf(), false).unwrap();
-        gi.create_conversation("conv-1", "a.md", None, None, Some("Chat")).unwrap();
+        gi.create_conversation("conv-1", "a.md", None, None, None, Some("Chat")).unwrap();
 
         let row = gi.get_conversation("conv-1").unwrap();
         assert_eq!(row.id, "conv-1");

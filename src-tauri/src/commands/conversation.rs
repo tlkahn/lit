@@ -10,6 +10,7 @@ pub fn conversation_create(
     node_id: String,
     anchor_type: Option<String>,
     anchor_id: Option<i64>,
+    anchor_key: Option<String>,
     title: Option<String>,
 ) -> Result<serde_json::Value, String> {
     super::graph::with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
@@ -18,6 +19,7 @@ pub fn conversation_create(
             &node_id,
             anchor_type.as_deref(),
             anchor_id,
+            anchor_key.as_deref(),
             title.as_deref(),
         )?;
         Ok(serde_json::to_value(row)?)

@@ -1111,13 +1111,14 @@ impl Store {
         node_id: &str,
         anchor_type: Option<&str>,
         anchor_id: Option<i64>,
+        anchor_key: Option<&str>,
         title: Option<&str>,
     ) -> Result<ConversationRow, GraphError> {
         self.conn.query_row(
-            "INSERT INTO conversations(id, node_id, anchor_type, anchor_id, title, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            "INSERT INTO conversations(id, node_id, anchor_type, anchor_id, anchor_key, title, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
              RETURNING id, node_id, anchor_type, anchor_id, title, created_at, updated_at, anchor_key",
-            rusqlite::params![id, node_id, anchor_type, anchor_id, title],
+            rusqlite::params![id, node_id, anchor_type, anchor_id, anchor_key, title],
             |row| map_conversation_row(row),
         ).map_err(|e| e.into())
     }
@@ -1402,7 +1403,7 @@ mod tests {
             let mut positions = HashMap::new();
             positions.insert("a.md".into(), Position { x: 1.0, y: 2.0 });
             store.save_positions(&positions).unwrap();
-            store.create_conversation("conv-1", "a.md", None, None, Some("Chat")).unwrap();
+            store.create_conversation("conv-1", "a.md", None, None, None, Some("Chat")).unwrap();
             store.add_message("conv-1", "user", "Hello").unwrap();
 
             store.conn.execute(
@@ -3431,7 +3432,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, Some("My Chat")).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, Some("My Chat")).unwrap();
 
         let row = store.get_conversation("conv-1").unwrap().expect("should exist");
         assert_eq!(row.id, "conv-1");
@@ -3444,7 +3445,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
 
         let row = store.get_conversation("conv-1").unwrap().unwrap();
         assert!(!row.created_at.is_empty());
@@ -3458,8 +3459,8 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
-        assert!(store.create_conversation("conv-1", "a.md", None, None, None).is_err());
+        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
+        assert!(store.create_conversation("conv-1", "a.md", None, None, None, None).is_err());
     }
 
     #[test]
@@ -3468,7 +3469,7 @@ mod tests {
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
 
-        let row: ConversationRow = store.create_conversation("conv-1", "a.md", Some("annotation"), Some(7), Some("Chat")).unwrap();
+        let row: ConversationRow = store.create_conversation("conv-1", "a.md", Some("annotation"), Some(7), None, Some("Chat")).unwrap();
         assert_eq!(row.id, "conv-1");
         assert_eq!(row.node_id, "a.md");
         assert_eq!(row.anchor_type, Some("annotation".into()));
@@ -3492,7 +3493,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", Some("annotation"), Some(42), Some("Title")).unwrap();
+        store.create_conversation("conv-1", "a.md", Some("annotation"), Some(42), None, Some("Title")).unwrap();
 
         let row = store.get_conversation("conv-1").unwrap().unwrap();
         assert_eq!(row.id, "conv-1");
@@ -3519,9 +3520,9 @@ mod tests {
         let node_b = make_node("b.md", "B", &[], json!({}));
         store.upsert_node(&node_a, 1).unwrap();
         store.upsert_node(&node_b, 1).unwrap();
-        store.create_conversation("conv-a1", "a.md", None, None, None).unwrap();
-        store.create_conversation("conv-a2", "a.md", None, None, None).unwrap();
-        store.create_conversation("conv-b1", "b.md", None, None, None).unwrap();
+        store.create_conversation("conv-a1", "a.md", None, None, None, None).unwrap();
+        store.create_conversation("conv-a2", "a.md", None, None, None, None).unwrap();
+        store.create_conversation("conv-b1", "b.md", None, None, None, None).unwrap();
 
         let list = store.list_conversations("a.md").unwrap();
         assert_eq!(list.len(), 2);
@@ -3535,7 +3536,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
         store.delete_conversation("conv-1").unwrap();
         assert_eq!(store.get_conversation("conv-1").unwrap(), None);
     }
@@ -3553,7 +3554,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", Some("annotation"), Some(7), Some("Chat")).unwrap();
+        store.create_conversation("conv-1", "a.md", Some("annotation"), Some(7), None, Some("Chat")).unwrap();
         store.conn.execute(
             "UPDATE conversations SET anchor_key = ?1 WHERE id = ?2",
             rusqlite::params!["abc-123", "conv-1"],
@@ -3576,8 +3577,8 @@ mod tests {
         store.upsert_node(&node_a, 1).unwrap();
         store.upsert_node(&node_b, 1).unwrap();
 
-        store.create_conversation("conv-a", "a.md", Some("annotation"), Some(1), None).unwrap();
-        store.create_conversation("conv-b", "b.md", Some("annotation"), Some(2), None).unwrap();
+        store.create_conversation("conv-a", "a.md", Some("annotation"), Some(1), None, None).unwrap();
+        store.create_conversation("conv-b", "b.md", Some("annotation"), Some(2), None, None).unwrap();
         store.conn.execute(
             "UPDATE conversations SET anchor_key = 'shared-key' WHERE id IN ('conv-a', 'conv-b')",
             [],
@@ -3596,7 +3597,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", Some("annotation"), Some(1), None).unwrap();
+        store.create_conversation("conv-1", "a.md", Some("annotation"), Some(1), None, None).unwrap();
         store.conn.execute(
             "UPDATE conversations SET anchor_key = 'key-1' WHERE id = 'conv-1'",
             [],
@@ -3619,8 +3620,8 @@ mod tests {
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
 
-        store.create_conversation("conv-1", "a.md", Some("annotation"), Some(1), None).unwrap();
-        store.create_conversation("conv-2", "a.md", Some("annotation"), Some(2), None).unwrap();
+        store.create_conversation("conv-1", "a.md", Some("annotation"), Some(1), None, None).unwrap();
+        store.create_conversation("conv-2", "a.md", Some("annotation"), Some(2), None, None).unwrap();
         store.conn.execute(
             "UPDATE conversations SET anchor_key = 'key-1' WHERE id = 'conv-1'",
             [],
@@ -3643,7 +3644,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", Some("file"), Some(42), Some("Test Title")).unwrap();
+        store.create_conversation("conv-1", "a.md", Some("file"), Some(42), None, Some("Test Title")).unwrap();
 
         let row = store.conn.query_row(
             "SELECT id, node_id, anchor_type, anchor_id, title, created_at, updated_at, anchor_key
@@ -3670,7 +3671,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
 
         store.conn.execute(
             "UPDATE conversations SET updated_at = '2000-01-01T00:00:00Z' WHERE id = 'conv-1'",
@@ -3689,7 +3690,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
 
         let msg: MessageRow = store.add_message("conv-1", "user", "Hello world").unwrap();
         assert_eq!(msg.conversation_id, "conv-1");
@@ -3705,7 +3706,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
 
         let msg = store.add_message("conv-1", "user", "Hello").unwrap();
         assert!(msg.id > 0);
@@ -3728,7 +3729,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
         assert!(store.add_message("conv-1", "invalid_role", "Hello").is_err());
     }
 
@@ -3737,7 +3738,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
 
         store.conn.execute(
             "UPDATE conversations SET updated_at = '2000-01-01T00:00:00Z' WHERE id = 'conv-1'",
@@ -3756,7 +3757,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
         assert!(store.list_messages("conv-1").unwrap().is_empty());
     }
 
@@ -3765,7 +3766,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
 
         store.add_message("conv-1", "user", "First").unwrap();
         store.add_message("conv-1", "assistant", "Second").unwrap();
@@ -3788,7 +3789,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
 
         store.add_message("conv-1", "user", "msg0").unwrap();
         store.add_message("conv-1", "assistant", "msg1").unwrap();
@@ -3808,7 +3809,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
         store.add_message("conv-1", "user", "msg0").unwrap();
 
         store.delete_messages_after("conv-1", 10).unwrap();
@@ -3820,7 +3821,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
 
         store.add_message("conv-1", "user", "msg0").unwrap();
         store.add_message("conv-1", "assistant", "msg1").unwrap();
@@ -3845,7 +3846,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, Some("Chat")).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, Some("Chat")).unwrap();
 
         store.conn.execute_batch(
             "CREATE TRIGGER test_block_touch_conversation
@@ -3873,7 +3874,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
         store.add_message("conv-1", "user", "msg").unwrap();
 
         store.delete_conversation("conv-1").unwrap();
@@ -3890,7 +3891,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
         store.add_message("conv-1", "user", "msg").unwrap();
 
         store.delete_node("a.md").unwrap();
@@ -3911,7 +3912,7 @@ mod tests {
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
 
-        store.create_conversation("conv-1", "a.md", None, None, Some("Chat")).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, Some("Chat")).unwrap();
         store.add_message("conv-1", "user", "Q1").unwrap();
         store.add_message("conv-1", "assistant", "A1").unwrap();
         store.add_message("conv-1", "user", "Q2").unwrap();
@@ -3943,16 +3944,28 @@ mod tests {
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
 
-        store.create_conversation("file-conv", "a.md", None, None, None).unwrap();
+        store.create_conversation("file-conv", "a.md", None, None, None, None).unwrap();
         let file_row = store.get_conversation("file-conv").unwrap().unwrap();
         assert_eq!(file_row.anchor_type, None);
         assert_eq!(file_row.anchor_id, None);
 
-        store.create_conversation("ann-conv", "a.md", Some("annotation"), Some(7), Some("On note")).unwrap();
+        store.create_conversation("ann-conv", "a.md", Some("annotation"), Some(7), None, Some("On note")).unwrap();
         let ann_row = store.get_conversation("ann-conv").unwrap().unwrap();
         assert_eq!(ann_row.anchor_type, Some("annotation".into()));
         assert_eq!(ann_row.anchor_id, Some(7));
         assert_eq!(ann_row.title, Some("On note".into()));
+    }
+
+    #[test]
+    fn create_conversation_with_anchor_key() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let row = store.create_conversation(
+            "conv-1", "a.md", Some("annotation"), Some(7), Some("abc-uuid-123"), Some("Chat"),
+        ).unwrap();
+        assert_eq!(row.anchor_key, Some("abc-uuid-123".into()));
     }
 
     #[test]
@@ -4002,7 +4015,7 @@ mod tests {
             .unwrap();
         assert_eq!(title, "Alpha");
 
-        store.create_conversation("conv-1", "a.md", None, None, Some("Test")).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, Some("Test")).unwrap();
         store.add_message("conv-1", "user", "Hello").unwrap();
         let msgs = store.list_messages("conv-1").unwrap();
         assert_eq!(msgs.len(), 1);
@@ -4013,7 +4026,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "Old Title", &["tag1"], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, Some("Chat")).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, Some("Chat")).unwrap();
         store.add_message("conv-1", "user", "Hello").unwrap();
 
         let node2 = make_node("a.md", "New Title", &["tag2"], json!({}));
@@ -4120,7 +4133,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, Some("Chat")).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, Some("Chat")).unwrap();
         store.add_message("conv-1", "user", "Hello").unwrap();
 
         store.conn.execute("DELETE FROM nodes WHERE id = 'a.md'", []).unwrap();
