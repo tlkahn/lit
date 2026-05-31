@@ -1,11 +1,13 @@
 import type { EditorView } from "@codemirror/view";
 import type { Annotation, AnnotationType } from "./ipc";
-import { resolveAnnotationScopeWithMode } from "./ipc";
+import { resolveAnnotationScopeWithMode, annotationFindUuid } from "./ipc";
 import { startLlmStream } from "./llmClient";
 import { classifyFireType } from "./fireClassification";
 import { useModalLockStore } from "../stores/modalLock";
 import { usePreferencesStore, type PreferencesState } from "../stores/preferences";
 import { useLlmResponseStore } from "../stores/llmResponse";
+import { useConversationStore } from "../stores/conversation";
+import { useWorkspaceStore } from "../stores/workspace";
 import { setFiringAnnotation, clearFiringAnnotation } from "../editor/livePreview/annotationWidgets";
 
 export interface FireAnnotationArgs {
@@ -79,9 +81,37 @@ export async function fireAnnotation(args: FireAnnotationArgs): Promise<void> {
   const text = buildFirePrompt(scopeText, annotation.body);
   const fireType = classifyFireType(annotation.annotation_type);
 
+  if (fireType === "persisting") {
+    try {
+      const nodeId = useWorkspaceStore.getState().currentPagePath;
+      if (!nodeId) return;
+
+      const uuid = await annotationFindUuid(
+        nodeId, annotation.annotation_type, annotation.body, annotation.char_start,
+      );
+      if (!uuid) return;
+
+      await useConversationStore.getState().sendAnnotationFire({
+        nodeId,
+        annotationUuid: uuid,
+        annotation,
+        content: annotation.body ?? "",
+        textOverride: text,
+        model: prefs.llmModel,
+        system: system || undefined,
+      });
+    } catch (err) {
+      console.error("sendAnnotationFire failed:", err);
+    } finally {
+      view.dispatch({ effects: clearFiringAnnotation.of(annotation.char_start) });
+      useModalLockStore.getState().setLlmLocked(false);
+      window.dispatchEvent(new CustomEvent("lit:fire-complete", { detail: { annotation } }));
+    }
+    return;
+  }
+
   useLlmResponseStore.getState().startStream({
     question: annotation.body ?? "",
-    fireSourceAnnotation: fireType === "persisting" ? annotation : undefined,
   });
 
   await startLlmStream(

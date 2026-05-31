@@ -9,18 +9,22 @@ import { firingAnnotationsField } from "../editor/livePreview/annotationWidgets"
 
 vi.mock("./ipc", () => ({
   resolveAnnotationScopeWithMode: vi.fn(async () => null),
+  annotationFindUuid: vi.fn(async () => "fake-uuid-123"),
 }));
 
 vi.mock("./llmClient", () => ({
   startLlmStream: vi.fn(async () => {}),
 }));
 
-import { resolveAnnotationScopeWithMode } from "./ipc";
+import { resolveAnnotationScopeWithMode, annotationFindUuid } from "./ipc";
 import { startLlmStream } from "./llmClient";
 import { fireAnnotation, buildFirePrompt, getTypePrompt, stripAnnotations } from "./fireOrchestrator";
+import { useConversationStore } from "../stores/conversation";
+import { useWorkspaceStore } from "../stores/workspace";
 
 const mockResolve = resolveAnnotationScopeWithMode as ReturnType<typeof vi.fn>;
 const mockStream = startLlmStream as ReturnType<typeof vi.fn>;
+const mockFindUuid = annotationFindUuid as ReturnType<typeof vi.fn>;
 
 function makeView(doc = "hello world", withFiringField = false): EditorView {
   const extensions = withFiringField ? [firingAnnotationsField] : [];
@@ -50,6 +54,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   useModalLockStore.setState({ llmLocked: false, openCount: 0, locked: false });
   useLlmResponseStore.getState().reset();
+  useWorkspaceStore.setState({ currentPagePath: "test/page.md" });
 });
 
 describe("buildFirePrompt", () => {
@@ -104,14 +109,14 @@ describe("fireAnnotation", () => {
   });
 
   it("reads type-specific system prompt from preferences", async () => {
-    usePreferencesStore.setState({ llmPromptQ: "Custom Q prompt" });
+    usePreferencesStore.setState({ llmPromptLlm: "Custom LLM prompt" });
     const view = makeView();
-    const ann = makeAnnotation({ annotation_type: "question" });
+    const ann = makeAnnotation({ annotation_type: "llm" });
 
     await fireAnnotation({ view, annotation: ann });
 
     const callArgs = mockStream.mock.calls[0]![0];
-    expect(callArgs.system).toBe("Custom Q prompt");
+    expect(callArgs.system).toBe("Custom LLM prompt");
     view.destroy();
   });
 
@@ -224,42 +229,6 @@ describe("fireAnnotation", () => {
     view.destroy();
   });
 
-  it("persisting type: does NOT replace document content on done", async () => {
-    const doc = "hello world";
-    const view = makeView(doc);
-    const ann = makeAnnotation({ annotation_type: "question", char_start: 0, char_end: 11 });
-
-    mockStream.mockImplementation(async (_args: unknown, callbacks: { onChunk: (t: string) => void; onDone: () => void }) => {
-      callbacks.onChunk("the answer");
-      callbacks.onDone();
-    });
-
-    await fireAnnotation({ view, annotation: ann });
-
-    expect(view.state.doc.toString()).toBe("hello world");
-    view.destroy();
-  });
-
-  // --- Cycle 10: Persisting fire sets fireSourceAnnotation ---
-
-  it("persisting type: sets fireSourceAnnotation in store", async () => {
-    const view = makeView();
-    const ann = makeAnnotation({ annotation_type: "question" });
-
-    mockStream.mockImplementation(async (_args: unknown, callbacks: { onChunk: (t: string) => void; onDone: () => void }) => {
-      callbacks.onChunk("response");
-      callbacks.onDone();
-    });
-
-    await fireAnnotation({ view, annotation: ann });
-
-    const store = useLlmResponseStore.getState();
-    expect(store.status).toBe("done");
-    expect(store.responseText).toBe("response");
-    expect(store.fireSourceAnnotation).toBe(ann);
-    view.destroy();
-  });
-
   it("replacing type: does NOT set fireSourceAnnotation", async () => {
     const view = makeView();
     const ann = makeAnnotation({ annotation_type: "llm" });
@@ -315,10 +284,10 @@ describe("fireAnnotation", () => {
   });
 
   it("excludes annotation syntax from scope text sent to LLM", async () => {
-    const doc = "接电话前先微笑\n%%! q \\p | what does this mean? %%";
+    const doc = "接电话前先微笑\n%%! llm | what does this mean? %%";
     const view = makeView(doc);
     const ann = makeAnnotation({
-      annotation_type: "question",
+      annotation_type: "llm",
       body: "what does this mean?",
       char_start: 8,
       char_end: doc.length,
@@ -336,13 +305,13 @@ describe("fireAnnotation", () => {
   });
 
   it("strips multiple annotations from scope text", async () => {
-    const doc = "paragraph %%! n | note1 %% middle %%! q | note2 %% end";
+    const doc = "paragraph %%! todo | note1 %% middle %%! todo | note2 %% end";
     const view = makeView(doc);
     const ann = makeAnnotation({
-      annotation_type: "note",
+      annotation_type: "todo",
       body: "note1",
       char_start: 10,
-      char_end: 33,
+      char_end: 39,
     });
     mockResolve.mockResolvedValue({ start: 0, end: doc.length });
 
@@ -354,6 +323,163 @@ describe("fireAnnotation", () => {
     expect(streamArgs.text).toContain("paragraph");
     expect(streamArgs.text).toContain("middle");
     expect(streamArgs.text).toContain("end");
+    view.destroy();
+  });
+
+  // --- Cycle 6.1: Persisting fires route through conversation store ---
+
+  it("persisting type: calls sendAnnotationFire on conversation store", async () => {
+    const sendSpy = vi.fn().mockResolvedValue(undefined);
+    useConversationStore.setState({ sendAnnotationFire: sendSpy });
+    mockFindUuid.mockResolvedValue("uuid-abc");
+    const view = makeView();
+    const ann = makeAnnotation({ annotation_type: "question", body: "what is this?" });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    expect(sendSpy).toHaveBeenCalledOnce();
+    const callArg = sendSpy.mock.calls[0]![0] as Record<string, unknown>;
+    expect(callArg.nodeId).toBe("test/page.md");
+    expect(callArg.annotationUuid).toBe("uuid-abc");
+    expect(callArg.annotation).toBe(ann);
+    expect(callArg.content).toBe("what is this?");
+    expect(callArg.model).toBe(usePreferencesStore.getState().llmModel);
+    view.destroy();
+  });
+
+  it("persisting type: does NOT call startLlmStream directly", async () => {
+    useConversationStore.setState({ sendAnnotationFire: vi.fn(async () => {}) });
+    const view = makeView();
+    const ann = makeAnnotation({ annotation_type: "question" });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    expect(mockStream).not.toHaveBeenCalled();
+    view.destroy();
+  });
+
+  it("persisting type: passes system prompt and textOverride", async () => {
+    usePreferencesStore.setState({ llmPromptQ: "Custom Q prompt" });
+    const sendSpy = vi.fn().mockResolvedValue(undefined);
+    useConversationStore.setState({ sendAnnotationFire: sendSpy });
+    mockResolve.mockResolvedValue({ start: 0, end: 5 });
+    const view = makeView("hello world");
+    const ann = makeAnnotation({ annotation_type: "question", body: "what?" });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    const callArg = sendSpy.mock.calls[0]![0] as Record<string, unknown>;
+    expect(callArg.system).toBe("Custom Q prompt");
+    expect(callArg.textOverride).toContain("hello");
+    expect(callArg.textOverride).toContain("what?");
+    view.destroy();
+  });
+
+  it("persisting type: calls annotationFindUuid with correct args", async () => {
+    useConversationStore.setState({ sendAnnotationFire: vi.fn(async () => {}) });
+    const view = makeView();
+    const ann = makeAnnotation({
+      annotation_type: "note",
+      body: "my note",
+      char_start: 5,
+    });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    expect(mockFindUuid).toHaveBeenCalledWith("test/page.md", "note", "my note", 5);
+    view.destroy();
+  });
+
+  it("persisting type: clears firing and unlocks when sendAnnotationFire resolves", async () => {
+    useConversationStore.setState({ sendAnnotationFire: vi.fn(async () => {}) });
+    const completeSpy = vi.fn();
+    window.addEventListener("lit:fire-complete", completeSpy);
+    const view = makeView("hello world", true);
+    const ann = makeAnnotation({ annotation_type: "question", char_start: 0 });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    expect(useModalLockStore.getState().llmLocked).toBe(false);
+    expect(view.state.field(firingAnnotationsField).has(0)).toBe(false);
+    expect(completeSpy).toHaveBeenCalledOnce();
+    window.removeEventListener("lit:fire-complete", completeSpy);
+    view.destroy();
+  });
+
+  it("persisting type: clears firing and unlocks when sendAnnotationFire rejects", async () => {
+    useConversationStore.setState({
+      sendAnnotationFire: vi.fn(async () => { throw new Error("stream failed"); }),
+    });
+    const completeSpy = vi.fn();
+    window.addEventListener("lit:fire-complete", completeSpy);
+    const view = makeView("hello world", true);
+    const ann = makeAnnotation({ annotation_type: "question", char_start: 0 });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    expect(useModalLockStore.getState().llmLocked).toBe(false);
+    expect(view.state.field(firingAnnotationsField).has(0)).toBe(false);
+    expect(completeSpy).toHaveBeenCalledOnce();
+    window.removeEventListener("lit:fire-complete", completeSpy);
+    view.destroy();
+  });
+
+  it("persisting type: skips sendAnnotationFire when annotationFindUuid returns null", async () => {
+    const sendSpy = vi.fn().mockResolvedValue(undefined);
+    useConversationStore.setState({ sendAnnotationFire: sendSpy });
+    mockFindUuid.mockResolvedValue(null);
+    const view = makeView("hello world", true);
+    const ann = makeAnnotation({ annotation_type: "question", char_start: 0 });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(useModalLockStore.getState().llmLocked).toBe(false);
+    expect(view.state.field(firingAnnotationsField).has(0)).toBe(false);
+    view.destroy();
+  });
+
+  it("persisting type: skips when currentPagePath is null", async () => {
+    useWorkspaceStore.setState({ currentPagePath: null });
+    const sendSpy = vi.fn().mockResolvedValue(undefined);
+    useConversationStore.setState({ sendAnnotationFire: sendSpy });
+    const view = makeView("hello world", true);
+    const ann = makeAnnotation({ annotation_type: "question", char_start: 0 });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    expect(mockFindUuid).not.toHaveBeenCalled();
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(useModalLockStore.getState().llmLocked).toBe(false);
+    expect(view.state.field(firingAnnotationsField).has(0)).toBe(false);
+    view.destroy();
+  });
+
+  it("persisting type: does NOT call startStream on llmResponse store", async () => {
+    useConversationStore.setState({ sendAnnotationFire: vi.fn(async () => {}) });
+    const view = makeView();
+    const ann = makeAnnotation({ annotation_type: "question" });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    expect(useLlmResponseStore.getState().status).toBe("idle");
+    view.destroy();
+  });
+
+  it("persisting type: passes annotation body as content, scope+body as textOverride", async () => {
+    const sendSpy = vi.fn().mockResolvedValue(undefined);
+    useConversationStore.setState({ sendAnnotationFire: sendSpy });
+    mockFindUuid.mockResolvedValue("uuid-content-test");
+    mockResolve.mockResolvedValue({ start: 0, end: 5 });
+    const view = makeView("hello world");
+    const ann = makeAnnotation({ annotation_type: "question", body: "what is this?" });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    const callArg = sendSpy.mock.calls[0]![0] as Record<string, unknown>;
+    expect(callArg.content).toBe("what is this?");
+    expect(callArg.textOverride).toContain("hello");
+    expect(callArg.textOverride).toContain("what is this?");
     view.destroy();
   });
 });
