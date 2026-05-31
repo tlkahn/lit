@@ -1,6 +1,3 @@
-use std::collections::HashMap;
-use std::sync::Mutex;
-
 const SERVICE_NAME: &str = "com.lit.app";
 const ACCOUNT_OPENAI: &str = "openai-api-key";
 const ACCOUNT_ANTHROPIC: &str = "anthropic-api-key";
@@ -12,18 +9,21 @@ pub trait CredentialStore: Send + Sync {
     fn delete(&self, service: &str, account: &str) -> Result<(), String>;
 }
 
+#[cfg(test)]
 pub struct InMemoryStore {
-    data: Mutex<HashMap<(String, String), String>>,
+    data: std::sync::Mutex<std::collections::HashMap<(String, String), String>>,
 }
 
+#[cfg(test)]
 impl InMemoryStore {
     pub fn new() -> Self {
         Self {
-            data: Mutex::new(HashMap::new()),
+            data: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
 }
 
+#[cfg(test)]
 impl CredentialStore for InMemoryStore {
     fn set(&self, service: &str, account: &str, password: &str) -> Result<(), String> {
         self.data
