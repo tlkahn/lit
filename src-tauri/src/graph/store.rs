@@ -918,7 +918,7 @@ impl Store {
                 uuid: row.get(4)?,
             })
         })?;
-        Ok(rows.filter_map(|r| r.ok()).collect())
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
     pub fn upsert_annotations(&self, node_id: &str, annotations: &[IndexableAnnotation]) -> Result<Vec<String>, GraphError> {
@@ -946,6 +946,7 @@ impl Store {
             "INSERT INTO annotations(node_id, annotation_type, certainty, body, date, source_line, char_start, char_end, scope_kind, scope_value, uuid)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         )?;
+        let mut inserted_rowids = Vec::with_capacity(diff.inserts.len());
         for &new_idx in &diff.inserts {
             let ann = &annotations[new_idx];
             let uuid_val = uuid::Uuid::new_v4().to_string();
@@ -962,6 +963,7 @@ impl Store {
                 ann.scope_value,
                 uuid_val,
             ])?;
+            inserted_rowids.push(self.conn.last_insert_rowid());
         }
 
         let deleted_uuids: Vec<String> = diff.deletes.iter()
@@ -972,12 +974,24 @@ impl Store {
             self.conn.execute("DELETE FROM annotations WHERE id = ?1", [existing[old_idx].id])?;
         }
 
-        self.conn.execute("DELETE FROM annotations_fts WHERE node_id = ?1", [node_id])?;
-        self.conn.execute(
-            "INSERT INTO annotations_fts(rowid, body, node_id, annotation_type)
-             SELECT id, body, node_id, annotation_type FROM annotations WHERE node_id = ?1 AND body IS NOT NULL",
-            [node_id],
-        )?;
+        // Incremental FTS maintenance: only touch rows that changed
+        if !diff.inserts.is_empty() || !diff.deletes.is_empty() {
+            // Delete FTS rows for removed annotations
+            for &old_idx in &diff.deletes {
+                self.conn.execute(
+                    "DELETE FROM annotations_fts WHERE rowid = ?1",
+                    [existing[old_idx].id],
+                )?;
+            }
+            // Insert FTS rows for newly added annotations
+            let mut fts_insert = self.conn.prepare(
+                "INSERT INTO annotations_fts(rowid, body, node_id, annotation_type)
+                 SELECT id, body, node_id, annotation_type FROM annotations WHERE id = ?1 AND body IS NOT NULL",
+            )?;
+            for rowid in &inserted_rowids {
+                fts_insert.execute([rowid])?;
+            }
+        }
 
         Ok(deleted_uuids)
     }
@@ -2950,6 +2964,49 @@ mod tests {
         assert_eq!(new_rows[1].0, old_rows[1].0);
     }
 
+    #[test]
+    fn upsert_annotations_fts_rowids_stable_on_update_only() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        // Insert two annotations with bodies
+        let anns = vec![
+            super::IndexableAnnotation { char_start: 10, ..make_annotation("note", Some("alpha body")) },
+            super::IndexableAnnotation { char_start: 50, ..make_annotation("note", Some("beta body")) },
+        ];
+        store.upsert_annotations("a.md", &anns).unwrap();
+
+        // Capture FTS rowids
+        let rowids_before: Vec<i64> = store.conn
+            .prepare("SELECT rowid FROM annotations_fts WHERE node_id = 'a.md' ORDER BY rowid")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        assert_eq!(rowids_before.len(), 2);
+
+        // Re-upsert the SAME annotations with shifted char_start (update-only diff)
+        let anns2 = vec![
+            super::IndexableAnnotation { char_start: 15, ..make_annotation("note", Some("alpha body")) },
+            super::IndexableAnnotation { char_start: 55, ..make_annotation("note", Some("beta body")) },
+        ];
+        store.upsert_annotations("a.md", &anns2).unwrap();
+
+        // Capture FTS rowids again
+        let rowids_after: Vec<i64> = store.conn
+            .prepare("SELECT rowid FROM annotations_fts WHERE node_id = 'a.md' ORDER BY rowid")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+
+        // Rowids must be identical — no delete+re-insert churn
+        assert_eq!(rowids_before, rowids_after);
+    }
+
     // --- Cycle 5: delete_node cascades ---
 
     #[test]
@@ -4470,5 +4527,42 @@ mod tests {
             [], |r| r.get(0),
         ).unwrap();
         assert!(idx_sql.contains("UNIQUE"), "idx_conversations_anchor should be UNIQUE");
+    }
+
+    #[test]
+    fn fetch_existing_annotations_propagates_row_error() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1000).unwrap();
+
+        // Recreate the annotations table without NOT NULL on uuid so we can
+        // insert a row with NULL uuid, which will fail deserialization
+        // (ExistingAnnotation.uuid is String, not Option<String>).
+        store.conn.execute_batch(
+            "DROP TABLE annotations;
+             CREATE TABLE annotations (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 node_id TEXT NOT NULL,
+                 annotation_type TEXT NOT NULL,
+                 certainty TEXT NOT NULL,
+                 body TEXT,
+                 date TEXT,
+                 source_line INTEGER NOT NULL,
+                 char_start INTEGER NOT NULL,
+                 char_end INTEGER NOT NULL,
+                 scope_kind TEXT NOT NULL,
+                 scope_value TEXT NOT NULL,
+                 uuid TEXT
+             );"
+        ).unwrap();
+
+        store.conn.execute(
+            "INSERT INTO annotations(node_id, annotation_type, certainty, body, date, source_line, char_start, char_end, scope_kind, scope_value, uuid)
+             VALUES ('a.md', 'highlight', 'certain', NULL, NULL, 1, 0, 10, 'line', '1', NULL)",
+            [],
+        ).unwrap();
+
+        let result = store.fetch_existing_annotations("a.md");
+        assert!(result.is_err(), "should propagate row-level deserialization error for NULL uuid");
     }
 }

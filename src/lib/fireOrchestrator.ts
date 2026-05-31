@@ -47,7 +47,7 @@ export function buildFirePrompt(scopeText: string, body: string | null): string 
   return parts.join("\n\n");
 }
 
-export async function fireAnnotation(args: FireAnnotationArgs): Promise<void> {
+export async function fireAnnotation(args: FireAnnotationArgs): Promise<(() => void) | void> {
   const { view, annotation } = args;
 
   if (useModalLockStore.getState().llmLocked) {
@@ -108,11 +108,24 @@ export async function fireAnnotation(args: FireAnnotationArgs): Promise<void> {
 
     useBottomPanelStore.getState().handleTabClick("llm-response");
 
+    const title = annotation.body
+      ? `${annotation.annotation_type}: ${annotation.body}`
+      : annotation.annotation_type;
+
+    let cleaned = false;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      unsubscribe();
+      try { view.dispatch({ effects: clearFiringAnnotation.of(annotation.char_start) }); } catch { /* view destroyed */ }
+      useModalLockStore.getState().setLlmLocked(false);
+      window.dispatchEvent(new CustomEvent("lit:fire-complete", { detail: { annotation } }));
+    };
+
     const unsubscribe = useLlmResponseStore.subscribe((state, prev) => {
+      if (cleaned) return;
       if (state.status !== prev.status && (state.status === "done" || state.status === "error")) {
-        view.dispatch({ effects: clearFiringAnnotation.of(annotation.char_start) });
-        window.dispatchEvent(new CustomEvent("lit:fire-complete", { detail: { annotation } }));
-        unsubscribe();
+        cleanup();
       }
     });
 
@@ -120,21 +133,24 @@ export async function fireAnnotation(args: FireAnnotationArgs): Promise<void> {
       nodeId,
       annotationUuid: uuid,
       annotation,
-      content: annotation.body ?? "",
+      content: annotation.body ?? text,
       textOverride: text,
       model: prefs.llmModel,
       system: system || undefined,
+      title,
     })
       .catch((err) => console.error("sendAnnotationFire failed:", err))
       .finally(() => {
-        if (useLlmResponseStore.getState().status === "idle") {
-          unsubscribe();
-          view.dispatch({ effects: clearFiringAnnotation.of(annotation.char_start) });
-          useModalLockStore.getState().setLlmLocked(false);
-          window.dispatchEvent(new CustomEvent("lit:fire-complete", { detail: { annotation } }));
+        if (useLlmResponseStore.getState().status !== "streaming") {
+          cleanup();
         }
       });
-    return;
+
+    const dispose = () => {
+      cleanup();
+    };
+
+    return dispose;
   }
 
   useLlmResponseStore.getState().startStream({
@@ -148,19 +164,21 @@ export async function fireAnnotation(args: FireAnnotationArgs): Promise<void> {
       onDone: () => {
         const responseText = useLlmResponseStore.getState().responseText;
         useLlmResponseStore.getState().finishStream();
-        view.dispatch({ effects: clearFiringAnnotation.of(annotation.char_start) });
+        try { view.dispatch({ effects: clearFiringAnnotation.of(annotation.char_start) }); } catch { /* view destroyed */ }
 
         if (fireType === "replacing") {
-          view.dispatch({
-            changes: { from: annotation.char_start, to: annotation.char_end, insert: responseText },
-          });
+          try {
+            view.dispatch({
+              changes: { from: annotation.char_start, to: annotation.char_end, insert: responseText },
+            });
+          } catch { /* view destroyed */ }
         }
 
         useModalLockStore.getState().setLlmLocked(false);
         window.dispatchEvent(new CustomEvent("lit:fire-complete", { detail: { annotation } }));
       },
       onError: (error) => {
-        view.dispatch({ effects: clearFiringAnnotation.of(annotation.char_start) });
+        try { view.dispatch({ effects: clearFiringAnnotation.of(annotation.char_start) }); } catch { /* view destroyed */ }
         useLlmResponseStore.getState().setError(error.message);
         useModalLockStore.getState().setLlmLocked(false);
         window.dispatchEvent(new CustomEvent("lit:fire-complete", { detail: { annotation, error: error.message } }));

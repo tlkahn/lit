@@ -77,10 +77,10 @@ export const annotationPlugin = ViewPlugin.fromClass(
             if (this.view.state.doc.toString() !== this.lastDocStr) return;
             const uuidMap = new Map<string, string>();
             for (const ia of indexed) {
-              uuidMap.set(`${ia.annotation_type}:${ia.char_start}`, ia.uuid);
+              uuidMap.set(`${ia.annotation_type}:${ia.char_start}:${ia.char_end}`, ia.uuid);
             }
             for (const ann of annotations) {
-              const key = `${ann.annotation_type}:${ann.char_start}`;
+              const key = `${ann.annotation_type}:${ann.char_start}:${ann.char_end}`;
               const uuid = uuidMap.get(key);
               if (uuid) ann.uuid = uuid;
             }
@@ -178,11 +178,15 @@ export function findAnnotationAtCursor(
 const fireAnnotationPlugin = ViewPlugin.fromClass(
   class {
     private handler: (e: Event) => void;
+    private disposeFireCleanup: (() => void) | null = null;
     constructor(private view: EditorView) {
       this.handler = (e: Event) => {
         const detail = (e as CustomEvent).detail;
         if (detail?.annotation) {
-          fireAnnotation({ view: this.view, annotation: detail.annotation });
+          const result = fireAnnotation({ view: this.view, annotation: detail.annotation });
+          result.then((cleanup) => {
+            if (typeof cleanup === "function") this.disposeFireCleanup = cleanup;
+          });
         }
       };
       window.addEventListener("lit:fire-annotation", this.handler);
@@ -192,6 +196,8 @@ const fireAnnotationPlugin = ViewPlugin.fromClass(
     }
     destroy() {
       window.removeEventListener("lit:fire-annotation", this.handler);
+      this.disposeFireCleanup?.();
+      this.disposeFireCleanup = null;
     }
   },
 );
@@ -220,10 +226,12 @@ const companionInsertPlugin = ViewPlugin.fromClass(
 const llmLockBridgePlugin = ViewPlugin.fromClass(
   class {
     private unsub: () => void;
+    private destroyed = false;
     constructor(private view: EditorView) {
       const initial = useModalLockStore.getState().llmLocked;
       if (initial) {
         queueMicrotask(() => {
+          if (this.destroyed) return;
           this.view.dispatch({ effects: setLlmLockedEffect.of(true) });
         });
       }
@@ -237,6 +245,7 @@ const llmLockBridgePlugin = ViewPlugin.fromClass(
       this.view = update.view;
     }
     destroy() {
+      this.destroyed = true;
       this.unsub();
     }
   },
@@ -287,12 +296,14 @@ const conversationThreadBridgePlugin = ViewPlugin.fromClass(
   class {
     private unsub: () => void;
     private lastKeys: Set<string>;
+    private destroyed = false;
 
     constructor(private view: EditorView) {
       const initial = deriveThreadKeys(useConversationStore.getState().conversations);
       this.lastKeys = initial;
       if (initial.size > 0) {
         queueMicrotask(() => {
+          if (this.destroyed) return;
           this.view.dispatch({ effects: setAnnotationThreadKeys.of(initial) });
         });
       }
@@ -308,6 +319,7 @@ const conversationThreadBridgePlugin = ViewPlugin.fromClass(
       this.view = update.view;
     }
     destroy() {
+      this.destroyed = true;
       this.unsub();
     }
   },

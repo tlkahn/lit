@@ -558,6 +558,44 @@ describe("fireAnnotation", () => {
     view.destroy();
   });
 
+  it("persisting type: returns a dispose function", async () => {
+    useConversationStore.setState({
+      sendAnnotationFire: vi.fn(async () => {
+        useLlmResponseStore.getState().startStream({ question: "test" });
+      }),
+    });
+    const view = makeView("hello world", true);
+    const ann = makeAnnotation({ annotation_type: "question", char_start: 0 });
+
+    const result = await fireAnnotation({ view, annotation: ann });
+
+    expect(typeof result).toBe("function");
+    view.destroy();
+  });
+
+  it("persisting type: destroying view mid-stream does not throw when stream finishes", async () => {
+    useConversationStore.setState({
+      sendAnnotationFire: vi.fn(async () => {
+        useLlmResponseStore.getState().startStream({ question: "test" });
+      }),
+    });
+    const view = makeView("hello world", true);
+    const ann = makeAnnotation({ annotation_type: "question", char_start: 0 });
+
+    const dispose = await fireAnnotation({ view, annotation: ann });
+    expect(typeof dispose).toBe("function");
+
+    // Destroy the view mid-stream
+    view.destroy();
+    // Call dispose (simulates what fireAnnotationPlugin.destroy() does)
+    (dispose as () => void)();
+
+    // Finishing the stream should not throw even though the view is destroyed
+    expect(() => {
+      useLlmResponseStore.getState().finishStream();
+    }).not.toThrow();
+  });
+
   it("persisting type: passes annotation body as content, scope+body as textOverride", async () => {
     const sendSpy = vi.fn().mockResolvedValue(undefined);
     useConversationStore.setState({ sendAnnotationFire: sendSpy });
@@ -572,6 +610,86 @@ describe("fireAnnotation", () => {
     expect(callArg.content).toBe("what is this?");
     expect(callArg.textOverride).toContain("hello");
     expect(callArg.textOverride).toContain("what is this?");
+    view.destroy();
+  });
+
+  it("persisting type: uses scope text as content when annotation body is null", async () => {
+    const sendSpy = vi.fn().mockResolvedValue(undefined);
+    useConversationStore.setState({ sendAnnotationFire: sendSpy });
+    mockFindUuid.mockResolvedValue("uuid-null-body");
+    mockResolve.mockResolvedValue({ start: 0, end: 5 });
+    const view = makeView("hello world");
+    const ann = makeAnnotation({ annotation_type: "question", body: null });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    const callArg = sendSpy.mock.calls[0]![0] as Record<string, unknown>;
+    // content should NOT be empty — it should be the scope text via buildFirePrompt
+    expect(callArg.content).not.toBe("");
+    expect(callArg.content).toBe(buildFirePrompt("hello", null));
+    view.destroy();
+  });
+
+  // --- Fix: persisting branch cleanup / unlock tests ---
+
+  it("persisting type: passes derived title to sendAnnotationFire", async () => {
+    const sendSpy = vi.fn().mockResolvedValue(undefined);
+    useConversationStore.setState({ sendAnnotationFire: sendSpy });
+    mockFindUuid.mockResolvedValue("uuid-title-test");
+
+    // Case 1: annotation with body
+    const view1 = makeView();
+    const ann1 = makeAnnotation({ annotation_type: "question", body: "what is X?" });
+    await fireAnnotation({ view: view1, annotation: ann1 });
+    // Need to reset lock for next fire
+    useModalLockStore.setState({ llmLocked: false });
+
+    const callArg1 = sendSpy.mock.calls[0]![0] as Record<string, unknown>;
+    expect(callArg1.title).toBe("question: what is X?");
+    view1.destroy();
+
+    // Case 2: annotation with null body
+    const view2 = makeView();
+    const ann2 = makeAnnotation({ annotation_type: "note", body: null });
+    await fireAnnotation({ view: view2, annotation: ann2 });
+
+    const callArg2 = sendSpy.mock.calls[1]![0] as Record<string, unknown>;
+    expect(callArg2.title).toBe("note");
+    view2.destroy();
+  });
+
+  it("persisting type: unlocks when sendAnnotationFire resolves with non-streaming status", async () => {
+    // sendAnnotationFire resolves without starting a stream (status stays idle)
+    useConversationStore.setState({ sendAnnotationFire: vi.fn(async () => {}) });
+    const view = makeView("hello world", true);
+    const ann = makeAnnotation({ annotation_type: "question", char_start: 0 });
+
+    await fireAnnotation({ view, annotation: ann });
+    await flushPromises();
+
+    expect(useModalLockStore.getState().llmLocked).toBe(false);
+    view.destroy();
+  });
+
+  it("persisting type: unlocks when stream finishes via subscriber", async () => {
+    // sendAnnotationFire starts a stream — the subscriber should unlock on done
+    useConversationStore.setState({
+      sendAnnotationFire: vi.fn(async () => {
+        useLlmResponseStore.getState().startStream({ question: "test" });
+      }),
+    });
+    const view = makeView("hello world", true);
+    const ann = makeAnnotation({ annotation_type: "question", char_start: 0 });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    // Status is streaming, so .finally() should NOT have unlocked
+    expect(useModalLockStore.getState().llmLocked).toBe(true);
+
+    // Finish the stream — subscriber should call cleanup and unlock
+    useLlmResponseStore.getState().finishStream();
+
+    expect(useModalLockStore.getState().llmLocked).toBe(false);
     view.destroy();
   });
 });

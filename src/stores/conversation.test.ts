@@ -1797,4 +1797,46 @@ describe("conversation store", () => {
 
     expect(mockedConversationDeleteByAnchor).not.toHaveBeenCalled();
   });
+
+  // --- Group T: sendAnnotationFire race condition regression ---
+
+  it("sendAnnotationFire posts to correct thread even when activeConversationId is sabotaged mid-flight", async () => {
+    const THREAD_ID = "annotation-thread-id";
+    vi.spyOn(crypto, "randomUUID").mockReturnValue(THREAD_ID as `${string}-${string}-${string}-${string}-${string}`);
+    mockedConversationFindByAnchor.mockResolvedValue(null);
+    mockedConversationCreate.mockResolvedValue({
+      ...fakeConversation,
+      id: THREAD_ID,
+      anchor_type: "annotation",
+      anchor_key: "ann-uuid-1",
+    });
+
+    // Sabotage: as soon as activeConversationId is set to the correct thread,
+    // a concurrent action overwrites it with a different value.
+    const SABOTAGED_ID = "sabotaged-conv-id";
+    const unsub = useConversationStore.subscribe((state) => {
+      if (state.activeConversationId === THREAD_ID) {
+        useConversationStore.setState({ activeConversationId: SABOTAGED_ID });
+      }
+    });
+
+    const persistedMsg: MessageRow = {
+      id: 10, conversation_id: THREAD_ID, role: "user",
+      content: "fire content", seq: 1, created_at: "2025-01-01T00:00:01Z",
+    };
+    mockedConversationAddMessage.mockResolvedValue(persistedMsg);
+    mockedStartLlmStream.mockResolvedValue(undefined);
+
+    await useConversationStore.getState().sendAnnotationFire({
+      nodeId: "node-1",
+      annotationUuid: "ann-uuid-1",
+      annotation: fakeAnnotation,
+      content: "fire content",
+      model: "test-model",
+    });
+    unsub();
+
+    // The message must be posted to the correct annotation thread, NOT the sabotaged one.
+    expect(mockedConversationAddMessage).toHaveBeenCalledWith(THREAD_ID, "user", "fire content");
+  });
 });

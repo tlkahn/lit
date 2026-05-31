@@ -44,10 +44,7 @@ pub fn write_page(
         let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
         let result = gi.reindex_file(&relative_path, ann_enabled);
         drop(indices);
-        crate::commands::graph::emit_reindex_result(&app_handle, &result);
-        if let Ok(removed) = &result {
-            crate::commands::graph::emit_annotations_removed(&app_handle, removed);
-        }
+        crate::commands::graph::emit_reindex_side_effects(&app_handle, &result);
     }
 
     Ok(())
@@ -206,8 +203,7 @@ pub fn rewrite_vault_links(
             Some(e) => Err(e),
             None => Ok(()),
         };
-        crate::commands::graph::emit_reindex_result(&app_handle, &result);
-        crate::commands::graph::emit_annotations_removed(&app_handle, &all_removed);
+        crate::commands::graph::emit_reindex_side_effects_with_removed(&app_handle, &result, &all_removed);
     }
 
     if let Ok(oplog) = oplog_state.get_oplog(&root) {

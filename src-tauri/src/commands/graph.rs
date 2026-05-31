@@ -42,6 +42,27 @@ pub(crate) fn emit_annotations_removed(handle: &tauri::AppHandle, removed: &[(St
     let _ = handle.emit("lit:annotations-removed", &payload);
 }
 
+/// Combined emit for single-file reindex results (result carries removed pairs in Ok).
+pub(crate) fn emit_reindex_side_effects(
+    handle: &tauri::AppHandle,
+    result: &Result<Vec<(String, String)>, crate::graph::error::GraphError>,
+) {
+    emit_reindex_result(handle, result);
+    if let Ok(removed) = result {
+        emit_annotations_removed(handle, removed);
+    }
+}
+
+/// Combined emit for batch reindex results (removed pairs collected separately).
+pub(crate) fn emit_reindex_side_effects_with_removed(
+    handle: &tauri::AppHandle,
+    result: &Result<(), crate::graph::error::GraphError>,
+    removed: &[(String, String)],
+) {
+    emit_reindex_result(handle, result);
+    emit_annotations_removed(handle, removed);
+}
+
 pub struct GraphRegistry {
     pub indices: Mutex<HashMap<PathBuf, Arc<GraphIndex>>>,
 }
@@ -512,10 +533,7 @@ pub fn link_unlinked_mention(
     if let Some(gi) = gi {
         let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
         let result = gi.reindex_file(&source_id, ann_enabled);
-        emit_reindex_result(&app_handle, &result);
-        if let Ok(removed) = &result {
-            emit_annotations_removed(&app_handle, removed);
-        }
+        emit_reindex_side_effects(&app_handle, &result);
     }
 
     Ok(())
@@ -1176,8 +1194,7 @@ pub fn rewrite_links(
             Some(e) => Err(e),
             None => Ok(()),
         };
-        emit_reindex_result(&app_handle, &result);
-        emit_annotations_removed(&app_handle, &all_removed);
+        emit_reindex_side_effects_with_removed(&app_handle, &result, &all_removed);
     }
 
     Ok(summary)

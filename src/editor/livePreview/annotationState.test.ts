@@ -434,6 +434,34 @@ describe("annotationPlugin", () => {
     view.destroy();
   });
 
+  it("enriches correct UUIDs when two annotations share type and char_start", async () => {
+    const parsedAnn1 = makeAnnotation({ annotation_type: "note", char_start: 5, char_end: 15 });
+    const parsedAnn2 = makeAnnotation({ annotation_type: "note", char_start: 5, char_end: 25 });
+    vi.mocked(parseAnnotations).mockResolvedValue([parsedAnn1, parsedAnn2]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+    mockListAnnotations.mockResolvedValue([
+      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: null, date: null, source_line: 1, char_start: 5, char_end: 15, uuid: "uuid-short" },
+      { annotation_id: 2, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: null, date: null, source_line: 1, char_start: 5, char_end: 25, uuid: "uuid-long" },
+    ]);
+
+    const state = EditorState.create({
+      doc: "hello world!!! more text here",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const data = view.state.field(annotationDataField);
+    view.destroy();
+
+    expect(data).toHaveLength(2);
+    const short = data.find((a) => a.char_end === 15);
+    const long = data.find((a) => a.char_end === 25);
+    expect(short!.uuid).toBe("uuid-short");
+    expect(long!.uuid).toBe("uuid-long");
+  });
+
   it("discards stale enrichment when doc changes during listAnnotations", async () => {
     const parsedAnn = makeAnnotation({ annotation_type: "note", char_start: 0, char_end: 5 });
     vi.mocked(parseAnnotations).mockResolvedValue([parsedAnn]);
@@ -1003,6 +1031,18 @@ describe("llmLockBridgePlugin", () => {
     view.destroy();
     expect(() => useModalLockStore.getState().setLlmLocked(true)).not.toThrow();
   });
+
+  it("does not dispatch on destroyed view when microtask fires after destroy", async () => {
+    useModalLockStore.setState({ llmLocked: true });
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+    view.destroy();
+    await new Promise<void>((r) => queueMicrotask(r));
+    // If the destroyed guard is missing, dispatching on a destroyed view would crash.
+    // The test passes without throwing.
+  });
 });
 
 describe("openAnnotationThreadPlugin", () => {
@@ -1324,6 +1364,23 @@ describe("conversationThreadBridgePlugin", () => {
     expect(view.state.field(annotationThreadKeysField).size).toBe(0);
 
     view.destroy();
+  });
+
+  it("does not dispatch on destroyed view when microtask fires after destroy", async () => {
+    useConversationStore.setState({
+      conversations: [
+        makeConversationRow({ anchor_type: "annotation", anchor_key: "uuid-destroy" }),
+      ],
+    });
+
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+    view.destroy();
+    await new Promise<void>((r) => queueMicrotask(r));
+    // If the destroyed guard is missing, dispatching on a destroyed view would crash.
+    // The test passes without throwing.
   });
 });
 

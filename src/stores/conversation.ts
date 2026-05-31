@@ -30,6 +30,7 @@ interface StreamArgs {
 interface SendMessageArgs extends StreamArgs {
   content: string;
   textOverride?: string;
+  conversationId?: string;
 }
 
 interface SendAnnotationFireArgs {
@@ -214,7 +215,7 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
   },
 
   sendMessage: async (args: SendMessageArgs) => {
-    const convId = get().activeConversationId;
+    const convId = args.conversationId ?? get().activeConversationId;
     if (convId === null) {
       set({ error: "No active conversation" });
       return;
@@ -271,6 +272,7 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
       nodeId: args.nodeId,
       neighborsDepth: args.neighborsDepth,
       fireSourceAnnotation: args.annotation,
+      conversationId: convId,
     });
   },
 
