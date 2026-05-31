@@ -242,7 +242,7 @@ describe("MessageBubble", () => {
     expect(span!.textContent).toBe("");
   });
 
-  it("does not show Insert/Replace on non-latest assistant messages", () => {
+  it("does not show Insert/Replace when showEditorActions is false", () => {
     const msg = makeMessage({ role: "assistant", content: "Old response" });
     const { queryByTestId } = render(
       <MessageBubble message={msg} isLast={false} showEditorActions={false} hadSelection={false} />,
