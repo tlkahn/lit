@@ -93,6 +93,7 @@ pub struct AnnotationSearchResult {
     pub source_line: u32,
     pub char_start: usize,
     pub char_end: usize,
+    pub uuid: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -123,6 +124,7 @@ pub struct ConversationRow {
     pub title: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    pub anchor_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -361,6 +363,7 @@ mod tests {
             title: Some("Discussion about X".into()),
             created_at: "2026-05-30T12:00:00Z".into(),
             updated_at: "2026-05-30T12:30:00Z".into(),
+            anchor_key: None,
         };
         let json_str = serde_json::to_string(&row).expect("serialize");
         let back: ConversationRow = serde_json::from_str(&json_str).expect("deserialize");
@@ -395,6 +398,7 @@ mod tests {
             source_line: 3,
             char_start: 10,
             char_end: 30,
+            uuid: "550e8400-e29b-41d4-a716-446655440000".into(),
         };
         let json_str = serde_json::to_string(&asr).expect("serialize");
         let back: AnnotationSearchResult = serde_json::from_str(&json_str).expect("deserialize");

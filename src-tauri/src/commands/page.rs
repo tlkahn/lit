@@ -30,13 +30,13 @@ pub(super) fn reindex_and_emit(
     graph_state: &State<Arc<GraphRegistry>>,
     app_handle: &tauri::AppHandle,
     root: &std::path::PathBuf,
-    op: impl FnOnce(&GraphIndex, bool) -> Result<(), crate::graph::error::GraphError>,
+    op: impl FnOnce(&GraphIndex, bool) -> Result<Vec<(String, String)>, crate::graph::error::GraphError>,
 ) {
     let gi = lookup_graph_index(graph_state, root);
     if let Some(gi) = gi {
         let ann = crate::preferences::annotations_enabled(app_handle);
         let result = op(&gi, ann);
-        crate::commands::graph::emit_reindex_result(app_handle, result);
+        crate::commands::graph::emit_reindex_side_effects(app_handle, &result);
     }
 }
 
@@ -228,21 +228,23 @@ pub fn rewrite_vault_links(
     let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
 
     let mut reindex_err: Option<crate::graph::error::GraphError> = None;
+    let mut all_removed: Vec<(String, String)> = Vec::new();
     for pr in &planned.rewrites {
         registry.record(&root.join(&pr.relative_path), &pr.after_content);
         if let Some(ref gi) = gi {
-            if let Err(e) = gi.reindex_file(&pr.relative_path, ann_enabled) {
-                reindex_err = Some(e);
+            match gi.reindex_file(&pr.relative_path, ann_enabled) {
+                Ok(removed) => all_removed.extend(removed),
+                Err(e) => { reindex_err = Some(e); }
             }
         }
     }
 
     if gi.is_some() {
-        let result = match reindex_err {
+        let result: Result<(), _> = match reindex_err {
             Some(e) => Err(e),
             None => Ok(()),
         };
-        crate::commands::graph::emit_reindex_result(&app_handle, result);
+        crate::commands::graph::emit_reindex_side_effects_with_removed(&app_handle, &result, &all_removed);
     }
 
     if let Ok(oplog) = oplog_state.get_oplog(&root) {

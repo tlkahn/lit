@@ -1,12 +1,15 @@
 import type { EditorView } from "@codemirror/view";
 import type { Annotation, AnnotationType } from "./ipc";
-import { resolveAnnotationScopeWithMode } from "./ipc";
+import { resolveAnnotationScopeWithMode, annotationFindUuid } from "./ipc";
 import { startLlmStream } from "./llmClient";
 import { classifyFireType } from "./fireClassification";
 import { useModalLockStore } from "../stores/modalLock";
 import { usePreferencesStore, type PreferencesState } from "../stores/preferences";
 import { useLlmResponseStore } from "../stores/llmResponse";
-import { setFiringAnnotation, clearFiringAnnotation } from "../editor/livePreview/annotationWidgets";
+import { useConversationStore } from "../stores/conversation";
+import { useWorkspaceStore } from "../stores/workspace";
+import { useBottomPanelStore } from "../stores/bottomPanel";
+import { setFiringAnnotation, clearFiringAnnotation, annotationThreadKeysField, setAnnotationThreadKeys } from "../editor/livePreview/annotationWidgets";
 
 export interface FireAnnotationArgs {
   view: EditorView;
@@ -44,7 +47,7 @@ export function buildFirePrompt(scopeText: string, body: string | null): string 
   return parts.join("\n\n");
 }
 
-export async function fireAnnotation(args: FireAnnotationArgs): Promise<void> {
+export async function fireAnnotation(args: FireAnnotationArgs): Promise<(() => void) | void> {
   const { view, annotation } = args;
 
   if (useModalLockStore.getState().llmLocked) {
@@ -54,6 +57,15 @@ export async function fireAnnotation(args: FireAnnotationArgs): Promise<void> {
   useModalLockStore.getState().setLlmLocked(true);
   view.dispatch({ effects: setFiringAnnotation.of(annotation.char_start) });
   window.dispatchEvent(new CustomEvent("lit:fire-started", { detail: { annotation } }));
+
+  let cleanedUp = false;
+  const doCleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    try { view.dispatch({ effects: clearFiringAnnotation.of(annotation.char_start) }); } catch { /* view destroyed */ }
+    useModalLockStore.getState().setLlmLocked(false);
+    window.dispatchEvent(new CustomEvent("lit:fire-complete", { detail: { annotation } }));
+  };
 
   const prefs = usePreferencesStore.getState();
   const doc = view.state.doc.toString();
@@ -79,9 +91,83 @@ export async function fireAnnotation(args: FireAnnotationArgs): Promise<void> {
   const text = buildFirePrompt(scopeText, annotation.body);
   const fireType = classifyFireType(annotation.annotation_type);
 
+  if (fireType === "persisting") {
+    const nodeId = useWorkspaceStore.getState().currentPagePath;
+    if (!nodeId) {
+      useLlmResponseStore.getState().setError("No active file. Open a file and try again.");
+      useBottomPanelStore.getState().handleTabClick("llm-response");
+      doCleanup();
+      return;
+    }
+
+    let uuid: string | null;
+    try {
+      uuid = await annotationFindUuid(
+        nodeId, annotation.annotation_type, annotation.body, annotation.char_start,
+      );
+    } catch (err) {
+      console.warn("annotationFindUuid failed:", err);
+      useLlmResponseStore.getState().setError("Failed to look up annotation. Save the file and try again.");
+      useBottomPanelStore.getState().handleTabClick("llm-response");
+      doCleanup();
+      return;
+    }
+    if (!uuid) {
+      useLlmResponseStore.getState().setError("Annotation not found in index. Save the file and try again.");
+      useBottomPanelStore.getState().handleTabClick("llm-response");
+      doCleanup();
+      return;
+    }
+
+    const currentKeys = view.state.field(annotationThreadKeysField, false) ?? new Set<string>();
+    const newKeys = new Set(currentKeys);
+    newKeys.add(uuid);
+    view.dispatch({ effects: setAnnotationThreadKeys.of(newKeys) });
+
+    useBottomPanelStore.getState().handleTabClick("llm-response");
+
+    const title = annotation.body
+      ? `${annotation.annotation_type}: ${annotation.body}`
+      : annotation.annotation_type;
+
+    const cleanup = () => {
+      unsubscribe();
+      doCleanup();
+    };
+
+    const unsubscribe = useLlmResponseStore.subscribe((state, prev) => {
+      if (cleanedUp) return;
+      if (state.status !== prev.status && (state.status === "done" || state.status === "error")) {
+        cleanup();
+      }
+    });
+
+    useConversationStore.getState().sendAnnotationFire({
+      nodeId,
+      annotationUuid: uuid,
+      annotation,
+      content: annotation.body ?? text,
+      textOverride: text,
+      model: prefs.llmModel,
+      system: system || undefined,
+      title,
+    })
+      .catch((err) => console.error("sendAnnotationFire failed:", err))
+      .finally(() => {
+        if (useLlmResponseStore.getState().status !== "streaming") {
+          cleanup();
+        }
+      });
+
+    const dispose = () => {
+      cleanup();
+    };
+
+    return dispose;
+  }
+
   useLlmResponseStore.getState().startStream({
     question: annotation.body ?? "",
-    fireSourceAnnotation: fireType === "persisting" ? annotation : undefined,
   });
 
   await startLlmStream(
@@ -91,22 +177,20 @@ export async function fireAnnotation(args: FireAnnotationArgs): Promise<void> {
       onDone: () => {
         const responseText = useLlmResponseStore.getState().responseText;
         useLlmResponseStore.getState().finishStream();
-        view.dispatch({ effects: clearFiringAnnotation.of(annotation.char_start) });
 
         if (fireType === "replacing") {
-          view.dispatch({
-            changes: { from: annotation.char_start, to: annotation.char_end, insert: responseText },
-          });
+          try {
+            view.dispatch({
+              changes: { from: annotation.char_start, to: annotation.char_end, insert: responseText },
+            });
+          } catch { /* view destroyed */ }
         }
 
-        useModalLockStore.getState().setLlmLocked(false);
-        window.dispatchEvent(new CustomEvent("lit:fire-complete", { detail: { annotation } }));
+        doCleanup();
       },
       onError: (error) => {
-        view.dispatch({ effects: clearFiringAnnotation.of(annotation.char_start) });
         useLlmResponseStore.getState().setError(error.message);
-        useModalLockStore.getState().setLlmLocked(false);
-        window.dispatchEvent(new CustomEvent("lit:fire-complete", { detail: { annotation, error: error.message } }));
+        doCleanup();
       },
     },
   );

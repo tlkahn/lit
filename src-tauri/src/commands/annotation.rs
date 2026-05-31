@@ -72,6 +72,21 @@ pub fn list_annotations(
     })
 }
 
+#[tauri::command]
+pub fn annotation_find_uuid(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<super::graph::GraphRegistry>>,
+    node_id: String,
+    annotation_type: String,
+    body: Option<String>,
+    char_start_hint: usize,
+) -> Result<Option<String>, String> {
+    super::graph::with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+        gi.find_annotation_uuid(&node_id, &annotation_type, body.as_deref(), char_start_hint)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,6 +205,25 @@ mod tests {
         let node_ids: Vec<&str> = results.iter().map(|r| r.node_id.as_str()).collect();
         assert!(node_ids.contains(&"a.md"));
         assert!(node_ids.contains(&"b.md"));
+    }
+
+    #[test]
+    fn cmd_annotation_find_uuid() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "%%! q: _ | What does this mean? %% hello");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let uuid = gi.find_annotation_uuid("a.md", "question", Some("What does this mean?"), 0).unwrap();
+        assert!(uuid.is_some());
+        assert!(!uuid.unwrap().is_empty());
+    }
+
+    #[test]
+    fn cmd_annotation_find_uuid_missing() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "%%! n: _ | note %%");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let uuid = gi.find_annotation_uuid("a.md", "question", Some("nonexistent"), 0).unwrap();
+        assert!(uuid.is_none());
     }
 
     #[test]

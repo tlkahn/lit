@@ -766,6 +766,7 @@ export interface Annotation {
   char_start: number;
   char_end: number;
   original: string;
+  uuid?: string | null;
 }
 
 export interface ScopeRange {
@@ -818,6 +819,7 @@ export interface AnnotationSearchResult {
   source_line: number;
   char_start: number;
   char_end: number;
+  uuid: string;
 }
 
 export async function searchAnnotations(
@@ -922,6 +924,7 @@ export interface ConversationRow {
   node_id: string;
   anchor_type: string | null;
   anchor_id: number | null;
+  anchor_key: string | null;
   title: string | null;
   created_at: string;
   updated_at: string;
@@ -979,6 +982,7 @@ export async function conversationCreate(
   nodeId: string,
   anchorType?: string,
   anchorId?: number,
+  anchorKey?: string,
   title?: string,
 ): Promise<ConversationRow> {
   return invoke<ConversationRow>("conversation_create", {
@@ -986,6 +990,45 @@ export async function conversationCreate(
     nodeId,
     anchorType: anchorType ?? null,
     anchorId: anchorId ?? null,
+    anchorKey: anchorKey ?? null,
     title: title ?? null,
+  });
+}
+
+export async function annotationFindUuid(
+  nodeId: string,
+  annotationType: string,
+  body: string | null,
+  charStartHint: number,
+): Promise<string | null> {
+  return invoke<string | null>("annotation_find_uuid", {
+    nodeId,
+    annotationType,
+    body,
+    charStartHint,
+  });
+}
+
+export async function conversationFindByAnchor(
+  nodeId: string,
+  anchorType: string,
+  anchorKey: string,
+): Promise<ConversationRow | null> {
+  return invoke<ConversationRow | null>("conversation_find_by_anchor", {
+    nodeId,
+    anchorType,
+    anchorKey,
+  });
+}
+
+export async function conversationDeleteByAnchor(
+  nodeId: string,
+  anchorType: string,
+  anchorKey: string,
+): Promise<void> {
+  return invoke<void>("conversation_delete_by_anchor", {
+    nodeId,
+    anchorType,
+    anchorKey,
   });
 }

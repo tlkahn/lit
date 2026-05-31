@@ -7,8 +7,8 @@ import {
 } from "./settingsRegistry";
 
 describe("SETTINGS_REGISTRY", () => {
-  it("has 30 entries", () => {
-    expect(SETTINGS_REGISTRY).toHaveLength(30);
+  it("has 31 entries", () => {
+    expect(SETTINGS_REGISTRY).toHaveLength(31);
   });
 
   it("every entry has required fields defined", () => {
@@ -94,7 +94,7 @@ describe("groupByCategory", () => {
     expect(grouped.get("Editor")).toHaveLength(3);
     expect(grouped.get("Cross-references")).toHaveLength(3);
     expect(grouped.get("Annotations")).toHaveLength(4);
-    expect(grouped.get("LLM")).toHaveLength(15);
+    expect(grouped.get("LLM")).toHaveLength(16);
     expect(grouped.get("Experimental")).toHaveLength(1);
     expect(grouped.get("Keyboard Shortcuts")).toHaveLength(0);
   });
@@ -116,9 +116,9 @@ describe("filterSettings", () => {
     }
   });
 
-  it("returns all 23 entries with empty indices for empty query", () => {
+  it("returns all entries with empty indices for empty query", () => {
     const results = filterSettings(SETTINGS_REGISTRY, "");
-    expect(results).toHaveLength(30);
+    expect(results).toHaveLength(31);
     for (const r of results) {
       expect(r.indices).toEqual([]);
     }

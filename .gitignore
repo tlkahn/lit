@@ -71,3 +71,6 @@ playwright-report/
 server/.aws-sam/
 server/samconfig.toml
 server/scripts/
+
+# Release notes
+release-notes/

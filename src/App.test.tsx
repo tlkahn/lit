@@ -6,6 +6,7 @@ import { useWorkspaceStore } from "./stores/workspace";
 import { usePreferencesStore } from "./stores/preferences";
 import { useLicenseStore } from "./stores/license";
 import { usePaneStore } from "./stores/panes";
+import { useConversationStore } from "./stores/conversation";
 import { _resetForTesting as resetRegistry } from "./lib/paneContentRegistry";
 import { _resetForTesting as resetEditorViewRef } from "./lib/editorViewRef";
 import { SIDEBAR_WIDTH_PX } from "./components/Sidebar";
@@ -704,6 +705,32 @@ describe("App", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("settings-modal-backdrop")).toBeInTheDocument();
+    });
+  });
+
+  it("lit:annotations-removed event calls handleAnnotationsRemoved", async () => {
+    mockListen();
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+    useLicenseStore.setState({ state: "trial", daysRemaining: 12, loading: false });
+
+    const handleAnnotationsRemoved = vi.fn();
+    useConversationStore.setState({ handleAnnotationsRemoved });
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    const items = [
+      { node_id: "page1.md", uuid: "uuid-1" },
+      { node_id: "page2.md", uuid: "uuid-2" },
+    ];
+
+    act(() => {
+      emitMockEvent("lit:annotations-removed", { items });
+    });
+
+    await waitFor(() => {
+      expect(handleAnnotationsRemoved).toHaveBeenCalledWith(items);
     });
   });
 

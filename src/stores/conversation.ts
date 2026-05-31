@@ -6,25 +6,43 @@ import {
   conversationMessages,
   conversationAddMessage,
   conversationDeleteMessagesAfter,
+  conversationFindByAnchor,
+  conversationDeleteByAnchor,
   llmBuildContext,
   GLOBAL_NODE_ID,
+  type Annotation,
   type ConversationRow,
   type MessageRow,
 } from "../lib/ipc";
 import { startLlmStream, cancelLlmStream } from "../lib/llmClient";
 import { useLlmResponseStore } from "./llmResponse";
 import { useModalLockStore } from "./modalLock";
+import { usePreferencesStore } from "./preferences";
 
 interface StreamArgs {
   model: string;
   system?: string;
   nodeId?: string;
   neighborsDepth?: number;
+  fireSourceAnnotation?: Annotation | null;
 }
 
 interface SendMessageArgs extends StreamArgs {
   content: string;
   textOverride?: string;
+  conversationId?: string;
+}
+
+interface SendAnnotationFireArgs {
+  nodeId: string;
+  annotationUuid: string;
+  annotation: Annotation;
+  content: string;
+  textOverride?: string;
+  model: string;
+  system?: string;
+  neighborsDepth?: number;
+  title?: string;
 }
 
 interface ConversationStore {
@@ -34,13 +52,17 @@ interface ConversationStore {
   error: string | null;
 
   loadConversations: (nodeId: string) => Promise<void>;
-  createConversation: (nodeId: string, title?: string) => Promise<string | null>;
+  createConversation: (nodeId: string, title?: string, anchorType?: string, anchorKey?: string) => Promise<string | null>;
   selectConversation: (id: string) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
+  findOrCreateAnnotationThread: (nodeId: string, annotationUuid: string, title?: string) => Promise<string | null>;
   sendMessage: (args: SendMessageArgs) => Promise<void>;
+  sendAnnotationFire: (args: SendAnnotationFireArgs) => Promise<void>;
   retryLastMessage: (args: StreamArgs) => Promise<void>;
   editMessage: (seq: number, newContent: string, args: StreamArgs) => Promise<void>;
   cancelConversationStream: () => Promise<void>;
+  cleanupAnnotationThread: (nodeId: string, annotationUuid: string) => Promise<void>;
+  handleAnnotationsRemoved: (items: Array<{ node_id: string; uuid: string }>) => Promise<void>;
   reset: () => void;
 }
 
@@ -85,7 +107,10 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
       console.warn("llmBuildContext failed, using raw context:", e);
     }
 
-    useLlmResponseStore.getState().startStream({ question: content });
+    useLlmResponseStore.getState().startStream({
+      question: content,
+      fireSourceAnnotation: streamArgs.fireSourceAnnotation,
+    });
     useModalLockStore.getState().setLlmLocked(true);
 
     try {
@@ -146,10 +171,10 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
     }
   },
 
-  createConversation: async (nodeId: string, title?: string) => {
+  createConversation: async (nodeId: string, title?: string, anchorType?: string, anchorKey?: string) => {
     const id = crypto.randomUUID();
     try {
-      const row = await conversationCreate(id, nodeId, undefined, undefined, title);
+      const row = await conversationCreate(id, nodeId, anchorType, undefined, anchorKey, title);
       set((s) => ({
         conversations: [...s.conversations, row],
         activeConversationId: id,
@@ -190,7 +215,7 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
   },
 
   sendMessage: async (args: SendMessageArgs) => {
-    const convId = get().activeConversationId;
+    const convId = args.conversationId ?? get().activeConversationId;
     if (convId === null) {
       set({ error: "No active conversation" });
       return;
@@ -211,6 +236,43 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
       system: args.system,
       nodeId: args.nodeId,
       neighborsDepth: args.neighborsDepth,
+      fireSourceAnnotation: args.fireSourceAnnotation,
+    });
+  },
+
+  findOrCreateAnnotationThread: async (nodeId: string, annotationUuid: string, title?: string) => {
+    set({ error: null });
+    try {
+      const existing = await conversationFindByAnchor(nodeId, "annotation", annotationUuid);
+      if (existing) {
+        await get().selectConversation(existing.id);
+        if (get().error) return null;
+        return existing.id;
+      }
+      return await get().createConversation(nodeId, title, "annotation", annotationUuid);
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : String(e) });
+      return null;
+    }
+  },
+
+  sendAnnotationFire: async (args: SendAnnotationFireArgs) => {
+    const convId = await get().findOrCreateAnnotationThread(
+      args.nodeId,
+      args.annotationUuid,
+      args.title,
+    );
+    if (convId === null) return;
+
+    await get().sendMessage({
+      content: args.content,
+      textOverride: args.textOverride,
+      model: args.model,
+      system: args.system,
+      nodeId: args.nodeId,
+      neighborsDepth: args.neighborsDepth,
+      fireSourceAnnotation: args.annotation,
+      conversationId: convId,
     });
   },
 
@@ -257,6 +319,32 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
     useLlmResponseStore.getState().stopStream();
     useModalLockStore.getState().setLlmLocked(false);
     await cancelLlmStream();
+  },
+
+  cleanupAnnotationThread: async (nodeId: string, annotationUuid: string) => {
+    if (!usePreferencesStore.getState().llmDeleteAnnotationThreads) return;
+    try {
+      await conversationDeleteByAnchor(nodeId, "annotation", annotationUuid);
+      set((s) => {
+        const match = (c: ConversationRow) =>
+          c.node_id === nodeId &&
+          c.anchor_type === "annotation" &&
+          c.anchor_key === annotationUuid;
+        const matchedId = s.conversations.find(match)?.id;
+        const isActive = matchedId != null && s.activeConversationId === matchedId;
+        return {
+          conversations: s.conversations.filter((c) => !match(c)),
+          activeConversationId: isActive ? null : s.activeConversationId,
+          messages: isActive ? [] : s.messages,
+        };
+      });
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : String(e) });
+    }
+  },
+
+  handleAnnotationsRemoved: async (items) => {
+    await Promise.all(items.map((item) => get().cleanupAnnotationThread(item.node_id, item.uuid)));
   },
 
   reset: () => set(initialState),

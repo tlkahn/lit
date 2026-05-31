@@ -37,6 +37,7 @@ function makeConversation(overrides: Partial<ConversationRow> = {}): Conversatio
     node_id: "page-1",
     anchor_type: null,
     anchor_id: null,
+    anchor_key: null,
     title: null,
     created_at: "2025-01-01T00:00:00Z",
     updated_at: "2025-01-01T00:00:00Z",

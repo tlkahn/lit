@@ -72,6 +72,7 @@ pub fn parse_block(inner: &str) -> Annotation {
         char_start: 0,
         char_end: 0,
         original: String::new(),
+        uuid: None,
     }
 }
 

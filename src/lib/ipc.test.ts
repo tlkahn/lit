@@ -96,6 +96,9 @@ import {
   conversationAddMessage,
   conversationDelete,
   conversationDeleteMessagesAfter,
+  annotationFindUuid,
+  conversationFindByAnchor,
+  conversationDeleteByAnchor,
   type MessageRole,
 } from "./ipc";
 
@@ -304,6 +307,7 @@ describe("ipc", () => {
                 source_line: 3,
                 char_start: 10,
                 char_end: 30,
+                uuid: "test-uuid-1",
               },
             ];
           }
@@ -319,6 +323,7 @@ describe("ipc", () => {
               source_line: 5,
               char_start: 10,
               char_end: 50,
+              uuid: "test-uuid-1",
             },
           ];
         }
@@ -337,6 +342,7 @@ describe("ipc", () => {
                 source_line: 1,
                 char_start: 0,
                 char_end: 20,
+                uuid: "test-uuid-2",
               },
             ];
           }
@@ -352,6 +358,7 @@ describe("ipc", () => {
               source_line: 1,
               char_start: 0,
               char_end: 10,
+              uuid: "test-uuid-1",
             },
             {
               annotation_id: 2,
@@ -364,6 +371,7 @@ describe("ipc", () => {
               source_line: 3,
               char_start: 20,
               char_end: 40,
+              uuid: "test-uuid-2",
             },
           ];
         }
@@ -578,6 +586,7 @@ describe("ipc", () => {
             node_id: "notes/a.md",
             anchor_type: null,
             anchor_id: null,
+            anchor_key: null,
             title: "Fetched Chat",
             created_at: "2025-01-01T00:00:00Z",
             updated_at: "2025-01-01T00:00:00Z",
@@ -590,6 +599,7 @@ describe("ipc", () => {
               node_id: (args as Record<string, unknown>).nodeId,
               anchor_type: null,
               anchor_id: null,
+              anchor_key: null,
               title: "Chat 1",
               created_at: "2025-01-01T00:00:00Z",
               updated_at: "2025-01-02T00:00:00Z",
@@ -603,11 +613,33 @@ describe("ipc", () => {
             node_id: a.nodeId,
             anchor_type: a.anchorType ?? null,
             anchor_id: a.anchorId ?? null,
+            anchor_key: a.anchorKey ?? null,
             title: a.title ?? null,
             created_at: "2025-01-01T00:00:00Z",
             updated_at: "2025-01-01T00:00:00Z",
           };
         }
+        case "annotation_find_uuid": {
+          const a = args as Record<string, unknown>;
+          if (a.body === null) return "uuid-for-null-body";
+          return "test-uuid-abc";
+        }
+        case "conversation_find_by_anchor": {
+          const a = args as Record<string, unknown>;
+          if (a.anchorKey === "missing") return null;
+          return {
+            id: "conv-found",
+            node_id: a.nodeId,
+            anchor_type: a.anchorType,
+            anchor_id: null,
+            anchor_key: a.anchorKey,
+            title: "Anchored Chat",
+            created_at: "2025-01-01T00:00:00Z",
+            updated_at: "2025-01-01T00:00:00Z",
+          };
+        }
+        case "conversation_delete_by_anchor":
+          return null;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -1194,6 +1226,7 @@ describe("ipc", () => {
     expect(results[0]!.node_id).toBe("a.md");
     expect(results[0]!.body).toBe("Silk Road flourished");
     expect(results[0]!.annotation_type).toBe("note");
+    expect(results[0]!.uuid).toBe("test-uuid-1");
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("search_annotations", {
       query: "Silk Road",
@@ -1655,12 +1688,13 @@ describe("ipc", () => {
     expect(role).toBe("user");
   });
 
-  it("conversationCreate returns ConversationRow", async () => {
-    const row = await conversationCreate("conv-1", "notes/a.md", "annotation", 42, "My Chat");
+  it("conversationCreate passes anchorKey to Rust command", async () => {
+    const row = await conversationCreate("conv-1", "notes/a.md", "annotation", 42, "ann-uuid-1", "My Chat");
     expect(row.id).toBe("conv-1");
     expect(row.node_id).toBe("notes/a.md");
     expect(row.anchor_type).toBe("annotation");
     expect(row.anchor_id).toBe(42);
+    expect(row.anchor_key).toBe("ann-uuid-1");
     expect(row.title).toBe("My Chat");
     expect(row.created_at).toBe("2025-01-01T00:00:00Z");
     const { invoke } = await import("@tauri-apps/api/core");
@@ -1669,7 +1703,74 @@ describe("ipc", () => {
       nodeId: "notes/a.md",
       anchorType: "annotation",
       anchorId: 42,
+      anchorKey: "ann-uuid-1",
       title: "My Chat",
+    });
+  });
+
+  it("conversationCreate sends anchorKey null when omitted", async () => {
+    const row = await conversationCreate("conv-1", "notes/a.md");
+    expect(row.anchor_key).toBeNull();
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("conversation_create", {
+      id: "conv-1",
+      nodeId: "notes/a.md",
+      anchorType: null,
+      anchorId: null,
+      anchorKey: null,
+      title: null,
+    });
+  });
+
+  it("annotationFindUuid invokes with correct args", async () => {
+    const uuid = await annotationFindUuid("a.md", "question", "What?", 10);
+    expect(uuid).toBe("test-uuid-abc");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("annotation_find_uuid", {
+      nodeId: "a.md",
+      annotationType: "question",
+      body: "What?",
+      charStartHint: 10,
+    });
+  });
+
+  it("annotationFindUuid passes null body", async () => {
+    const uuid = await annotationFindUuid("a.md", "note", null, 0);
+    expect(uuid).toBe("uuid-for-null-body");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("annotation_find_uuid", {
+      nodeId: "a.md",
+      annotationType: "note",
+      body: null,
+      charStartHint: 0,
+    });
+  });
+
+  it("conversationFindByAnchor returns ConversationRow", async () => {
+    const row = await conversationFindByAnchor("a.md", "annotation", "uuid-1");
+    expect(row).not.toBeNull();
+    expect(row!.id).toBe("conv-found");
+    expect(row!.anchor_key).toBe("uuid-1");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("conversation_find_by_anchor", {
+      nodeId: "a.md",
+      anchorType: "annotation",
+      anchorKey: "uuid-1",
+    });
+  });
+
+  it("conversationFindByAnchor returns null when not found", async () => {
+    const row = await conversationFindByAnchor("a.md", "annotation", "missing");
+    expect(row).toBeNull();
+  });
+
+  it("conversationDeleteByAnchor invokes with correct args", async () => {
+    await conversationDeleteByAnchor("a.md", "annotation", "uuid-1");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("conversation_delete_by_anchor", {
+      nodeId: "a.md",
+      anchorType: "annotation",
+      anchorKey: "uuid-1",
     });
   });
 

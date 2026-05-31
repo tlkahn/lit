@@ -38,6 +38,7 @@ export interface PreferencesState {
   llmPromptApp: string;
   llmOpenaiApiKeySet: boolean;
   llmAnthropicApiKeySet: boolean;
+  llmDeleteAnnotationThreads: boolean;
   loaded: boolean;
   loadPreferences: () => Promise<void>;
 }
@@ -93,6 +94,7 @@ function mapPreferences(prefs: Preferences) {
     llmPromptN: (prefs["llm.prompts.n"] as string) ?? "Elaborate on the following note given the surrounding context.",
     llmPromptCf: (prefs["llm.prompts.cf"] as string) ?? "Explain the connection described in the following cross-reference.",
     llmPromptApp: (prefs["llm.prompts.app"] as string) ?? "Provide critical commentary on the following text.",
+    llmDeleteAnnotationThreads: (prefs["llm.deleteAnnotationThreads"] as boolean) ?? false,
   };
 }
 
@@ -127,6 +129,7 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   llmPromptApp: "Provide critical commentary on the following text.",
   llmOpenaiApiKeySet: false,
   llmAnthropicApiKeySet: false,
+  llmDeleteAnnotationThreads: false,
   loaded: false,
 
   loadPreferences: async () => {

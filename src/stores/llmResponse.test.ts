@@ -68,6 +68,7 @@ describe("llmResponse store", () => {
       char_start: 0,
       char_end: 10,
       original: "%%!q | why? %%",
+      uuid: null,
     };
     useLlmResponseStore.getState().startStream({
       question: "why?",
@@ -118,6 +119,7 @@ describe("llmResponse store", () => {
       char_start: 0,
       char_end: 10,
       original: "%%!q | why? %%",
+      uuid: null,
     };
     useLlmResponseStore.getState().startStream({
       question: "q",

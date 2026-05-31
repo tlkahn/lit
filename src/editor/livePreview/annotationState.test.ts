@@ -11,6 +11,7 @@ import {
   displayModeField,
   setDisplayMode,
   findAnnotationAtCursor,
+  deriveThreadKeys,
 } from "./annotationState";
 import {
   annotationFoldField,
@@ -19,17 +20,27 @@ import {
   CalloutWidget,
   MarkerWidget,
   llmLockedField,
+  annotationThreadKeysField,
+  setAnnotationThreadKeys,
 } from "./annotationWidgets";
 import { Annotation as AnnotationGrammar } from "../markdown/annotation";
 import { Comment as CommentGrammar } from "../markdown/comment";
-import type { Annotation } from "../../lib/ipc";
-import { parseAnnotations } from "../../lib/ipc";
+import type { Annotation, ConversationRow } from "../../lib/ipc";
+import { parseAnnotations, annotationFindUuid, listAnnotations } from "../../lib/ipc";
 import { type AnnotationDisplayMode } from "../../stores/preferences";
 import { useModalLockStore } from "../../stores/modalLock";
+import { useWorkspaceStore } from "../../stores/workspace";
+import { useConversationStore } from "../../stores/conversation";
+import { useBottomPanelStore } from "../../stores/bottomPanel";
 
 vi.mock("../../lib/ipc", () => ({
   parseAnnotations: vi.fn(async () => []),
+  annotationFindUuid: vi.fn(async () => null),
+  listAnnotations: vi.fn(async () => []),
 }));
+
+const mockFindUuid = annotationFindUuid as ReturnType<typeof vi.fn>;
+const mockListAnnotations = listAnnotations as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -357,6 +368,349 @@ describe("annotationPlugin", () => {
 
     view.destroy();
   });
+
+  it("enriches parsed annotations with UUIDs from listAnnotations using fuzzy matching", async () => {
+    const parsedAnn = makeAnnotation({ annotation_type: "note", body: "hello", char_start: 5, char_end: 15 });
+    vi.mocked(parseAnnotations).mockResolvedValue([parsedAnn]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+    mockListAnnotations.mockResolvedValue([
+      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: "hello", date: null, source_line: 1, char_start: 5, char_end: 15, uuid: "enriched-uuid-1" },
+    ]);
+
+    const state = EditorState.create({
+      doc: "hello world!!!",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const data = view.state.field(annotationDataField);
+    view.destroy();
+
+    expect(data).toHaveLength(1);
+    expect(data[0]!.uuid).toBe("enriched-uuid-1");
+  });
+
+  it("does not call listAnnotations when currentPagePath is null", async () => {
+    const parsedAnn = makeAnnotation({ annotation_type: "note", char_start: 0, char_end: 10 });
+    vi.mocked(parseAnnotations).mockResolvedValue([parsedAnn]);
+    useWorkspaceStore.setState({ currentPagePath: null });
+
+    const state = EditorState.create({
+      doc: "hello world",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockListAnnotations).not.toHaveBeenCalled();
+    const data = view.state.field(annotationDataField);
+    expect(data).toHaveLength(1);
+    expect(data[0]!.uuid).toBeUndefined();
+
+    view.destroy();
+  });
+
+  it("dispatches annotations without uuid when listAnnotations rejects", async () => {
+    const parsedAnn = makeAnnotation({ annotation_type: "note", char_start: 0, char_end: 10 });
+    vi.mocked(parseAnnotations).mockResolvedValue([parsedAnn]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+    mockListAnnotations.mockRejectedValue(new Error("db error"));
+
+    const state = EditorState.create({
+      doc: "hello world",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const data = view.state.field(annotationDataField);
+    expect(data).toHaveLength(1);
+    expect(data[0]!.uuid).toBeUndefined();
+
+    view.destroy();
+  });
+
+  it("enriches correct UUIDs when two annotations share type but differ in body", async () => {
+    const parsedAnn1 = makeAnnotation({ annotation_type: "note", body: "first", char_start: 5, char_end: 15 });
+    const parsedAnn2 = makeAnnotation({ annotation_type: "note", body: "second", char_start: 5, char_end: 25 });
+    vi.mocked(parseAnnotations).mockResolvedValue([parsedAnn1, parsedAnn2]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+    mockListAnnotations.mockResolvedValue([
+      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: "first", date: null, source_line: 1, char_start: 5, char_end: 15, uuid: "uuid-first" },
+      { annotation_id: 2, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: "second", date: null, source_line: 1, char_start: 5, char_end: 25, uuid: "uuid-second" },
+    ]);
+
+    const state = EditorState.create({
+      doc: "hello world!!! more text here",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const data = view.state.field(annotationDataField);
+    view.destroy();
+
+    expect(data).toHaveLength(2);
+    const first = data.find((a) => a.body === "first");
+    const second = data.find((a) => a.body === "second");
+    expect(first!.uuid).toBe("uuid-first");
+    expect(second!.uuid).toBe("uuid-second");
+  });
+
+  it("discards stale enrichment when doc changes during listAnnotations", async () => {
+    const parsedAnn = makeAnnotation({ annotation_type: "note", char_start: 0, char_end: 5 });
+    vi.mocked(parseAnnotations).mockResolvedValue([parsedAnn]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+
+    let resolveList!: (v: unknown[]) => void;
+    mockListAnnotations.mockImplementation(
+      () => new Promise((r) => { resolveList = r; }),
+    );
+
+    const state = EditorState.create({
+      doc: "hello",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    view.dispatch({ changes: { from: 5, insert: " changed" } });
+
+    resolveList([
+      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: "test body", date: null, source_line: 1, char_start: 0, char_end: 5, uuid: "stale-uuid" },
+    ]);
+    await vi.advanceTimersByTimeAsync(0);
+
+    const data = view.state.field(annotationDataField);
+    const hasStaleUuid = data.some((a) => a.uuid === "stale-uuid");
+    expect(hasStaleUuid).toBe(false);
+
+    view.destroy();
+  });
+
+  it("integration: enriched uuid enables thread indicator on PillWidget", async () => {
+    const doc = "first line\ntext %%!n | body%% more";
+    const parsedAnn = makeAnnotation({
+      annotation_type: "note",
+      body: "body",
+      char_start: 16,
+      char_end: 29,
+      original: "%%!n | body%%",
+    });
+    vi.mocked(parseAnnotations).mockResolvedValue([parsedAnn]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+    mockListAnnotations.mockResolvedValue([
+      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: "body", date: null, source_line: 2, char_start: 16, char_end: 29, uuid: "enriched-thread-uuid" },
+    ]);
+    useConversationStore.setState({
+      conversations: [
+        makeConversationRow({ anchor_type: "annotation", anchor_key: "enriched-thread-uuid" }),
+      ],
+    });
+
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: 0 },
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationExtension(),
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    ensureSyntaxTree(view.state, view.state.doc.length);
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const decoSources = view.state.facet(EditorView.decorations);
+    const widgets: { from: number; to: number; widget: unknown }[] = [];
+    for (const source of decoSources) {
+      if (typeof source === "function") continue;
+      const iter = source.iter();
+      while (iter.value) {
+        widgets.push({ from: iter.from, to: iter.to, widget: iter.value.spec?.widget ?? null });
+        iter.next();
+      }
+    }
+
+    const pill = widgets.find((w) => w.from === 16 && w.to === 29);
+    expect(pill).toBeTruthy();
+    expect(pill!.widget).toBeInstanceOf(PillWidget);
+    expect((pill!.widget as PillWidget).hasThread).toBe(true);
+
+    view.destroy();
+  });
+
+  it("enriches annotations after positions shift from document edits (fuzzy matching)", async () => {
+    // Simulate: parsed annotations have shifted positions compared to DB
+    // (e.g. user typed text before the annotation, shifting it right by 10 chars)
+    const parsedAnn = makeAnnotation({ annotation_type: "note", body: "important", char_start: 15, char_end: 30 });
+    vi.mocked(parseAnnotations).mockResolvedValue([parsedAnn]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+    // DB still has the old positions (before the edit shifted things)
+    mockListAnnotations.mockResolvedValue([
+      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: "important", date: null, source_line: 1, char_start: 5, char_end: 20, uuid: "uuid-shifted" },
+    ]);
+
+    const state = EditorState.create({
+      doc: "some padded text with annotation here",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const data = view.state.field(annotationDataField);
+    view.destroy();
+
+    expect(data).toHaveLength(1);
+    // Fuzzy matching by type+body should still find the UUID despite position mismatch
+    expect(data[0]!.uuid).toBe("uuid-shifted");
+  });
+
+  it("fuzzy matching picks closest candidate by proximity when type+body matches multiple", async () => {
+    // Two annotations with same type and body but at different positions
+    const parsedAnn1 = makeAnnotation({ annotation_type: "note", body: "dup", char_start: 10, char_end: 20 });
+    const parsedAnn2 = makeAnnotation({ annotation_type: "note", body: "dup", char_start: 50, char_end: 60 });
+    vi.mocked(parseAnnotations).mockResolvedValue([parsedAnn1, parsedAnn2]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+    mockListAnnotations.mockResolvedValue([
+      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: "dup", date: null, source_line: 1, char_start: 12, char_end: 22, uuid: "uuid-near-10" },
+      { annotation_id: 2, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: "dup", date: null, source_line: 3, char_start: 48, char_end: 58, uuid: "uuid-near-50" },
+    ]);
+
+    const state = EditorState.create({
+      doc: "x".repeat(70),
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const data = view.state.field(annotationDataField);
+    view.destroy();
+
+    expect(data).toHaveLength(2);
+    // Each parsed annotation should match the indexed one closest to it
+    expect(data[0]!.uuid).toBe("uuid-near-10");
+    expect(data[1]!.uuid).toBe("uuid-near-50");
+  });
+
+  it("does NOT call listAnnotations when annotation fingerprint is unchanged", async () => {
+    const ann = makeAnnotation({ annotation_type: "note", body: "stable", char_start: 0, char_end: 10 });
+    vi.mocked(parseAnnotations).mockResolvedValue([ann]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+    mockListAnnotations.mockResolvedValue([
+      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: "stable", date: null, source_line: 1, char_start: 0, char_end: 10, uuid: "uuid-cached" },
+    ]);
+
+    const state = EditorState.create({
+      doc: "hello text",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    // Initial fireIPC
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockListAnnotations).toHaveBeenCalledTimes(1);
+
+    // Trigger another doc change — parseAnnotations returns same type+body, just shifted positions
+    const shiftedAnn = makeAnnotation({ annotation_type: "note", body: "stable", char_start: 6, char_end: 16 });
+    vi.mocked(parseAnnotations).mockResolvedValue([shiftedAnn]);
+    mockListAnnotations.mockClear();
+
+    view.dispatch({ changes: { from: 0, insert: "added " } });
+    await vi.advanceTimersByTimeAsync(150);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // listAnnotations should NOT be called since fingerprint (type:body) didn't change
+    expect(mockListAnnotations).not.toHaveBeenCalled();
+
+    // But enrichment should still work from cached data
+    const data = view.state.field(annotationDataField);
+    expect(data[0]!.uuid).toBe("uuid-cached");
+
+    view.destroy();
+  });
+
+  it("calls listAnnotations when annotations change (fingerprint differs)", async () => {
+    const ann1 = makeAnnotation({ annotation_type: "note", body: "original", char_start: 0, char_end: 10 });
+    vi.mocked(parseAnnotations).mockResolvedValue([ann1]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+    mockListAnnotations.mockResolvedValue([
+      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: "original", date: null, source_line: 1, char_start: 0, char_end: 10, uuid: "uuid-orig" },
+    ]);
+
+    const state = EditorState.create({
+      doc: "hello text",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockListAnnotations).toHaveBeenCalledTimes(1);
+
+    // Now annotations change — different body
+    const ann2 = makeAnnotation({ annotation_type: "note", body: "edited", char_start: 0, char_end: 10 });
+    vi.mocked(parseAnnotations).mockResolvedValue([ann2]);
+    mockListAnnotations.mockClear();
+    mockListAnnotations.mockResolvedValue([
+      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: "edited", date: null, source_line: 1, char_start: 0, char_end: 10, uuid: "uuid-edited" },
+    ]);
+
+    view.dispatch({ changes: { from: 5, insert: "!" } });
+    await vi.advanceTimersByTimeAsync(150);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // listAnnotations SHOULD be called since fingerprint changed
+    expect(mockListAnnotations).toHaveBeenCalledTimes(1);
+    const data = view.state.field(annotationDataField);
+    expect(data[0]!.uuid).toBe("uuid-edited");
+
+    view.destroy();
+  });
+
+  it("invalidates cache on page change (nodeId differs)", async () => {
+    const ann = makeAnnotation({ annotation_type: "note", body: "stable", char_start: 0, char_end: 10 });
+    vi.mocked(parseAnnotations).mockResolvedValue([ann]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/page1.md" });
+    mockListAnnotations.mockResolvedValue([
+      { annotation_id: 1, node_id: "notes/page1.md", node_title: "page1", annotation_type: "note", certainty: "neutral", body: "stable", date: null, source_line: 1, char_start: 0, char_end: 10, uuid: "uuid-page1" },
+    ]);
+
+    const state = EditorState.create({
+      doc: "hello text",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockListAnnotations).toHaveBeenCalledTimes(1);
+    expect(view.state.field(annotationDataField)[0]!.uuid).toBe("uuid-page1");
+
+    // Simulate page change — same annotations but different nodeId
+    useWorkspaceStore.setState({ currentPagePath: "notes/page2.md" });
+    mockListAnnotations.mockClear();
+    mockListAnnotations.mockResolvedValue([
+      { annotation_id: 2, node_id: "notes/page2.md", node_title: "page2", annotation_type: "note", certainty: "neutral", body: "stable", date: null, source_line: 1, char_start: 0, char_end: 10, uuid: "uuid-page2" },
+    ]);
+
+    view.dispatch({ changes: { from: 5, insert: "!" } });
+    await vi.advanceTimersByTimeAsync(150);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // listAnnotations SHOULD be called because nodeId changed
+    expect(mockListAnnotations).toHaveBeenCalledTimes(1);
+    const data = view.state.field(annotationDataField);
+    expect(data[0]!.uuid).toBe("uuid-page2");
+
+    view.destroy();
+  });
 });
 
 describe("annotationDecorationProvider", () => {
@@ -370,6 +724,7 @@ describe("annotationDecorationProvider", () => {
         displayModeField,
         annotationDecorationProvider,
         annotationFoldField,
+        annotationThreadKeysField,
       ],
     });
     const view = new EditorView({ state, parent: document.createElement("div") });
@@ -605,6 +960,115 @@ describe("annotationDecorationProvider", () => {
 
     view.destroy();
   });
+
+  it("passes hasThread=true to PillWidget when annotation uuid matches thread key", () => {
+    const doc = "first line\ntext %%!n | body%% more";
+    const view = makeAnnotationView(doc, 0);
+
+    const ann = makeAnnotation({ char_start: 16, char_end: 29, original: "%%!n | body%%", uuid: "uuid-1" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+    view.dispatch({ effects: setAnnotationThreadKeys.of(new Set(["uuid-1"])) });
+
+    const decos = collectDecorations(view);
+    const found = decos.find((d) => d.from === 16 && d.to === 29);
+    expect(found).toBeTruthy();
+    expect((found!.widget as PillWidget).hasThread).toBe(true);
+
+    view.destroy();
+  });
+
+  it("passes hasThread=false when annotation uuid not in thread keys", () => {
+    const doc = "first line\ntext %%!n | body%% more";
+    const view = makeAnnotationView(doc, 0);
+
+    const ann = makeAnnotation({ char_start: 16, char_end: 29, original: "%%!n | body%%", uuid: "uuid-other" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+    view.dispatch({ effects: setAnnotationThreadKeys.of(new Set(["uuid-1"])) });
+
+    const decos = collectDecorations(view);
+    const found = decos.find((d) => d.from === 16 && d.to === 29);
+    expect(found).toBeTruthy();
+    expect((found!.widget as PillWidget).hasThread).toBe(false);
+
+    view.destroy();
+  });
+
+  it("passes hasThread=false when annotation uuid is null", () => {
+    const doc = "first line\ntext %%!n | body%% more";
+    const view = makeAnnotationView(doc, 0);
+
+    const ann = makeAnnotation({ char_start: 16, char_end: 29, original: "%%!n | body%%", uuid: null });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+    view.dispatch({ effects: setAnnotationThreadKeys.of(new Set(["uuid-1"])) });
+
+    const decos = collectDecorations(view);
+    const found = decos.find((d) => d.from === 16 && d.to === 29);
+    expect(found).toBeTruthy();
+    expect((found!.widget as PillWidget).hasThread).toBe(false);
+
+    view.destroy();
+  });
+
+  it("passes hasThread=true to MarkerWidget in footnote mode", () => {
+    const doc = "first line\ntext %%!n | body%% more";
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: 0 },
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+        displayModeField,
+        annotationDecorationProvider,
+        annotationFoldField,
+        annotationThreadKeysField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    ensureSyntaxTree(view.state, view.state.doc.length);
+
+    view.dispatch({ effects: setDisplayMode.of("footnote") });
+    const ann = makeAnnotation({ char_start: 16, char_end: 29, original: "%%!n | body%%", uuid: "uuid-fn" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+    view.dispatch({ effects: setAnnotationThreadKeys.of(new Set(["uuid-fn"])) });
+
+    const decos = collectDecorations(view);
+    const found = decos.find((d) => d.from === 16 && d.to === 29);
+    expect(found).toBeTruthy();
+    expect(found!.widget).toBeInstanceOf(MarkerWidget);
+    expect((found!.widget as MarkerWidget).hasThread).toBe(true);
+
+    view.destroy();
+  });
+
+  it("passes hasThread=true to CalloutWidget for block annotation", () => {
+    const doc = "first line\n\n%%!\nbody\n%%\nafter";
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: 24 },
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+        displayModeField,
+        annotationDecorationProvider,
+        annotationFoldField,
+        annotationThreadKeysField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    ensureSyntaxTree(view.state, view.state.doc.length);
+
+    const ann = makeAnnotation({ form: "block", char_start: 12, char_end: 23, original: "%%!\nbody\n%%", uuid: "uuid-block" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+    view.dispatch({ effects: setAnnotationThreadKeys.of(new Set(["uuid-block"])) });
+
+    const decos = collectDecorations(view);
+    const found = decos.find((d) => d.from === 12 && d.to === 23);
+    expect(found).toBeTruthy();
+    expect(found!.widget).toBeInstanceOf(CalloutWidget);
+    expect((found!.widget as CalloutWidget).hasThread).toBe(true);
+
+    view.destroy();
+  });
 });
 
 describe("findAnnotationAtCursor", () => {
@@ -646,10 +1110,10 @@ describe("findAnnotationAtCursor", () => {
 });
 
 describe("annotationExtension", () => {
-  it("returns array with 12 extensions", () => {
+  it("returns array with 15 extensions", () => {
     const ext = annotationExtension();
     expect(Array.isArray(ext)).toBe(true);
-    expect((ext as unknown[]).length).toBe(12);
+    expect((ext as unknown[]).length).toBe(15);
   });
 
   it("includes annotationDataField", () => {
@@ -666,11 +1130,41 @@ describe("annotationExtension", () => {
     const ext = annotationExtension() as unknown[];
     expect(ext).toContain(llmLockedField);
   });
+
+  it("includes annotationThreadKeysField", () => {
+    const ext = annotationExtension() as unknown[];
+    expect(ext).toContain(annotationThreadKeysField);
+  });
 });
 
 describe("llmLockBridgePlugin", () => {
   beforeEach(() => {
     useModalLockStore.setState({ llmLocked: false });
+  });
+
+  it("does not dispatch synchronously in constructor when store is already locked", () => {
+    useModalLockStore.setState({ llmLocked: true });
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+    expect(view.state.field(llmLockedField)).toBe(false);
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+    view.destroy();
+  });
+
+  it("deferred dispatch sets llmLockedField after microtask when store is already locked", async () => {
+    useModalLockStore.setState({ llmLocked: true });
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+    expect(view.state.field(llmLockedField)).toBe(false);
+    await new Promise<void>((r) => queueMicrotask(r));
+    expect(view.state.field(llmLockedField)).toBe(true);
+    view.destroy();
   });
 
   it("sets llmLockedField when store.llmLocked changes to true", () => {
@@ -702,5 +1196,389 @@ describe("llmLockBridgePlugin", () => {
     });
     view.destroy();
     expect(() => useModalLockStore.getState().setLlmLocked(true)).not.toThrow();
+  });
+
+  it("does not dispatch on destroyed view when microtask fires after destroy", async () => {
+    useModalLockStore.setState({ llmLocked: true });
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+    view.destroy();
+    await new Promise<void>((r) => queueMicrotask(r));
+    // If the destroyed guard is missing, dispatching on a destroyed view would crash.
+    // The test passes without throwing.
+  });
+});
+
+describe("openAnnotationThreadPlugin", () => {
+  beforeEach(() => {
+    useWorkspaceStore.setState({ currentPagePath: "notes/page.md" });
+    mockFindUuid.mockResolvedValue("uuid-123");
+    useConversationStore.setState({
+      findOrCreateAnnotationThread: vi.fn(async () => "thread-id"),
+    });
+    useBottomPanelStore.setState({ activeTab: "linked", unfolded: false });
+  });
+
+  it("calls findOrCreateAnnotationThread on lit:open-annotation-thread", async () => {
+    vi.useFakeTimers();
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+
+    const ann = makeAnnotation({ annotation_type: "note", body: "test body", uuid: null });
+    window.dispatchEvent(new CustomEvent("lit:open-annotation-thread", { detail: { annotation: ann } }));
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const findOrCreate = useConversationStore.getState().findOrCreateAnnotationThread;
+    expect(findOrCreate).toHaveBeenCalledWith("notes/page.md", "uuid-123", "note: test body");
+
+    view.destroy();
+    vi.useRealTimers();
+  });
+
+  it("uses annotation.uuid directly when available", async () => {
+    vi.useFakeTimers();
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+
+    const ann = makeAnnotation({ annotation_type: "note", body: "test body", uuid: "uuid-direct" });
+    window.dispatchEvent(new CustomEvent("lit:open-annotation-thread", { detail: { annotation: ann } }));
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockFindUuid).not.toHaveBeenCalled();
+    const findOrCreate = useConversationStore.getState().findOrCreateAnnotationThread;
+    expect(findOrCreate).toHaveBeenCalledWith("notes/page.md", "uuid-direct", "note: test body");
+
+    view.destroy();
+    vi.useRealTimers();
+  });
+
+  it("falls back to annotationFindUuid when uuid is null", async () => {
+    vi.useFakeTimers();
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+
+    const ann = makeAnnotation({ uuid: null });
+    window.dispatchEvent(new CustomEvent("lit:open-annotation-thread", { detail: { annotation: ann } }));
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockFindUuid).toHaveBeenCalled();
+
+    view.destroy();
+    vi.useRealTimers();
+  });
+
+  it("opens bottom panel to llm-response", async () => {
+    vi.useFakeTimers();
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+
+    const ann = makeAnnotation({ uuid: "uuid-panel" });
+    window.dispatchEvent(new CustomEvent("lit:open-annotation-thread", { detail: { annotation: ann } }));
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(useBottomPanelStore.getState().activeTab).toBe("llm-response");
+    expect(useBottomPanelStore.getState().unfolded).toBe(true);
+
+    view.destroy();
+    vi.useRealTimers();
+  });
+
+  it("does nothing when currentPagePath is null", async () => {
+    vi.useFakeTimers();
+    useWorkspaceStore.setState({ currentPagePath: null });
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+
+    const ann = makeAnnotation({ uuid: "uuid-noop" });
+    window.dispatchEvent(new CustomEvent("lit:open-annotation-thread", { detail: { annotation: ann } }));
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockFindUuid).not.toHaveBeenCalled();
+    const findOrCreate = useConversationStore.getState().findOrCreateAnnotationThread;
+    expect(findOrCreate).not.toHaveBeenCalled();
+
+    view.destroy();
+    vi.useRealTimers();
+  });
+
+  it("does nothing when UUID not found", async () => {
+    vi.useFakeTimers();
+    mockFindUuid.mockResolvedValue(null);
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+
+    const ann = makeAnnotation({ uuid: null });
+    window.dispatchEvent(new CustomEvent("lit:open-annotation-thread", { detail: { annotation: ann } }));
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const findOrCreate = useConversationStore.getState().findOrCreateAnnotationThread;
+    expect(findOrCreate).not.toHaveBeenCalled();
+
+    view.destroy();
+    vi.useRealTimers();
+  });
+
+  it("unsubscribes on destroy", async () => {
+    vi.useFakeTimers();
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+    view.destroy();
+
+    const ann = makeAnnotation({ uuid: "uuid-dead" });
+    window.dispatchEvent(new CustomEvent("lit:open-annotation-thread", { detail: { annotation: ann } }));
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const findOrCreate = useConversationStore.getState().findOrCreateAnnotationThread;
+    expect(findOrCreate).not.toHaveBeenCalled();
+
+    vi.useRealTimers();
+  });
+
+  it("derives title from annotation type and body", async () => {
+    vi.useFakeTimers();
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+
+    const ann = makeAnnotation({ annotation_type: "question", body: "What is X?", uuid: "uuid-title" });
+    window.dispatchEvent(new CustomEvent("lit:open-annotation-thread", { detail: { annotation: ann } }));
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const findOrCreate = useConversationStore.getState().findOrCreateAnnotationThread;
+    expect(findOrCreate).toHaveBeenCalledWith("notes/page.md", "uuid-title", "question: What is X?");
+
+    view.destroy();
+    vi.useRealTimers();
+  });
+});
+
+// --- Conversation Thread Bridge Plugin ---
+
+function makeConversationRow(overrides: Partial<ConversationRow> = {}): ConversationRow {
+  return {
+    id: "conv-" + Math.random().toString(36).slice(2, 8),
+    node_id: "node-1",
+    anchor_type: null,
+    anchor_id: null,
+    anchor_key: null,
+    title: null,
+    created_at: "2025-01-01T00:00:00Z",
+    updated_at: "2025-01-01T00:00:00Z",
+    ...overrides,
+  };
+}
+
+describe("conversationThreadBridgePlugin", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    useConversationStore.setState({ conversations: [] });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("hydrates thread keys from pre-loaded conversations on creation", async () => {
+    useConversationStore.setState({
+      conversations: [
+        makeConversationRow({ anchor_type: "annotation", anchor_key: "uuid-a" }),
+        makeConversationRow({ anchor_type: "annotation", anchor_key: "uuid-b" }),
+      ],
+    });
+
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const keys = view.state.field(annotationThreadKeysField);
+    expect(keys.has("uuid-a")).toBe(true);
+    expect(keys.has("uuid-b")).toBe(true);
+    expect(keys.size).toBe(2);
+
+    view.destroy();
+  });
+
+  it("updates thread keys when store conversations change", async () => {
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(view.state.field(annotationThreadKeysField).size).toBe(0);
+
+    useConversationStore.setState({
+      conversations: [
+        makeConversationRow({ anchor_type: "annotation", anchor_key: "uuid-new" }),
+      ],
+    });
+
+    const keys = view.state.field(annotationThreadKeysField);
+    expect(keys.has("uuid-new")).toBe(true);
+
+    view.destroy();
+  });
+
+  it("does not dispatch when derived set is unchanged", async () => {
+    useConversationStore.setState({
+      conversations: [
+        makeConversationRow({ anchor_type: "annotation", anchor_key: "uuid-stable" }),
+      ],
+    });
+
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    const keysBefore = view.state.field(annotationThreadKeysField);
+
+    useConversationStore.setState({
+      conversations: [
+        makeConversationRow({ anchor_type: "annotation", anchor_key: "uuid-stable" }),
+        makeConversationRow({ anchor_type: "general", anchor_key: null }),
+      ],
+    });
+
+    const keysAfter = view.state.field(annotationThreadKeysField);
+    expect(keysAfter).toBe(keysBefore);
+
+    view.destroy();
+  });
+
+  it("removes keys when conversations shrink", async () => {
+    useConversationStore.setState({
+      conversations: [
+        makeConversationRow({ anchor_type: "annotation", anchor_key: "uuid-gone" }),
+      ],
+    });
+
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(view.state.field(annotationThreadKeysField).has("uuid-gone")).toBe(true);
+
+    useConversationStore.setState({ conversations: [] });
+
+    expect(view.state.field(annotationThreadKeysField).size).toBe(0);
+
+    view.destroy();
+  });
+
+  it("does not throw after destroy when store mutates", async () => {
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    view.destroy();
+
+    expect(() => {
+      useConversationStore.setState({
+        conversations: [
+          makeConversationRow({ anchor_type: "annotation", anchor_key: "uuid-after-destroy" }),
+        ],
+      });
+    }).not.toThrow();
+  });
+
+  it("does NOT dispatch synchronously in constructor", () => {
+    useConversationStore.setState({
+      conversations: [
+        makeConversationRow({ anchor_type: "annotation", anchor_key: "uuid-sync" }),
+      ],
+    });
+
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+
+    expect(view.state.field(annotationThreadKeysField).size).toBe(0);
+
+    view.destroy();
+  });
+
+  it("does not dispatch on destroyed view when microtask fires after destroy", async () => {
+    useConversationStore.setState({
+      conversations: [
+        makeConversationRow({ anchor_type: "annotation", anchor_key: "uuid-destroy" }),
+      ],
+    });
+
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+    view.destroy();
+    await new Promise<void>((r) => queueMicrotask(r));
+    // If the destroyed guard is missing, dispatching on a destroyed view would crash.
+    // The test passes without throwing.
+  });
+});
+
+describe("deriveThreadKeys", () => {
+  it("extracts keys from annotation conversations", () => {
+    const rows = [
+      makeConversationRow({ anchor_type: "annotation", anchor_key: "uuid-1" }),
+      makeConversationRow({ anchor_type: "annotation", anchor_key: "uuid-2" }),
+    ];
+    const keys = deriveThreadKeys(rows);
+    expect(keys).toEqual(new Set(["uuid-1", "uuid-2"]));
+  });
+
+  it("excludes non-annotation conversations", () => {
+    const rows = [
+      makeConversationRow({ anchor_type: "general", anchor_key: "key-1" }),
+      makeConversationRow({ anchor_type: "annotation", anchor_key: "uuid-only" }),
+      makeConversationRow({ anchor_type: null, anchor_key: null }),
+    ];
+    const keys = deriveThreadKeys(rows);
+    expect(keys).toEqual(new Set(["uuid-only"]));
+  });
+
+  it("excludes annotation conversations with null anchor_key", () => {
+    const rows = [
+      makeConversationRow({ anchor_type: "annotation", anchor_key: null }),
+    ];
+    const keys = deriveThreadKeys(rows);
+    expect(keys.size).toBe(0);
+  });
+
+  it("returns empty set for empty array", () => {
+    expect(deriveThreadKeys([]).size).toBe(0);
   });
 });

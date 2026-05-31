@@ -19,6 +19,7 @@ const mockResults: AnnotationSearchResult[] = [
     source_line: 10,
     char_start: 100,
     char_end: 150,
+    uuid: "test-uuid-1",
   },
   {
     annotation_id: 2,
@@ -31,6 +32,7 @@ const mockResults: AnnotationSearchResult[] = [
     source_line: 25,
     char_start: 200,
     char_end: 260,
+    uuid: "test-uuid-2",
   },
   {
     annotation_id: 3,
@@ -43,6 +45,7 @@ const mockResults: AnnotationSearchResult[] = [
     source_line: 42,
     char_start: 400,
     char_end: 420,
+    uuid: "test-uuid-3",
   },
 ];
 
@@ -765,6 +768,7 @@ describe("CommandPalette", () => {
         source_line: i + 1,
         char_start: 0,
         char_end: 10,
+        uuid: `test-uuid-${i + 1}`,
       }));
       mockInvoke((cmd) => {
         if (cmd === "search_annotations") return manyResults;
@@ -1259,6 +1263,7 @@ describe("CommandPalette", () => {
         source_line: 1,
         char_start: 0,
         char_end: 10,
+        uuid: "test-uuid-10",
       };
       const silkResult: AnnotationSearchResult = {
         annotation_id: 11,
@@ -1271,6 +1276,7 @@ describe("CommandPalette", () => {
         source_line: 1,
         char_start: 0,
         char_end: 10,
+        uuid: "test-uuid-11",
       };
 
       await act(async () => {

@@ -256,7 +256,7 @@ pub fn execute_split(
             deleted: vec![relative_path.clone()],
         };
         let reindex_result = gi.batch_reindex(&diff, ann_enabled);
-        crate::commands::graph::emit_reindex_result(&app_handle, reindex_result);
+        crate::commands::graph::emit_reindex_side_effects(&app_handle, &reindex_result);
     }
 
     if let Ok(oplog) = oplog_state.get_oplog(&root) {
@@ -381,7 +381,7 @@ pub fn merge_documents(
             deleted: result.source_snapshots.iter().map(|(p, _)| p.clone()).collect(),
         };
         let reindex_result = gi.batch_reindex(&diff, ann_enabled);
-        crate::commands::graph::emit_reindex_result(&app_handle, reindex_result);
+        crate::commands::graph::emit_reindex_side_effects(&app_handle, &reindex_result);
     }
 
     if let Ok(oplog) = oplog_state.get_oplog(&root) {

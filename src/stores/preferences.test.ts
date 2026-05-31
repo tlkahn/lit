@@ -847,4 +847,70 @@ describe("PreferencesStore", () => {
 
     expect(usePreferencesStore.getState().neighborsDepth).toBe(0);
   });
+
+  it("defaults llmDeleteAnnotationThreads to false", () => {
+    const state = usePreferencesStore.getState();
+    expect(state.llmDeleteAnnotationThreads).toBe(false);
+  });
+
+  it("maps llm.deleteAnnotationThreads: true from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "llm.deleteAnnotationThreads": true,
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().llmDeleteAnnotationThreads).toBe(true);
+  });
+
+  it("defaults llmDeleteAnnotationThreads to false when key missing from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().llmDeleteAnnotationThreads).toBe(false);
+  });
+
+  it("updates llmDeleteAnnotationThreads on preferences://changed event", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().llmDeleteAnnotationThreads).toBe(false);
+
+    emitMockEvent("preferences://changed", {
+      "workbench.colorTheme": null,
+      "workbench.darkMode": "auto",
+      "workbench.sideBar.location": "left",
+      "llm.deleteAnnotationThreads": true,
+    });
+
+    expect(usePreferencesStore.getState().llmDeleteAnnotationThreads).toBe(true);
+  });
 });

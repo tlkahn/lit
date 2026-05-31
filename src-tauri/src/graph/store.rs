@@ -1,13 +1,13 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use tracing::{debug, info};
 
 use super::error::GraphError;
 use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, ConversationRow, IndexableAnnotation, LinkEntry, MessageRow, ParsedNode, Stats, TagPageResult, TagSearchResult};
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 10;
+pub const CURRENT_SCHEMA_VERSION: i64 = 13;
 
 fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rusqlite::Error> {
     Ok(AnnotationSearchResult {
@@ -21,6 +21,7 @@ fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rus
         source_line: row.get(7)?,
         char_start: row.get(8)?,
         char_end: row.get(9)?,
+        uuid: row.get(10)?,
     })
 }
 
@@ -33,11 +34,88 @@ fn map_conversation_row(row: &rusqlite::Row) -> Result<ConversationRow, rusqlite
         title: row.get(4)?,
         created_at: row.get(5)?,
         updated_at: row.get(6)?,
+        anchor_key: row.get(7)?,
     })
 }
 
 pub struct Store {
     pub(crate) conn: Connection,
+}
+
+struct ExistingAnnotation {
+    id: i64,
+    annotation_type: String,
+    body: Option<String>,
+    char_start: i64,
+    uuid: String,
+}
+
+struct AnnotationDiff {
+    updates: Vec<(usize, usize)>,
+    inserts: Vec<usize>,
+    deletes: Vec<usize>,
+}
+
+fn match_annotations(existing: &[ExistingAnnotation], incoming: &[IndexableAnnotation]) -> AnnotationDiff {
+    // Group existing annotations by (type, body) key.
+    let mut existing_groups: HashMap<(String, Option<String>), Vec<usize>> = HashMap::new();
+    for (i, ex) in existing.iter().enumerate() {
+        existing_groups
+            .entry((ex.annotation_type.clone(), ex.body.clone()))
+            .or_default()
+            .push(i);
+    }
+
+    // Sort each group of existing candidates by char_start.
+    for indices in existing_groups.values_mut() {
+        indices.sort_by_key(|&i| existing[i].char_start);
+    }
+
+    // Group incoming annotations by the same key, sorted by char_start.
+    let mut incoming_groups: HashMap<(String, Option<String>), Vec<usize>> = HashMap::new();
+    for (i, ann) in incoming.iter().enumerate() {
+        incoming_groups
+            .entry((ann.annotation_type.clone(), ann.body.clone()))
+            .or_default()
+            .push(i);
+    }
+    for indices in incoming_groups.values_mut() {
+        indices.sort_by_key(|&i| incoming[i].char_start);
+    }
+
+    // Pair by ordinal rank within each (type, body) group: first existing
+    // (by position) pairs with first incoming (by position), etc. This
+    // prevents UUID swaps when positions shift dramatically — e.g. an
+    // annotation moving from pos 10 to 190 won't steal the UUID of
+    // a neighbor at pos 200.
+    let mut updates = Vec::new();
+    let mut inserts = Vec::new();
+    let mut matched_old: HashSet<usize> = HashSet::new();
+
+    for (key, inc_indices) in &incoming_groups {
+        if let Some(ex_indices) = existing_groups.get(key) {
+            let pair_count = inc_indices.len().min(ex_indices.len());
+            for rank in 0..pair_count {
+                updates.push((inc_indices[rank], ex_indices[rank]));
+                matched_old.insert(ex_indices[rank]);
+            }
+            // Extra incoming annotations beyond existing count are inserts.
+            for &new_idx in &inc_indices[pair_count..] {
+                inserts.push(new_idx);
+            }
+        } else {
+            // No existing annotations for this key — all are inserts.
+            for &new_idx in inc_indices {
+                inserts.push(new_idx);
+            }
+        }
+    }
+
+    let deletes: Vec<usize> = (0..existing.len())
+        .filter(|i| !matched_old.contains(i))
+        .collect();
+
+    AnnotationDiff { updates, inserts, deletes }
 }
 
 impl Store {
@@ -272,6 +350,74 @@ impl Store {
                 COMMIT;"
             )?;
             self.conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+        }
+
+        if version < 11 {
+            info!(from = version, to = 11, "migrating schema: adding uuid to annotations, anchor_key to conversations");
+            self.conn.execute_batch(
+                "ALTER TABLE annotations ADD COLUMN uuid TEXT;
+                 ALTER TABLE conversations ADD COLUMN anchor_key TEXT;
+                 CREATE INDEX IF NOT EXISTS idx_conversations_anchor ON conversations(node_id, anchor_type, anchor_key);
+                 UPDATE meta SET value = '11' WHERE key = 'schema_version';"
+            )?;
+            let mut stmt = self.conn.prepare("SELECT rowid FROM annotations WHERE uuid IS NULL")?;
+            let rowids: Vec<i64> = stmt.query_map([], |row| row.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            for rowid in rowids {
+                let id = uuid::Uuid::new_v4().to_string();
+                self.conn.execute(
+                    "UPDATE annotations SET uuid = ?1 WHERE rowid = ?2",
+                    rusqlite::params![id, rowid],
+                )?;
+            }
+        }
+
+        if version < 12 {
+            info!(from = version, to = 12, "migrating schema: enforcing NOT NULL on annotations.uuid");
+            self.conn.execute_batch("PRAGMA foreign_keys=OFF;")?;
+            self.conn.execute_batch(
+                "BEGIN TRANSACTION;
+                CREATE TABLE annotations_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    node_id TEXT NOT NULL,
+                    annotation_type TEXT NOT NULL,
+                    certainty TEXT NOT NULL,
+                    body TEXT,
+                    date TEXT,
+                    source_line INTEGER NOT NULL,
+                    char_start INTEGER NOT NULL,
+                    char_end INTEGER NOT NULL,
+                    scope_kind TEXT NOT NULL,
+                    scope_value TEXT NOT NULL,
+                    uuid TEXT NOT NULL
+                );
+                INSERT INTO annotations_new SELECT id, node_id, annotation_type, certainty, body, date, source_line, char_start, char_end, scope_kind, scope_value, uuid FROM annotations;
+                DROP TABLE annotations;
+                ALTER TABLE annotations_new RENAME TO annotations;
+                CREATE INDEX idx_annotations_node_id ON annotations(node_id);
+                CREATE INDEX idx_annotations_type ON annotations(annotation_type);
+                DELETE FROM annotations_fts;
+                INSERT INTO annotations_fts(rowid, body, node_id, annotation_type)
+                    SELECT id, body, node_id, annotation_type FROM annotations WHERE body IS NOT NULL;
+                UPDATE meta SET value = '12' WHERE key = 'schema_version';
+                COMMIT;"
+            )?;
+            self.conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+        }
+
+        if version < 13 {
+            info!(from = version, to = 13, "migrating schema: unique anchor constraint on conversations");
+            self.conn.execute_batch(
+                "DELETE FROM conversations WHERE rowid NOT IN (
+                    SELECT MIN(rowid) FROM conversations
+                    WHERE anchor_key IS NOT NULL
+                    GROUP BY node_id, anchor_type, anchor_key
+                ) AND anchor_key IS NOT NULL;
+                DROP INDEX IF EXISTS idx_conversations_anchor;
+                CREATE UNIQUE INDEX idx_conversations_anchor
+                    ON conversations(node_id, anchor_type, anchor_key);
+                UPDATE meta SET value = '13' WHERE key = 'schema_version';"
+            )?;
         }
 
         Ok(())
@@ -782,35 +928,95 @@ impl Store {
 
     // --- Annotations ---
 
-    pub fn upsert_annotations(&self, node_id: &str, annotations: &[IndexableAnnotation]) -> Result<(), GraphError> {
-        self.conn.execute("DELETE FROM annotations_fts WHERE node_id = ?1", [node_id])?;
-        self.conn.execute("DELETE FROM annotations WHERE node_id = ?1", [node_id])?;
-        for ann in annotations {
-            self.conn.execute(
-                "INSERT INTO annotations(node_id, annotation_type, certainty, body, date, source_line, char_start, char_end, scope_kind, scope_value)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                rusqlite::params![
-                    node_id,
-                    ann.annotation_type,
-                    ann.certainty,
-                    ann.body,
-                    ann.date,
-                    ann.source_line,
-                    ann.char_start,
-                    ann.char_end,
-                    ann.scope_kind,
-                    ann.scope_value,
-                ],
-            )?;
-            if ann.body.is_some() {
-                let rowid = self.conn.last_insert_rowid();
+    fn fetch_existing_annotations(&self, node_id: &str) -> Result<Vec<ExistingAnnotation>, GraphError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, annotation_type, body, char_start, uuid FROM annotations WHERE node_id = ?1",
+        )?;
+        let rows = stmt.query_map([node_id], |row| {
+            Ok(ExistingAnnotation {
+                id: row.get(0)?,
+                annotation_type: row.get(1)?,
+                body: row.get(2)?,
+                char_start: row.get(3)?,
+                uuid: row.get(4)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    pub fn upsert_annotations(&self, node_id: &str, annotations: &[IndexableAnnotation]) -> Result<Vec<String>, GraphError> {
+        let existing = self.fetch_existing_annotations(node_id)?;
+        let diff = match_annotations(&existing, annotations);
+
+        let mut update_stmt = self.conn.prepare(
+            "UPDATE annotations SET certainty=?1, date=?2, source_line=?3, char_start=?4, char_end=?5, scope_kind=?6, scope_value=?7 WHERE id=?8",
+        )?;
+        for &(new_idx, old_idx) in &diff.updates {
+            let ann = &annotations[new_idx];
+            update_stmt.execute(rusqlite::params![
+                ann.certainty,
+                ann.date,
+                ann.source_line,
+                ann.char_start,
+                ann.char_end,
+                ann.scope_kind,
+                ann.scope_value,
+                existing[old_idx].id,
+            ])?;
+        }
+
+        let mut insert_stmt = self.conn.prepare(
+            "INSERT INTO annotations(node_id, annotation_type, certainty, body, date, source_line, char_start, char_end, scope_kind, scope_value, uuid)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        )?;
+        let mut inserted_rowids = Vec::with_capacity(diff.inserts.len());
+        for &new_idx in &diff.inserts {
+            let ann = &annotations[new_idx];
+            let uuid_val = uuid::Uuid::new_v4().to_string();
+            insert_stmt.execute(rusqlite::params![
+                node_id,
+                ann.annotation_type,
+                ann.certainty,
+                ann.body,
+                ann.date,
+                ann.source_line,
+                ann.char_start,
+                ann.char_end,
+                ann.scope_kind,
+                ann.scope_value,
+                uuid_val,
+            ])?;
+            inserted_rowids.push(self.conn.last_insert_rowid());
+        }
+
+        let deleted_uuids: Vec<String> = diff.deletes.iter()
+            .map(|&old_idx| existing[old_idx].uuid.clone())
+            .collect();
+
+        for &old_idx in &diff.deletes {
+            self.conn.execute("DELETE FROM annotations WHERE id = ?1", [existing[old_idx].id])?;
+        }
+
+        // Incremental FTS maintenance: only touch rows that changed
+        if !diff.inserts.is_empty() || !diff.deletes.is_empty() {
+            // Delete FTS rows for removed annotations
+            for &old_idx in &diff.deletes {
                 self.conn.execute(
-                    "INSERT INTO annotations_fts(rowid, body, node_id, annotation_type) VALUES (?1, ?2, ?3, ?4)",
-                    rusqlite::params![rowid, ann.body, node_id, ann.annotation_type],
+                    "DELETE FROM annotations_fts WHERE rowid = ?1",
+                    [existing[old_idx].id],
                 )?;
             }
+            // Insert FTS rows for newly added annotations
+            let mut fts_insert = self.conn.prepare(
+                "INSERT INTO annotations_fts(rowid, body, node_id, annotation_type)
+                 SELECT id, body, node_id, annotation_type FROM annotations WHERE id = ?1 AND body IS NOT NULL",
+            )?;
+            for rowid in &inserted_rowids {
+                fts_insert.execute([rowid])?;
+            }
         }
-        Ok(())
+
+        Ok(deleted_uuids)
     }
 
     pub fn search_annotations(&self, query: &str, type_filter: Option<&str>, limit: i64) -> Result<Vec<AnnotationSearchResult>, GraphError> {
@@ -837,7 +1043,7 @@ impl Store {
 
             let where_clause = conditions.join(" AND ");
             let sql = format!(
-                "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end
+                "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end, a.uuid
                  FROM annotations a
                  JOIN nodes n ON n.id = a.node_id
                  WHERE {where_clause}
@@ -861,7 +1067,7 @@ impl Store {
 
             let (sql, params_count) = if type_filter.is_some() {
                 (
-                    "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end
+                    "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end, a.uuid
                      FROM annotations_fts f
                      JOIN annotations a ON a.id = f.rowid
                      JOIN nodes n ON n.id = a.node_id
@@ -872,7 +1078,7 @@ impl Store {
                 )
             } else {
                 (
-                    "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end
+                    "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end, a.uuid
                      FROM annotations_fts f
                      JOIN annotations a ON a.id = f.rowid
                      JOIN nodes n ON n.id = a.node_id
@@ -905,7 +1111,7 @@ impl Store {
         match (node_id, type_filter) {
             (Some(nid), Some(tf)) => {
                 let mut stmt = self.conn.prepare(
-                    "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end
+                    "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end, a.uuid
                      FROM annotations a
                      JOIN nodes n ON n.id = a.node_id
                      WHERE a.node_id = ?1 AND a.annotation_type = ?2
@@ -919,7 +1125,7 @@ impl Store {
             }
             (Some(nid), None) => {
                 let mut stmt = self.conn.prepare(
-                    "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end
+                    "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end, a.uuid
                      FROM annotations a
                      JOIN nodes n ON n.id = a.node_id
                      WHERE a.node_id = ?1
@@ -933,7 +1139,7 @@ impl Store {
             }
             (None, Some(tf)) => {
                 let mut stmt = self.conn.prepare(
-                    "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end
+                    "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end, a.uuid
                      FROM annotations a
                      JOIN nodes n ON n.id = a.node_id
                      WHERE a.annotation_type = ?1
@@ -947,7 +1153,7 @@ impl Store {
             }
             (None, None) => {
                 let mut stmt = self.conn.prepare(
-                    "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end
+                    "SELECT a.id, a.node_id, n.title, a.annotation_type, a.certainty, a.body, a.date, a.source_line, a.char_start, a.char_end, a.uuid
                      FROM annotations a
                      JOIN nodes n ON n.id = a.node_id
                      ORDER BY a.node_id, a.source_line
@@ -961,6 +1167,26 @@ impl Store {
         }
     }
 
+    pub fn find_annotation_uuid(
+        &self,
+        node_id: &str,
+        annotation_type: &str,
+        body: Option<&str>,
+        char_start_hint: usize,
+    ) -> Result<Option<String>, GraphError> {
+        let uuid: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT uuid FROM annotations
+                 WHERE node_id = ?1 AND annotation_type = ?2 AND body IS ?3
+                 ORDER BY ABS(char_start - ?4) LIMIT 1",
+                rusqlite::params![node_id, annotation_type, body, char_start_hint as i64],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(uuid)
+    }
+
     // --- Conversations ---
 
     pub fn create_conversation(
@@ -969,20 +1195,21 @@ impl Store {
         node_id: &str,
         anchor_type: Option<&str>,
         anchor_id: Option<i64>,
+        anchor_key: Option<&str>,
         title: Option<&str>,
     ) -> Result<ConversationRow, GraphError> {
         self.conn.query_row(
-            "INSERT INTO conversations(id, node_id, anchor_type, anchor_id, title, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-             RETURNING id, node_id, anchor_type, anchor_id, title, created_at, updated_at",
-            rusqlite::params![id, node_id, anchor_type, anchor_id, title],
+            "INSERT INTO conversations(id, node_id, anchor_type, anchor_id, anchor_key, title, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+             RETURNING id, node_id, anchor_type, anchor_id, title, created_at, updated_at, anchor_key",
+            rusqlite::params![id, node_id, anchor_type, anchor_id, anchor_key, title],
             |row| map_conversation_row(row),
         ).map_err(|e| e.into())
     }
 
     pub fn get_conversation(&self, id: &str) -> Result<Option<ConversationRow>, GraphError> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, node_id, anchor_type, anchor_id, title, created_at, updated_at
+            "SELECT id, node_id, anchor_type, anchor_id, title, created_at, updated_at, anchor_key
              FROM conversations WHERE id = ?1"
         )?;
         let mut rows = stmt.query([id])?;
@@ -994,7 +1221,7 @@ impl Store {
 
     pub fn list_conversations(&self, node_id: &str) -> Result<Vec<ConversationRow>, GraphError> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, node_id, anchor_type, anchor_id, title, created_at, updated_at
+            "SELECT id, node_id, anchor_type, anchor_id, title, created_at, updated_at, anchor_key
              FROM conversations WHERE node_id = ?1
              ORDER BY updated_at DESC"
         )?;
@@ -1006,6 +1233,38 @@ impl Store {
 
     pub fn delete_conversation(&self, id: &str) -> Result<(), GraphError> {
         self.conn.execute("DELETE FROM conversations WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    pub fn find_conversation_by_anchor(
+        &self,
+        node_id: &str,
+        anchor_type: &str,
+        anchor_key: &str,
+    ) -> Result<Option<ConversationRow>, GraphError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, node_id, anchor_type, anchor_id, title, created_at, updated_at, anchor_key
+             FROM conversations
+             WHERE node_id = ?1 AND anchor_type = ?2 AND anchor_key = ?3",
+        )?;
+        let mut rows = stmt.query(rusqlite::params![node_id, anchor_type, anchor_key])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(map_conversation_row(row)?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn delete_conversations_by_anchor(
+        &self,
+        node_id: &str,
+        anchor_type: &str,
+        anchor_key: &str,
+    ) -> Result<(), GraphError> {
+        self.conn.execute(
+            "DELETE FROM conversations
+             WHERE node_id = ?1 AND anchor_type = ?2 AND anchor_key = ?3",
+            rusqlite::params![node_id, anchor_type, anchor_key],
+        )?;
         Ok(())
     }
 
@@ -1227,7 +1486,7 @@ mod tests {
             let mut positions = HashMap::new();
             positions.insert("a.md".into(), Position { x: 1.0, y: 2.0 });
             store.save_positions(&positions).unwrap();
-            store.create_conversation("conv-1", "a.md", None, None, Some("Chat")).unwrap();
+            store.create_conversation("conv-1", "a.md", None, None, None, Some("Chat")).unwrap();
             store.add_message("conv-1", "user", "Hello").unwrap();
 
             store.conn.execute(
@@ -2334,8 +2593,39 @@ mod tests {
     // --- Cycle 2: Schema v6 ---
 
     #[test]
-    fn schema_version_is_ten() {
-        assert_eq!(CURRENT_SCHEMA_VERSION, 10);
+    fn schema_version_is_thirteen() {
+        assert_eq!(CURRENT_SCHEMA_VERSION, 13);
+    }
+
+    #[test]
+    fn migration_v11_adds_uuid_and_anchor_key() {
+        let store = Store::open_memory().unwrap();
+
+        let has_uuid: bool = store.conn
+            .prepare("SELECT uuid FROM annotations LIMIT 0")
+            .is_ok();
+        assert!(has_uuid, "annotations table should have uuid column");
+
+        let has_anchor_key: bool = store.conn
+            .prepare("SELECT anchor_key FROM conversations LIMIT 0")
+            .is_ok();
+        assert!(has_anchor_key, "conversations table should have anchor_key column");
+    }
+
+    #[test]
+    fn migration_v11_backfills_existing_annotation_uuids() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.upsert_annotations("a.md", &[make_annotation("note", Some("hello"))]).unwrap();
+
+        let uuid: String = store.conn.query_row(
+            "SELECT uuid FROM annotations WHERE node_id = 'a.md' LIMIT 1",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(uuid.len(), 36, "uuid should be 36-char hyphenated v4 format");
+        assert_eq!(&uuid[14..15], "4", "uuid version nibble should be 4");
     }
 
     #[test]
@@ -2430,6 +2720,21 @@ mod tests {
     }
 
     #[test]
+    fn upsert_annotations_generates_v4_uuid() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        store.upsert_annotations("a.md", &[make_annotation("note", Some("hello"))]).unwrap();
+
+        let uuid: String = store.conn.query_row(
+            "SELECT uuid FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(uuid.len(), 36, "uuid should be 36-char hyphenated v4 format");
+        assert_eq!(&uuid[14..15], "4", "uuid version nibble should be 4");
+    }
+
+    #[test]
     fn upsert_annotations_inserts_rows() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
@@ -2480,6 +2785,360 @@ mod tests {
             store.conn.query_row("SELECT COUNT(*) FROM annotations_fts", [], |r| r.get::<_, i64>(0)).unwrap(),
             1
         );
+    }
+
+    // --- Cycle 1.2: incremental upsert_annotations ---
+
+    #[test]
+    fn upsert_annotations_preserves_uuid_on_body_match() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let anns = vec![super::IndexableAnnotation {
+            char_start: 0,
+            ..make_annotation("note", Some("important note"))
+        }];
+        store.upsert_annotations("a.md", &anns).unwrap();
+
+        let uuid1: String = store.conn.query_row(
+            "SELECT uuid FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+
+        let anns2 = vec![super::IndexableAnnotation {
+            char_start: 50,
+            source_line: 5,
+            ..make_annotation("note", Some("important note"))
+        }];
+        store.upsert_annotations("a.md", &anns2).unwrap();
+
+        let (uuid2, char_start): (String, i64) = store.conn.query_row(
+            "SELECT uuid, char_start FROM annotations WHERE node_id = 'a.md'", [], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        let count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+
+        assert_eq!(uuid2, uuid1);
+        assert_eq!(char_start, 50);
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn upsert_annotations_assigns_new_uuid_on_new_annotation() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let anns = vec![make_annotation("note", Some("first"))];
+        store.upsert_annotations("a.md", &anns).unwrap();
+
+        let uuid1: String = store.conn.query_row(
+            "SELECT uuid FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+
+        let anns2 = vec![
+            make_annotation("note", Some("first")),
+            make_annotation("question", Some("new q")),
+        ];
+        store.upsert_annotations("a.md", &anns2).unwrap();
+
+        let count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        let fts_count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM annotations_fts WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+
+        let mut stmt = store.conn.prepare(
+            "SELECT uuid, annotation_type FROM annotations WHERE node_id = 'a.md' ORDER BY annotation_type",
+        ).unwrap();
+        let rows: Vec<(String, String)> = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap().filter_map(|r| r.ok()).collect();
+
+        assert_eq!(count, 2);
+        assert_eq!(fts_count, 2);
+        assert_eq!(rows[0].1, "note");
+        assert_eq!(rows[0].0, uuid1);
+        assert_eq!(rows[1].1, "question");
+        assert!(!rows[1].0.is_empty());
+        assert_ne!(rows[1].0, uuid1);
+    }
+
+    #[test]
+    fn upsert_annotations_deletes_removed_annotations() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let anns = vec![
+            make_annotation("note", Some("keep")),
+            make_annotation("question", Some("remove")),
+        ];
+        store.upsert_annotations("a.md", &anns).unwrap();
+
+        let keep_uuid: String = store.conn.query_row(
+            "SELECT uuid FROM annotations WHERE node_id = 'a.md' AND body = 'keep'", [], |r| r.get(0),
+        ).unwrap();
+
+        let anns2 = vec![make_annotation("note", Some("keep"))];
+        store.upsert_annotations("a.md", &anns2).unwrap();
+
+        let count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        let fts_count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM annotations_fts WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        let surviving_uuid: String = store.conn.query_row(
+            "SELECT uuid FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+
+        assert_eq!(count, 1);
+        assert_eq!(fts_count, 1);
+        assert_eq!(surviving_uuid, keep_uuid);
+    }
+
+    #[test]
+    fn upsert_annotations_returns_deleted_uuids() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let anns = vec![
+            make_annotation("note", Some("keep")),
+            make_annotation("question", Some("remove-1")),
+            make_annotation("question", Some("remove-2")),
+        ];
+        store.upsert_annotations("a.md", &anns).unwrap();
+
+        let remove1_uuid: String = store.conn.query_row(
+            "SELECT uuid FROM annotations WHERE node_id = 'a.md' AND body = 'remove-1'", [], |r| r.get(0),
+        ).unwrap();
+        let remove2_uuid: String = store.conn.query_row(
+            "SELECT uuid FROM annotations WHERE node_id = 'a.md' AND body = 'remove-2'", [], |r| r.get(0),
+        ).unwrap();
+
+        let anns2 = vec![make_annotation("note", Some("keep"))];
+        let deleted_uuids = store.upsert_annotations("a.md", &anns2).unwrap();
+
+        assert_eq!(deleted_uuids.len(), 2);
+        assert!(deleted_uuids.contains(&remove1_uuid));
+        assert!(deleted_uuids.contains(&remove2_uuid));
+    }
+
+    #[test]
+    fn upsert_annotations_returns_empty_when_no_deletions() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let anns = vec![make_annotation("note", Some("stay"))];
+        let deleted = store.upsert_annotations("a.md", &anns).unwrap();
+        assert!(deleted.is_empty());
+
+        let anns2 = vec![make_annotation("note", Some("stay"))];
+        let deleted2 = store.upsert_annotations("a.md", &anns2).unwrap();
+        assert!(deleted2.is_empty());
+    }
+
+    #[test]
+    fn upsert_annotations_handles_duplicate_type_body() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let anns = vec![
+            super::IndexableAnnotation { char_start: 10, ..make_annotation("note", Some("recurring")) },
+            super::IndexableAnnotation { char_start: 100, ..make_annotation("note", Some("recurring")) },
+        ];
+        store.upsert_annotations("a.md", &anns).unwrap();
+
+        let mut stmt = store.conn.prepare(
+            "SELECT uuid, char_start FROM annotations WHERE node_id = 'a.md' ORDER BY char_start",
+        ).unwrap();
+        let old_rows: Vec<(String, i64)> = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap().filter_map(|r| r.ok()).collect();
+        assert_eq!(old_rows.len(), 2);
+
+        let anns2 = vec![
+            super::IndexableAnnotation { char_start: 15, ..make_annotation("note", Some("recurring")) },
+            super::IndexableAnnotation { char_start: 105, ..make_annotation("note", Some("recurring")) },
+        ];
+        store.upsert_annotations("a.md", &anns2).unwrap();
+
+        let mut stmt2 = store.conn.prepare(
+            "SELECT uuid, char_start FROM annotations WHERE node_id = 'a.md' ORDER BY char_start",
+        ).unwrap();
+        let new_rows: Vec<(String, i64)> = stmt2.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap().filter_map(|r| r.ok()).collect();
+        assert_eq!(new_rows.len(), 2);
+
+        assert_eq!(new_rows[0].1, 15);
+        assert_eq!(new_rows[0].0, old_rows[0].0);
+        assert_eq!(new_rows[1].1, 105);
+        assert_eq!(new_rows[1].0, old_rows[1].0);
+    }
+
+    #[test]
+    fn upsert_annotations_fts_rowids_stable_on_update_only() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        // Insert two annotations with bodies
+        let anns = vec![
+            super::IndexableAnnotation { char_start: 10, ..make_annotation("note", Some("alpha body")) },
+            super::IndexableAnnotation { char_start: 50, ..make_annotation("note", Some("beta body")) },
+        ];
+        store.upsert_annotations("a.md", &anns).unwrap();
+
+        // Capture FTS rowids
+        let rowids_before: Vec<i64> = store.conn
+            .prepare("SELECT rowid FROM annotations_fts WHERE node_id = 'a.md' ORDER BY rowid")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        assert_eq!(rowids_before.len(), 2);
+
+        // Re-upsert the SAME annotations with shifted char_start (update-only diff)
+        let anns2 = vec![
+            super::IndexableAnnotation { char_start: 15, ..make_annotation("note", Some("alpha body")) },
+            super::IndexableAnnotation { char_start: 55, ..make_annotation("note", Some("beta body")) },
+        ];
+        store.upsert_annotations("a.md", &anns2).unwrap();
+
+        // Capture FTS rowids again
+        let rowids_after: Vec<i64> = store.conn
+            .prepare("SELECT rowid FROM annotations_fts WHERE node_id = 'a.md' ORDER BY rowid")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+
+        // Rowids must be identical — no delete+re-insert churn
+        assert_eq!(rowids_before, rowids_after);
+    }
+
+    // --- match_annotations: greedy position-sorted pairing ---
+
+    #[test]
+    fn match_annotations_no_uuid_swap_on_position_shift() {
+        // Regression test: two annotations share (type, body). User inserts text
+        // moving the first from pos 10 to pos 190. Without sorted iteration the
+        // greedy matcher assigns incoming@190 to existing@200 (dist 10) stealing
+        // that UUID, then incoming@200 falls back to existing@10 — a UUID swap.
+        let existing = vec![
+            super::ExistingAnnotation {
+                id: 1, annotation_type: "note".into(), body: Some("TODO".into()),
+                char_start: 10, uuid: "uuid-A".into(),
+            },
+            super::ExistingAnnotation {
+                id: 2, annotation_type: "note".into(), body: Some("TODO".into()),
+                char_start: 200, uuid: "uuid-B".into(),
+            },
+        ];
+        let incoming = vec![
+            super::IndexableAnnotation { char_start: 190, ..make_annotation("note", Some("TODO")) },
+            super::IndexableAnnotation { char_start: 200, ..make_annotation("note", Some("TODO")) },
+        ];
+
+        let diff = super::match_annotations(&existing, &incoming);
+
+        // Build a map: incoming_idx → matched existing_idx
+        let map: std::collections::HashMap<usize, usize> =
+            diff.updates.iter().copied().collect();
+
+        // incoming[0] (pos 190) should match existing[0] (pos 10, uuid-A)
+        // incoming[1] (pos 200) should match existing[1] (pos 200, uuid-B)
+        assert_eq!(map[&0], 0, "incoming@190 must match existing@10 (uuid-A), not existing@200");
+        assert_eq!(map[&1], 1, "incoming@200 must match existing@200 (uuid-B)");
+        assert!(diff.inserts.is_empty());
+        assert!(diff.deletes.is_empty());
+    }
+
+    #[test]
+    fn match_annotations_three_same_key_preserves_order() {
+        // Three annotations with the same (type, body), positions shift slightly.
+        // Ordinal pairing must hold: first→first, second→second, third→third.
+        let existing = vec![
+            super::ExistingAnnotation {
+                id: 1, annotation_type: "note".into(), body: Some("x".into()),
+                char_start: 10, uuid: "u1".into(),
+            },
+            super::ExistingAnnotation {
+                id: 2, annotation_type: "note".into(), body: Some("x".into()),
+                char_start: 100, uuid: "u2".into(),
+            },
+            super::ExistingAnnotation {
+                id: 3, annotation_type: "note".into(), body: Some("x".into()),
+                char_start: 300, uuid: "u3".into(),
+            },
+        ];
+        let incoming = vec![
+            super::IndexableAnnotation { char_start: 15, ..make_annotation("note", Some("x")) },
+            super::IndexableAnnotation { char_start: 110, ..make_annotation("note", Some("x")) },
+            super::IndexableAnnotation { char_start: 290, ..make_annotation("note", Some("x")) },
+        ];
+
+        let diff = super::match_annotations(&existing, &incoming);
+
+        let map: std::collections::HashMap<usize, usize> =
+            diff.updates.iter().copied().collect();
+
+        assert_eq!(map[&0], 0, "first incoming must pair with first existing");
+        assert_eq!(map[&1], 1, "second incoming must pair with second existing");
+        assert_eq!(map[&2], 2, "third incoming must pair with third existing");
+        assert!(diff.inserts.is_empty());
+        assert!(diff.deletes.is_empty());
+    }
+
+    #[test]
+    fn upsert_annotations_no_uuid_swap_on_large_shift() {
+        // Integration test through upsert_annotations: two TODO annotations,
+        // first one shifts dramatically. UUIDs must stay with their original
+        // ordinal annotation.
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let anns = vec![
+            super::IndexableAnnotation { char_start: 10, ..make_annotation("note", Some("TODO")) },
+            super::IndexableAnnotation { char_start: 200, ..make_annotation("note", Some("TODO")) },
+        ];
+        store.upsert_annotations("a.md", &anns).unwrap();
+
+        let mut stmt = store.conn.prepare(
+            "SELECT uuid, char_start FROM annotations WHERE node_id = 'a.md' ORDER BY char_start",
+        ).unwrap();
+        let old_rows: Vec<(String, i64)> = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap().filter_map(|r| r.ok()).collect();
+        assert_eq!(old_rows.len(), 2);
+        let (uuid_a, uuid_b) = (old_rows[0].0.clone(), old_rows[1].0.clone());
+
+        // Shift first annotation from 10 → 190 (close to the second at 200).
+        let anns2 = vec![
+            super::IndexableAnnotation { char_start: 190, ..make_annotation("note", Some("TODO")) },
+            super::IndexableAnnotation { char_start: 200, ..make_annotation("note", Some("TODO")) },
+        ];
+        store.upsert_annotations("a.md", &anns2).unwrap();
+
+        let mut stmt2 = store.conn.prepare(
+            "SELECT uuid, char_start FROM annotations WHERE node_id = 'a.md' ORDER BY char_start",
+        ).unwrap();
+        let new_rows: Vec<(String, i64)> = stmt2.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap().filter_map(|r| r.ok()).collect();
+        assert_eq!(new_rows.len(), 2);
+
+        // uuid-A (originally at 10) should now be at 190
+        assert_eq!(new_rows[0].0, uuid_a, "uuid-A must follow its annotation to pos 190");
+        assert_eq!(new_rows[0].1, 190);
+        // uuid-B (originally at 200) should stay at 200
+        assert_eq!(new_rows[1].0, uuid_b, "uuid-B must remain at pos 200");
+        assert_eq!(new_rows[1].1, 200);
     }
 
     // --- Cycle 5: delete_node cascades ---
@@ -2755,6 +3414,86 @@ mod tests {
         assert_eq!(latin_results[0].node_id, "b.md");
     }
 
+    // --- find_annotation_uuid ---
+
+    #[test]
+    fn find_annotation_uuid_returns_match() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let ann = make_annotation("note", Some("hello world"));
+        store.upsert_annotations("a.md", &[ann]).unwrap();
+
+        let result = store
+            .find_annotation_uuid("a.md", "note", Some("hello world"), 0)
+            .unwrap();
+        assert!(result.is_some());
+        let uuid = result.unwrap();
+        assert!(!uuid.is_empty());
+    }
+
+    #[test]
+    fn find_annotation_uuid_returns_none_for_missing() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let result = store
+            .find_annotation_uuid("a.md", "note", Some("no such body"), 0)
+            .unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn find_annotation_uuid_closest_when_duplicates() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let ann_at_0 = super::IndexableAnnotation {
+            char_start: 0,
+            ..make_annotation("note", Some("dup body"))
+        };
+        let ann_at_100 = super::IndexableAnnotation {
+            char_start: 100,
+            ..make_annotation("note", Some("dup body"))
+        };
+        store.upsert_annotations("a.md", &[ann_at_0, ann_at_100]).unwrap();
+
+        // hint=90, closer to 100
+        let result = store
+            .find_annotation_uuid("a.md", "note", Some("dup body"), 90)
+            .unwrap()
+            .unwrap();
+
+        // Verify it's the one at char_start=100
+        let uuid_at_100: String = store
+            .conn
+            .query_row(
+                "SELECT uuid FROM annotations WHERE node_id='a.md' AND char_start=100",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(result, uuid_at_100);
+    }
+
+    #[test]
+    fn find_annotation_uuid_with_null_body() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let ann = make_annotation("note", None);
+        store.upsert_annotations("a.md", &[ann]).unwrap();
+
+        let result = store
+            .find_annotation_uuid("a.md", "note", None, 0)
+            .unwrap();
+        assert!(result.is_some(), "should match annotation with NULL body");
+    }
+
     // --- v6 → v7 migration path ---
 
     #[test]
@@ -3008,7 +3747,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, Some("My Chat")).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, Some("My Chat")).unwrap();
 
         let row = store.get_conversation("conv-1").unwrap().expect("should exist");
         assert_eq!(row.id, "conv-1");
@@ -3021,7 +3760,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
 
         let row = store.get_conversation("conv-1").unwrap().unwrap();
         assert!(!row.created_at.is_empty());
@@ -3035,8 +3774,8 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
-        assert!(store.create_conversation("conv-1", "a.md", None, None, None).is_err());
+        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
+        assert!(store.create_conversation("conv-1", "a.md", None, None, None, None).is_err());
     }
 
     #[test]
@@ -3045,7 +3784,7 @@ mod tests {
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
 
-        let row: ConversationRow = store.create_conversation("conv-1", "a.md", Some("annotation"), Some(7), Some("Chat")).unwrap();
+        let row: ConversationRow = store.create_conversation("conv-1", "a.md", Some("annotation"), Some(7), None, Some("Chat")).unwrap();
         assert_eq!(row.id, "conv-1");
         assert_eq!(row.node_id, "a.md");
         assert_eq!(row.anchor_type, Some("annotation".into()));
@@ -3069,7 +3808,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", Some("annotation"), Some(42), Some("Title")).unwrap();
+        store.create_conversation("conv-1", "a.md", Some("annotation"), Some(42), None, Some("Title")).unwrap();
 
         let row = store.get_conversation("conv-1").unwrap().unwrap();
         assert_eq!(row.id, "conv-1");
@@ -3096,9 +3835,9 @@ mod tests {
         let node_b = make_node("b.md", "B", &[], json!({}));
         store.upsert_node(&node_a, 1).unwrap();
         store.upsert_node(&node_b, 1).unwrap();
-        store.create_conversation("conv-a1", "a.md", None, None, None).unwrap();
-        store.create_conversation("conv-a2", "a.md", None, None, None).unwrap();
-        store.create_conversation("conv-b1", "b.md", None, None, None).unwrap();
+        store.create_conversation("conv-a1", "a.md", None, None, None, None).unwrap();
+        store.create_conversation("conv-a2", "a.md", None, None, None, None).unwrap();
+        store.create_conversation("conv-b1", "b.md", None, None, None, None).unwrap();
 
         let list = store.list_conversations("a.md").unwrap();
         assert_eq!(list.len(), 2);
@@ -3112,7 +3851,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
         store.delete_conversation("conv-1").unwrap();
         assert_eq!(store.get_conversation("conv-1").unwrap(), None);
     }
@@ -3123,6 +3862,96 @@ mod tests {
         store.delete_conversation("nonexistent").unwrap();
     }
 
+    // --- Conversations: find_conversation_by_anchor ---
+
+    #[test]
+    fn find_conversation_by_anchor_returns_match() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.create_conversation("conv-1", "a.md", Some("annotation"), Some(7), None, Some("Chat")).unwrap();
+        store.conn.execute(
+            "UPDATE conversations SET anchor_key = ?1 WHERE id = ?2",
+            rusqlite::params!["abc-123", "conv-1"],
+        ).unwrap();
+
+        let result = store
+            .find_conversation_by_anchor("a.md", "annotation", "abc-123")
+            .unwrap();
+        assert!(result.is_some());
+        let row = result.unwrap();
+        assert_eq!(row.id, "conv-1");
+        assert_eq!(row.anchor_key, Some("abc-123".into()));
+    }
+
+    #[test]
+    fn find_conversation_by_anchor_scoped_to_node() {
+        let store = Store::open_memory().unwrap();
+        let node_a = make_node("a.md", "A", &[], json!({}));
+        let node_b = make_node("b.md", "B", &[], json!({}));
+        store.upsert_node(&node_a, 1).unwrap();
+        store.upsert_node(&node_b, 1).unwrap();
+
+        store.create_conversation("conv-a", "a.md", Some("annotation"), Some(1), None, None).unwrap();
+        store.create_conversation("conv-b", "b.md", Some("annotation"), Some(2), None, None).unwrap();
+        store.conn.execute(
+            "UPDATE conversations SET anchor_key = 'shared-key' WHERE id IN ('conv-a', 'conv-b')",
+            [],
+        ).unwrap();
+
+        let result = store
+            .find_conversation_by_anchor("a.md", "annotation", "shared-key")
+            .unwrap();
+        assert_eq!(result.unwrap().id, "conv-a");
+    }
+
+    // --- Conversations: delete_conversations_by_anchor ---
+
+    #[test]
+    fn delete_conversations_by_anchor_removes_matching() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.create_conversation("conv-1", "a.md", Some("annotation"), Some(1), None, None).unwrap();
+        store.conn.execute(
+            "UPDATE conversations SET anchor_key = 'key-1' WHERE id = 'conv-1'",
+            [],
+        ).unwrap();
+        store.add_message("conv-1", "user", "hello").unwrap();
+
+        store.delete_conversations_by_anchor("a.md", "annotation", "key-1").unwrap();
+
+        assert_eq!(store.get_conversation("conv-1").unwrap(), None);
+        let msg_count: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM conversation_messages", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(msg_count, 0);
+    }
+
+    #[test]
+    fn delete_conversations_by_anchor_leaves_others() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        store.create_conversation("conv-1", "a.md", Some("annotation"), Some(1), None, None).unwrap();
+        store.create_conversation("conv-2", "a.md", Some("annotation"), Some(2), None, None).unwrap();
+        store.conn.execute(
+            "UPDATE conversations SET anchor_key = 'key-1' WHERE id = 'conv-1'",
+            [],
+        ).unwrap();
+        store.conn.execute(
+            "UPDATE conversations SET anchor_key = 'key-2' WHERE id = 'conv-2'",
+            [],
+        ).unwrap();
+
+        store.delete_conversations_by_anchor("a.md", "annotation", "key-1").unwrap();
+
+        assert_eq!(store.get_conversation("conv-1").unwrap(), None);
+        assert!(store.get_conversation("conv-2").unwrap().is_some());
+    }
+
     // --- Conversations: map_conversation_row ---
 
     #[test]
@@ -3130,10 +3959,10 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", Some("file"), Some(42), Some("Test Title")).unwrap();
+        store.create_conversation("conv-1", "a.md", Some("file"), Some(42), None, Some("Test Title")).unwrap();
 
         let row = store.conn.query_row(
-            "SELECT id, node_id, anchor_type, anchor_id, title, created_at, updated_at
+            "SELECT id, node_id, anchor_type, anchor_id, title, created_at, updated_at, anchor_key
              FROM conversations WHERE id = ?1",
             ["conv-1"],
             |row| map_conversation_row(row),
@@ -3157,7 +3986,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
 
         store.conn.execute(
             "UPDATE conversations SET updated_at = '2000-01-01T00:00:00Z' WHERE id = 'conv-1'",
@@ -3176,7 +4005,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
 
         let msg: MessageRow = store.add_message("conv-1", "user", "Hello world").unwrap();
         assert_eq!(msg.conversation_id, "conv-1");
@@ -3192,7 +4021,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
 
         let msg = store.add_message("conv-1", "user", "Hello").unwrap();
         assert!(msg.id > 0);
@@ -3215,7 +4044,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
         assert!(store.add_message("conv-1", "invalid_role", "Hello").is_err());
     }
 
@@ -3224,7 +4053,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
 
         store.conn.execute(
             "UPDATE conversations SET updated_at = '2000-01-01T00:00:00Z' WHERE id = 'conv-1'",
@@ -3243,7 +4072,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
         assert!(store.list_messages("conv-1").unwrap().is_empty());
     }
 
@@ -3252,7 +4081,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
 
         store.add_message("conv-1", "user", "First").unwrap();
         store.add_message("conv-1", "assistant", "Second").unwrap();
@@ -3275,7 +4104,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
 
         store.add_message("conv-1", "user", "msg0").unwrap();
         store.add_message("conv-1", "assistant", "msg1").unwrap();
@@ -3295,7 +4124,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
         store.add_message("conv-1", "user", "msg0").unwrap();
 
         store.delete_messages_after("conv-1", 10).unwrap();
@@ -3307,7 +4136,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
 
         store.add_message("conv-1", "user", "msg0").unwrap();
         store.add_message("conv-1", "assistant", "msg1").unwrap();
@@ -3332,7 +4161,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, Some("Chat")).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, Some("Chat")).unwrap();
 
         store.conn.execute_batch(
             "CREATE TRIGGER test_block_touch_conversation
@@ -3360,7 +4189,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
         store.add_message("conv-1", "user", "msg").unwrap();
 
         store.delete_conversation("conv-1").unwrap();
@@ -3377,7 +4206,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
         store.add_message("conv-1", "user", "msg").unwrap();
 
         store.delete_node("a.md").unwrap();
@@ -3398,7 +4227,7 @@ mod tests {
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
 
-        store.create_conversation("conv-1", "a.md", None, None, Some("Chat")).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, Some("Chat")).unwrap();
         store.add_message("conv-1", "user", "Q1").unwrap();
         store.add_message("conv-1", "assistant", "A1").unwrap();
         store.add_message("conv-1", "user", "Q2").unwrap();
@@ -3430,16 +4259,28 @@ mod tests {
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
 
-        store.create_conversation("file-conv", "a.md", None, None, None).unwrap();
+        store.create_conversation("file-conv", "a.md", None, None, None, None).unwrap();
         let file_row = store.get_conversation("file-conv").unwrap().unwrap();
         assert_eq!(file_row.anchor_type, None);
         assert_eq!(file_row.anchor_id, None);
 
-        store.create_conversation("ann-conv", "a.md", Some("annotation"), Some(7), Some("On note")).unwrap();
+        store.create_conversation("ann-conv", "a.md", Some("annotation"), Some(7), None, Some("On note")).unwrap();
         let ann_row = store.get_conversation("ann-conv").unwrap().unwrap();
         assert_eq!(ann_row.anchor_type, Some("annotation".into()));
         assert_eq!(ann_row.anchor_id, Some(7));
         assert_eq!(ann_row.title, Some("On note".into()));
+    }
+
+    #[test]
+    fn create_conversation_with_anchor_key() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let row = store.create_conversation(
+            "conv-1", "a.md", Some("annotation"), Some(7), Some("abc-uuid-123"), Some("Chat"),
+        ).unwrap();
+        assert_eq!(row.anchor_key, Some("abc-uuid-123".into()));
     }
 
     #[test]
@@ -3489,7 +4330,7 @@ mod tests {
             .unwrap();
         assert_eq!(title, "Alpha");
 
-        store.create_conversation("conv-1", "a.md", None, None, Some("Test")).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, Some("Test")).unwrap();
         store.add_message("conv-1", "user", "Hello").unwrap();
         let msgs = store.list_messages("conv-1").unwrap();
         assert_eq!(msgs.len(), 1);
@@ -3500,7 +4341,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "Old Title", &["tag1"], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, Some("Chat")).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, Some("Chat")).unwrap();
         store.add_message("conv-1", "user", "Hello").unwrap();
 
         let node2 = make_node("a.md", "New Title", &["tag2"], json!({}));
@@ -3581,7 +4422,7 @@ mod tests {
         }
 
         let store = Store::open(&db_path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 10);
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
 
         let title: String = store.conn.query_row(
             "SELECT title FROM nodes WHERE id = 'a.md'", [], |r| r.get(0),
@@ -3607,7 +4448,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, Some("Chat")).unwrap();
+        store.create_conversation("conv-1", "a.md", None, None, None, Some("Chat")).unwrap();
         store.add_message("conv-1", "user", "Hello").unwrap();
 
         store.conn.execute("DELETE FROM nodes WHERE id = 'a.md'", []).unwrap();
@@ -3646,5 +4487,231 @@ mod tests {
         let result = store.get_first_paragraphs(&ids).unwrap();
         assert_eq!(result.len(), 1);
         assert!(!result.contains_key("ghost.md"));
+    }
+
+    // --- Cycle A: v12 migration enforces NOT NULL on uuid ---
+
+    #[test]
+    fn migration_v12_enforces_uuid_not_null() {
+        let store = Store::open_memory().unwrap();
+
+        let mut stmt = store.conn.prepare("PRAGMA table_info(annotations)").unwrap();
+        let columns: Vec<(String, i64)> = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(1)?, row.get::<_, i64>(3)?))
+        }).unwrap().filter_map(|r| r.ok()).collect();
+
+        let uuid_col = columns.iter().find(|(name, _)| name == "uuid");
+        assert!(uuid_col.is_some(), "annotations table should have uuid column");
+        assert_eq!(uuid_col.unwrap().1, 1, "uuid column should have notnull=1");
+
+        assert_eq!(CURRENT_SCHEMA_VERSION, 13);
+    }
+
+    // --- Cycle C: search/list annotations return uuid ---
+
+    #[test]
+    fn search_annotations_returns_uuid() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let ann = super::IndexableAnnotation {
+            body: Some("Silk Road trade route".into()),
+            ..make_annotation("note", None)
+        };
+        store.upsert_annotations("a.md", &[ann]).unwrap();
+
+        let results = store.search_annotations("Silk Road", None, 10).unwrap();
+        assert_eq!(results.len(), 1);
+        let uuid = &results[0].uuid;
+        assert_eq!(uuid.len(), 36, "uuid should be 36-char hyphenated format");
+        assert!(uuid.contains('-'), "uuid should contain hyphens");
+    }
+
+    #[test]
+    fn list_annotations_returns_uuid() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        store.upsert_annotations("a.md", &[make_annotation("note", Some("hello"))]).unwrap();
+
+        let results = store.list_annotations(Some("a.md"), None, 10).unwrap();
+        assert_eq!(results.len(), 1);
+        let uuid = &results[0].uuid;
+        assert_eq!(uuid.len(), 36);
+        assert!(uuid.contains('-'));
+    }
+
+    // --- Cycle: v13 UNIQUE anchor constraint ---
+
+    #[test]
+    fn duplicate_anchor_key_insert_fails() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        store.create_conversation(
+            "conv-1", "a.md", Some("annotation"), Some(1), Some("uuid-abc"), Some("Chat"),
+        ).unwrap();
+
+        let result = store.create_conversation(
+            "conv-2", "a.md", Some("annotation"), Some(1), Some("uuid-abc"), Some("Chat 2"),
+        );
+        assert!(result.is_err(), "duplicate anchor triple should be rejected");
+    }
+
+    #[test]
+    fn v12_to_v13_migration_deduplicates_anchors() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
+            conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+            conn.execute_batch(
+                "CREATE TABLE nodes (
+                    id TEXT PRIMARY KEY, title TEXT, first_paragraph TEXT,
+                    frontmatter JSON, mtime INTEGER, is_stub INTEGER DEFAULT 0, tags_text TEXT DEFAULT ''
+                );
+                CREATE TABLE tags (node_id TEXT, tag TEXT);
+                CREATE TABLE aliases (node_id TEXT, alias TEXT);
+                CREATE TABLE edges (source TEXT, target TEXT, context TEXT, raw_target TEXT DEFAULT '', source_line INTEGER DEFAULT 0);
+                CREATE TABLE sync (path TEXT PRIMARY KEY, mtime INTEGER);
+                CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+                CREATE TABLE annotations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    node_id TEXT NOT NULL, annotation_type TEXT NOT NULL,
+                    certainty TEXT NOT NULL, body TEXT, date TEXT,
+                    source_line INTEGER NOT NULL, char_start INTEGER NOT NULL, char_end INTEGER NOT NULL,
+                    scope_kind TEXT NOT NULL, scope_value TEXT NOT NULL,
+                    uuid TEXT NOT NULL
+                );
+                CREATE INDEX idx_annotations_node_id ON annotations(node_id);
+                CREATE INDEX idx_annotations_type ON annotations(annotation_type);
+                CREATE VIRTUAL TABLE annotations_fts USING fts5(
+                    body, node_id UNINDEXED, annotation_type UNINDEXED,
+                    tokenize = 'trigram case_sensitive 0'
+                );
+                CREATE TABLE node_positions (
+                    node_id TEXT PRIMARY KEY, x REAL NOT NULL, y REAL NOT NULL
+                );
+                CREATE TABLE conversations (
+                    id TEXT PRIMARY KEY,
+                    node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+                    anchor_type TEXT,
+                    anchor_id INTEGER,
+                    anchor_key TEXT,
+                    title TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX idx_conversations_node_id ON conversations(node_id);
+                CREATE INDEX idx_conversations_anchor ON conversations(node_id, anchor_type, anchor_key);
+                CREATE TABLE conversation_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                    role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
+                    content TEXT NOT NULL,
+                    seq INTEGER NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX idx_conv_messages_conv_id ON conversation_messages(conversation_id);
+                INSERT INTO meta(key, value) VALUES ('schema_version', '12');
+                INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub)
+                    VALUES ('a.md', 'Alpha', 'p1', '{}', 1, 0);
+
+                -- duplicate anchor triple: conv-dup1 (earlier) should survive, conv-dup2 should be deleted
+                INSERT INTO conversations(id, node_id, anchor_type, anchor_id, anchor_key, title, created_at, updated_at)
+                    VALUES ('conv-dup1', 'a.md', 'annotation', 1, 'uuid-abc', 'First', '2025-01-01', '2025-01-01');
+                INSERT INTO conversation_messages(conversation_id, role, content, seq, created_at)
+                    VALUES ('conv-dup1', 'user', 'msg-keep', 0, '2025-01-01');
+
+                INSERT INTO conversations(id, node_id, anchor_type, anchor_id, anchor_key, title, created_at, updated_at)
+                    VALUES ('conv-dup2', 'a.md', 'annotation', 1, 'uuid-abc', 'Second', '2025-01-02', '2025-01-02');
+                INSERT INTO conversation_messages(conversation_id, role, content, seq, created_at)
+                    VALUES ('conv-dup2', 'user', 'msg-remove', 0, '2025-01-02');
+
+                -- two NULL anchor_key conversations: both should survive
+                INSERT INTO conversations(id, node_id, anchor_type, anchor_id, anchor_key, title, created_at, updated_at)
+                    VALUES ('conv-null1', 'a.md', NULL, NULL, NULL, 'Page chat 1', '2025-01-01', '2025-01-01');
+                INSERT INTO conversations(id, node_id, anchor_type, anchor_id, anchor_key, title, created_at, updated_at)
+                    VALUES ('conv-null2', 'a.md', NULL, NULL, NULL, 'Page chat 2', '2025-01-01', '2025-01-01');",
+            ).unwrap();
+        }
+
+        let store = Store::open(&db_path).unwrap();
+
+        // 1. Schema version is 13
+        assert_eq!(store.schema_version().unwrap(), 13);
+
+        // 2. Earliest duplicate survived, later one deleted
+        let surv = store.get_conversation("conv-dup1").unwrap();
+        assert!(surv.is_some(), "earliest duplicate should survive");
+        let gone = store.get_conversation("conv-dup2").unwrap();
+        assert!(gone.is_none(), "later duplicate should be deleted");
+
+        // 3. Messages for deleted duplicate are cascade-deleted
+        let gone_msgs: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM conversation_messages WHERE conversation_id = 'conv-dup2'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(gone_msgs, 0, "messages for deleted duplicate should be cascade-deleted");
+
+        // 4. Messages for surviving conversation preserved
+        let kept_msgs = store.list_messages("conv-dup1").unwrap();
+        assert_eq!(kept_msgs.len(), 1);
+        assert_eq!(kept_msgs[0].content, "msg-keep");
+
+        // 5. Both NULL-anchor conversations survive
+        let null1 = store.get_conversation("conv-null1").unwrap();
+        assert!(null1.is_some(), "first NULL-anchor conversation should survive");
+        let null2 = store.get_conversation("conv-null2").unwrap();
+        assert!(null2.is_some(), "second NULL-anchor conversation should survive");
+
+        // 6. Index is UNIQUE
+        let idx_sql: String = store.conn.query_row(
+            "SELECT sql FROM sqlite_master WHERE name = 'idx_conversations_anchor'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert!(idx_sql.contains("UNIQUE"), "idx_conversations_anchor should be UNIQUE");
+    }
+
+    #[test]
+    fn fetch_existing_annotations_propagates_row_error() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1000).unwrap();
+
+        // Recreate the annotations table without NOT NULL on uuid so we can
+        // insert a row with NULL uuid, which will fail deserialization
+        // (ExistingAnnotation.uuid is String, not Option<String>).
+        store.conn.execute_batch(
+            "DROP TABLE annotations;
+             CREATE TABLE annotations (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 node_id TEXT NOT NULL,
+                 annotation_type TEXT NOT NULL,
+                 certainty TEXT NOT NULL,
+                 body TEXT,
+                 date TEXT,
+                 source_line INTEGER NOT NULL,
+                 char_start INTEGER NOT NULL,
+                 char_end INTEGER NOT NULL,
+                 scope_kind TEXT NOT NULL,
+                 scope_value TEXT NOT NULL,
+                 uuid TEXT
+             );"
+        ).unwrap();
+
+        store.conn.execute(
+            "INSERT INTO annotations(node_id, annotation_type, certainty, body, date, source_line, char_start, char_end, scope_kind, scope_value, uuid)
+             VALUES ('a.md', 'highlight', 'certain', NULL, NULL, 1, 0, 10, 'line', '1', NULL)",
+            [],
+        ).unwrap();
+
+        let result = store.fetch_existing_annotations("a.md");
+        assert!(result.is_err(), "should propagate row-level deserialization error for NULL uuid");
     }
 }
