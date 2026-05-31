@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use tracing::{debug, info};
 
 use super::error::GraphError;
@@ -1076,6 +1076,33 @@ impl Store {
         }
     }
 
+    pub fn find_annotation_uuid(
+        &self,
+        node_id: &str,
+        annotation_type: &str,
+        body: Option<&str>,
+        char_start_hint: usize,
+    ) -> Result<Option<String>, GraphError> {
+        let uuid: Option<String> = match body {
+            Some(b) => self.conn.query_row(
+                "SELECT uuid FROM annotations
+                 WHERE node_id = ?1 AND annotation_type = ?2 AND body = ?3
+                 ORDER BY ABS(char_start - ?4) LIMIT 1",
+                rusqlite::params![node_id, annotation_type, b, char_start_hint as i64],
+                |row| row.get(0),
+            ),
+            None => self.conn.query_row(
+                "SELECT uuid FROM annotations
+                 WHERE node_id = ?1 AND annotation_type = ?2 AND body IS NULL
+                 ORDER BY ABS(char_start - ?3) LIMIT 1",
+                rusqlite::params![node_id, annotation_type, char_start_hint as i64],
+                |row| row.get(0),
+            ),
+        }
+        .optional()?;
+        Ok(uuid)
+    }
+
     // --- Conversations ---
 
     pub fn create_conversation(
@@ -1121,6 +1148,38 @@ impl Store {
 
     pub fn delete_conversation(&self, id: &str) -> Result<(), GraphError> {
         self.conn.execute("DELETE FROM conversations WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    pub fn find_conversation_by_anchor(
+        &self,
+        node_id: &str,
+        anchor_type: &str,
+        anchor_key: &str,
+    ) -> Result<Option<ConversationRow>, GraphError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, node_id, anchor_type, anchor_id, title, created_at, updated_at, anchor_key
+             FROM conversations
+             WHERE node_id = ?1 AND anchor_type = ?2 AND anchor_key = ?3",
+        )?;
+        let mut rows = stmt.query(rusqlite::params![node_id, anchor_type, anchor_key])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(map_conversation_row(row)?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn delete_conversations_by_anchor(
+        &self,
+        node_id: &str,
+        anchor_type: &str,
+        anchor_key: &str,
+    ) -> Result<(), GraphError> {
+        self.conn.execute(
+            "DELETE FROM conversations
+             WHERE node_id = ?1 AND anchor_type = ?2 AND anchor_key = ?3",
+            rusqlite::params![node_id, anchor_type, anchor_key],
+        )?;
         Ok(())
     }
 
@@ -3054,6 +3113,71 @@ mod tests {
         assert_eq!(latin_results[0].node_id, "b.md");
     }
 
+    // --- find_annotation_uuid ---
+
+    #[test]
+    fn find_annotation_uuid_returns_match() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let ann = make_annotation("note", Some("hello world"));
+        store.upsert_annotations("a.md", &[ann]).unwrap();
+
+        let result = store
+            .find_annotation_uuid("a.md", "note", Some("hello world"), 0)
+            .unwrap();
+        assert!(result.is_some());
+        let uuid = result.unwrap();
+        assert!(!uuid.is_empty());
+    }
+
+    #[test]
+    fn find_annotation_uuid_returns_none_for_missing() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let result = store
+            .find_annotation_uuid("a.md", "note", Some("no such body"), 0)
+            .unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn find_annotation_uuid_closest_when_duplicates() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let ann_at_0 = super::IndexableAnnotation {
+            char_start: 0,
+            ..make_annotation("note", Some("dup body"))
+        };
+        let ann_at_100 = super::IndexableAnnotation {
+            char_start: 100,
+            ..make_annotation("note", Some("dup body"))
+        };
+        store.upsert_annotations("a.md", &[ann_at_0, ann_at_100]).unwrap();
+
+        // hint=90, closer to 100
+        let result = store
+            .find_annotation_uuid("a.md", "note", Some("dup body"), 90)
+            .unwrap()
+            .unwrap();
+
+        // Verify it's the one at char_start=100
+        let uuid_at_100: String = store
+            .conn
+            .query_row(
+                "SELECT uuid FROM annotations WHERE node_id='a.md' AND char_start=100",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(result, uuid_at_100);
+    }
+
     // --- v6 → v7 migration path ---
 
     #[test]
@@ -3420,6 +3544,96 @@ mod tests {
     fn delete_conversation_nonexistent_is_noop() {
         let store = Store::open_memory().unwrap();
         store.delete_conversation("nonexistent").unwrap();
+    }
+
+    // --- Conversations: find_conversation_by_anchor ---
+
+    #[test]
+    fn find_conversation_by_anchor_returns_match() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.create_conversation("conv-1", "a.md", Some("annotation"), Some(7), Some("Chat")).unwrap();
+        store.conn.execute(
+            "UPDATE conversations SET anchor_key = ?1 WHERE id = ?2",
+            rusqlite::params!["abc-123", "conv-1"],
+        ).unwrap();
+
+        let result = store
+            .find_conversation_by_anchor("a.md", "annotation", "abc-123")
+            .unwrap();
+        assert!(result.is_some());
+        let row = result.unwrap();
+        assert_eq!(row.id, "conv-1");
+        assert_eq!(row.anchor_key, Some("abc-123".into()));
+    }
+
+    #[test]
+    fn find_conversation_by_anchor_scoped_to_node() {
+        let store = Store::open_memory().unwrap();
+        let node_a = make_node("a.md", "A", &[], json!({}));
+        let node_b = make_node("b.md", "B", &[], json!({}));
+        store.upsert_node(&node_a, 1).unwrap();
+        store.upsert_node(&node_b, 1).unwrap();
+
+        store.create_conversation("conv-a", "a.md", Some("annotation"), Some(1), None).unwrap();
+        store.create_conversation("conv-b", "b.md", Some("annotation"), Some(2), None).unwrap();
+        store.conn.execute(
+            "UPDATE conversations SET anchor_key = 'shared-key' WHERE id IN ('conv-a', 'conv-b')",
+            [],
+        ).unwrap();
+
+        let result = store
+            .find_conversation_by_anchor("a.md", "annotation", "shared-key")
+            .unwrap();
+        assert_eq!(result.unwrap().id, "conv-a");
+    }
+
+    // --- Conversations: delete_conversations_by_anchor ---
+
+    #[test]
+    fn delete_conversations_by_anchor_removes_matching() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.create_conversation("conv-1", "a.md", Some("annotation"), Some(1), None).unwrap();
+        store.conn.execute(
+            "UPDATE conversations SET anchor_key = 'key-1' WHERE id = 'conv-1'",
+            [],
+        ).unwrap();
+        store.add_message("conv-1", "user", "hello").unwrap();
+
+        store.delete_conversations_by_anchor("a.md", "annotation", "key-1").unwrap();
+
+        assert_eq!(store.get_conversation("conv-1").unwrap(), None);
+        let msg_count: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM conversation_messages", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(msg_count, 0);
+    }
+
+    #[test]
+    fn delete_conversations_by_anchor_leaves_others() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        store.create_conversation("conv-1", "a.md", Some("annotation"), Some(1), None).unwrap();
+        store.create_conversation("conv-2", "a.md", Some("annotation"), Some(2), None).unwrap();
+        store.conn.execute(
+            "UPDATE conversations SET anchor_key = 'key-1' WHERE id = 'conv-1'",
+            [],
+        ).unwrap();
+        store.conn.execute(
+            "UPDATE conversations SET anchor_key = 'key-2' WHERE id = 'conv-2'",
+            [],
+        ).unwrap();
+
+        store.delete_conversations_by_anchor("a.md", "annotation", "key-1").unwrap();
+
+        assert_eq!(store.get_conversation("conv-1").unwrap(), None);
+        assert!(store.get_conversation("conv-2").unwrap().is_some());
     }
 
     // --- Conversations: map_conversation_row ---
