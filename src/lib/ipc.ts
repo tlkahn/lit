@@ -365,6 +365,8 @@ export async function renderBibCitations(
 
 // Graph
 
+export const NODE_NOT_FOUND_PREFIX = "node not found:";
+
 export interface BacklinkEntry {
   source_id: string;
   source_title: string;

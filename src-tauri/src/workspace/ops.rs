@@ -139,9 +139,8 @@ pub fn rename_page(
     if let Some(parent) = new_full.parent() {
         fs::create_dir_all(parent)?;
     }
+    let content = fs::read_to_string(&old_full)?;
     fs::rename(&old_full, &new_full)?;
-
-    let content = fs::read_to_string(&new_full).unwrap_or_default();
     registry.record(&new_full, &content);
     registry.record_delete(&old_full);
 
@@ -361,6 +360,22 @@ mod tests {
         rename_page(dir.path(), "old.md", "new", &registry).unwrap();
         let old_full = dir.path().join("old.md");
         assert!(registry.consume_delete(&old_full));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rename_unreadable_file_propagates_error() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        let file_path = dir.path().join("locked.md");
+        fs::write(&file_path, "content").unwrap();
+        fs::set_permissions(&file_path, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let result = rename_page(dir.path(), "locked.md", "new", &registry);
+        assert!(result.is_err());
+
+        fs::set_permissions(&file_path, fs::Permissions::from_mode(0o644)).unwrap();
     }
 
     #[test]
