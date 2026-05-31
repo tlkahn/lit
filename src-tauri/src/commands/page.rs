@@ -2,13 +2,29 @@ use crate::commands::graph::GraphRegistry;
 use crate::commands::oplog::OpLogRegistry;
 use crate::commands::workspace::{get_workspace_root, WorkspaceRegistry};
 use crate::graph::indexer::GraphIndex;
+use crate::graph::rewriter::LinkRedirect;
 use crate::oplog::store::Action;
 use crate::workspace::ops;
 use crate::workspace::page::{PageContent, PageMeta};
 use crate::workspace::write_hash::WriteHashRegistry;
 use indexmap::IndexMap;
+use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::State;
+
+fn lookup_graph_index(registry: &GraphRegistry, root: &PathBuf) -> Option<Arc<GraphIndex>> {
+    let indices = registry.indices.lock().unwrap();
+    indices.get(root).cloned()
+}
+
+fn compute_candidate_paths(gi: &GraphIndex, redirects: &[LinkRedirect]) -> HashSet<String> {
+    let stems: Vec<String> = redirects
+        .iter()
+        .map(|r| crate::graph::indexer::normalize_stem(&r.old_target))
+        .collect();
+    gi.affected_sources(&stems)
+}
 
 fn reindex_and_emit(
     graph_state: &State<Arc<GraphRegistry>>,
@@ -16,10 +32,7 @@ fn reindex_and_emit(
     root: &std::path::PathBuf,
     op: impl FnOnce(&GraphIndex, bool) -> Result<(), crate::graph::error::GraphError>,
 ) {
-    let gi = {
-        let indices = graph_state.indices.lock().unwrap();
-        indices.get(root).cloned()
-    };
+    let gi = lookup_graph_index(graph_state, root);
     if let Some(gi) = gi {
         let ann = crate::preferences::annotations_enabled(app_handle);
         let result = op(&gi, ann);
@@ -194,16 +207,8 @@ pub fn rewrite_vault_links(
     let root = get_workspace_root(&workspace_state, window.label())?;
 
     let planned = {
-        let candidate_paths = {
-            let indices = graph_state.indices.lock().unwrap();
-            indices.get(&root).map(|gi| {
-                let stems: Vec<String> = redirects
-                    .iter()
-                    .map(|r| crate::graph::indexer::normalize_stem(&r.old_target))
-                    .collect();
-                gi.affected_sources(&stems)
-            })
-        };
+        let candidate_paths = lookup_graph_index(&graph_state, &root)
+            .map(|gi| compute_candidate_paths(&gi, &redirects));
         match candidate_paths {
             Some(ref paths) => crate::graph::rewriter::plan_vault_rewrites_for_paths(&root, &redirects, paths)?,
             None => crate::graph::rewriter::plan_vault_rewrites(&root, &redirects)?,
@@ -219,10 +224,7 @@ pub fn rewrite_vault_links(
 
     let summary = crate::graph::rewriter::apply_planned_rewrites(&root, &planned)?;
 
-    let gi = {
-        let indices = graph_state.indices.lock().unwrap();
-        indices.get(&root).cloned()
-    };
+    let gi = lookup_graph_index(&graph_state, &root);
     let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
 
     let mut reindex_err: Option<crate::graph::error::GraphError> = None;
@@ -364,5 +366,48 @@ mod tests {
         let planned = plan_vault_rewrites(tmp.path(), &[]).unwrap();
         assert_eq!(planned.files_scanned, 0);
         assert!(planned.rewrites.is_empty());
+    }
+
+    #[test]
+    fn lookup_releases_lock_before_affected_sources() {
+        use super::{compute_candidate_paths, lookup_graph_index};
+        use crate::commands::graph::GraphRegistry;
+        use crate::graph::indexer::GraphIndex;
+        use std::sync::{Arc, Barrier};
+
+        let tmp = tempfile::tempdir().unwrap();
+        write_file(tmp.path(), "a.md", "[[Target]]");
+
+        let gi = GraphIndex::build(tmp.path().to_path_buf(), false).unwrap();
+        let registry = GraphRegistry::new();
+        registry
+            .indices
+            .lock()
+            .unwrap()
+            .insert(tmp.path().to_path_buf(), Arc::new(gi));
+
+        let root = tmp.path().to_path_buf();
+        let barrier = Arc::new(Barrier::new(2));
+        let reg_ref = &registry;
+        let root_ref = &root;
+
+        std::thread::scope(|s| {
+            let b = barrier.clone();
+            s.spawn(move || {
+                let gi = lookup_graph_index(reg_ref, root_ref).unwrap();
+                b.wait();
+                let redirects = vec![LinkRedirect {
+                    old_target: "Target".into(),
+                    new_target: "NewTarget".into(),
+                }];
+                let _paths = compute_candidate_paths(&gi, &redirects);
+            });
+
+            barrier.wait();
+            assert!(
+                registry.indices.try_lock().is_ok(),
+                "indices mutex must be free while compute_candidate_paths runs"
+            );
+        });
     }
 }
