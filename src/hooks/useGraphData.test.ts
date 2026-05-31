@@ -3,7 +3,7 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import Graph from "graphology";
 import { mockInvoke, mockListen, emitMockEvent } from "../test/tauri-mock";
 import * as graphLayout from "../lib/graphLayout";
-import type { SubgraphResult } from "../lib/ipc";
+import { NODE_NOT_FOUND_PREFIX, type SubgraphResult } from "../lib/ipc";
 import type { UseGraphDataOptions } from "./useGraphData";
 
 const TWO_NODE_SUBGRAPH: SubgraphResult = {
@@ -162,7 +162,7 @@ describe("useGraphData", () => {
   describe("local mode resilience", () => {
     it("falls back to a synthetic seed node when get_graph_subgraph throws node-not-found", async () => {
       mockInvoke((cmd: string) => {
-        if (cmd === "get_graph_subgraph") throw new Error("node not found: notes/a.md");
+        if (cmd === "get_graph_subgraph") throw new Error(`${NODE_NOT_FOUND_PREFIX} notes/a.md`);
         return {};
       });
       const useGraphData = await importHook();

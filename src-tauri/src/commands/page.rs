@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::State;
 
-fn lookup_graph_index(registry: &GraphRegistry, root: &PathBuf) -> Option<Arc<GraphIndex>> {
+pub(super) fn lookup_graph_index(registry: &GraphRegistry, root: &PathBuf) -> Option<Arc<GraphIndex>> {
     let indices = registry.indices.lock().unwrap();
     indices.get(root).cloned()
 }
@@ -26,7 +26,7 @@ fn compute_candidate_paths(gi: &GraphIndex, redirects: &[LinkRedirect]) -> HashS
     gi.affected_sources(&stems)
 }
 
-fn reindex_and_emit(
+pub(super) fn reindex_and_emit(
     graph_state: &State<Arc<GraphRegistry>>,
     app_handle: &tauri::AppHandle,
     root: &std::path::PathBuf,

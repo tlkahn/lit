@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type MutableRefObject, type RefObject } from "react";
 import Graph from "graphology";
 import { listen } from "@tauri-apps/api/event";
-import { getFullSubgraph, getGraphPositions, getGraphSubgraph } from "../lib/ipc";
+import { getFullSubgraph, getGraphPositions, getGraphSubgraph, NODE_NOT_FOUND_PREFIX } from "../lib/ipc";
 import type { SubgraphResult } from "../lib/ipc";
 import { applyPositions, nodeLabelFromPath, populateGraph, recolorSeed, resolveThemeColors } from "../lib/graphLayout";
 import { getQualitySettings, type TierSettings } from "../lib/qualityTiers";
@@ -43,7 +43,7 @@ async function doRebuild(
       local = await getGraphSubgraph([seedId], currentDepth);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      if (msg.startsWith("node not found:")) {
+      if (msg.startsWith(NODE_NOT_FOUND_PREFIX)) {
         local = { nodes: [], edges: [] };
       } else {
         throw e;
