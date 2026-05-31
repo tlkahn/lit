@@ -3,6 +3,8 @@ use llm_core::Provider;
 use serde::Deserialize;
 use std::collections::HashMap;
 
+use crate::commands::credential::{self, CredentialStore};
+
 const DEFAULT_OPENAI_URL: &str = "https://api.openai.com";
 const DEFAULT_ANTHROPIC_URL: &str = "https://api.anthropic.com";
 
@@ -136,9 +138,17 @@ pub fn apply_token_budget(prompt: Prompt, model: &str) -> (Prompt, Option<Trunca
     )
 }
 
-pub fn resolve_api_key(explicit: Option<&str>, env_var_name: Option<&str>) -> Option<String> {
+pub fn resolve_api_key_with_keychain(
+    explicit: Option<&str>,
+    provider_id: &str,
+    store: &dyn CredentialStore,
+    env_var_name: Option<&str>,
+) -> Option<String> {
     if let Some(key) = explicit {
         return Some(key.to_string());
+    }
+    if let Ok(key) = credential::get_api_key_inner(store, provider_id) {
+        return Some(key);
     }
     env_var_name.and_then(|name| std::env::var(name).ok())
 }
@@ -370,24 +380,6 @@ mod tests {
         let text = "a".repeat(4000);
         let count = estimate_tokens(&text);
         assert!(count >= 900 && count <= 1100, "got {count}");
-    }
-
-    #[test]
-    fn resolve_api_key_explicit() {
-        let key = resolve_api_key(Some("sk-123"), None);
-        assert_eq!(key.as_deref(), Some("sk-123"));
-    }
-
-    #[test]
-    fn resolve_api_key_no_explicit_no_env_var_name() {
-        let key = resolve_api_key(None, None);
-        assert_eq!(key, None);
-    }
-
-    #[test]
-    fn resolve_api_key_no_explicit_env_var_not_set() {
-        let key = resolve_api_key(None, Some("LIT_TEST_NONEXISTENT_KEY_XYZ"));
-        assert_eq!(key, None);
     }
 
     fn mock_stream(
@@ -668,5 +660,114 @@ data: [DONE]\n\n";
         ]);
         let result = collect_stream_text(stream).await.unwrap();
         assert_eq!(result, "AB");
+    }
+
+    use crate::commands::credential::InMemoryStore;
+
+    #[test]
+    fn resolve_with_keychain_explicit_wins() {
+        let store = InMemoryStore::new();
+        store.set("com.lit.app", "anthropic-api-key", "keychain-key").unwrap();
+        std::env::set_var("LIT_TEST_EXPLICIT_WINS", "env-key");
+        let result = resolve_api_key_with_keychain(
+            Some("explicit-key"),
+            "anthropic",
+            &store,
+            Some("LIT_TEST_EXPLICIT_WINS"),
+        );
+        std::env::remove_var("LIT_TEST_EXPLICIT_WINS");
+        assert_eq!(result.as_deref(), Some("explicit-key"));
+    }
+
+    #[test]
+    fn resolve_with_keychain_falls_back_to_keychain() {
+        let store = InMemoryStore::new();
+        store.set("com.lit.app", "anthropic-api-key", "keychain-key").unwrap();
+        let result = resolve_api_key_with_keychain(
+            None,
+            "anthropic",
+            &store,
+            Some("LIT_TEST_NONEXISTENT_VAR_ABC"),
+        );
+        assert_eq!(result.as_deref(), Some("keychain-key"));
+    }
+
+    #[test]
+    fn resolve_with_keychain_falls_back_to_env() {
+        let store = InMemoryStore::new();
+        std::env::set_var("LIT_TEST_FALLBACK_ENV", "env-key");
+        let result = resolve_api_key_with_keychain(
+            None,
+            "anthropic",
+            &store,
+            Some("LIT_TEST_FALLBACK_ENV"),
+        );
+        std::env::remove_var("LIT_TEST_FALLBACK_ENV");
+        assert_eq!(result.as_deref(), Some("env-key"));
+    }
+
+    #[test]
+    fn resolve_with_keychain_returns_none_when_all_absent() {
+        let store = InMemoryStore::new();
+        let result = resolve_api_key_with_keychain(
+            None,
+            "anthropic",
+            &store,
+            Some("LIT_TEST_NONEXISTENT_VAR_XYZ"),
+        );
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn resolve_with_keychain_priority_order() {
+        let store = InMemoryStore::new();
+        store.set("com.lit.app", "openai-api-key", "keychain-key").unwrap();
+        std::env::set_var("LIT_TEST_PRIORITY", "env-key");
+
+        // With all three present, explicit wins
+        let r1 = resolve_api_key_with_keychain(
+            Some("explicit"),
+            "openai",
+            &store,
+            Some("LIT_TEST_PRIORITY"),
+        );
+        assert_eq!(r1.as_deref(), Some("explicit"));
+
+        // Without explicit, keychain wins over env
+        let r2 = resolve_api_key_with_keychain(
+            None,
+            "openai",
+            &store,
+            Some("LIT_TEST_PRIORITY"),
+        );
+        assert_eq!(r2.as_deref(), Some("keychain-key"));
+
+        // Without explicit or keychain, env wins
+        let store_empty = InMemoryStore::new();
+        let r3 = resolve_api_key_with_keychain(
+            None,
+            "openai",
+            &store_empty,
+            Some("LIT_TEST_PRIORITY"),
+        );
+        assert_eq!(r3.as_deref(), Some("env-key"));
+
+        std::env::remove_var("LIT_TEST_PRIORITY");
+    }
+
+    #[test]
+    fn resolve_with_keychain_release_build_scenario() {
+        // Replicates the bug: no explicit key, no env var (release .app bundle),
+        // but keychain has the key stored — the function still finds it.
+        let store = InMemoryStore::new();
+        store.set("com.lit.app", "anthropic-api-key", "sk-from-keychain").unwrap();
+
+        let result = resolve_api_key_with_keychain(
+            None,
+            "anthropic",
+            &store,
+            Some("ANTHROPIC_API_KEY_NONEXISTENT_TEST"),
+        );
+        assert_eq!(result.as_deref(), Some("sk-from-keychain"));
     }
 }

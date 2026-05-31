@@ -18,7 +18,7 @@ use crate::workspace::ops;
 use crate::workspace::split::{self, SplitPlan};
 use crate::workspace::split_execute;
 use crate::workspace::write_hash::WriteHashRegistry;
-use super::credential::{self, CredentialStore};
+use super::credential::CredentialStore;
 
 pub struct TitleSuggestState {
     active: Arc<Mutex<Option<JoinHandle<()>>>>,
@@ -174,13 +174,15 @@ pub async fn suggest_merge_title(
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string());
 
-    let keychain_key = credential::get_api_key_inner(store.as_ref(), "anthropic")
-        .ok()
-        .or_else(|| credential::get_api_key_inner(store.as_ref(), "openai").ok());
     let provider = llm::create_provider(&model, base_url.as_deref());
     let env_var_name = provider.key_env_var();
-    let api_key = llm::resolve_api_key(keychain_key.as_deref(), env_var_name)
-        .ok_or_else(|| "No API key found. Set one in Settings or via environment variable.".to_string())?;
+    let api_key = llm::resolve_api_key_with_keychain(
+        None,
+        provider.id(),
+        store.as_ref(),
+        env_var_name,
+    )
+    .ok_or_else(|| "No API key found. Set one in Settings or via environment variable.".to_string())?;
 
     let (tx, rx) = oneshot::channel();
 
@@ -724,12 +726,8 @@ mod tests {
             .unwrap_or(0.7);
         assert!((temperature - 0.7).abs() < f64::EPSILON);
 
-        let provider_name = if model.starts_with("claude-") {
-            "anthropic"
-        } else {
-            "openai"
-        };
-        assert_eq!(provider_name, "anthropic");
+        let provider = crate::llm::create_provider(model, None);
+        assert_eq!(provider.id(), "anthropic");
     }
 
     #[tokio::test]

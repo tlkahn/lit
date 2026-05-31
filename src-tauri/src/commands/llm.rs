@@ -12,7 +12,7 @@ use crate::graph::indexer::GraphIndex;
 use crate::llm::{self, ChatMessage, LlmEvent, TruncationInfo};
 use crate::llm_context::{build_context_layers, BuiltContext, Neighbor};
 use crate::workspace::write_hash::WriteHashRegistry;
-use super::credential::{self, CredentialStore};
+use super::credential::CredentialStore;
 
 pub const GLOBAL_NODE_ID: &str = "_global";
 
@@ -103,6 +103,7 @@ pub async fn llm_prompt_streaming(
     args: LlmPromptArgs,
     window: Window,
     state: tauri::State<'_, LlmState>,
+    store: tauri::State<'_, Arc<dyn CredentialStore>>,
 ) -> Result<(), String> {
     state.cancel();
 
@@ -130,7 +131,12 @@ pub async fn llm_prompt_streaming(
     }
 
     let env_var_name = provider.key_env_var();
-    let api_key = llm::resolve_api_key(args.api_key.as_deref(), env_var_name);
+    let api_key = llm::resolve_api_key_with_keychain(
+        args.api_key.as_deref(),
+        provider.id(),
+        store.as_ref(),
+        env_var_name,
+    );
 
     let model = args.model.clone();
     let state_ref = state.clone_ref();
@@ -211,11 +217,14 @@ pub async fn llm_test_connection(
     base_url: Option<String>,
     store: tauri::State<'_, Arc<dyn CredentialStore>>,
 ) -> Result<(), String> {
-    let provider_name = if model.starts_with("claude-") { "anthropic" } else { "openai" };
-    let keychain_key = credential::get_api_key_inner(store.as_ref(), provider_name).ok();
     let provider = llm::create_provider(&model, base_url.as_deref());
     let env_var_name = provider.key_env_var();
-    let api_key = llm::resolve_api_key(keychain_key.as_deref(), env_var_name);
+    let api_key = llm::resolve_api_key_with_keychain(
+        None,
+        provider.id(),
+        store.as_ref(),
+        env_var_name,
+    );
     test_connection_inner(&model, api_key.as_deref(), base_url.as_deref()).await
 }
 
@@ -667,5 +676,26 @@ mod tests {
         let registry = WriteHashRegistry::new();
         let result = build_context_inner("a.md", "Sys", 0, "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry);
         assert_send(result);
+    }
+
+    #[test]
+    fn provider_id_matches_credential_store() {
+        use crate::commands::credential::{self, InMemoryStore};
+
+        let models_and_expected = [
+            ("claude-sonnet-4-6", "anthropic"),
+            ("claude-opus-4-6", "anthropic"),
+            ("gpt-4o", "openai"),
+            ("gpt-4o-mini", "openai"),
+        ];
+        let store = InMemoryStore::new();
+        for (model, expected_id) in &models_and_expected {
+            let provider = llm::create_provider(model, None);
+            let id = provider.id();
+            assert_eq!(id, *expected_id, "provider.id() for model {model}");
+            store.set("com.lit.app", &format!("{}-api-key", id), "test-key").unwrap();
+            let key = credential::get_api_key_inner(&store, id);
+            assert!(key.is_ok(), "credential store should accept provider id '{id}' for model '{model}'");
+        }
     }
 }
