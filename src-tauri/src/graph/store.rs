@@ -7,7 +7,7 @@ use tracing::{debug, info};
 use super::error::GraphError;
 use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, ConversationRow, IndexableAnnotation, LinkEntry, MessageRow, ParsedNode, Stats, TagPageResult, TagSearchResult};
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 12;
+pub const CURRENT_SCHEMA_VERSION: i64 = 13;
 
 fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rusqlite::Error> {
     Ok(AnnotationSearchResult {
@@ -380,6 +380,21 @@ impl Store {
                 COMMIT;"
             )?;
             self.conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+        }
+
+        if version < 13 {
+            info!(from = version, to = 13, "migrating schema: unique anchor constraint on conversations");
+            self.conn.execute_batch(
+                "DELETE FROM conversations WHERE rowid NOT IN (
+                    SELECT MIN(rowid) FROM conversations
+                    WHERE anchor_key IS NOT NULL
+                    GROUP BY node_id, anchor_type, anchor_key
+                ) AND anchor_key IS NOT NULL;
+                DROP INDEX IF EXISTS idx_conversations_anchor;
+                CREATE UNIQUE INDEX idx_conversations_anchor
+                    ON conversations(node_id, anchor_type, anchor_key);
+                UPDATE meta SET value = '13' WHERE key = 'schema_version';"
+            )?;
         }
 
         Ok(())
@@ -2546,8 +2561,8 @@ mod tests {
     // --- Cycle 2: Schema v6 ---
 
     #[test]
-    fn schema_version_is_twelve() {
-        assert_eq!(CURRENT_SCHEMA_VERSION, 12);
+    fn schema_version_is_thirteen() {
+        assert_eq!(CURRENT_SCHEMA_VERSION, 13);
     }
 
     #[test]
@@ -4225,7 +4240,7 @@ mod tests {
         assert!(uuid_col.is_some(), "annotations table should have uuid column");
         assert_eq!(uuid_col.unwrap().1, 1, "uuid column should have notnull=1");
 
-        assert_eq!(CURRENT_SCHEMA_VERSION, 12);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 13);
     }
 
     // --- Cycle C: search/list annotations return uuid ---
@@ -4262,5 +4277,140 @@ mod tests {
         let uuid = &results[0].uuid;
         assert_eq!(uuid.len(), 36);
         assert!(uuid.contains('-'));
+    }
+
+    // --- Cycle: v13 UNIQUE anchor constraint ---
+
+    #[test]
+    fn duplicate_anchor_key_insert_fails() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        store.create_conversation(
+            "conv-1", "a.md", Some("annotation"), Some(1), Some("uuid-abc"), Some("Chat"),
+        ).unwrap();
+
+        let result = store.create_conversation(
+            "conv-2", "a.md", Some("annotation"), Some(1), Some("uuid-abc"), Some("Chat 2"),
+        );
+        assert!(result.is_err(), "duplicate anchor triple should be rejected");
+    }
+
+    #[test]
+    fn v12_to_v13_migration_deduplicates_anchors() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
+            conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+            conn.execute_batch(
+                "CREATE TABLE nodes (
+                    id TEXT PRIMARY KEY, title TEXT, first_paragraph TEXT,
+                    frontmatter JSON, mtime INTEGER, is_stub INTEGER DEFAULT 0, tags_text TEXT DEFAULT ''
+                );
+                CREATE TABLE tags (node_id TEXT, tag TEXT);
+                CREATE TABLE aliases (node_id TEXT, alias TEXT);
+                CREATE TABLE edges (source TEXT, target TEXT, context TEXT, raw_target TEXT DEFAULT '', source_line INTEGER DEFAULT 0);
+                CREATE TABLE sync (path TEXT PRIMARY KEY, mtime INTEGER);
+                CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+                CREATE TABLE annotations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    node_id TEXT NOT NULL, annotation_type TEXT NOT NULL,
+                    certainty TEXT NOT NULL, body TEXT, date TEXT,
+                    source_line INTEGER NOT NULL, char_start INTEGER NOT NULL, char_end INTEGER NOT NULL,
+                    scope_kind TEXT NOT NULL, scope_value TEXT NOT NULL,
+                    uuid TEXT NOT NULL
+                );
+                CREATE INDEX idx_annotations_node_id ON annotations(node_id);
+                CREATE INDEX idx_annotations_type ON annotations(annotation_type);
+                CREATE VIRTUAL TABLE annotations_fts USING fts5(
+                    body, node_id UNINDEXED, annotation_type UNINDEXED,
+                    tokenize = 'trigram case_sensitive 0'
+                );
+                CREATE TABLE node_positions (
+                    node_id TEXT PRIMARY KEY, x REAL NOT NULL, y REAL NOT NULL
+                );
+                CREATE TABLE conversations (
+                    id TEXT PRIMARY KEY,
+                    node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+                    anchor_type TEXT,
+                    anchor_id INTEGER,
+                    anchor_key TEXT,
+                    title TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX idx_conversations_node_id ON conversations(node_id);
+                CREATE INDEX idx_conversations_anchor ON conversations(node_id, anchor_type, anchor_key);
+                CREATE TABLE conversation_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                    role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
+                    content TEXT NOT NULL,
+                    seq INTEGER NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX idx_conv_messages_conv_id ON conversation_messages(conversation_id);
+                INSERT INTO meta(key, value) VALUES ('schema_version', '12');
+                INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub)
+                    VALUES ('a.md', 'Alpha', 'p1', '{}', 1, 0);
+
+                -- duplicate anchor triple: conv-dup1 (earlier) should survive, conv-dup2 should be deleted
+                INSERT INTO conversations(id, node_id, anchor_type, anchor_id, anchor_key, title, created_at, updated_at)
+                    VALUES ('conv-dup1', 'a.md', 'annotation', 1, 'uuid-abc', 'First', '2025-01-01', '2025-01-01');
+                INSERT INTO conversation_messages(conversation_id, role, content, seq, created_at)
+                    VALUES ('conv-dup1', 'user', 'msg-keep', 0, '2025-01-01');
+
+                INSERT INTO conversations(id, node_id, anchor_type, anchor_id, anchor_key, title, created_at, updated_at)
+                    VALUES ('conv-dup2', 'a.md', 'annotation', 1, 'uuid-abc', 'Second', '2025-01-02', '2025-01-02');
+                INSERT INTO conversation_messages(conversation_id, role, content, seq, created_at)
+                    VALUES ('conv-dup2', 'user', 'msg-remove', 0, '2025-01-02');
+
+                -- two NULL anchor_key conversations: both should survive
+                INSERT INTO conversations(id, node_id, anchor_type, anchor_id, anchor_key, title, created_at, updated_at)
+                    VALUES ('conv-null1', 'a.md', NULL, NULL, NULL, 'Page chat 1', '2025-01-01', '2025-01-01');
+                INSERT INTO conversations(id, node_id, anchor_type, anchor_id, anchor_key, title, created_at, updated_at)
+                    VALUES ('conv-null2', 'a.md', NULL, NULL, NULL, 'Page chat 2', '2025-01-01', '2025-01-01');",
+            ).unwrap();
+        }
+
+        let store = Store::open(&db_path).unwrap();
+
+        // 1. Schema version is 13
+        assert_eq!(store.schema_version().unwrap(), 13);
+
+        // 2. Earliest duplicate survived, later one deleted
+        let surv = store.get_conversation("conv-dup1").unwrap();
+        assert!(surv.is_some(), "earliest duplicate should survive");
+        let gone = store.get_conversation("conv-dup2").unwrap();
+        assert!(gone.is_none(), "later duplicate should be deleted");
+
+        // 3. Messages for deleted duplicate are cascade-deleted
+        let gone_msgs: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM conversation_messages WHERE conversation_id = 'conv-dup2'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(gone_msgs, 0, "messages for deleted duplicate should be cascade-deleted");
+
+        // 4. Messages for surviving conversation preserved
+        let kept_msgs = store.list_messages("conv-dup1").unwrap();
+        assert_eq!(kept_msgs.len(), 1);
+        assert_eq!(kept_msgs[0].content, "msg-keep");
+
+        // 5. Both NULL-anchor conversations survive
+        let null1 = store.get_conversation("conv-null1").unwrap();
+        assert!(null1.is_some(), "first NULL-anchor conversation should survive");
+        let null2 = store.get_conversation("conv-null2").unwrap();
+        assert!(null2.is_some(), "second NULL-anchor conversation should survive");
+
+        // 6. Index is UNIQUE
+        let idx_sql: String = store.conn.query_row(
+            "SELECT sql FROM sqlite_master WHERE name = 'idx_conversations_anchor'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert!(idx_sql.contains("UNIQUE"), "idx_conversations_anchor should be UNIQUE");
     }
 }
