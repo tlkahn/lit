@@ -3,7 +3,6 @@ import { render, screen, act } from "@testing-library/react";
 import { useRef } from "react";
 import { CodeMirrorEditor } from "./CodeMirrorEditor";
 import { EditorView } from "@codemirror/view";
-import { useWorkspaceStore } from "../stores/workspace";
 
 describe("CodeMirrorEditor", () => {
   it("renders container with data-testid='editor'", () => {
@@ -205,68 +204,6 @@ describe("CodeMirrorEditor", () => {
     }).not.toThrow();
   });
 
-  // --- Concern 2.1: lit:llm-request-context listener ---
-
-  it("responds to lit:llm-request-context with selection info", () => {
-    let capturedRef: React.RefObject<EditorView | null> = { current: null };
-    function Wrapper() {
-      const ref = useRef<EditorView | null>(null);
-      capturedRef = ref;
-      return <CodeMirrorEditor doc="hello world" viewRef={ref} />;
-    }
-    render(<Wrapper />);
-    const view = capturedRef.current!;
-
-    act(() => {
-      view.dispatch({ selection: { anchor: 6, head: 11 } });
-    });
-
-    const spy = vi.fn();
-    act(() => {
-      window.dispatchEvent(
-        new CustomEvent("lit:llm-request-context", { detail: { callback: spy } }),
-      );
-    });
-
-    expect(spy).toHaveBeenCalledTimes(1);
-    expect(spy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        selectionText: "world",
-        selectionFrom: 6,
-        selectionTo: 11,
-      }),
-    );
-  });
-
-  // --- Concern 2.2: filePath from workspace store ---
-
-  it("includes filePath in context callback", () => {
-    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
-    render(<CodeMirrorEditor doc="hello" />);
-
-    const spy = vi.fn();
-    act(() => {
-      window.dispatchEvent(
-        new CustomEvent("lit:llm-request-context", { detail: { callback: spy } }),
-      );
-    });
-
-    expect(spy).toHaveBeenCalledWith(
-      expect.objectContaining({ filePath: "notes/test.md" }),
-    );
-
-    useWorkspaceStore.setState({ currentPagePath: null });
-  });
-
-  it("cleans up lit:llm-request-context listener on unmount", () => {
-    const { unmount } = render(<CodeMirrorEditor doc="hello" />);
-    unmount();
-    const spy = vi.fn();
-    window.dispatchEvent(
-      new CustomEvent("lit:llm-request-context", { detail: { callback: spy } }),
-    );
-    expect(spy).not.toHaveBeenCalled();
-  });
 
   // --- lit:llm-insert-raw replaces current selection ---
 

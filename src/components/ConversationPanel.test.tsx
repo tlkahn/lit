@@ -20,10 +20,20 @@ vi.mock("../lib/llmClient", () => ({
   cancelLlmStream: vi.fn(),
 }));
 
+vi.mock("../lib/editorContext", () => ({
+  requestEditorContext: vi.fn(() => ({
+    selectionText: "",
+    selectionFrom: 0,
+    selectionTo: 0,
+    filePath: "",
+  })),
+}));
+
 import {
   conversationList,
   conversationMessages,
 } from "../lib/ipc";
+import { requestEditorContext } from "../lib/editorContext";
 import type { ConversationRow, MessageRow } from "../lib/ipc";
 
 import { ConversationPanel } from "./ConversationPanel";
@@ -62,6 +72,12 @@ describe("ConversationPanel", () => {
     useConversationStore.getState().reset();
     useLlmResponseStore.getState().reset();
     vi.clearAllMocks();
+    vi.mocked(requestEditorContext).mockReturnValue({
+      selectionText: "",
+      selectionFrom: 0,
+      selectionTo: 0,
+      filePath: "",
+    });
     mockedConversationList.mockResolvedValue([]);
     mockedConversationMessages.mockResolvedValue([]);
   });
@@ -602,16 +618,12 @@ describe("ConversationPanel", () => {
       messages: [],
     });
 
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      detail.callback({
-        selectionText: "hello world",
-        selectionFrom: 0,
-        selectionTo: 11,
-        filePath: "test.md",
-      });
-    };
-    window.addEventListener("lit:llm-request-context", handler);
+    vi.mocked(requestEditorContext).mockReturnValue({
+      selectionText: "hello world",
+      selectionFrom: 0,
+      selectionTo: 11,
+      filePath: "test.md",
+    });
 
     let result: ReturnType<typeof render>;
     await act(async () => {
@@ -630,8 +642,6 @@ describe("ConversationPanel", () => {
       content: "explain this",
       textOverride: "File: test.md\n\nContext:\nhello world\n\nexplain this",
     }));
-
-    window.removeEventListener("lit:llm-request-context", handler);
   });
 
   it("sends no textOverride when editor has no selection", async () => {

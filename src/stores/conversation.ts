@@ -84,9 +84,13 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
   ) => {
     const myGeneration = ++_streamGeneration;
 
-    const messages = get().messages.map((m) => ({
+    const storeMessages = get().messages;
+    const messages = storeMessages.map((m, i) => ({
       role: m.role,
-      content: m.content,
+      content:
+        m.role === "user" && i === storeMessages.length - 1
+          ? content
+          : m.content,
     }));
 
     const nodeId = streamArgs.nodeId ?? GLOBAL_NODE_ID;

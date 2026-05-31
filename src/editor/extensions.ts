@@ -85,7 +85,7 @@ export function createExtensions(config: ExtensionConfig): Extension[] {
       if (update.docChanged && config.onChange) {
         config.onChange(update.state.doc.toString());
       }
-      if (update.selectionSet) {
+      if (update.selectionSet && update.view.hasFocus) {
         const sel = update.state.selection.main;
         useEditorSelectionStore.getState().setSelection(sel.from, sel.to);
       }
