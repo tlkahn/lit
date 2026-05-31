@@ -510,17 +510,25 @@ describe("buildDecorations — fenced code blocks", () => {
     view.destroy();
   });
 
-  it("shows fences when cursor is inside code block", () => {
+  it("keeps line classes but shows fences when cursor is inside code block", () => {
     const view = makeView("```js\ncode\n```", 7); // cursor on "code"
     const decos = collectDecos(view);
-    expect(decos).toHaveLength(0);
+    const replaces = decos.filter((d) => d.type === "replace");
+    expect(replaces).toHaveLength(0);
+    expect(decos.some((d) => d.class === "cm-code-fence-top")).toBe(true);
+    expect(decos.some((d) => d.class === "cm-code-fence-bottom")).toBe(true);
+    expect(decos.some((d) => d.class === "cm-preview-code-block")).toBe(true);
     view.destroy();
   });
 
-  it("shows fences when cursor is on fence line", () => {
+  it("keeps line classes but shows fences when cursor is on fence line", () => {
     const view = makeView("```js\ncode\n```", 1); // cursor on opening fence
     const decos = collectDecos(view);
-    expect(decos).toHaveLength(0);
+    const replaces = decos.filter((d) => d.type === "replace");
+    expect(replaces).toHaveLength(0);
+    expect(decos.some((d) => d.class === "cm-code-fence-top")).toBe(true);
+    expect(decos.some((d) => d.class === "cm-code-fence-bottom")).toBe(true);
+    expect(decos.some((d) => d.class === "cm-preview-code-block")).toBe(true);
     view.destroy();
   });
 });
@@ -680,13 +688,15 @@ describe("buildDecorations — inline code", () => {
     view.destroy();
   });
 
-  it("does not hide backticks when cursor is inside inline code", () => {
+  it("keeps code mark but shows backticks when cursor is inside inline code", () => {
     const view = makeView("`code` text", 3);
     const decos = collectDecos(view);
-    const codeDecos = decos.filter(
-      (d) => d.class === "cm-preview-code-inline" || (d.type === "replace" && d.from <= 6),
-    );
-    expect(codeDecos).toHaveLength(0);
+    const replaces = decos.filter((d) => d.type === "replace" && d.from <= 6);
+    expect(replaces).toHaveLength(0);
+    const code = decos.find((d) => d.class === "cm-preview-code-inline");
+    expect(code).toBeDefined();
+    expect(code!.from).toBe(1);
+    expect(code!.to).toBe(5);
     view.destroy();
   });
 
@@ -695,9 +705,11 @@ describe("buildDecorations — inline code", () => {
     const view = makeView(doc, 3); // cursor inside `alpha`
     const decos = collectDecos(view);
     const codeDecos = decos.filter((d) => d.class === "cm-preview-code-inline");
-    expect(codeDecos).toHaveLength(1);
-    expect(codeDecos[0]!.from).toBe(13);
-    expect(codeDecos[0]!.to).toBe(17);
+    expect(codeDecos).toHaveLength(2);
+    expect(codeDecos[0]!.from).toBe(1);
+    expect(codeDecos[0]!.to).toBe(6);
+    expect(codeDecos[1]!.from).toBe(13);
+    expect(codeDecos[1]!.to).toBe(17);
     view.destroy();
   });
 });

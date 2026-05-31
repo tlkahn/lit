@@ -19,7 +19,6 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
     backgroundColor: "var(--code-background)",
     padding: "2px 4px",
     borderRadius: "3px",
-    fontSize: "0.9em",
   },
   ".cm-preview-code-block": {
     backgroundColor: "var(--code-background)",
