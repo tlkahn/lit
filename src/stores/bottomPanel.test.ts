@@ -135,6 +135,16 @@ describe("bottomPanel panelWidth", () => {
     expect(useBottomPanelStore.getState().panelWidth).toBe(MIN_PANEL_WIDTH);
     expect(localStorage.getItem(WIDTH_STORAGE_KEY)).toBe(String(MIN_PANEL_WIDTH));
   });
+
+  it("setPanelWidth persistence round-trip: set, read store, confirm localStorage", () => {
+    const targetWidth = 500;
+    // 1. Set the width
+    useBottomPanelStore.getState().setPanelWidth(targetWidth);
+    // 2. Read back from the store
+    expect(useBottomPanelStore.getState().panelWidth).toBe(targetWidth);
+    // 3. Confirm localStorage was updated
+    expect(localStorage.getItem(WIDTH_STORAGE_KEY)).toBe(String(targetWidth));
+  });
 });
 
 describe("bottomPanel panelHeight clamping", () => {
