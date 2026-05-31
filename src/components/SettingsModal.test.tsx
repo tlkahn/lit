@@ -340,6 +340,45 @@ describe("SettingsModal", () => {
         });
       });
     });
+
+    it("renders both Bottom and Side segmented options", () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const bottomBtn = container.querySelector("[data-testid='settings-bottomPanelPosition-bottom']")!;
+      const sideBtn = container.querySelector("[data-testid='settings-bottomPanelPosition-side']")!;
+      expect(bottomBtn).toBeTruthy();
+      expect(sideBtn).toBeTruthy();
+      expect(bottomBtn.textContent).toBe("Bottom");
+      expect(sideBtn.textContent).toBe("Side");
+    });
+
+    it("reflects store value 'side' when preference is pre-set", () => {
+      usePreferencesStore.setState({ bottomPanelPosition: "side" });
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const sideBtn = container.querySelector("[data-testid='settings-bottomPanelPosition-side']")!;
+      const bottomBtn = container.querySelector("[data-testid='settings-bottomPanelPosition-bottom']")!;
+      expect(sideBtn.getAttribute("aria-pressed")).toBe("true");
+      expect(bottomBtn.getAttribute("aria-pressed")).toBe("false");
+    });
+
+    it("persists value round-trip: click Side, store updates, IPC fires", async () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      // Initial state
+      expect(usePreferencesStore.getState().bottomPanelPosition).toBe("bottom");
+      // Click Side
+      const sideBtn = container.querySelector("[data-testid='settings-bottomPanelPosition-side']")!;
+      fireEvent.click(sideBtn);
+      // Store updated
+      expect(usePreferencesStore.getState().bottomPanelPosition).toBe("side");
+      // IPC called for persistence
+      await vi.waitFor(() => {
+        expect(invokeCalls).toContainEqual({
+          cmd: "set_preference",
+          args: { key: "workbench.bottomPanel.position", value: "side" },
+        });
+      });
+      // UI reflects new selection
+      expect(sideBtn.getAttribute("aria-pressed")).toBe("true");
+    });
   });
 
   // --- foldingEnabled (ToggleSwitch) ---

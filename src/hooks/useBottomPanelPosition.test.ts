@@ -30,6 +30,22 @@ describe("useBottomPanelPosition", () => {
     expect(result.current.mode).toBe("side");
   });
 
+  // Exhaustive 4-combo coverage of (bottomPanelPosition, sidebarLocation)
+  it.each([
+    { position: "bottom" as const, sidebar: "left" as const, expectedMode: "bottom", expectedSide: "right" },
+    { position: "bottom" as const, sidebar: "right" as const, expectedMode: "bottom", expectedSide: "left" },
+    { position: "side" as const, sidebar: "left" as const, expectedMode: "side", expectedSide: "right" },
+    { position: "side" as const, sidebar: "right" as const, expectedMode: "side", expectedSide: "left" },
+  ])(
+    "effectiveSide derivation: position=$position, sidebar=$sidebar -> mode=$expectedMode, side=$expectedSide",
+    ({ position, sidebar, expectedMode, expectedSide }) => {
+      usePreferencesStore.setState({ bottomPanelPosition: position, sidebarLocation: sidebar });
+      const { result } = renderHook(() => useBottomPanelPosition());
+      expect(result.current.mode).toBe(expectedMode);
+      expect(result.current.effectiveSide).toBe(expectedSide);
+    },
+  );
+
   it("reacts to bottomPanelPosition changes", () => {
     const { result } = renderHook(() => useBottomPanelPosition());
     expect(result.current.mode).toBe("bottom");
