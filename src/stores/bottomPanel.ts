@@ -7,6 +7,10 @@ const DEFAULT_PANEL_HEIGHT = 200;
 const MIN_PANEL_HEIGHT = 100;
 const STORAGE_KEY = "lit-bottom-panel-height";
 
+const DEFAULT_PANEL_WIDTH = 320;
+const MIN_PANEL_WIDTH = 200;
+const WIDTH_STORAGE_KEY = "lit-bottom-panel-width";
+
 function loadPanelHeight(): number {
   const stored = localStorage.getItem(STORAGE_KEY);
   if (stored === null) return DEFAULT_PANEL_HEIGHT;
@@ -15,10 +19,19 @@ function loadPanelHeight(): number {
   return Math.max(parsed, MIN_PANEL_HEIGHT);
 }
 
+function loadPanelWidth(): number {
+  const stored = localStorage.getItem(WIDTH_STORAGE_KEY);
+  if (stored === null) return DEFAULT_PANEL_WIDTH;
+  const parsed = Number(stored);
+  if (isNaN(parsed)) return DEFAULT_PANEL_WIDTH;
+  return Math.max(parsed, MIN_PANEL_WIDTH);
+}
+
 export interface BottomPanelState {
   activeTab: TabId;
   unfolded: boolean;
   panelHeight: number;
+  panelWidth: number;
   linkedCount: number | null;
   unlinkedCount: number | null;
   annotationCount: number;
@@ -28,6 +41,7 @@ export interface BottomPanelState {
   handleTabClick: (tab: TabId) => void;
   setUnfolded: (v: boolean) => void;
   setPanelHeight: (h: number) => void;
+  setPanelWidth: (w: number) => void;
   setLinkedCount: (v: number | null) => void;
   setUnlinkedCount: (v: number | null) => void;
   setAnnotationCount: (v: number) => void;
@@ -38,6 +52,7 @@ export const useBottomPanelStore = create<BottomPanelState>((set, get) => ({
   activeTab: "linked",
   unfolded: false,
   panelHeight: loadPanelHeight(),
+  panelWidth: loadPanelWidth(),
   linkedCount: null,
   unlinkedCount: null,
   annotationCount: 0,
@@ -80,6 +95,11 @@ export const useBottomPanelStore = create<BottomPanelState>((set, get) => ({
     localStorage.setItem(STORAGE_KEY, String(h));
   },
 
+  setPanelWidth: (w: number) => {
+    set({ panelWidth: w });
+    localStorage.setItem(WIDTH_STORAGE_KEY, String(w));
+  },
+
   setLinkedCount: (v: number | null) => set({ linkedCount: v }),
   setUnlinkedCount: (v: number | null) => set({ unlinkedCount: v }),
   setAnnotationCount: (v: number) => set({ annotationCount: v }),
@@ -99,4 +119,4 @@ export const useBottomPanelStore = create<BottomPanelState>((set, get) => ({
   },
 }));
 
-export { MIN_PANEL_HEIGHT, STORAGE_KEY };
+export { MIN_PANEL_HEIGHT, STORAGE_KEY, MIN_PANEL_WIDTH, WIDTH_STORAGE_KEY };
