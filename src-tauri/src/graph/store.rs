@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use rusqlite::Connection;
@@ -39,6 +39,58 @@ fn map_conversation_row(row: &rusqlite::Row) -> Result<ConversationRow, rusqlite
 
 pub struct Store {
     pub(crate) conn: Connection,
+}
+
+struct ExistingAnnotation {
+    id: i64,
+    annotation_type: String,
+    body: Option<String>,
+    char_start: i64,
+}
+
+struct AnnotationDiff {
+    updates: Vec<(usize, usize)>,
+    inserts: Vec<usize>,
+    deletes: Vec<usize>,
+}
+
+fn match_annotations(existing: &[ExistingAnnotation], incoming: &[IndexableAnnotation]) -> AnnotationDiff {
+    let mut candidates: HashMap<(String, Option<String>), Vec<usize>> = HashMap::new();
+    for (i, ex) in existing.iter().enumerate() {
+        candidates
+            .entry((ex.annotation_type.clone(), ex.body.clone()))
+            .or_default()
+            .push(i);
+    }
+
+    let mut updates = Vec::new();
+    let mut inserts = Vec::new();
+    let mut matched_old: HashSet<usize> = HashSet::new();
+
+    for (new_idx, ann) in incoming.iter().enumerate() {
+        let key = (ann.annotation_type.clone(), ann.body.clone());
+        let matched = candidates.get(&key).and_then(|old_indices| {
+            old_indices.iter()
+                .copied()
+                .filter(|oi| !matched_old.contains(oi))
+                .min_by_key(|&oi| {
+                    (existing[oi].char_start - ann.char_start as i64).unsigned_abs()
+                })
+        });
+
+        if let Some(old_idx) = matched {
+            updates.push((new_idx, old_idx));
+            matched_old.insert(old_idx);
+        } else {
+            inserts.push(new_idx);
+        }
+    }
+
+    let deletes: Vec<usize> = (0..existing.len())
+        .filter(|i| !matched_old.contains(i))
+        .collect();
+
+    AnnotationDiff { updates, inserts, deletes }
 }
 
 impl Store {
@@ -803,37 +855,76 @@ impl Store {
 
     // --- Annotations ---
 
+    fn fetch_existing_annotations(&self, node_id: &str) -> Result<Vec<ExistingAnnotation>, GraphError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, annotation_type, body, char_start FROM annotations WHERE node_id = ?1",
+        )?;
+        let rows = stmt.query_map([node_id], |row| {
+            Ok(ExistingAnnotation {
+                id: row.get(0)?,
+                annotation_type: row.get(1)?,
+                body: row.get(2)?,
+                char_start: row.get(3)?,
+            })
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
     pub fn upsert_annotations(&self, node_id: &str, annotations: &[IndexableAnnotation]) -> Result<(), GraphError> {
-        self.conn.execute("DELETE FROM annotations_fts WHERE node_id = ?1", [node_id])?;
-        self.conn.execute("DELETE FROM annotations WHERE node_id = ?1", [node_id])?;
-        for ann in annotations {
+        let existing = self.fetch_existing_annotations(node_id)?;
+        let diff = match_annotations(&existing, annotations);
+
+        let mut update_stmt = self.conn.prepare(
+            "UPDATE annotations SET certainty=?1, date=?2, source_line=?3, char_start=?4, char_end=?5, scope_kind=?6, scope_value=?7 WHERE id=?8",
+        )?;
+        for &(new_idx, old_idx) in &diff.updates {
+            let ann = &annotations[new_idx];
+            update_stmt.execute(rusqlite::params![
+                ann.certainty,
+                ann.date,
+                ann.source_line,
+                ann.char_start,
+                ann.char_end,
+                ann.scope_kind,
+                ann.scope_value,
+                existing[old_idx].id,
+            ])?;
+        }
+
+        let mut insert_stmt = self.conn.prepare(
+            "INSERT INTO annotations(node_id, annotation_type, certainty, body, date, source_line, char_start, char_end, scope_kind, scope_value, uuid)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        )?;
+        for &new_idx in &diff.inserts {
+            let ann = &annotations[new_idx];
             let uuid_val = ann.uuid.clone()
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-            self.conn.execute(
-                "INSERT INTO annotations(node_id, annotation_type, certainty, body, date, source_line, char_start, char_end, scope_kind, scope_value, uuid)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                rusqlite::params![
-                    node_id,
-                    ann.annotation_type,
-                    ann.certainty,
-                    ann.body,
-                    ann.date,
-                    ann.source_line,
-                    ann.char_start,
-                    ann.char_end,
-                    ann.scope_kind,
-                    ann.scope_value,
-                    uuid_val,
-                ],
-            )?;
-            if ann.body.is_some() {
-                let rowid = self.conn.last_insert_rowid();
-                self.conn.execute(
-                    "INSERT INTO annotations_fts(rowid, body, node_id, annotation_type) VALUES (?1, ?2, ?3, ?4)",
-                    rusqlite::params![rowid, ann.body, node_id, ann.annotation_type],
-                )?;
-            }
+            insert_stmt.execute(rusqlite::params![
+                node_id,
+                ann.annotation_type,
+                ann.certainty,
+                ann.body,
+                ann.date,
+                ann.source_line,
+                ann.char_start,
+                ann.char_end,
+                ann.scope_kind,
+                ann.scope_value,
+                uuid_val,
+            ])?;
         }
+
+        for &old_idx in &diff.deletes {
+            self.conn.execute("DELETE FROM annotations WHERE id = ?1", [existing[old_idx].id])?;
+        }
+
+        self.conn.execute("DELETE FROM annotations_fts WHERE node_id = ?1", [node_id])?;
+        self.conn.execute(
+            "INSERT INTO annotations_fts(rowid, body, node_id, annotation_type)
+             SELECT id, body, node_id, annotation_type FROM annotations WHERE node_id = ?1 AND body IS NOT NULL",
+            [node_id],
+        )?;
+
         Ok(())
     }
 
@@ -2537,6 +2628,156 @@ mod tests {
             store.conn.query_row("SELECT COUNT(*) FROM annotations_fts", [], |r| r.get::<_, i64>(0)).unwrap(),
             1
         );
+    }
+
+    // --- Cycle 1.2: incremental upsert_annotations ---
+
+    #[test]
+    fn upsert_annotations_preserves_uuid_on_body_match() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let anns = vec![super::IndexableAnnotation {
+            char_start: 0,
+            ..make_annotation("note", Some("important note"))
+        }];
+        store.upsert_annotations("a.md", &anns).unwrap();
+
+        let uuid1: String = store.conn.query_row(
+            "SELECT uuid FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+
+        let anns2 = vec![super::IndexableAnnotation {
+            char_start: 50,
+            source_line: 5,
+            ..make_annotation("note", Some("important note"))
+        }];
+        store.upsert_annotations("a.md", &anns2).unwrap();
+
+        let (uuid2, char_start): (String, i64) = store.conn.query_row(
+            "SELECT uuid, char_start FROM annotations WHERE node_id = 'a.md'", [], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        let count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+
+        assert_eq!(uuid2, uuid1);
+        assert_eq!(char_start, 50);
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn upsert_annotations_assigns_new_uuid_on_new_annotation() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let anns = vec![make_annotation("note", Some("first"))];
+        store.upsert_annotations("a.md", &anns).unwrap();
+
+        let uuid1: String = store.conn.query_row(
+            "SELECT uuid FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+
+        let anns2 = vec![
+            make_annotation("note", Some("first")),
+            make_annotation("question", Some("new q")),
+        ];
+        store.upsert_annotations("a.md", &anns2).unwrap();
+
+        let count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        let fts_count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM annotations_fts WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+
+        let mut stmt = store.conn.prepare(
+            "SELECT uuid, annotation_type FROM annotations WHERE node_id = 'a.md' ORDER BY annotation_type",
+        ).unwrap();
+        let rows: Vec<(String, String)> = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap().filter_map(|r| r.ok()).collect();
+
+        assert_eq!(count, 2);
+        assert_eq!(fts_count, 2);
+        assert_eq!(rows[0].1, "note");
+        assert_eq!(rows[0].0, uuid1);
+        assert_eq!(rows[1].1, "question");
+        assert!(!rows[1].0.is_empty());
+        assert_ne!(rows[1].0, uuid1);
+    }
+
+    #[test]
+    fn upsert_annotations_deletes_removed_annotations() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let anns = vec![
+            make_annotation("note", Some("keep")),
+            make_annotation("question", Some("remove")),
+        ];
+        store.upsert_annotations("a.md", &anns).unwrap();
+
+        let keep_uuid: String = store.conn.query_row(
+            "SELECT uuid FROM annotations WHERE node_id = 'a.md' AND body = 'keep'", [], |r| r.get(0),
+        ).unwrap();
+
+        let anns2 = vec![make_annotation("note", Some("keep"))];
+        store.upsert_annotations("a.md", &anns2).unwrap();
+
+        let count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        let fts_count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM annotations_fts WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        let surviving_uuid: String = store.conn.query_row(
+            "SELECT uuid FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+
+        assert_eq!(count, 1);
+        assert_eq!(fts_count, 1);
+        assert_eq!(surviving_uuid, keep_uuid);
+    }
+
+    #[test]
+    fn upsert_annotations_handles_duplicate_type_body() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let anns = vec![
+            super::IndexableAnnotation { char_start: 10, ..make_annotation("note", Some("recurring")) },
+            super::IndexableAnnotation { char_start: 100, ..make_annotation("note", Some("recurring")) },
+        ];
+        store.upsert_annotations("a.md", &anns).unwrap();
+
+        let mut stmt = store.conn.prepare(
+            "SELECT uuid, char_start FROM annotations WHERE node_id = 'a.md' ORDER BY char_start",
+        ).unwrap();
+        let old_rows: Vec<(String, i64)> = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap().filter_map(|r| r.ok()).collect();
+        assert_eq!(old_rows.len(), 2);
+
+        let anns2 = vec![
+            super::IndexableAnnotation { char_start: 15, ..make_annotation("note", Some("recurring")) },
+            super::IndexableAnnotation { char_start: 105, ..make_annotation("note", Some("recurring")) },
+        ];
+        store.upsert_annotations("a.md", &anns2).unwrap();
+
+        let mut stmt2 = store.conn.prepare(
+            "SELECT uuid, char_start FROM annotations WHERE node_id = 'a.md' ORDER BY char_start",
+        ).unwrap();
+        let new_rows: Vec<(String, i64)> = stmt2.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap().filter_map(|r| r.ok()).collect();
+        assert_eq!(new_rows.len(), 2);
+
+        assert_eq!(new_rows[0].1, 15);
+        assert_eq!(new_rows[0].0, old_rows[0].0);
+        assert_eq!(new_rows[1].1, 105);
+        assert_eq!(new_rows[1].0, old_rows[1].0);
     }
 
     // --- Cycle 5: delete_node cascades ---
