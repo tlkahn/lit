@@ -435,6 +435,8 @@ describe("fireAnnotation", () => {
     const sendSpy = vi.fn().mockResolvedValue(undefined);
     useConversationStore.setState({ sendAnnotationFire: sendSpy });
     mockFindUuid.mockResolvedValue(null);
+    const completeSpy = vi.fn();
+    window.addEventListener("lit:fire-complete", completeSpy);
     const view = makeView("hello world", true);
     const ann = makeAnnotation({ annotation_type: "question", char_start: 0 });
 
@@ -443,6 +445,8 @@ describe("fireAnnotation", () => {
     expect(sendSpy).not.toHaveBeenCalled();
     expect(useModalLockStore.getState().llmLocked).toBe(false);
     expect(view.state.field(firingAnnotationsField).has(0)).toBe(false);
+    expect(completeSpy).toHaveBeenCalledOnce();
+    window.removeEventListener("lit:fire-complete", completeSpy);
     view.destroy();
   });
 
@@ -450,6 +454,8 @@ describe("fireAnnotation", () => {
     useWorkspaceStore.setState({ currentPagePath: null });
     const sendSpy = vi.fn().mockResolvedValue(undefined);
     useConversationStore.setState({ sendAnnotationFire: sendSpy });
+    const completeSpy = vi.fn();
+    window.addEventListener("lit:fire-complete", completeSpy);
     const view = makeView("hello world", true);
     const ann = makeAnnotation({ annotation_type: "question", char_start: 0 });
 
@@ -459,6 +465,8 @@ describe("fireAnnotation", () => {
     expect(sendSpy).not.toHaveBeenCalled();
     expect(useModalLockStore.getState().llmLocked).toBe(false);
     expect(view.state.field(firingAnnotationsField).has(0)).toBe(false);
+    expect(completeSpy).toHaveBeenCalledOnce();
+    window.removeEventListener("lit:fire-complete", completeSpy);
     view.destroy();
   });
 

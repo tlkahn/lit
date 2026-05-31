@@ -87,6 +87,7 @@ export async function fireAnnotation(args: FireAnnotationArgs): Promise<void> {
     if (!nodeId) {
       view.dispatch({ effects: clearFiringAnnotation.of(annotation.char_start) });
       useModalLockStore.getState().setLlmLocked(false);
+      window.dispatchEvent(new CustomEvent("lit:fire-complete", { detail: { annotation } }));
       return;
     }
 
@@ -96,13 +97,14 @@ export async function fireAnnotation(args: FireAnnotationArgs): Promise<void> {
     if (!uuid) {
       view.dispatch({ effects: clearFiringAnnotation.of(annotation.char_start) });
       useModalLockStore.getState().setLlmLocked(false);
+      window.dispatchEvent(new CustomEvent("lit:fire-complete", { detail: { annotation } }));
       return;
     }
 
     useBottomPanelStore.getState().handleTabClick("llm-response");
 
-    const unsubscribe = useLlmResponseStore.subscribe((state) => {
-      if (state.status === "done" || state.status === "error") {
+    const unsubscribe = useLlmResponseStore.subscribe((state, prev) => {
+      if (state.status !== prev.status && (state.status === "done" || state.status === "error")) {
         view.dispatch({ effects: clearFiringAnnotation.of(annotation.char_start) });
         window.dispatchEvent(new CustomEvent("lit:fire-complete", { detail: { annotation } }));
         unsubscribe();
