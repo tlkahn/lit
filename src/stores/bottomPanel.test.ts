@@ -1,5 +1,13 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { useBottomPanelStore, WIDTH_STORAGE_KEY } from "./bottomPanel";
+import {
+  useBottomPanelStore,
+  DEFAULT_PANEL_HEIGHT,
+  DEFAULT_PANEL_WIDTH,
+  WIDTH_STORAGE_KEY,
+  STORAGE_KEY,
+  MIN_PANEL_HEIGHT,
+  MIN_PANEL_WIDTH,
+} from "./bottomPanel";
 import { useLlmResponseStore } from "./llmResponse";
 
 describe("bottomPanel setUnfolded", () => {
@@ -105,11 +113,11 @@ describe("bottomPanel resetForPage", () => {
 describe("bottomPanel panelWidth", () => {
   beforeEach(() => {
     localStorage.removeItem(WIDTH_STORAGE_KEY);
-    useBottomPanelStore.setState({ panelWidth: 320 });
+    useBottomPanelStore.setState({ panelWidth: DEFAULT_PANEL_WIDTH });
   });
 
-  it("defaults panelWidth to 320", () => {
-    expect(useBottomPanelStore.getState().panelWidth).toBe(320);
+  it("defaults panelWidth to DEFAULT_PANEL_WIDTH", () => {
+    expect(useBottomPanelStore.getState().panelWidth).toBe(DEFAULT_PANEL_WIDTH);
   });
 
   it("setPanelWidth updates state", () => {
@@ -120,5 +128,32 @@ describe("bottomPanel panelWidth", () => {
   it("setPanelWidth persists to localStorage", () => {
     useBottomPanelStore.getState().setPanelWidth(450);
     expect(localStorage.getItem(WIDTH_STORAGE_KEY)).toBe("450");
+  });
+
+  it("setPanelWidth clamps sub-minimum values to MIN_PANEL_WIDTH", () => {
+    useBottomPanelStore.getState().setPanelWidth(50);
+    expect(useBottomPanelStore.getState().panelWidth).toBe(MIN_PANEL_WIDTH);
+    expect(localStorage.getItem(WIDTH_STORAGE_KEY)).toBe(String(MIN_PANEL_WIDTH));
+  });
+});
+
+describe("bottomPanel panelHeight clamping", () => {
+  beforeEach(() => {
+    localStorage.removeItem(STORAGE_KEY);
+    useBottomPanelStore.setState({ panelHeight: DEFAULT_PANEL_HEIGHT });
+  });
+
+  it("setPanelHeight clamps sub-minimum values to MIN_PANEL_HEIGHT", () => {
+    useBottomPanelStore.getState().setPanelHeight(30);
+    expect(useBottomPanelStore.getState().panelHeight).toBe(MIN_PANEL_HEIGHT);
+    expect(localStorage.getItem(STORAGE_KEY)).toBe(String(MIN_PANEL_HEIGHT));
+  });
+
+  it("setPanelHeight allows values at or above the minimum", () => {
+    useBottomPanelStore.getState().setPanelHeight(MIN_PANEL_HEIGHT);
+    expect(useBottomPanelStore.getState().panelHeight).toBe(MIN_PANEL_HEIGHT);
+
+    useBottomPanelStore.getState().setPanelHeight(500);
+    expect(useBottomPanelStore.getState().panelHeight).toBe(500);
   });
 });
