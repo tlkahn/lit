@@ -85,6 +85,7 @@ const fakeAnnotation: Annotation = {
   char_start: 0,
   char_end: 10,
   original: "[n::test]",
+  uuid: null,
 };
 
 describe("conversation store", () => {

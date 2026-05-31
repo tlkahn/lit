@@ -9,7 +9,7 @@ import { useLlmResponseStore } from "../stores/llmResponse";
 import { useConversationStore } from "../stores/conversation";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useBottomPanelStore } from "../stores/bottomPanel";
-import { setFiringAnnotation, clearFiringAnnotation } from "../editor/livePreview/annotationWidgets";
+import { setFiringAnnotation, clearFiringAnnotation, annotationThreadKeysField, setAnnotationThreadKeys } from "../editor/livePreview/annotationWidgets";
 
 export interface FireAnnotationArgs {
   view: EditorView;
@@ -100,6 +100,11 @@ export async function fireAnnotation(args: FireAnnotationArgs): Promise<void> {
       window.dispatchEvent(new CustomEvent("lit:fire-complete", { detail: { annotation } }));
       return;
     }
+
+    const currentKeys = view.state.field(annotationThreadKeysField, false) ?? new Set<string>();
+    const newKeys = new Set(currentKeys);
+    newKeys.add(uuid);
+    view.dispatch({ effects: setAnnotationThreadKeys.of(newKeys) });
 
     useBottomPanelStore.getState().handleTabClick("llm-response");
 

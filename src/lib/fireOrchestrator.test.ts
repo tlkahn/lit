@@ -6,7 +6,7 @@ import { useModalLockStore } from "../stores/modalLock";
 import { usePreferencesStore } from "../stores/preferences";
 import { useLlmResponseStore } from "../stores/llmResponse";
 import { useBottomPanelStore } from "../stores/bottomPanel";
-import { firingAnnotationsField } from "../editor/livePreview/annotationWidgets";
+import { firingAnnotationsField, annotationThreadKeysField } from "../editor/livePreview/annotationWidgets";
 
 vi.mock("./ipc", () => ({
   resolveAnnotationScopeWithMode: vi.fn(async () => null),
@@ -30,7 +30,7 @@ const mockFindUuid = annotationFindUuid as ReturnType<typeof vi.fn>;
 const flushPromises = () => new Promise(resolve => setTimeout(resolve, 0));
 
 function makeView(doc = "hello world", withFiringField = false): EditorView {
-  const extensions = withFiringField ? [firingAnnotationsField] : [];
+  const extensions = withFiringField ? [firingAnnotationsField, annotationThreadKeysField] : [];
   return new EditorView({
     state: EditorState.create({ doc, extensions }),
     parent: document.createElement("div"),
@@ -49,6 +49,7 @@ function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
     char_start: 0,
     char_end: 11,
     original: "%%! llm | explain this %%",
+    uuid: null,
     ...overrides,
   };
 }
@@ -542,6 +543,19 @@ describe("fireAnnotation", () => {
     expect(view.state.field(firingAnnotationsField).has(0)).toBe(false);
     expect(completeSpy).toHaveBeenCalledOnce();
     window.removeEventListener("lit:fire-complete", completeSpy);
+    view.destroy();
+  });
+
+  it("persisting type: adds annotation UUID to annotationThreadKeysField", async () => {
+    useConversationStore.setState({ sendAnnotationFire: vi.fn(async () => {}) });
+    mockFindUuid.mockResolvedValue("uuid-thread-123");
+    const view = makeView("hello world", true);
+    const ann = makeAnnotation({ annotation_type: "question", char_start: 0 });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    const threadKeys = view.state.field(annotationThreadKeysField);
+    expect(threadKeys.has("uuid-thread-123")).toBe(true);
     view.destroy();
   });
 

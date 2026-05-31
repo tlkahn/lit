@@ -189,6 +189,21 @@
   background: rgba(158, 158, 158, 0.05);
 }
 
+/* Thread indicator */
+.cm-annotation-thread-indicator {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  font-size: 0.7em;
+  opacity: 0.6;
+  padding: 0 2px;
+  transition: opacity 0.15s ease;
+}
+
+.cm-annotation-thread-indicator:hover {
+  opacity: 1;
+}
+
 /* Fire button */
 .cm-annotation-fire-btn {
   display: inline-flex;

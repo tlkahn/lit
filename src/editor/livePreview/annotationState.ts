@@ -1,11 +1,14 @@
 import { type Extension, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, type ViewUpdate, keymap } from "@codemirror/view";
 import { syntaxTree, ensureSyntaxTree } from "@codemirror/language";
-import { parseAnnotations, type Annotation } from "../../lib/ipc";
+import { parseAnnotations, annotationFindUuid, type Annotation } from "../../lib/ipc";
 import { type AnnotationDisplayMode } from "../../stores/preferences";
 import { isCursorOnLine } from "./proximity";
-import { PillWidget, MarkerWidget, CalloutWidget, annotationFoldField, firingAnnotationsField, llmLockedField, setLlmLockedEffect } from "./annotationWidgets";
+import { PillWidget, MarkerWidget, CalloutWidget, annotationFoldField, firingAnnotationsField, llmLockedField, setLlmLockedEffect, annotationThreadKeysField } from "./annotationWidgets";
 import { useModalLockStore } from "../../stores/modalLock";
+import { useWorkspaceStore } from "../../stores/workspace";
+import { useConversationStore } from "../../stores/conversation";
+import { useBottomPanelStore } from "../../stores/bottomPanel";
 import { scopeHighlightExtension } from "./scopeHighlight";
 import { escapeAnnotationKeymap } from "./escapeAnnotation";
 import { fireAnnotation } from "../../lib/fireOrchestrator";
@@ -89,13 +92,14 @@ function findAnnotationForRange(
 }
 
 export const annotationDecorationProvider = EditorView.decorations.compute(
-  [annotationDataField, annotationFoldField, firingAnnotationsField, displayModeField, llmLockedField, "selection"],
+  [annotationDataField, annotationFoldField, firingAnnotationsField, displayModeField, llmLockedField, annotationThreadKeysField, "selection"],
   (state) => {
     const annotations = state.field(annotationDataField);
     if (annotations.length === 0) return Decoration.none;
     const mode = state.field(displayModeField);
     const firingSet = state.field(firingAnnotationsField, false) ?? new Set<number>();
     const llmLocked = state.field(llmLockedField, false) ?? false;
+    const threadKeys = state.field(annotationThreadKeysField, false) ?? new Set<string>();
 
     const docLen = state.doc.length;
     const decos: { from: number; to: number; deco: Decoration }[] = [];
@@ -117,6 +121,8 @@ export const annotationDecorationProvider = EditorView.decorations.compute(
         const isMultiLine = text.includes("\n");
         const isFiring = firingSet.has(from);
 
+        const hasThread = !!ann.uuid && threadKeys.has(ann.uuid);
+
         if (node.name === "BlockAnnotation" && isMultiLine) {
           const foldState = state.field(annotationFoldField, false);
           const isCollapsed = foldState?.get(from) ?? false;
@@ -124,11 +130,11 @@ export const annotationDecorationProvider = EditorView.decorations.compute(
             from,
             to,
             deco: Decoration.replace({
-              widget: new CalloutWidget(ann, isCollapsed, from, isFiring, llmLocked),
+              widget: new CalloutWidget(ann, isCollapsed, from, isFiring, llmLocked, hasThread),
             }),
           });
         } else {
-          const widget = mode === "footnote" ? new MarkerWidget(ann, isFiring, llmLocked) : new PillWidget(ann, isFiring, llmLocked);
+          const widget = mode === "footnote" ? new MarkerWidget(ann, isFiring, llmLocked, hasThread) : new PillWidget(ann, isFiring, llmLocked, hasThread);
           decos.push({
             from,
             to,
@@ -213,6 +219,39 @@ const llmLockBridgePlugin = ViewPlugin.fromClass(
   },
 );
 
+const openAnnotationThreadPlugin = ViewPlugin.fromClass(
+  class {
+    private handler: (e: Event) => void;
+    constructor(_view: EditorView) {
+      this.handler = async (e: Event) => {
+        const annotation = (e as CustomEvent).detail?.annotation as Annotation | undefined;
+        if (!annotation) return;
+
+        const nodeId = useWorkspaceStore.getState().currentPagePath;
+        if (!nodeId) return;
+
+        const uuid = annotation.uuid
+          ?? await annotationFindUuid(nodeId, annotation.annotation_type, annotation.body, annotation.char_start);
+        if (!uuid) return;
+
+        const title = annotation.body
+          ? `${annotation.annotation_type}: ${annotation.body}`
+          : annotation.annotation_type;
+
+        await useConversationStore.getState().findOrCreateAnnotationThread(nodeId, uuid, title);
+        useBottomPanelStore.getState().handleTabClick("llm-response");
+      };
+      window.addEventListener("lit:open-annotation-thread", this.handler);
+    }
+    update(_update: ViewUpdate) {
+      // view not used by this plugin's handler
+    }
+    destroy() {
+      window.removeEventListener("lit:open-annotation-thread", this.handler);
+    }
+  },
+);
+
 export function annotationExtension(): Extension {
   return [
     displayModeField,
@@ -223,9 +262,11 @@ export function annotationExtension(): Extension {
     firingAnnotationsField,
     llmLockedField,
     llmLockBridgePlugin,
+    annotationThreadKeysField,
     scopeHighlightExtension(),
     keymap.of(escapeAnnotationKeymap),
     fireAnnotationPlugin,
     companionInsertPlugin,
+    openAnnotationThreadPlugin,
   ];
 }

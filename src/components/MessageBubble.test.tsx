@@ -17,6 +17,7 @@ function makeAnnotation() {
     char_start: 0,
     char_end: 10,
     original: "test",
+    uuid: null,
   };
 }
 

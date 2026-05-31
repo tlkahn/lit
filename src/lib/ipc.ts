@@ -764,6 +764,7 @@ export interface Annotation {
   char_start: number;
   char_end: number;
   original: string;
+  uuid: string | null;
 }
 
 export interface ScopeRange {

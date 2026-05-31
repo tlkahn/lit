@@ -418,6 +418,7 @@ describe("LlmResponsePanel", () => {
       char_start: 0,
       char_end: 14,
       original: "%%!q | why? %%",
+      uuid: null,
     };
     useLlmResponseStore.getState().startStream({
       question: "why?",
@@ -449,6 +450,7 @@ describe("LlmResponsePanel", () => {
       char_start: 0,
       char_end: 14,
       original: "%%!q | why? %%",
+      uuid: null,
     };
     useLlmResponseStore.getState().startStream({
       question: "why?",
@@ -483,6 +485,7 @@ describe("LlmResponsePanel", () => {
       char_start: 0,
       char_end: 14,
       original: "%%!q | why? %%",
+      uuid: null,
     };
     useLlmResponseStore.getState().startStream({
       question: "why?",

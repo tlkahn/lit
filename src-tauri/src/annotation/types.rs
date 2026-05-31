@@ -184,6 +184,8 @@ pub struct Annotation {
     pub char_start: usize,
     pub char_end: usize,
     pub original: String,
+    #[serde(default)]
+    pub uuid: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -461,6 +463,7 @@ mod tests {
             char_start: 10,
             char_end: 50,
             original: "%%! n? __ | a note @2026-03 %%".to_string(),
+            uuid: None,
         };
         let json = serde_json::to_string(&ann).unwrap();
         let parsed: Annotation = serde_json::from_str(&json).unwrap();

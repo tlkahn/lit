@@ -115,6 +115,7 @@ pub fn parse_compact(inner: &str) -> Annotation {
             char_start: 0,
             char_end: 0,
             original: String::new(),
+            uuid: None,
         };
     }
 
@@ -129,6 +130,7 @@ pub fn parse_compact(inner: &str) -> Annotation {
         char_start: 0,
         char_end: 0,
         original: String::new(),
+        uuid: None,
     }
 }
 

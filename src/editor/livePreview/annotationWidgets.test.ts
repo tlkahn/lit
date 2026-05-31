@@ -41,6 +41,7 @@ function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
     char_start: 0,
     char_end: 13,
     original: "%%!n | body%%",
+    uuid: null,
     ...overrides,
   };
 }
@@ -735,6 +736,216 @@ describe("widget eq with llmLocked", () => {
   it("CalloutWidget eq returns false when llmLocked differs", () => {
     const ann = makeAnnotation();
     expect(new CalloutWidget(ann, false, 0, false, false).eq(new CalloutWidget(ann, false, 0, false, true))).toBe(false);
+  });
+});
+
+describe("thread indicator", () => {
+  // --- Rendering tests (Cycle 7.2) ---
+
+  it("PillWidget with hasThread=true renders .cm-annotation-thread-indicator", () => {
+    const view = makeEditorView();
+    const w = new PillWidget(makeAnnotation(), false, false, true);
+    const dom = w.toDOM(view);
+    const indicator = dom.querySelector(".cm-annotation-thread-indicator");
+    expect(indicator).toBeTruthy();
+    expect(indicator!.textContent).toBe("\u{1F4AC}");
+    view.destroy();
+  });
+
+  it("PillWidget with hasThread=false does NOT render indicator", () => {
+    const view = makeEditorView();
+    const w = new PillWidget(makeAnnotation(), false, false, false);
+    const dom = w.toDOM(view);
+    expect(dom.querySelector(".cm-annotation-thread-indicator")).toBeNull();
+    view.destroy();
+  });
+
+  it("PillWidget default (no hasThread) does NOT render indicator", () => {
+    const view = makeEditorView();
+    const w = new PillWidget(makeAnnotation());
+    const dom = w.toDOM(view);
+    expect(dom.querySelector(".cm-annotation-thread-indicator")).toBeNull();
+    view.destroy();
+  });
+
+  it("PillWidget thread indicator appears after fire button", () => {
+    const view = makeEditorView();
+    const w = new PillWidget(makeAnnotation({ annotation_type: "note" }), false, false, true);
+    const dom = w.toDOM(view);
+    const fireBtn = dom.querySelector(".cm-annotation-fire-btn");
+    const indicator = dom.querySelector(".cm-annotation-thread-indicator");
+    expect(fireBtn).toBeTruthy();
+    expect(indicator).toBeTruthy();
+    const children = Array.from(dom.children);
+    expect(children.indexOf(fireBtn as Element)).toBeLessThan(children.indexOf(indicator as Element));
+    view.destroy();
+  });
+
+  it("MarkerWidget with hasThread=true renders indicator", () => {
+    const view = makeEditorView();
+    const w = new MarkerWidget(makeAnnotation({ annotation_type: "note" }), false, false, true);
+    const dom = w.toDOM(view);
+    expect(dom.querySelector(".cm-annotation-thread-indicator")).toBeTruthy();
+    view.destroy();
+  });
+
+  it("MarkerWidget non-fireable type with hasThread=true wraps sup to include indicator", () => {
+    const view = makeEditorView();
+    const w = new MarkerWidget(makeAnnotation({ annotation_type: "bare" }), false, false, true);
+    const dom = w.toDOM(view);
+    expect(dom.tagName).toBe("SPAN");
+    expect(dom.classList.contains("cm-annotation-marker-wrap")).toBe(true);
+    expect(dom.querySelector(".cm-annotation-thread-indicator")).toBeTruthy();
+    view.destroy();
+  });
+
+  it("MarkerWidget with hasThread=false does NOT render indicator", () => {
+    const view = makeEditorView();
+    const w = new MarkerWidget(makeAnnotation({ annotation_type: "note" }), false, false, false);
+    const dom = w.toDOM(view);
+    expect(dom.querySelector(".cm-annotation-thread-indicator")).toBeNull();
+    view.destroy();
+  });
+
+  it("CalloutWidget with hasThread=true renders indicator in header", () => {
+    const ann = makeAnnotation({ form: "block", body: "body" });
+    const w = new CalloutWidget(ann, false, 0, false, false, true);
+    const dom = w.toDOM(null as unknown as EditorView);
+    expect(dom.querySelector(".cm-annotation-callout-header .cm-annotation-thread-indicator")).toBeTruthy();
+  });
+
+  it("CalloutWidget with hasThread=false does NOT render indicator", () => {
+    const ann = makeAnnotation({ form: "block", body: "body" });
+    const w = new CalloutWidget(ann, false, 0, false, false, false);
+    const dom = w.toDOM(null as unknown as EditorView);
+    expect(dom.querySelector(".cm-annotation-thread-indicator")).toBeNull();
+  });
+
+  it("CalloutWidget thread indicator appears after fire button, before fold arrow", () => {
+    const ann = makeAnnotation({ form: "block", annotation_type: "note", body: "body" });
+    const w = new CalloutWidget(ann, false, 0, false, false, true);
+    const dom = w.toDOM(null as unknown as EditorView);
+    const header = dom.querySelector(".cm-annotation-callout-header")!;
+    const children = Array.from(header.children);
+    const fireBtnIdx = children.findIndex((c) => c.classList.contains("cm-annotation-fire-btn"));
+    const indicatorIdx = children.findIndex((c) => c.classList.contains("cm-annotation-thread-indicator"));
+    const foldIdx = children.findIndex((c) => c.classList.contains("cm-annotation-fold-icon"));
+    expect(fireBtnIdx).toBeLessThan(indicatorIdx);
+    expect(indicatorIdx).toBeLessThan(foldIdx);
+  });
+
+  // --- eq() tests (Cycle 7.2) ---
+
+  it("PillWidget eq returns false when hasThread differs", () => {
+    const ann = makeAnnotation();
+    expect(new PillWidget(ann, false, false, false).eq(new PillWidget(ann, false, false, true))).toBe(false);
+  });
+
+  it("PillWidget eq returns true when both hasThread=true", () => {
+    const ann = makeAnnotation();
+    expect(new PillWidget(ann, false, false, true).eq(new PillWidget(ann, false, false, true))).toBe(true);
+  });
+
+  it("MarkerWidget eq returns false when hasThread differs", () => {
+    const ann = makeAnnotation();
+    expect(new MarkerWidget(ann, false, false, false).eq(new MarkerWidget(ann, false, false, true))).toBe(false);
+  });
+
+  it("CalloutWidget eq returns false when hasThread differs", () => {
+    const ann = makeAnnotation();
+    expect(new CalloutWidget(ann, false, 0, false, false, false).eq(new CalloutWidget(ann, false, 0, false, false, true))).toBe(false);
+  });
+
+  // --- Click behavior tests (Cycle 7.3) ---
+
+  it("PillWidget thread indicator mousedown dispatches lit:open-annotation-thread", () => {
+    const view = makeEditorView();
+    const ann = makeAnnotation({ char_start: 3 });
+    const w = new PillWidget(ann, false, false, true);
+    const dom = w.toDOM(view);
+    const indicator = dom.querySelector(".cm-annotation-thread-indicator")! as HTMLElement;
+
+    const spy = vi.fn();
+    window.addEventListener("lit:open-annotation-thread", spy);
+    indicator.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(spy).toHaveBeenCalledOnce();
+    const event = spy.mock.calls[0]![0] as CustomEvent;
+    expect(event.detail.annotation).toBe(ann);
+    window.removeEventListener("lit:open-annotation-thread", spy);
+    view.destroy();
+  });
+
+  it("PillWidget thread indicator mousedown calls stopPropagation and preventDefault", () => {
+    const view = makeEditorView();
+    const ann = makeAnnotation();
+    const w = new PillWidget(ann, false, false, true);
+    const dom = w.toDOM(view);
+    const indicator = dom.querySelector(".cm-annotation-thread-indicator")! as HTMLElement;
+
+    const event = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    const stopSpy = vi.spyOn(event, "stopPropagation");
+    indicator.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(stopSpy).toHaveBeenCalled();
+    view.destroy();
+  });
+
+  it("PillWidget thread indicator mousedown does NOT dispatch lit:open-annotation-builder", () => {
+    const view = makeEditorView();
+    const ann = makeAnnotation();
+    const w = new PillWidget(ann, false, false, true);
+    const dom = w.toDOM(view);
+    const indicator = dom.querySelector(".cm-annotation-thread-indicator")! as HTMLElement;
+
+    const editSpy = vi.fn();
+    window.addEventListener("lit:open-annotation-builder", editSpy);
+    indicator.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(editSpy).not.toHaveBeenCalled();
+    window.removeEventListener("lit:open-annotation-builder", editSpy);
+    view.destroy();
+  });
+
+  it("MarkerWidget thread indicator mousedown dispatches lit:open-annotation-thread", () => {
+    const view = makeEditorView();
+    const ann = makeAnnotation({ annotation_type: "note" });
+    const w = new MarkerWidget(ann, false, false, true);
+    const dom = w.toDOM(view);
+    const indicator = dom.querySelector(".cm-annotation-thread-indicator")! as HTMLElement;
+
+    const spy = vi.fn();
+    window.addEventListener("lit:open-annotation-thread", spy);
+    indicator.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(spy).toHaveBeenCalledOnce();
+    expect((spy.mock.calls[0]![0] as CustomEvent).detail.annotation).toBe(ann);
+    window.removeEventListener("lit:open-annotation-thread", spy);
+    view.destroy();
+  });
+
+  it("CalloutWidget thread indicator mousedown dispatches lit:open-annotation-thread", () => {
+    const ann = makeAnnotation({ form: "block", annotation_type: "note", body: "body" });
+    const w = new CalloutWidget(ann, false, 0, false, false, true);
+    const dom = w.toDOM(null as unknown as EditorView);
+    const indicator = dom.querySelector(".cm-annotation-thread-indicator")! as HTMLElement;
+
+    const spy = vi.fn();
+    window.addEventListener("lit:open-annotation-thread", spy);
+    indicator.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(spy).toHaveBeenCalledOnce();
+    expect((spy.mock.calls[0]![0] as CustomEvent).detail.annotation).toBe(ann);
+    window.removeEventListener("lit:open-annotation-thread", spy);
+  });
+
+  it("CalloutWidget header click on indicator does NOT trigger edit event", () => {
+    const ann = makeAnnotation({ form: "block", annotation_type: "note", body: "body" });
+    const w = new CalloutWidget(ann, false, 0, false, false, true);
+    const dom = w.toDOM(null as unknown as EditorView);
+    const indicator = dom.querySelector(".cm-annotation-thread-indicator")! as HTMLElement;
+
+    const editSpy = vi.fn();
+    window.addEventListener("lit:open-annotation-builder", editSpy);
+    indicator.click();
+    expect(editSpy).not.toHaveBeenCalled();
+    window.removeEventListener("lit:open-annotation-builder", editSpy);
   });
 });
 

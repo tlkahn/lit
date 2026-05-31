@@ -19,17 +19,25 @@ import {
   CalloutWidget,
   MarkerWidget,
   llmLockedField,
+  annotationThreadKeysField,
+  setAnnotationThreadKeys,
 } from "./annotationWidgets";
 import { Annotation as AnnotationGrammar } from "../markdown/annotation";
 import { Comment as CommentGrammar } from "../markdown/comment";
 import type { Annotation } from "../../lib/ipc";
-import { parseAnnotations } from "../../lib/ipc";
+import { parseAnnotations, annotationFindUuid } from "../../lib/ipc";
 import { type AnnotationDisplayMode } from "../../stores/preferences";
 import { useModalLockStore } from "../../stores/modalLock";
+import { useWorkspaceStore } from "../../stores/workspace";
+import { useConversationStore } from "../../stores/conversation";
+import { useBottomPanelStore } from "../../stores/bottomPanel";
 
 vi.mock("../../lib/ipc", () => ({
   parseAnnotations: vi.fn(async () => []),
+  annotationFindUuid: vi.fn(async () => null),
 }));
+
+const mockFindUuid = annotationFindUuid as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -47,6 +55,7 @@ function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
     char_start: 0,
     char_end: 10,
     original: "%%!n | x%%",
+    uuid: null,
     ...overrides,
   };
 }
@@ -370,6 +379,7 @@ describe("annotationDecorationProvider", () => {
         displayModeField,
         annotationDecorationProvider,
         annotationFoldField,
+        annotationThreadKeysField,
       ],
     });
     const view = new EditorView({ state, parent: document.createElement("div") });
@@ -605,6 +615,115 @@ describe("annotationDecorationProvider", () => {
 
     view.destroy();
   });
+
+  it("passes hasThread=true to PillWidget when annotation uuid matches thread key", () => {
+    const doc = "first line\ntext %%!n | body%% more";
+    const view = makeAnnotationView(doc, 0);
+
+    const ann = makeAnnotation({ char_start: 16, char_end: 29, original: "%%!n | body%%", uuid: "uuid-1" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+    view.dispatch({ effects: setAnnotationThreadKeys.of(new Set(["uuid-1"])) });
+
+    const decos = collectDecorations(view);
+    const found = decos.find((d) => d.from === 16 && d.to === 29);
+    expect(found).toBeTruthy();
+    expect((found!.widget as PillWidget).hasThread).toBe(true);
+
+    view.destroy();
+  });
+
+  it("passes hasThread=false when annotation uuid not in thread keys", () => {
+    const doc = "first line\ntext %%!n | body%% more";
+    const view = makeAnnotationView(doc, 0);
+
+    const ann = makeAnnotation({ char_start: 16, char_end: 29, original: "%%!n | body%%", uuid: "uuid-other" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+    view.dispatch({ effects: setAnnotationThreadKeys.of(new Set(["uuid-1"])) });
+
+    const decos = collectDecorations(view);
+    const found = decos.find((d) => d.from === 16 && d.to === 29);
+    expect(found).toBeTruthy();
+    expect((found!.widget as PillWidget).hasThread).toBe(false);
+
+    view.destroy();
+  });
+
+  it("passes hasThread=false when annotation uuid is null", () => {
+    const doc = "first line\ntext %%!n | body%% more";
+    const view = makeAnnotationView(doc, 0);
+
+    const ann = makeAnnotation({ char_start: 16, char_end: 29, original: "%%!n | body%%", uuid: null });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+    view.dispatch({ effects: setAnnotationThreadKeys.of(new Set(["uuid-1"])) });
+
+    const decos = collectDecorations(view);
+    const found = decos.find((d) => d.from === 16 && d.to === 29);
+    expect(found).toBeTruthy();
+    expect((found!.widget as PillWidget).hasThread).toBe(false);
+
+    view.destroy();
+  });
+
+  it("passes hasThread=true to MarkerWidget in footnote mode", () => {
+    const doc = "first line\ntext %%!n | body%% more";
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: 0 },
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+        displayModeField,
+        annotationDecorationProvider,
+        annotationFoldField,
+        annotationThreadKeysField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    ensureSyntaxTree(view.state, view.state.doc.length);
+
+    view.dispatch({ effects: setDisplayMode.of("footnote") });
+    const ann = makeAnnotation({ char_start: 16, char_end: 29, original: "%%!n | body%%", uuid: "uuid-fn" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+    view.dispatch({ effects: setAnnotationThreadKeys.of(new Set(["uuid-fn"])) });
+
+    const decos = collectDecorations(view);
+    const found = decos.find((d) => d.from === 16 && d.to === 29);
+    expect(found).toBeTruthy();
+    expect(found!.widget).toBeInstanceOf(MarkerWidget);
+    expect((found!.widget as MarkerWidget).hasThread).toBe(true);
+
+    view.destroy();
+  });
+
+  it("passes hasThread=true to CalloutWidget for block annotation", () => {
+    const doc = "first line\n\n%%!\nbody\n%%\nafter";
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: 24 },
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+        displayModeField,
+        annotationDecorationProvider,
+        annotationFoldField,
+        annotationThreadKeysField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    ensureSyntaxTree(view.state, view.state.doc.length);
+
+    const ann = makeAnnotation({ form: "block", char_start: 12, char_end: 23, original: "%%!\nbody\n%%", uuid: "uuid-block" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+    view.dispatch({ effects: setAnnotationThreadKeys.of(new Set(["uuid-block"])) });
+
+    const decos = collectDecorations(view);
+    const found = decos.find((d) => d.from === 12 && d.to === 23);
+    expect(found).toBeTruthy();
+    expect(found!.widget).toBeInstanceOf(CalloutWidget);
+    expect((found!.widget as CalloutWidget).hasThread).toBe(true);
+
+    view.destroy();
+  });
 });
 
 describe("findAnnotationAtCursor", () => {
@@ -646,10 +765,10 @@ describe("findAnnotationAtCursor", () => {
 });
 
 describe("annotationExtension", () => {
-  it("returns array with 12 extensions", () => {
+  it("returns array with 14 extensions", () => {
     const ext = annotationExtension();
     expect(Array.isArray(ext)).toBe(true);
-    expect((ext as unknown[]).length).toBe(12);
+    expect((ext as unknown[]).length).toBe(14);
   });
 
   it("includes annotationDataField", () => {
@@ -665,6 +784,11 @@ describe("annotationExtension", () => {
   it("includes llmLockedField", () => {
     const ext = annotationExtension() as unknown[];
     expect(ext).toContain(llmLockedField);
+  });
+
+  it("includes annotationThreadKeysField", () => {
+    const ext = annotationExtension() as unknown[];
+    expect(ext).toContain(annotationThreadKeysField);
   });
 });
 
@@ -702,5 +826,171 @@ describe("llmLockBridgePlugin", () => {
     });
     view.destroy();
     expect(() => useModalLockStore.getState().setLlmLocked(true)).not.toThrow();
+  });
+});
+
+describe("openAnnotationThreadPlugin", () => {
+  beforeEach(() => {
+    useWorkspaceStore.setState({ currentPagePath: "notes/page.md" });
+    mockFindUuid.mockResolvedValue("uuid-123");
+    useConversationStore.setState({
+      findOrCreateAnnotationThread: vi.fn(async () => "thread-id"),
+    });
+    useBottomPanelStore.setState({ activeTab: "linked", unfolded: false });
+  });
+
+  it("calls findOrCreateAnnotationThread on lit:open-annotation-thread", async () => {
+    vi.useFakeTimers();
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+
+    const ann = makeAnnotation({ annotation_type: "note", body: "test body", uuid: null });
+    window.dispatchEvent(new CustomEvent("lit:open-annotation-thread", { detail: { annotation: ann } }));
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const findOrCreate = useConversationStore.getState().findOrCreateAnnotationThread;
+    expect(findOrCreate).toHaveBeenCalledWith("notes/page.md", "uuid-123", "note: test body");
+
+    view.destroy();
+    vi.useRealTimers();
+  });
+
+  it("uses annotation.uuid directly when available", async () => {
+    vi.useFakeTimers();
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+
+    const ann = makeAnnotation({ annotation_type: "note", body: "test body", uuid: "uuid-direct" });
+    window.dispatchEvent(new CustomEvent("lit:open-annotation-thread", { detail: { annotation: ann } }));
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockFindUuid).not.toHaveBeenCalled();
+    const findOrCreate = useConversationStore.getState().findOrCreateAnnotationThread;
+    expect(findOrCreate).toHaveBeenCalledWith("notes/page.md", "uuid-direct", "note: test body");
+
+    view.destroy();
+    vi.useRealTimers();
+  });
+
+  it("falls back to annotationFindUuid when uuid is null", async () => {
+    vi.useFakeTimers();
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+
+    const ann = makeAnnotation({ uuid: null });
+    window.dispatchEvent(new CustomEvent("lit:open-annotation-thread", { detail: { annotation: ann } }));
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockFindUuid).toHaveBeenCalled();
+
+    view.destroy();
+    vi.useRealTimers();
+  });
+
+  it("opens bottom panel to llm-response", async () => {
+    vi.useFakeTimers();
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+
+    const ann = makeAnnotation({ uuid: "uuid-panel" });
+    window.dispatchEvent(new CustomEvent("lit:open-annotation-thread", { detail: { annotation: ann } }));
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(useBottomPanelStore.getState().activeTab).toBe("llm-response");
+    expect(useBottomPanelStore.getState().unfolded).toBe(true);
+
+    view.destroy();
+    vi.useRealTimers();
+  });
+
+  it("does nothing when currentPagePath is null", async () => {
+    vi.useFakeTimers();
+    useWorkspaceStore.setState({ currentPagePath: null });
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+
+    const ann = makeAnnotation({ uuid: "uuid-noop" });
+    window.dispatchEvent(new CustomEvent("lit:open-annotation-thread", { detail: { annotation: ann } }));
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockFindUuid).not.toHaveBeenCalled();
+    const findOrCreate = useConversationStore.getState().findOrCreateAnnotationThread;
+    expect(findOrCreate).not.toHaveBeenCalled();
+
+    view.destroy();
+    vi.useRealTimers();
+  });
+
+  it("does nothing when UUID not found", async () => {
+    vi.useFakeTimers();
+    mockFindUuid.mockResolvedValue(null);
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+
+    const ann = makeAnnotation({ uuid: null });
+    window.dispatchEvent(new CustomEvent("lit:open-annotation-thread", { detail: { annotation: ann } }));
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const findOrCreate = useConversationStore.getState().findOrCreateAnnotationThread;
+    expect(findOrCreate).not.toHaveBeenCalled();
+
+    view.destroy();
+    vi.useRealTimers();
+  });
+
+  it("unsubscribes on destroy", async () => {
+    vi.useFakeTimers();
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+    view.destroy();
+
+    const ann = makeAnnotation({ uuid: "uuid-dead" });
+    window.dispatchEvent(new CustomEvent("lit:open-annotation-thread", { detail: { annotation: ann } }));
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const findOrCreate = useConversationStore.getState().findOrCreateAnnotationThread;
+    expect(findOrCreate).not.toHaveBeenCalled();
+
+    vi.useRealTimers();
+  });
+
+  it("derives title from annotation type and body", async () => {
+    vi.useFakeTimers();
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
+      parent: document.createElement("div"),
+    });
+
+    const ann = makeAnnotation({ annotation_type: "question", body: "What is X?", uuid: "uuid-title" });
+    window.dispatchEvent(new CustomEvent("lit:open-annotation-thread", { detail: { annotation: ann } }));
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const findOrCreate = useConversationStore.getState().findOrCreateAnnotationThread;
+    expect(findOrCreate).toHaveBeenCalledWith("notes/page.md", "uuid-title", "question: What is X?");
+
+    view.destroy();
+    vi.useRealTimers();
   });
 });
