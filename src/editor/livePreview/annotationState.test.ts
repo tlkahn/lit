@@ -369,12 +369,12 @@ describe("annotationPlugin", () => {
     view.destroy();
   });
 
-  it("enriches parsed annotations with UUIDs from listAnnotations", async () => {
-    const parsedAnn = makeAnnotation({ annotation_type: "note", char_start: 5, char_end: 15 });
+  it("enriches parsed annotations with UUIDs from listAnnotations using fuzzy matching", async () => {
+    const parsedAnn = makeAnnotation({ annotation_type: "note", body: "hello", char_start: 5, char_end: 15 });
     vi.mocked(parseAnnotations).mockResolvedValue([parsedAnn]);
     useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
     mockListAnnotations.mockResolvedValue([
-      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: null, date: null, source_line: 1, char_start: 5, char_end: 15, uuid: "enriched-uuid-1" },
+      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: "hello", date: null, source_line: 1, char_start: 5, char_end: 15, uuid: "enriched-uuid-1" },
     ]);
 
     const state = EditorState.create({
@@ -434,14 +434,14 @@ describe("annotationPlugin", () => {
     view.destroy();
   });
 
-  it("enriches correct UUIDs when two annotations share type and char_start", async () => {
-    const parsedAnn1 = makeAnnotation({ annotation_type: "note", char_start: 5, char_end: 15 });
-    const parsedAnn2 = makeAnnotation({ annotation_type: "note", char_start: 5, char_end: 25 });
+  it("enriches correct UUIDs when two annotations share type but differ in body", async () => {
+    const parsedAnn1 = makeAnnotation({ annotation_type: "note", body: "first", char_start: 5, char_end: 15 });
+    const parsedAnn2 = makeAnnotation({ annotation_type: "note", body: "second", char_start: 5, char_end: 25 });
     vi.mocked(parseAnnotations).mockResolvedValue([parsedAnn1, parsedAnn2]);
     useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
     mockListAnnotations.mockResolvedValue([
-      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: null, date: null, source_line: 1, char_start: 5, char_end: 15, uuid: "uuid-short" },
-      { annotation_id: 2, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: null, date: null, source_line: 1, char_start: 5, char_end: 25, uuid: "uuid-long" },
+      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: "first", date: null, source_line: 1, char_start: 5, char_end: 15, uuid: "uuid-first" },
+      { annotation_id: 2, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: "second", date: null, source_line: 1, char_start: 5, char_end: 25, uuid: "uuid-second" },
     ]);
 
     const state = EditorState.create({
@@ -456,10 +456,10 @@ describe("annotationPlugin", () => {
     view.destroy();
 
     expect(data).toHaveLength(2);
-    const short = data.find((a) => a.char_end === 15);
-    const long = data.find((a) => a.char_end === 25);
-    expect(short!.uuid).toBe("uuid-short");
-    expect(long!.uuid).toBe("uuid-long");
+    const first = data.find((a) => a.body === "first");
+    const second = data.find((a) => a.body === "second");
+    expect(first!.uuid).toBe("uuid-first");
+    expect(second!.uuid).toBe("uuid-second");
   });
 
   it("discards stale enrichment when doc changes during listAnnotations", async () => {
@@ -483,7 +483,7 @@ describe("annotationPlugin", () => {
     view.dispatch({ changes: { from: 5, insert: " changed" } });
 
     resolveList([
-      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: null, date: null, source_line: 1, char_start: 0, char_end: 5, uuid: "stale-uuid" },
+      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: "test body", date: null, source_line: 1, char_start: 0, char_end: 5, uuid: "stale-uuid" },
     ]);
     await vi.advanceTimersByTimeAsync(0);
 
@@ -542,6 +542,172 @@ describe("annotationPlugin", () => {
     expect(pill).toBeTruthy();
     expect(pill!.widget).toBeInstanceOf(PillWidget);
     expect((pill!.widget as PillWidget).hasThread).toBe(true);
+
+    view.destroy();
+  });
+
+  it("enriches annotations after positions shift from document edits (fuzzy matching)", async () => {
+    // Simulate: parsed annotations have shifted positions compared to DB
+    // (e.g. user typed text before the annotation, shifting it right by 10 chars)
+    const parsedAnn = makeAnnotation({ annotation_type: "note", body: "important", char_start: 15, char_end: 30 });
+    vi.mocked(parseAnnotations).mockResolvedValue([parsedAnn]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+    // DB still has the old positions (before the edit shifted things)
+    mockListAnnotations.mockResolvedValue([
+      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: "important", date: null, source_line: 1, char_start: 5, char_end: 20, uuid: "uuid-shifted" },
+    ]);
+
+    const state = EditorState.create({
+      doc: "some padded text with annotation here",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const data = view.state.field(annotationDataField);
+    view.destroy();
+
+    expect(data).toHaveLength(1);
+    // Fuzzy matching by type+body should still find the UUID despite position mismatch
+    expect(data[0]!.uuid).toBe("uuid-shifted");
+  });
+
+  it("fuzzy matching picks closest candidate by proximity when type+body matches multiple", async () => {
+    // Two annotations with same type and body but at different positions
+    const parsedAnn1 = makeAnnotation({ annotation_type: "note", body: "dup", char_start: 10, char_end: 20 });
+    const parsedAnn2 = makeAnnotation({ annotation_type: "note", body: "dup", char_start: 50, char_end: 60 });
+    vi.mocked(parseAnnotations).mockResolvedValue([parsedAnn1, parsedAnn2]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+    mockListAnnotations.mockResolvedValue([
+      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: "dup", date: null, source_line: 1, char_start: 12, char_end: 22, uuid: "uuid-near-10" },
+      { annotation_id: 2, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: "dup", date: null, source_line: 3, char_start: 48, char_end: 58, uuid: "uuid-near-50" },
+    ]);
+
+    const state = EditorState.create({
+      doc: "x".repeat(70),
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const data = view.state.field(annotationDataField);
+    view.destroy();
+
+    expect(data).toHaveLength(2);
+    // Each parsed annotation should match the indexed one closest to it
+    expect(data[0]!.uuid).toBe("uuid-near-10");
+    expect(data[1]!.uuid).toBe("uuid-near-50");
+  });
+
+  it("does NOT call listAnnotations when annotation fingerprint is unchanged", async () => {
+    const ann = makeAnnotation({ annotation_type: "note", body: "stable", char_start: 0, char_end: 10 });
+    vi.mocked(parseAnnotations).mockResolvedValue([ann]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+    mockListAnnotations.mockResolvedValue([
+      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: "stable", date: null, source_line: 1, char_start: 0, char_end: 10, uuid: "uuid-cached" },
+    ]);
+
+    const state = EditorState.create({
+      doc: "hello text",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    // Initial fireIPC
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockListAnnotations).toHaveBeenCalledTimes(1);
+
+    // Trigger another doc change — parseAnnotations returns same type+body, just shifted positions
+    const shiftedAnn = makeAnnotation({ annotation_type: "note", body: "stable", char_start: 6, char_end: 16 });
+    vi.mocked(parseAnnotations).mockResolvedValue([shiftedAnn]);
+    mockListAnnotations.mockClear();
+
+    view.dispatch({ changes: { from: 0, insert: "added " } });
+    await vi.advanceTimersByTimeAsync(150);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // listAnnotations should NOT be called since fingerprint (type:body) didn't change
+    expect(mockListAnnotations).not.toHaveBeenCalled();
+
+    // But enrichment should still work from cached data
+    const data = view.state.field(annotationDataField);
+    expect(data[0]!.uuid).toBe("uuid-cached");
+
+    view.destroy();
+  });
+
+  it("calls listAnnotations when annotations change (fingerprint differs)", async () => {
+    const ann1 = makeAnnotation({ annotation_type: "note", body: "original", char_start: 0, char_end: 10 });
+    vi.mocked(parseAnnotations).mockResolvedValue([ann1]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+    mockListAnnotations.mockResolvedValue([
+      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: "original", date: null, source_line: 1, char_start: 0, char_end: 10, uuid: "uuid-orig" },
+    ]);
+
+    const state = EditorState.create({
+      doc: "hello text",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockListAnnotations).toHaveBeenCalledTimes(1);
+
+    // Now annotations change — different body
+    const ann2 = makeAnnotation({ annotation_type: "note", body: "edited", char_start: 0, char_end: 10 });
+    vi.mocked(parseAnnotations).mockResolvedValue([ann2]);
+    mockListAnnotations.mockClear();
+    mockListAnnotations.mockResolvedValue([
+      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: "edited", date: null, source_line: 1, char_start: 0, char_end: 10, uuid: "uuid-edited" },
+    ]);
+
+    view.dispatch({ changes: { from: 5, insert: "!" } });
+    await vi.advanceTimersByTimeAsync(150);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // listAnnotations SHOULD be called since fingerprint changed
+    expect(mockListAnnotations).toHaveBeenCalledTimes(1);
+    const data = view.state.field(annotationDataField);
+    expect(data[0]!.uuid).toBe("uuid-edited");
+
+    view.destroy();
+  });
+
+  it("invalidates cache on page change (nodeId differs)", async () => {
+    const ann = makeAnnotation({ annotation_type: "note", body: "stable", char_start: 0, char_end: 10 });
+    vi.mocked(parseAnnotations).mockResolvedValue([ann]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/page1.md" });
+    mockListAnnotations.mockResolvedValue([
+      { annotation_id: 1, node_id: "notes/page1.md", node_title: "page1", annotation_type: "note", certainty: "neutral", body: "stable", date: null, source_line: 1, char_start: 0, char_end: 10, uuid: "uuid-page1" },
+    ]);
+
+    const state = EditorState.create({
+      doc: "hello text",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockListAnnotations).toHaveBeenCalledTimes(1);
+    expect(view.state.field(annotationDataField)[0]!.uuid).toBe("uuid-page1");
+
+    // Simulate page change — same annotations but different nodeId
+    useWorkspaceStore.setState({ currentPagePath: "notes/page2.md" });
+    mockListAnnotations.mockClear();
+    mockListAnnotations.mockResolvedValue([
+      { annotation_id: 2, node_id: "notes/page2.md", node_title: "page2", annotation_type: "note", certainty: "neutral", body: "stable", date: null, source_line: 1, char_start: 0, char_end: 10, uuid: "uuid-page2" },
+    ]);
+
+    view.dispatch({ changes: { from: 5, insert: "!" } });
+    await vi.advanceTimersByTimeAsync(150);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // listAnnotations SHOULD be called because nodeId changed
+    expect(mockListAnnotations).toHaveBeenCalledTimes(1);
+    const data = view.state.field(annotationDataField);
+    expect(data[0]!.uuid).toBe("uuid-page2");
 
     view.destroy();
   });

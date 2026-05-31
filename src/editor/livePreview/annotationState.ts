@@ -40,10 +40,50 @@ export const annotationDataField = StateField.define<Annotation[]>({
   },
 });
 
+/** Build a fingerprint from annotation types+bodies (position-independent). */
+function buildAnnotationFingerprint(annotations: Annotation[]): string {
+  return annotations
+    .map((a) => `${a.annotation_type}:${a.body ?? ""}`)
+    .join("\n");
+}
+
+type IndexedGroup = Array<{ uuid: string; char_start: number }>;
+
+/** Group indexed annotations by (type, body) for fuzzy matching. */
+function buildIndexedGroups(indexed: Array<{ annotation_type: string; body: string | null; uuid: string; char_start: number }>): Map<string, IndexedGroup> {
+  const groups = new Map<string, IndexedGroup>();
+  for (const ia of indexed) {
+    const key = `${ia.annotation_type}:${ia.body ?? ""}`;
+    let arr = groups.get(key);
+    if (!arr) { arr = []; groups.set(key, arr); }
+    arr.push({ uuid: ia.uuid, char_start: ia.char_start });
+  }
+  return groups;
+}
+
+/** Enrich annotations with UUIDs using fuzzy (type+body) matching + proximity tiebreaker. */
+function enrichWithGroups(annotations: Annotation[], groups: Map<string, IndexedGroup>): void {
+  for (const ann of annotations) {
+    const key = `${ann.annotation_type}:${ann.body ?? ""}`;
+    const candidates = groups.get(key);
+    if (!candidates || candidates.length === 0) continue;
+    let best = candidates[0]!;
+    let bestDist = Math.abs(best.char_start - ann.char_start);
+    for (let i = 1; i < candidates.length; i++) {
+      const d = Math.abs(candidates[i]!.char_start - ann.char_start);
+      if (d < bestDist) { best = candidates[i]!; bestDist = d; }
+    }
+    ann.uuid = best.uuid;
+  }
+}
+
 export const annotationPlugin = ViewPlugin.fromClass(
   class {
     private debounceTimer: ReturnType<typeof setTimeout> | null = null;
     private lastDocStr = "";
+    private lastAnnotationFingerprint = "";
+    private lastNodeId: string | null = null;
+    private lastIndexedGroups: Map<string, IndexedGroup> = new Map();
 
     constructor(private view: EditorView) {
       this.lastDocStr = view.state.doc.toString();
@@ -73,17 +113,19 @@ export const annotationPlugin = ViewPlugin.fromClass(
         const nodeId = useWorkspaceStore.getState().currentPagePath;
         if (nodeId && annotations.length > 0) {
           try {
-            const indexed = await listAnnotations(nodeId);
-            if (this.view.state.doc.toString() !== this.lastDocStr) return;
-            const uuidMap = new Map<string, string>();
-            for (const ia of indexed) {
-              uuidMap.set(`${ia.annotation_type}:${ia.char_start}:${ia.char_end}`, ia.uuid);
+            const fingerprint = buildAnnotationFingerprint(annotations);
+            const nodeChanged = nodeId !== this.lastNodeId;
+            const fpChanged = fingerprint !== this.lastAnnotationFingerprint;
+
+            if (nodeChanged || fpChanged) {
+              const indexed = await listAnnotations(nodeId);
+              if (this.view.state.doc.toString() !== this.lastDocStr) return;
+              this.lastIndexedGroups = buildIndexedGroups(indexed);
+              this.lastAnnotationFingerprint = fingerprint;
+              this.lastNodeId = nodeId;
             }
-            for (const ann of annotations) {
-              const key = `${ann.annotation_type}:${ann.char_start}:${ann.char_end}`;
-              const uuid = uuidMap.get(key);
-              if (uuid) ann.uuid = uuid;
-            }
+
+            enrichWithGroups(annotations, this.lastIndexedGroups);
           } catch { /* best-effort enrichment */ }
         }
 
@@ -186,6 +228,8 @@ const fireAnnotationPlugin = ViewPlugin.fromClass(
           const result = fireAnnotation({ view: this.view, annotation: detail.annotation });
           result.then((cleanup) => {
             if (typeof cleanup === "function") this.disposeFireCleanup = cleanup;
+          }).catch((err) => {
+            console.warn("fireAnnotation failed:", err);
           });
         }
       };

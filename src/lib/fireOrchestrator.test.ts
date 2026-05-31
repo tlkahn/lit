@@ -446,6 +446,9 @@ describe("fireAnnotation", () => {
     expect(useModalLockStore.getState().llmLocked).toBe(false);
     expect(view.state.field(firingAnnotationsField).has(0)).toBe(false);
     expect(completeSpy).toHaveBeenCalledOnce();
+    expect(useLlmResponseStore.getState().status).toBe("error");
+    expect(useLlmResponseStore.getState().errorMessage).toBe("Annotation not found in index. Save the file and try again.");
+    expect(useBottomPanelStore.getState().activeTab).toBe("llm-response");
     window.removeEventListener("lit:fire-complete", completeSpy);
     view.destroy();
   });
@@ -466,6 +469,31 @@ describe("fireAnnotation", () => {
     expect(useModalLockStore.getState().llmLocked).toBe(false);
     expect(view.state.field(firingAnnotationsField).has(0)).toBe(false);
     expect(completeSpy).toHaveBeenCalledOnce();
+    expect(useLlmResponseStore.getState().status).toBe("error");
+    expect(useLlmResponseStore.getState().errorMessage).toBe("No active file. Open a file and try again.");
+    expect(useBottomPanelStore.getState().activeTab).toBe("llm-response");
+    window.removeEventListener("lit:fire-complete", completeSpy);
+    view.destroy();
+  });
+
+  it("persisting type: clears firing and shows error when annotationFindUuid throws", async () => {
+    const sendSpy = vi.fn().mockResolvedValue(undefined);
+    useConversationStore.setState({ sendAnnotationFire: sendSpy });
+    mockFindUuid.mockRejectedValue(new Error("IPC error"));
+    const completeSpy = vi.fn();
+    window.addEventListener("lit:fire-complete", completeSpy);
+    const view = makeView("hello world", true);
+    const ann = makeAnnotation({ annotation_type: "question", char_start: 0 });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(useModalLockStore.getState().llmLocked).toBe(false);
+    expect(view.state.field(firingAnnotationsField).has(0)).toBe(false);
+    expect(completeSpy).toHaveBeenCalledOnce();
+    expect(useLlmResponseStore.getState().status).toBe("error");
+    expect(useLlmResponseStore.getState().errorMessage).toBe("Failed to look up annotation. Save the file and try again.");
+    expect(useBottomPanelStore.getState().activeTab).toBe("llm-response");
     window.removeEventListener("lit:fire-complete", completeSpy);
     view.destroy();
   });

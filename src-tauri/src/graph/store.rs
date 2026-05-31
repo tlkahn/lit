@@ -57,34 +57,57 @@ struct AnnotationDiff {
 }
 
 fn match_annotations(existing: &[ExistingAnnotation], incoming: &[IndexableAnnotation]) -> AnnotationDiff {
-    let mut candidates: HashMap<(String, Option<String>), Vec<usize>> = HashMap::new();
+    // Group existing annotations by (type, body) key.
+    let mut existing_groups: HashMap<(String, Option<String>), Vec<usize>> = HashMap::new();
     for (i, ex) in existing.iter().enumerate() {
-        candidates
+        existing_groups
             .entry((ex.annotation_type.clone(), ex.body.clone()))
             .or_default()
             .push(i);
     }
 
+    // Sort each group of existing candidates by char_start.
+    for indices in existing_groups.values_mut() {
+        indices.sort_by_key(|&i| existing[i].char_start);
+    }
+
+    // Group incoming annotations by the same key, sorted by char_start.
+    let mut incoming_groups: HashMap<(String, Option<String>), Vec<usize>> = HashMap::new();
+    for (i, ann) in incoming.iter().enumerate() {
+        incoming_groups
+            .entry((ann.annotation_type.clone(), ann.body.clone()))
+            .or_default()
+            .push(i);
+    }
+    for indices in incoming_groups.values_mut() {
+        indices.sort_by_key(|&i| incoming[i].char_start);
+    }
+
+    // Pair by ordinal rank within each (type, body) group: first existing
+    // (by position) pairs with first incoming (by position), etc. This
+    // prevents UUID swaps when positions shift dramatically — e.g. an
+    // annotation moving from pos 10 to 190 won't steal the UUID of
+    // a neighbor at pos 200.
     let mut updates = Vec::new();
     let mut inserts = Vec::new();
     let mut matched_old: HashSet<usize> = HashSet::new();
 
-    for (new_idx, ann) in incoming.iter().enumerate() {
-        let key = (ann.annotation_type.clone(), ann.body.clone());
-        let matched = candidates.get(&key).and_then(|old_indices| {
-            old_indices.iter()
-                .copied()
-                .filter(|oi| !matched_old.contains(oi))
-                .min_by_key(|&oi| {
-                    (existing[oi].char_start - ann.char_start as i64).unsigned_abs()
-                })
-        });
-
-        if let Some(old_idx) = matched {
-            updates.push((new_idx, old_idx));
-            matched_old.insert(old_idx);
+    for (key, inc_indices) in &incoming_groups {
+        if let Some(ex_indices) = existing_groups.get(key) {
+            let pair_count = inc_indices.len().min(ex_indices.len());
+            for rank in 0..pair_count {
+                updates.push((inc_indices[rank], ex_indices[rank]));
+                matched_old.insert(ex_indices[rank]);
+            }
+            // Extra incoming annotations beyond existing count are inserts.
+            for &new_idx in &inc_indices[pair_count..] {
+                inserts.push(new_idx);
+            }
         } else {
-            inserts.push(new_idx);
+            // No existing annotations for this key — all are inserts.
+            for &new_idx in inc_indices {
+                inserts.push(new_idx);
+            }
         }
     }
 
@@ -1151,23 +1174,16 @@ impl Store {
         body: Option<&str>,
         char_start_hint: usize,
     ) -> Result<Option<String>, GraphError> {
-        let uuid: Option<String> = match body {
-            Some(b) => self.conn.query_row(
+        let uuid: Option<String> = self
+            .conn
+            .query_row(
                 "SELECT uuid FROM annotations
-                 WHERE node_id = ?1 AND annotation_type = ?2 AND body = ?3
+                 WHERE node_id = ?1 AND annotation_type = ?2 AND body IS ?3
                  ORDER BY ABS(char_start - ?4) LIMIT 1",
-                rusqlite::params![node_id, annotation_type, b, char_start_hint as i64],
+                rusqlite::params![node_id, annotation_type, body, char_start_hint as i64],
                 |row| row.get(0),
-            ),
-            None => self.conn.query_row(
-                "SELECT uuid FROM annotations
-                 WHERE node_id = ?1 AND annotation_type = ?2 AND body IS NULL
-                 ORDER BY ABS(char_start - ?3) LIMIT 1",
-                rusqlite::params![node_id, annotation_type, char_start_hint as i64],
-                |row| row.get(0),
-            ),
-        }
-        .optional()?;
+            )
+            .optional()?;
         Ok(uuid)
     }
 
@@ -3007,6 +3023,124 @@ mod tests {
         assert_eq!(rowids_before, rowids_after);
     }
 
+    // --- match_annotations: greedy position-sorted pairing ---
+
+    #[test]
+    fn match_annotations_no_uuid_swap_on_position_shift() {
+        // Regression test: two annotations share (type, body). User inserts text
+        // moving the first from pos 10 to pos 190. Without sorted iteration the
+        // greedy matcher assigns incoming@190 to existing@200 (dist 10) stealing
+        // that UUID, then incoming@200 falls back to existing@10 — a UUID swap.
+        let existing = vec![
+            super::ExistingAnnotation {
+                id: 1, annotation_type: "note".into(), body: Some("TODO".into()),
+                char_start: 10, uuid: "uuid-A".into(),
+            },
+            super::ExistingAnnotation {
+                id: 2, annotation_type: "note".into(), body: Some("TODO".into()),
+                char_start: 200, uuid: "uuid-B".into(),
+            },
+        ];
+        let incoming = vec![
+            super::IndexableAnnotation { char_start: 190, ..make_annotation("note", Some("TODO")) },
+            super::IndexableAnnotation { char_start: 200, ..make_annotation("note", Some("TODO")) },
+        ];
+
+        let diff = super::match_annotations(&existing, &incoming);
+
+        // Build a map: incoming_idx → matched existing_idx
+        let map: std::collections::HashMap<usize, usize> =
+            diff.updates.iter().copied().collect();
+
+        // incoming[0] (pos 190) should match existing[0] (pos 10, uuid-A)
+        // incoming[1] (pos 200) should match existing[1] (pos 200, uuid-B)
+        assert_eq!(map[&0], 0, "incoming@190 must match existing@10 (uuid-A), not existing@200");
+        assert_eq!(map[&1], 1, "incoming@200 must match existing@200 (uuid-B)");
+        assert!(diff.inserts.is_empty());
+        assert!(diff.deletes.is_empty());
+    }
+
+    #[test]
+    fn match_annotations_three_same_key_preserves_order() {
+        // Three annotations with the same (type, body), positions shift slightly.
+        // Ordinal pairing must hold: first→first, second→second, third→third.
+        let existing = vec![
+            super::ExistingAnnotation {
+                id: 1, annotation_type: "note".into(), body: Some("x".into()),
+                char_start: 10, uuid: "u1".into(),
+            },
+            super::ExistingAnnotation {
+                id: 2, annotation_type: "note".into(), body: Some("x".into()),
+                char_start: 100, uuid: "u2".into(),
+            },
+            super::ExistingAnnotation {
+                id: 3, annotation_type: "note".into(), body: Some("x".into()),
+                char_start: 300, uuid: "u3".into(),
+            },
+        ];
+        let incoming = vec![
+            super::IndexableAnnotation { char_start: 15, ..make_annotation("note", Some("x")) },
+            super::IndexableAnnotation { char_start: 110, ..make_annotation("note", Some("x")) },
+            super::IndexableAnnotation { char_start: 290, ..make_annotation("note", Some("x")) },
+        ];
+
+        let diff = super::match_annotations(&existing, &incoming);
+
+        let map: std::collections::HashMap<usize, usize> =
+            diff.updates.iter().copied().collect();
+
+        assert_eq!(map[&0], 0, "first incoming must pair with first existing");
+        assert_eq!(map[&1], 1, "second incoming must pair with second existing");
+        assert_eq!(map[&2], 2, "third incoming must pair with third existing");
+        assert!(diff.inserts.is_empty());
+        assert!(diff.deletes.is_empty());
+    }
+
+    #[test]
+    fn upsert_annotations_no_uuid_swap_on_large_shift() {
+        // Integration test through upsert_annotations: two TODO annotations,
+        // first one shifts dramatically. UUIDs must stay with their original
+        // ordinal annotation.
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let anns = vec![
+            super::IndexableAnnotation { char_start: 10, ..make_annotation("note", Some("TODO")) },
+            super::IndexableAnnotation { char_start: 200, ..make_annotation("note", Some("TODO")) },
+        ];
+        store.upsert_annotations("a.md", &anns).unwrap();
+
+        let mut stmt = store.conn.prepare(
+            "SELECT uuid, char_start FROM annotations WHERE node_id = 'a.md' ORDER BY char_start",
+        ).unwrap();
+        let old_rows: Vec<(String, i64)> = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap().filter_map(|r| r.ok()).collect();
+        assert_eq!(old_rows.len(), 2);
+        let (uuid_a, uuid_b) = (old_rows[0].0.clone(), old_rows[1].0.clone());
+
+        // Shift first annotation from 10 → 190 (close to the second at 200).
+        let anns2 = vec![
+            super::IndexableAnnotation { char_start: 190, ..make_annotation("note", Some("TODO")) },
+            super::IndexableAnnotation { char_start: 200, ..make_annotation("note", Some("TODO")) },
+        ];
+        store.upsert_annotations("a.md", &anns2).unwrap();
+
+        let mut stmt2 = store.conn.prepare(
+            "SELECT uuid, char_start FROM annotations WHERE node_id = 'a.md' ORDER BY char_start",
+        ).unwrap();
+        let new_rows: Vec<(String, i64)> = stmt2.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap().filter_map(|r| r.ok()).collect();
+        assert_eq!(new_rows.len(), 2);
+
+        // uuid-A (originally at 10) should now be at 190
+        assert_eq!(new_rows[0].0, uuid_a, "uuid-A must follow its annotation to pos 190");
+        assert_eq!(new_rows[0].1, 190);
+        // uuid-B (originally at 200) should stay at 200
+        assert_eq!(new_rows[1].0, uuid_b, "uuid-B must remain at pos 200");
+        assert_eq!(new_rows[1].1, 200);
+    }
+
     // --- Cycle 5: delete_node cascades ---
 
     #[test]
@@ -3343,6 +3477,21 @@ mod tests {
             )
             .unwrap();
         assert_eq!(result, uuid_at_100);
+    }
+
+    #[test]
+    fn find_annotation_uuid_with_null_body() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let ann = make_annotation("note", None);
+        store.upsert_annotations("a.md", &[ann]).unwrap();
+
+        let result = store
+            .find_annotation_uuid("a.md", "note", None, 0)
+            .unwrap();
+        assert!(result.is_some(), "should match annotation with NULL body");
     }
 
     // --- v6 → v7 migration path ---

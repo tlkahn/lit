@@ -171,13 +171,15 @@ pub fn rebuild_graph_index(
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
     let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
-    let msg = with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
-        let result = gi.full_rebuild(ann_enabled)?;
-        Ok(format!(
-            "Rebuilt: {} nodes, {} edges, {} stubs",
-            result.nodes_indexed, result.edges_resolved, result.stubs_created
-        ))
+    let result = with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+        gi.full_rebuild(ann_enabled)
     })?;
+    let msg = format!(
+        "Rebuilt: {} nodes, {} edges, {} stubs",
+        result.nodes_indexed, result.edges_resolved, result.stubs_created
+    );
+    emit_annotations_removed(&app_handle, &result.removed_annotation_uuids);
+    let _ = app_handle.emit("lit:graph-updated", ());
     let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
     let gi = graph_state.indices.lock().unwrap().get(&root).cloned();
     if let Some(gi) = gi {
