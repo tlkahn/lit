@@ -14,7 +14,6 @@ interface MessageBubbleProps {
 }
 
 function MessageBubbleInner({ message, isLast, showEditorActions, hadSelection, fireSourceAnnotation, onEdit, onEditSubmit, onRetry }: MessageBubbleProps) {
-  const [hovered, setHovered] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState(message.content);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -48,25 +47,26 @@ function MessageBubbleInner({ message, isLast, showEditorActions, hadSelection, 
     }
   }, [editText, message.seq, onEditSubmit]);
 
-  const actions = hovered && !editing && (
+  const actions = !editing && (
     <div className="flex gap-1 mt-1">
-      <button data-testid="message-copy-btn" onClick={handleCopy} className="text-xs text-muted hover:text-normal px-1">
-        Copy
+      <button data-testid="message-copy-btn" aria-label="Copy" onClick={handleCopy} className="text-xs text-muted hover:text-normal px-1">
+        <span className="nerd-font" aria-hidden="true">{''}</span>
       </button>
       {isUser && onEdit && (
-        <button data-testid="message-edit-btn" onClick={handleEditClick} className="text-xs text-muted hover:text-normal px-1">
-          Edit
+        <button data-testid="message-edit-btn" aria-label="Edit" onClick={handleEditClick} className="text-xs text-muted hover:text-normal px-1">
+          <span className="nerd-font" aria-hidden="true">{''}</span>
         </button>
       )}
       {isAssistant && isLast && onRetry && (
-        <button data-testid="message-retry-btn" onClick={onRetry} className="text-xs text-muted hover:text-normal px-1">
-          Retry
+        <button data-testid="message-retry-btn" aria-label="Retry" onClick={onRetry} className="text-xs text-muted hover:text-normal px-1">
+          <span className="nerd-font" aria-hidden="true">{''}</span>
         </button>
       )}
       {isAssistant && showEditorActions && (
         hadSelection ? (
           <button
             data-testid="message-replace-btn"
+            aria-label="Replace selection"
             className="text-xs text-muted hover:text-normal px-1"
             onClick={() => {
               window.dispatchEvent(
@@ -74,11 +74,12 @@ function MessageBubbleInner({ message, isLast, showEditorActions, hadSelection, 
               );
             }}
           >
-            Replace selection
+            <span className="nerd-font" aria-hidden="true">{''}</span>
           </button>
         ) : (
           <button
             data-testid="message-insert-btn"
+            aria-label="Insert at cursor"
             className="text-xs text-muted hover:text-normal px-1"
             onClick={() => {
               window.dispatchEvent(
@@ -86,13 +87,14 @@ function MessageBubbleInner({ message, isLast, showEditorActions, hadSelection, 
               );
             }}
           >
-            Insert at cursor
+            <span className="nerd-font" aria-hidden="true">{''}</span>
           </button>
         )
       )}
       {isAssistant && showEditorActions && fireSourceAnnotation && (
         <button
           data-testid="message-companion-btn"
+          aria-label="Insert as companion"
           className="text-xs text-muted hover:text-normal px-1"
           onClick={() => {
             window.dispatchEvent(
@@ -102,7 +104,7 @@ function MessageBubbleInner({ message, isLast, showEditorActions, hadSelection, 
             );
           }}
         >
-          Insert as companion
+          <span className="nerd-font" aria-hidden="true">{''}</span>
         </button>
       )}
     </div>
@@ -113,8 +115,6 @@ function MessageBubbleInner({ message, isLast, showEditorActions, hadSelection, 
       <div
         data-testid="message-bubble-user"
         className="self-end bg-interactive-accent text-on-accent rounded-lg px-3 py-2 max-w-[80%]"
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
       >
         {editing ? (
           <textarea
@@ -137,8 +137,6 @@ function MessageBubbleInner({ message, isLast, showEditorActions, hadSelection, 
     <div
       data-testid="message-bubble-assistant"
       className="self-start bg-secondary rounded-lg px-3 py-2 max-w-[80%] prose prose-sm"
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
     >
       <div dangerouslySetInnerHTML={{ __html: html }} />
       {actions}
