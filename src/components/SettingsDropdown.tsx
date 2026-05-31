@@ -9,7 +9,7 @@ interface SettingsDropdownProps {
 
 export function SettingsDropdown({ options, value, onChange, testId, label, nullable }: SettingsDropdownProps) {
   return (
-    <div className="flex items-center justify-between gap-2">
+    <div className="flex items-center justify-between gap-2 min-w-0 flex-wrap">
       {label && <span className="text-sm text-text-normal">{label}</span>}
       <select
         data-testid={testId}
