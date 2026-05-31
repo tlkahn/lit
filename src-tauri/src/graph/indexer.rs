@@ -180,6 +180,7 @@ pub struct IndexResult {
     pub nodes_indexed: usize,
     pub edges_resolved: usize,
     pub stubs_created: usize,
+    pub removed_annotation_uuids: Vec<(String, String)>,
 }
 
 pub fn index_workspace(
@@ -257,6 +258,7 @@ pub fn index_workspace_with_progress(
     let mut nodes_indexed = 0;
     let mut edges_resolved = 0;
     let mut stubs_created = 0;
+    let mut removed_annotation_uuids: Vec<(String, String)> = Vec::new();
     let mut reverse_stems = ReverseStemIndex::new();
     let mut known_stubs: HashSet<String> = HashSet::new();
     let node_count = all_nodes.len();
@@ -266,15 +268,18 @@ pub fn index_workspace_with_progress(
         store.upsert_node(node, mtime)?;
         nodes_indexed += 1;
 
-        if annotations_enabled {
-            if let Some(body) = bodies.get(&node.id) {
-                let annotations = super::extract::extract_annotations(body);
-                if !annotations.is_empty() {
-                    store.upsert_annotations(&node.id, &annotations)?;
-                }
+        {
+            let anns = if annotations_enabled {
+                bodies.get(&node.id)
+                    .map(|b| super::extract::extract_annotations(b))
+                    .unwrap_or_default()
+            } else {
+                vec![]
+            };
+            let deleted = store.upsert_annotations(&node.id, &anns)?;
+            for uuid in deleted {
+                removed_annotation_uuids.push((node.id.clone(), uuid));
             }
-        } else {
-            store.upsert_annotations(&node.id, &[])?;
         }
 
         store.delete_edges_from(&node.id)?;
@@ -326,6 +331,7 @@ pub fn index_workspace_with_progress(
             nodes_indexed,
             edges_resolved,
             stubs_created,
+            removed_annotation_uuids,
         },
         reverse_stems,
     ))
@@ -430,6 +436,7 @@ pub fn incremental_reindex(
     let mut nodes_indexed = 0;
     let mut edges_resolved = 0;
     let mut stubs_created = 0;
+    let mut removed_annotation_uuids: Vec<(String, String)> = Vec::new();
 
     // Collect stems that changed (for re-resolution of other files)
     let mut changed_stems: Vec<String> = Vec::new();
@@ -477,11 +484,16 @@ pub fn incremental_reindex(
                 stem_lookup.insert(&node.id, &new_aliases);
                 nodes_indexed += 1;
 
-                if annotations_enabled {
-                    let annotations = super::extract::extract_annotations(&body);
-                    store.upsert_annotations(&node.id, &annotations)?;
-                } else {
-                    store.upsert_annotations(&node.id, &[])?;
+                {
+                    let anns = if annotations_enabled {
+                        super::extract::extract_annotations(&body)
+                    } else {
+                        vec![]
+                    };
+                    let deleted = store.upsert_annotations(&node.id, &anns)?;
+                    for uuid in deleted {
+                        removed_annotation_uuids.push((node.id.clone(), uuid));
+                    }
                 }
 
                 // Re-resolve outgoing links
@@ -576,6 +588,7 @@ pub fn incremental_reindex(
         nodes_indexed,
         edges_resolved,
         stubs_created,
+        removed_annotation_uuids,
     })
 }
 
@@ -711,23 +724,23 @@ impl GraphIndex {
         })
     }
 
-    pub fn batch_reindex(&self, diff: &DiffResult, annotations_enabled: bool) -> Result<(), GraphError> {
+    pub fn batch_reindex(&self, diff: &DiffResult, annotations_enabled: bool) -> Result<Vec<(String, String)>, GraphError> {
         if diff.is_empty() {
-            return Ok(());
+            return Ok(vec![]);
         }
         let store = self.store.lock().unwrap();
         let mut reverse = self.reverse_stems.lock().unwrap();
-        incremental_reindex(&store, &self.workspace_root, &mut reverse, diff, annotations_enabled)?;
+        let result = incremental_reindex(&store, &self.workspace_root, &mut reverse, diff, annotations_enabled)?;
         let mut knowledge = self.knowledge.lock().unwrap();
         *knowledge = KnowledgeGraph::from_store(&store)?;
-        Ok(())
+        Ok(result.removed_annotation_uuids)
     }
 
-    pub fn reindex_file(&self, relative_path: &str, annotations_enabled: bool) -> Result<(), GraphError> {
+    pub fn reindex_file(&self, relative_path: &str, annotations_enabled: bool) -> Result<Vec<(String, String)>, GraphError> {
         self.batch_reindex(&DiffResult { new: vec![], changed: vec![relative_path.to_string()], deleted: vec![] }, annotations_enabled)
     }
 
-    pub fn remove_file(&self, relative_path: &str, annotations_enabled: bool) -> Result<(), GraphError> {
+    pub fn remove_file(&self, relative_path: &str, annotations_enabled: bool) -> Result<Vec<(String, String)>, GraphError> {
         self.batch_reindex(&DiffResult { new: vec![], changed: vec![], deleted: vec![relative_path.to_string()] }, annotations_enabled)
     }
 
@@ -4777,5 +4790,40 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("conversation not found"), "expected 'conversation not found', got: {msg}");
         assert!(msg.contains("nonexistent-conv"), "expected conversation ID in error, got: {msg}");
+    }
+
+    #[test]
+    fn batch_reindex_returns_removed_annotation_uuids() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Text %%! n: _ | keep %% more %%! q: _ | remove %%");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        let remove_uuid: String = {
+            let store = gi.store.lock().unwrap();
+            store.conn.query_row(
+                "SELECT uuid FROM annotations WHERE node_id = 'a.md' AND body = 'remove'",
+                [], |r| r.get(0),
+            ).unwrap()
+        };
+
+        write_md(dir.path(), "a.md", "Text %%! n: _ | keep %% more");
+        let diff = DiffResult { new: vec![], changed: vec!["a.md".to_string()], deleted: vec![] };
+        let removed = gi.batch_reindex(&diff, true).unwrap();
+
+        assert_eq!(removed.len(), 1);
+        assert_eq!(removed[0], ("a.md".to_string(), remove_uuid));
+    }
+
+    #[test]
+    fn batch_reindex_returns_empty_when_no_annotations_removed() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Text %%! n: _ | stay %%");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        write_md(dir.path(), "a.md", "Changed text %%! n: _ | stay %%");
+        let diff = DiffResult { new: vec![], changed: vec!["a.md".to_string()], deleted: vec![] };
+        let removed = gi.batch_reindex(&diff, true).unwrap();
+
+        assert!(removed.is_empty());
     }
 }

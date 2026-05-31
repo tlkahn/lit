@@ -61,6 +61,7 @@ interface ConversationStore {
   editMessage: (seq: number, newContent: string, args: StreamArgs) => Promise<void>;
   cancelConversationStream: () => Promise<void>;
   cleanupAnnotationThread: (nodeId: string, annotationUuid: string) => Promise<void>;
+  handleAnnotationsRemoved: (items: Array<{ node_id: string; uuid: string }>) => Promise<void>;
   reset: () => void;
 }
 
@@ -337,6 +338,12 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
       });
     } catch (e) {
       set({ error: e instanceof Error ? e.message : String(e) });
+    }
+  },
+
+  handleAnnotationsRemoved: async (items) => {
+    for (const item of items) {
+      await get().cleanupAnnotationThread(item.node_id, item.uuid);
     }
   },
 

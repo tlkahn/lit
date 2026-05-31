@@ -21,7 +21,10 @@ pub fn trash_page(
         let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
         let result = gi.remove_file(&relative_path, ann_enabled);
         drop(indices);
-        crate::commands::graph::emit_reindex_result(&app_handle, result);
+        crate::commands::graph::emit_reindex_result(&app_handle, &result);
+        if let Ok(removed) = &result {
+            crate::commands::graph::emit_annotations_removed(&app_handle, removed);
+        }
     }
 
     Ok(entry)
@@ -43,7 +46,10 @@ pub fn restore_page(
         let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
         let result = gi.reindex_file(&original_path, ann_enabled);
         drop(indices);
-        crate::commands::graph::emit_reindex_result(&app_handle, result);
+        crate::commands::graph::emit_reindex_result(&app_handle, &result);
+        if let Ok(removed) = &result {
+            crate::commands::graph::emit_annotations_removed(&app_handle, removed);
+        }
     }
 
     Ok(original_path)

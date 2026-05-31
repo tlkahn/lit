@@ -921,7 +921,7 @@ impl Store {
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
-    pub fn upsert_annotations(&self, node_id: &str, annotations: &[IndexableAnnotation]) -> Result<(), GraphError> {
+    pub fn upsert_annotations(&self, node_id: &str, annotations: &[IndexableAnnotation]) -> Result<Vec<String>, GraphError> {
         let existing = self.fetch_existing_annotations(node_id)?;
         let diff = match_annotations(&existing, annotations);
 
@@ -964,6 +964,10 @@ impl Store {
             ])?;
         }
 
+        let deleted_uuids: Vec<String> = diff.deletes.iter()
+            .map(|&old_idx| existing[old_idx].uuid.clone())
+            .collect();
+
         for &old_idx in &diff.deletes {
             self.conn.execute("DELETE FROM annotations WHERE id = ?1", [existing[old_idx].id])?;
         }
@@ -975,7 +979,7 @@ impl Store {
             [node_id],
         )?;
 
-        Ok(())
+        Ok(deleted_uuids)
     }
 
     pub fn search_annotations(&self, query: &str, type_filter: Option<&str>, limit: i64) -> Result<Vec<AnnotationSearchResult>, GraphError> {
@@ -2863,6 +2867,49 @@ mod tests {
         assert_eq!(count, 1);
         assert_eq!(fts_count, 1);
         assert_eq!(surviving_uuid, keep_uuid);
+    }
+
+    #[test]
+    fn upsert_annotations_returns_deleted_uuids() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let anns = vec![
+            make_annotation("note", Some("keep")),
+            make_annotation("question", Some("remove-1")),
+            make_annotation("question", Some("remove-2")),
+        ];
+        store.upsert_annotations("a.md", &anns).unwrap();
+
+        let remove1_uuid: String = store.conn.query_row(
+            "SELECT uuid FROM annotations WHERE node_id = 'a.md' AND body = 'remove-1'", [], |r| r.get(0),
+        ).unwrap();
+        let remove2_uuid: String = store.conn.query_row(
+            "SELECT uuid FROM annotations WHERE node_id = 'a.md' AND body = 'remove-2'", [], |r| r.get(0),
+        ).unwrap();
+
+        let anns2 = vec![make_annotation("note", Some("keep"))];
+        let deleted_uuids = store.upsert_annotations("a.md", &anns2).unwrap();
+
+        assert_eq!(deleted_uuids.len(), 2);
+        assert!(deleted_uuids.contains(&remove1_uuid));
+        assert!(deleted_uuids.contains(&remove2_uuid));
+    }
+
+    #[test]
+    fn upsert_annotations_returns_empty_when_no_deletions() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let anns = vec![make_annotation("note", Some("stay"))];
+        let deleted = store.upsert_annotations("a.md", &anns).unwrap();
+        assert!(deleted.is_empty());
+
+        let anns2 = vec![make_annotation("note", Some("stay"))];
+        let deleted2 = store.upsert_annotations("a.md", &anns2).unwrap();
+        assert!(deleted2.is_empty());
     }
 
     #[test]

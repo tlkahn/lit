@@ -1763,4 +1763,38 @@ describe("conversation store", () => {
       messages: [{ role: "user", content: "hello" }],
     });
   });
+
+  // --- Group S: handleAnnotationsRemoved (Cycle 8.1d) ---
+
+  it("handleAnnotationsRemoved calls cleanupAnnotationThread for each item", async () => {
+    usePreferencesStore.setState({ llmDeleteAnnotationThreads: true });
+    mockedConversationDeleteByAnchor.mockResolvedValue(undefined);
+
+    await useConversationStore.getState().handleAnnotationsRemoved([
+      { node_id: "node-1", uuid: "uuid-a" },
+      { node_id: "node-2", uuid: "uuid-b" },
+    ]);
+
+    expect(mockedConversationDeleteByAnchor).toHaveBeenCalledTimes(2);
+    expect(mockedConversationDeleteByAnchor).toHaveBeenCalledWith("node-1", "annotation", "uuid-a");
+    expect(mockedConversationDeleteByAnchor).toHaveBeenCalledWith("node-2", "annotation", "uuid-b");
+  });
+
+  it("handleAnnotationsRemoved does nothing when preference disabled", async () => {
+    usePreferencesStore.setState({ llmDeleteAnnotationThreads: false });
+
+    await useConversationStore.getState().handleAnnotationsRemoved([
+      { node_id: "node-1", uuid: "uuid-a" },
+    ]);
+
+    expect(mockedConversationDeleteByAnchor).not.toHaveBeenCalled();
+  });
+
+  it("handleAnnotationsRemoved does nothing with empty items", async () => {
+    usePreferencesStore.setState({ llmDeleteAnnotationThreads: true });
+
+    await useConversationStore.getState().handleAnnotationsRemoved([]);
+
+    expect(mockedConversationDeleteByAnchor).not.toHaveBeenCalled();
+  });
 });

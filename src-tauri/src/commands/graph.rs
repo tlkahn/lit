@@ -6,16 +6,40 @@ use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
 use tauri::{Emitter, State};
 
-pub(crate) fn reindex_event_name(result: &Result<(), GraphError>) -> (&'static str, Option<String>) {
+pub(crate) fn reindex_event_name<T>(result: &Result<T, GraphError>) -> (&'static str, Option<String>) {
     match result {
-        Ok(()) => ("lit:graph-updated", None),
+        Ok(_) => ("lit:graph-updated", None),
         Err(e) => ("lit:graph-reindex-failed", Some(e.to_string())),
     }
 }
 
-pub(crate) fn emit_reindex_result(handle: &tauri::AppHandle, result: Result<(), GraphError>) {
-    let (event, payload) = reindex_event_name(&result);
+pub(crate) fn emit_reindex_result<T>(handle: &tauri::AppHandle, result: &Result<T, GraphError>) {
+    let (event, payload) = reindex_event_name(result);
     let _ = handle.emit(event, payload);
+}
+
+#[derive(Clone, serde::Serialize)]
+pub(crate) struct AnnotationsRemovedPayload {
+    pub items: Vec<AnnotationRemovedItem>,
+}
+
+#[derive(Clone, serde::Serialize)]
+pub(crate) struct AnnotationRemovedItem {
+    pub node_id: String,
+    pub uuid: String,
+}
+
+pub(crate) fn emit_annotations_removed(handle: &tauri::AppHandle, removed: &[(String, String)]) {
+    if removed.is_empty() {
+        return;
+    }
+    let payload = AnnotationsRemovedPayload {
+        items: removed.iter().map(|(node_id, uuid)| AnnotationRemovedItem {
+            node_id: node_id.clone(),
+            uuid: uuid.clone(),
+        }).collect(),
+    };
+    let _ = handle.emit("lit:annotations-removed", &payload);
 }
 
 pub struct GraphRegistry {
@@ -488,7 +512,10 @@ pub fn link_unlinked_mention(
     if let Some(gi) = gi {
         let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
         let result = gi.reindex_file(&source_id, ann_enabled);
-        emit_reindex_result(&app_handle, result);
+        emit_reindex_result(&app_handle, &result);
+        if let Ok(removed) = &result {
+            emit_annotations_removed(&app_handle, removed);
+        }
     }
 
     Ok(())
@@ -563,7 +590,7 @@ mod tests {
     #[test]
     fn reindex_event_name_err_returns_graph_reindex_failed() {
         let err = GraphError::Other("disk full".to_string());
-        let (event, payload) = reindex_event_name(&Err(err));
+        let (event, payload) = reindex_event_name::<()>(&Err(err));
         assert_eq!(event, "lit:graph-reindex-failed");
         assert_eq!(payload.unwrap(), "disk full");
     }
@@ -1133,21 +1160,24 @@ pub fn rewrite_links(
     let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
 
     let mut reindex_err: Option<GraphError> = None;
+    let mut all_removed: Vec<(String, String)> = Vec::new();
     for pr in &planned.rewrites {
         registry.record(&root.join(&pr.relative_path), &pr.after_content);
         if let Some(ref gi) = gi {
-            if let Err(e) = gi.reindex_file(&pr.relative_path, ann_enabled) {
-                reindex_err = Some(e);
+            match gi.reindex_file(&pr.relative_path, ann_enabled) {
+                Ok(removed) => all_removed.extend(removed),
+                Err(e) => { reindex_err = Some(e); }
             }
         }
     }
 
     if gi.is_some() {
-        let result = match reindex_err {
+        let result: Result<(), _> = match reindex_err {
             Some(e) => Err(e),
             None => Ok(()),
         };
-        emit_reindex_result(&app_handle, result);
+        emit_reindex_result(&app_handle, &result);
+        emit_annotations_removed(&app_handle, &all_removed);
     }
 
     Ok(summary)

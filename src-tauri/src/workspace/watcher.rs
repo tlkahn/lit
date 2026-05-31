@@ -140,7 +140,10 @@ impl FileWatcher {
                             let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
                             let result = gi.batch_reindex(&diff, ann_enabled);
                             drop(indices);
-                            crate::commands::graph::emit_reindex_result(&app_handle, result);
+                            crate::commands::graph::emit_reindex_result(&app_handle, &result);
+                            if let Ok(removed) = &result {
+                                crate::commands::graph::emit_annotations_removed(&app_handle, removed);
+                            }
                         } else {
                             drop(indices);
                         }

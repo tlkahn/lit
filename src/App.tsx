@@ -18,6 +18,7 @@ import { useThemeStore } from "./stores/theme";
 import { usePreferencesStore } from "./stores/preferences";
 import { useFocusModeStore } from "./stores/focusMode";
 import { useLicenseStore } from "./stores/license";
+import { useConversationStore } from "./stores/conversation";
 import { getStartupContext, mergeDocuments, executeSplit } from "./lib/ipc";
 import type { MergePlan } from "./lib/ipc";
 import { listen } from "@tauri-apps/api/event";
@@ -181,6 +182,15 @@ function App() {
       });
       if (cancelled) { unDeepLink(); return; }
       unlisteners.push(unDeepLink);
+
+      const unAnnotationsRemoved = await listen<{ items: Array<{ node_id: string; uuid: string }> }>(
+        "lit:annotations-removed",
+        (event) => {
+          useConversationStore.getState().handleAnnotationsRemoved(event.payload.items);
+        },
+      );
+      if (cancelled) { unAnnotationsRemoved(); return; }
+      unlisteners.push(unAnnotationsRemoved);
     };
 
     setup();

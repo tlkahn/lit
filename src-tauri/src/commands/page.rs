@@ -44,7 +44,10 @@ pub fn write_page(
         let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
         let result = gi.reindex_file(&relative_path, ann_enabled);
         drop(indices);
-        crate::commands::graph::emit_reindex_result(&app_handle, result);
+        crate::commands::graph::emit_reindex_result(&app_handle, &result);
+        if let Ok(removed) = &result {
+            crate::commands::graph::emit_annotations_removed(&app_handle, removed);
+        }
     }
 
     Ok(())
@@ -187,21 +190,24 @@ pub fn rewrite_vault_links(
     let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
 
     let mut reindex_err: Option<crate::graph::error::GraphError> = None;
+    let mut all_removed: Vec<(String, String)> = Vec::new();
     for pr in &planned.rewrites {
         registry.record(&root.join(&pr.relative_path), &pr.after_content);
         if let Some(ref gi) = gi {
-            if let Err(e) = gi.reindex_file(&pr.relative_path, ann_enabled) {
-                reindex_err = Some(e);
+            match gi.reindex_file(&pr.relative_path, ann_enabled) {
+                Ok(removed) => all_removed.extend(removed),
+                Err(e) => { reindex_err = Some(e); }
             }
         }
     }
 
     if gi.is_some() {
-        let result = match reindex_err {
+        let result: Result<(), _> = match reindex_err {
             Some(e) => Err(e),
             None => Ok(()),
         };
-        crate::commands::graph::emit_reindex_result(&app_handle, result);
+        crate::commands::graph::emit_reindex_result(&app_handle, &result);
+        crate::commands::graph::emit_annotations_removed(&app_handle, &all_removed);
     }
 
     if let Ok(oplog) = oplog_state.get_oplog(&root) {
