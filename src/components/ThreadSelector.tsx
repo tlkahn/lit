@@ -37,13 +37,26 @@ export function ThreadSelector({
     );
   }
 
+  // A controlled <select> whose value matches no <option> renders blank and
+  // collapses to zero width (selectedIndex = -1 in real browsers). When the
+  // active id is null or stale, fall back to an explicit placeholder option so
+  // the selection is always valid and the box stays visible (bug #234).
+  const hasMatch =
+    activeConversationId != null &&
+    conversations.some((conv) => conv.id === activeConversationId);
+
   return (
     <select
       data-testid="thread-selector"
-      value={activeConversationId ?? ""}
+      value={hasMatch ? activeConversationId! : ""}
       onChange={(e) => onSelect(e.target.value)}
       className="rounded-md bg-bg-tertiary px-2.5 py-1 text-sm text-text-normal outline-none focus:ring-1 focus:ring-accent"
     >
+      {!hasMatch && (
+        <option value="" disabled>
+          Select thread…
+        </option>
+      )}
       {conversations.map((conv) => (
         <option key={conv.id} value={conv.id}>
           {getDisplayTitle(conv, firstUserMessages)}

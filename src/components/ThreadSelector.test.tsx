@@ -100,4 +100,67 @@ describe("ThreadSelector", () => {
     expect(select.querySelector("option")!.textContent).toBe("No threads");
     expect(select.disabled).toBe(true);
   });
+
+  // Bug #234: controlled <select> collapses to zero width when its `value`
+  // (activeConversationId) matches no rendered <option>: a real browser sets
+  // selectedIndex = -1 and renders the box blank. jsdom can't reproduce the
+  // -1/zero-width behavior (it silently falls back to the first option), so we
+  // assert the equivalent contract: when nothing matches, the active selection
+  // must be the explicit placeholder ("") — never a silently-picked real thread.
+
+  it("selects the placeholder (not a real thread) when active id matches nothing", () => {
+    const conversations = [
+      makeConversation({ id: "c1", title: "Alpha" }),
+      makeConversation({ id: "c2", title: "Beta" }),
+      makeConversation({ id: "c3", title: "Gamma" }),
+    ];
+    const { getByTestId } = render(
+      <ThreadSelector
+        conversations={conversations}
+        activeConversationId="not-in-list"
+        onSelect={vi.fn()}
+      />,
+    );
+    const select = getByTestId("thread-selector") as HTMLSelectElement;
+    expect(select.value).toBe("");
+  });
+
+  it("selects the placeholder when active id is null but threads exist", () => {
+    const conversations = [
+      makeConversation({ id: "c1", title: "Alpha" }),
+      makeConversation({ id: "c2", title: "Beta" }),
+    ];
+    const { getByTestId } = render(
+      <ThreadSelector conversations={conversations} activeConversationId={null} onSelect={vi.fn()} />,
+    );
+    const select = getByTestId("thread-selector") as HTMLSelectElement;
+    expect(select.value).toBe("");
+  });
+
+  it("shows a placeholder option as the selection when nothing matches", () => {
+    const conversations = [makeConversation({ id: "c1", title: "Alpha" })];
+    const { getByTestId } = render(
+      <ThreadSelector conversations={conversations} activeConversationId={null} onSelect={vi.fn()} />,
+    );
+    const select = getByTestId("thread-selector") as HTMLSelectElement;
+    const selected = select.options[select.selectedIndex]!;
+    expect(selected.value).toBe("");
+    expect(selected.textContent).toBe("Select thread…");
+  });
+
+  it("does not add a placeholder option when the active id matches a thread", () => {
+    const conversations = [
+      makeConversation({ id: "c1", title: "Alpha" }),
+      makeConversation({ id: "c2", title: "Beta" }),
+    ];
+    const { getByTestId } = render(
+      <ThreadSelector conversations={conversations} activeConversationId="c2" onSelect={vi.fn()} />,
+    );
+    const select = getByTestId("thread-selector") as HTMLSelectElement;
+    expect(select.value).toBe("c2");
+    expect(select.querySelectorAll("option")).toHaveLength(2);
+    expect(
+      Array.from(select.options).some((o) => o.textContent === "Select thread…"),
+    ).toBe(false);
+  });
 });

@@ -27,13 +27,14 @@ vi.mock("../lib/editorContext", () => ({
     selectionTo: 0,
     filePath: "",
   })),
+  enrichWithEditorContext: vi.fn(() => undefined),
 }));
 
 import {
   conversationList,
   conversationMessages,
 } from "../lib/ipc";
-import { requestEditorContext } from "../lib/editorContext";
+import { requestEditorContext, enrichWithEditorContext } from "../lib/editorContext";
 import type { ConversationRow, MessageRow } from "../lib/ipc";
 
 import { ConversationPanel } from "./ConversationPanel";
@@ -78,6 +79,7 @@ describe("ConversationPanel", () => {
       selectionTo: 0,
       filePath: "",
     });
+    vi.mocked(enrichWithEditorContext).mockReturnValue(undefined);
     mockedConversationList.mockResolvedValue([]);
     mockedConversationMessages.mockResolvedValue([]);
   });
@@ -615,12 +617,9 @@ describe("ConversationPanel", () => {
       messages: [],
     });
 
-    vi.mocked(requestEditorContext).mockReturnValue({
-      selectionText: "hello world",
-      selectionFrom: 0,
-      selectionTo: 11,
-      filePath: "test.md",
-    });
+    vi.mocked(enrichWithEditorContext).mockReturnValue(
+      "File: test.md\n\nContext:\nhello world\n\nexplain this",
+    );
 
     let result: ReturnType<typeof render>;
     await act(async () => {
@@ -735,6 +734,33 @@ describe("ConversationPanel", () => {
     expect(createConversationSpy).toHaveBeenCalledWith("_global", "hello");
   });
 
+  // Bug #234: when the store's activeConversationId is stale (not in the
+  // current conversation list), the controlled <select> matched no option and
+  // collapsed to zero width. The dropdown must instead stay visible, showing
+  // the explicit placeholder rather than silently picking the first thread.
+  it("keeps the thread dropdown visible when the active id is stale / not in the list", async () => {
+    useConversationStore.setState({
+      loadConversations: vi.fn().mockResolvedValue(undefined),
+      activeConversationId: "stale-id-not-in-list",
+      conversations: [
+        makeConversation({ id: "c1", title: "Alpha" }),
+        makeConversation({ id: "c2", title: "Beta" }),
+      ],
+      messages: [],
+    });
+
+    let result: ReturnType<typeof render>;
+    await act(async () => {
+      result = render(<ConversationPanel pageId="page-1" />);
+    });
+
+    const select = result!.getByTestId("thread-selector") as HTMLSelectElement;
+    expect(select.value).toBe("");
+    expect(select.selectedIndex).toBeGreaterThanOrEqual(0);
+    expect(
+      Array.from(select.options).some((o) => o.textContent === "Select thread…"),
+    ).toBe(true);
+  });
   it("new thread without pageId uses _global", async () => {
     const createConversationSpy = vi.fn().mockImplementation(async () => {
       useConversationStore.setState({ activeConversationId: "new-id", messages: [] });
