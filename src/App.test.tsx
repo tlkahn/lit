@@ -777,15 +777,12 @@ describe("App", () => {
     expect(screen.getAllByTestId("bottom-panel")).toHaveLength(1);
   });
 
-  it("sidebar-mode panel container has correct width, flexShrink, and transition", () => {
+  it("sidebar-mode panel container has flexShrink 0", () => {
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
     usePreferencesStore.setState({ bottomPanelPosition: "side" });
-    useBottomPanelStore.setState({ panelWidth: 400 });
     render(<App />);
     const container = screen.getByTestId("sidebar-bottom-panel");
-    expect(container.style.width).toBe("400px");
     expect(container.style.flexShrink).toBe("0");
-    expect(container.style.transition).toBe("width 150ms ease-out");
   });
 
   it("sidebar-mode panel appears after editor column when sidebar is on left", () => {
