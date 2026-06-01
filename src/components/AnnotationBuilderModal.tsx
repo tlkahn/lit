@@ -13,7 +13,7 @@ interface AnnotationBuilderModalProps {
   selectedText?: string;
 }
 
-type ScopeKind = "none" | "words" | "sentence" | "paragraph" | "page" | "anchor" | "document" | "section" | "asymmetric";
+type ScopeKind = "none" | "words" | "sentence" | "paragraph" | "page" | "anchor" | "document" | "section";
 
 const UNIT_SCOPE_KINDS: ScopeKind[] = ["words", "sentence", "paragraph", "page"];
 
@@ -60,6 +60,7 @@ export function AnnotationBuilderModal({
     if (!initialFields?.scope) return 1;
     if (initialFields.scope.kind === "asymmetric") return initialFields.scope.value.before;
     if (initialFields.scope.kind === "anchor") return 1;
+    if (initialFields.scope.kind === "document" || initialFields.scope.kind === "section") return 1;
     return initialFields.scope.value as number;
   });
   const [anchorText, setAnchorText] = useState<string>(() => {
@@ -98,7 +99,6 @@ export function AnnotationBuilderModal({
     if (scopeKind === "anchor") return { kind: "anchor" as const, value: anchorText || "" };
     if (scopeKind === "document") return { kind: "document" as const, value: 0 as const };
     if (scopeKind === "section") return { kind: "section" as const, value: 0 as const };
-    if (scopeKind === "asymmetric") return null;
     if (asymmetric) {
       return { kind: "asymmetric" as const, value: { unit: scopeKindToIpcUnit(scopeKind), before: scopeCount, after: scopeAfter } };
     }

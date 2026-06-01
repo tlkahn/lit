@@ -310,13 +310,13 @@ describe("fireAnnotation", () => {
   });
 
   it("strips multiple annotations from scope text", async () => {
-    const doc = "paragraph <!--- todo | note1 ---> middle <!--- todo | note2 ---> end";
+    const doc = "paragraph <!--- llm | note1 ---> middle <!--- llm | note2 ---> end";
     const view = makeView(doc);
     const ann = makeAnnotation({
-      annotation_type: "todo",
+      annotation_type: "llm",
       body: "note1",
       char_start: 10,
-      char_end: 39,
+      char_end: 38,
     });
     mockResolve.mockResolvedValue({ start: 0, end: doc.length });
 
@@ -696,6 +696,25 @@ describe("fireAnnotation", () => {
     await flushPromises();
 
     expect(useModalLockStore.getState().llmLocked).toBe(false);
+    view.destroy();
+  });
+
+  it("non-fireable type: returns early without calling startLlmStream or sendAnnotationFire", async () => {
+    const sendSpy = vi.fn().mockResolvedValue(undefined);
+    useConversationStore.setState({ sendAnnotationFire: sendSpy });
+    const completeSpy = vi.fn();
+    window.addEventListener("lit:fire-complete", completeSpy);
+    const view = makeView("hello world", true);
+    const ann = makeAnnotation({ annotation_type: "bare" as Annotation["annotation_type"], char_start: 0 });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    expect(mockStream).not.toHaveBeenCalled();
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(useModalLockStore.getState().llmLocked).toBe(false);
+    expect(view.state.field(firingAnnotationsField).has(0)).toBe(false);
+    expect(completeSpy).toHaveBeenCalledOnce();
+    window.removeEventListener("lit:fire-complete", completeSpy);
     view.destroy();
   });
 

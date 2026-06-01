@@ -538,5 +538,23 @@ describe("AnnotationBuilderModal", () => {
       expect(screen.getByTestId("annotation-scope-before")).toHaveValue(2);
       expect(screen.getByTestId("annotation-scope-after")).toHaveValue(4);
     });
+
+    it("editing document-scoped annotation and switching to sentence produces valid scope", () => {
+      render(
+        <AnnotationBuilderModal
+          onClose={onClose}
+          onInsert={onInsert}
+          mode="edit"
+          initialFields={{
+            type: "note",
+            scope: { kind: "document", value: 0 as const },
+            body: "whole doc note",
+          }}
+        />,
+      );
+      fireEvent.change(screen.getByTestId("annotation-scope-select"), { target: { value: "sentence" } });
+      const preview = screen.getByTestId("annotation-preview");
+      expect(preview.textContent).toContain("\\s");
+    });
   });
 });

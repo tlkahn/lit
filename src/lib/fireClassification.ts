@@ -1,20 +1,26 @@
 import type { AnnotationType } from "./ipc";
 
-const REPLACING_TYPES: Set<AnnotationType> = new Set(["llm", "translation"]);
-const PERSISTING_TYPES: Set<AnnotationType> = new Set(["question"]);
-
 export type FireType = "replacing" | "persisting";
 
+const FIRE_TYPE_MAP: Record<AnnotationType, FireType | null> = {
+  llm: "replacing",
+  translation: "replacing",
+  question: "persisting",
+  todo: null,
+  note: null,
+  crossref: null,
+  apparatus: null,
+  bare: null,
+};
+
 export function classifyFireType(type: AnnotationType): FireType | null {
-  if (REPLACING_TYPES.has(type)) return "replacing";
-  if (PERSISTING_TYPES.has(type)) return "persisting";
-  return null;
+  return FIRE_TYPE_MAP[type];
 }
 
 export function isReplacingType(type: AnnotationType): boolean {
-  return REPLACING_TYPES.has(type);
+  return FIRE_TYPE_MAP[type] === "replacing";
 }
 
 export function canFire(type: AnnotationType): boolean {
-  return REPLACING_TYPES.has(type) || PERSISTING_TYPES.has(type);
+  return FIRE_TYPE_MAP[type] != null;
 }

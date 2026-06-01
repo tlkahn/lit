@@ -768,6 +768,21 @@ describe("createFireButton llmLocked param", () => {
     const btn = createFireButton(makeAnnotation({ annotation_type: "llm" }), false, false);
     expect(btn!.classList.contains("cm-annotation-fire-disabled")).toBe(false);
   });
+
+  it("does NOT add proximity class when llmLocked is true", () => {
+    const btn = createFireButton(makeAnnotation({ annotation_type: "llm" }), false, true);
+    expect(btn!.classList.contains("cm-annotation-fire-proximity")).toBe(false);
+  });
+
+  it("does NOT dispatch lit:fire-annotation when llmLocked is true", () => {
+    const ann = makeAnnotation({ annotation_type: "llm" });
+    const btn = createFireButton(ann, false, true)!;
+    const spy = vi.fn();
+    window.addEventListener("lit:fire-annotation", spy);
+    btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(spy).not.toHaveBeenCalled();
+    window.removeEventListener("lit:fire-annotation", spy);
+  });
 });
 
 describe("widget eq with llmLocked", () => {
