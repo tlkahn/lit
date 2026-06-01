@@ -547,4 +547,25 @@ mod tests {
         let parsed: Annotation = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.uuid, Some("abc".to_string()));
     }
+
+    #[test]
+    fn annotation_scanner_id_takes_precedence_in_json() {
+        let ann = Annotation {
+            form: AnnotationForm::Compact,
+            annotation_type: AnnotationType::Note,
+            certainty: Certainty::Neutral,
+            scope: Scope::Sentence(1),
+            body: Some("test".to_string()),
+            date: None,
+            is_structured: true,
+            char_start: 0,
+            char_end: 10,
+            original: "<!---[scanner-id] n | test --->".to_string(),
+            uuid: Some("scanner-id".to_string()),
+        };
+        let json = serde_json::to_string(&ann).unwrap();
+        assert!(json.contains(r#""uuid":"scanner-id""#), "JSON should contain scanner-id, got: {json}");
+        let parsed: Annotation = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.uuid, Some("scanner-id".to_string()));
+    }
 }

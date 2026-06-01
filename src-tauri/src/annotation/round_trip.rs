@@ -235,4 +235,37 @@ mod tests {
             unit: ScopeKind::Sentence, before: 2, after: 1,
         });
     }
+
+    #[test]
+    fn compact_with_id_round_trip() {
+        let ann = parse_one("<!---[abc-123] n? __ | body --->");
+        assert_eq!(ann.uuid, Some("abc-123".to_string()));
+        assert_eq!(ann.annotation_type, AnnotationType::Note);
+        assert_eq!(ann.certainty, Certainty::Tentative);
+        assert_eq!(ann.scope, Scope::Words(2));
+        assert_eq!(ann.body, Some("body".to_string()));
+        assert_eq!(ann.form, AnnotationForm::Compact);
+    }
+
+    #[test]
+    fn compact_without_id_round_trip() {
+        let ann = parse_one("<!--- n? __ | body --->");
+        assert_eq!(ann.uuid, None);
+        assert_eq!(ann.annotation_type, AnnotationType::Note);
+        assert_eq!(ann.certainty, Certainty::Tentative);
+        assert_eq!(ann.scope, Scope::Words(2));
+        assert_eq!(ann.body, Some("body".to_string()));
+    }
+
+    #[test]
+    fn block_with_uuid_id_round_trip() {
+        let ann = parse_one("<!---[550e8400-e29b-41d4-a716-446655440000]\nn!\n\\p\n@2026-03-28\n---\nThe body.\n--->");
+        assert_eq!(ann.uuid, Some("550e8400-e29b-41d4-a716-446655440000".to_string()));
+        assert_eq!(ann.annotation_type, AnnotationType::Note);
+        assert_eq!(ann.certainty, Certainty::Firm);
+        assert_eq!(ann.scope, Scope::Paragraph(1));
+        assert_eq!(ann.date, Some("2026-03-28".to_string()));
+        assert_eq!(ann.body, Some("The body.".to_string()));
+        assert_eq!(ann.form, AnnotationForm::Block);
+    }
 }

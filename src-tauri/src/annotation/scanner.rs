@@ -1,9 +1,27 @@
+use std::sync::LazyLock;
+use regex::Regex;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawAnnotation {
     pub char_start: usize,
     pub char_end: usize,
     pub inner: String,
     pub original: String,
+    pub id: Option<String>,
+}
+
+static ID_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\[([a-zA-Z0-9][a-zA-Z0-9_.\-]*)\]").unwrap()
+});
+
+fn extract_id(inner: &str) -> (Option<String>, &str) {
+    if let Some(caps) = ID_RE.captures(inner) {
+        let id = caps.get(1).unwrap().as_str().to_string();
+        let remaining = &inner[caps.get(0).unwrap().end()..];
+        (Some(id), remaining.trim_start())
+    } else {
+        (None, inner)
+    }
 }
 
 pub(crate) fn utf16_len(s: &str) -> usize {
@@ -38,13 +56,16 @@ pub fn scan_annotations(content: &str) -> Vec<RawAnnotation> {
             let comment_utf16_end = comment_utf16_start + utf16_len(original);
 
             let inner_raw = &content[after_open..close_byte];
-            let inner = inner_raw.trim().to_string();
+            let trimmed = inner_raw.trim();
+            let (id, remaining) = extract_id(trimmed);
+            let inner = remaining.to_string();
 
             results.push(RawAnnotation {
                 char_start: comment_utf16_start,
                 char_end: comment_utf16_end,
                 inner,
                 original: original.to_string(),
+                id,
             });
 
             last_byte = open_byte;
@@ -287,5 +308,66 @@ mod tests {
         assert_eq!(anns.len(), 2);
         assert_eq!(anns[0].inner, "block");
         assert_eq!(anns[1].inner, "inline");
+    }
+
+    #[test]
+    fn id_uuid() {
+        let doc = "<!---[550e8400-e29b-41d4-a716-446655440000] n? __ | body --->";
+        let anns = scan_annotations(doc);
+        assert_eq!(anns.len(), 1);
+        assert_eq!(anns[0].id, Some("550e8400-e29b-41d4-a716-446655440000".to_string()));
+        assert_eq!(anns[0].inner, "n? __ | body");
+    }
+
+    #[test]
+    fn id_slug() {
+        let doc = "<!---[my-note.v2] n | body --->";
+        let anns = scan_annotations(doc);
+        assert_eq!(anns.len(), 1);
+        assert_eq!(anns[0].id, Some("my-note.v2".to_string()));
+        assert_eq!(anns[0].inner, "n | body");
+    }
+
+    #[test]
+    fn id_short_numeric() {
+        let doc = "<!---[42] n | body --->";
+        let anns = scan_annotations(doc);
+        assert_eq!(anns.len(), 1);
+        assert_eq!(anns[0].id, Some("42".to_string()));
+    }
+
+    #[test]
+    fn id_omitted() {
+        let doc = "<!--- n | body --->";
+        let anns = scan_annotations(doc);
+        assert_eq!(anns.len(), 1);
+        assert_eq!(anns[0].id, None);
+        assert_eq!(anns[0].inner, "n | body");
+    }
+
+    #[test]
+    fn id_invalid_start() {
+        let doc = "<!---[-bad] n | body --->";
+        let anns = scan_annotations(doc);
+        assert_eq!(anns.len(), 1);
+        assert_eq!(anns[0].id, None);
+        assert!(anns[0].inner.contains("[-bad]"));
+    }
+
+    #[test]
+    fn id_empty_brackets() {
+        let doc = "<!---[] n | body --->";
+        let anns = scan_annotations(doc);
+        assert_eq!(anns.len(), 1);
+        assert_eq!(anns[0].id, None);
+    }
+
+    #[test]
+    fn id_multiline() {
+        let doc = "<!---[abc-123]\nn!\n\\p\n---\nBody.\n--->";
+        let anns = scan_annotations(doc);
+        assert_eq!(anns.len(), 1);
+        assert_eq!(anns[0].id, Some("abc-123".to_string()));
+        assert!(anns[0].inner.starts_with("n!"));
     }
 }

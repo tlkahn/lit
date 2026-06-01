@@ -972,7 +972,7 @@ impl Store {
         let mut inserted_rowids = Vec::with_capacity(diff.inserts.len());
         for &new_idx in &diff.inserts {
             let ann = &annotations[new_idx];
-            let uuid_val = uuid::Uuid::new_v4().to_string();
+            let uuid_val = ann.uuid.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             insert_stmt.execute(rusqlite::params![
                 node_id,
                 ann.annotation_type,
@@ -1489,6 +1489,7 @@ mod tests {
                 char_end: 10,
                 scope_kind: "file".into(),
                 scope_value: "a.md".into(),
+                uuid: None,
             }]).unwrap();
             use super::super::types::Position;
             let mut positions = HashMap::new();
@@ -2724,6 +2725,7 @@ mod tests {
             char_end: 10,
             scope_kind: "words".into(),
             scope_value: "1".into(),
+            uuid: None,
         }
     }
 
@@ -3190,6 +3192,7 @@ mod tests {
             char_end: 50,
             scope_kind: "words".into(),
             scope_value: "2".into(),
+            uuid: None,
         };
         store.upsert_annotations("a.md", &[ann]).unwrap();
 

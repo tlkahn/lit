@@ -17,6 +17,9 @@ pub fn parse_annotations(content: &str) -> Vec<Annotation> {
         ann.char_start = ra.char_start;
         ann.char_end = ra.char_end;
         ann.original = ra.original;
+        if ra.id.is_some() {
+            ann.uuid = ra.id;
+        }
 
         annotations.push(ann);
     }
@@ -162,6 +165,33 @@ mod tests {
         let anns = parse_annotations(doc);
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].inner_check(), true);
+    }
+
+    #[test]
+    fn compact_with_id_populates_uuid() {
+        let doc = "<!---[abc-123] n? __ | body --->";
+        let anns = parse_annotations(doc);
+        assert_eq!(anns.len(), 1);
+        assert_eq!(anns[0].uuid, Some("abc-123".to_string()));
+        assert_eq!(anns[0].annotation_type, AnnotationType::Note);
+        assert_eq!(anns[0].certainty, Certainty::Tentative);
+    }
+
+    #[test]
+    fn compact_without_id_uuid_is_none() {
+        let doc = "<!--- n? __ | body --->";
+        let anns = parse_annotations(doc);
+        assert_eq!(anns.len(), 1);
+        assert_eq!(anns[0].uuid, None);
+    }
+
+    #[test]
+    fn block_with_id_populates_uuid() {
+        let doc = "<!---[my-uuid]\nn!\n\\p\n---\nThe body.\n--->";
+        let anns = parse_annotations(doc);
+        assert_eq!(anns.len(), 1);
+        assert_eq!(anns[0].uuid, Some("my-uuid".to_string()));
+        assert_eq!(anns[0].form, AnnotationForm::Block);
     }
 
     #[test]
