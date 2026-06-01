@@ -87,6 +87,33 @@ pub fn annotation_find_uuid(
     })
 }
 
+#[tauri::command]
+pub fn migrate_annotations(content: String) -> String {
+    use crate::annotation::scanner::{find_fenced_ranges, is_in_fenced_range};
+
+    let fenced_ranges = find_fenced_ranges(&content);
+    let re = regex::Regex::new(r"(?s)%%!(.*?)%%").unwrap();
+
+    let mut result = String::with_capacity(content.len());
+    let mut last_end = 0;
+
+    for m in re.find_iter(&content) {
+        if is_in_fenced_range(m.start(), &fenced_ranges) {
+            // Inside a fenced code block — keep the original text unchanged
+            continue;
+        }
+        result.push_str(&content[last_end..m.start()]);
+        let caps = re.captures(m.as_str()).unwrap();
+        let inner = &caps[1];
+        result.push_str("<!---");
+        result.push_str(inner);
+        result.push_str("--->");
+        last_end = m.end();
+    }
+    result.push_str(&content[last_end..]);
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,7 +122,7 @@ mod tests {
 
     #[test]
     fn cmd_parse_annotations_compact() {
-        let result = parse_annotations("%%! n: | note %%".to_string());
+        let result = parse_annotations("<!--- n: | note --->".to_string());
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].annotation_type, AnnotationType::Note);
     }
@@ -108,7 +135,7 @@ mod tests {
 
     #[test]
     fn cmd_resolve_scope_words() {
-        let content = "hello world %%! n: _ | note %%".to_string();
+        let content = "hello world <!--- n: _ | note --->".to_string();
         let result = resolve_annotation_scope(
             content,
             12,
@@ -121,7 +148,7 @@ mod tests {
 
     #[test]
     fn cmd_resolve_scope_none() {
-        let content = "%%! n: _ | note %%".to_string();
+        let content = "<!--- n: _ | note --->".to_string();
         let result = resolve_annotation_scope(
             content,
             0,
@@ -133,7 +160,7 @@ mod tests {
 
     #[test]
     fn cmd_resolve_scope_with_mode_backward() {
-        let content = "hello world %%! n %%".to_string();
+        let content = "hello world <!--- n --->".to_string();
         let result_new = resolve_annotation_scope_with_mode(
             content.clone(), 12, Scope::Words(1), "en".to_string(), None,
         );
@@ -143,7 +170,7 @@ mod tests {
 
     #[test]
     fn cmd_resolve_scope_with_mode_bidirectional() {
-        let content = "before %%! n %% after word".to_string();
+        let content = "before <!--- n ---> after word".to_string();
         let result = resolve_annotation_scope_with_mode(
             content, 7, Scope::Words(1), "en".to_string(),
             Some(ResolutionMode::Bidirectional),
@@ -167,7 +194,7 @@ mod tests {
     #[test]
     fn cmd_search_annotations() {
         let dir = create_workspace();
-        write_md(dir.path(), "a.md", "Some text %%! n: _ | Silk Road flourished %% more.");
+        write_md(dir.path(), "a.md", "Some text <!--- n: _ | Silk Road flourished ---> more.");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.search_annotations("Silk Road", None, 20).unwrap();
         assert_eq!(results.len(), 1);
@@ -178,7 +205,7 @@ mod tests {
     #[test]
     fn cmd_list_annotations() {
         let dir = create_workspace();
-        write_md(dir.path(), "a.md", "%%! n: _ | first %% text %%! q: _ | second %%");
+        write_md(dir.path(), "a.md", "<!--- n: _ | first ---> text <!--- q: _ | second --->");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.list_annotations(Some("a.md"), None, 100).unwrap();
         assert_eq!(results.len(), 2);
@@ -187,7 +214,7 @@ mod tests {
     #[test]
     fn cmd_list_annotations_filtered() {
         let dir = create_workspace();
-        write_md(dir.path(), "a.md", "%%! n: _ | note body %% and %%! q: _ | question body %%");
+        write_md(dir.path(), "a.md", "<!--- n: _ | note body ---> and <!--- q: _ | question body --->");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.list_annotations(Some("a.md"), Some("note"), 100).unwrap();
         assert_eq!(results.len(), 1);
@@ -197,8 +224,8 @@ mod tests {
     #[test]
     fn cmd_list_annotations_vault_wide() {
         let dir = create_workspace();
-        write_md(dir.path(), "a.md", "%%! n: _ | alpha note %%");
-        write_md(dir.path(), "b.md", "%%! q: _ | beta question %%");
+        write_md(dir.path(), "a.md", "<!--- n: _ | alpha note --->");
+        write_md(dir.path(), "b.md", "<!--- q: _ | beta question --->");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.list_annotations(None, None, 100).unwrap();
         assert_eq!(results.len(), 2);
@@ -210,7 +237,7 @@ mod tests {
     #[test]
     fn cmd_annotation_find_uuid() {
         let dir = create_workspace();
-        write_md(dir.path(), "a.md", "%%! q: _ | What does this mean? %% hello");
+        write_md(dir.path(), "a.md", "<!--- q: _ | What does this mean? ---> hello");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let uuid = gi.find_annotation_uuid("a.md", "question", Some("What does this mean?"), 0).unwrap();
         assert!(uuid.is_some());
@@ -220,17 +247,81 @@ mod tests {
     #[test]
     fn cmd_annotation_find_uuid_missing() {
         let dir = create_workspace();
-        write_md(dir.path(), "a.md", "%%! n: _ | note %%");
+        write_md(dir.path(), "a.md", "<!--- n: _ | note --->");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let uuid = gi.find_annotation_uuid("a.md", "question", Some("nonexistent"), 0).unwrap();
         assert!(uuid.is_none());
     }
 
+    // --- migrate_annotations tests ---
+
+    #[test]
+    fn cmd_migrate_compact() {
+        let result = migrate_annotations("%%! n | body %%".to_string());
+        assert_eq!(result, "<!--- n | body --->");
+    }
+
+    #[test]
+    fn cmd_migrate_block() {
+        let result = migrate_annotations("%%!\nn\n---\nbody\n%%".to_string());
+        assert_eq!(result, "<!---\nn\n---\nbody\n--->");
+    }
+
+    #[test]
+    fn cmd_migrate_mixed_with_text() {
+        let input = "before %%! n | note %% middle %%! q | question %% after";
+        let result = migrate_annotations(input.to_string());
+        assert_eq!(result, "before <!--- n | note ---> middle <!--- q | question ---> after");
+    }
+
+    #[test]
+    fn cmd_migrate_idempotent() {
+        let already_migrated = "<!--- n | body --->";
+        let result = migrate_annotations(already_migrated.to_string());
+        assert_eq!(result, already_migrated);
+    }
+
+    #[test]
+    fn cmd_migrate_parses_identically() {
+        let old = "%%! n: _ | a note %%";
+        let migrated = migrate_annotations(old.to_string());
+        let old_anns = parse_annotations(old.to_string());
+        let new_anns = parse_annotations(migrated);
+        assert_eq!(old_anns.len(), new_anns.len());
+        assert_eq!(old_anns[0].annotation_type, new_anns[0].annotation_type);
+        assert_eq!(old_anns[0].body, new_anns[0].body);
+        assert_eq!(old_anns[0].scope, new_anns[0].scope);
+    }
+
+    // --- migrate_annotations fence-awareness tests ---
+
+    #[test]
+    fn cmd_migrate_skips_fenced_code_block() {
+        let input = "before\n```\n%%! n | inside fence %%\n```\nafter";
+        let result = migrate_annotations(input.to_string());
+        assert_eq!(result, input, "%%! inside a fenced code block must not be migrated");
+    }
+
+    #[test]
+    fn cmd_migrate_outside_fence() {
+        let input = "text %%! n | outside %% end";
+        let result = migrate_annotations(input.to_string());
+        assert_eq!(result, "text <!--- n | outside ---> end");
+    }
+
+    #[test]
+    fn cmd_migrate_mixed_fenced_and_unfenced() {
+        let input = "%%! n | free %% then\n```\n%%! n | caged %%\n```\nand %%! q | also free %%";
+        let result = migrate_annotations(input.to_string());
+        let expected = "<!--- n | free ---> then\n```\n%%! n | caged %%\n```\nand <!--- q | also free --->";
+        assert_eq!(result, expected);
+    }
+
     #[test]
     fn cmd_list_annotations_vault_wide_with_type_filter() {
         let dir = create_workspace();
-        write_md(dir.path(), "a.md", "%%! n: _ | alpha note %% and %%! q: _ | alpha question %%");
-        write_md(dir.path(), "b.md", "%%! n: _ | beta note %%");
+        write_md(dir.path(), "a.md", "<!--- n: _ | alpha note ---> and <!--- q: _ | alpha question --->");
+        write_md(dir.path(), "b.md", "<!--- n: _ | beta note --->");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.list_annotations(None, Some("note"), 100).unwrap();
         assert_eq!(results.len(), 2);

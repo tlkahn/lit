@@ -79,6 +79,8 @@ pub struct IndexableAnnotation {
     pub char_end: usize,
     pub scope_kind: String,
     pub scope_value: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub uuid: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -324,6 +326,7 @@ mod tests {
             char_end: 50,
             scope_kind: "words".into(),
             scope_value: "2".into(),
+            uuid: None,
         };
         let json_str = serde_json::to_string(&ia).expect("serialize");
         let back: IndexableAnnotation = serde_json::from_str(&json_str).expect("deserialize");

@@ -1,6 +1,7 @@
 import type { Annotation, AnnotationType, Certainty, Scope } from "./ipc";
 
 export interface AnnotationFields {
+  id: string | null;
   type: AnnotationType | null;
   certainty: Certainty;
   scope: Scope | null;
@@ -22,19 +23,32 @@ export interface EditRawInfo {
 }
 
 export function getEditCursorOffset(dsl: string): number {
-  if (dsl.startsWith("%%!\n")) {
+  if (dsl.startsWith("<!---[")) {
+    const closeBracket = dsl.indexOf("]", 5);
+    if (closeBracket !== -1) {
+      if (dsl[closeBracket + 1] === "\n") {
+        const separatorIdx = dsl.indexOf("\n---\n");
+        if (separatorIdx !== -1) return separatorIdx + 5;
+        return closeBracket + 2;
+      }
+      return closeBracket + 2;
+    }
+  }
+  if (dsl.startsWith("<!---\n")) {
     const separatorIdx = dsl.indexOf("\n---\n");
     if (separatorIdx !== -1) {
       return separatorIdx + 5;
     }
-    return 4;
+    return 6;
   }
-  return 4;
+  return 6;
 }
 
 const EXPLICIT_SCOPE_RE = /[_\\]/;
 
 export function annotationToFields(ann: Annotation): AnnotationFields {
+  const hasAuthoredId = /^(?:<!---\s*\[|%%!\s*\[)/.test(ann.original);
+  const id = hasAuthoredId ? (ann.uuid ?? null) : null;
   const type: AnnotationType | null = ann.annotation_type === "bare" ? null : ann.annotation_type;
   const certainty: Certainty = ann.certainty;
 
@@ -52,7 +66,7 @@ export function annotationToFields(ann: Annotation): AnnotationFields {
   const body = ann.body ?? "";
   const date = ann.date ?? null;
 
-  return { type, certainty, scope, body, date };
+  return { id, type, certainty, scope, body, date };
 }
 
 const TYPE_KEYWORDS: Record<string, string> = {
@@ -111,21 +125,23 @@ function isBlockForm(body: string): boolean {
 }
 
 export function generateDsl(fields: AnnotationFields): string {
-  const { type, certainty, scope, body, date } = fields;
+  const { id, type, certainty, scope, body, date } = fields;
 
+  const idStr = id ? `[${id}]` : "";
   const typeStr = serializeType(type);
   const certStr = serializeCertainty(certainty);
   const scopeStr = serializeScope(scope);
   const dateStr = date ? `@${date}` : "";
 
   if (body && isBlockForm(body)) {
-    return generateBlock(typeStr, certStr, scopeStr, dateStr, body);
+    return generateBlock(idStr, typeStr, certStr, scopeStr, dateStr, body);
   }
 
-  return generateCompact(typeStr, certStr, scopeStr, dateStr, body);
+  return generateCompact(idStr, typeStr, certStr, scopeStr, dateStr, body);
 }
 
 function generateCompact(
+  idStr: string,
   typeStr: string,
   certStr: string,
   scopeStr: string,
@@ -155,17 +171,21 @@ function generateCompact(
     inner = tailStr;
   }
 
-  return `%%! ${inner} %%`;
+  if (idStr) {
+    return `<!---${idStr} ${inner} --->`;
+  }
+  return `<!--- ${inner} --->`;
 }
 
 function generateBlock(
+  idStr: string,
   typeStr: string,
   certStr: string,
   scopeStr: string,
   dateStr: string,
   body: string,
 ): string {
-  const lines: string[] = ["%%!"];
+  const lines: string[] = [idStr ? `<!---${idStr}` : "<!---"];
 
   const typeCert = typeStr + certStr;
   if (typeCert) lines.push(typeCert);
@@ -177,6 +197,6 @@ function generateBlock(
     lines.push(body);
   }
 
-  lines.push("%%");
+  lines.push("--->");
   return lines.join("\n");
 }

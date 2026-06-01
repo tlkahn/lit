@@ -10,21 +10,24 @@ export const Annotation: MarkdownConfig = {
   parseInline: [
     {
       name: "InlineAnnotation",
-      before: "InlineComment",
+      before: "HTMLTag",
       parse(cx, next, pos) {
-        // %%! — char codes: 37 37 33
-        if (next !== 37) return -1;
-        if (cx.char(pos + 1) !== 37) return -1;
-        if (cx.char(pos + 2) !== 33) return -1;
-        let end = pos + 3;
+        // <!--- — char codes: 60 33 45 45 45
+        if (next !== 60) return -1;
+        if (cx.char(pos + 1) !== 33) return -1;
+        if (cx.char(pos + 2) !== 45) return -1;
+        if (cx.char(pos + 3) !== 45) return -1;
+        if (cx.char(pos + 4) !== 45) return -1;
+        let end = pos + 5;
         while (end < cx.end) {
           const ch = cx.char(end);
           if (ch === 10 || ch === 13 || ch === -1) return -1;
-          if (ch === 37 && cx.char(end + 1) === 37) {
-            const closeEnd = end + 2;
+          // ---> — char codes: 45 45 45 62
+          if (ch === 45 && cx.char(end + 1) === 45 && cx.char(end + 2) === 45 && cx.char(end + 3) === 62) {
+            const closeEnd = end + 4;
             return cx.addElement(
               cx.elt("InlineAnnotation", pos, closeEnd, [
-                cx.elt("InlineAnnotationMark", pos, pos + 3),
+                cx.elt("InlineAnnotationMark", pos, pos + 5),
                 cx.elt("InlineAnnotationMark", end, closeEnd),
               ]),
             );
@@ -38,30 +41,30 @@ export const Annotation: MarkdownConfig = {
   parseBlock: [
     {
       name: "BlockAnnotation",
-      before: "BlockComment",
+      before: "HTMLBlock",
       endLeaf(_cx, line) {
-        if (!/^%%!/.test(line.text)) return false;
-        if (line.text.indexOf("%%", 3) !== -1) return false;
+        if (!/^<!---/.test(line.text)) return false;
+        if (line.text.indexOf("--->", 5) !== -1) return false;
         return true;
       },
       parse(cx, line) {
-        if (!/^%%!/.test(line.text)) return false;
+        if (!/^<!---/.test(line.text)) return false;
 
         const start = cx.lineStart;
 
-        // Single-line: %%!content%% (trailing whitespace tolerated)
-        const trimmed = line.text.trimEnd();
-        if (trimmed.length > 3 && trimmed.endsWith("%%")) {
-          const end = cx.lineStart + trimmed.length;
+        // Single-line: check if ---> appears anywhere after the opening <!---
+        const closeIdx = line.text.indexOf("--->", 5);
+        if (closeIdx !== -1) {
+          const end = cx.lineStart + closeIdx + 4;
           cx.nextLine();
           cx.addElement(cx.elt("BlockAnnotation", start, end));
           return true;
         }
 
-        // Multi-line: %%!\n...\n%%
+        // Multi-line: <!---\n...\n--->
         let lastEnd = cx.lineStart + line.text.length;
         while (cx.nextLine()) {
-          if (/^%%\s*$/.test(line.text)) {
+          if (/^--->\s*$/.test(line.text)) {
             const end = cx.lineStart + line.text.length;
             cx.nextLine();
             cx.addElement(cx.elt("BlockAnnotation", start, end));

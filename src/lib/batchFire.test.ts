@@ -34,7 +34,7 @@ function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
     is_structured: true,
     char_start: 0,
     char_end: 20,
-    original: "%%! llm | explain %%",
+    original: "<!--- llm | explain --->",
     ...overrides,
   };
 }

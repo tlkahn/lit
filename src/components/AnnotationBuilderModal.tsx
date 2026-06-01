@@ -23,6 +23,7 @@ export function AnnotationBuilderModal({
   onEditRaw,
   selectedText,
 }: AnnotationBuilderModalProps) {
+  const [id, setId] = useState(initialFields?.id ?? "");
   const [type, setType] = useState<AnnotationType | null>(initialFields?.type ?? null);
   const [certainty, setCertainty] = useState<Certainty>(initialFields?.certainty ?? "neutral");
   const [scopeKind, setScopeKind] = useState<ScopeKind>(() => {
@@ -66,13 +67,14 @@ export function AnnotationBuilderModal({
 
   const fields: AnnotationFields = useMemo(
     () => ({
+      id: id || null,
       type: type === "bare" ? null : type,
       certainty,
       scope,
       body,
       date: date || null,
     }),
-    [type, certainty, scope, body, date],
+    [id, type, certainty, scope, body, date],
   );
 
   const preview = useMemo(() => generateDsl(fields), [fields]);
@@ -168,6 +170,18 @@ export function AnnotationBuilderModal({
               />
             </label>
           )}
+
+          <label className="col-span-2 flex flex-col gap-1">
+            <span className="text-xs text-text-muted">ID (optional)</span>
+            <input
+              type="text"
+              className="rounded border border-border-primary bg-bg-secondary px-2 py-1 text-sm text-text-normal"
+              data-testid="annotation-id-input"
+              value={id}
+              onChange={(e) => setId(e.target.value)}
+              placeholder="e.g. my-note-1"
+            />
+          </label>
 
           <label className="col-span-2 flex flex-col gap-1">
             <span className="text-xs text-text-muted">Date</span>

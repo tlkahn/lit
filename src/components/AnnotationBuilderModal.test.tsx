@@ -25,6 +25,7 @@ describe("AnnotationBuilderModal", () => {
     expect(screen.getByTestId("annotation-type-select")).toBeInTheDocument();
     expect(screen.getByTestId("annotation-certainty-select")).toBeInTheDocument();
     expect(screen.getByTestId("annotation-scope-select")).toBeInTheDocument();
+    expect(screen.getByTestId("annotation-id-input")).toBeInTheDocument();
     expect(screen.getByTestId("annotation-body-input")).toBeInTheDocument();
     expect(screen.getByTestId("annotation-date-input")).toBeInTheDocument();
     expect(screen.getByTestId("annotation-preview")).toBeInTheDocument();
@@ -83,7 +84,7 @@ describe("AnnotationBuilderModal", () => {
     fireEvent.change(screen.getByTestId("annotation-type-select"), { target: { value: "note" } });
     fireEvent.change(screen.getByTestId("annotation-body-input"), { target: { value: "test body" } });
     fireEvent.click(screen.getByTestId("annotation-insert-btn"));
-    expect(onInsert).toHaveBeenCalledWith("%%! n | test body %%");
+    expect(onInsert).toHaveBeenCalledWith("<!--- n | test body --->");
   });
 
   it("cancel button calls onClose", () => {
@@ -105,7 +106,7 @@ describe("AnnotationBuilderModal", () => {
     fireEvent.change(screen.getByTestId("annotation-scope-select"), { target: { value: "words" } });
     fireEvent.change(screen.getByTestId("annotation-body-input"), { target: { value: "is this right?" } });
     const preview = screen.getByTestId("annotation-preview");
-    expect(preview.textContent).toBe("%%! q! _ | is this right? %%");
+    expect(preview.textContent).toBe("<!--- q! _ | is this right? --->");
   });
 
   it("initialFields prop pre-fills form", () => {
@@ -117,7 +118,7 @@ describe("AnnotationBuilderModal", () => {
       />,
     );
     const preview = screen.getByTestId("annotation-preview");
-    expect(preview.textContent).toBe("%%! todo! | fix this %%");
+    expect(preview.textContent).toBe("<!--- todo! | fix this --->");
   });
 
   it("scope count input appears for words/sentence/paragraph/page", () => {
@@ -137,7 +138,7 @@ describe("AnnotationBuilderModal", () => {
     render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
     expect(screen.getByTestId("annotation-type-select")).toHaveValue("");
     expect(screen.getByTestId("annotation-body-input")).toHaveValue("");
-    expect(screen.getByTestId("annotation-preview").textContent).toBe("%%!  %%");
+    expect(screen.getByTestId("annotation-preview").textContent).toBe("<!---  --->");
   });
 
   it("uses initialFields on each fresh mount", () => {
@@ -217,7 +218,7 @@ describe("AnnotationBuilderModal", () => {
         />,
       );
       fireEvent.click(screen.getByTestId("annotation-insert-btn"));
-      expect(onInsert).toHaveBeenCalledWith("%%! n | edited %%");
+      expect(onInsert).toHaveBeenCalledWith("<!--- n | edited --->");
     });
   });
 
@@ -251,7 +252,7 @@ describe("AnnotationBuilderModal", () => {
       fireEvent.click(screen.getByTestId("annotation-edit-raw-btn"));
       expect(onEditRaw).toHaveBeenCalledWith({
         mode: "edit",
-        draftDsl: "%%! n | test %%",
+        draftDsl: "<!--- n | test --->",
         originalRange,
       });
     });
@@ -287,6 +288,45 @@ describe("AnnotationBuilderModal", () => {
         />,
       );
       expect(screen.getByTestId("annotation-scope-select")).toHaveValue("paragraph");
+    });
+  });
+
+  describe("[id] support", () => {
+    it("ID input renders and is empty by default", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      const idInput = screen.getByTestId("annotation-id-input");
+      expect(idInput).toBeInTheDocument();
+      expect(idInput).toHaveValue("");
+    });
+
+    it("ID input updates preview with [id]", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      fireEvent.change(screen.getByTestId("annotation-type-select"), { target: { value: "note" } });
+      fireEvent.change(screen.getByTestId("annotation-body-input"), { target: { value: "hello" } });
+      fireEvent.change(screen.getByTestId("annotation-id-input"), { target: { value: "my-note" } });
+      const preview = screen.getByTestId("annotation-preview");
+      expect(preview.textContent).toBe("<!---[my-note] n | hello --->");
+    });
+
+    it("insert with [id] produces correct DSL", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      fireEvent.change(screen.getByTestId("annotation-type-select"), { target: { value: "note" } });
+      fireEvent.change(screen.getByTestId("annotation-body-input"), { target: { value: "test" } });
+      fireEvent.change(screen.getByTestId("annotation-id-input"), { target: { value: "ref-1" } });
+      fireEvent.click(screen.getByTestId("annotation-insert-btn"));
+      expect(onInsert).toHaveBeenCalledWith("<!---[ref-1] n | test --->");
+    });
+
+    it("initialFields with id pre-fills ID input", () => {
+      render(
+        <AnnotationBuilderModal
+          onClose={onClose}
+          onInsert={onInsert}
+          initialFields={{ id: "pre-filled-id", type: "note", body: "x" }}
+        />,
+      );
+      expect(screen.getByTestId("annotation-id-input")).toHaveValue("pre-filled-id");
+      expect(screen.getByTestId("annotation-preview").textContent).toBe("<!---[pre-filled-id] n | x --->");
     });
   });
 });

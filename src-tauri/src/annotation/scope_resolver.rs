@@ -489,7 +489,7 @@ mod tests {
 
     #[test]
     fn words_1_single_preceding_word() {
-        let content = "hello %%! n: _ | note %%";
+        let content = "hello <!--- n: _ | note --->";
         let char_start = 6;
         let result = resolve_scope_range(content, char_start, &Scope::Words(1), "en");
         assert_eq!(result, Some(ScopeRange { start: 0, end: 5 }));
@@ -497,7 +497,7 @@ mod tests {
 
     #[test]
     fn words_2_two_preceding_words() {
-        let content = "the quick brown fox %%! n: __ | note %%";
+        let content = "the quick brown fox <!--- n: __ | note --->";
         let char_start = 20;
         let result = resolve_scope_range(content, char_start, &Scope::Words(2), "en");
         assert_eq!(result, Some(ScopeRange { start: 10, end: 19 }));
@@ -505,7 +505,7 @@ mod tests {
 
     #[test]
     fn words_3_three_preceding_words() {
-        let content = "the quick brown fox %%! n: ___ | note %%";
+        let content = "the quick brown fox <!--- n: ___ | note --->";
         let char_start = 20;
         let result = resolve_scope_range(content, char_start, &Scope::Words(3), "en");
         assert_eq!(result, Some(ScopeRange { start: 4, end: 19 }));
@@ -513,7 +513,7 @@ mod tests {
 
     #[test]
     fn words_more_than_available() {
-        let content = "brown fox %%! n: | note %%";
+        let content = "brown fox <!--- n: | note --->";
         let char_start = 10;
         let result = resolve_scope_range(content, char_start, &Scope::Words(5), "en");
         assert_eq!(result, Some(ScopeRange { start: 0, end: 9 }));
@@ -521,7 +521,7 @@ mod tests {
 
     #[test]
     fn words_with_cjk() {
-        let content = "你好 世界 %%! n: __ | note %%";
+        let content = "你好 世界 <!--- n: __ | note --->";
         let char_start = 5;
         let result = resolve_scope_range(content, char_start, &Scope::Words(1), "en");
         assert_eq!(result, Some(ScopeRange { start: 3, end: 5 }));
@@ -529,7 +529,7 @@ mod tests {
 
     #[test]
     fn words_no_preceding_text() {
-        let content = "%%! n: _ | note %%";
+        let content = "<!--- n: _ | note --->";
         let char_start = 0;
         let result = resolve_scope_range(content, char_start, &Scope::Words(1), "en");
         assert_eq!(result, None);
@@ -537,7 +537,7 @@ mod tests {
 
     #[test]
     fn words_only_whitespace_before() {
-        let content = "   %%! n: _ | note %%";
+        let content = "   <!--- n: _ | note --->";
         let char_start = 3;
         let result = resolve_scope_range(content, char_start, &Scope::Words(1), "en");
         assert_eq!(result, None);
@@ -545,7 +545,7 @@ mod tests {
 
     #[test]
     fn sentence_single_sentence() {
-        let content = "The cat sat on the mat.%%! n: | note %%";
+        let content = "The cat sat on the mat.<!--- n: | note --->";
         let char_start = 23;
         let result = resolve_scope_range(content, char_start, &Scope::Sentence(1), "en");
         assert_eq!(result, Some(ScopeRange { start: 0, end: 23 }));
@@ -553,7 +553,7 @@ mod tests {
 
     #[test]
     fn sentence_last_of_multiple_sentences() {
-        let content = "The dog ran. The cat sat.%%! n: | note %%";
+        let content = "The dog ran. The cat sat.<!--- n: | note --->";
         let char_start = 25;
         let result = resolve_scope_range(content, char_start, &Scope::Sentence(1), "en");
         assert_eq!(result, Some(ScopeRange { start: 13, end: 25 }));
@@ -561,7 +561,7 @@ mod tests {
 
     #[test]
     fn sentence_two_of_multiple() {
-        let content = "First one. The dog ran. The cat sat.%%! n: \\ss | note %%";
+        let content = "First one. The dog ran. The cat sat.<!--- n: \\ss | note --->";
         let char_start = 36;
         let result = resolve_scope_range(content, char_start, &Scope::Sentence(2), "en");
         assert_eq!(result, Some(ScopeRange { start: 11, end: 36 }));
@@ -569,7 +569,7 @@ mod tests {
 
     #[test]
     fn sentence_more_than_available() {
-        let content = "The dog ran. The cat sat.%%! n: \\sss | note %%";
+        let content = "The dog ran. The cat sat.<!--- n: \\sss | note --->";
         let char_start = 25;
         let result = resolve_scope_range(content, char_start, &Scope::Sentence(3), "en");
         assert_eq!(result, Some(ScopeRange { start: 0, end: 25 }));
@@ -577,7 +577,7 @@ mod tests {
 
     #[test]
     fn sentence_mid_sentence() {
-        let content = "The dog ran. The cat sat%%! n: | note %% on the mat.";
+        let content = "The dog ran. The cat sat<!--- n: | note ---> on the mat.";
         let char_start = 25;
         let result = resolve_scope_range(content, char_start, &Scope::Sentence(1), "en");
         assert_eq!(result, Some(ScopeRange { start: 13, end: 25 }));
@@ -585,7 +585,7 @@ mod tests {
 
     #[test]
     fn sentence_no_preceding_text() {
-        let content = "%%! n: | note %%";
+        let content = "<!--- n: | note --->";
         let char_start = 0;
         let result = resolve_scope_range(content, char_start, &Scope::Sentence(1), "en");
         assert_eq!(result, None);
@@ -593,7 +593,7 @@ mod tests {
 
     #[test]
     fn paragraph_1_current_paragraph() {
-        let content = "First paragraph.\n\nSecond paragraph text.%%! n: \\p | note %%";
+        let content = "First paragraph.\n\nSecond paragraph text.<!--- n: \\p | note --->";
         let char_start = 40;
         let result = resolve_scope_range(content, char_start, &Scope::Paragraph(1), "en");
         assert_eq!(result, Some(ScopeRange { start: 18, end: 40 }));
@@ -601,7 +601,7 @@ mod tests {
 
     #[test]
     fn paragraph_2_current_and_preceding() {
-        let content = "First para.\n\nSecond para.\n\nThird para.%%! n: \\pp | note %%";
+        let content = "First para.\n\nSecond para.\n\nThird para.<!--- n: \\pp | note --->";
         let char_start = 38;
         let result = resolve_scope_range(content, char_start, &Scope::Paragraph(2), "en");
         assert_eq!(result, Some(ScopeRange { start: 13, end: 38 }));
@@ -609,7 +609,7 @@ mod tests {
 
     #[test]
     fn paragraph_more_than_available() {
-        let content = "Only paragraph.%%! n: \\ppp | note %%";
+        let content = "Only paragraph.<!--- n: \\ppp | note --->";
         let char_start = 15;
         let result = resolve_scope_range(content, char_start, &Scope::Paragraph(3), "en");
         assert_eq!(result, Some(ScopeRange { start: 0, end: 15 }));
@@ -617,7 +617,7 @@ mod tests {
 
     #[test]
     fn paragraph_no_preceding_text() {
-        let content = "%%! n: \\p | note %%";
+        let content = "<!--- n: \\p | note --->";
         let char_start = 0;
         let result = resolve_scope_range(content, char_start, &Scope::Paragraph(1), "en");
         assert_eq!(result, None);
@@ -625,7 +625,7 @@ mod tests {
 
     #[test]
     fn page_1_current_page() {
-        let content = "Page one.\x0CPage two text.%%! n: \\f | note %%";
+        let content = "Page one.\x0CPage two text.<!--- n: \\f | note --->";
         let char_start = 25;
         let result = resolve_scope_range(content, char_start, &Scope::Page(1), "en");
         assert_eq!(result, Some(ScopeRange { start: 10, end: 25 }));
@@ -633,7 +633,7 @@ mod tests {
 
     #[test]
     fn page_2_current_and_preceding() {
-        let content = "Page one.\x0CPage two.\x0CPage three.%%! n: | note %%";
+        let content = "Page one.\x0CPage two.\x0CPage three.<!--- n: | note --->";
         let char_start = 31;
         let result = resolve_scope_range(content, char_start, &Scope::Page(2), "en");
         assert_eq!(result, Some(ScopeRange { start: 10, end: 31 }));
@@ -641,7 +641,7 @@ mod tests {
 
     #[test]
     fn page_no_form_feed() {
-        let content = "All one page.%%! n: \\f | note %%";
+        let content = "All one page.<!--- n: \\f | note --->";
         let char_start = 14;
         let result = resolve_scope_range(content, char_start, &Scope::Page(1), "en");
         assert_eq!(result, Some(ScopeRange { start: 0, end: 14 }));
@@ -649,7 +649,7 @@ mod tests {
 
     #[test]
     fn anchor_found() {
-        let content = "The term anuttara appears in this text.%%! n: ^\"anuttara\" | note %%";
+        let content = "The term anuttara appears in this text.<!--- n: ^\"anuttara\" | note --->";
         let char_start = 39;
         let result = resolve_scope_range(
             content, char_start,
@@ -660,7 +660,7 @@ mod tests {
 
     #[test]
     fn anchor_not_found() {
-        let content = "No match here.%%! n: ^\"missing\" | note %%";
+        let content = "No match here.<!--- n: ^\"missing\" | note --->";
         let char_start = 15;
         let result = resolve_scope_range(
             content, char_start,
@@ -671,8 +671,8 @@ mod tests {
 
     #[test]
     fn sentence_with_double_spaces() {
-        let content = "Maximum depth  $d = 5$  and composition.%%! n: | note %%";
-        let ann_start = content.find("%%!").unwrap();
+        let content = "Maximum depth  $d = 5$  and composition.<!--- n: | note --->";
+        let ann_start = content.find("<!---").unwrap();
         let ann_start_utf16 = utf16_len(&content[..ann_start]);
         let result = resolve_scope_range(content, ann_start_utf16, &Scope::Sentence(1), "en");
         assert!(result.is_some(), "scope should resolve despite double spaces");
@@ -683,8 +683,8 @@ mod tests {
 
     #[test]
     fn sentence_double_spaces_multi_sentence() {
-        let content = "First sentence. Second  has  double  spaces.%%! n: | note %%";
-        let ann_start = content.find("%%!").unwrap();
+        let content = "First sentence. Second  has  double  spaces.<!--- n: | note --->";
+        let ann_start = content.find("<!---").unwrap();
         let ann_start_utf16 = utf16_len(&content[..ann_start]);
         let result = resolve_scope_range(content, ann_start_utf16, &Scope::Sentence(1), "en");
         assert!(result.is_some());
@@ -735,8 +735,8 @@ mod tests {
 
     #[test]
     fn section_scope_middle_heading() {
-        let content = "# Intro\n\nSome text.\n\n## Methods\n\nMethod details.%%! n %%\n\n## Results\n\nResult text.";
-        let ann_pos = content.find("%%!").unwrap();
+        let content = "# Intro\n\nSome text.\n\n## Methods\n\nMethod details.<!--- n --->\n\n## Results\n\nResult text.";
+        let ann_pos = content.find("<!---").unwrap();
         let char_start = utf16_len(&content[..ann_pos]);
         let result = resolve_scope_range(content, char_start, &Scope::Section, "en");
         let range = result.unwrap();
@@ -847,8 +847,8 @@ mod tests {
 
     #[test]
     fn backward_mode_matches_original() {
-        let content = "hello world %%! n %%";
-        let cs = utf16_len(&content[..content.find("%%!").unwrap()]);
+        let content = "hello world <!--- n --->";
+        let cs = utf16_len(&content[..content.find("<!---").unwrap()]);
         let backward = resolve_scope_range_with_mode(content, cs, &Scope::Words(1), "en", &ResolutionMode::Backward);
         let original = resolve_scope_range(content, cs, &Scope::Words(1), "en");
         assert_eq!(backward, original);
@@ -870,8 +870,8 @@ mod tests {
 
     #[test]
     fn sentence_crosses_paragraph_boundary_backward() {
-        let content = "First sentence.\n\nSecond sentence.%%! n \\ss | note %%";
-        let char_start = utf16_len(&content[..content.find("%%!").unwrap()]);
+        let content = "First sentence.\n\nSecond sentence.<!--- n \\ss | note --->";
+        let char_start = utf16_len(&content[..content.find("<!---").unwrap()]);
         let result = resolve_scope_range(content, char_start, &Scope::Sentence(2), "en");
         let range = result.unwrap();
         assert_eq!(range.start, 0);
@@ -879,8 +879,8 @@ mod tests {
 
     #[test]
     fn sentence_one_in_current_para_backward() {
-        let content = "First sentence.\n\nSecond sentence.%%! n \\s | note %%";
-        let char_start = utf16_len(&content[..content.find("%%!").unwrap()]);
+        let content = "First sentence.\n\nSecond sentence.<!--- n \\s | note --->";
+        let char_start = utf16_len(&content[..content.find("<!---").unwrap()]);
         let result = resolve_scope_range(content, char_start, &Scope::Sentence(1), "en");
         let range = result.unwrap();
         let expected_start = utf16_len(&content[..content.find("Second").unwrap()]);
@@ -891,8 +891,8 @@ mod tests {
 
     #[test]
     fn sentence_crosses_two_paragraph_boundaries_backward() {
-        let content = "First sentence.\n\nSecond sentence.\n\nThird sentence.%%! n \\sss | note %%";
-        let char_start = utf16_len(&content[..content.find("%%!").unwrap()]);
+        let content = "First sentence.\n\nSecond sentence.\n\nThird sentence.<!--- n \\sss | note --->";
+        let char_start = utf16_len(&content[..content.find("<!---").unwrap()]);
         let result = resolve_scope_range(content, char_start, &Scope::Sentence(3), "en");
         let range = result.unwrap();
         assert_eq!(range.start, 0);
@@ -900,8 +900,8 @@ mod tests {
 
     #[test]
     fn sentence_more_than_available_cross_paragraph_backward() {
-        let content = "First sentence.\n\nSecond sentence.%%! n | note %%";
-        let char_start = utf16_len(&content[..content.find("%%!").unwrap()]);
+        let content = "First sentence.\n\nSecond sentence.<!--- n | note --->";
+        let char_start = utf16_len(&content[..content.find("<!---").unwrap()]);
         let result = resolve_scope_range(content, char_start, &Scope::Sentence(5), "en");
         let range = result.unwrap();
         assert_eq!(range.start, 0);
@@ -909,8 +909,8 @@ mod tests {
 
     #[test]
     fn sentence_empty_paragraph_between_content_backward() {
-        let content = "First sentence.\n\n\n\nSecond sentence.%%! n \\ss | note %%";
-        let char_start = utf16_len(&content[..content.find("%%!").unwrap()]);
+        let content = "First sentence.\n\n\n\nSecond sentence.<!--- n \\ss | note --->";
+        let char_start = utf16_len(&content[..content.find("<!---").unwrap()]);
         let result = resolve_scope_range(content, char_start, &Scope::Sentence(2), "en");
         let range = result.unwrap();
         assert_eq!(range.start, 0);
@@ -997,8 +997,8 @@ mod tests {
 
     #[test]
     fn sentence_crosses_paragraph_boundary_cjk() {
-        let content = "第一句话。\n\n第二句话。%%! n \\ss | note %%";
-        let char_start = utf16_len(&content[..content.find("%%!").unwrap()]);
+        let content = "第一句话。\n\n第二句话。<!--- n \\ss | note --->";
+        let char_start = utf16_len(&content[..content.find("<!---").unwrap()]);
         let result = resolve_scope_range(content, char_start, &Scope::Sentence(2), "zh");
         let range = result.unwrap();
         assert_eq!(range.start, 0);
@@ -1006,21 +1006,21 @@ mod tests {
 
     #[test]
     fn sentence_cjk_with_prior_annotation_debris() {
-        let content = "Silently count to 10 seconds before speaking\"\n%%\n\n4.接电话前先微笑(加州大学) -- not renders\n\n%%! q \\s | what does this mean? %%";
-        let char_start = utf16_len(&content[..content.rfind("%%!").unwrap()]);
+        let content = "Silently count to 10 seconds before speaking\"\n--->\n\n4.接电话前先微笑(加州大学) -- not renders\n\n<!--- q \\s | what does this mean? --->";
+        let char_start = utf16_len(&content[..content.rfind("<!---").unwrap()]);
         let result = resolve_sentence(content, char_start, 1, "en");
         assert!(result.is_some());
     }
 
     #[test]
     fn paragraph_cjk_with_prior_annotation_debris() {
-        let content = "Silently count to 10 seconds before speaking\"\n%%\n\n4.接电话前先微笑(加州大学) -- not renders\n\n%%! q \\p | what does this mean? %%";
-        let char_start = utf16_len(&content[..content.rfind("%%!").unwrap()]);
+        let content = "Silently count to 10 seconds before speaking\"\n--->\n\n4.接电话前先微笑(加州大学) -- not renders\n\n<!--- q \\p | what does this mean? --->";
+        let char_start = utf16_len(&content[..content.rfind("<!---").unwrap()]);
         let result = resolve_paragraph(content, char_start, 1);
         assert!(result.is_some());
         let (start, end) = result.unwrap();
         let scope = &content[utf16_to_byte(content, start)..utf16_to_byte(content, end)];
-        assert!(!scope.contains("%%!"));
+        assert!(!scope.contains("<!---"));
     }
 
     #[test]
@@ -1040,8 +1040,8 @@ mod tests {
 
     #[test]
     fn sentence_with_double_comma_resolves() {
-        let content = "First sentence. Second,, important sentence.%%! n \\s | note %%";
-        let char_start = utf16_len(&content[..content.find("%%!").unwrap()]);
+        let content = "First sentence. Second,, important sentence.<!--- n \\s | note --->";
+        let char_start = utf16_len(&content[..content.find("<!---").unwrap()]);
         let result = resolve_scope_range(content, char_start, &Scope::Sentence(1), "en");
         assert!(result.is_some());
     }

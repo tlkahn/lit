@@ -194,6 +194,15 @@ pub fn strip_for_mention_scan(body: &str) -> String {
         })
         .into_owned();
 
+    // Blank legacy annotations (%%!...%%)
+    let re_legacy = regex::Regex::new(r"(?s)%%!.*?%%").unwrap();
+    text = re_legacy
+        .replace_all(&text, |caps: &regex::Captures| {
+            let m = caps.get(0).unwrap().as_str();
+            String::from_utf8(m.bytes().map(|b| if b == b'\n' { b'\n' } else { b' ' }).collect()).unwrap()
+        })
+        .into_owned();
+
     // Blank existing wikilinks
     let re_wikilink = regex::Regex::new(r"\[\[[^\]]+\]\]").unwrap();
     text = re_wikilink
@@ -408,6 +417,7 @@ pub fn extract_annotations(content: &str) -> Vec<super::types::IndexableAnnotati
                 char_end: ann.char_end,
                 scope_kind,
                 scope_value,
+                uuid: ann.uuid,
             }
         })
         .collect()
@@ -745,6 +755,40 @@ mod tests {
     }
 
     #[test]
+    fn strip_blanks_legacy_annotations() {
+        let body = "before %%! Alice inside %% after Alice";
+        let stripped = strip_for_mention_scan(body);
+        assert_eq!(stripped.len(), body.len());
+        // "Alice inside" within %%!...%% should be blanked
+        assert!(!stripped.contains("Alice inside"));
+        // "Alice" after should remain
+        assert!(stripped.contains("after Alice"));
+    }
+
+    #[test]
+    fn strip_blanks_both_old_and_new() {
+        let body = "%%! Alice old %% middle <!--- Alice new ---> Alice plain";
+        let stripped = strip_for_mention_scan(body);
+        assert_eq!(stripped.len(), body.len());
+        // Both formats should be blanked
+        assert!(!stripped.contains("Alice old"));
+        assert!(!stripped.contains("Alice new"));
+        // Plain mention should remain
+        assert!(stripped.contains("Alice plain"));
+    }
+
+    #[test]
+    fn strip_blanks_legacy_multiline() {
+        let body = "before\n%%!\nAlice\n%%\nafter Alice";
+        let stripped = strip_for_mention_scan(body);
+        assert_eq!(stripped.len(), body.len());
+        assert_eq!(stripped.lines().count(), body.lines().count());
+        // Only the final "Alice" should survive
+        let mentions = find_plain_mentions(&stripped, &["Alice"]);
+        assert_eq!(mentions.len(), 1);
+    }
+
+    #[test]
     fn strip_offset_preservation() {
         let body = "```\nAlice\n```\n`Alice` and <!-- Alice --> plus [[Alice]] end";
         let stripped = strip_for_mention_scan(body);
@@ -941,7 +985,7 @@ mod tests {
 
     #[test]
     fn extract_annotations_basic() {
-        let content = "Some text %%! n: _ | a note %% more";
+        let content = "Some text <!--- n: _ | a note ---> more";
         let result = extract_annotations(content);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].annotation_type, "note");
@@ -952,14 +996,14 @@ mod tests {
 
     #[test]
     fn extract_annotations_multiple() {
-        let content = "%%! n: _ | first %% stuff %%! q: _ | second %%";
+        let content = "<!--- n: _ | first ---> stuff <!--- q: _ | second --->";
         let result = extract_annotations(content);
         assert_eq!(result.len(), 2);
     }
 
     #[test]
     fn extract_annotations_no_body() {
-        let content = "%%! n: _ %%";
+        let content = "<!--- n: _ --->";
         let result = extract_annotations(content);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].body, None);
@@ -967,7 +1011,7 @@ mod tests {
 
     #[test]
     fn extract_annotations_multiline() {
-        let content = "line one\nline two\n%%! n: _ | note %%";
+        let content = "line one\nline two\n<!--- n: _ | note --->";
         let result = extract_annotations(content);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].source_line, 3);
@@ -981,7 +1025,7 @@ mod tests {
 
     #[test]
     fn extract_annotations_llm_type() {
-        let content = "Some text %%! llm | summarize %% more";
+        let content = "Some text <!--- llm | summarize ---> more";
         let result = extract_annotations(content);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].annotation_type, "llm");
@@ -989,7 +1033,7 @@ mod tests {
 
     #[test]
     fn extract_annotations_document_scope() {
-        let content = r"%%! llm \d | summarize %%";
+        let content = r"<!--- llm \d | summarize --->";
         let result = extract_annotations(content);
         assert_eq!(result[0].scope_kind, "document");
         assert_eq!(result[0].scope_value, "");
@@ -997,7 +1041,7 @@ mod tests {
 
     #[test]
     fn extract_annotations_section_scope() {
-        let content = r"%%! n: \h | section note %%";
+        let content = r"<!--- n: \h | section note --->";
         let result = extract_annotations(content);
         assert_eq!(result[0].scope_kind, "section");
         assert_eq!(result[0].scope_value, "");
@@ -1005,7 +1049,7 @@ mod tests {
 
     #[test]
     fn extract_annotations_asymmetric_scope() {
-        let content = r"%%! n 3\p1 | asymmetric note %%";
+        let content = r"<!--- n 3\p1 | asymmetric note --->";
         let result = extract_annotations(content);
         assert_eq!(result[0].scope_kind, "asymmetric_paragraph");
         assert_eq!(result[0].scope_value, "3:1");

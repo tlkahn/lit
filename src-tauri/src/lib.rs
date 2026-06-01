@@ -342,6 +342,7 @@ pub fn run() {
             commands::annotation::search_annotations,
             commands::annotation::list_annotations,
             commands::annotation::annotation_find_uuid,
+            commands::annotation::migrate_annotations,
             commands::conversation::conversation_create,
             commands::conversation::conversation_get,
             commands::conversation::conversation_list,

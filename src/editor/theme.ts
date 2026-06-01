@@ -26,8 +26,11 @@ export const editorTheme: Extension = [
       color: "var(--text-normal)",
     },
     ".cm-cursor": { borderLeftColor: "var(--text-normal)" },
-    "&.cm-focused .cm-selectionBackground, .cm-selectionBackground": {
-      backgroundColor: "var(--text-selection)",
+    ".cm-content ::selection": {
+      backgroundColor: "var(--text-selection) !important",
+    },
+    ".cm-content::selection": {
+      backgroundColor: "var(--text-selection) !important",
     },
   }),
 ];
@@ -41,8 +44,11 @@ export const editorDarkTheme: Extension = [
         color: "var(--text-normal)",
       },
       ".cm-cursor": { borderLeftColor: "var(--text-normal)" },
-      "&.cm-focused .cm-selectionBackground, .cm-selectionBackground": {
-        backgroundColor: "var(--text-selection)",
+      ".cm-content ::selection": {
+        backgroundColor: "var(--text-selection) !important",
+      },
+      ".cm-content::selection": {
+        backgroundColor: "var(--text-selection) !important",
       },
     },
     { dark: true },

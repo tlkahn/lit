@@ -949,7 +949,7 @@ impl Store {
         let diff = match_annotations(&existing, annotations);
 
         let mut update_stmt = self.conn.prepare(
-            "UPDATE annotations SET certainty=?1, date=?2, source_line=?3, char_start=?4, char_end=?5, scope_kind=?6, scope_value=?7 WHERE id=?8",
+            "UPDATE annotations SET certainty=?1, date=?2, source_line=?3, char_start=?4, char_end=?5, scope_kind=?6, scope_value=?7, uuid=COALESCE(?8, uuid) WHERE id=?9",
         )?;
         for &(new_idx, old_idx) in &diff.updates {
             let ann = &annotations[new_idx];
@@ -961,6 +961,7 @@ impl Store {
                 ann.char_end,
                 ann.scope_kind,
                 ann.scope_value,
+                ann.uuid,
                 existing[old_idx].id,
             ])?;
         }
@@ -972,7 +973,7 @@ impl Store {
         let mut inserted_rowids = Vec::with_capacity(diff.inserts.len());
         for &new_idx in &diff.inserts {
             let ann = &annotations[new_idx];
-            let uuid_val = uuid::Uuid::new_v4().to_string();
+            let uuid_val = ann.uuid.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             insert_stmt.execute(rusqlite::params![
                 node_id,
                 ann.annotation_type,
@@ -1489,6 +1490,7 @@ mod tests {
                 char_end: 10,
                 scope_kind: "file".into(),
                 scope_value: "a.md".into(),
+                uuid: None,
             }]).unwrap();
             use super::super::types::Position;
             let mut positions = HashMap::new();
@@ -2724,6 +2726,7 @@ mod tests {
             char_end: 10,
             scope_kind: "words".into(),
             scope_value: "1".into(),
+            uuid: None,
         }
     }
 
@@ -3190,6 +3193,7 @@ mod tests {
             char_end: 50,
             scope_kind: "words".into(),
             scope_value: "2".into(),
+            uuid: None,
         };
         store.upsert_annotations("a.md", &[ann]).unwrap();
 
@@ -4721,5 +4725,42 @@ mod tests {
 
         let result = store.fetch_existing_annotations("a.md");
         assert!(result.is_err(), "should propagate row-level deserialization error for NULL uuid");
+    }
+
+    #[test]
+    fn upsert_annotations_update_applies_user_uuid() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        // First insert: no user-specified uuid → auto-generated v4 UUID
+        let anns = vec![make_annotation("note", Some("body"))];
+        store.upsert_annotations("a.md", &anns).unwrap();
+
+        let auto_uuid: String = store.conn.query_row(
+            "SELECT uuid FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(auto_uuid.len(), 36, "should be auto-generated v4 UUID");
+
+        // Second upsert: same body (matches existing) but with a user-specified [id]
+        let anns2 = vec![super::IndexableAnnotation {
+            uuid: Some("my-custom-id".into()),
+            ..make_annotation("note", Some("body"))
+        }];
+        store.upsert_annotations("a.md", &anns2).unwrap();
+
+        let updated_uuid: String = store.conn.query_row(
+            "SELECT uuid FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(updated_uuid, "my-custom-id", "user-specified uuid should replace auto-generated one");
+
+        // Third upsert: same body, uuid=None → should keep existing "my-custom-id"
+        let anns3 = vec![make_annotation("note", Some("body"))];
+        store.upsert_annotations("a.md", &anns3).unwrap();
+
+        let preserved_uuid: String = store.conn.query_row(
+            "SELECT uuid FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(preserved_uuid, "my-custom-id", "COALESCE should preserve existing uuid when incoming is None");
     }
 }

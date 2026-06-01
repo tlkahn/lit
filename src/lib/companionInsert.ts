@@ -4,6 +4,7 @@ import { generateDsl } from "./annotationDsl";
 
 export function buildCompanionDsl(responseText: string): string {
   return generateDsl({
+    id: null,
     type: "note",
     certainty: "neutral",
     scope: null,

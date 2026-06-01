@@ -93,7 +93,7 @@ export function BacklinksPanel({ pageId, onCountChange, contentHeight }: Backlin
 
   if (!graphReady) {
     return (
-      <div className="px-6 py-2" data-testid="backlinks-building">
+      <div className="px-4 py-2" data-testid="backlinks-building">
         <div className="flex items-center gap-2 py-1">
           <svg
             className="h-3 w-3 animate-spin text-text-faint"
@@ -111,7 +111,7 @@ export function BacklinksPanel({ pageId, onCountChange, contentHeight }: Backlin
   }
 
   return (
-    <div className="px-6 py-2">
+    <div className="flex h-full flex-col px-4 py-2">
       {entries.length === 0 ? (
         <p className="text-xs text-text-faint">
           No other pages link to this page
@@ -121,7 +121,7 @@ export function BacklinksPanel({ pageId, onCountChange, contentHeight }: Backlin
           ref={scrollRef}
           data-testid="backlinks-scroll-container"
           data-virtual-scroll
-          className="overflow-y-auto"
+          className={`overflow-y-auto${contentHeight == null ? " min-h-0 flex-1" : ""}`}
           style={contentHeight != null ? { height: contentHeight } : undefined}
         >
           <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>

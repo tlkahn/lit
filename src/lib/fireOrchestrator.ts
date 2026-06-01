@@ -34,6 +34,7 @@ export function getTypePrompt(annotationType: AnnotationType): string {
 
 export function stripAnnotations(text: string): string {
   return text
+    .replace(/<!---[\s\S]*?--->/g, "")
     .replace(/%%![\s\S]*?%%/g, "")
     .replace(/[ \t]{2,}/g, " ")
     .replace(/\n{2,}/g, "\n")

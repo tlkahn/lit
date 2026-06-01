@@ -58,42 +58,42 @@ describe("createAnnotationInputHandler", () => {
     }).not.toThrow();
   });
 
-  it("typing ! after %% returns true and deletes the %%", () => {
-    const view = makeView("hello %%", 8);
-    const intercepted = simulateInput(view, "!");
+  it("typing - after <!-- returns true and deletes the <!--", () => {
+    const view = makeView("hello <!--", 10);
+    const intercepted = simulateInput(view, "-");
     expect(intercepted).toBe(true);
     expect(view.state.doc.toString()).toBe("hello ");
   });
 
-  it("typing ! without preceding %% returns false", () => {
+  it("typing - without preceding <!-- returns false", () => {
     const view = makeView("hello ", 6);
-    const intercepted = simulateInput(view, "!");
+    const intercepted = simulateInput(view, "-");
     expect(intercepted).toBe(false);
   });
 
-  it("typing ! after single % does not trigger", () => {
-    const view = makeView("hello %", 7);
-    const intercepted = simulateInput(view, "!");
+  it("typing - after single < does not trigger", () => {
+    const view = makeView("hello <", 7);
+    const intercepted = simulateInput(view, "-");
     expect(intercepted).toBe(false);
   });
 
-  it("typing ! after %% inside a fenced code block does not trigger", () => {
-    const doc = "```\nhello %%\n```";
-    const cursorPos = 12;
+  it("typing - after <!-- inside a fenced code block does not trigger", () => {
+    const doc = "```\nhello <!--\n```";
+    const cursorPos = 14;
     const view = makeView(doc, cursorPos);
-    const intercepted = simulateInput(view, "!");
+    const intercepted = simulateInput(view, "-");
     expect(intercepted).toBe(false);
   });
 
-  it("multi-char input (paste) containing %%! does not trigger", () => {
+  it("multi-char input (paste) containing <!--- does not trigger", () => {
     const view = makeView("hello ", 6);
-    const intercepted = simulateInput(view, "%%!");
+    const intercepted = simulateInput(view, "<!---");
     expect(intercepted).toBe(false);
   });
 
   it("dispatches lit:open-annotation-builder event on trigger", () => {
-    const view = makeView("hello %%", 8);
-    simulateInput(view, "!");
+    const view = makeView("hello <!--", 10);
+    simulateInput(view, "-");
     expect(dispatchedEvents).toHaveLength(1);
     expect(dispatchedEvents[0]!.type).toBe("lit:open-annotation-builder");
   });
