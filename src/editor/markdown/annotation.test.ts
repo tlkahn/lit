@@ -25,20 +25,22 @@ function parseNodes(doc: string) {
 }
 
 describe("InlineAnnotation parser", () => {
-  it("parses %%!note%% as InlineAnnotation mid-line", () => {
-    const nodes = parseNodes("text %%!note%% more");
+  it("parses <!---note---> as InlineAnnotation mid-line", () => {
+    // "text " = 5 chars, "<!---note--->" = 13 chars (5+4+4), ends at 18
+    const nodes = parseNodes("text <!---note---> more");
     const ia = nodes.find((n) => n.name === "InlineAnnotation");
     expect(ia).toBeDefined();
     expect(ia!.from).toBe(5);
-    expect(ia!.to).toBe(14);
+    expect(ia!.to).toBe(18);
   });
 
   it("produces InlineAnnotationMark children at correct positions", () => {
-    const nodes = parseNodes("text %%!note%% more");
+    // "text " = 5, open mark: 5..10 (5 chars), close mark: 14..18 (4 chars)
+    const nodes = parseNodes("text <!---note---> more");
     const marks = nodes.filter((n) => n.name === "InlineAnnotationMark");
     expect(marks).toHaveLength(2);
-    expect(marks[0]).toEqual({ name: "InlineAnnotationMark", from: 5, to: 8 });
-    expect(marks[1]).toEqual({ name: "InlineAnnotationMark", from: 12, to: 14 });
+    expect(marks[0]).toEqual({ name: "InlineAnnotationMark", from: 5, to: 10 });
+    expect(marks[1]).toEqual({ name: "InlineAnnotationMark", from: 14, to: 18 });
   });
 
   it("does not match plain %%hidden%% — still InlineComment", () => {
@@ -47,39 +49,43 @@ describe("InlineAnnotation parser", () => {
     expect(nodes.some((n) => n.name === "InlineComment")).toBe(true);
   });
 
-  it("does not match unclosed %%!", () => {
-    const nodes = parseNodes("text %%!unclosed");
+  it("does not match unclosed <!---", () => {
+    const nodes = parseNodes("text <!---unclosed");
     expect(nodes.some((n) => n.name === "InlineAnnotation")).toBe(false);
   });
 
-  it("does not match single %", () => {
-    const nodes = parseNodes("%!not annotation%");
+  it("does not match single <", () => {
+    const nodes = parseNodes("<!not annotation--->");
     expect(nodes.some((n) => n.name === "InlineAnnotation")).toBe(false);
   });
 
   it("does not span newlines", () => {
-    const nodes = parseNodes("%%!broken\nannotation%%");
+    const nodes = parseNodes("<!---broken\nannotation--->");
     expect(nodes.some((n) => n.name === "InlineAnnotation")).toBe(false);
   });
 
   it("parses adjacent annotations as two separate nodes", () => {
-    const nodes = parseNodes("text %%!a%%%%!b%% end");
+    // "text " = 5
+    // "<!---a--->" = 10 chars (5+1+4), from 5 to 15
+    // "<!---b--->" = 10 chars, from 15 to 25
+    const nodes = parseNodes("text <!---a---><!---b---> end");
     const annotations = nodes.filter((n) => n.name === "InlineAnnotation");
     expect(annotations).toHaveLength(2);
     expect(annotations[0]!.from).toBe(5);
-    expect(annotations[0]!.to).toBe(11);
-    expect(annotations[1]!.from).toBe(11);
-    expect(annotations[1]!.to).toBe(17);
+    expect(annotations[0]!.to).toBe(15);
+    expect(annotations[1]!.from).toBe(15);
+    expect(annotations[1]!.to).toBe(25);
   });
 });
 
 describe("BlockAnnotation parser", () => {
-  it("parses multi-line %%!...%% as BlockAnnotation", () => {
-    const nodes = parseNodes("%%!\ncontent\n%%");
+  it("parses multi-line <!---...--->  as BlockAnnotation", () => {
+    // "<!---\ncontent\n--->" = 5+1+7+1+4 = 18
+    const nodes = parseNodes("<!---\ncontent\n--->");
     const ba = nodes.find((n) => n.name === "BlockAnnotation");
     expect(ba).toBeDefined();
     expect(ba!.from).toBe(0);
-    expect(ba!.to).toBe(14);
+    expect(ba!.to).toBe(18);
   });
 
   it("does not match plain %%...%% — still BlockComment", () => {
@@ -88,22 +94,23 @@ describe("BlockAnnotation parser", () => {
     expect(nodes.some((n) => n.name === "BlockComment")).toBe(true);
   });
 
-  it("parses single-line %%!content%% at line start as BlockAnnotation", () => {
-    const nodes = parseNodes("%%!content%%");
+  it("parses single-line <!---content---> at line start as BlockAnnotation", () => {
+    // "<!---content--->" = 5+7+4 = 16
+    const nodes = parseNodes("<!---content--->");
     const ba = nodes.find((n) => n.name === "BlockAnnotation");
     expect(ba).toBeDefined();
     expect(ba!.from).toBe(0);
-    expect(ba!.to).toBe(12);
+    expect(ba!.to).toBe(16);
   });
 
-  it("unclosed %%! still produces BlockAnnotation (graceful degradation)", () => {
-    const nodes = parseNodes("%%!\nunclosed");
+  it("unclosed <!--- still produces BlockAnnotation (graceful degradation)", () => {
+    const nodes = parseNodes("<!---\nunclosed");
     const ba = nodes.find((n) => n.name === "BlockAnnotation");
     expect(ba).toBeDefined();
   });
 
-  it("closing %% with trailing whitespace works", () => {
-    const nodes = parseNodes("%%!\ncontent\n%%  ");
+  it("closing ---> with trailing whitespace works", () => {
+    const nodes = parseNodes("<!---\ncontent\n--->  ");
     const ba = nodes.find((n) => n.name === "BlockAnnotation");
     expect(ba).toBeDefined();
   });
@@ -112,11 +119,11 @@ describe("BlockAnnotation parser", () => {
     const doc = [
       "3.生气时先默数10秒再说话(卡耐基基金会)",
       "",
-      "%%! q \\s | what does this mean? %%",
+      "<!--- q \\s | what does this mean? --->",
       "",
       "4.接电话前先微笑(加州大学)",
       "",
-      "%%! q \\s | what does this mean? %%",
+      "<!--- q \\s | what does this mean? --->",
     ].join("\n");
     const nodes = parseNodes(doc);
     const annotations = nodes.filter((n) => n.name === "BlockAnnotation");
@@ -124,7 +131,7 @@ describe("BlockAnnotation parser", () => {
 
     // Verify positions match expected offsets
     const line1 = "3.生气时先默数10秒再说话(卡耐基基金会)";
-    const annText = "%%! q \\s | what does this mean? %%";
+    const annText = "<!--- q \\s | what does this mean? --->";
     const line2 = "4.接电话前先微笑(加州大学)";
     // first annotation starts after line1 + \n + \n
     const ann1Start = line1.length + 1 + 1;
@@ -141,53 +148,53 @@ describe("BlockAnnotation parser", () => {
   it("multi-line block annotation directly after paragraph (no blank line) renders", () => {
     const doc = [
       "4.接电话前先微笑(加州大学)",
-      "%%!",
+      "<!---",
       "n",
       "---",
       "body text",
-      "%%",
+      "--->",
     ].join("\n");
     const nodes = parseNodes(doc);
     const ba = nodes.find((n) => n.name === "BlockAnnotation");
     expect(ba).toBeDefined();
   });
 
-  it("single-line annotation directly after paragraph (no blank line) stays inline", () => {
-    const doc = "some paragraph text\n%%! q \\s | note %%";
+  it("single-line annotation directly after paragraph (no blank line) becomes block", () => {
+    // With <!--- delimiter, the built-in HTML comment block parser's endLeaf
+    // ends the paragraph, so single-line annotations on their own line after
+    // a paragraph are now parsed as BlockAnnotation (not InlineAnnotation).
+    const doc = "some paragraph text\n<!--- q \\s | note --->";
     const nodes = parseNodes(doc);
-    const inline = nodes.find((n) => n.name === "InlineAnnotation");
     const block = nodes.find((n) => n.name === "BlockAnnotation");
-    expect(inline).toBeDefined();
-    expect(block).toBeUndefined();
+    expect(block).toBeDefined();
   });
 
-  it("minimal single-line annotation after paragraph stays inline", () => {
-    const doc = "paragraph\n%%! x %%";
+  it("minimal single-line annotation after paragraph becomes block", () => {
+    const doc = "paragraph\n<!--- x --->";
     const nodes = parseNodes(doc);
-    const inline = nodes.find((n) => n.name === "InlineAnnotation");
     const block = nodes.find((n) => n.name === "BlockAnnotation");
-    expect(inline).toBeDefined();
-    expect(block).toBeUndefined();
+    expect(block).toBeDefined();
   });
 
-  it("single-line annotation with trailing whitespace after paragraph stays inline", () => {
-    const doc = "paragraph\n%%! content %%   ";
+  it("single-line annotation with trailing whitespace after paragraph becomes block", () => {
+    const doc = "paragraph\n<!--- content --->   ";
     const nodes = parseNodes(doc);
-    const inline = nodes.find((n) => n.name === "InlineAnnotation");
     const block = nodes.find((n) => n.name === "BlockAnnotation");
-    expect(inline).toBeDefined();
-    expect(block).toBeUndefined();
+    expect(block).toBeDefined();
   });
 
-  it("%%! with closing %% and extra text does not end leaf", () => {
-    const doc = "paragraph\n%%! note %% some trailing text";
+  it("<!--- with closing ---> and extra text after paragraph becomes block (unclosed)", () => {
+    // The built-in HTML endLeaf ends the paragraph. Our block parser sees
+    // the line starts with <!--- but doesn't end with --->, so it enters
+    // multi-line mode and creates a BlockAnnotation (graceful degradation).
+    const doc = "paragraph\n<!--- note ---> some trailing text";
     const nodes = parseNodes(doc);
     const block = nodes.find((n) => n.name === "BlockAnnotation");
-    expect(block).toBeUndefined();
+    expect(block).toBeDefined();
   });
 
   it("single-line annotation with trailing whitespace", () => {
-    const doc = "%%! q \\s | what does this mean? %% ";
+    const doc = "<!--- q \\s | what does this mean? ---> ";
     const nodes = parseNodes(doc);
     const ba = nodes.find((n) => n.name === "BlockAnnotation");
     expect(ba).toBeDefined();
@@ -199,28 +206,27 @@ describe("BlockAnnotation parser", () => {
   it("trailing-space annotation after paragraph does not swallow subsequent block annotation", () => {
     const doc = [
       "3.生气时先默数10秒再说话(卡耐基基金会)",
-      "%%! q \\s | what does this mean? %% ",
+      "<!--- q \\s | what does this mean? ---> ",
       "",
-      "%%!",
+      "<!---",
       "n",
       "---",
       "body text",
-      "%%",
+      "--->",
     ].join("\n");
     const nodes = parseNodes(doc);
-    // First annotation is inline (part of paragraph), second is a block
-    const inline = nodes.filter((n) => n.name === "InlineAnnotation");
+    // With <!--- delimiter, both annotations become blocks
+    // (the built-in HTML comment endLeaf ends the paragraph)
     const block = nodes.filter((n) => n.name === "BlockAnnotation");
-    expect(inline).toHaveLength(1);
-    expect(block).toHaveLength(1);
+    expect(block).toHaveLength(2);
   });
 
   it("real-world: two annotation groups with trailing spaces (user bug report)", () => {
     const doc = [
       "3.生气时先默数10秒再说话(卡耐基基金会) -- renders",
-      "%%! q \\s | what does this mean? %% ",
+      "<!--- q \\s | what does this mean? ---> ",
       "",
-      "%%!",
+      "<!---",
       "n",
       "---",
       "## Translation & Explanation",
@@ -229,13 +235,13 @@ describe("BlockAnnotation parser", () => {
       "",
       "**Translation:**",
       '> "When angry, silently count to 10 seconds before speaking"',
-      "%%",
+      "--->",
       "",
       "4.接电话前先微笑(加州大学) -- not renders",
       "",
-      "%%! q \\s | what does this mean? %% ",
+      "<!--- q \\s | what does this mean? ---> ",
       "",
-      "%%!",
+      "<!---",
       "n",
       "---",
       "## Translation and Explanation",
@@ -245,14 +251,13 @@ describe("BlockAnnotation parser", () => {
       "This is a **Chinese phrase** that translates to:",
       "",
       "...",
-      "%%",
+      "--->",
     ].join("\n");
     const nodes = parseNodes(doc);
-    const inline = nodes.filter((n) => n.name === "InlineAnnotation");
     const block = nodes.filter((n) => n.name === "BlockAnnotation");
-    // First single-line is inline (no blank line before it), rest are blocks
-    expect(inline).toHaveLength(1);
-    expect(block).toHaveLength(3);
+    // With <!--- delimiter, all annotations become blocks
+    // (the built-in HTML comment endLeaf ends paragraphs before inline parsing)
+    expect(block).toHaveLength(4);
   });
 
   it("block annotation after paragraph renders with full extension set (GFM, Frontmatter, etc.)", () => {
@@ -263,23 +268,23 @@ describe("BlockAnnotation parser", () => {
       "---",
       "3.生气时先默数10秒再说话(卡耐基基金会)",
       "",
-      "%%!",
+      "<!---",
       "n",
       "\\s",
       "---",
       "## Translation & Explanation",
       "",
       "**Chinese text:** 生气时先默数10秒再说话",
-      "%%",
+      "--->",
       "",
       "4.接电话前先微笑(加州大学)",
-      "%%!",
+      "<!---",
       "n",
       "---",
       "## Translation and Explanation",
       "",
       "body text",
-      "%%",
+      "--->",
     ].join("\n");
     const state = EditorState.create({
       doc,

@@ -23,8 +23,8 @@ function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
     date: null,
     is_structured: true,
     char_start: 5,
-    char_end: 18,
-    original: "%%!n | test%%",
+    char_end: 22,
+    original: "<!---n | test--->",
     ...overrides,
   };
 }
@@ -48,21 +48,23 @@ function makeView(doc: string, cursorPos: number, annotations: Annotation[] = []
 
 describe("escapeAnnotationKeymap", () => {
   it("ESC inside annotation moves cursor to char_end + 2 and clears scope highlight", () => {
-    const doc = "hello %%!n | test%% more text";
-    const ann = makeAnnotation({ char_start: 6, char_end: 19 });
+    // "hello <!---n | test---> more text"
+    // annotation: char_start=6, char_end=23
+    const doc = "hello <!---n | test---> more text";
+    const ann = makeAnnotation({ char_start: 6, char_end: 23 });
     const view = makeView(doc, 10, [ann]);
     view.dispatch({ effects: setScopeHighlight.of({ from: 0, to: 5 }) });
 
     const handled = runEsc(view);
     expect(handled).toBe(true);
-    expect(view.state.selection.main.head).toBe(21);
+    expect(view.state.selection.main.head).toBe(25);
     expect(view.state.field(scopeHighlightField)).toBe(Decoration.none);
     view.destroy();
   });
 
   it("ESC outside annotation returns false", () => {
-    const doc = "hello %%!n | test%% more text";
-    const ann = makeAnnotation({ char_start: 6, char_end: 19 });
+    const doc = "hello <!---n | test---> more text";
+    const ann = makeAnnotation({ char_start: 6, char_end: 23 });
     const view = makeView(doc, 2, [ann]);
 
     const handled = runEsc(view);
@@ -71,8 +73,8 @@ describe("escapeAnnotationKeymap", () => {
   });
 
   it("ESC with non-collapsed selection returns false", () => {
-    const doc = "hello %%!n | test%% more text";
-    const ann = makeAnnotation({ char_start: 6, char_end: 19 });
+    const doc = "hello <!---n | test---> more text";
+    const ann = makeAnnotation({ char_start: 6, char_end: 23 });
     const state = EditorState.create({
       doc,
       selection: EditorSelection.range(8, 14),
@@ -91,8 +93,9 @@ describe("escapeAnnotationKeymap", () => {
   });
 
   it("ESC clamps to doc length", () => {
-    const doc = "hi%%!n%%";
-    const ann = makeAnnotation({ char_start: 2, char_end: 8 });
+    // "hi<!---n--->" = 12 chars, annotation: char_start=2, char_end=12
+    const doc = "hi<!---n--->";
+    const ann = makeAnnotation({ char_start: 2, char_end: 12 });
     const view = makeView(doc, 5, [ann]);
 
     const handled = runEsc(view);

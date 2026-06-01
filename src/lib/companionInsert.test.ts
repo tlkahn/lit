@@ -18,8 +18,8 @@ function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
     date: null,
     is_structured: true,
     char_start: 6,
-    char_end: 20,
-    original: "%%!q | why? %%",
+    char_end: 25,
+    original: "<!--- q | why? --->",
     ...overrides,
   };
 }
@@ -29,8 +29,8 @@ describe("buildCompanionDsl", () => {
     const dsl = buildCompanionDsl("The answer is 42.");
     expect(dsl).toContain("n");
     expect(dsl).toContain("The answer is 42.");
-    expect(dsl).toMatch(/^%%!/);
-    expect(dsl).toMatch(/%%$/);
+    expect(dsl).toMatch(/^<!---/);
+    expect(dsl).toMatch(/--->$/);
   });
 
   it("uses block form for multiline response", () => {
@@ -42,36 +42,36 @@ describe("buildCompanionDsl", () => {
 
 describe("insertCompanionAnnotation", () => {
   it("inserts companion DSL after source annotation char_end", () => {
-    const doc = "hello %%!q | why? %% world";
+    const doc = "hello <!--- q | why? ---> world";
     const view = new EditorView({
       state: EditorState.create({ doc }),
       parent: document.createElement("div"),
     });
-    const ann = makeAnnotation({ char_start: 6, char_end: 20 });
+    const ann = makeAnnotation({ char_start: 6, char_end: 25 });
 
     insertCompanionAnnotation(view, ann, "The answer.");
 
     const result = view.state.doc.toString();
-    expect(result.slice(0, 20)).toBe("hello %%!q | why? %%");
-    expect(result.slice(20, 22)).toBe("\n\n");
-    expect(result.slice(22)).toContain("%%!");
-    expect(result.slice(22)).toContain("The answer.");
+    expect(result.slice(0, 25)).toBe("hello <!--- q | why? --->");
+    expect(result.slice(25, 27)).toBe("\n\n");
+    expect(result.slice(27)).toContain("<!---");
+    expect(result.slice(27)).toContain("The answer.");
 
     view.destroy();
   });
 
   it("source annotation text is unchanged after insertion", () => {
-    const doc = "hello %%!q | why? %% world";
+    const doc = "hello <!--- q | why? ---> world";
     const view = new EditorView({
       state: EditorState.create({ doc }),
       parent: document.createElement("div"),
     });
-    const ann = makeAnnotation({ char_start: 6, char_end: 20 });
+    const ann = makeAnnotation({ char_start: 6, char_end: 25 });
 
     insertCompanionAnnotation(view, ann, "answer");
 
     const result = view.state.doc.toString();
-    expect(result.slice(6, 20)).toBe("%%!q | why? %%");
+    expect(result.slice(6, 25)).toBe("<!--- q | why? --->");
 
     view.destroy();
   });

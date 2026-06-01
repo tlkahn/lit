@@ -48,7 +48,7 @@ function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
     is_structured: true,
     char_start: 0,
     char_end: 11,
-    original: "%%! llm | explain this %%",
+    original: "<!--- llm | explain this --->",
     ...overrides,
   };
 }
@@ -289,7 +289,7 @@ describe("fireAnnotation", () => {
   });
 
   it("excludes annotation syntax from scope text sent to LLM", async () => {
-    const doc = "接电话前先微笑\n%%! llm | what does this mean? %%";
+    const doc = "接电话前先微笑\n<!--- llm | what does this mean? --->";
     const view = makeView(doc);
     const ann = makeAnnotation({
       annotation_type: "llm",
@@ -302,15 +302,15 @@ describe("fireAnnotation", () => {
     await fireAnnotation({ view, annotation: ann });
 
     const [streamArgs] = mockStream.mock.calls[0]!;
-    expect(streamArgs.text).not.toContain("%%!");
-    expect(streamArgs.text).not.toContain("%%");
+    expect(streamArgs.text).not.toContain("<!---");
+    expect(streamArgs.text).not.toContain("--->");
     expect(streamArgs.text).toContain("接电话前先微笑");
     expect(streamArgs.text).toContain("what does this mean?");
     view.destroy();
   });
 
   it("strips multiple annotations from scope text", async () => {
-    const doc = "paragraph %%! todo | note1 %% middle %%! todo | note2 %% end";
+    const doc = "paragraph <!--- todo | note1 ---> middle <!--- todo | note2 ---> end";
     const view = makeView(doc);
     const ann = makeAnnotation({
       annotation_type: "todo",
@@ -323,8 +323,8 @@ describe("fireAnnotation", () => {
     await fireAnnotation({ view, annotation: ann });
 
     const [streamArgs] = mockStream.mock.calls[0]!;
-    expect(streamArgs.text).not.toContain("%%!");
-    expect(streamArgs.text).not.toContain("%%");
+    expect(streamArgs.text).not.toContain("<!---");
+    expect(streamArgs.text).not.toContain("--->");
     expect(streamArgs.text).toContain("paragraph");
     expect(streamArgs.text).toContain("middle");
     expect(streamArgs.text).toContain("end");
@@ -724,19 +724,19 @@ describe("fireAnnotation", () => {
 
 describe("stripAnnotations", () => {
   it("removes annotation at end of text", () => {
-    expect(stripAnnotations("接电话前先微笑\n%%! q \\p | ask %%")).toBe("接电话前先微笑");
+    expect(stripAnnotations("接电话前先微笑\n<!--- q \\p | ask --->")).toBe("接电话前先微笑");
   });
 
   it("removes annotation in middle of text", () => {
-    expect(stripAnnotations("before %%! llm | body %% after")).toBe("before after");
+    expect(stripAnnotations("before <!--- llm | body ---> after")).toBe("before after");
   });
 
   it("removes multiple annotations", () => {
-    expect(stripAnnotations("a %%! n | x %% b %%! q | y %% c")).toBe("a b c");
+    expect(stripAnnotations("a <!--- n | x ---> b <!--- q | y ---> c")).toBe("a b c");
   });
 
   it("removes block (multiline) annotation", () => {
-    expect(stripAnnotations("text\n%%!\nq\n---\nbody\n%%\nmore")).toBe("text\nmore");
+    expect(stripAnnotations("text\n<!---\nq\n---\nbody\n--->\nmore")).toBe("text\nmore");
   });
 
   it("returns text unchanged when no annotations", () => {
@@ -744,10 +744,10 @@ describe("stripAnnotations", () => {
   });
 
   it("returns empty string when annotation is entire text", () => {
-    expect(stripAnnotations("%%! q | body %%")).toBe("");
+    expect(stripAnnotations("<!--- q | body --->")).toBe("");
   });
 
   it("handles CJK text surrounding annotation", () => {
-    expect(stripAnnotations("你好%%! n | 注释 %%世界")).toBe("你好世界");
+    expect(stripAnnotations("你好<!--- n | 注释 --->世界")).toBe("你好世界");
   });
 });

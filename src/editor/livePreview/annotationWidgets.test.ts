@@ -39,8 +39,8 @@ function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
     date: null,
     is_structured: true,
     char_start: 0,
-    char_end: 13,
-    original: "%%!n | body%%",
+    char_end: 17,
+    original: "<!---n | body--->",
     ...overrides,
   };
 }
@@ -64,7 +64,7 @@ describe("PillWidget", () => {
       date: "2026-04",
       char_start: 0,
       char_end: 22,
-      original: "%%!n | hello @2026-04%%",
+      original: "<!---n | hello @2026-04--->",
     });
     const w = new PillWidget(ann);
     const dom = w.toDOM(view);
@@ -95,14 +95,14 @@ describe("PillWidget", () => {
   });
 
   it("eq returns true when original + charStart + charEnd match", () => {
-    const a = new PillWidget(makeAnnotation({ original: "%%!n%%", char_start: 0, char_end: 6 }));
-    const b = new PillWidget(makeAnnotation({ original: "%%!n%%", char_start: 0, char_end: 6, body: "different" }));
+    const a = new PillWidget(makeAnnotation({ original: "<!---n--->", char_start: 0, char_end: 10 }));
+    const b = new PillWidget(makeAnnotation({ original: "<!---n--->", char_start: 0, char_end: 10, body: "different" }));
     expect(a.eq(b)).toBe(true);
   });
 
   it("eq returns false when different", () => {
-    const a = new PillWidget(makeAnnotation({ original: "%%!n%%", char_start: 0, char_end: 6 }));
-    const b = new PillWidget(makeAnnotation({ original: "%%!q%%", char_start: 0, char_end: 6 }));
+    const a = new PillWidget(makeAnnotation({ original: "<!---n--->", char_start: 0, char_end: 10 }));
+    const b = new PillWidget(makeAnnotation({ original: "<!---q--->", char_start: 0, char_end: 10 }));
     expect(a.eq(b)).toBe(false);
   });
 
@@ -169,7 +169,7 @@ describe("CalloutWidget", () => {
       body: "body",
       char_start: 0,
       char_end: 18,
-      original: "%%!\nn!\n---\nbody\n%%",
+      original: "<!---\nn!\n---\nbody\n--->",
     });
     const w = new CalloutWidget(ann, false, 0);
     const dom = w.toDOM(null as unknown as import("@codemirror/view").EditorView);
@@ -229,8 +229,8 @@ describe("CalloutWidget", () => {
 
 describe("PillWidget click → edit event", () => {
   it("pill click dispatches lit:open-annotation-builder with edit detail", () => {
-    const view = makeEditorView("hello %%!n | test%% world");
-    const ann = makeAnnotation({ char_start: 6, char_end: 19, original: "%%!n | test%%" });
+    const view = makeEditorView("hello <!---n | test---> world");
+    const ann = makeAnnotation({ char_start: 6, char_end: 23, original: "<!---n | test--->" });
     const w = new PillWidget(ann);
     const dom = w.toDOM(view);
 
@@ -241,7 +241,7 @@ describe("PillWidget click → edit event", () => {
     const event = spy.mock.calls[0]![0] as CustomEvent;
     expect(event.detail.mode).toBe("edit");
     expect(event.detail.annotation).toBe(ann);
-    expect(event.detail.originalRange).toEqual({ from: 6, to: 19 });
+    expect(event.detail.originalRange).toEqual({ from: 6, to: 23 });
     window.removeEventListener("lit:open-annotation-builder", spy);
     view.destroy();
   });
@@ -249,8 +249,8 @@ describe("PillWidget click → edit event", () => {
 
 describe("CalloutWidget click → edit event", () => {
   it("header click dispatches lit:open-annotation-builder with edit detail", () => {
-    const view = makeEditorView("hello %%!n\n---\nbody\n%% world");
-    const ann = makeAnnotation({ form: "block", char_start: 6, char_end: 22 });
+    const view = makeEditorView("hello <!---n\n---\nbody\n---> world");
+    const ann = makeAnnotation({ form: "block", char_start: 6, char_end: 26 });
     const w = new CalloutWidget(ann, false, 6);
     const dom = w.toDOM(view);
 
@@ -263,14 +263,14 @@ describe("CalloutWidget click → edit event", () => {
     const event = spy.mock.calls[0]![0] as CustomEvent;
     expect(event.detail.mode).toBe("edit");
     expect(event.detail.annotation).toBe(ann);
-    expect(event.detail.originalRange).toEqual({ from: 6, to: 22 });
+    expect(event.detail.originalRange).toEqual({ from: 6, to: 26 });
     window.removeEventListener("lit:open-annotation-builder", spy);
     view.destroy();
   });
 
   it("fold arrow click does NOT dispatch edit event", () => {
-    const view = makeEditorView("hello %%!n\n---\nbody\n%% world");
-    const ann = makeAnnotation({ form: "block", char_start: 6, char_end: 22 });
+    const view = makeEditorView("hello <!---n\n---\nbody\n---> world");
+    const ann = makeAnnotation({ form: "block", char_start: 6, char_end: 26 });
     const w = new CalloutWidget(ann, false, 6);
     const dom = w.toDOM(view);
 
@@ -372,14 +372,14 @@ describe("MarkerWidget", () => {
   });
 
   it("eq compares original + char_start + char_end", () => {
-    const a = new MarkerWidget(makeAnnotation({ original: "%%!n%%", char_start: 0, char_end: 6 }));
-    const b = new MarkerWidget(makeAnnotation({ original: "%%!n%%", char_start: 0, char_end: 6, body: "different" }));
+    const a = new MarkerWidget(makeAnnotation({ original: "<!---n--->", char_start: 0, char_end: 10 }));
+    const b = new MarkerWidget(makeAnnotation({ original: "<!---n--->", char_start: 0, char_end: 10, body: "different" }));
     expect(a.eq(b)).toBe(true);
   });
 
   it("eq returns false when different", () => {
-    const a = new MarkerWidget(makeAnnotation({ original: "%%!n%%", char_start: 0, char_end: 6 }));
-    const b = new MarkerWidget(makeAnnotation({ original: "%%!q%%", char_start: 0, char_end: 6 }));
+    const a = new MarkerWidget(makeAnnotation({ original: "<!---n--->", char_start: 0, char_end: 10 }));
+    const b = new MarkerWidget(makeAnnotation({ original: "<!---q--->", char_start: 0, char_end: 10 }));
     expect(a.eq(b)).toBe(false);
   });
 

@@ -24,7 +24,7 @@ function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
     is_structured: true,
     char_start: 0,
     char_end: 10,
-    original: "%%! n %%",
+    original: "<!--- n --->",
     ...overrides,
   };
 }
@@ -33,13 +33,13 @@ describe("generateDsl", () => {
   describe("compact form", () => {
     it("bare annotation with just body", () => {
       expect(generateDsl(fields({ body: "compare Vasugupta SpK 1.1" }))).toBe(
-        "%%! compare Vasugupta SpK 1.1 %%",
+        "<!--- compare Vasugupta SpK 1.1 --->",
       );
     });
 
     it("note type with body", () => {
       expect(generateDsl(fields({ type: "note", body: "a note" }))).toBe(
-        "%%! n | a note %%",
+        "<!--- n | a note --->",
       );
     });
 
@@ -54,7 +54,7 @@ describe("generateDsl", () => {
             date: "2026-03",
           }),
         ),
-      ).toBe("%%! q? __ | same sense as TĀ 3.68? @2026-03 %%");
+      ).toBe("<!--- q? __ | same sense as TĀ 3.68? @2026-03 --->");
     });
 
     it("todo firm with anchor scope", () => {
@@ -67,7 +67,7 @@ describe("generateDsl", () => {
             body: "Sanderson 2007 handout says 9th c.",
           }),
         ),
-      ).toBe('%%! todo! ^"8th century" | Sanderson 2007 handout says 9th c. %%');
+      ).toBe('<!--- todo! ^"8th century" | Sanderson 2007 handout says 9th c. --->');
     });
 
     it("crossref with paragraph scope, no body", () => {
@@ -78,13 +78,13 @@ describe("generateDsl", () => {
             scope: { kind: "paragraph", value: 2 },
           }),
         ),
-      ).toBe("%%! cf \\pp %%");
+      ).toBe("<!--- cf \\pp --->");
     });
 
     it("apparatus type", () => {
       expect(
         generateDsl(fields({ type: "apparatus", body: "variant reading in ms. B" })),
-      ).toBe("%%! app | variant reading in ms. B %%");
+      ).toBe("<!--- app | variant reading in ms. B --->");
     });
 
     it("translation type with date", () => {
@@ -97,7 +97,7 @@ describe("generateDsl", () => {
             date: "2026-03",
           }),
         ),
-      ).toBe("%%! tr _ | cf. Tibetan version @2026-03 %%");
+      ).toBe("<!--- tr _ | cf. Tibetan version @2026-03 --->");
     });
 
     it("note firm with page scope", () => {
@@ -110,13 +110,13 @@ describe("generateDsl", () => {
             body: "page-level note",
           }),
         ),
-      ).toBe("%%! n! \\f | page-level note %%");
+      ).toBe("<!--- n! \\f | page-level note --->");
     });
 
     it("sentence scope defaults omitted (null scope)", () => {
       expect(
         generateDsl(fields({ type: "note", body: "no scope specified" })),
-      ).toBe("%%! n | no scope specified %%");
+      ).toBe("<!--- n | no scope specified --->");
     });
 
     it("sentence scope explicit", () => {
@@ -128,7 +128,7 @@ describe("generateDsl", () => {
             body: "two sentences",
           }),
         ),
-      ).toBe("%%! n \\ss | two sentences %%");
+      ).toBe("<!--- n \\ss | two sentences --->");
     });
 
     it("page scope 3", () => {
@@ -139,7 +139,7 @@ describe("generateDsl", () => {
             scope: { kind: "page", value: 3 },
           }),
         ),
-      ).toBe("%%! cf \\fff %%");
+      ).toBe("<!--- cf \\fff --->");
     });
 
     it("words scope 3", () => {
@@ -151,7 +151,7 @@ describe("generateDsl", () => {
             body: "three words",
           }),
         ),
-      ).toBe("%%! n ___ | three words %%");
+      ).toBe("<!--- n ___ | three words --->");
     });
 
     it("paragraph scope 1", () => {
@@ -163,7 +163,7 @@ describe("generateDsl", () => {
             body: "one paragraph",
           }),
         ),
-      ).toBe("%%! n \\p | one paragraph %%");
+      ).toBe("<!--- n \\p | one paragraph --->");
     });
 
     it("sentence scope 1 explicit is included", () => {
@@ -175,7 +175,7 @@ describe("generateDsl", () => {
             body: "one sentence",
           }),
         ),
-      ).toBe("%%! n \\s | one sentence %%");
+      ).toBe("<!--- n \\s | one sentence --->");
     });
   });
 
@@ -192,7 +192,7 @@ describe("generateDsl", () => {
           }),
         ),
       ).toBe(
-        "%%!\nn!\n\\p\n@2026-03-28\n---\nLambert's framing maps closely to Tainter's\ncomplexity brake.\n%%",
+        "<!---\nn!\n\\p\n@2026-03-28\n---\nLambert's framing maps closely to Tainter's\ncomplexity brake.\n--->",
       );
     });
 
@@ -201,7 +201,7 @@ describe("generateDsl", () => {
         "This is a very long annotation body that exceeds the eighty character threshold and should trigger block form output.";
       expect(
         generateDsl(fields({ type: "note", body: longBody })),
-      ).toBe(`%%!\nn\n---\n${longBody}\n%%`);
+      ).toBe(`<!---\nn\n---\n${longBody}\n--->`);
     });
 
     it("block with anchor scope", () => {
@@ -214,7 +214,7 @@ describe("generateDsl", () => {
             date: "2026-03",
           }),
         ),
-      ).toBe('%%!\ncf\n^"anuttara"\n@2026-03\n---\nPrimary parallels:\n- TĀ 3.68\n%%');
+      ).toBe('<!---\ncf\n^"anuttara"\n@2026-03\n---\nPrimary parallels:\n- TĀ 3.68\n--->');
     });
 
     it("empty body stays compact even with header fields", () => {
@@ -228,13 +228,13 @@ describe("generateDsl", () => {
             date: "2026-03-28",
           }),
         ),
-      ).toBe("%%! todo! \\p @2026-03-28 %%");
+      ).toBe("<!--- todo! \\p @2026-03-28 --->");
     });
 
     it("block bare with multiline body", () => {
       expect(
         generateDsl(fields({ body: "line one\nline two" })),
-      ).toBe("%%!\n---\nline one\nline two\n%%");
+      ).toBe("<!---\n---\nline one\nline two\n--->");
     });
   });
 
@@ -242,49 +242,49 @@ describe("generateDsl", () => {
     it("tentative outputs ?", () => {
       expect(
         generateDsl(fields({ type: "note", certainty: "tentative", body: "x" })),
-      ).toBe("%%! n? | x %%");
+      ).toBe("<!--- n? | x --->");
     });
 
     it("firm outputs !", () => {
       expect(
         generateDsl(fields({ type: "note", certainty: "firm", body: "x" })),
-      ).toBe("%%! n! | x %%");
+      ).toBe("<!--- n! | x --->");
     });
 
     it("neutral outputs nothing", () => {
       expect(
         generateDsl(fields({ type: "note", certainty: "neutral", body: "x" })),
-      ).toBe("%%! n | x %%");
+      ).toBe("<!--- n | x --->");
     });
   });
 
   describe("all types", () => {
     it("note → n", () => {
-      expect(generateDsl(fields({ type: "note" }))).toBe("%%! n %%");
+      expect(generateDsl(fields({ type: "note" }))).toBe("<!--- n --->");
     });
 
     it("question → q", () => {
-      expect(generateDsl(fields({ type: "question" }))).toBe("%%! q %%");
+      expect(generateDsl(fields({ type: "question" }))).toBe("<!--- q --->");
     });
 
     it("todo → todo", () => {
-      expect(generateDsl(fields({ type: "todo" }))).toBe("%%! todo %%");
+      expect(generateDsl(fields({ type: "todo" }))).toBe("<!--- todo --->");
     });
 
     it("crossref → cf", () => {
-      expect(generateDsl(fields({ type: "crossref" }))).toBe("%%! cf %%");
+      expect(generateDsl(fields({ type: "crossref" }))).toBe("<!--- cf --->");
     });
 
     it("apparatus → app", () => {
-      expect(generateDsl(fields({ type: "apparatus" }))).toBe("%%! app %%");
+      expect(generateDsl(fields({ type: "apparatus" }))).toBe("<!--- app --->");
     });
 
     it("translation → tr", () => {
-      expect(generateDsl(fields({ type: "translation" }))).toBe("%%! tr %%");
+      expect(generateDsl(fields({ type: "translation" }))).toBe("<!--- tr --->");
     });
 
     it("bare (null) with no body → minimal", () => {
-      expect(generateDsl(fields())).toBe("%%!  %%");
+      expect(generateDsl(fields())).toBe("<!---  --->");
     });
   });
 
@@ -292,18 +292,18 @@ describe("generateDsl", () => {
     it("YYYY-MM format", () => {
       expect(
         generateDsl(fields({ type: "note", body: "x", date: "2026-03" })),
-      ).toBe("%%! n | x @2026-03 %%");
+      ).toBe("<!--- n | x @2026-03 --->");
     });
 
     it("YYYY-MM-DD format", () => {
       expect(
         generateDsl(fields({ type: "note", body: "x", date: "2026-03-28" })),
-      ).toBe("%%! n | x @2026-03-28 %%");
+      ).toBe("<!--- n | x @2026-03-28 --->");
     });
 
     it("null date omitted", () => {
       expect(generateDsl(fields({ type: "note", body: "x" }))).toBe(
-        "%%! n | x %%",
+        "<!--- n | x --->",
       );
     });
   });
@@ -312,7 +312,7 @@ describe("generateDsl", () => {
     it("empty body with type only", () => {
       expect(
         generateDsl(fields({ type: "note", scope: { kind: "words", value: 1 } })),
-      ).toBe("%%! n _ %%");
+      ).toBe("<!--- n _ --->");
     });
 
     it("anchor scope with special characters", () => {
@@ -324,40 +324,40 @@ describe("generateDsl", () => {
             body: "test",
           }),
         ),
-      ).toBe('%%! n ^"a \\"quoted\\" phrase" | test %%');
+      ).toBe('<!--- n ^"a \\"quoted\\" phrase" | test --->');
     });
 
     it("date with no body in compact", () => {
       expect(
         generateDsl(fields({ type: "note", date: "2026-03" })),
-      ).toBe("%%! n @2026-03 %%");
+      ).toBe("<!--- n @2026-03 --->");
     });
   });
 });
 
 describe("getEditCursorOffset", () => {
   it("compact bare body", () => {
-    expect(getEditCursorOffset("%%! body %%")).toBe(4);
+    expect(getEditCursorOffset("<!--- body --->")).toBe(6);
   });
 
   it("compact typed", () => {
-    expect(getEditCursorOffset("%%! n | a note %%")).toBe(4);
+    expect(getEditCursorOffset("<!--- n | a note --->")).toBe(6);
   });
 
   it("compact with scope+date", () => {
-    expect(getEditCursorOffset("%%! q? __ | x @2026-03 %%")).toBe(4);
+    expect(getEditCursorOffset("<!--- q? __ | x @2026-03 --->")).toBe(6);
   });
 
   it("block with type+body", () => {
-    expect(getEditCursorOffset("%%!\nn\n---\nbody\n%%")).toBe(10);
+    expect(getEditCursorOffset("<!---\nn\n---\nbody\n--->")).toBe(12);
   });
 
   it("block full headers", () => {
-    expect(getEditCursorOffset("%%!\nn!\n\\p\n@2026-03\n---\nbody\n%%")).toBe(23);
+    expect(getEditCursorOffset("<!---\nn!\n\\p\n@2026-03\n---\nbody\n--->")).toBe(25);
   });
 
   it("block bare body", () => {
-    expect(getEditCursorOffset("%%!\n---\nline one\nline two\n%%")).toBe(8);
+    expect(getEditCursorOffset("<!---\n---\nline one\nline two\n--->")).toBe(10);
   });
 });
 
@@ -418,7 +418,7 @@ describe("annotationToFields", () => {
     it("words scope passes through", () => {
       const f = annotationToFields(makeAnnotation({
         scope: { kind: "words", value: 2 },
-        original: "%%! n __ | body %%",
+        original: "<!--- n __ | body --->",
       }));
       expect(f.scope).toEqual({ kind: "words", value: 2 });
     });
@@ -426,7 +426,7 @@ describe("annotationToFields", () => {
     it("paragraph scope passes through", () => {
       const f = annotationToFields(makeAnnotation({
         scope: { kind: "paragraph", value: 1 },
-        original: "%%! n \\p | body %%",
+        original: "<!--- n \\p | body --->",
       }));
       expect(f.scope).toEqual({ kind: "paragraph", value: 1 });
     });
@@ -434,7 +434,7 @@ describe("annotationToFields", () => {
     it("page scope passes through", () => {
       const f = annotationToFields(makeAnnotation({
         scope: { kind: "page", value: 1 },
-        original: "%%! n \\f | body %%",
+        original: "<!--- n \\f | body --->",
       }));
       expect(f.scope).toEqual({ kind: "page", value: 1 });
     });
@@ -442,7 +442,7 @@ describe("annotationToFields", () => {
     it("anchor scope passes through", () => {
       const f = annotationToFields(makeAnnotation({
         scope: { kind: "anchor", value: "some text" },
-        original: '%%! n ^"some text" | body %%',
+        original: '<!--- n ^"some text" | body --->',
       }));
       expect(f.scope).toEqual({ kind: "anchor", value: "some text" });
     });
@@ -450,7 +450,7 @@ describe("annotationToFields", () => {
     it("sentence(1) without explicit scope in original → null", () => {
       const f = annotationToFields(makeAnnotation({
         scope: { kind: "sentence", value: 1 },
-        original: "%%! n | body %%",
+        original: "<!--- n | body --->",
       }));
       expect(f.scope).toBeNull();
     });
@@ -458,7 +458,7 @@ describe("annotationToFields", () => {
     it("sentence(1) with explicit \\s in original → passes through", () => {
       const f = annotationToFields(makeAnnotation({
         scope: { kind: "sentence", value: 1 },
-        original: "%%! n \\s | body %%",
+        original: "<!--- n \\s | body --->",
       }));
       expect(f.scope).toEqual({ kind: "sentence", value: 1 });
     });
@@ -466,7 +466,7 @@ describe("annotationToFields", () => {
     it("sentence(2) always passes through", () => {
       const f = annotationToFields(makeAnnotation({
         scope: { kind: "sentence", value: 2 },
-        original: "%%! n \\ss | body %%",
+        original: "<!--- n \\ss | body --->",
       }));
       expect(f.scope).toEqual({ kind: "sentence", value: 2 });
     });
@@ -474,7 +474,7 @@ describe("annotationToFields", () => {
     it("sentence(1) with _ in original → passes through (words detected)", () => {
       const f = annotationToFields(makeAnnotation({
         scope: { kind: "sentence", value: 1 },
-        original: "%%! n _ | body %%",
+        original: "<!--- n _ | body --->",
       }));
       expect(f.scope).toEqual({ kind: "sentence", value: 1 });
     });
@@ -482,7 +482,7 @@ describe("annotationToFields", () => {
     it("sentence(1) with ^\" in body but no scope marker → null", () => {
       const f = annotationToFields(makeAnnotation({
         scope: { kind: "sentence", value: 1 },
-        original: '%%! n | see ^"foo" %%',
+        original: '<!--- n | see ^"foo" --->',
       }));
       expect(f.scope).toBeNull();
     });
@@ -514,9 +514,9 @@ describe("annotationToFields", () => {
         annotation_type: "note",
         scope: { kind: "sentence", value: 1 },
         body: "a note",
-        original: "%%! n | a note %%",
+        original: "<!--- n | a note --->",
       });
-      expect(generateDsl(annotationToFields(ann))).toBe("%%! n | a note %%");
+      expect(generateDsl(annotationToFields(ann))).toBe("<!--- n | a note --->");
     });
 
     it("question tentative with words scope round-trips", () => {
@@ -526,9 +526,9 @@ describe("annotationToFields", () => {
         scope: { kind: "words", value: 2 },
         body: "same sense?",
         date: "2026-03",
-        original: "%%! q? __ | same sense? @2026-03 %%",
+        original: "<!--- q? __ | same sense? @2026-03 --->",
       });
-      expect(generateDsl(annotationToFields(ann))).toBe("%%! q? __ | same sense? @2026-03 %%");
+      expect(generateDsl(annotationToFields(ann))).toBe("<!--- q? __ | same sense? @2026-03 --->");
     });
 
     it("bare annotation with just body round-trips", () => {
@@ -536,9 +536,9 @@ describe("annotationToFields", () => {
         annotation_type: "bare",
         scope: { kind: "sentence", value: 1 },
         body: "compare Vasugupta",
-        original: "%%! compare Vasugupta %%",
+        original: "<!--- compare Vasugupta --->",
       });
-      expect(generateDsl(annotationToFields(ann))).toBe("%%! compare Vasugupta %%");
+      expect(generateDsl(annotationToFields(ann))).toBe("<!--- compare Vasugupta --->");
     });
 
     it("note with explicit \\s scope round-trips", () => {
@@ -546,28 +546,28 @@ describe("annotationToFields", () => {
         annotation_type: "note",
         scope: { kind: "sentence", value: 1 },
         body: "one sentence",
-        original: "%%! n \\s | one sentence %%",
+        original: "<!--- n \\s | one sentence --->",
       });
-      expect(generateDsl(annotationToFields(ann))).toBe("%%! n \\s | one sentence %%");
+      expect(generateDsl(annotationToFields(ann))).toBe("<!--- n \\s | one sentence --->");
     });
   });
 
   describe("llm type", () => {
     it("generates llm compact form", () => {
       expect(generateDsl(fields({ type: "llm", body: "explain" }))).toBe(
-        "%%! llm | explain %%",
+        "<!--- llm | explain --->",
       );
     });
 
     it("generates llm with scope", () => {
       expect(
         generateDsl(fields({ type: "llm", scope: { kind: "paragraph", value: 1 }, body: "summarize" })),
-      ).toBe("%%! llm \\p | summarize %%");
+      ).toBe("<!--- llm \\p | summarize --->");
     });
 
     it("generates llm block form for multiline body", () => {
       const result = generateDsl(fields({ type: "llm", body: "line1\nline2" }));
-      expect(result).toBe("%%!\nllm\n---\nline1\nline2\n%%");
+      expect(result).toBe("<!---\nllm\n---\nline1\nline2\n--->");
     });
   });
 
@@ -575,13 +575,13 @@ describe("annotationToFields", () => {
     it("document scope serializes as \\d", () => {
       expect(
         generateDsl(fields({ type: "llm", scope: { kind: "document", value: 0 }, body: "summarize all" })),
-      ).toBe("%%! llm \\d | summarize all %%");
+      ).toBe("<!--- llm \\d | summarize all --->");
     });
 
     it("section scope serializes as \\h", () => {
       expect(
         generateDsl(fields({ type: "note", scope: { kind: "section", value: 0 }, body: "review" })),
-      ).toBe("%%! n \\h | review %%");
+      ).toBe("<!--- n \\h | review --->");
     });
 
     it("asymmetric scope serializes with before\\unit after format", () => {
@@ -593,7 +593,7 @@ describe("annotationToFields", () => {
             body: "context",
           }),
         ),
-      ).toBe("%%! llm 2\\s3 | context %%");
+      ).toBe("<!--- llm 2\\s3 | context --->");
     });
 
     it("asymmetric scope with paragraph unit", () => {
@@ -605,7 +605,7 @@ describe("annotationToFields", () => {
             body: "test",
           }),
         ),
-      ).toBe("%%! llm 1\\p2 | test %%");
+      ).toBe("<!--- llm 1\\p2 | test --->");
     });
 
     it("asymmetric scope with word unit uses underscore", () => {
@@ -617,7 +617,7 @@ describe("annotationToFields", () => {
             body: "test",
           }),
         ),
-      ).toBe("%%! llm 3_1 | test %%");
+      ).toBe("<!--- llm 3_1 | test --->");
     });
   });
 });

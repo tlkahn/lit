@@ -83,7 +83,7 @@ describe("AnnotationBuilderModal", () => {
     fireEvent.change(screen.getByTestId("annotation-type-select"), { target: { value: "note" } });
     fireEvent.change(screen.getByTestId("annotation-body-input"), { target: { value: "test body" } });
     fireEvent.click(screen.getByTestId("annotation-insert-btn"));
-    expect(onInsert).toHaveBeenCalledWith("%%! n | test body %%");
+    expect(onInsert).toHaveBeenCalledWith("<!--- n | test body --->");
   });
 
   it("cancel button calls onClose", () => {
@@ -105,7 +105,7 @@ describe("AnnotationBuilderModal", () => {
     fireEvent.change(screen.getByTestId("annotation-scope-select"), { target: { value: "words" } });
     fireEvent.change(screen.getByTestId("annotation-body-input"), { target: { value: "is this right?" } });
     const preview = screen.getByTestId("annotation-preview");
-    expect(preview.textContent).toBe("%%! q! _ | is this right? %%");
+    expect(preview.textContent).toBe("<!--- q! _ | is this right? --->");
   });
 
   it("initialFields prop pre-fills form", () => {
@@ -117,7 +117,7 @@ describe("AnnotationBuilderModal", () => {
       />,
     );
     const preview = screen.getByTestId("annotation-preview");
-    expect(preview.textContent).toBe("%%! todo! | fix this %%");
+    expect(preview.textContent).toBe("<!--- todo! | fix this --->");
   });
 
   it("scope count input appears for words/sentence/paragraph/page", () => {
@@ -137,7 +137,7 @@ describe("AnnotationBuilderModal", () => {
     render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
     expect(screen.getByTestId("annotation-type-select")).toHaveValue("");
     expect(screen.getByTestId("annotation-body-input")).toHaveValue("");
-    expect(screen.getByTestId("annotation-preview").textContent).toBe("%%!  %%");
+    expect(screen.getByTestId("annotation-preview").textContent).toBe("<!---  --->");
   });
 
   it("uses initialFields on each fresh mount", () => {
@@ -217,7 +217,7 @@ describe("AnnotationBuilderModal", () => {
         />,
       );
       fireEvent.click(screen.getByTestId("annotation-insert-btn"));
-      expect(onInsert).toHaveBeenCalledWith("%%! n | edited %%");
+      expect(onInsert).toHaveBeenCalledWith("<!--- n | edited --->");
     });
   });
 
@@ -251,7 +251,7 @@ describe("AnnotationBuilderModal", () => {
       fireEvent.click(screen.getByTestId("annotation-edit-raw-btn"));
       expect(onEditRaw).toHaveBeenCalledWith({
         mode: "edit",
-        draftDsl: "%%! n | test %%",
+        draftDsl: "<!--- n | test --->",
         originalRange,
       });
     });

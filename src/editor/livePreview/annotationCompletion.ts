@@ -22,8 +22,8 @@ export function annotationCompletionSource(ctx: CompletionContext): CompletionRe
     .map(([key, keyword]) => ({
       label: `/${key}`,
       apply: (view: import("@codemirror/view").EditorView, _completion: unknown, from: number, to: number) => {
-        const insert = `%%! ${keyword} |  %%`;
-        const cursorPos = from + insert.length - 3;
+        const insert = `<!--- ${keyword} |  --->`;
+        const cursorPos = from + insert.length - 5;
         view.dispatch({
           changes: { from, to, insert },
           selection: { anchor: cursorPos },

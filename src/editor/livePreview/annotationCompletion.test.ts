@@ -31,8 +31,8 @@ describe("annotationCompletionSource", () => {
     const apply = result!.options[0]!.apply as (view: EditorView, completion: unknown, from: number, to: number) => void;
     apply(view, null, 0, 4);
 
-    expect(view.state.doc.toString()).toBe("%%! llm |  %%");
-    expect(view.state.selection.main.head).toBe(10);
+    expect(view.state.doc.toString()).toBe("<!--- llm |  --->");
+    expect(view.state.selection.main.head).toBe(12);
     view.destroy();
   });
 
@@ -88,7 +88,7 @@ describe("annotationCompletionSource", () => {
     expect(result!.options.length).toBe(7);
   });
 
-  it("cursor position is between | and %% after apply", () => {
+  it("cursor position is between | and ---> after apply", () => {
     const result = getCompletions("/q", 2);
     expect(result).not.toBeNull();
 
@@ -101,11 +101,11 @@ describe("annotationCompletionSource", () => {
     const apply = qOption.apply as (view: EditorView, completion: unknown, from: number, to: number) => void;
     apply(view, null, 0, 2);
 
-    expect(view.state.doc.toString()).toBe("%%! q |  %%");
+    expect(view.state.doc.toString()).toBe("<!--- q |  --->");
     const cursor = view.state.selection.main.head;
     const docText = view.state.doc.toString();
     expect(docText[cursor - 1]).toBe(" ");
-    expect(docText.slice(cursor)).toBe(" %%");
+    expect(docText.slice(cursor)).toBe(" --->");
     view.destroy();
   });
 });

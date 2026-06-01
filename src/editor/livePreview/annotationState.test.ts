@@ -57,7 +57,7 @@ function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
     is_structured: true,
     char_start: 0,
     char_end: 10,
-    original: "%%!n | x%%",
+    original: "<!---n | x--->",
     ...overrides,
   };
 }
@@ -495,18 +495,18 @@ describe("annotationPlugin", () => {
   });
 
   it("integration: enriched uuid enables thread indicator on PillWidget", async () => {
-    const doc = "first line\ntext %%!n | body%% more";
+    const doc = "first line\ntext <!---n | body---> more";
     const parsedAnn = makeAnnotation({
       annotation_type: "note",
       body: "body",
       char_start: 16,
-      char_end: 29,
-      original: "%%!n | body%%",
+      char_end: 33,
+      original: "<!---n | body--->",
     });
     vi.mocked(parseAnnotations).mockResolvedValue([parsedAnn]);
     useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
     mockListAnnotations.mockResolvedValue([
-      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: "body", date: null, source_line: 2, char_start: 16, char_end: 29, uuid: "enriched-thread-uuid" },
+      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: "body", date: null, source_line: 2, char_start: 16, char_end: 33, uuid: "enriched-thread-uuid" },
     ]);
     useConversationStore.setState({
       conversations: [
@@ -538,7 +538,7 @@ describe("annotationPlugin", () => {
       }
     }
 
-    const pill = widgets.find((w) => w.from === 16 && w.to === 29);
+    const pill = widgets.find((w) => w.from === 16 && w.to === 33);
     expect(pill).toBeTruthy();
     expect(pill!.widget).toBeInstanceOf(PillWidget);
     expect((pill!.widget as PillWidget).hasThread).toBe(true);
@@ -752,19 +752,19 @@ describe("annotationDecorationProvider", () => {
 
   it("InlineAnnotation → PillWidget", () => {
     // "first line\n" = 11 chars, "text " = 5 chars
-    // %%!n | body%% starts at 16, 13 chars → ends at 29
-    const doc = "first line\ntext %%!n | body%% more";
+    // <!---n | body---> starts at 16, 17 chars → ends at 33
+    const doc = "first line\ntext <!---n | body---> more";
     const view = makeAnnotationView(doc, 0);
 
     const ann = makeAnnotation({
       char_start: 16,
-      char_end: 29,
-      original: "%%!n | body%%",
+      char_end: 33,
+      original: "<!---n | body--->",
     });
     view.dispatch({ effects: setAnnotationData.of([ann]) });
 
     const decos = collectDecorations(view);
-    const found = decos.find((d) => d.from === 16 && d.to === 29);
+    const found = decos.find((d) => d.from === 16 && d.to === 33);
     expect(found).toBeTruthy();
     expect(found!.widget).toBeInstanceOf(PillWidget);
 
@@ -772,18 +772,18 @@ describe("annotationDecorationProvider", () => {
   });
 
   it("cursor on annotation line → no decoration", () => {
-    const doc = "first line\ntext %%!n | body%% more";
+    const doc = "first line\ntext <!---n | body---> more";
     const view = makeAnnotationView(doc, 16);
 
     const ann = makeAnnotation({
       char_start: 16,
-      char_end: 29,
-      original: "%%!n | body%%",
+      char_end: 33,
+      original: "<!---n | body--->",
     });
     view.dispatch({ effects: setAnnotationData.of([ann]) });
 
     const decos = collectDecorations(view);
-    const found = decos.find((d) => d.from === 16 && d.to === 29);
+    const found = decos.find((d) => d.from === 16 && d.to === 33);
     expect(found).toBeUndefined();
 
     view.destroy();
@@ -792,19 +792,19 @@ describe("annotationDecorationProvider", () => {
   it("multi-line BlockAnnotation → CalloutWidget", () => {
     // Blank line needed so paragraph doesn't swallow the block annotation
     // BlockAnnotation at 12..23
-    const doc = "first line\n\n%%!\nbody\n%%\nafter";
-    const view = makeAnnotationView(doc, 24);
+    const doc = "first line\n\n<!---\nbody\n--->\nafter";
+    const view = makeAnnotationView(doc, 28);
 
     const ann = makeAnnotation({
       form: "block",
       char_start: 12,
-      char_end: 23,
-      original: "%%!\nbody\n%%",
+      char_end: 27,
+      original: "<!---\nbody\n--->",
     });
     view.dispatch({ effects: setAnnotationData.of([ann]) });
 
     const decos = collectDecorations(view);
-    const found = decos.find((d) => d.from === 12 && d.to === 23);
+    const found = decos.find((d) => d.from === 12 && d.to === 27);
     expect(found).toBeTruthy();
     expect(found!.widget).toBeInstanceOf(CalloutWidget);
 
@@ -813,20 +813,20 @@ describe("annotationDecorationProvider", () => {
 
   it("single-line BlockAnnotation → PillWidget", () => {
     // "first line\n" = 11 chars
-    // %%!content%% = 12 chars (11-22), end = 11+12 = 23
-    // BlockAnnotation 11..23
-    const doc = "first line\n%%!content%%";
+    // <!---content---> = 16 chars (11-26), end = 11+16 = 27
+    // BlockAnnotation 11..27
+    const doc = "first line\n<!---content--->";
     const view = makeAnnotationView(doc, 0);
 
     const ann = makeAnnotation({
       char_start: 11,
-      char_end: 23,
-      original: "%%!content%%",
+      char_end: 27,
+      original: "<!---content--->",
     });
     view.dispatch({ effects: setAnnotationData.of([ann]) });
 
     const decos = collectDecorations(view);
-    const found = decos.find((d) => d.from === 11 && d.to === 23);
+    const found = decos.find((d) => d.from === 11 && d.to === 27);
     expect(found).toBeTruthy();
     expect(found!.widget).toBeInstanceOf(PillWidget);
 
@@ -834,21 +834,21 @@ describe("annotationDecorationProvider", () => {
   });
 
   it("fold state → CalloutWidget receives isCollapsed=true", () => {
-    const doc = "first line\n\n%%!\nbody\n%%\nafter";
-    const view = makeAnnotationView(doc, 24);
+    const doc = "first line\n\n<!---\nbody\n--->\nafter";
+    const view = makeAnnotationView(doc, 28);
 
     const ann = makeAnnotation({
       form: "block",
       char_start: 12,
-      char_end: 23,
-      original: "%%!\nbody\n%%",
+      char_end: 27,
+      original: "<!---\nbody\n--->",
     });
 
     view.dispatch({ effects: setAnnotationData.of([ann]) });
     view.dispatch({ effects: toggleAnnotationFoldEffect.of({ pos: 12 }) });
 
     const decos = collectDecorations(view);
-    const found = decos.find((d) => d.from === 12 && d.to === 23);
+    const found = decos.find((d) => d.from === 12 && d.to === 27);
     expect(found).toBeTruthy();
     expect(found!.widget).toBeInstanceOf(CalloutWidget);
     expect((found!.widget as CalloutWidget).isCollapsed).toBe(true);
@@ -857,7 +857,7 @@ describe("annotationDecorationProvider", () => {
   });
 
   it("InlineAnnotation + mode 'footnote' → MarkerWidget", () => {
-    const doc = "first line\ntext %%!n | body%% more";
+    const doc = "first line\ntext <!---n | body---> more";
     const state = EditorState.create({
       doc,
       selection: { anchor: 0 },
@@ -874,11 +874,11 @@ describe("annotationDecorationProvider", () => {
 
     view.dispatch({ effects: setDisplayMode.of("footnote") });
 
-    const ann = makeAnnotation({ char_start: 16, char_end: 29, original: "%%!n | body%%" });
+    const ann = makeAnnotation({ char_start: 16, char_end: 33, original: "<!---n | body--->" });
     view.dispatch({ effects: setAnnotationData.of([ann]) });
 
     const decos = collectDecorations(view);
-    const found = decos.find((d) => d.from === 16 && d.to === 29);
+    const found = decos.find((d) => d.from === 16 && d.to === 33);
     expect(found).toBeTruthy();
     expect(found!.widget).toBeInstanceOf(MarkerWidget);
 
@@ -886,7 +886,7 @@ describe("annotationDecorationProvider", () => {
   });
 
   it("InlineAnnotation + mode 'pill' → PillWidget", () => {
-    const doc = "first line\ntext %%!n | body%% more";
+    const doc = "first line\ntext <!---n | body---> more";
     const state = EditorState.create({
       doc,
       selection: { anchor: 0 },
@@ -903,11 +903,11 @@ describe("annotationDecorationProvider", () => {
 
     view.dispatch({ effects: setDisplayMode.of("pill") });
 
-    const ann = makeAnnotation({ char_start: 16, char_end: 29, original: "%%!n | body%%" });
+    const ann = makeAnnotation({ char_start: 16, char_end: 33, original: "<!---n | body--->" });
     view.dispatch({ effects: setAnnotationData.of([ann]) });
 
     const decos = collectDecorations(view);
-    const found = decos.find((d) => d.from === 16 && d.to === 29);
+    const found = decos.find((d) => d.from === 16 && d.to === 33);
     expect(found).toBeTruthy();
     expect(found!.widget).toBeInstanceOf(PillWidget);
 
@@ -915,10 +915,10 @@ describe("annotationDecorationProvider", () => {
   });
 
   it("multi-line BlockAnnotation + mode 'footnote' → CalloutWidget (unchanged)", () => {
-    const doc = "first line\n\n%%!\nbody\n%%\nafter";
+    const doc = "first line\n\n<!---\nbody\n--->\nafter";
     const state = EditorState.create({
       doc,
-      selection: { anchor: 24 },
+      selection: { anchor: 28 },
       extensions: [
         markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
         annotationDataField,
@@ -935,13 +935,13 @@ describe("annotationDecorationProvider", () => {
     const ann = makeAnnotation({
       form: "block",
       char_start: 12,
-      char_end: 23,
-      original: "%%!\nbody\n%%",
+      char_end: 27,
+      original: "<!---\nbody\n--->",
     });
     view.dispatch({ effects: setAnnotationData.of([ann]) });
 
     const decos = collectDecorations(view);
-    const found = decos.find((d) => d.from === 12 && d.to === 23);
+    const found = decos.find((d) => d.from === 12 && d.to === 27);
     expect(found).toBeTruthy();
     expect(found!.widget).toBeInstanceOf(CalloutWidget);
 
@@ -962,15 +962,15 @@ describe("annotationDecorationProvider", () => {
   });
 
   it("passes hasThread=true to PillWidget when annotation uuid matches thread key", () => {
-    const doc = "first line\ntext %%!n | body%% more";
+    const doc = "first line\ntext <!---n | body---> more";
     const view = makeAnnotationView(doc, 0);
 
-    const ann = makeAnnotation({ char_start: 16, char_end: 29, original: "%%!n | body%%", uuid: "uuid-1" });
+    const ann = makeAnnotation({ char_start: 16, char_end: 33, original: "<!---n | body--->", uuid: "uuid-1" });
     view.dispatch({ effects: setAnnotationData.of([ann]) });
     view.dispatch({ effects: setAnnotationThreadKeys.of(new Set(["uuid-1"])) });
 
     const decos = collectDecorations(view);
-    const found = decos.find((d) => d.from === 16 && d.to === 29);
+    const found = decos.find((d) => d.from === 16 && d.to === 33);
     expect(found).toBeTruthy();
     expect((found!.widget as PillWidget).hasThread).toBe(true);
 
@@ -978,15 +978,15 @@ describe("annotationDecorationProvider", () => {
   });
 
   it("passes hasThread=false when annotation uuid not in thread keys", () => {
-    const doc = "first line\ntext %%!n | body%% more";
+    const doc = "first line\ntext <!---n | body---> more";
     const view = makeAnnotationView(doc, 0);
 
-    const ann = makeAnnotation({ char_start: 16, char_end: 29, original: "%%!n | body%%", uuid: "uuid-other" });
+    const ann = makeAnnotation({ char_start: 16, char_end: 33, original: "<!---n | body--->", uuid: "uuid-other" });
     view.dispatch({ effects: setAnnotationData.of([ann]) });
     view.dispatch({ effects: setAnnotationThreadKeys.of(new Set(["uuid-1"])) });
 
     const decos = collectDecorations(view);
-    const found = decos.find((d) => d.from === 16 && d.to === 29);
+    const found = decos.find((d) => d.from === 16 && d.to === 33);
     expect(found).toBeTruthy();
     expect((found!.widget as PillWidget).hasThread).toBe(false);
 
@@ -994,15 +994,15 @@ describe("annotationDecorationProvider", () => {
   });
 
   it("passes hasThread=false when annotation uuid is null", () => {
-    const doc = "first line\ntext %%!n | body%% more";
+    const doc = "first line\ntext <!---n | body---> more";
     const view = makeAnnotationView(doc, 0);
 
-    const ann = makeAnnotation({ char_start: 16, char_end: 29, original: "%%!n | body%%", uuid: null });
+    const ann = makeAnnotation({ char_start: 16, char_end: 33, original: "<!---n | body--->", uuid: null });
     view.dispatch({ effects: setAnnotationData.of([ann]) });
     view.dispatch({ effects: setAnnotationThreadKeys.of(new Set(["uuid-1"])) });
 
     const decos = collectDecorations(view);
-    const found = decos.find((d) => d.from === 16 && d.to === 29);
+    const found = decos.find((d) => d.from === 16 && d.to === 33);
     expect(found).toBeTruthy();
     expect((found!.widget as PillWidget).hasThread).toBe(false);
 
@@ -1010,7 +1010,7 @@ describe("annotationDecorationProvider", () => {
   });
 
   it("passes hasThread=true to MarkerWidget in footnote mode", () => {
-    const doc = "first line\ntext %%!n | body%% more";
+    const doc = "first line\ntext <!---n | body---> more";
     const state = EditorState.create({
       doc,
       selection: { anchor: 0 },
@@ -1027,12 +1027,12 @@ describe("annotationDecorationProvider", () => {
     ensureSyntaxTree(view.state, view.state.doc.length);
 
     view.dispatch({ effects: setDisplayMode.of("footnote") });
-    const ann = makeAnnotation({ char_start: 16, char_end: 29, original: "%%!n | body%%", uuid: "uuid-fn" });
+    const ann = makeAnnotation({ char_start: 16, char_end: 33, original: "<!---n | body--->", uuid: "uuid-fn" });
     view.dispatch({ effects: setAnnotationData.of([ann]) });
     view.dispatch({ effects: setAnnotationThreadKeys.of(new Set(["uuid-fn"])) });
 
     const decos = collectDecorations(view);
-    const found = decos.find((d) => d.from === 16 && d.to === 29);
+    const found = decos.find((d) => d.from === 16 && d.to === 33);
     expect(found).toBeTruthy();
     expect(found!.widget).toBeInstanceOf(MarkerWidget);
     expect((found!.widget as MarkerWidget).hasThread).toBe(true);
@@ -1041,10 +1041,10 @@ describe("annotationDecorationProvider", () => {
   });
 
   it("passes hasThread=true to CalloutWidget for block annotation", () => {
-    const doc = "first line\n\n%%!\nbody\n%%\nafter";
+    const doc = "first line\n\n<!---\nbody\n--->\nafter";
     const state = EditorState.create({
       doc,
-      selection: { anchor: 24 },
+      selection: { anchor: 28 },
       extensions: [
         markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
         annotationDataField,
@@ -1057,12 +1057,12 @@ describe("annotationDecorationProvider", () => {
     const view = new EditorView({ state, parent: document.createElement("div") });
     ensureSyntaxTree(view.state, view.state.doc.length);
 
-    const ann = makeAnnotation({ form: "block", char_start: 12, char_end: 23, original: "%%!\nbody\n%%", uuid: "uuid-block" });
+    const ann = makeAnnotation({ form: "block", char_start: 12, char_end: 27, original: "<!---\nbody\n--->", uuid: "uuid-block" });
     view.dispatch({ effects: setAnnotationData.of([ann]) });
     view.dispatch({ effects: setAnnotationThreadKeys.of(new Set(["uuid-block"])) });
 
     const decos = collectDecorations(view);
-    const found = decos.find((d) => d.from === 12 && d.to === 23);
+    const found = decos.find((d) => d.from === 12 && d.to === 27);
     expect(found).toBeTruthy();
     expect(found!.widget).toBeInstanceOf(CalloutWidget);
     expect((found!.widget as CalloutWidget).hasThread).toBe(true);

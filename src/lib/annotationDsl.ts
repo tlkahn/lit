@@ -22,14 +22,14 @@ export interface EditRawInfo {
 }
 
 export function getEditCursorOffset(dsl: string): number {
-  if (dsl.startsWith("%%!\n")) {
+  if (dsl.startsWith("<!---\n")) {
     const separatorIdx = dsl.indexOf("\n---\n");
     if (separatorIdx !== -1) {
       return separatorIdx + 5;
     }
-    return 4;
+    return 6;
   }
-  return 4;
+  return 6;
 }
 
 const EXPLICIT_SCOPE_RE = /[_\\]/;
@@ -155,7 +155,7 @@ function generateCompact(
     inner = tailStr;
   }
 
-  return `%%! ${inner} %%`;
+  return `<!--- ${inner} --->`;
 }
 
 function generateBlock(
@@ -165,7 +165,7 @@ function generateBlock(
   dateStr: string,
   body: string,
 ): string {
-  const lines: string[] = ["%%!"];
+  const lines: string[] = ["<!---"];
 
   const typeCert = typeStr + certStr;
   if (typeCert) lines.push(typeCert);
@@ -177,6 +177,6 @@ function generateBlock(
     lines.push(body);
   }
 
-  lines.push("%%");
+  lines.push("--->");
   return lines.join("\n");
 }

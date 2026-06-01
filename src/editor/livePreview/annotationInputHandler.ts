@@ -14,18 +14,18 @@ function isInsideFencedCode(state: EditorState, pos: number): boolean {
 
 export function createAnnotationInputHandler(): Extension {
   return EditorView.inputHandler.of((view, from, to, text) => {
-    if (text !== "!" || from !== to) return false;
+    if (text !== "-" || from !== to) return false;
 
     const { state } = view;
     const pos = from;
-    if (pos < 2) return false;
+    if (pos < 4) return false;
 
-    const preceding = state.doc.sliceString(pos - 2, pos);
-    if (preceding !== "%%") return false;
+    const preceding = state.doc.sliceString(pos - 4, pos);
+    if (preceding !== "<!--") return false;
 
     if (isInsideFencedCode(state, pos)) return false;
 
-    view.dispatch({ changes: { from: pos - 2, to: pos } });
+    view.dispatch({ changes: { from: pos - 4, to: pos } });
     window.dispatchEvent(new CustomEvent("lit:open-annotation-builder"));
     return true;
   });
