@@ -1,6 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { AnnotationBuilderModal } from "./AnnotationBuilderModal";
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 describe("AnnotationBuilderModal", () => {
   let onClose: ReturnType<typeof vi.fn>;
@@ -8,9 +10,15 @@ describe("AnnotationBuilderModal", () => {
   let onEditRaw: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-01"));
     onClose = vi.fn();
     onInsert = vi.fn();
     onEditRaw = vi.fn();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("renders panel when mounted", () => {
@@ -81,10 +89,11 @@ describe("AnnotationBuilderModal", () => {
 
   it("insert button calls onInsert with correct DSL", () => {
     render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
-    fireEvent.change(screen.getByTestId("annotation-type-select"), { target: { value: "note" } });
+    // type defaults to "note", clear the auto-generated id so we can test a known shape
+    fireEvent.change(screen.getByTestId("annotation-id-input"), { target: { value: "" } });
     fireEvent.change(screen.getByTestId("annotation-body-input"), { target: { value: "test body" } });
     fireEvent.click(screen.getByTestId("annotation-insert-btn"));
-    expect(onInsert).toHaveBeenCalledWith("<!--- n | test body --->");
+    expect(onInsert).toHaveBeenCalledWith("<!--- n | test body @2026-06-01 --->");
   });
 
   it("cancel button calls onClose", () => {
@@ -101,12 +110,14 @@ describe("AnnotationBuilderModal", () => {
 
   it("preview shows generateDsl output", () => {
     render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+    // Clear auto-generated id so the preview is predictable
+    fireEvent.change(screen.getByTestId("annotation-id-input"), { target: { value: "" } });
     fireEvent.change(screen.getByTestId("annotation-type-select"), { target: { value: "question" } });
     fireEvent.change(screen.getByTestId("annotation-certainty-select"), { target: { value: "firm" } });
     fireEvent.change(screen.getByTestId("annotation-scope-select"), { target: { value: "words" } });
     fireEvent.change(screen.getByTestId("annotation-body-input"), { target: { value: "is this right?" } });
     const preview = screen.getByTestId("annotation-preview");
-    expect(preview.textContent).toBe("<!--- q! _ | is this right? --->");
+    expect(preview.textContent).toBe("<!--- q! _ | is this right? @2026-06-01 --->");
   });
 
   it("initialFields prop pre-fills form", () => {
@@ -118,7 +129,8 @@ describe("AnnotationBuilderModal", () => {
       />,
     );
     const preview = screen.getByTestId("annotation-preview");
-    expect(preview.textContent).toBe("<!--- todo! | fix this --->");
+    // id and date auto-filled: [uuid] and @2026-06-01
+    expect(preview.textContent).toMatch(/^<!---\[[0-9a-f-]{36}\] todo! \| fix this @2026-06-01 --->$/);
   });
 
   it("scope count input appears for words/sentence/paragraph/page", () => {
@@ -131,14 +143,18 @@ describe("AnnotationBuilderModal", () => {
     const { unmount } = render(
       <AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />,
     );
-    fireEvent.change(screen.getByTestId("annotation-type-select"), { target: { value: "note" } });
+    fireEvent.change(screen.getByTestId("annotation-type-select"), { target: { value: "question" } });
     fireEvent.change(screen.getByTestId("annotation-body-input"), { target: { value: "hello" } });
     unmount();
 
     render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
-    expect(screen.getByTestId("annotation-type-select")).toHaveValue("");
+    expect(screen.getByTestId("annotation-type-select")).toHaveValue("note");
     expect(screen.getByTestId("annotation-body-input")).toHaveValue("");
-    expect(screen.getByTestId("annotation-preview").textContent).toBe("<!---  --->");
+    expect(screen.getByTestId("annotation-date-input")).toHaveValue("2026-06-01");
+    const idInput = screen.getByTestId("annotation-id-input") as HTMLInputElement;
+    expect(idInput.value).toMatch(UUID_RE);
+    const preview = screen.getByTestId("annotation-preview").textContent!;
+    expect(preview).toMatch(/^<!---\[[0-9a-f-]{36}\] n @2026-06-01 --->$/);
   });
 
   it("uses initialFields on each fresh mount", () => {
@@ -161,6 +177,7 @@ describe("AnnotationBuilderModal", () => {
     );
     expect(screen.getByTestId("annotation-preview").textContent).toContain("second");
     expect(screen.getByTestId("annotation-type-select")).toHaveValue("note");
+    expect(screen.getByTestId("annotation-date-input")).toHaveValue("2026-06-01");
   });
 
   describe("edit mode", () => {
@@ -291,30 +308,74 @@ describe("AnnotationBuilderModal", () => {
     });
   });
 
-  describe("[id] support", () => {
-    it("ID input renders and is empty by default", () => {
+  describe("smart defaults", () => {
+    it("defaults to Note type in create mode", () => {
       render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
-      const idInput = screen.getByTestId("annotation-id-input");
+      expect(screen.getByTestId("annotation-type-select")).toHaveValue("note");
+    });
+
+    it("pre-fills ID with UUID in create mode", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      const idInput = screen.getByTestId("annotation-id-input") as HTMLInputElement;
+      expect(idInput.value).toMatch(UUID_RE);
+    });
+
+    it("does not pre-fill ID in edit mode when no initialFields.id", () => {
+      render(
+        <AnnotationBuilderModal onClose={onClose} onInsert={onInsert} mode="edit" />,
+      );
+      expect(screen.getByTestId("annotation-id-input")).toHaveValue("");
+    });
+
+    it("pre-fills date with today in create mode", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      expect(screen.getByTestId("annotation-date-input")).toHaveValue("2026-06-01");
+    });
+
+    it("does not pre-fill date in edit mode", () => {
+      render(
+        <AnnotationBuilderModal onClose={onClose} onInsert={onInsert} mode="edit" />,
+      );
+      expect(screen.getByTestId("annotation-date-input")).toHaveValue("");
+    });
+  });
+
+  describe("rendered markdown preview", () => {
+    it("renders body as markdown in preview", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      fireEvent.change(screen.getByTestId("annotation-body-input"), { target: { value: "**bold**" } });
+      const rendered = screen.getByTestId("annotation-preview-rendered");
+      expect(rendered.innerHTML).toContain("<strong>bold</strong>");
+    });
+
+    it("does not show rendered preview when body is empty", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      expect(screen.queryByTestId("annotation-preview-rendered")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("[id] support", () => {
+    it("ID input renders and is pre-filled with UUID by default", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      const idInput = screen.getByTestId("annotation-id-input") as HTMLInputElement;
       expect(idInput).toBeInTheDocument();
-      expect(idInput).toHaveValue("");
+      expect(idInput.value).toMatch(UUID_RE);
     });
 
     it("ID input updates preview with [id]", () => {
       render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
-      fireEvent.change(screen.getByTestId("annotation-type-select"), { target: { value: "note" } });
       fireEvent.change(screen.getByTestId("annotation-body-input"), { target: { value: "hello" } });
       fireEvent.change(screen.getByTestId("annotation-id-input"), { target: { value: "my-note" } });
       const preview = screen.getByTestId("annotation-preview");
-      expect(preview.textContent).toBe("<!---[my-note] n | hello --->");
+      expect(preview.textContent).toBe("<!---[my-note] n | hello @2026-06-01 --->");
     });
 
     it("insert with [id] produces correct DSL", () => {
       render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
-      fireEvent.change(screen.getByTestId("annotation-type-select"), { target: { value: "note" } });
       fireEvent.change(screen.getByTestId("annotation-body-input"), { target: { value: "test" } });
       fireEvent.change(screen.getByTestId("annotation-id-input"), { target: { value: "ref-1" } });
       fireEvent.click(screen.getByTestId("annotation-insert-btn"));
-      expect(onInsert).toHaveBeenCalledWith("<!---[ref-1] n | test --->");
+      expect(onInsert).toHaveBeenCalledWith("<!---[ref-1] n | test @2026-06-01 --->");
     });
 
     it("initialFields with id pre-fills ID input", () => {
@@ -326,7 +387,7 @@ describe("AnnotationBuilderModal", () => {
         />,
       );
       expect(screen.getByTestId("annotation-id-input")).toHaveValue("pre-filled-id");
-      expect(screen.getByTestId("annotation-preview").textContent).toBe("<!---[pre-filled-id] n | x --->");
+      expect(screen.getByTestId("annotation-preview").textContent).toBe("<!---[pre-filled-id] n | x @2026-06-01 --->");
     });
   });
 });

@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { generateDsl, type AnnotationFields, type EditRawInfo } from "../lib/annotationDsl";
+import { renderMarkdown } from "../lib/renderMarkdown";
 import type { AnnotationType, Certainty, Scope } from "../lib/ipc";
 
 interface AnnotationBuilderModalProps {
@@ -23,8 +24,15 @@ export function AnnotationBuilderModal({
   onEditRaw,
   selectedText,
 }: AnnotationBuilderModalProps) {
-  const [id, setId] = useState(initialFields?.id ?? "");
-  const [type, setType] = useState<AnnotationType | null>(initialFields?.type ?? null);
+  const [id, setId] = useState(() => {
+    if (initialFields?.id) return initialFields.id;
+    if (mode !== "edit") return crypto.randomUUID();
+    return "";
+  });
+  const [type, setType] = useState<AnnotationType | null>(() => {
+    if (initialFields?.type !== undefined) return initialFields.type;
+    return "note";
+  });
   const [certainty, setCertainty] = useState<Certainty>(initialFields?.certainty ?? "neutral");
   const [scopeKind, setScopeKind] = useState<ScopeKind>(() => {
     if (initialFields?.scope) return initialFields.scope.kind;
@@ -42,7 +50,11 @@ export function AnnotationBuilderModal({
     return "";
   });
   const [body, setBody] = useState(initialFields?.body ?? "");
-  const [date, setDate] = useState(initialFields?.date ?? "");
+  const [date, setDate] = useState(() => {
+    if (initialFields?.date) return initialFields.date;
+    if (mode !== "edit") return new Date().toISOString().slice(0, 10);
+    return "";
+  });
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -78,6 +90,7 @@ export function AnnotationBuilderModal({
   );
 
   const preview = useMemo(() => generateDsl(fields), [fields]);
+  const renderedBody = useMemo(() => renderMarkdown(body), [body]);
 
   const handleInsert = () => {
     onInsert(preview);
@@ -209,12 +222,23 @@ export function AnnotationBuilderModal({
 
         <div className="mb-4 rounded border border-border-primary bg-bg-secondary p-2">
           <span className="mb-1 block text-xs text-text-muted">Preview</span>
-          <pre
-            className="whitespace-pre-wrap text-xs text-text-normal"
+          <code
+            className="whitespace-pre-wrap text-xs text-text-normal block"
             data-testid="annotation-preview"
           >
             {preview}
-          </pre>
+          </code>
+          {renderedBody && (
+            <>
+              <div className="my-2 border-t border-dashed border-border-primary" />
+              <span className="mb-1 block text-xs text-text-muted">Rendered</span>
+              <div
+                className="prose prose-sm"
+                data-testid="annotation-preview-rendered"
+                dangerouslySetInnerHTML={{ __html: renderedBody }}
+              />
+            </>
+          )}
         </div>
 
         <div className="flex justify-end gap-2">
