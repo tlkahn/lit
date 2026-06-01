@@ -67,7 +67,7 @@ describe("llmResponse store", () => {
       is_structured: true,
       char_start: 0,
       char_end: 10,
-      original: "%%!q | why? %%",
+      original: "<!--- q | why? --->",
       uuid: null,
     };
     useLlmResponseStore.getState().startStream({
@@ -118,7 +118,7 @@ describe("llmResponse store", () => {
       is_structured: true,
       char_start: 0,
       char_end: 10,
-      original: "%%!q | why? %%",
+      original: "<!--- q | why? --->",
       uuid: null,
     };
     useLlmResponseStore.getState().startStream({

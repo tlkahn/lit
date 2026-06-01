@@ -278,7 +278,7 @@ describe("ipc", () => {
               is_structured: true,
               char_start: 0,
               char_end: 16,
-              original: "%%! n: | a note %%",
+              original: "<!--- n: | a note --->",
             },
           ];
         }
@@ -1147,13 +1147,13 @@ describe("ipc", () => {
   });
 
   it("parseAnnotations returns parsed results", async () => {
-    const anns = await parseAnnotations("%%! n: | a note %%");
+    const anns = await parseAnnotations("<!--- n: | a note --->");
     expect(anns).toHaveLength(1);
     expect(anns[0]!.annotation_type).toBe("note");
     expect(anns[0]!.body).toBe("a note");
     expect(anns[0]!.is_structured).toBe(true);
     const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("parse_annotations", { content: "%%! n: | a note %%" });
+    expect(invoke).toHaveBeenCalledWith("parse_annotations", { content: "<!--- n: | a note --->" });
   });
 
   it("parseAnnotations empty content returns empty array", async () => {
@@ -1165,7 +1165,7 @@ describe("ipc", () => {
 
   it("resolveAnnotationScope returns range", async () => {
     const result = await resolveAnnotationScope(
-      "hello world %%! n: _ | note %%",
+      "hello world <!--- n: _ | note --->",
       12,
       { kind: "words", value: 1 },
       "en",
@@ -1173,7 +1173,7 @@ describe("ipc", () => {
     expect(result).toEqual({ start: 6, end: 11 });
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("resolve_annotation_scope", {
-      content: "hello world %%! n: _ | note %%",
+      content: "hello world <!--- n: _ | note --->",
       charStart: 12,
       scope: { kind: "words", value: 1 },
       lang: "en",
@@ -1182,7 +1182,7 @@ describe("ipc", () => {
 
   it("resolveAnnotationScope returns null when unresolvable", async () => {
     const result = await resolveAnnotationScope(
-      "%%! n: _ | note %%",
+      "<!--- n: _ | note --->",
       0,
       { kind: "words", value: 1 },
       "en",
@@ -1192,7 +1192,7 @@ describe("ipc", () => {
 
   it("resolveAnnotationScopeWithMode calls IPC with mode arg", async () => {
     const result = await resolveAnnotationScopeWithMode(
-      "hello world %%! llm | explain %%",
+      "hello world <!--- llm | explain --->",
       12,
       { kind: "sentence", value: 1 },
       "en",
@@ -1201,7 +1201,7 @@ describe("ipc", () => {
     expect(result).toEqual({ start: 2, end: 15 });
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("resolve_annotation_scope_with_mode", {
-      content: "hello world %%! llm | explain %%",
+      content: "hello world <!--- llm | explain --->",
       charStart: 12,
       scope: { kind: "sentence", value: 1 },
       lang: "en",
@@ -1211,7 +1211,7 @@ describe("ipc", () => {
 
   it("resolveAnnotationScopeWithMode returns null when unresolvable", async () => {
     const result = await resolveAnnotationScopeWithMode(
-      "%%! llm | explain %%",
+      "<!--- llm | explain --->",
       0,
       { kind: "sentence", value: 1 },
       "en",

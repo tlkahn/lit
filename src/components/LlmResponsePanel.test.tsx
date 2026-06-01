@@ -417,7 +417,7 @@ describe("LlmResponsePanel", () => {
       is_structured: true,
       char_start: 0,
       char_end: 14,
-      original: "%%!q | why? %%",
+      original: "<!--- q | why? --->",
       uuid: null,
     };
     useLlmResponseStore.getState().startStream({
@@ -449,7 +449,7 @@ describe("LlmResponsePanel", () => {
       is_structured: true,
       char_start: 0,
       char_end: 14,
-      original: "%%!q | why? %%",
+      original: "<!--- q | why? --->",
       uuid: null,
     };
     useLlmResponseStore.getState().startStream({
@@ -484,7 +484,7 @@ describe("LlmResponsePanel", () => {
       is_structured: true,
       char_start: 0,
       char_end: 14,
-      original: "%%!q | why? %%",
+      original: "<!--- q | why? --->",
       uuid: null,
     };
     useLlmResponseStore.getState().startStream({

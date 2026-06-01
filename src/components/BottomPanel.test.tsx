@@ -48,7 +48,7 @@ function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
     is_structured: true,
     char_start: 0,
     char_end: 10,
-    original: "%%!n | x%%",
+    original: "<!--- n | x --->",
     ...overrides,
   };
 }
