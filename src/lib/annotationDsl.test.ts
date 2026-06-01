@@ -4,6 +4,7 @@ import type { Annotation } from "./ipc";
 
 function fields(overrides: Partial<AnnotationFields> = {}): AnnotationFields {
   return {
+    id: null,
     type: null,
     certainty: "neutral",
     scope: null,
@@ -359,6 +360,18 @@ describe("getEditCursorOffset", () => {
   it("block bare body", () => {
     expect(getEditCursorOffset("<!---\n---\nline one\nline two\n--->")).toBe(10);
   });
+
+  it("compact with [my-id]", () => {
+    // <!---[my-id] n | hello --->
+    // closeBracket = 11, cursor at 13
+    expect(getEditCursorOffset("<!---[my-id] n | hello --->")).toBe(13);
+  });
+
+  it("block with [my-id]", () => {
+    const dsl = "<!---[my-id]\nn\n---\nbody\n--->";
+    const separatorIdx = dsl.indexOf("\n---\n");
+    expect(getEditCursorOffset(dsl)).toBe(separatorIdx + 5);
+  });
 });
 
 describe("annotationToFields", () => {
@@ -508,6 +521,23 @@ describe("annotationToFields", () => {
     expect(f.date).toBe("2026-03");
   });
 
+  describe("uuid mapping", () => {
+    it("uuid: 'abc-123' → id: 'abc-123'", () => {
+      const f = annotationToFields(makeAnnotation({ uuid: "abc-123" }));
+      expect(f.id).toBe("abc-123");
+    });
+
+    it("uuid: null → id: null", () => {
+      const f = annotationToFields(makeAnnotation({ uuid: null }));
+      expect(f.id).toBeNull();
+    });
+
+    it("uuid: undefined → id: null", () => {
+      const f = annotationToFields(makeAnnotation({ uuid: undefined }));
+      expect(f.id).toBeNull();
+    });
+  });
+
   describe("round-trip", () => {
     it("note with body round-trips", () => {
       const ann = makeAnnotation({
@@ -549,6 +579,17 @@ describe("annotationToFields", () => {
         original: "<!--- n \\s | one sentence --->",
       });
       expect(generateDsl(annotationToFields(ann))).toBe("<!--- n \\s | one sentence --->");
+    });
+
+    it("annotation with uuid round-trips", () => {
+      const ann = makeAnnotation({
+        annotation_type: "note",
+        scope: { kind: "sentence", value: 1 },
+        body: "a note",
+        uuid: "my-note-1",
+        original: "<!---[my-note-1] n | a note --->",
+      });
+      expect(generateDsl(annotationToFields(ann))).toBe("<!---[my-note-1] n | a note --->");
     });
   });
 
@@ -618,6 +659,71 @@ describe("annotationToFields", () => {
           }),
         ),
       ).toBe("<!--- llm 3_1 | test --->");
+    });
+  });
+
+  describe("[id] support", () => {
+    it("compact with id", () => {
+      expect(
+        generateDsl(fields({ id: "my-note", type: "note", body: "hello" })),
+      ).toBe("<!---[my-note] n | hello --->");
+    });
+
+    it("UUID format id", () => {
+      expect(
+        generateDsl(fields({ id: "550e8400-e29b-41d4-a716-446655440000", type: "note", body: "x" })),
+      ).toBe("<!---[550e8400-e29b-41d4-a716-446655440000] n | x --->");
+    });
+
+    it("null id produces no bracket", () => {
+      expect(
+        generateDsl(fields({ id: null, type: "note", body: "x" })),
+      ).toBe("<!--- n | x --->");
+    });
+
+    it("bare annotation with id", () => {
+      expect(
+        generateDsl(fields({ id: "ref-1", body: "compare Vasugupta" })),
+      ).toBe("<!---[ref-1] compare Vasugupta --->");
+    });
+
+    it("full annotation with id", () => {
+      expect(
+        generateDsl(
+          fields({
+            id: "ann-42",
+            type: "question",
+            certainty: "tentative",
+            scope: { kind: "words", value: 2 },
+            body: "same sense?",
+            date: "2026-03",
+          }),
+        ),
+      ).toBe("<!---[ann-42] q? __ | same sense? @2026-03 --->");
+    });
+
+    it("block with id", () => {
+      expect(
+        generateDsl(
+          fields({
+            id: "block-1",
+            type: "note",
+            body: "line one\nline two",
+          }),
+        ),
+      ).toBe("<!---[block-1]\nn\n---\nline one\nline two\n--->");
+    });
+
+    it("block without id (unchanged)", () => {
+      expect(
+        generateDsl(
+          fields({
+            id: null,
+            type: "note",
+            body: "line one\nline two",
+          }),
+        ),
+      ).toBe("<!---\nn\n---\nline one\nline two\n--->");
     });
   });
 });
