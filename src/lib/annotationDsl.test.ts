@@ -555,6 +555,30 @@ describe("annotationToFields", () => {
       const f = annotationToFields(makeAnnotation({ uuid: undefined }));
       expect(f.id).toBeNull();
     });
+
+    it("user-authored [id] on separate line in block form → id preserved", () => {
+      const f = annotationToFields(makeAnnotation({
+        uuid: "my-id",
+        original: "<!---\n[my-id]\nn!\n--->",
+      }));
+      expect(f.id).toBe("my-id");
+    });
+
+    it("user-authored [id] on separate line in legacy block form → id preserved", () => {
+      const f = annotationToFields(makeAnnotation({
+        uuid: "my-id",
+        original: "%%!\n[my-id]\nn!\n%%",
+      }));
+      expect(f.id).toBe("my-id");
+    });
+
+    it("block-form without [id] bracket and auto-generated uuid → id null", () => {
+      const f = annotationToFields(makeAnnotation({
+        uuid: "550e8400-e29b-41d4-a716-446655440000",
+        original: "<!---\nn!\n\\p\n---\nBody.\n--->",
+      }));
+      expect(f.id).toBeNull();
+    });
   });
 
   describe("round-trip", () => {
