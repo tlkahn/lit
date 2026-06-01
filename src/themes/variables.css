@@ -36,6 +36,7 @@
 
   /* Code */
   --code-background: #f6f8fa;
+  --code-background-translucent: color-mix(in srgb, #f6f8fa 70%, transparent);
   --code-normal: #1f2328;
 
   /* Extended colors (callouts) */
@@ -108,6 +109,7 @@
 
   /* Code */
   --code-background: #151b23;
+  --code-background-translucent: color-mix(in srgb, #151b23 40%, transparent);
   --code-normal: #f0f6fc;
 
   /* Extended colors (callouts) */
