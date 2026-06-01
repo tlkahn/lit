@@ -90,11 +90,18 @@ export function BottomPanel({ pageId, direction = "bottom" }: BottomPanelProps) 
 
   const shadowClass = unfolded ? ` ${getShadowClass(direction)}` : "";
 
+  const tabWrapperStyle = (tabId: string): React.CSSProperties => ({
+    display: activeTab === tabId ? (isVertical ? "flex" : undefined) : "none",
+    ...(isVertical
+      ? { flexDirection: "column" as const, flex: 1, minHeight: 0 }
+      : { height: "100%" }),
+  });
+
   return (
     <div
       ref={panelRef}
       data-testid="bottom-panel"
-      className={`relative z-10 flex-shrink-0 overflow-hidden${shadowClass}`}
+      className={`relative z-10 flex-shrink-0 overflow-hidden${isVertical ? " h-full text-sm" : ""}${shadowClass}`}
       style={panelStyle}
     >
       <ResizeHandle
@@ -110,26 +117,26 @@ export function BottomPanel({ pageId, direction = "bottom" }: BottomPanelProps) 
         role="tabpanel"
         id="bp-tabpanel"
         aria-labelledby={`bp-tab-${activeTab}`}
-        className="overflow-hidden"
+        className={`overflow-hidden${isVertical ? " flex h-full flex-col" : ""}`}
         style={contentStyle}
       >
         {pageId && (
-          <div style={{ display: activeTab === "linked" ? undefined : "none", height: "100%" }}>
-            <BacklinksPanel pageId={pageId} onCountChange={setLinkedCount} contentHeight={panelHeight} />
+          <div style={tabWrapperStyle("linked")}>
+            <BacklinksPanel pageId={pageId} onCountChange={setLinkedCount} contentHeight={isVertical ? undefined : panelHeight} />
           </div>
         )}
         {pageId && hasOpenedUnlinked && (
-          <div style={{ display: activeTab === "unlinked" ? undefined : "none", height: "100%" }}>
-            <UnlinkedMentionsPanel pageId={pageId} onCountChange={setUnlinkedCount} contentHeight={panelHeight} />
+          <div style={tabWrapperStyle("unlinked")}>
+            <UnlinkedMentionsPanel pageId={pageId} onCountChange={setUnlinkedCount} contentHeight={isVertical ? undefined : panelHeight} />
           </div>
         )}
         {pageId && annotationEnabled && hasOpenedAnnotations && (
-          <div style={{ display: activeTab === "annotations" ? undefined : "none", height: "100%" }}>
-            <AnnotationPanel pageId={pageId} onCountChange={setAnnotationCount} contentHeight={panelHeight} />
+          <div style={tabWrapperStyle("annotations")}>
+            <AnnotationPanel pageId={pageId} onCountChange={setAnnotationCount} contentHeight={isVertical ? undefined : panelHeight} />
           </div>
         )}
         {hasOpenedLlm && (
-          <div style={{ display: activeTab === "llm-response" ? undefined : "none", height: "100%" }}>
+          <div style={tabWrapperStyle("llm-response")}>
             <ConversationPanel pageId={pageId ?? undefined} />
           </div>
         )}

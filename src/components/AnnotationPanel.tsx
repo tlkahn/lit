@@ -96,7 +96,7 @@ export function AnnotationPanel({ pageId, onCountChange, contentHeight }: Annota
   const doc = view?.state.doc;
 
   return (
-    <div className="px-6 py-2">
+    <div className="flex h-full flex-col px-4 py-2">
       {annotations.length === 0 ? (
         <p className="text-xs text-text-faint" data-testid="annotation-panel-empty">
           No annotations
@@ -105,7 +105,7 @@ export function AnnotationPanel({ pageId, onCountChange, contentHeight }: Annota
         <div
           ref={scrollRef}
           data-testid="annotations-scroll-container"
-          className="overflow-y-auto"
+          className={`overflow-y-auto${contentHeight == null ? " min-h-0 flex-1" : ""}`}
           style={contentHeight != null ? { height: contentHeight } : undefined}
         >
           {annotations.map((ann, i) => {

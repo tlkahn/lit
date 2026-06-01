@@ -85,7 +85,7 @@ export function UnlinkedMentionsPanel({ pageId, onCountChange, contentHeight }: 
   );
 
   return (
-    <div className="px-6 py-2">
+    <div className="flex h-full flex-col px-4 py-2">
       {loading && entries.length === 0 ? (
         spinner("lg")
       ) : entries.length === 0 ? (
@@ -99,7 +99,7 @@ export function UnlinkedMentionsPanel({ pageId, onCountChange, contentHeight }: 
             ref={scrollRef}
             data-testid="unlinked-scroll-container"
             data-virtual-scroll
-            className="overflow-y-auto"
+            className={`overflow-y-auto${contentHeight == null ? " min-h-0 flex-1" : ""}`}
             style={contentHeight != null ? { height: contentHeight } : undefined}
           >
             <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
