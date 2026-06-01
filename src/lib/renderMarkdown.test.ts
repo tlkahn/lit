@@ -16,4 +16,19 @@ describe("renderMarkdown", () => {
   it("returns empty string for empty input", () => {
     expect(renderMarkdown("")).toBe("");
   });
+
+  it("adds target=_blank and rel=noopener noreferrer to links", () => {
+    const result = renderMarkdown("[example](https://example.com)");
+    expect(result).toContain('target="_blank"');
+    expect(result).toContain('rel="noopener noreferrer"');
+  });
+
+  it("target attribute survives DOMPurify sanitization", () => {
+    const result = renderMarkdown("[link](https://example.com)");
+    const div = document.createElement("div");
+    div.innerHTML = result;
+    const anchor = div.querySelector("a");
+    expect(anchor?.getAttribute("target")).toBe("_blank");
+    expect(anchor?.getAttribute("rel")).toContain("noopener");
+  });
 });
