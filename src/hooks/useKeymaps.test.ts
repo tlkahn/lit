@@ -722,6 +722,87 @@ describe("useKeymaps", () => {
     expect(actionFn).toHaveBeenCalled();
   });
 
+  // --- Shifted punctuation: Mod-Shift-: (issue #253) ---
+
+  it("macOS Cmd+Shift+; (key=';') triggers Mod-Shift-: binding (app.insertAnnotation)", async () => {
+    // On macOS, Cmd+Shift+; reports key=";" (unshifted) due to a platform quirk.
+    // keyStringFromEvent must use w3c-keyname's keyName() to get the correct shifted key.
+    const { platform } = await import("./useKeymaps");
+    const originalIsMac = platform.isMac;
+    platform.isMac = true;
+
+    mockInvoke((cmd) => {
+      if (cmd === "get_keymaps") {
+        return [
+          { key: "Mod-Shift-:", command: "app.insertAnnotation" },
+        ];
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    try {
+      const { result } = await loadHook();
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      const listener = vi.fn();
+      window.addEventListener("lit:open-annotation-builder", listener);
+
+      // Simulate macOS Cmd+Shift+; — key is ";" (unshifted), keyCode is 186
+      const event = new KeyboardEvent("keydown", {
+        key: ";",
+        keyCode: 186,
+        metaKey: true,
+        shiftKey: true,
+        bubbles: true,
+      });
+      document.dispatchEvent(event);
+
+      window.removeEventListener("lit:open-annotation-builder", listener);
+      expect(listener).toHaveBeenCalledTimes(1);
+    } finally {
+      platform.isMac = originalIsMac;
+    }
+  });
+
+  it("non-Mac Ctrl+Shift+: (key=':') triggers Mod-Shift-: binding (app.insertAnnotation)", async () => {
+    // On non-Mac, the browser correctly reports key=":" when Shift+; is pressed.
+    const { platform } = await import("./useKeymaps");
+    const originalIsMac = platform.isMac;
+    platform.isMac = false;
+
+    mockInvoke((cmd) => {
+      if (cmd === "get_keymaps") {
+        return [
+          { key: "Mod-Shift-:", command: "app.insertAnnotation" },
+        ];
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    try {
+      const { result } = await loadHook();
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      const listener = vi.fn();
+      window.addEventListener("lit:open-annotation-builder", listener);
+
+      // Simulate non-Mac Ctrl+Shift+: — key is ":" (shifted), keyCode is 186
+      const event = new KeyboardEvent("keydown", {
+        key: ":",
+        keyCode: 186,
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+      });
+      document.dispatchEvent(event);
+
+      window.removeEventListener("lit:open-annotation-builder", listener);
+      expect(listener).toHaveBeenCalledTimes(1);
+    } finally {
+      platform.isMac = originalIsMac;
+    }
+  });
+
   // --- Cycle 13: Integration smoke test ---
 
   it("split → navigate → close full keyboard flow", async () => {

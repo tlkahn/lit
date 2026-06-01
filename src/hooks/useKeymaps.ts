@@ -19,6 +19,7 @@ import { fireAnnotation } from "../lib/fireOrchestrator";
 import { batchFireReplacingAnnotations } from "../lib/batchFire";
 import { useBottomPanelStore } from "../stores/bottomPanel";
 import type { EditorView } from "@codemirror/view";
+import { base as w3cBase, shift as w3cShift } from "w3c-keyname";
 
 function transferDomFocus() {
   const id = usePaneStore.getState().focusedPaneId;
@@ -256,7 +257,16 @@ function keyStringFromEvent(e: KeyboardEvent): string {
   if (e.shiftKey) parts.push("Shift");
   if (e.altKey) parts.push("Alt");
 
-  const key = e.key;
+  // On macOS, when Cmd (Meta) and Shift are both held, KeyboardEvent.key
+  // reports the unshifted key (e.g. ";" instead of ":"). Fall back to the
+  // w3c-keyname shift lookup table in that case, matching what CodeMirror does.
+  const ignoreKey =
+    platform.isMac && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey;
+  const key =
+    (!ignoreKey && e.key) ||
+    (e.shiftKey ? w3cShift : w3cBase)[e.keyCode] ||
+    e.key ||
+    "Unidentified";
   if (!["Meta", "Control", "Shift", "Alt"].includes(key)) {
     parts.push(key.length === 1 ? key.toLowerCase() : key);
   }
