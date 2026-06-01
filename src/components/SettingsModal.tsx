@@ -17,6 +17,7 @@ import { CATEGORIES, SETTINGS_REGISTRY, STORE_FIELDS, filterSettings, type Categ
 import { useThemeStore } from "../stores/theme";
 import { KeyboardShortcutsPanel } from "./KeyboardShortcutsPanel";
 import { TestConnectionButton } from "./TestConnectionButton";
+import { AcademicExportSettings } from "./AcademicExportSettings";
 
 interface SettingsModalProps {
   open: boolean;
@@ -454,6 +455,11 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
                           {cat === "LLM" && (
                             <div className="mt-3">
                               <TestConnectionButton model={prefs.llmModel as string} baseUrl={(prefs.llmModel as string).startsWith("claude-") ? (prefs.llmAnthropicBaseUrl as string) || undefined : (prefs.llmOpenaiBaseUrl as string) || undefined} />
+                            </div>
+                          )}
+                          {cat === "Academic Export" && (
+                            <div className="mt-3">
+                              <AcademicExportSettings />
                             </div>
                           )}
                           {Array.from(grouped).map(([groupName, groupResults]) => (

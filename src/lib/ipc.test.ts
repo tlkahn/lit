@@ -99,6 +99,8 @@ import {
   annotationFindUuid,
   conversationFindByAnchor,
   conversationDeleteByAnchor,
+  detectPandoc,
+  exportDocument,
   type MessageRole,
 } from "./ipc";
 
@@ -640,6 +642,21 @@ describe("ipc", () => {
         }
         case "conversation_delete_by_anchor":
           return null;
+        case "detect_pandoc":
+          return {
+            pandoc_path: "/usr/local/bin/pandoc",
+            pandoc_version: "pandoc 3.1.9",
+            crossref_path: "/usr/local/bin/pandoc-crossref",
+            crossref_version: "pandoc-crossref 0.3.17.0",
+            pdf_engines: ["xelatex", "pdflatex"],
+          };
+        case "export_document":
+          return {
+            output_path: "/tmp/output.tex",
+            success: true,
+            stderr: "",
+            latex_errors: [],
+          };
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -1771,6 +1788,77 @@ describe("ipc", () => {
       nodeId: "a.md",
       anchorType: "annotation",
       anchorKey: "uuid-1",
+    });
+  });
+
+  it("detectPandoc calls detect_pandoc", async () => {
+    const info = await detectPandoc();
+    expect(info.pandoc_path).toBe("/usr/local/bin/pandoc");
+    expect(info.pandoc_version).toBe("pandoc 3.1.9");
+    expect(info.crossref_path).toBe("/usr/local/bin/pandoc-crossref");
+    expect(info.crossref_version).toBe("pandoc-crossref 0.3.17.0");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("detect_pandoc");
+  });
+
+  it("detectPandoc returns pdf_engines", async () => {
+    const info = await detectPandoc();
+    expect(info.pdf_engines).toEqual(["xelatex", "pdflatex"]);
+  });
+
+  it("exportDocument calls export_document with snake_case request", async () => {
+    const result = await exportDocument({
+      relativePath: "notes/paper.md",
+      outputPath: "/tmp/output.tex",
+      format: "latex",
+    });
+    expect(result.output_path).toBe("/tmp/output.tex");
+    expect(result.success).toBe(true);
+    expect(result.stderr).toBe("");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("export_document", {
+      request: {
+        relative_path: "notes/paper.md",
+        output_path: "/tmp/output.tex",
+        format: "latex",
+        csl: undefined,
+        template: undefined,
+        reference_doc: undefined,
+        pdf_engine: undefined,
+      },
+    });
+  });
+
+  it("exportDocument returns latex_errors", async () => {
+    const result = await exportDocument({
+      relativePath: "notes/paper.md",
+      outputPath: "/tmp/output.pdf",
+      format: "pdf",
+    });
+    expect(result.latex_errors).toEqual([]);
+  });
+
+  it("exportDocument passes optional override fields", async () => {
+    await exportDocument({
+      relativePath: "paper.md",
+      outputPath: "/out.pdf",
+      format: "pdf",
+      csl: "ieee",
+      template: "/t.tex",
+      referenceDoc: "/r.docx",
+      pdfEngine: "lualatex",
+    });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("export_document", {
+      request: {
+        relative_path: "paper.md",
+        output_path: "/out.pdf",
+        format: "pdf",
+        csl: "ieee",
+        template: "/t.tex",
+        reference_doc: "/r.docx",
+        pdf_engine: "lualatex",
+      },
     });
   });
 

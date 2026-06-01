@@ -1,0 +1,111 @@
+\documentclass[$if(fontsize)$$fontsize$$else$12pt$endif$$if(lang)$,$lang$$endif$]{article}
+
+%% — geometry ——————————————————————————————————
+\usepackage[margin=1in]{geometry}
+
+%% — encoding & fonts ————————————————————————————
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+$if(CJKmainfont)$
+\usepackage{xeCJK}
+\setCJKmainfont{$CJKmainfont$}
+$endif$
+
+%% — standard packages ———————————————————————————
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{hyperref}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  citecolor=blue,
+  urlcolor=blue,
+$if(title)$
+  pdftitle={$title$},
+$endif$
+$if(author)$
+  pdfauthor={$for(author)$$author$$sep$, $endfor$},
+$endif$
+}
+
+%% — smart cross-references ——————————————————————
+\usepackage{cleveref}
+
+%% — bibliography (biblatex or citeproc) —————————
+$if(natbib)$
+\usepackage[$natbiboptions$]{natbib}
+\bibliographystyle{$if(biblio-style)$$biblio-style$$else$plainnat$endif$}
+$endif$
+$if(biblatex)$
+\usepackage[$if(biblio-style)$style=$biblio-style$,$endif$$for(biblatexoptions)$$biblatexoptions$$sep$,$endfor$]{biblatex}
+$for(bibliography)$
+\addbibresource{$bibliography$}
+$endfor$
+$endif$
+
+%% — listings / code —————————————————————————————
+$if(listings)$
+\usepackage{listings}
+$endif$
+$if(highlighting-macros)$
+$highlighting-macros$
+$endif$
+
+%% — header-includes ————————————————————————————
+$for(header-includes)$
+$header-includes$
+$endfor$
+
+%% — title block —————————————————————————————————
+$if(title)$
+\title{$title$}
+$endif$
+$if(author)$
+\author{$for(author)$$author$$sep$ \and $endfor$}
+$endif$
+$if(date)$
+\date{$date$}
+$else$
+\date{}
+$endif$
+
+\begin{document}
+
+$if(title)$
+\maketitle
+$endif$
+
+$if(abstract)$
+\begin{abstract}
+$abstract$
+\end{abstract}
+$endif$
+
+$for(include-before)$
+$include-before$
+$endfor$
+
+$if(toc)$
+\tableofcontents
+\newpage
+$endif$
+
+$body$
+
+$if(natbib)$
+$if(bibliography)$
+\bibliography{$for(bibliography)$$bibliography$$sep$,$endfor$}
+$endif$
+$endif$
+$if(biblatex)$
+\printbibliography$if(biblio-title)$[title=$biblio-title$]$endif$
+$endif$
+
+$for(include-after)$
+$include-after$
+$endfor$
+
+\end{document}

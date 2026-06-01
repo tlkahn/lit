@@ -34,6 +34,13 @@ const defaults = {
   llmPromptLlm: "Execute the following instruction using the provided context.",
   llmPromptTr: "Translate the following text. If a hint is provided, follow it.",
   llmPromptQ: "Answer the following question about the provided context.",
+  llmDeleteAnnotationThreads: false,
+  academicPandocPath: "",
+  academicCrossrefPath: "",
+  academicPdfEngine: "",
+  academicDefaultCsl: "",
+  academicDefaultTemplate: "",
+  academicDefaultReferenceDoc: "",
   loaded: true,
 };
 
@@ -127,10 +134,10 @@ describe("SettingsModal", () => {
 
   // --- Structural tests ---
 
-  it("renders all six section headings", () => {
+  it("renders all seven section headings", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
-    expect(headings).toEqual(["Appearance", "Editor", "Cross-references", "Annotations", "LLM", "Experimental"]);
+    expect(headings).toEqual(["Appearance", "Editor", "Cross-references", "Annotations", "LLM", "Academic Export", "Experimental"]);
   });
 
   it("has a scrollable content area", () => {
@@ -905,7 +912,7 @@ describe("SettingsModal", () => {
 
   // --- Registry-driven rendering safety net ---
 
-  it("all 24 control data-testid values exist", () => {
+  it("all 30 control data-testid values exist", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const expectedIds = [
       "settings-darkMode-auto",
@@ -931,6 +938,12 @@ describe("SettingsModal", () => {
       "settings-llmSystemPrompt",
       "settings-llmTemperature",
       "settings-neighborsDepth",
+      "settings-academicPandocPath",
+      "settings-academicCrossrefPath",
+      "settings-academicPdfEngine",
+      "settings-academicDefaultCsl",
+      "settings-academicDefaultTemplate",
+      "settings-academicDefaultReferenceDoc",
       "settings-experimentalUnlinkedReferences",
     ];
     for (const id of expectedIds) {
@@ -938,10 +951,10 @@ describe("SettingsModal", () => {
     }
   });
 
-  it("all 6 h3 headings render with correct text", () => {
+  it("all 7 h3 headings render with correct text", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
-    expect(headings).toEqual(["Appearance", "Editor", "Cross-references", "Annotations", "LLM", "Experimental"]);
+    expect(headings).toEqual(["Appearance", "Editor", "Cross-references", "Annotations", "LLM", "Academic Export", "Experimental"]);
   });
 
   // --- Search input ---
@@ -1021,7 +1034,7 @@ describe("SettingsModal", () => {
     expect(container.querySelector("[data-testid='settings-no-results']")!.textContent).toContain("No matching settings");
   });
 
-  it("empty search shows all 24 controls", () => {
+  it("empty search shows all 30 controls", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
     fireEvent.change(search, { target: { value: "fold" } });
@@ -1051,6 +1064,12 @@ describe("SettingsModal", () => {
       "settings-llmSystemPrompt",
       "settings-llmTemperature",
       "settings-neighborsDepth",
+      "settings-academicPandocPath",
+      "settings-academicCrossrefPath",
+      "settings-academicPdfEngine",
+      "settings-academicDefaultCsl",
+      "settings-academicDefaultTemplate",
+      "settings-academicDefaultReferenceDoc",
       "settings-experimentalUnlinkedReferences",
     ];
     for (const id of expectedIds) {
@@ -1078,14 +1097,14 @@ describe("SettingsModal", () => {
     expect(headings).toEqual(["Cross-references", "Annotations"]);
   });
 
-  it("clearing search restores all 6 headings", () => {
+  it("clearing search restores all 7 headings", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
     fireEvent.change(search, { target: { value: "fold" } });
     fireEvent.change(search, { target: { value: "" } });
 
     const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
-    expect(headings).toEqual(["Appearance", "Editor", "Cross-references", "Annotations", "LLM", "Experimental"]);
+    expect(headings).toEqual(["Appearance", "Editor", "Cross-references", "Annotations", "LLM", "Academic Export", "Experimental"]);
   });
 
   // Cycle 6.3 — Sidebar highlights categories with matches
@@ -1157,6 +1176,12 @@ describe("SettingsModal", () => {
       "settings-llmSystemPrompt",
       "settings-llmTemperature",
       "settings-neighborsDepth",
+      "settings-academicPandocPath",
+      "settings-academicCrossrefPath",
+      "settings-academicPdfEngine",
+      "settings-academicDefaultCsl",
+      "settings-academicDefaultTemplate",
+      "settings-academicDefaultReferenceDoc",
       "settings-experimentalUnlinkedReferences",
     ];
     for (const id of expectedIds) {
@@ -1766,5 +1791,119 @@ describe("SettingsModal", () => {
 
     expect(container.querySelector("[data-testid='settings-json-editor']")).toBeNull();
     expect(container.querySelector("[data-testid='settings-sidebar']")).toBeTruthy();
+  });
+
+  // --- Academic Export settings ---
+
+  describe("Academic Export category", () => {
+    it("renders Academic Export section heading", () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
+      expect(headings).toContain("Academic Export");
+    });
+
+    it("Academic Export appears before Experimental in headings", () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
+      const academicIdx = headings.indexOf("Academic Export");
+      const experimentalIdx = headings.indexOf("Experimental");
+      expect(academicIdx).toBeGreaterThan(-1);
+      expect(experimentalIdx).toBeGreaterThan(-1);
+      expect(academicIdx).toBeLessThan(experimentalIdx);
+    });
+
+    it("renders Pandoc Path text input", () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const input = container.querySelector("[data-testid='settings-academicPandocPath']");
+      expect(input).toBeTruthy();
+      expect(input!.tagName).toBe("INPUT");
+    });
+
+    it("renders Crossref Filter Path text input", () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const input = container.querySelector("[data-testid='settings-academicCrossrefPath']");
+      expect(input).toBeTruthy();
+      expect(input!.tagName).toBe("INPUT");
+    });
+
+    it("renders PDF Engine dropdown", () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const select = container.querySelector("[data-testid='settings-academicPdfEngine']");
+      expect(select).toBeTruthy();
+      expect(select!.tagName).toBe("SELECT");
+    });
+
+    it("PDF Engine dropdown has xelatex, lualatex, pdflatex options", () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const select = container.querySelector("[data-testid='settings-academicPdfEngine']")!;
+      const opts = Array.from(select.querySelectorAll("option")).map((o) => o.value);
+      expect(opts).toContain("xelatex");
+      expect(opts).toContain("lualatex");
+      expect(opts).toContain("pdflatex");
+    });
+
+    it("renders Default CSL Style dropdown", () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const select = container.querySelector("[data-testid='settings-academicDefaultCsl']");
+      expect(select).toBeTruthy();
+      expect(select!.tagName).toBe("SELECT");
+    });
+
+    it("Default CSL dropdown has expected styles", () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const select = container.querySelector("[data-testid='settings-academicDefaultCsl']")!;
+      const opts = Array.from(select.querySelectorAll("option")).map((o) => o.value);
+      expect(opts).toContain("apa");
+      expect(opts).toContain("ieee");
+      expect(opts).toContain("chicago-author-date");
+    });
+
+    it("renders Default Template text input", () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const input = container.querySelector("[data-testid='settings-academicDefaultTemplate']");
+      expect(input).toBeTruthy();
+      expect(input!.tagName).toBe("INPUT");
+    });
+
+    it("renders Default Reference Doc text input", () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const input = container.querySelector("[data-testid='settings-academicDefaultReferenceDoc']");
+      expect(input).toBeTruthy();
+      expect(input!.tagName).toBe("INPUT");
+    });
+
+    it("changing PDF Engine calls setPreference", async () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const select = container.querySelector("[data-testid='settings-academicPdfEngine']")!;
+      fireEvent.change(select, { target: { value: "xelatex" } });
+      expect(usePreferencesStore.getState().academicPdfEngine).toBe("xelatex");
+      await vi.waitFor(() => {
+        expect(invokeCalls).toContainEqual({
+          cmd: "set_preference",
+          args: { key: "academic.pdfEngine", value: "xelatex" },
+        });
+      });
+    });
+
+    it("Pandoc Path commits on blur", async () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const input = container.querySelector("[data-testid='settings-academicPandocPath']") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "/opt/pandoc" } });
+      fireEvent.blur(input);
+      expect(usePreferencesStore.getState().academicPandocPath).toBe("/opt/pandoc");
+      await vi.waitFor(() => {
+        expect(invokeCalls).toContainEqual({
+          cmd: "set_preference",
+          args: { key: "academic.pandocPath", value: "/opt/pandoc" },
+        });
+      });
+    });
+
+    it("Academic Export appears in sidebar", () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
+      const buttons = Array.from(sidebar.querySelectorAll("button")).map((b) => b.textContent);
+      expect(buttons).toContain("Academic Export");
+    });
   });
 });
