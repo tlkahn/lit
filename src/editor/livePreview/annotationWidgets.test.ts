@@ -1009,14 +1009,14 @@ describe("CalloutWidget body markdown rendering", () => {
     expect(bodyEl.innerHTML).toContain("item one");
   });
 
-  it("pill body renders as plain text, not HTML", () => {
+  it("pill body renders inline markdown as HTML", () => {
     const view = makeEditorView();
-    const ann = makeAnnotation({ body: "**not bold**" });
+    const ann = makeAnnotation({ body: "**bold** and *italic*" });
     const w = new PillWidget(ann);
     const dom = w.toDOM(view);
     const bodyEl = dom.querySelector(".cm-annotation-pill-body")!;
-    expect(bodyEl.textContent).toBe("**not bold**");
-    expect(bodyEl.innerHTML).not.toContain("<strong>");
+    expect(bodyEl.innerHTML).toContain("<strong>bold</strong>");
+    expect(bodyEl.innerHTML).toContain("<em>italic</em>");
     view.destroy();
   });
 });

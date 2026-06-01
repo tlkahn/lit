@@ -3,7 +3,7 @@ import { StateEffect, StateField, type Transaction } from "@codemirror/state";
 import type { Annotation } from "../../lib/ipc";
 import type { AnnotationBuilderEventDetail } from "../../lib/annotationDsl";
 import { canFire } from "../../lib/fireClassification";
-import { renderMarkdown } from "../../lib/renderMarkdown";
+import { renderMarkdown, renderInlineMarkdown } from "../../lib/renderMarkdown";
 import { handleAnnotationHover, handleAnnotationLeave } from "./annotationHover";
 import { TYPE_ICON, certaintyClass, certaintyMark, truncateBody } from "./annotationConstants";
 import "./annotation.css";
@@ -148,7 +148,7 @@ function buildPillDOM(ann: Annotation): HTMLSpanElement {
   if (body) {
     const bodyEl = document.createElement("span");
     bodyEl.className = "cm-annotation-pill-body";
-    bodyEl.textContent = body;
+    bodyEl.innerHTML = renderInlineMarkdown(body);
     pill.appendChild(bodyEl);
   }
 
