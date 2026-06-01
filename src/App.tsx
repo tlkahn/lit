@@ -435,12 +435,7 @@ function App() {
             </ErrorBoundary>
           </div>
           {bottomPanelMode === "side" && (
-            <div
-              data-testid="sidebar-bottom-panel"
-              style={{ flexShrink: 0 }}
-            >
-              <BottomPanel pageId={currentPanePage ?? undefined} direction={effectiveSide} />
-            </div>
+            <BottomPanel pageId={currentPanePage ?? undefined} direction={effectiveSide} />
           )}
         </div>
         <StatusBar />

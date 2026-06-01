@@ -756,18 +756,20 @@ describe("App", () => {
     });
   });
 
-  it("does not render sidebar-mode bottom panel when bottomPanelPosition is 'bottom'", () => {
+  it("bottom-mode panel is not a direct child of the flex row", () => {
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
     usePreferencesStore.setState({ bottomPanelPosition: "bottom" });
     render(<App />);
-    expect(screen.queryByTestId("sidebar-bottom-panel")).not.toBeInTheDocument();
+    const bottomPanel = screen.getByTestId("bottom-panel");
+    expect(bottomPanel.parentElement?.className).not.toMatch(/flex-row/);
   });
 
   it("renders BottomPanel as a sidebar when bottomPanelPosition is 'side'", () => {
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
     usePreferencesStore.setState({ bottomPanelPosition: "side" });
     render(<App />);
-    expect(screen.getByTestId("sidebar-bottom-panel")).toBeInTheDocument();
+    const bottomPanel = screen.getByTestId("bottom-panel");
+    expect(bottomPanel.parentElement?.className).toContain("flex-row");
   });
 
   it("only one BottomPanel exists in DOM when mode is 'side'", () => {
@@ -777,38 +779,38 @@ describe("App", () => {
     expect(screen.getAllByTestId("bottom-panel")).toHaveLength(1);
   });
 
-  it("sidebar-mode panel container has flexShrink 0", () => {
+  it("sidebar-mode panel has flex-shrink-0", () => {
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
     usePreferencesStore.setState({ bottomPanelPosition: "side" });
     render(<App />);
-    const container = screen.getByTestId("sidebar-bottom-panel");
-    expect(container.style.flexShrink).toBe("0");
+    const bottomPanel = screen.getByTestId("bottom-panel");
+    expect(bottomPanel.className).toContain("flex-shrink-0");
   });
 
   it("sidebar-mode panel appears after editor column when sidebar is on left", () => {
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
     usePreferencesStore.setState({ bottomPanelPosition: "side", sidebarLocation: "left" });
     render(<App />);
-    const sidebarPanel = screen.getByTestId("sidebar-bottom-panel");
-    const flexRow = sidebarPanel.parentElement!;
+    const bottomPanel = screen.getByTestId("bottom-panel");
+    const flexRow = bottomPanel.parentElement!;
     expect(flexRow.className).toContain("flex-row");
     expect(flexRow.className).not.toContain("flex-row-reverse");
     const children = Array.from(flexRow.children);
-    expect(children.indexOf(sidebarPanel)).toBe(children.length - 1);
+    expect(children.indexOf(bottomPanel)).toBe(children.length - 1);
   });
 
   it("sidebar-mode panel appears on the left when sidebar is on the right", () => {
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
     usePreferencesStore.setState({ bottomPanelPosition: "side", sidebarLocation: "right" });
     render(<App />);
-    const sidebarPanel = screen.getByTestId("sidebar-bottom-panel");
-    const flexRow = sidebarPanel.parentElement!;
+    const bottomPanel = screen.getByTestId("bottom-panel");
+    const flexRow = bottomPanel.parentElement!;
     expect(flexRow.className).toContain("flex-row-reverse");
     const children = Array.from(flexRow.children);
-    expect(children.indexOf(sidebarPanel)).toBe(children.length - 1);
+    expect(children.indexOf(bottomPanel)).toBe(children.length - 1);
   });
 
-  it("sidebar-mode BottomPanel is nested inside the sidebar container", () => {
+  it("sidebar-mode panel is a direct child of the flex row", () => {
     useWorkspaceStore.setState({ workspacePath: "/test", pages: samplePages, graphReady: true });
     usePaneStore.setState({
       root: { type: "leaf", id: "test-pane", pagePath: "Test Page.md" },
@@ -817,14 +819,14 @@ describe("App", () => {
     usePreferencesStore.setState({ bottomPanelPosition: "side" });
     render(<App />);
     const bottomPanel = screen.getByTestId("bottom-panel");
-    expect(bottomPanel.closest("[data-testid='sidebar-bottom-panel']")).toBeTruthy();
+    expect(bottomPanel.parentElement?.className).toContain("flex-row");
   });
 
-  it("sidebar-mode container exists when panel is collapsed", () => {
+  it("sidebar-mode panel exists when panel is collapsed", () => {
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
     usePreferencesStore.setState({ bottomPanelPosition: "side" });
     useBottomPanelStore.setState({ unfolded: false });
     render(<App />);
-    expect(screen.getByTestId("sidebar-bottom-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("bottom-panel")).toBeInTheDocument();
   });
 });
