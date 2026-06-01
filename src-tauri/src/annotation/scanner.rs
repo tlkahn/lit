@@ -18,18 +18,18 @@ pub fn scan_annotations(content: &str) -> Vec<RawAnnotation> {
     let mut last_byte = 0usize;
     let mut utf16_acc = 0usize;
 
-    while let Some(rel) = content[search_from..].find("%%!") {
+    while let Some(rel) = content[search_from..].find("<!---") {
         let open_byte = search_from + rel;
 
         if is_in_fenced_range(open_byte, &fenced_ranges) {
-            search_from = open_byte + 3;
+            search_from = open_byte + 5;
             continue;
         }
 
-        let after_open = open_byte + 3;
-        if let Some(close_rel) = content[after_open..].find("%%") {
+        let after_open = open_byte + 5;
+        if let Some(close_rel) = content[after_open..].find("--->") {
             let close_byte = after_open + close_rel;
-            let end_byte = close_byte + 2;
+            let end_byte = close_byte + 4;
 
             utf16_acc += utf16_len(&content[last_byte..open_byte]);
             let comment_utf16_start = utf16_acc;
@@ -131,28 +131,28 @@ mod tests {
 
     #[test]
     fn single_line_annotation() {
-        let doc = "hello %%! world %% end";
+        let doc = "hello <!--- world ---> end";
         let anns = scan_annotations(doc);
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].inner, "world");
-        assert_eq!(anns[0].original, "%%! world %%");
+        assert_eq!(anns[0].original, "<!--- world --->");
         assert_eq!(anns[0].char_start, 6);
-        assert_eq!(anns[0].char_end, 18);
+        assert_eq!(anns[0].char_end, 22);
     }
 
     #[test]
     fn multi_line_annotation() {
-        let doc = "before\n%%!\nfoo\nbar\n%%\nafter";
+        let doc = "before\n<!---\nfoo\nbar\n--->\nafter";
         let anns = scan_annotations(doc);
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].inner, "foo\nbar");
-        assert_eq!(anns[0].original, "%%!\nfoo\nbar\n%%");
+        assert_eq!(anns[0].original, "<!---\nfoo\nbar\n--->");
         assert_eq!(anns[0].char_start, 7);
     }
 
     #[test]
     fn multiple_annotations() {
-        let doc = "%%! a %% text %%! b %%";
+        let doc = "<!--- a ---> text <!--- b --->";
         let anns = scan_annotations(doc);
         assert_eq!(anns.len(), 2);
         assert_eq!(anns[0].inner, "a");
@@ -171,21 +171,21 @@ mod tests {
 
     #[test]
     fn empty_annotation() {
-        let anns = scan_annotations("%%!  %%");
+        let anns = scan_annotations("<!---  --->");
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].inner, "");
     }
 
     #[test]
     fn annotation_no_spaces() {
-        let anns = scan_annotations("%%!text%%");
+        let anns = scan_annotations("<!---text--->");
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].inner, "text");
     }
 
     #[test]
     fn skip_annotation_in_backtick_fence() {
-        let doc = "before\n```\n%%! skip %%\n```\nafter %%! keep %%";
+        let doc = "before\n```\n<!--- skip --->\n```\nafter <!--- keep --->";
         let anns = scan_annotations(doc);
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].inner, "keep");
@@ -193,7 +193,7 @@ mod tests {
 
     #[test]
     fn skip_annotation_in_tilde_fence() {
-        let doc = "~~~\n%%! skip %%\n~~~\n%%! keep %%";
+        let doc = "~~~\n<!--- skip --->\n~~~\n<!--- keep --->";
         let anns = scan_annotations(doc);
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].inner, "keep");
@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn skip_annotation_in_four_backtick_fence() {
-        let doc = "````\n```\n%%! skip %%\n```\n````\n%%! keep %%";
+        let doc = "````\n```\n<!--- skip --->\n```\n````\n<!--- keep --->";
         let anns = scan_annotations(doc);
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].inner, "keep");
@@ -209,15 +209,15 @@ mod tests {
 
     #[test]
     fn fence_with_language_tag() {
-        let doc = "```rust\n%%! skip %%\n```\n%%! keep %%";
+        let doc = "```rust\n<!--- skip --->\n```\n<!--- keep --->";
         let anns = scan_annotations(doc);
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].inner, "keep");
     }
 
     #[test]
-    fn plain_percent_comments_ignored() {
-        let doc = "%% normal %% %%! keep %%";
+    fn plain_html_comments_ignored() {
+        let doc = "<!-- normal --> <!--- keep --->";
         let anns = scan_annotations(doc);
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].inner, "keep");
@@ -225,53 +225,55 @@ mod tests {
 
     #[test]
     fn utf16_offsets_ascii() {
-        let doc = "ab %%! c %% de";
+        // "ab " = 3, then "<!--- c --->" = 12 chars
+        let doc = "ab <!--- c ---> de";
         let anns = scan_annotations(doc);
         assert_eq!(anns[0].char_start, 3);
-        assert_eq!(anns[0].char_end, 11);
+        assert_eq!(anns[0].char_end, 15);
     }
 
     #[test]
     fn utf16_offsets_cjk() {
-        let doc = "你好%%! note %%";
+        // "你好" = 2 UTF-16 units, "<!--- note --->" = 15 chars
+        let doc = "你好<!--- note --->";
         let anns = scan_annotations(doc);
         assert_eq!(anns[0].char_start, 2);
-        assert_eq!(anns[0].char_end, 13); // 2 + "%%! note %%" = 11
+        assert_eq!(anns[0].char_end, 17);
     }
 
     #[test]
     fn utf16_offsets_emoji() {
-        // 🎉 = U+1F389 = 2 UTF-16 code units
-        let doc = "🎉%%! hi %%";
+        // 🎉 = U+1F389 = 2 UTF-16 code units, "<!--- hi --->" = 13 chars
+        let doc = "🎉<!--- hi --->";
         let anns = scan_annotations(doc);
         assert_eq!(anns[0].char_start, 2);
-        assert_eq!(anns[0].char_end, 11); // 2 + "%%! hi %%" = 9
+        assert_eq!(anns[0].char_end, 15);
     }
 
     #[test]
     fn utf16_offsets_mixed() {
         // "a你🎉" = 1 + 1 + 2 = 4 UTF-16 units
-        let doc = "a你🎉%%! x %%";
+        let doc = "a你🎉<!--- x --->";
         let anns = scan_annotations(doc);
         assert_eq!(anns[0].char_start, 4);
     }
 
     #[test]
     fn unclosed_annotation() {
-        let doc = "%%! no end";
+        let doc = "<!--- no end";
         assert_eq!(scan_annotations(doc).len(), 0);
     }
 
     #[test]
     fn annotation_at_document_start() {
-        let doc = "%%! first %%";
+        let doc = "<!--- first --->";
         let anns = scan_annotations(doc);
         assert_eq!(anns[0].char_start, 0);
     }
 
     #[test]
     fn adjacent_annotations() {
-        let doc = "%%! a %%%%! b %%";
+        let doc = "<!--- a ---><!--- b --->";
         let anns = scan_annotations(doc);
         assert_eq!(anns.len(), 2);
         assert_eq!(anns[0].inner, "a");
@@ -280,7 +282,7 @@ mod tests {
 
     #[test]
     fn annotation_after_multiline() {
-        let doc = "%%!\nblock\n%%\n%%! inline %%";
+        let doc = "<!---\nblock\n--->\n<!--- inline --->";
         let anns = scan_annotations(doc);
         assert_eq!(anns.len(), 2);
         assert_eq!(anns[0].inner, "block");

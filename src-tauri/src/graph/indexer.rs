@@ -3755,7 +3755,7 @@ mod tests {
     #[test]
     fn full_index_stores_annotations() {
         let dir = create_workspace();
-        write_md(dir.path(), "a.md", "Some text %%! n: _ | important discovery %% more.");
+        write_md(dir.path(), "a.md", "Some text <!--- n: _ | important discovery ---> more.");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.search_annotations("important", None, 10).unwrap();
         assert_eq!(results.len(), 1);
@@ -3768,12 +3768,12 @@ mod tests {
     #[test]
     fn incremental_reindex_updates_annotations() {
         let dir = create_workspace();
-        write_md(dir.path(), "a.md", "%%! n: _ | old body %%");
+        write_md(dir.path(), "a.md", "<!--- n: _ | old body --->");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.search_annotations("old", None, 10).unwrap();
         assert_eq!(results.len(), 1);
 
-        write_md(dir.path(), "a.md", "%%! n: _ | new body %%");
+        write_md(dir.path(), "a.md", "<!--- n: _ | new body --->");
         gi.reindex_file("a.md", true).unwrap();
 
         let old_results = gi.search_annotations("old", None, 10).unwrap();
@@ -3788,7 +3788,7 @@ mod tests {
     #[test]
     fn full_index_skips_annotations_when_disabled() {
         let dir = create_workspace();
-        write_md(dir.path(), "a.md", "%%! n: _ | note body %%");
+        write_md(dir.path(), "a.md", "<!--- n: _ | note body --->");
         fs::create_dir_all(dir.path().join(".lit")).unwrap();
         let store = Store::open(&dir.path().join(".lit").join("graph.db")).unwrap();
         index_workspace_with_progress(&store, dir.path(), &crate::graph::progress::noop_callback(), false).unwrap();
@@ -3808,7 +3808,7 @@ mod tests {
         let store = Store::open(&dir.path().join(".lit").join("graph.db")).unwrap();
         index_workspace(&store, dir.path(), true).unwrap();
 
-        write_md(dir.path(), "a.md", "%%! n: _ | annotated %%");
+        write_md(dir.path(), "a.md", "<!--- n: _ | annotated --->");
         let diff = DiffResult {
             new: vec![],
             changed: vec!["a.md".to_string()],
@@ -3827,7 +3827,7 @@ mod tests {
     #[test]
     fn graph_index_build_skips_annotations_when_disabled() {
         let dir = create_workspace();
-        write_md(dir.path(), "a.md", "%%! n: _ | note body %%");
+        write_md(dir.path(), "a.md", "<!--- n: _ | note body --->");
         let gi = GraphIndex::build(dir.path().to_path_buf(), false).unwrap();
         let results = gi.search_annotations("note", None, 10).unwrap();
         assert!(results.is_empty());
@@ -3836,7 +3836,7 @@ mod tests {
     #[test]
     fn graph_index_build_indexes_annotations_when_enabled() {
         let dir = create_workspace();
-        write_md(dir.path(), "a.md", "%%! n: _ | note body %%");
+        write_md(dir.path(), "a.md", "<!--- n: _ | note body --->");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.search_annotations("note", None, 10).unwrap();
         assert_eq!(results.len(), 1);
@@ -3848,7 +3848,7 @@ mod tests {
         write_md(dir.path(), "a.md", "initial");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(50));
-        write_md(dir.path(), "a.md", "%%! n: _ | synced note %%");
+        write_md(dir.path(), "a.md", "<!--- n: _ | synced note --->");
         gi.sync_with_disk(false).unwrap();
         let results = gi.search_annotations("synced", None, 10).unwrap();
         assert!(results.is_empty());
@@ -3859,7 +3859,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "initial");
         let gi = GraphIndex::build(dir.path().to_path_buf(), false).unwrap();
-        write_md(dir.path(), "a.md", "%%! n: _ | reindexed note %%");
+        write_md(dir.path(), "a.md", "<!--- n: _ | reindexed note --->");
         gi.reindex_file("a.md", false).unwrap();
         let results = gi.search_annotations("reindexed", None, 10).unwrap();
         assert!(results.is_empty());
@@ -3868,7 +3868,7 @@ mod tests {
     #[test]
     fn graph_index_remove_file_skips_annotations_when_disabled() {
         let dir = create_workspace();
-        write_md(dir.path(), "a.md", "%%! n: _ | note %%");
+        write_md(dir.path(), "a.md", "<!--- n: _ | note --->");
         write_md(dir.path(), "b.md", "other");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.search_annotations("note", None, 10).unwrap();
@@ -3882,7 +3882,7 @@ mod tests {
     #[test]
     fn graph_index_full_rebuild_skips_annotations_when_disabled() {
         let dir = create_workspace();
-        write_md(dir.path(), "a.md", "%%! n: _ | note body %%");
+        write_md(dir.path(), "a.md", "<!--- n: _ | note body --->");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.search_annotations("note", None, 10).unwrap();
         assert_eq!(results.len(), 1);
@@ -4912,7 +4912,7 @@ mod tests {
     #[test]
     fn batch_reindex_returns_removed_annotation_uuids() {
         let dir = create_workspace();
-        write_md(dir.path(), "a.md", "Text %%! n: _ | keep %% more %%! q: _ | remove %%");
+        write_md(dir.path(), "a.md", "Text <!--- n: _ | keep ---> more <!--- q: _ | remove --->");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
 
         let remove_uuid: String = {
@@ -4923,7 +4923,7 @@ mod tests {
             ).unwrap()
         };
 
-        write_md(dir.path(), "a.md", "Text %%! n: _ | keep %% more");
+        write_md(dir.path(), "a.md", "Text <!--- n: _ | keep ---> more");
         let diff = DiffResult { new: vec![], changed: vec!["a.md".to_string()], deleted: vec![] };
         let removed = gi.batch_reindex(&diff, true).unwrap();
 
@@ -4934,10 +4934,10 @@ mod tests {
     #[test]
     fn batch_reindex_returns_empty_when_no_annotations_removed() {
         let dir = create_workspace();
-        write_md(dir.path(), "a.md", "Text %%! n: _ | stay %%");
+        write_md(dir.path(), "a.md", "Text <!--- n: _ | stay --->");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
 
-        write_md(dir.path(), "a.md", "Changed text %%! n: _ | stay %%");
+        write_md(dir.path(), "a.md", "Changed text <!--- n: _ | stay --->");
         let diff = DiffResult { new: vec![], changed: vec!["a.md".to_string()], deleted: vec![] };
         let removed = gi.batch_reindex(&diff, true).unwrap();
 
