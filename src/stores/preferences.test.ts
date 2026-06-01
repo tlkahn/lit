@@ -702,15 +702,11 @@ describe("PreferencesStore", () => {
       expect(state.llmPromptLlm).toBeTruthy();
     });
 
-    it("defaults all 7 prompt fields to non-empty strings", () => {
+    it("defaults all 3 prompt fields to non-empty strings", () => {
       const state = usePreferencesStore.getState();
       expect(state.llmPromptLlm).toBeTruthy();
-      expect(state.llmPromptTodo).toBeTruthy();
       expect(state.llmPromptTr).toBeTruthy();
       expect(state.llmPromptQ).toBeTruthy();
-      expect(state.llmPromptN).toBeTruthy();
-      expect(state.llmPromptCf).toBeTruthy();
-      expect(state.llmPromptApp).toBeTruthy();
     });
 
     it("maps llm.prompts.* from IPC", async () => {
@@ -749,12 +745,8 @@ describe("PreferencesStore", () => {
       await usePreferencesStore.getState().loadPreferences();
       const state = usePreferencesStore.getState();
       expect(state.llmPromptLlm).toContain("instruction");
-      expect(state.llmPromptTodo).toContain("task");
       expect(state.llmPromptTr).toContain("Translate");
       expect(state.llmPromptQ).toContain("question");
-      expect(state.llmPromptN).toContain("note");
-      expect(state.llmPromptCf).toContain("cross-reference");
-      expect(state.llmPromptApp).toContain("commentary");
     });
 
     it("updates prompts on preferences://changed event", async () => {

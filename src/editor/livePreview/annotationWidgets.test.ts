@@ -287,13 +287,22 @@ describe("CalloutWidget click → edit event", () => {
 describe("MarkerWidget", () => {
   it("toDOM returns span.cm-annotation-marker-wrap for fireable types", () => {
     const view = makeEditorView();
-    const w = new MarkerWidget(makeAnnotation());
+    const w = new MarkerWidget(makeAnnotation({ annotation_type: "llm" }));
     const dom = w.toDOM(view);
     expect(dom.tagName).toBe("SPAN");
     expect(dom.classList.contains("cm-annotation-marker-wrap")).toBe(true);
     const sup = dom.querySelector("sup");
     expect(sup).toBeTruthy();
     expect(sup!.classList.contains("cm-annotation-marker")).toBe(true);
+    view.destroy();
+  });
+
+  it("toDOM returns sup.cm-annotation-marker directly for non-fireable note type", () => {
+    const view = makeEditorView();
+    const w = new MarkerWidget(makeAnnotation({ annotation_type: "note" }));
+    const dom = w.toDOM(view);
+    expect(dom.tagName).toBe("SUP");
+    expect(dom.classList.contains("cm-annotation-marker")).toBe(true);
     view.destroy();
   });
 
@@ -530,18 +539,50 @@ describe("fire button", () => {
 
     it("fire button has .cm-annotation-fire-disabled when llmLocked", () => {
       const view = makeEditorView();
-      const w = new PillWidget(makeAnnotation({ annotation_type: "note", body: "test" }), false, true);
+      const w = new PillWidget(makeAnnotation({ annotation_type: "llm", body: "test" }), false, true);
       const dom = w.toDOM(view);
       const btn = dom.querySelector(".cm-annotation-fire-btn");
       expect(btn!.classList.contains("cm-annotation-fire-disabled")).toBe(true);
       view.destroy();
     });
+
+    it("does NOT render fire button for note type", () => {
+      const view = makeEditorView();
+      const w = new PillWidget(makeAnnotation({ annotation_type: "note" }));
+      const dom = w.toDOM(view);
+      expect(dom.querySelector(".cm-annotation-fire-btn")).toBeNull();
+      view.destroy();
+    });
+
+    it("does NOT render fire button for todo type", () => {
+      const view = makeEditorView();
+      const w = new PillWidget(makeAnnotation({ annotation_type: "todo" }));
+      const dom = w.toDOM(view);
+      expect(dom.querySelector(".cm-annotation-fire-btn")).toBeNull();
+      view.destroy();
+    });
+
+    it("does NOT render fire button for crossref type", () => {
+      const view = makeEditorView();
+      const w = new PillWidget(makeAnnotation({ annotation_type: "crossref" }));
+      const dom = w.toDOM(view);
+      expect(dom.querySelector(".cm-annotation-fire-btn")).toBeNull();
+      view.destroy();
+    });
+
+    it("does NOT render fire button for apparatus type", () => {
+      const view = makeEditorView();
+      const w = new PillWidget(makeAnnotation({ annotation_type: "apparatus" }));
+      const dom = w.toDOM(view);
+      expect(dom.querySelector(".cm-annotation-fire-btn")).toBeNull();
+      view.destroy();
+    });
   });
 
   describe("MarkerWidget", () => {
-    it("renders .cm-annotation-fire-btn for note type", () => {
+    it("renders .cm-annotation-fire-btn for llm type", () => {
       const view = makeEditorView();
-      const w = new MarkerWidget(makeAnnotation({ annotation_type: "note" }));
+      const w = new MarkerWidget(makeAnnotation({ annotation_type: "llm" }));
       const dom = w.toDOM(view);
       expect(dom.querySelector(".cm-annotation-fire-btn")).toBeTruthy();
       view.destroy();
@@ -555,9 +596,17 @@ describe("fire button", () => {
       view.destroy();
     });
 
+    it("does NOT render fire button for note type", () => {
+      const view = makeEditorView();
+      const w = new MarkerWidget(makeAnnotation({ annotation_type: "note" }));
+      const dom = w.toDOM(view);
+      expect(dom.querySelector(".cm-annotation-fire-btn")).toBeNull();
+      view.destroy();
+    });
+
     it("fire button has .cm-annotation-fire-disabled when llmLocked", () => {
       const view = makeEditorView();
-      const w = new MarkerWidget(makeAnnotation({ annotation_type: "todo" }), false, true);
+      const w = new MarkerWidget(makeAnnotation({ annotation_type: "llm" }), false, true);
       const dom = w.toDOM(view);
       const btn = dom.querySelector(".cm-annotation-fire-btn");
       expect(btn!.classList.contains("cm-annotation-fire-disabled")).toBe(true);
@@ -583,7 +632,7 @@ describe("fire button", () => {
     });
 
     it("fire button has .cm-annotation-fire-disabled when llmLocked", () => {
-      const ann = makeAnnotation({ form: "block", annotation_type: "crossref", body: "cf" });
+      const ann = makeAnnotation({ form: "block", annotation_type: "llm", body: "explain" });
       const w = new CalloutWidget(ann, false, 0, false, true);
       const dom = w.toDOM(null as unknown as EditorView);
       const btn = dom.querySelector(".cm-annotation-fire-btn");
@@ -626,7 +675,7 @@ describe("firingAnnotationsField", () => {
 
 describe("spinner rendering", () => {
   it("createFireButton with isFiring=true has cm-annotation-spinner class and no ▶ text", () => {
-    const ann = makeAnnotation({ annotation_type: "note" });
+    const ann = makeAnnotation({ annotation_type: "llm" });
     const btn = createFireButton(ann, true);
     expect(btn).toBeTruthy();
     expect(btn!.classList.contains("cm-annotation-spinner")).toBe(true);
@@ -634,7 +683,7 @@ describe("spinner rendering", () => {
   });
 
   it("createFireButton with isFiring=false has ▶ text", () => {
-    const ann = makeAnnotation({ annotation_type: "note" });
+    const ann = makeAnnotation({ annotation_type: "llm" });
     const btn = createFireButton(ann, false);
     expect(btn).toBeTruthy();
     expect(btn!.textContent).toBe("▶");
@@ -643,7 +692,7 @@ describe("spinner rendering", () => {
 
   it("PillWidget with isFiring=true renders spinner button", () => {
     const view = makeEditorView();
-    const ann = makeAnnotation({ annotation_type: "note" });
+    const ann = makeAnnotation({ annotation_type: "llm" });
     const w = new PillWidget(ann, true);
     const dom = w.toDOM(view);
     const btn = dom.querySelector(".cm-annotation-fire-btn");
@@ -661,7 +710,7 @@ describe("spinner rendering", () => {
 
   it("MarkerWidget with isFiring=true renders spinner button", () => {
     const view = makeEditorView();
-    const ann = makeAnnotation({ annotation_type: "note" });
+    const ann = makeAnnotation({ annotation_type: "llm" });
     const w = new MarkerWidget(ann, true);
     const dom = w.toDOM(view);
     const btn = dom.querySelector(".cm-annotation-fire-btn");
@@ -710,14 +759,29 @@ describe("llmLockedField", () => {
 describe("createFireButton llmLocked param", () => {
   it("adds disabled class when llmLocked param is true (store is false)", () => {
     useModalLockStore.setState({ llmLocked: false });
-    const btn = createFireButton(makeAnnotation({ annotation_type: "note" }), false, true);
+    const btn = createFireButton(makeAnnotation({ annotation_type: "llm" }), false, true);
     expect(btn!.classList.contains("cm-annotation-fire-disabled")).toBe(true);
   });
 
   it("no disabled class when llmLocked param is false (store is true)", () => {
     useModalLockStore.setState({ llmLocked: true });
-    const btn = createFireButton(makeAnnotation({ annotation_type: "note" }), false, false);
+    const btn = createFireButton(makeAnnotation({ annotation_type: "llm" }), false, false);
     expect(btn!.classList.contains("cm-annotation-fire-disabled")).toBe(false);
+  });
+
+  it("does NOT add proximity class when llmLocked is true", () => {
+    const btn = createFireButton(makeAnnotation({ annotation_type: "llm" }), false, true);
+    expect(btn!.classList.contains("cm-annotation-fire-proximity")).toBe(false);
+  });
+
+  it("does NOT dispatch lit:fire-annotation when llmLocked is true", () => {
+    const ann = makeAnnotation({ annotation_type: "llm" });
+    const btn = createFireButton(ann, false, true)!;
+    const spy = vi.fn();
+    window.addEventListener("lit:fire-annotation", spy);
+    btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(spy).not.toHaveBeenCalled();
+    window.removeEventListener("lit:fire-annotation", spy);
   });
 });
 
@@ -769,7 +833,7 @@ describe("thread indicator", () => {
 
   it("PillWidget thread indicator appears after fire button", () => {
     const view = makeEditorView();
-    const w = new PillWidget(makeAnnotation({ annotation_type: "note" }), false, false, true);
+    const w = new PillWidget(makeAnnotation({ annotation_type: "llm" }), false, false, true);
     const dom = w.toDOM(view);
     const fireBtn = dom.querySelector(".cm-annotation-fire-btn");
     const indicator = dom.querySelector(".cm-annotation-thread-indicator");
@@ -821,7 +885,7 @@ describe("thread indicator", () => {
   });
 
   it("CalloutWidget thread indicator appears after fire button, before fold arrow", () => {
-    const ann = makeAnnotation({ form: "block", annotation_type: "note", body: "body" });
+    const ann = makeAnnotation({ form: "block", annotation_type: "llm", body: "body" });
     const w = new CalloutWidget(ann, false, 0, false, false, true);
     const dom = w.toDOM(null as unknown as EditorView);
     const header = dom.querySelector(".cm-annotation-callout-header")!;
@@ -945,6 +1009,33 @@ describe("thread indicator", () => {
     indicator.click();
     expect(editSpy).not.toHaveBeenCalled();
     window.removeEventListener("lit:open-annotation-builder", editSpy);
+  });
+});
+
+describe("fire button proximity reveal", () => {
+  it("fire button has cm-annotation-fire-proximity class when not firing", () => {
+    const ann = makeAnnotation({ annotation_type: "llm" });
+    const btn = createFireButton(ann, false);
+    expect(btn).toBeTruthy();
+    expect(btn!.classList.contains("cm-annotation-fire-proximity")).toBe(true);
+  });
+
+  it("fire button does NOT have cm-annotation-fire-proximity class when isFiring is true", () => {
+    const ann = makeAnnotation({ annotation_type: "llm" });
+    const btn = createFireButton(ann, true);
+    expect(btn).toBeTruthy();
+    expect(btn!.classList.contains("cm-annotation-fire-proximity")).toBe(false);
+  });
+
+  it("PillWidget fire button has cm-annotation-fire-proximity class", () => {
+    const view = makeEditorView();
+    const ann = makeAnnotation({ annotation_type: "llm" });
+    const w = new PillWidget(ann);
+    const dom = w.toDOM(view);
+    const btn = dom.querySelector(".cm-annotation-fire-btn");
+    expect(btn).toBeTruthy();
+    expect(btn!.classList.contains("cm-annotation-fire-proximity")).toBe(true);
+    view.destroy();
   });
 });
 

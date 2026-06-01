@@ -107,10 +107,15 @@ export function createFireButton(ann: Annotation, isFiring?: boolean, llmLocked?
     btn.classList.add("cm-annotation-fire-disabled");
   }
 
+  if (!llmLocked) {
+    btn.classList.add("cm-annotation-fire-proximity");
+  }
+
   btn.textContent = "▶";
   btn.onmousedown = (e) => {
     e.stopPropagation();
     e.preventDefault();
+    if (llmLocked) return;
     window.dispatchEvent(
       new CustomEvent<FireAnnotationEventDetail>("lit:fire-annotation", {
         detail: { annotation: ann },

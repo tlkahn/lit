@@ -353,6 +353,61 @@ describe("AnnotationBuilderModal", () => {
     });
   });
 
+  describe("type dropdown options", () => {
+    it("includes LLM option", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      const typeSelect = screen.getByTestId("annotation-type-select");
+      const options = Array.from(typeSelect.querySelectorAll("option"));
+      const llmOption = options.find((o) => o.value === "llm");
+      expect(llmOption).toBeDefined();
+      expect(llmOption!.textContent).toContain("LLM");
+    });
+  });
+
+  describe("scope dropdown options", () => {
+    it("includes Document option", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      const scopeSelect = screen.getByTestId("annotation-scope-select");
+      const options = Array.from(scopeSelect.querySelectorAll("option"));
+      expect(options.find((o) => o.value === "document")).toBeDefined();
+    });
+
+    it("includes Section option", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      const scopeSelect = screen.getByTestId("annotation-scope-select");
+      const options = Array.from(scopeSelect.querySelectorAll("option"));
+      expect(options.find((o) => o.value === "section")).toBeDefined();
+    });
+
+    it("document scope does not show count input", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      fireEvent.change(screen.getByTestId("annotation-scope-select"), { target: { value: "document" } });
+      expect(screen.queryByTestId("annotation-scope-count")).not.toBeInTheDocument();
+    });
+
+    it("section scope does not show count input", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      fireEvent.change(screen.getByTestId("annotation-scope-select"), { target: { value: "section" } });
+      expect(screen.queryByTestId("annotation-scope-count")).not.toBeInTheDocument();
+    });
+
+    it("document scope generates \\d in preview", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      fireEvent.change(screen.getByTestId("annotation-type-select"), { target: { value: "note" } });
+      fireEvent.change(screen.getByTestId("annotation-scope-select"), { target: { value: "document" } });
+      const preview = screen.getByTestId("annotation-preview");
+      expect(preview.textContent).toContain("\\d");
+    });
+
+    it("section scope generates \\h in preview", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      fireEvent.change(screen.getByTestId("annotation-type-select"), { target: { value: "note" } });
+      fireEvent.change(screen.getByTestId("annotation-scope-select"), { target: { value: "section" } });
+      const preview = screen.getByTestId("annotation-preview");
+      expect(preview.textContent).toContain("\\h");
+    });
+  });
+
   describe("rendered markdown preview", () => {
     it("renders body as markdown in preview", () => {
       render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
@@ -401,6 +456,105 @@ describe("AnnotationBuilderModal", () => {
       );
       expect(screen.getByTestId("annotation-id-input")).toHaveValue("pre-filled-id");
       expect(screen.getByTestId("annotation-preview").textContent).toBe("<!---[pre-filled-id] n | x @2026-06-01 --->");
+    });
+  });
+
+  describe("asymmetric scope split toggle", () => {
+    it("split toggle appears when scope is sentence", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      fireEvent.change(screen.getByTestId("annotation-scope-select"), { target: { value: "sentence" } });
+      expect(screen.getByTestId("annotation-asymmetric-toggle")).toBeInTheDocument();
+    });
+
+    it("split toggle does NOT appear when scope is none", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      fireEvent.change(screen.getByTestId("annotation-scope-select"), { target: { value: "none" } });
+      expect(screen.queryByTestId("annotation-asymmetric-toggle")).not.toBeInTheDocument();
+    });
+
+    it("split toggle does NOT appear when scope is anchor", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      fireEvent.change(screen.getByTestId("annotation-scope-select"), { target: { value: "anchor" } });
+      expect(screen.queryByTestId("annotation-asymmetric-toggle")).not.toBeInTheDocument();
+    });
+
+    it("split toggle does NOT appear when scope is document", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      fireEvent.change(screen.getByTestId("annotation-scope-select"), { target: { value: "document" } });
+      expect(screen.queryByTestId("annotation-asymmetric-toggle")).not.toBeInTheDocument();
+    });
+
+    it("split toggle does NOT appear when scope is section", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      fireEvent.change(screen.getByTestId("annotation-scope-select"), { target: { value: "section" } });
+      expect(screen.queryByTestId("annotation-asymmetric-toggle")).not.toBeInTheDocument();
+    });
+
+    it("enabling split toggle shows before/after inputs", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      fireEvent.change(screen.getByTestId("annotation-scope-select"), { target: { value: "sentence" } });
+      fireEvent.click(screen.getByTestId("annotation-asymmetric-toggle"));
+      expect(screen.getByTestId("annotation-scope-before")).toBeInTheDocument();
+      expect(screen.getByTestId("annotation-scope-after")).toBeInTheDocument();
+      expect(screen.queryByTestId("annotation-scope-count")).not.toBeInTheDocument();
+    });
+
+    it("asymmetric scope generates correct DSL", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      fireEvent.change(screen.getByTestId("annotation-type-select"), { target: { value: "note" } });
+      fireEvent.change(screen.getByTestId("annotation-scope-select"), { target: { value: "sentence" } });
+      fireEvent.click(screen.getByTestId("annotation-asymmetric-toggle"));
+      fireEvent.change(screen.getByTestId("annotation-scope-before"), { target: { value: "3" } });
+      fireEvent.change(screen.getByTestId("annotation-scope-after"), { target: { value: "1" } });
+      const preview = screen.getByTestId("annotation-preview");
+      expect(preview.textContent).toMatch(/3\\s1/);
+    });
+
+    it("disabling split toggle reverts to symmetric, using the larger value", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      fireEvent.change(screen.getByTestId("annotation-scope-select"), { target: { value: "sentence" } });
+      fireEvent.click(screen.getByTestId("annotation-asymmetric-toggle"));
+      fireEvent.change(screen.getByTestId("annotation-scope-before"), { target: { value: "3" } });
+      fireEvent.change(screen.getByTestId("annotation-scope-after"), { target: { value: "1" } });
+      // Disable toggle
+      fireEvent.click(screen.getByTestId("annotation-asymmetric-toggle"));
+      expect(screen.getByTestId("annotation-scope-count")).toHaveValue(3);
+    });
+
+    it("editing existing asymmetric annotation pre-fills toggle and values", () => {
+      render(
+        <AnnotationBuilderModal
+          onClose={onClose}
+          onInsert={onInsert}
+          mode="edit"
+          initialFields={{
+            scope: { kind: "asymmetric", value: { unit: "sentence", before: 2, after: 4 } },
+          }}
+        />,
+      );
+      const toggle = screen.getByTestId("annotation-asymmetric-toggle") as HTMLInputElement;
+      expect(toggle.checked).toBe(true);
+      expect(screen.getByTestId("annotation-scope-select")).toHaveValue("sentence");
+      expect(screen.getByTestId("annotation-scope-before")).toHaveValue(2);
+      expect(screen.getByTestId("annotation-scope-after")).toHaveValue(4);
+    });
+
+    it("editing document-scoped annotation and switching to sentence produces valid scope", () => {
+      render(
+        <AnnotationBuilderModal
+          onClose={onClose}
+          onInsert={onInsert}
+          mode="edit"
+          initialFields={{
+            type: "note",
+            scope: { kind: "document", value: 0 as const },
+            body: "whole doc note",
+          }}
+        />,
+      );
+      fireEvent.change(screen.getByTestId("annotation-scope-select"), { target: { value: "sentence" } });
+      const preview = screen.getByTestId("annotation-preview");
+      expect(preview.textContent).toContain("\\s");
     });
   });
 });

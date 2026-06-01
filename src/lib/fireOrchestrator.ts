@@ -18,12 +18,8 @@ export interface FireAnnotationArgs {
 
 const PROMPT_FIELD_MAP: Partial<Record<AnnotationType, keyof PreferencesState>> = {
   llm: "llmPromptLlm",
-  todo: "llmPromptTodo",
   translation: "llmPromptTr",
   question: "llmPromptQ",
-  note: "llmPromptN",
-  crossref: "llmPromptCf",
-  apparatus: "llmPromptApp",
 };
 
 export function getTypePrompt(annotationType: AnnotationType): string {
@@ -91,6 +87,10 @@ export async function fireAnnotation(args: FireAnnotationArgs): Promise<(() => v
   const system = getTypePrompt(annotation.annotation_type);
   const text = buildFirePrompt(scopeText, annotation.body);
   const fireType = classifyFireType(annotation.annotation_type);
+  if (!fireType) {
+    doCleanup();
+    return;
+  }
 
   if (fireType === "persisting") {
     const nodeId = useWorkspaceStore.getState().currentPagePath;

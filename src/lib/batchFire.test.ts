@@ -60,7 +60,7 @@ beforeEach(() => {
 describe("batchFireReplacingAnnotations", () => {
   it("fires each replacing annotation sequentially, sorted by char_start descending", async () => {
     const ann1 = makeAnnotation({ annotation_type: "llm", char_start: 10, char_end: 30 });
-    const ann2 = makeAnnotation({ annotation_type: "todo", char_start: 40, char_end: 60 });
+    const ann2 = makeAnnotation({ annotation_type: "translation", char_start: 40, char_end: 60 });
     const view = makeView([ann1, ann2]);
 
     await batchFireReplacingAnnotations(view);

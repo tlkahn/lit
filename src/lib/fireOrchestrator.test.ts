@@ -310,13 +310,13 @@ describe("fireAnnotation", () => {
   });
 
   it("strips multiple annotations from scope text", async () => {
-    const doc = "paragraph <!--- todo | note1 ---> middle <!--- todo | note2 ---> end";
+    const doc = "paragraph <!--- llm | note1 ---> middle <!--- llm | note2 ---> end";
     const view = makeView(doc);
     const ann = makeAnnotation({
-      annotation_type: "todo",
+      annotation_type: "llm",
       body: "note1",
       char_start: 10,
-      char_end: 39,
+      char_end: 38,
     });
     mockResolve.mockResolvedValue({ start: 0, end: doc.length });
 
@@ -384,14 +384,14 @@ describe("fireAnnotation", () => {
     useConversationStore.setState({ sendAnnotationFire: vi.fn(async () => {}) });
     const view = makeView();
     const ann = makeAnnotation({
-      annotation_type: "note",
-      body: "my note",
+      annotation_type: "question",
+      body: "my question",
       char_start: 5,
     });
 
     await fireAnnotation({ view, annotation: ann });
 
-    expect(mockFindUuid).toHaveBeenCalledWith("test/page.md", "note", "my note", 5);
+    expect(mockFindUuid).toHaveBeenCalledWith("test/page.md", "question", "my question", 5);
     view.destroy();
   });
 
@@ -678,11 +678,11 @@ describe("fireAnnotation", () => {
 
     // Case 2: annotation with null body
     const view2 = makeView();
-    const ann2 = makeAnnotation({ annotation_type: "note", body: null });
+    const ann2 = makeAnnotation({ annotation_type: "question", body: null });
     await fireAnnotation({ view: view2, annotation: ann2 });
 
     const callArg2 = sendSpy.mock.calls[1]![0] as Record<string, unknown>;
-    expect(callArg2.title).toBe("note");
+    expect(callArg2.title).toBe("question");
     view2.destroy();
   });
 
@@ -696,6 +696,25 @@ describe("fireAnnotation", () => {
     await flushPromises();
 
     expect(useModalLockStore.getState().llmLocked).toBe(false);
+    view.destroy();
+  });
+
+  it("non-fireable type: returns early without calling startLlmStream or sendAnnotationFire", async () => {
+    const sendSpy = vi.fn().mockResolvedValue(undefined);
+    useConversationStore.setState({ sendAnnotationFire: sendSpy });
+    const completeSpy = vi.fn();
+    window.addEventListener("lit:fire-complete", completeSpy);
+    const view = makeView("hello world", true);
+    const ann = makeAnnotation({ annotation_type: "bare" as Annotation["annotation_type"], char_start: 0 });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    expect(mockStream).not.toHaveBeenCalled();
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(useModalLockStore.getState().llmLocked).toBe(false);
+    expect(view.state.field(firingAnnotationsField).has(0)).toBe(false);
+    expect(completeSpy).toHaveBeenCalledOnce();
+    window.removeEventListener("lit:fire-complete", completeSpy);
     view.destroy();
   });
 

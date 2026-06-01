@@ -260,6 +260,25 @@
   pointer-events: none;
 }
 
+/* Proximity reveal — hidden by default, shown on parent hover */
+.cm-annotation-fire-proximity {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.cm-annotation-pill:hover .cm-annotation-fire-proximity,
+.cm-annotation-marker-wrap:hover .cm-annotation-fire-proximity,
+.cm-annotation-callout-header:hover .cm-annotation-fire-proximity {
+  opacity: 0.6;
+  pointer-events: auto;
+}
+
+.cm-annotation-pill:hover .cm-annotation-fire-proximity:hover,
+.cm-annotation-marker-wrap:hover .cm-annotation-fire-proximity:hover,
+.cm-annotation-callout-header:hover .cm-annotation-fire-proximity:hover {
+  opacity: 1;
+}
+
 /* Spinner (firing state) */
 @keyframes cm-annotation-spin {
   to { transform: rotate(360deg); }

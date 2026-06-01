@@ -7,8 +7,8 @@ describe("fireClassification", () => {
       expect(classifyFireType("llm")).toBe("replacing");
     });
 
-    it("todo is replacing", () => {
-      expect(classifyFireType("todo")).toBe("replacing");
+    it("todo returns null (not fire-eligible)", () => {
+      expect(classifyFireType("todo")).toBeNull();
     });
 
     it("translation is replacing", () => {
@@ -19,16 +19,16 @@ describe("fireClassification", () => {
       expect(classifyFireType("question")).toBe("persisting");
     });
 
-    it("note is persisting", () => {
-      expect(classifyFireType("note")).toBe("persisting");
+    it("note returns null (not fire-eligible)", () => {
+      expect(classifyFireType("note")).toBeNull();
     });
 
-    it("crossref is persisting", () => {
-      expect(classifyFireType("crossref")).toBe("persisting");
+    it("crossref returns null (not fire-eligible)", () => {
+      expect(classifyFireType("crossref")).toBeNull();
     });
 
-    it("apparatus is persisting", () => {
-      expect(classifyFireType("apparatus")).toBe("persisting");
+    it("apparatus returns null (not fire-eligible)", () => {
+      expect(classifyFireType("apparatus")).toBeNull();
     });
 
     it("bare returns null", () => {
@@ -61,6 +61,22 @@ describe("fireClassification", () => {
 
     it("returns false for bare", () => {
       expect(canFire("bare")).toBe(false);
+    });
+
+    it("returns false for todo", () => {
+      expect(canFire("todo")).toBe(false);
+    });
+
+    it("returns false for note", () => {
+      expect(canFire("note")).toBe(false);
+    });
+
+    it("returns false for crossref", () => {
+      expect(canFire("crossref")).toBe(false);
+    });
+
+    it("returns false for apparatus", () => {
+      expect(canFire("apparatus")).toBe(false);
     });
   });
 });
