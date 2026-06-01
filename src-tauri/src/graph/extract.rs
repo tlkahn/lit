@@ -941,7 +941,7 @@ mod tests {
 
     #[test]
     fn extract_annotations_basic() {
-        let content = "Some text %%! n: _ | a note %% more";
+        let content = "Some text <!--- n: _ | a note ---> more";
         let result = extract_annotations(content);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].annotation_type, "note");
@@ -952,14 +952,14 @@ mod tests {
 
     #[test]
     fn extract_annotations_multiple() {
-        let content = "%%! n: _ | first %% stuff %%! q: _ | second %%";
+        let content = "<!--- n: _ | first ---> stuff <!--- q: _ | second --->";
         let result = extract_annotations(content);
         assert_eq!(result.len(), 2);
     }
 
     #[test]
     fn extract_annotations_no_body() {
-        let content = "%%! n: _ %%";
+        let content = "<!--- n: _ --->";
         let result = extract_annotations(content);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].body, None);
@@ -967,7 +967,7 @@ mod tests {
 
     #[test]
     fn extract_annotations_multiline() {
-        let content = "line one\nline two\n%%! n: _ | note %%";
+        let content = "line one\nline two\n<!--- n: _ | note --->";
         let result = extract_annotations(content);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].source_line, 3);
@@ -981,7 +981,7 @@ mod tests {
 
     #[test]
     fn extract_annotations_llm_type() {
-        let content = "Some text %%! llm | summarize %% more";
+        let content = "Some text <!--- llm | summarize ---> more";
         let result = extract_annotations(content);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].annotation_type, "llm");
@@ -989,7 +989,7 @@ mod tests {
 
     #[test]
     fn extract_annotations_document_scope() {
-        let content = r"%%! llm \d | summarize %%";
+        let content = r"<!--- llm \d | summarize --->";
         let result = extract_annotations(content);
         assert_eq!(result[0].scope_kind, "document");
         assert_eq!(result[0].scope_value, "");
@@ -997,7 +997,7 @@ mod tests {
 
     #[test]
     fn extract_annotations_section_scope() {
-        let content = r"%%! n: \h | section note %%";
+        let content = r"<!--- n: \h | section note --->";
         let result = extract_annotations(content);
         assert_eq!(result[0].scope_kind, "section");
         assert_eq!(result[0].scope_value, "");
@@ -1005,7 +1005,7 @@ mod tests {
 
     #[test]
     fn extract_annotations_asymmetric_scope() {
-        let content = r"%%! n 3\p1 | asymmetric note %%";
+        let content = r"<!--- n 3\p1 | asymmetric note --->";
         let result = extract_annotations(content);
         assert_eq!(result[0].scope_kind, "asymmetric_paragraph");
         assert_eq!(result[0].scope_value, "3:1");

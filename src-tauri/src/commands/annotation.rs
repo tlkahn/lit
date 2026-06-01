@@ -95,7 +95,7 @@ mod tests {
 
     #[test]
     fn cmd_parse_annotations_compact() {
-        let result = parse_annotations("%%! n: | note %%".to_string());
+        let result = parse_annotations("<!--- n: | note --->".to_string());
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].annotation_type, AnnotationType::Note);
     }
@@ -108,7 +108,7 @@ mod tests {
 
     #[test]
     fn cmd_resolve_scope_words() {
-        let content = "hello world %%! n: _ | note %%".to_string();
+        let content = "hello world <!--- n: _ | note --->".to_string();
         let result = resolve_annotation_scope(
             content,
             12,
@@ -121,7 +121,7 @@ mod tests {
 
     #[test]
     fn cmd_resolve_scope_none() {
-        let content = "%%! n: _ | note %%".to_string();
+        let content = "<!--- n: _ | note --->".to_string();
         let result = resolve_annotation_scope(
             content,
             0,
@@ -133,7 +133,7 @@ mod tests {
 
     #[test]
     fn cmd_resolve_scope_with_mode_backward() {
-        let content = "hello world %%! n %%".to_string();
+        let content = "hello world <!--- n --->".to_string();
         let result_new = resolve_annotation_scope_with_mode(
             content.clone(), 12, Scope::Words(1), "en".to_string(), None,
         );
@@ -143,7 +143,7 @@ mod tests {
 
     #[test]
     fn cmd_resolve_scope_with_mode_bidirectional() {
-        let content = "before %%! n %% after word".to_string();
+        let content = "before <!--- n ---> after word".to_string();
         let result = resolve_annotation_scope_with_mode(
             content, 7, Scope::Words(1), "en".to_string(),
             Some(ResolutionMode::Bidirectional),
@@ -167,7 +167,7 @@ mod tests {
     #[test]
     fn cmd_search_annotations() {
         let dir = create_workspace();
-        write_md(dir.path(), "a.md", "Some text %%! n: _ | Silk Road flourished %% more.");
+        write_md(dir.path(), "a.md", "Some text <!--- n: _ | Silk Road flourished ---> more.");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.search_annotations("Silk Road", None, 20).unwrap();
         assert_eq!(results.len(), 1);
@@ -178,7 +178,7 @@ mod tests {
     #[test]
     fn cmd_list_annotations() {
         let dir = create_workspace();
-        write_md(dir.path(), "a.md", "%%! n: _ | first %% text %%! q: _ | second %%");
+        write_md(dir.path(), "a.md", "<!--- n: _ | first ---> text <!--- q: _ | second --->");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.list_annotations(Some("a.md"), None, 100).unwrap();
         assert_eq!(results.len(), 2);
@@ -187,7 +187,7 @@ mod tests {
     #[test]
     fn cmd_list_annotations_filtered() {
         let dir = create_workspace();
-        write_md(dir.path(), "a.md", "%%! n: _ | note body %% and %%! q: _ | question body %%");
+        write_md(dir.path(), "a.md", "<!--- n: _ | note body ---> and <!--- q: _ | question body --->");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.list_annotations(Some("a.md"), Some("note"), 100).unwrap();
         assert_eq!(results.len(), 1);
@@ -197,8 +197,8 @@ mod tests {
     #[test]
     fn cmd_list_annotations_vault_wide() {
         let dir = create_workspace();
-        write_md(dir.path(), "a.md", "%%! n: _ | alpha note %%");
-        write_md(dir.path(), "b.md", "%%! q: _ | beta question %%");
+        write_md(dir.path(), "a.md", "<!--- n: _ | alpha note --->");
+        write_md(dir.path(), "b.md", "<!--- q: _ | beta question --->");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.list_annotations(None, None, 100).unwrap();
         assert_eq!(results.len(), 2);
@@ -210,7 +210,7 @@ mod tests {
     #[test]
     fn cmd_annotation_find_uuid() {
         let dir = create_workspace();
-        write_md(dir.path(), "a.md", "%%! q: _ | What does this mean? %% hello");
+        write_md(dir.path(), "a.md", "<!--- q: _ | What does this mean? ---> hello");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let uuid = gi.find_annotation_uuid("a.md", "question", Some("What does this mean?"), 0).unwrap();
         assert!(uuid.is_some());
@@ -220,7 +220,7 @@ mod tests {
     #[test]
     fn cmd_annotation_find_uuid_missing() {
         let dir = create_workspace();
-        write_md(dir.path(), "a.md", "%%! n: _ | note %%");
+        write_md(dir.path(), "a.md", "<!--- n: _ | note --->");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let uuid = gi.find_annotation_uuid("a.md", "question", Some("nonexistent"), 0).unwrap();
         assert!(uuid.is_none());
@@ -229,8 +229,8 @@ mod tests {
     #[test]
     fn cmd_list_annotations_vault_wide_with_type_filter() {
         let dir = create_workspace();
-        write_md(dir.path(), "a.md", "%%! n: _ | alpha note %% and %%! q: _ | alpha question %%");
-        write_md(dir.path(), "b.md", "%%! n: _ | beta note %%");
+        write_md(dir.path(), "a.md", "<!--- n: _ | alpha note ---> and <!--- q: _ | alpha question --->");
+        write_md(dir.path(), "b.md", "<!--- n: _ | beta note --->");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.list_annotations(None, Some("note"), 100).unwrap();
         assert_eq!(results.len(), 2);

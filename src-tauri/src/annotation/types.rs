@@ -462,7 +462,7 @@ mod tests {
             is_structured: true,
             char_start: 10,
             char_end: 50,
-            original: "%%! n? __ | a note @2026-03 %%".to_string(),
+            original: "<!--- n? __ | a note @2026-03 --->".to_string(),
             uuid: None,
         };
         let json = serde_json::to_string(&ann).unwrap();
@@ -520,7 +520,7 @@ mod tests {
             is_structured: false,
             char_start: 0,
             char_end: 10,
-            original: "%%: n %%".to_string(),
+            original: "<!---: n --->".to_string(),
             uuid: None,
         };
         let json = serde_json::to_string(&ann).unwrap();
@@ -539,7 +539,7 @@ mod tests {
             is_structured: false,
             char_start: 0,
             char_end: 10,
-            original: "%%: n %%".to_string(),
+            original: "<!---: n --->".to_string(),
             uuid: Some("abc".to_string()),
         };
         let json = serde_json::to_string(&ann).unwrap();

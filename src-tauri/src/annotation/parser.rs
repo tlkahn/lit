@@ -31,7 +31,7 @@ mod tests {
 
     #[test]
     fn single_compact_annotation() {
-        let doc = "The term *anuttara*%%! n? __ | same sense as TĀ 3.68? @2026-03 %% appears.";
+        let doc = "The term *anuttara*<!--- n? __ | same sense as TĀ 3.68? @2026-03 ---> appears.";
         let anns = parse_annotations(doc);
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].annotation_type, AnnotationType::Note);
@@ -46,7 +46,7 @@ mod tests {
 
     #[test]
     fn single_block_annotation() {
-        let doc = "Text before.\n%%!\nn!\n\\p\n@2026-03-28\n---\nThe body.\n%%\nText after.";
+        let doc = "Text before.\n<!---\nn!\n\\p\n@2026-03-28\n---\nThe body.\n--->\nText after.";
         let anns = parse_annotations(doc);
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].annotation_type, AnnotationType::Note);
@@ -58,7 +58,7 @@ mod tests {
 
     #[test]
     fn mixed_compact_and_block() {
-        let doc = "%%! n: | inline note %%\n\nParagraph.\n\n%%!\ncf\n---\nBlock crossref.\n%%";
+        let doc = "<!--- n: | inline note --->\n\nParagraph.\n\n<!---\ncf\n---\nBlock crossref.\n--->";
         let anns = parse_annotations(doc);
         assert_eq!(anns.len(), 2);
         assert_eq!(anns[0].form, AnnotationForm::Compact);
@@ -69,7 +69,7 @@ mod tests {
 
     #[test]
     fn bare_annotation() {
-        let doc = "text%%! compare Vasugupta SpK 1.1 %%more";
+        let doc = "text<!--- compare Vasugupta SpK 1.1 --->more";
         let anns = parse_annotations(doc);
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].annotation_type, AnnotationType::Bare);
@@ -78,7 +78,7 @@ mod tests {
 
     #[test]
     fn skip_code_fenced_annotations() {
-        let doc = "```\n%%! skip %%\n```\n%%! q? | keep %%";
+        let doc = "```\n<!--- skip --->\n```\n<!--- q? | keep --->";
         let anns = parse_annotations(doc);
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].annotation_type, AnnotationType::Question);
@@ -91,7 +91,7 @@ mod tests {
 
     #[test]
     fn ordering_by_position() {
-        let doc = "%%! a %% middle %%! b %%";
+        let doc = "<!--- a ---> middle <!--- b --->";
         let anns = parse_annotations(doc);
         assert_eq!(anns.len(), 2);
         assert!(anns[0].char_start < anns[1].char_start);
@@ -99,14 +99,14 @@ mod tests {
 
     #[test]
     fn original_preserved() {
-        let doc = "%%! todo! | fix this %%";
+        let doc = "<!--- todo! | fix this --->";
         let anns = parse_annotations(doc);
-        assert_eq!(anns[0].original, "%%! todo! | fix this %%");
+        assert_eq!(anns[0].original, "<!--- todo! | fix this --->");
     }
 
     #[test]
     fn utf16_offsets_with_cjk() {
-        let doc = "你好%%! n: | 注释 %%";
+        let doc = "你好<!--- n: | 注释 --->";
         let anns = parse_annotations(doc);
         assert_eq!(anns[0].char_start, 2);
         assert_eq!(anns[0].body, Some("注释".to_string()));
@@ -114,14 +114,14 @@ mod tests {
 
     #[test]
     fn apparatus_type_integration() {
-        let doc = "%%! app: | variant: ms. B has *prakāśa* %%";
+        let doc = "<!--- app: | variant: ms. B has *prakāśa* --->";
         let anns = parse_annotations(doc);
         assert_eq!(anns[0].annotation_type, AnnotationType::Apparatus);
     }
 
     #[test]
     fn translation_type_integration() {
-        let doc = "%%! tr: _ | cf. Tibetan version @2026-03 %%";
+        let doc = "<!--- tr: _ | cf. Tibetan version @2026-03 --->";
         let anns = parse_annotations(doc);
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].annotation_type, AnnotationType::Translation);
@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn page_scope_compact_integration() {
-        let doc = r"%%! n: \f | page-level note %%";
+        let doc = r"<!--- n: \f | page-level note --->";
         let anns = parse_annotations(doc);
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].scope, Scope::Page(1));
@@ -140,7 +140,7 @@ mod tests {
 
     #[test]
     fn page_scope_block_integration() {
-        let doc = "%%!\ncf\n\\ff\n---\nTwo pages.\n%%";
+        let doc = "<!---\ncf\n\\ff\n---\nTwo pages.\n--->";
         let anns = parse_annotations(doc);
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].scope, Scope::Page(2));
@@ -148,17 +148,17 @@ mod tests {
 
     #[test]
     fn underscore_suffix_scope_integration() {
-        let doc = r"%%! n: \p__ | two paragraphs %%";
+        let doc = r"<!--- n: \p__ | two paragraphs --->";
         let anns = parse_annotations(doc);
         assert_eq!(anns[0].scope, Scope::Paragraph(2));
-        let doc2 = r"%%! n: \pp | two paragraphs %%";
+        let doc2 = r"<!--- n: \pp | two paragraphs --->";
         let anns2 = parse_annotations(doc2);
         assert_eq!(anns[0].scope, anns2[0].scope);
     }
 
     #[test]
     fn plain_percent_comments_not_matched() {
-        let doc = "%% normal %% %%! real %%";
+        let doc = "<!-- normal --> <!--- real --->";
         let anns = parse_annotations(doc);
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].inner_check(), true);
@@ -167,17 +167,17 @@ mod tests {
     #[test]
     fn multiple_annotations_with_blocks_and_compact() {
         let doc = "\
-First paragraph.%%! n: _ | marginal note @2026-03 %%
+First paragraph.<!--- n: _ | marginal note @2026-03 --->
 
-%%!
+<!---
 todo!
 \\p
 @2026-03-28
 ---
 Need to verify this claim.
-%%
+--->
 
-Second paragraph.%%! cf \\pp %%
+Second paragraph.<!--- cf \\pp --->
 ";
         let anns = parse_annotations(doc);
         assert_eq!(anns.len(), 3);
