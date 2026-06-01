@@ -30,7 +30,6 @@ export function ThreadSelector({
       <select
         data-testid="thread-selector"
         disabled
-        className="rounded-md bg-bg-tertiary px-2.5 py-1 text-sm text-text-muted outline-none"
       >
         <option>No threads</option>
       </select>
@@ -50,7 +49,6 @@ export function ThreadSelector({
       data-testid="thread-selector"
       value={hasMatch ? activeConversationId! : ""}
       onChange={(e) => onSelect(e.target.value)}
-      className="rounded-md bg-bg-tertiary px-2.5 py-1 text-sm text-text-normal outline-none focus:ring-1 focus:ring-accent"
     >
       {!hasMatch && (
         <option value="" disabled>

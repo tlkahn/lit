@@ -109,7 +109,6 @@ export function AnnotationBuilderModal({
           <label className="flex flex-col gap-1">
             <span className="text-xs text-text-muted">Type</span>
             <select
-              className="rounded border border-border-primary bg-bg-secondary px-2 py-1 text-sm text-text-normal"
               data-testid="annotation-type-select"
               value={type ?? ""}
               onChange={(e) => setType((e.target.value || null) as AnnotationType | null)}
@@ -127,7 +126,6 @@ export function AnnotationBuilderModal({
           <label className="flex flex-col gap-1">
             <span className="text-xs text-text-muted">Certainty</span>
             <select
-              className="rounded border border-border-primary bg-bg-secondary px-2 py-1 text-sm text-text-normal"
               data-testid="annotation-certainty-select"
               value={certainty}
               onChange={(e) => setCertainty(e.target.value as Certainty)}
@@ -141,7 +139,6 @@ export function AnnotationBuilderModal({
           <label className="flex flex-col gap-1">
             <span className="text-xs text-text-muted">Scope</span>
             <select
-              className="rounded border border-border-primary bg-bg-secondary px-2 py-1 text-sm text-text-normal"
               data-testid="annotation-scope-select"
               value={scopeKind}
               onChange={(e) => setScopeKind(e.target.value as ScopeKind)}

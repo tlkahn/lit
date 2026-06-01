@@ -125,6 +125,18 @@ describe("ThreadSelector", () => {
     expect(select.value).toBe("");
   });
 
+  it("does not apply ad-hoc styling classes on the select element", () => {
+    const conversations = [
+      makeConversation({ id: "c1", title: "Alpha thread" }),
+    ];
+    const { getByTestId } = render(
+      <ThreadSelector conversations={conversations} activeConversationId="c1" onSelect={vi.fn()} />,
+    );
+    const select = getByTestId("thread-selector");
+    expect(select.className).not.toContain("bg-bg-tertiary");
+    expect(select.className).not.toContain("rounded-md");
+  });
+
   it("selects the placeholder when active id is null but threads exist", () => {
     const conversations = [
       makeConversation({ id: "c1", title: "Alpha" }),

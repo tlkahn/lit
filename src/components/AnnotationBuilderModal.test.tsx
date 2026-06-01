@@ -180,6 +180,19 @@ describe("AnnotationBuilderModal", () => {
     expect(screen.getByTestId("annotation-date-input")).toHaveValue("2026-06-01");
   });
 
+  it("select elements do not carry ad-hoc border/background classes", () => {
+    render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+    const selects = [
+      screen.getByTestId("annotation-type-select"),
+      screen.getByTestId("annotation-certainty-select"),
+      screen.getByTestId("annotation-scope-select"),
+    ];
+    for (const select of selects) {
+      expect(select.className).not.toContain("border-border-primary");
+      expect(select.className).not.toContain("bg-bg-secondary");
+    }
+  });
+
   describe("edit mode", () => {
     it("mode='edit' renders 'Update' button text", () => {
       render(

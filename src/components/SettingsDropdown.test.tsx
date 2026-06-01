@@ -72,6 +72,15 @@ describe("SettingsDropdown", () => {
     expect(em!.textContent).toBe("Fancy");
   });
 
+  it("select element has no ad-hoc background/border Tailwind classes", () => {
+    const { container } = render(
+      <SettingsDropdown options={options} value="a" onChange={vi.fn()} testId="test-dropdown" />,
+    );
+    const select = container.querySelector("[data-testid='test-dropdown']")!;
+    expect(select.className).not.toContain("bg-bg-tertiary");
+    expect(select.className).not.toContain("rounded-md");
+  });
+
   it("has label-left, control-right layout", () => {
     const { container } = render(
       <SettingsDropdown options={options} value="a" onChange={vi.fn()} testId="test-dropdown" label="Pick one" />,

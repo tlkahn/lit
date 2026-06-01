@@ -49,6 +49,39 @@ html, body, #root {
   font-family: var(--font-interface-theme, ui-sans-serif, system-ui, sans-serif);
 }
 
+select {
+  appearance: none;
+  background-color: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 0.25rem;
+  padding: 0.25rem 1.75rem 0.25rem 0.625rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  color: var(--text-normal);
+  outline: none;
+  background-repeat: no-repeat;
+  background-position: right 0.5rem center;
+  background-size: 0.75rem;
+}
+
+.theme-light select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%2359636e' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+.theme-dark select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%239198a1' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+select:focus {
+  box-shadow: 0 0 0 1px var(--interactive-accent);
+}
+
+select:disabled {
+  color: var(--text-muted);
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
 .cm-editor, [contenteditable], textarea {
   direction: auto;
   unicode-bidi: plaintext;

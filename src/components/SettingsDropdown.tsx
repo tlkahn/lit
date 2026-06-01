@@ -15,7 +15,6 @@ export function SettingsDropdown({ options, value, onChange, testId, label, null
         data-testid={testId}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="rounded-md bg-bg-tertiary px-2.5 py-1 text-sm text-text-normal outline-none focus:ring-1 focus:ring-accent"
       >
         {nullable && <option value="">Default</option>}
         {options.map((opt) => (
