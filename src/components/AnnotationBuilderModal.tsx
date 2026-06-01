@@ -82,18 +82,6 @@ export function AnnotationBuilderModal({
     return "";
   });
 
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    },
-    [onClose],
-  );
-
-  useEffect(() => {
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [handleKeyDown]);
-
   const scope: Scope | null = useMemo(() => {
     if (scopeKind === "none") return null;
     if (scopeKind === "anchor") return { kind: "anchor" as const, value: anchorText || "" };
@@ -119,6 +107,23 @@ export function AnnotationBuilderModal({
 
   const preview = useMemo(() => generateDsl(fields), [fields]);
   const renderedBody = useMemo(() => renderMarkdown(body), [body]);
+
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+        e.preventDefault();
+        e.stopPropagation();
+        onInsert(preview);
+      }
+    },
+    [onClose, onInsert, preview],
+  );
+
+  useEffect(() => {
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => document.removeEventListener("keydown", handleKeyDown, true);
+  }, [handleKeyDown]);
 
   const handleInsert = () => {
     onInsert(preview);

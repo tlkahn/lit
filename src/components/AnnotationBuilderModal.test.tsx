@@ -108,6 +108,22 @@ describe("AnnotationBuilderModal", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it("Cmd+Enter calls onInsert with current preview", () => {
+    render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+    fireEvent.change(screen.getByTestId("annotation-id-input"), { target: { value: "" } });
+    fireEvent.change(screen.getByTestId("annotation-body-input"), { target: { value: "confirm test" } });
+    fireEvent.keyDown(document, { key: "Enter", metaKey: true });
+    expect(onInsert).toHaveBeenCalledWith("<!--- n | confirm test @2026-06-01 --->");
+  });
+
+  it("Ctrl+Enter calls onInsert with current preview", () => {
+    render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+    fireEvent.change(screen.getByTestId("annotation-id-input"), { target: { value: "" } });
+    fireEvent.change(screen.getByTestId("annotation-body-input"), { target: { value: "confirm test" } });
+    fireEvent.keyDown(document, { key: "Enter", ctrlKey: true });
+    expect(onInsert).toHaveBeenCalledWith("<!--- n | confirm test @2026-06-01 --->");
+  });
+
   it("preview shows generateDsl output", () => {
     render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
     // Clear auto-generated id so the preview is predictable
