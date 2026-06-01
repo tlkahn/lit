@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { generateDsl, type AnnotationFields, type EditRawInfo } from "../lib/annotationDsl";
 import { renderMarkdown } from "../lib/renderMarkdown";
-import type { AnnotationType, Certainty, Scope } from "../lib/ipc";
+import type { AnnotationType, Certainty, Scope, ScopeKind as IpcScopeKind } from "../lib/ipc";
 
 interface AnnotationBuilderModalProps {
   onClose: () => void;
@@ -14,6 +14,18 @@ interface AnnotationBuilderModalProps {
 }
 
 type ScopeKind = "none" | "words" | "sentence" | "paragraph" | "page" | "anchor" | "document" | "section" | "asymmetric";
+
+const UNIT_SCOPE_KINDS: ScopeKind[] = ["words", "sentence", "paragraph", "page"];
+
+/** Map ipc ScopeKind ("word") to UI ScopeKind ("words") */
+function ipcUnitToScopeKind(unit: IpcScopeKind): ScopeKind {
+  return unit === "word" ? "words" : unit;
+}
+
+/** Map UI ScopeKind ("words") to ipc ScopeKind ("word") */
+function scopeKindToIpcUnit(kind: ScopeKind): IpcScopeKind {
+  return kind === "words" ? "word" : kind as IpcScopeKind;
+}
 
 export function AnnotationBuilderModal({
   onClose,
@@ -35,12 +47,18 @@ export function AnnotationBuilderModal({
   });
   const [certainty, setCertainty] = useState<Certainty>(initialFields?.certainty ?? "neutral");
   const [scopeKind, setScopeKind] = useState<ScopeKind>(() => {
-    if (initialFields?.scope) return initialFields.scope.kind;
+    if (initialFields?.scope) {
+      if (initialFields.scope.kind === "asymmetric") {
+        return ipcUnitToScopeKind(initialFields.scope.value.unit);
+      }
+      return initialFields.scope.kind;
+    }
     if (selectedText) return "anchor";
     return "none";
   });
   const [scopeCount, setScopeCount] = useState<number>(() => {
     if (!initialFields?.scope) return 1;
+    if (initialFields.scope.kind === "asymmetric") return initialFields.scope.value.before;
     if (initialFields.scope.kind === "anchor") return 1;
     return initialFields.scope.value as number;
   });
@@ -48,6 +66,13 @@ export function AnnotationBuilderModal({
     if (initialFields?.scope?.kind === "anchor") return initialFields.scope.value;
     if (!initialFields?.scope && selectedText) return selectedText;
     return "";
+  });
+  const [asymmetric, setAsymmetric] = useState(() => {
+    return initialFields?.scope?.kind === "asymmetric";
+  });
+  const [scopeAfter, setScopeAfter] = useState(() => {
+    if (initialFields?.scope?.kind === "asymmetric") return initialFields.scope.value.after;
+    return 1;
   });
   const [body, setBody] = useState(initialFields?.body ?? "");
   const [date, setDate] = useState(() => {
@@ -73,9 +98,12 @@ export function AnnotationBuilderModal({
     if (scopeKind === "anchor") return { kind: "anchor" as const, value: anchorText || "" };
     if (scopeKind === "document") return { kind: "document" as const, value: 0 as const };
     if (scopeKind === "section") return { kind: "section" as const, value: 0 as const };
-    if (scopeKind === "asymmetric") return { kind: "asymmetric" as const, value: { unit: "sentence" as const, before: scopeCount, after: scopeCount } };
+    if (scopeKind === "asymmetric") return null;
+    if (asymmetric) {
+      return { kind: "asymmetric" as const, value: { unit: scopeKindToIpcUnit(scopeKind), before: scopeCount, after: scopeAfter } };
+    }
     return { kind: scopeKind, value: scopeCount };
-  }, [scopeKind, scopeCount, anchorText]);
+  }, [scopeKind, scopeCount, anchorText, asymmetric, scopeAfter]);
 
   const fields: AnnotationFields = useMemo(
     () => ({
@@ -120,6 +148,7 @@ export function AnnotationBuilderModal({
               <option value="crossref">CrossRef (cf)</option>
               <option value="apparatus">Apparatus (app)</option>
               <option value="translation">Translation (tr)</option>
+              <option value="llm">LLM (⚡)</option>
             </select>
           </label>
 
@@ -149,10 +178,12 @@ export function AnnotationBuilderModal({
               <option value="paragraph">Paragraph</option>
               <option value="page">Page</option>
               <option value="anchor">Anchor</option>
+              <option value="document">Document</option>
+              <option value="section">Section</option>
             </select>
           </label>
 
-          {scopeKind !== "none" && scopeKind !== "anchor" && (
+          {UNIT_SCOPE_KINDS.includes(scopeKind) && !asymmetric && (
             <label className="flex flex-col gap-1">
               <span className="text-xs text-text-muted">Count</span>
               <input
@@ -165,6 +196,54 @@ export function AnnotationBuilderModal({
                 onChange={(e) => setScopeCount(Math.max(1, parseInt(e.target.value) || 1))}
               />
             </label>
+          )}
+
+          {UNIT_SCOPE_KINDS.includes(scopeKind) && (
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                data-testid="annotation-asymmetric-toggle"
+                checked={asymmetric}
+                onChange={() => {
+                  if (asymmetric) {
+                    setScopeCount(Math.max(scopeCount, scopeAfter));
+                    setAsymmetric(false);
+                  } else {
+                    setAsymmetric(true);
+                  }
+                }}
+              />
+              <span className="text-xs text-text-muted">Asymmetric</span>
+            </label>
+          )}
+
+          {asymmetric && UNIT_SCOPE_KINDS.includes(scopeKind) && (
+            <>
+              <label className="flex flex-col gap-1">
+                <span className="text-xs text-text-muted">Before</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={9}
+                  className="rounded border border-border-primary bg-bg-secondary px-2 py-1 text-sm text-text-normal"
+                  data-testid="annotation-scope-before"
+                  value={scopeCount}
+                  onChange={(e) => setScopeCount(Math.max(1, parseInt(e.target.value) || 1))}
+                />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-xs text-text-muted">After</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={9}
+                  className="rounded border border-border-primary bg-bg-secondary px-2 py-1 text-sm text-text-normal"
+                  data-testid="annotation-scope-after"
+                  value={scopeAfter}
+                  onChange={(e) => setScopeAfter(Math.max(1, parseInt(e.target.value) || 1))}
+                />
+              </label>
+            </>
           )}
 
           {scopeKind === "anchor" && (

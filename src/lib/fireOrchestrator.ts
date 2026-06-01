@@ -18,12 +18,8 @@ export interface FireAnnotationArgs {
 
 const PROMPT_FIELD_MAP: Partial<Record<AnnotationType, keyof PreferencesState>> = {
   llm: "llmPromptLlm",
-  todo: "llmPromptTodo",
   translation: "llmPromptTr",
   question: "llmPromptQ",
-  note: "llmPromptN",
-  crossref: "llmPromptCf",
-  apparatus: "llmPromptApp",
 };
 
 export function getTypePrompt(annotationType: AnnotationType): string {

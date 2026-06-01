@@ -32,12 +32,8 @@ const defaults = {
   llmTemperature: 0.7,
   neighborsDepth: 1,
   llmPromptLlm: "Execute the following instruction using the provided context.",
-  llmPromptTodo: "Complete the following task using the provided context.",
   llmPromptTr: "Translate the following text. If a hint is provided, follow it.",
   llmPromptQ: "Answer the following question about the provided context.",
-  llmPromptN: "Elaborate on the following note given the surrounding context.",
-  llmPromptCf: "Explain the connection described in the following cross-reference.",
-  llmPromptApp: "Provide critical commentary on the following text.",
   loaded: true,
 };
 
@@ -1697,7 +1693,7 @@ describe("SettingsModal", () => {
   // --- Advanced group (collapsible per-type prompts) ---
 
   it("prompt entries have group 'Advanced' in registry", () => {
-    const promptFields = ["llmPromptLlm", "llmPromptTodo", "llmPromptTr", "llmPromptQ", "llmPromptN", "llmPromptCf", "llmPromptApp"];
+    const promptFields = ["llmPromptLlm", "llmPromptTr", "llmPromptQ"];
     for (const field of promptFields) {
       const entry = SETTINGS_REGISTRY.find(e => e.storeField === field);
       expect(entry).toBeTruthy();
@@ -1721,12 +1717,8 @@ describe("SettingsModal", () => {
 
     const promptTestIds = [
       "settings-llmPromptLlm",
-      "settings-llmPromptTodo",
       "settings-llmPromptTr",
       "settings-llmPromptQ",
-      "settings-llmPromptN",
-      "settings-llmPromptCf",
-      "settings-llmPromptApp",
     ];
     for (const id of promptTestIds) {
       expect(container.querySelector(`[data-testid='${id}']`), `missing ${id}`).toBeTruthy();
@@ -1742,19 +1734,15 @@ describe("SettingsModal", () => {
     expect(container.querySelector("[data-testid='settings-group-Advanced']")).toBeNull();
   });
 
-  it("all 7 prompt textareas appear after expanding Advanced", () => {
+  it("all 3 prompt textareas appear after expanding Advanced", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const header = container.querySelector("[data-testid='settings-group-Advanced'] button")!;
     fireEvent.click(header);
 
     const promptTestIds = [
       "settings-llmPromptLlm",
-      "settings-llmPromptTodo",
       "settings-llmPromptTr",
       "settings-llmPromptQ",
-      "settings-llmPromptN",
-      "settings-llmPromptCf",
-      "settings-llmPromptApp",
     ];
     for (const id of promptTestIds) {
       expect(container.querySelector(`[data-testid='${id}']`), `missing ${id}`).toBeTruthy();

@@ -384,14 +384,14 @@ describe("fireAnnotation", () => {
     useConversationStore.setState({ sendAnnotationFire: vi.fn(async () => {}) });
     const view = makeView();
     const ann = makeAnnotation({
-      annotation_type: "note",
-      body: "my note",
+      annotation_type: "question",
+      body: "my question",
       char_start: 5,
     });
 
     await fireAnnotation({ view, annotation: ann });
 
-    expect(mockFindUuid).toHaveBeenCalledWith("test/page.md", "note", "my note", 5);
+    expect(mockFindUuid).toHaveBeenCalledWith("test/page.md", "question", "my question", 5);
     view.destroy();
   });
 
@@ -678,11 +678,11 @@ describe("fireAnnotation", () => {
 
     // Case 2: annotation with null body
     const view2 = makeView();
-    const ann2 = makeAnnotation({ annotation_type: "note", body: null });
+    const ann2 = makeAnnotation({ annotation_type: "question", body: null });
     await fireAnnotation({ view: view2, annotation: ann2 });
 
     const callArg2 = sendSpy.mock.calls[1]![0] as Record<string, unknown>;
-    expect(callArg2.title).toBe("note");
+    expect(callArg2.title).toBe("question");
     view2.destroy();
   });
 

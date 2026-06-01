@@ -1,7 +1,7 @@
 import type { AnnotationType } from "./ipc";
 
-const REPLACING_TYPES: Set<AnnotationType> = new Set(["llm", "todo", "translation"]);
-const PERSISTING_TYPES: Set<AnnotationType> = new Set(["question", "note", "crossref", "apparatus"]);
+const REPLACING_TYPES: Set<AnnotationType> = new Set(["llm", "translation"]);
+const PERSISTING_TYPES: Set<AnnotationType> = new Set(["question"]);
 
 export type FireType = "replacing" | "persisting";
 
