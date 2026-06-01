@@ -89,8 +89,29 @@ pub fn annotation_find_uuid(
 
 #[tauri::command]
 pub fn migrate_annotations(content: String) -> String {
+    use crate::annotation::scanner::{find_fenced_ranges, is_in_fenced_range};
+
+    let fenced_ranges = find_fenced_ranges(&content);
     let re = regex::Regex::new(r"(?s)%%!(.*?)%%").unwrap();
-    re.replace_all(&content, "<!---$1--->").to_string()
+
+    let mut result = String::with_capacity(content.len());
+    let mut last_end = 0;
+
+    for m in re.find_iter(&content) {
+        if is_in_fenced_range(m.start(), &fenced_ranges) {
+            // Inside a fenced code block — keep the original text unchanged
+            continue;
+        }
+        result.push_str(&content[last_end..m.start()]);
+        let caps = re.captures(m.as_str()).unwrap();
+        let inner = &caps[1];
+        result.push_str("<!---");
+        result.push_str(inner);
+        result.push_str("--->");
+        last_end = m.end();
+    }
+    result.push_str(&content[last_end..]);
+    result
 }
 
 #[cfg(test)]
@@ -270,6 +291,30 @@ mod tests {
         assert_eq!(old_anns[0].annotation_type, new_anns[0].annotation_type);
         assert_eq!(old_anns[0].body, new_anns[0].body);
         assert_eq!(old_anns[0].scope, new_anns[0].scope);
+    }
+
+    // --- migrate_annotations fence-awareness tests ---
+
+    #[test]
+    fn cmd_migrate_skips_fenced_code_block() {
+        let input = "before\n```\n%%! n | inside fence %%\n```\nafter";
+        let result = migrate_annotations(input.to_string());
+        assert_eq!(result, input, "%%! inside a fenced code block must not be migrated");
+    }
+
+    #[test]
+    fn cmd_migrate_outside_fence() {
+        let input = "text %%! n | outside %% end";
+        let result = migrate_annotations(input.to_string());
+        assert_eq!(result, "text <!--- n | outside ---> end");
+    }
+
+    #[test]
+    fn cmd_migrate_mixed_fenced_and_unfenced() {
+        let input = "%%! n | free %% then\n```\n%%! n | caged %%\n```\nand %%! q | also free %%";
+        let result = migrate_annotations(input.to_string());
+        let expected = "<!--- n | free ---> then\n```\n%%! n | caged %%\n```\nand <!--- q | also free --->";
+        assert_eq!(result, expected);
     }
 
     #[test]

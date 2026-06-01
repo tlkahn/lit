@@ -750,4 +750,12 @@ describe("stripAnnotations", () => {
   it("handles CJK text surrounding annotation", () => {
     expect(stripAnnotations("你好<!--- n | 注释 --->世界")).toBe("你好世界");
   });
+
+  it("removes legacy %%!...%% annotation", () => {
+    expect(stripAnnotations("hello %%! n | note %% world")).toBe("hello world");
+  });
+
+  it("removes mixed new-format and legacy annotations", () => {
+    expect(stripAnnotations("a <!--- x ---> b %%! y %% c")).toBe("a b c");
+  });
 });

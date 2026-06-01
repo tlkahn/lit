@@ -47,7 +47,8 @@ export function getEditCursorOffset(dsl: string): number {
 const EXPLICIT_SCOPE_RE = /[_\\]/;
 
 export function annotationToFields(ann: Annotation): AnnotationFields {
-  const id = ann.uuid ?? null;
+  const hasAuthoredId = /^(?:<!---\[|%%!\[)/.test(ann.original);
+  const id = hasAuthoredId ? (ann.uuid ?? null) : null;
   const type: AnnotationType | null = ann.annotation_type === "bare" ? null : ann.annotation_type;
   const certainty: Certainty = ann.certainty;
 

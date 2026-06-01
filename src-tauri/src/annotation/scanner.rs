@@ -29,8 +29,14 @@ pub(crate) fn utf16_len(s: &str) -> usize {
 }
 
 pub fn scan_annotations(content: &str) -> Vec<RawAnnotation> {
-    let mut results = scan_annotations_new(content);
-    let mut legacy = scan_annotations_legacy(content);
+    let fenced = find_fenced_ranges(content);
+    let new_ann_ranges = find_new_annotation_byte_ranges(content);
+
+    let mut results = scan_with_delimiters(content, "<!---", "--->", &fenced);
+
+    let mut legacy_skip: Vec<FencedRange> = fenced;
+    legacy_skip.extend(new_ann_ranges);
+    let mut legacy = scan_with_delimiters(content, "%%!", "%%", &legacy_skip);
 
     results.append(&mut legacy);
 
@@ -41,76 +47,49 @@ pub fn scan_annotations(content: &str) -> Vec<RawAnnotation> {
     results
 }
 
-fn scan_annotations_new(content: &str) -> Vec<RawAnnotation> {
-    let fenced_ranges = find_fenced_ranges(content);
-
-    let mut results = Vec::new();
-    let mut search_from = 0usize;
-    let mut last_byte = 0usize;
-    let mut utf16_acc = 0usize;
-
+/// Find byte ranges of all `<!---...--->` blocks in content, so the legacy
+/// scanner can skip `%%!` tokens that appear inside new-format annotations.
+fn find_new_annotation_byte_ranges(content: &str) -> Vec<FencedRange> {
+    let mut ranges = Vec::new();
+    let mut search_from = 0;
     while let Some(rel) = content[search_from..].find("<!---") {
-        let open_byte = search_from + rel;
-
-        if is_in_fenced_range(open_byte, &fenced_ranges) {
-            search_from = open_byte + 5;
-            continue;
-        }
-
-        let after_open = open_byte + 5;
-        if let Some(close_rel) = content[after_open..].find("--->") {
-            let close_byte = after_open + close_rel;
-            let end_byte = close_byte + 4;
-
-            utf16_acc += utf16_len(&content[last_byte..open_byte]);
-            let comment_utf16_start = utf16_acc;
-
-            let original = &content[open_byte..end_byte];
-            let comment_utf16_end = comment_utf16_start + utf16_len(original);
-
-            let inner_raw = &content[after_open..close_byte];
-            let trimmed = inner_raw.trim();
-            let (id, remaining) = extract_id(trimmed);
-            let inner = remaining.to_string();
-
-            results.push(RawAnnotation {
-                char_start: comment_utf16_start,
-                char_end: comment_utf16_end,
-                inner,
-                original: original.to_string(),
-                id,
-            });
-
-            last_byte = open_byte;
-            search_from = end_byte;
+        let open = search_from + rel;
+        if let Some(close_rel) = content[open + 5..].find("--->") {
+            let end = open + 5 + close_rel + 4;
+            ranges.push(FencedRange { start: open, end });
+            search_from = end;
         } else {
             break;
         }
     }
-
-    results
+    ranges
 }
 
-fn scan_annotations_legacy(content: &str) -> Vec<RawAnnotation> {
-    let fenced_ranges = find_fenced_ranges(content);
-
+fn scan_with_delimiters(
+    content: &str,
+    open_delim: &str,
+    close_delim: &str,
+    skip_ranges: &[FencedRange],
+) -> Vec<RawAnnotation> {
     let mut results = Vec::new();
     let mut search_from = 0usize;
     let mut last_byte = 0usize;
     let mut utf16_acc = 0usize;
+    let open_len = open_delim.len();
+    let close_len = close_delim.len();
 
-    while let Some(rel) = content[search_from..].find("%%!") {
+    while let Some(rel) = content[search_from..].find(open_delim) {
         let open_byte = search_from + rel;
 
-        if is_in_fenced_range(open_byte, &fenced_ranges) {
-            search_from = open_byte + 3;
+        if is_in_fenced_range(open_byte, skip_ranges) {
+            search_from = open_byte + open_len;
             continue;
         }
 
-        let after_open = open_byte + 3;
-        if let Some(close_rel) = content[after_open..].find("%%") {
+        let after_open = open_byte + open_len;
+        if let Some(close_rel) = content[after_open..].find(close_delim) {
             let close_byte = after_open + close_rel;
-            let end_byte = close_byte + 2;
+            let end_byte = close_byte + close_len;
 
             utf16_acc += utf16_len(&content[last_byte..open_byte]);
             let comment_utf16_start = utf16_acc;
@@ -141,12 +120,12 @@ fn scan_annotations_legacy(content: &str) -> Vec<RawAnnotation> {
     results
 }
 
-struct FencedRange {
-    start: usize,
-    end: usize,
+pub(crate) struct FencedRange {
+    pub(crate) start: usize,
+    pub(crate) end: usize,
 }
 
-fn find_fenced_ranges(content: &str) -> Vec<FencedRange> {
+pub(crate) fn find_fenced_ranges(content: &str) -> Vec<FencedRange> {
     let mut ranges = Vec::new();
     let mut in_fence = false;
     let mut fence_marker = String::new();
@@ -205,7 +184,7 @@ fn detect_fence_close(trimmed: &str, marker: &str) -> bool {
     }
 }
 
-fn is_in_fenced_range(byte_offset: usize, ranges: &[FencedRange]) -> bool {
+pub(crate) fn is_in_fenced_range(byte_offset: usize, ranges: &[FencedRange]) -> bool {
     ranges.iter().any(|r| byte_offset >= r.start && byte_offset < r.end)
 }
 
@@ -443,6 +422,35 @@ mod tests {
         let anns = scan_annotations(doc);
         assert_eq!(anns.len(), 2);
         assert!(anns[0].char_start < anns[1].char_start);
+    }
+
+    #[test]
+    fn legacy_inside_new_format_is_suppressed() {
+        // %%! inside a <!---..---> body must NOT produce a phantom annotation
+        let doc = "<!--- note about %%! syntax --->";
+        let anns = scan_annotations(doc);
+        assert_eq!(anns.len(), 1);
+        assert_eq!(anns[0].original, "<!--- note about %%! syntax --->");
+        assert!(anns[0].inner.contains("%%!"));
+    }
+
+    #[test]
+    fn legacy_with_close_inside_new_format_is_suppressed() {
+        // Full %%!...%% inside a <!---..---> body must NOT produce a phantom
+        let doc = "<!--- body with %%! old %% inside --->";
+        let anns = scan_annotations(doc);
+        assert_eq!(anns.len(), 1);
+        assert_eq!(anns[0].original, "<!--- body with %%! old %% inside --->");
+    }
+
+    #[test]
+    fn legacy_outside_new_format_still_works() {
+        // Legacy annotation outside new-format should still be detected
+        let doc = "<!--- new ---> then %%! legacy %%";
+        let anns = scan_annotations(doc);
+        assert_eq!(anns.len(), 2);
+        assert_eq!(anns[0].inner, "new");
+        assert_eq!(anns[1].inner, "legacy");
     }
 
     // --- ID extraction tests ---

@@ -183,14 +183,34 @@ describe("BlockAnnotation parser", () => {
     expect(block).toBeDefined();
   });
 
-  it("<!--- with closing ---> and extra text after paragraph becomes block (unclosed)", () => {
+  it("<!--- with closing ---> and trailing text after paragraph becomes block ending at --->", () => {
     // The built-in HTML endLeaf ends the paragraph. Our block parser sees
-    // the line starts with <!--- but doesn't end with --->, so it enters
-    // multi-line mode and creates a BlockAnnotation (graceful degradation).
+    // the line starts with <!--- and finds ---> on the same line, so it
+    // creates a BlockAnnotation ending at the close of --->.
     const doc = "paragraph\n<!--- note ---> some trailing text";
     const nodes = parseNodes(doc);
     const block = nodes.find((n) => n.name === "BlockAnnotation");
     expect(block).toBeDefined();
+    // "paragraph\n" = 10 chars, annotation starts at 10
+    // "<!--- note --->" = 15 chars, ends at 25
+    expect(block!.from).toBe(10);
+    expect(block!.to).toBe(25);
+  });
+
+  it("single-line annotation with trailing content does not swallow subsequent lines", () => {
+    const doc = "<!--- note ---> see ref\nnext paragraph";
+    const nodes = parseNodes(doc);
+    const ba = nodes.find((n) => n.name === "BlockAnnotation");
+    expect(ba).toBeDefined();
+    // "<!--- note --->" = 15 chars, annotation ends at close of --->
+    expect(ba!.from).toBe(0);
+    expect(ba!.to).toBe(15);
+    // Ensure there is no second BlockAnnotation (trailing content not swallowed)
+    const allBlocks = nodes.filter((n) => n.name === "BlockAnnotation");
+    expect(allBlocks).toHaveLength(1);
+    // "next paragraph" should be parsed as a Paragraph, not consumed
+    const para = nodes.filter((n) => n.name === "Paragraph");
+    expect(para.length).toBeGreaterThanOrEqual(1);
   });
 
   it("single-line annotation with trailing whitespace", () => {

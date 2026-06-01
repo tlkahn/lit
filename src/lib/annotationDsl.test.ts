@@ -522,9 +522,28 @@ describe("annotationToFields", () => {
   });
 
   describe("uuid mapping", () => {
-    it("uuid: 'abc-123' → id: 'abc-123'", () => {
-      const f = annotationToFields(makeAnnotation({ uuid: "abc-123" }));
-      expect(f.id).toBe("abc-123");
+    it("user-authored [id] in original → id preserved", () => {
+      const f = annotationToFields(makeAnnotation({
+        uuid: "my-id",
+        original: "<!---[my-id] n | body --->",
+      }));
+      expect(f.id).toBe("my-id");
+    });
+
+    it("user-authored [id] with legacy %%! delimiter → id preserved", () => {
+      const f = annotationToFields(makeAnnotation({
+        uuid: "my-id",
+        original: "%%![my-id] n | body %%",
+      }));
+      expect(f.id).toBe("my-id");
+    });
+
+    it("auto-generated uuid without [id] bracket in original → id null", () => {
+      const f = annotationToFields(makeAnnotation({
+        uuid: "550e8400-e29b-41d4-a716-446655440000",
+        original: "<!--- n | body --->",
+      }));
+      expect(f.id).toBeNull();
     });
 
     it("uuid: null → id: null", () => {

@@ -52,10 +52,10 @@ export const Annotation: MarkdownConfig = {
 
         const start = cx.lineStart;
 
-        // Single-line: <!---content---> (trailing whitespace tolerated)
-        const trimmed = line.text.trimEnd();
-        if (trimmed.length > 5 && trimmed.endsWith("--->")) {
-          const end = cx.lineStart + trimmed.length;
+        // Single-line: check if ---> appears anywhere after the opening <!---
+        const closeIdx = line.text.indexOf("--->", 5);
+        if (closeIdx !== -1) {
+          const end = cx.lineStart + closeIdx + 4;
           cx.nextLine();
           cx.addElement(cx.elt("BlockAnnotation", start, end));
           return true;
