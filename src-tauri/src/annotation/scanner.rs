@@ -29,6 +29,19 @@ pub(crate) fn utf16_len(s: &str) -> usize {
 }
 
 pub fn scan_annotations(content: &str) -> Vec<RawAnnotation> {
+    let mut results = scan_annotations_new(content);
+    let mut legacy = scan_annotations_legacy(content);
+
+    results.append(&mut legacy);
+
+    // Deduplicate by char_start (if somehow both match the same range)
+    results.sort_by_key(|a| a.char_start);
+    results.dedup_by_key(|a| a.char_start);
+
+    results
+}
+
+fn scan_annotations_new(content: &str) -> Vec<RawAnnotation> {
     let fenced_ranges = find_fenced_ranges(content);
 
     let mut results = Vec::new();
@@ -48,6 +61,56 @@ pub fn scan_annotations(content: &str) -> Vec<RawAnnotation> {
         if let Some(close_rel) = content[after_open..].find("--->") {
             let close_byte = after_open + close_rel;
             let end_byte = close_byte + 4;
+
+            utf16_acc += utf16_len(&content[last_byte..open_byte]);
+            let comment_utf16_start = utf16_acc;
+
+            let original = &content[open_byte..end_byte];
+            let comment_utf16_end = comment_utf16_start + utf16_len(original);
+
+            let inner_raw = &content[after_open..close_byte];
+            let trimmed = inner_raw.trim();
+            let (id, remaining) = extract_id(trimmed);
+            let inner = remaining.to_string();
+
+            results.push(RawAnnotation {
+                char_start: comment_utf16_start,
+                char_end: comment_utf16_end,
+                inner,
+                original: original.to_string(),
+                id,
+            });
+
+            last_byte = open_byte;
+            search_from = end_byte;
+        } else {
+            break;
+        }
+    }
+
+    results
+}
+
+fn scan_annotations_legacy(content: &str) -> Vec<RawAnnotation> {
+    let fenced_ranges = find_fenced_ranges(content);
+
+    let mut results = Vec::new();
+    let mut search_from = 0usize;
+    let mut last_byte = 0usize;
+    let mut utf16_acc = 0usize;
+
+    while let Some(rel) = content[search_from..].find("%%!") {
+        let open_byte = search_from + rel;
+
+        if is_in_fenced_range(open_byte, &fenced_ranges) {
+            search_from = open_byte + 3;
+            continue;
+        }
+
+        let after_open = open_byte + 3;
+        if let Some(close_rel) = content[after_open..].find("%%") {
+            let close_byte = after_open + close_rel;
+            let end_byte = close_byte + 2;
 
             utf16_acc += utf16_len(&content[last_byte..open_byte]);
             let comment_utf16_start = utf16_acc;
@@ -150,6 +213,8 @@ fn is_in_fenced_range(byte_offset: usize, ranges: &[FencedRange]) -> bool {
 mod tests {
     use super::*;
 
+    // --- New format (<!---...--->) tests ---
+
     #[test]
     fn single_line_annotation() {
         let doc = "hello <!--- world ---> end";
@@ -246,7 +311,6 @@ mod tests {
 
     #[test]
     fn utf16_offsets_ascii() {
-        // "ab " = 3, then "<!--- c --->" = 12 chars
         let doc = "ab <!--- c ---> de";
         let anns = scan_annotations(doc);
         assert_eq!(anns[0].char_start, 3);
@@ -255,7 +319,6 @@ mod tests {
 
     #[test]
     fn utf16_offsets_cjk() {
-        // "你好" = 2 UTF-16 units, "<!--- note --->" = 15 chars
         let doc = "你好<!--- note --->";
         let anns = scan_annotations(doc);
         assert_eq!(anns[0].char_start, 2);
@@ -264,7 +327,6 @@ mod tests {
 
     #[test]
     fn utf16_offsets_emoji() {
-        // 🎉 = U+1F389 = 2 UTF-16 code units, "<!--- hi --->" = 13 chars
         let doc = "🎉<!--- hi --->";
         let anns = scan_annotations(doc);
         assert_eq!(anns[0].char_start, 2);
@@ -273,7 +335,6 @@ mod tests {
 
     #[test]
     fn utf16_offsets_mixed() {
-        // "a你🎉" = 1 + 1 + 2 = 4 UTF-16 units
         let doc = "a你🎉<!--- x --->";
         let anns = scan_annotations(doc);
         assert_eq!(anns[0].char_start, 4);
@@ -309,6 +370,82 @@ mod tests {
         assert_eq!(anns[0].inner, "block");
         assert_eq!(anns[1].inner, "inline");
     }
+
+    // --- Legacy format (%%!...%%) tests ---
+
+    #[test]
+    fn legacy_single_line() {
+        let doc = "hello %%! world %% end";
+        let anns = scan_annotations(doc);
+        assert_eq!(anns.len(), 1);
+        assert_eq!(anns[0].inner, "world");
+        assert_eq!(anns[0].original, "%%! world %%");
+    }
+
+    #[test]
+    fn legacy_multiline() {
+        let doc = "before\n%%!\nfoo\nbar\n%%\nafter";
+        let anns = scan_annotations(doc);
+        assert_eq!(anns.len(), 1);
+        assert_eq!(anns[0].inner, "foo\nbar");
+    }
+
+    #[test]
+    fn legacy_skip_fenced() {
+        let doc = "```\n%%! skip %%\n```\n%%! keep %%";
+        let anns = scan_annotations(doc);
+        assert_eq!(anns.len(), 1);
+        assert_eq!(anns[0].inner, "keep");
+    }
+
+    #[test]
+    fn legacy_with_id() {
+        let doc = "%%![my-id] n | body %%";
+        let anns = scan_annotations(doc);
+        assert_eq!(anns.len(), 1);
+        assert_eq!(anns[0].id, Some("my-id".to_string()));
+        assert_eq!(anns[0].inner, "n | body");
+    }
+
+    #[test]
+    fn legacy_adjacent() {
+        let doc = "%%! a %%%%! b %%";
+        let anns = scan_annotations(doc);
+        assert_eq!(anns.len(), 2);
+        assert_eq!(anns[0].inner, "a");
+        assert_eq!(anns[1].inner, "b");
+    }
+
+    // --- Mixed old and new format tests ---
+
+    #[test]
+    fn mixed_old_and_new() {
+        let doc = "%%! old %% middle <!--- new ---> end";
+        let anns = scan_annotations(doc);
+        assert_eq!(anns.len(), 2);
+        assert!(anns[0].char_start < anns[1].char_start);
+        assert_eq!(anns[0].inner, "old");
+        assert_eq!(anns[1].inner, "new");
+    }
+
+    #[test]
+    fn mixed_no_duplicates() {
+        let doc = "<!--- a ---> text %%! b %%";
+        let anns = scan_annotations(doc);
+        assert_eq!(anns.len(), 2);
+        assert_eq!(anns[0].inner, "a");
+        assert_eq!(anns[1].inner, "b");
+    }
+
+    #[test]
+    fn mixed_sorted_by_position() {
+        let doc = "<!--- first ---> gap %%! second %%";
+        let anns = scan_annotations(doc);
+        assert_eq!(anns.len(), 2);
+        assert!(anns[0].char_start < anns[1].char_start);
+    }
+
+    // --- ID extraction tests ---
 
     #[test]
     fn id_uuid() {

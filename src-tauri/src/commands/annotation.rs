@@ -87,6 +87,12 @@ pub fn annotation_find_uuid(
     })
 }
 
+#[tauri::command]
+pub fn migrate_annotations(content: String) -> String {
+    let re = regex::Regex::new(r"(?s)%%!(.*?)%%").unwrap();
+    re.replace_all(&content, "<!---$1--->").to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,6 +230,46 @@ mod tests {
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let uuid = gi.find_annotation_uuid("a.md", "question", Some("nonexistent"), 0).unwrap();
         assert!(uuid.is_none());
+    }
+
+    // --- migrate_annotations tests ---
+
+    #[test]
+    fn cmd_migrate_compact() {
+        let result = migrate_annotations("%%! n | body %%".to_string());
+        assert_eq!(result, "<!--- n | body --->");
+    }
+
+    #[test]
+    fn cmd_migrate_block() {
+        let result = migrate_annotations("%%!\nn\n---\nbody\n%%".to_string());
+        assert_eq!(result, "<!---\nn\n---\nbody\n--->");
+    }
+
+    #[test]
+    fn cmd_migrate_mixed_with_text() {
+        let input = "before %%! n | note %% middle %%! q | question %% after";
+        let result = migrate_annotations(input.to_string());
+        assert_eq!(result, "before <!--- n | note ---> middle <!--- q | question ---> after");
+    }
+
+    #[test]
+    fn cmd_migrate_idempotent() {
+        let already_migrated = "<!--- n | body --->";
+        let result = migrate_annotations(already_migrated.to_string());
+        assert_eq!(result, already_migrated);
+    }
+
+    #[test]
+    fn cmd_migrate_parses_identically() {
+        let old = "%%! n: _ | a note %%";
+        let migrated = migrate_annotations(old.to_string());
+        let old_anns = parse_annotations(old.to_string());
+        let new_anns = parse_annotations(migrated);
+        assert_eq!(old_anns.len(), new_anns.len());
+        assert_eq!(old_anns[0].annotation_type, new_anns[0].annotation_type);
+        assert_eq!(old_anns[0].body, new_anns[0].body);
+        assert_eq!(old_anns[0].scope, new_anns[0].scope);
     }
 
     #[test]

@@ -194,6 +194,15 @@ pub fn strip_for_mention_scan(body: &str) -> String {
         })
         .into_owned();
 
+    // Blank legacy annotations (%%!...%%)
+    let re_legacy = regex::Regex::new(r"(?s)%%!.*?%%").unwrap();
+    text = re_legacy
+        .replace_all(&text, |caps: &regex::Captures| {
+            let m = caps.get(0).unwrap().as_str();
+            String::from_utf8(m.bytes().map(|b| if b == b'\n' { b'\n' } else { b' ' }).collect()).unwrap()
+        })
+        .into_owned();
+
     // Blank existing wikilinks
     let re_wikilink = regex::Regex::new(r"\[\[[^\]]+\]\]").unwrap();
     text = re_wikilink
@@ -743,6 +752,40 @@ mod tests {
         let stripped = strip_for_mention_scan(body);
         assert!(!stripped.starts_with("[[Alice]]"));
         assert!(stripped.contains("Alice outside"));
+    }
+
+    #[test]
+    fn strip_blanks_legacy_annotations() {
+        let body = "before %%! Alice inside %% after Alice";
+        let stripped = strip_for_mention_scan(body);
+        assert_eq!(stripped.len(), body.len());
+        // "Alice inside" within %%!...%% should be blanked
+        assert!(!stripped.contains("Alice inside"));
+        // "Alice" after should remain
+        assert!(stripped.contains("after Alice"));
+    }
+
+    #[test]
+    fn strip_blanks_both_old_and_new() {
+        let body = "%%! Alice old %% middle <!--- Alice new ---> Alice plain";
+        let stripped = strip_for_mention_scan(body);
+        assert_eq!(stripped.len(), body.len());
+        // Both formats should be blanked
+        assert!(!stripped.contains("Alice old"));
+        assert!(!stripped.contains("Alice new"));
+        // Plain mention should remain
+        assert!(stripped.contains("Alice plain"));
+    }
+
+    #[test]
+    fn strip_blanks_legacy_multiline() {
+        let body = "before\n%%!\nAlice\n%%\nafter Alice";
+        let stripped = strip_for_mention_scan(body);
+        assert_eq!(stripped.len(), body.len());
+        assert_eq!(stripped.lines().count(), body.lines().count());
+        // Only the final "Alice" should survive
+        let mentions = find_plain_mentions(&stripped, &["Alice"]);
+        assert_eq!(mentions.len(), 1);
     }
 
     #[test]

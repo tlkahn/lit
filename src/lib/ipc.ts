@@ -1028,6 +1028,10 @@ export async function conversationUpdateTitle(
   return invoke<void>("conversation_update_title", { conversationId, title });
 }
 
+export async function migrateAnnotations(content: string): Promise<string> {
+  return invoke<string>("migrate_annotations", { content });
+}
+
 export async function conversationDeleteByAnchor(
   nodeId: string,
   anchorType: string,
