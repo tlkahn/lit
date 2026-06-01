@@ -358,6 +358,26 @@ describe("LlmResponsePanel", () => {
 
   // --- Styling & layout ---
 
+  it("prose container has max-w-none class", () => {
+    useLlmResponseStore.getState().startStream({ question: "q" });
+    useLlmResponseStore.getState().appendChunk("response");
+    useLlmResponseStore.getState().finishStream();
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    const el = container.querySelector("[data-testid='llm-response-text']");
+    expect(el?.className).toContain("max-w-none");
+  });
+
+  it("links in rendered markdown have target=_blank and rel=noopener noreferrer", () => {
+    useLlmResponseStore.getState().startStream({ question: "q" });
+    useLlmResponseStore.getState().appendChunk("[click](https://example.com)");
+    useLlmResponseStore.getState().finishStream();
+    const { container } = render(<LlmResponsePanel contentHeight={300} />);
+    const el = container.querySelector("[data-testid='llm-response-text']");
+    const anchor = el?.querySelector("a");
+    expect(anchor?.getAttribute("target")).toBe("_blank");
+    expect(anchor?.getAttribute("rel")).toContain("noopener noreferrer");
+  });
+
   it("submit button has accent background class", () => {
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
     const btn = container.querySelector("[data-testid='llm-submit-btn']") as HTMLElement;

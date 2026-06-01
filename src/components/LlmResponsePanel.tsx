@@ -179,7 +179,7 @@ export function LlmResponsePanel({ contentHeight, onSubmit }: LlmResponsePanelPr
         ) : (
           <div
             data-testid="llm-response-text"
-            className="prose prose-sm break-words text-text-normal"
+            className="prose prose-sm max-w-none break-words text-text-normal"
           >
             <div dangerouslySetInnerHTML={{ __html: renderMarkdown(responseText) }} />
             {status === "streaming" && <span className="animate-pulse">▍</span>}
