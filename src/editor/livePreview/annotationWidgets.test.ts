@@ -948,6 +948,79 @@ describe("thread indicator", () => {
   });
 });
 
+describe("CalloutWidget body markdown rendering", () => {
+  it("renders body as HTML via renderMarkdown when expanded", () => {
+    const ann = makeAnnotation({
+      form: "block",
+      body: "**bold** text",
+      char_start: 0,
+      char_end: 5,
+      original: "block",
+    });
+    const w = new CalloutWidget(ann, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    const bodyEl = dom.querySelector(".cm-annotation-callout-body")!;
+    expect(bodyEl.innerHTML).toContain("<strong>bold</strong>");
+    expect(bodyEl.innerHTML).toContain("text");
+  });
+
+  it("sanitizes HTML in body to prevent XSS", () => {
+    const ann = makeAnnotation({
+      form: "block",
+      body: '<script>alert("xss")</script>Safe text',
+      char_start: 0,
+      char_end: 5,
+      original: "block",
+    });
+    const w = new CalloutWidget(ann, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    const bodyEl = dom.querySelector(".cm-annotation-callout-body")!;
+    expect(bodyEl.innerHTML).not.toContain("<script>");
+    expect(bodyEl.innerHTML).toContain("Safe text");
+  });
+
+  it("renders markdown headings in body", () => {
+    const ann = makeAnnotation({
+      form: "block",
+      body: "# Heading\n\nParagraph text",
+      char_start: 0,
+      char_end: 5,
+      original: "block",
+    });
+    const w = new CalloutWidget(ann, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    const bodyEl = dom.querySelector(".cm-annotation-callout-body")!;
+    expect(bodyEl.querySelector("h1")).toBeTruthy();
+    expect(bodyEl.querySelector("h1")!.textContent).toBe("Heading");
+  });
+
+  it("renders markdown lists in body", () => {
+    const ann = makeAnnotation({
+      form: "block",
+      body: "- item one\n- item two",
+      char_start: 0,
+      char_end: 5,
+      original: "block",
+    });
+    const w = new CalloutWidget(ann, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    const bodyEl = dom.querySelector(".cm-annotation-callout-body")!;
+    expect(bodyEl.innerHTML).toContain("<li>");
+    expect(bodyEl.innerHTML).toContain("item one");
+  });
+
+  it("pill body renders as plain text, not HTML", () => {
+    const view = makeEditorView();
+    const ann = makeAnnotation({ body: "**not bold**" });
+    const w = new PillWidget(ann);
+    const dom = w.toDOM(view);
+    const bodyEl = dom.querySelector(".cm-annotation-pill-body")!;
+    expect(bodyEl.textContent).toBe("**not bold**");
+    expect(bodyEl.innerHTML).not.toContain("<strong>");
+    view.destroy();
+  });
+});
+
 describe("annotationThreadKeysField", () => {
   it("initial state is an empty Set", () => {
     const state = EditorState.create({ extensions: [annotationThreadKeysField] });

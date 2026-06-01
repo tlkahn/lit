@@ -3,6 +3,7 @@ import { StateEffect, StateField, type Transaction } from "@codemirror/state";
 import type { Annotation } from "../../lib/ipc";
 import type { AnnotationBuilderEventDetail } from "../../lib/annotationDsl";
 import { canFire } from "../../lib/fireClassification";
+import { renderMarkdown } from "../../lib/renderMarkdown";
 import { handleAnnotationHover, handleAnnotationLeave } from "./annotationHover";
 import { TYPE_ICON, certaintyClass, certaintyMark, truncateBody } from "./annotationConstants";
 import "./annotation.css";
@@ -395,7 +396,7 @@ export class CalloutWidget extends WidgetType {
     if (!this.isCollapsed && ann.body) {
       const body = document.createElement("div");
       body.className = "cm-annotation-callout-body";
-      body.textContent = ann.body;
+      body.innerHTML = renderMarkdown(ann.body);
       container.appendChild(body);
     }
 

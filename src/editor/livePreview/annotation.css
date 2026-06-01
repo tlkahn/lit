@@ -142,6 +142,40 @@
   line-height: 1.5;
 }
 
+.cm-annotation-callout-body p {
+  padding: 0 0 0.4em;
+}
+
+.cm-annotation-callout-body p:last-child {
+  padding-bottom: 0;
+}
+
+.cm-annotation-callout-body ul,
+.cm-annotation-callout-body ol {
+  padding-left: 1.5em;
+  padding-bottom: 0.4em;
+}
+
+.cm-annotation-callout-body code {
+  font-size: 0.9em;
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+  background: rgba(128, 128, 128, 0.1);
+}
+
+.cm-annotation-callout-body pre {
+  padding: 0.5em;
+  border-radius: 4px;
+  background: rgba(128, 128, 128, 0.08);
+  overflow-x: auto;
+}
+
+.cm-annotation-callout-body blockquote {
+  padding-left: 0.8em;
+  border-left: 2px solid rgba(128, 128, 128, 0.3);
+  opacity: 0.85;
+}
+
 .cm-annotation-fold-icon {
   display: inline-flex;
   align-items: center;
