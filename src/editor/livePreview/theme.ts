@@ -16,20 +16,20 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
   },
   ".cm-preview-code-inline": {
     fontFamily: "var(--font-monospace-theme, ui-monospace, SFMono-Regular, Menlo, Consolas, \"Noto Sans Mono\", monospace)",
-    backgroundColor: "var(--code-background)",
+    backgroundColor: "color-mix(in srgb, var(--code-background) 70%, transparent)",
     padding: "2px 4px",
     borderRadius: "3px",
   },
   ".cm-preview-code-block": {
-    backgroundColor: "var(--code-background)",
+    backgroundColor: "color-mix(in srgb, var(--code-background) 70%, transparent)",
     fontFamily: "var(--font-monospace-theme, ui-monospace, SFMono-Regular, Menlo, Consolas, \"Noto Sans Mono\", monospace)",
   },
   ".cm-code-fence-top": {
-    backgroundColor: "var(--code-background)",
+    backgroundColor: "color-mix(in srgb, var(--code-background) 70%, transparent)",
     borderRadius: "4px 4px 0 0",
   },
   ".cm-code-fence-bottom": {
-    backgroundColor: "var(--code-background)",
+    backgroundColor: "color-mix(in srgb, var(--code-background) 70%, transparent)",
     borderRadius: "0 0 4px 4px",
   },
   ".cm-preview-strikethrough": {
