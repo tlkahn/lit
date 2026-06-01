@@ -1,5 +1,5 @@
 import { type Extension, Compartment, Prec, EditorState } from "@codemirror/state";
-import { EditorView, keymap, drawSelection } from "@codemirror/view";
+import { EditorView, keymap } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { enterInList, indentListItem, outdentListItem } from "./listCommands";
 import { markdown } from "@codemirror/lang-markdown";
@@ -79,7 +79,6 @@ export function createExtensions(config: ExtensionConfig): Extension[] {
     ),
     keymap.of(searchKeymap),
     jumpHistoryExtension(),
-    drawSelection(),
     EditorView.lineWrapping,
     EditorView.updateListener.of((update) => {
       if (update.docChanged && config.onChange) {
