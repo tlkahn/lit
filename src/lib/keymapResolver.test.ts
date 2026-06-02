@@ -94,5 +94,7 @@ describe("keymaps/default.json", () => {
     expect(find("pane.splitDown")).toEqual(expect.objectContaining({ key: "Mod-Shift-d" }));
     expect(find("pane.focusNext")).toEqual(expect.objectContaining({ key: "Mod-Alt-ArrowRight" }));
     expect(find("pane.focusPrev")).toEqual(expect.objectContaining({ key: "Mod-Alt-ArrowLeft" }));
+    expect(find("pane.focusContentNext")).toEqual(expect.objectContaining({ key: "Mod-]" }));
+    expect(find("pane.focusContentPrev")).toEqual(expect.objectContaining({ key: "Mod-[" }));
   });
 });

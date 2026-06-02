@@ -10,7 +10,7 @@ import { openInExternalEditor, setPreference } from "../lib/ipc";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePreferencesStore } from "../stores/preferences";
 import { useFocusModeStore } from "../stores/focusMode";
-import { getCurrentEditorView, getPaneView, setFocusedPane } from "../lib/editorViewRef";
+import { getCurrentEditorView, getPaneView, setFocusedPane, isFocusInsideContentPane } from "../lib/editorViewRef";
 import { usePaneStore, collectLeaves, MAX_PANES } from "../stores/panes";
 import { annotationDataField, findAnnotationAtCursor } from "../editor/livePreview/annotationState";
 import type { AnnotationBuilderEventDetail } from "../lib/annotationDsl";
@@ -148,6 +148,28 @@ function ensureCommandsRegistered() {
     action: () => {
       const { focusedPaneId } = usePaneStore.getState();
       usePaneStore.getState().closePane(focusedPaneId);
+      transferDomFocus();
+    },
+  });
+  registerCommand({
+    id: "pane.focusContentNext",
+    label: "Focus Next Content Pane",
+    keywords: ["pane", "focus", "next", "content", "editor"],
+    action: () => {
+      if (isFocusInsideContentPane()) {
+        usePaneStore.getState().focusNext();
+      }
+      transferDomFocus();
+    },
+  });
+  registerCommand({
+    id: "pane.focusContentPrev",
+    label: "Focus Previous Content Pane",
+    keywords: ["pane", "focus", "previous", "content", "editor"],
+    action: () => {
+      if (isFocusInsideContentPane()) {
+        usePaneStore.getState().focusPrev();
+      }
       transferDomFocus();
     },
   });

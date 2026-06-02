@@ -32,6 +32,25 @@ export function getCurrentEditorView(): EditorView | null {
   return legacyView;
 }
 
+export function isFocusInsideContentPane(): boolean {
+  const active = document.activeElement;
+  if (active == null || active === document.body) {
+    return false;
+  }
+
+  for (const view of paneViews.values()) {
+    if (view.dom.contains(active)) {
+      return true;
+    }
+  }
+
+  if (active.closest('[data-testid="editor-pane"]') != null) {
+    return true;
+  }
+
+  return false;
+}
+
 export function _resetForTesting(): void {
   paneViews.clear();
   focusedPaneId = null;

@@ -19,6 +19,8 @@
   { "key": "Mod-Shift-d", "command": "pane.splitDown" },
   { "key": "Mod-Alt-ArrowRight", "command": "pane.focusNext" },
   { "key": "Mod-Alt-ArrowLeft", "command": "pane.focusPrev" },
+  { "key": "Mod-]", "command": "pane.focusContentNext" },
+  { "key": "Mod-[", "command": "pane.focusContentPrev" },
   { "key": "Mod-\\", "command": "workbench.toggleSideBar" },
   { "key": "Mod-Shift-k", "command": "app.openKeyboardShortcuts" },
   { "key": "Mod-Shift-l", "command": "app.askQuestion" },

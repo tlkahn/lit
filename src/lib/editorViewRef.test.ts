@@ -7,11 +7,16 @@ import {
   setFocusedPane,
   setCurrentEditorView,
   getCurrentEditorView,
+  isFocusInsideContentPane,
   _resetForTesting,
 } from "./editorViewRef";
 
 function fakeView(label: string): EditorView {
   return { __label: label } as unknown as EditorView;
+}
+
+function fakeViewWithDom(dom: HTMLElement): EditorView {
+  return { dom } as unknown as EditorView;
 }
 
 describe("editorViewRef", () => {
@@ -59,5 +64,75 @@ describe("editorViewRef", () => {
     const view = fakeView("legacy");
     setCurrentEditorView(view);
     expect(getCurrentEditorView()).toBe(view);
+  });
+});
+
+describe("isFocusInsideContentPane", () => {
+  beforeEach(() => {
+    _resetForTesting();
+    // Clean up any DOM elements added during tests
+    document.body.innerHTML = "";
+    // Reset focus to body
+    (document.activeElement as HTMLElement)?.blur?.();
+  });
+
+  it("returns false when nothing is focused (activeElement is body)", () => {
+    expect(isFocusInsideContentPane()).toBe(false);
+  });
+
+  it("returns true when activeElement is inside a registered EditorView's DOM", () => {
+    const container = document.createElement("div");
+    const inner = document.createElement("input");
+    container.appendChild(inner);
+    document.body.appendChild(container);
+
+    const view = fakeViewWithDom(container);
+    registerPaneView("pane1", view);
+
+    inner.focus();
+    expect(document.activeElement).toBe(inner);
+    expect(isFocusInsideContentPane()).toBe(true);
+  });
+
+  it("returns true when activeElement is inside [data-testid='editor-pane'] but NOT inside any registered EditorView", () => {
+    const paneWrapper = document.createElement("div");
+    paneWrapper.setAttribute("data-testid", "editor-pane");
+    const inner = document.createElement("input");
+    paneWrapper.appendChild(inner);
+    document.body.appendChild(paneWrapper);
+
+    // No EditorView registered for this pane
+    inner.focus();
+    expect(document.activeElement).toBe(inner);
+    expect(isFocusInsideContentPane()).toBe(true);
+  });
+
+  it("returns false when activeElement is outside all pane areas (e.g., sidebar)", () => {
+    const sidebar = document.createElement("div");
+    sidebar.setAttribute("data-testid", "sidebar");
+    const button = document.createElement("button");
+    sidebar.appendChild(button);
+    document.body.appendChild(sidebar);
+
+    button.focus();
+    expect(document.activeElement).toBe(button);
+    expect(isFocusInsideContentPane()).toBe(false);
+  });
+
+  it("returns false when document.activeElement is null/body", () => {
+    // activeElement defaults to body when nothing focused
+    expect(document.activeElement).toBe(document.body);
+    expect(isFocusInsideContentPane()).toBe(false);
+  });
+
+  it("returns true when focus is on pane wrapper div itself", () => {
+    const paneWrapper = document.createElement("div");
+    paneWrapper.setAttribute("data-testid", "editor-pane");
+    paneWrapper.setAttribute("tabindex", "0");
+    document.body.appendChild(paneWrapper);
+
+    paneWrapper.focus();
+    expect(document.activeElement).toBe(paneWrapper);
+    expect(isFocusInsideContentPane()).toBe(true);
   });
 });
