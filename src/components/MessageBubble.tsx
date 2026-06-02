@@ -48,7 +48,7 @@ function MessageBubbleInner({ message, isLast, showEditorActions, hadSelection, 
   }, [editText, message.seq, onEditSubmit]);
 
   const actions = !editing && (
-    <div className="flex gap-1 mt-1">
+    <div className="flex gap-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
       <button data-testid="message-copy-btn" aria-label="Copy" onClick={handleCopy} className="text-xs text-muted hover:text-normal px-1">
         <span className="nerd-font" aria-hidden="true">{''}</span>
       </button>
@@ -99,7 +99,7 @@ function MessageBubbleInner({ message, isLast, showEditorActions, hadSelection, 
     return (
       <div
         data-testid="message-bubble-user"
-        className="self-end bg-interactive-accent text-on-accent rounded-lg px-3 py-2 max-w-[80%]"
+        className="group self-end bg-chat-user text-chat-user-text rounded-tl-2xl rounded-tr-2xl rounded-bl-2xl rounded-br-md px-3 py-2 max-w-[80%]"
       >
         {editing ? (
           <textarea
@@ -111,7 +111,7 @@ function MessageBubbleInner({ message, isLast, showEditorActions, hadSelection, 
             onKeyDown={handleEditKeyDown}
           />
         ) : (
-          message.content
+          <div className="prose prose-sm prose-on-user" dangerouslySetInnerHTML={{ __html: html }} />
         )}
         {actions}
       </div>
@@ -121,7 +121,7 @@ function MessageBubbleInner({ message, isLast, showEditorActions, hadSelection, 
   return (
     <div
       data-testid="message-bubble-assistant"
-      className="self-start bg-secondary rounded-lg px-3 py-2 max-w-[80%] prose prose-sm"
+      className="group self-start bg-chat-assistant text-chat-assistant-text rounded-tl-2xl rounded-tr-2xl rounded-br-2xl rounded-bl-md px-3 py-2 max-w-[80%] prose prose-sm prose-on-assistant"
     >
       <div dangerouslySetInnerHTML={{ __html: html }} />
       {actions}

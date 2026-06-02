@@ -41,11 +41,11 @@ export const ConversationInput = forwardRef<ConversationInputHandle, Conversatio
   };
 
   return (
-    <div className="flex items-end gap-1 px-3 py-2 border-t border-border" style={{ backgroundColor: "color-mix(in srgb, var(--background-primary) 60%, var(--background-secondary))" }}>
+    <div className="flex items-end gap-1 px-3 py-2" style={{ backgroundColor: "color-mix(in srgb, var(--background-primary) 60%, var(--background-secondary))" }}>
       <textarea
         ref={textareaRef}
         data-testid="conversation-input"
-        className="flex-1 resize-none rounded border border-border bg-transparent px-2 py-1 text-sm outline-none focus:border-accent"
+        className="flex-1 resize-none rounded-2xl bg-secondary px-3 py-1.5 text-sm outline-none"
         style={{ overflow: "hidden" }}
         rows={1}
         value={value}

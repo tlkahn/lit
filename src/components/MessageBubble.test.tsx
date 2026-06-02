@@ -55,12 +55,11 @@ describe("MessageBubble", () => {
     expect(bubble.innerHTML).toContain("<strong>bold</strong>");
   });
 
-  it("renders user messages as plain text", () => {
-    const msg = makeMessage({ role: "user", content: "**not bold**" });
+  it("renders user messages as markdown with prose styling", () => {
+    const msg = makeMessage({ role: "user", content: "**bold text**" });
     const { getByTestId } = render(<MessageBubble message={msg} />);
     const bubble = getByTestId("message-bubble-user");
-    expect(bubble.innerHTML).not.toContain("<strong>");
-    expect(bubble.textContent).toContain("**not bold**");
+    expect(bubble.innerHTML).toContain("<strong>bold text</strong>");
   });
 
   it("sanitizes HTML in assistant messages", () => {

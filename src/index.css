@@ -39,6 +39,10 @@
   --color-nav-active-text: var(--nav-item-color-active);
   --color-text-success: var(--color-green);
   --color-toggle-active: #34C759;
+  --color-chat-user: var(--chat-bubble-user);
+  --color-chat-user-text: var(--chat-bubble-user-text);
+  --color-chat-assistant: var(--chat-bubble-assistant);
+  --color-chat-assistant-text: var(--chat-bubble-assistant-text);
 }
 
 html, body, #root {
@@ -149,4 +153,28 @@ select:disabled {
   --tw-prose-pre-bg: var(--code-background);
   --tw-prose-th-borders: var(--background-modifier-border);
   --tw-prose-td-borders: var(--background-modifier-border);
+}
+
+.prose-on-user {
+  --tw-prose-body: var(--chat-bubble-user-text);
+  --tw-prose-headings: var(--chat-bubble-user-text);
+  --tw-prose-bold: var(--chat-bubble-user-text);
+  --tw-prose-links: var(--chat-bubble-user-text);
+  --tw-prose-code: var(--chat-bubble-user-text);
+  --tw-prose-pre-code: var(--chat-bubble-user-text);
+  --tw-prose-counters: var(--chat-bubble-user-text);
+  --tw-prose-bullets: var(--chat-bubble-user-text);
+  --tw-prose-quotes: var(--chat-bubble-user-text);
+}
+
+.prose-on-assistant {
+  --tw-prose-body: var(--chat-bubble-assistant-text);
+  --tw-prose-headings: var(--chat-bubble-assistant-text);
+  --tw-prose-bold: var(--chat-bubble-assistant-text);
+  --tw-prose-links: var(--chat-bubble-assistant-text);
+  --tw-prose-code: var(--chat-bubble-assistant-text);
+  --tw-prose-pre-code: var(--chat-bubble-assistant-text);
+  --tw-prose-counters: var(--chat-bubble-assistant-text);
+  --tw-prose-bullets: var(--chat-bubble-assistant-text);
+  --tw-prose-quotes: var(--chat-bubble-assistant-text);
 }
