@@ -99,7 +99,7 @@ function MessageBubbleInner({ message, isLast, showEditorActions, hadSelection, 
     return (
       <div
         data-testid="message-bubble-user"
-        className="group self-end bg-chat-user text-chat-user-text rounded-tl-2xl rounded-tr-2xl rounded-bl-2xl rounded-br-md px-3 py-2 max-w-[80%]"
+        className="group self-end bg-chat-user text-chat-user-text rounded-tl-2xl rounded-tr-2xl rounded-bl-2xl rounded-br-md px-3 py-2 max-w-[80%] min-w-0 [overflow-wrap:anywhere]"
       >
         {editing ? (
           <textarea
@@ -121,7 +121,7 @@ function MessageBubbleInner({ message, isLast, showEditorActions, hadSelection, 
   return (
     <div
       data-testid="message-bubble-assistant"
-      className="group self-start bg-chat-assistant text-chat-assistant-text rounded-tl-2xl rounded-tr-2xl rounded-br-2xl rounded-bl-md px-3 py-2 max-w-[80%] prose prose-sm prose-on-assistant"
+      className="group self-start bg-chat-assistant text-chat-assistant-text rounded-tl-2xl rounded-tr-2xl rounded-br-2xl rounded-bl-md px-3 py-2 max-w-[80%] min-w-0 prose prose-sm prose-on-assistant [overflow-wrap:anywhere]"
     >
       <div dangerouslySetInnerHTML={{ __html: html }} />
       {actions}

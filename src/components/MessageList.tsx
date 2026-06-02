@@ -65,7 +65,7 @@ export function MessageList({ messages, onEdit, onEditSubmit, onRetry }: Message
       {status === "streaming" && (
         <div
           data-testid="streaming-bubble"
-          className="self-start bg-chat-assistant text-chat-assistant-text rounded-tl-2xl rounded-tr-2xl rounded-br-2xl rounded-bl-md px-3 py-2 max-w-[80%] prose prose-sm prose-on-assistant"
+          className="self-start bg-chat-assistant text-chat-assistant-text rounded-tl-2xl rounded-tr-2xl rounded-br-2xl rounded-bl-md px-3 py-2 max-w-[80%] min-w-0 prose prose-sm prose-on-assistant [overflow-wrap:anywhere]"
         >
           <div dangerouslySetInnerHTML={{ __html: renderMarkdown(responseText + "▍") }} />
         </div>
