@@ -179,6 +179,18 @@ describe("AcademicExportDialog", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("cancel button renders and calls onClose", () => {
+    const onClose = vi.fn();
+    const { container } = render(
+      <AcademicExportDialog open={true} onClose={onClose} />,
+    );
+    const cancelBtn = container.querySelector("[data-testid='academic-export-cancel-btn']") as HTMLButtonElement;
+    expect(cancelBtn).toBeTruthy();
+    expect(cancelBtn.textContent).toBe("Cancel");
+    fireEvent.click(cancelBtn);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("changes format when selecting different option", () => {
     const { container } = render(
       <AcademicExportDialog open={true} onClose={vi.fn()} initialFormat="latex" />,

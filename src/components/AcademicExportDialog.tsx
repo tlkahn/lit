@@ -264,18 +264,6 @@ export function AcademicExportDialog({ open, onClose, initialFormat }: AcademicE
             </div>
           )}
 
-          {/* Export button */}
-          <div className="pt-2">
-            <button
-              data-testid="academic-export-btn"
-              disabled={!outputPath || exporting}
-              onClick={handleExport}
-              className="w-full rounded bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
-            >
-              {exporting ? "Exporting..." : `Export to ${FORMAT_LABELS[format]}`}
-            </button>
-          </div>
-
           {/* Result display */}
           {result && result.success && (
             <div data-testid="academic-export-success" className="rounded border border-border bg-bg-secondary p-3 text-sm text-text-success">
@@ -298,6 +286,24 @@ export function AcademicExportDialog({ open, onClose, initialFormat }: AcademicE
               )}
             </div>
           )}
+        </div>
+
+        <div className="flex justify-end gap-2 px-5 pb-5 pt-3">
+          <button
+            data-testid="academic-export-cancel-btn"
+            onClick={onClose}
+            className="rounded px-3 py-1.5 text-sm text-text-muted hover:bg-bg-secondary"
+          >
+            Cancel
+          </button>
+          <button
+            data-testid="academic-export-btn"
+            disabled={!outputPath || exporting}
+            onClick={handleExport}
+            className="rounded bg-interactive-accent px-3 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-50"
+          >
+            {exporting ? "Exporting..." : `Export to ${FORMAT_LABELS[format]}`}
+          </button>
         </div>
       </div>
     </div>
