@@ -44,6 +44,7 @@ import type { Annotation, ExportProgress, ExportSummary, PageContent, SplitPlan 
 import { useStatusMessageStore } from "./stores/statusMessage";
 import { MergePreviewDialog } from "./components/MergePreviewDialog";
 import { SplitPreviewDialog } from "./components/SplitPreviewDialog";
+import { AcademicExportDialog } from "./components/AcademicExportDialog";
 
 interface LitCliArgs {
   workspace: string | null;
@@ -145,6 +146,9 @@ function App() {
   const licensedTo = useLicenseStore((s) => s.licensedTo);
   const daysRemaining = useLicenseStore((s) => s.daysRemaining);
 
+  const [academicExportOpen, setAcademicExportOpen] = useState(false);
+  const [academicExportFormat, setAcademicExportFormat] = useState<"latex" | "pdf" | "html" | "docx">("latex");
+
   const [mergePreviewOpen, setMergePreviewOpen] = useState(false);
   const [mergePreviewDocs, setMergePreviewDocs] = useState<PageContent[]>([]);
   const [splitPreviewOpen, setSplitPreviewOpen] = useState(false);
@@ -182,6 +186,34 @@ function App() {
       });
       if (cancelled) { unPrefs(); return; }
       unlisteners.push(unPrefs);
+
+      const unExportLatex = await listen("menu://export-latex", () => {
+        setAcademicExportFormat("latex");
+        setAcademicExportOpen(true);
+      });
+      if (cancelled) { unExportLatex(); return; }
+      unlisteners.push(unExportLatex);
+
+      const unExportPdf = await listen("menu://export-pdf", () => {
+        setAcademicExportFormat("pdf");
+        setAcademicExportOpen(true);
+      });
+      if (cancelled) { unExportPdf(); return; }
+      unlisteners.push(unExportPdf);
+
+      const unExportHtml = await listen("menu://export-html", () => {
+        setAcademicExportFormat("html");
+        setAcademicExportOpen(true);
+      });
+      if (cancelled) { unExportHtml(); return; }
+      unlisteners.push(unExportHtml);
+
+      const unExportDocx = await listen("menu://export-docx", () => {
+        setAcademicExportFormat("docx");
+        setAcademicExportOpen(true);
+      });
+      if (cancelled) { unExportDocx(); return; }
+      unlisteners.push(unExportDocx);
 
       const unDeepLink = await listen<string>("license://activate-key", async (event) => {
         const ok = await useLicenseStore.getState().activate(event.payload);
@@ -287,6 +319,7 @@ function App() {
   useModalLock(commandPaletteOpen);
   useModalLock(annotationBuilderOpen);
   useModalLock(settingsOpen);
+  useModalLock(academicExportOpen);
   useModalLock(mergePreviewOpen);
   useModalLock(splitPreviewOpen);
 
@@ -339,6 +372,16 @@ function App() {
     };
     window.addEventListener("lit:open-split-preview", handler);
     return () => window.removeEventListener("lit:open-split-preview", handler);
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ format: "latex" | "pdf" | "html" | "docx" }>).detail;
+      setAcademicExportFormat(detail?.format ?? "latex");
+      setAcademicExportOpen(true);
+    };
+    window.addEventListener("lit:open-academic-export", handler);
+    return () => window.removeEventListener("lit:open-academic-export", handler);
   }, []);
 
   useEffect(() => {
@@ -461,6 +504,7 @@ function App() {
             initialFields={editingAnnotation ? annotationToFields(editingAnnotation) : undefined}
           />
         )}
+        <AcademicExportDialog open={academicExportOpen} onClose={() => setAcademicExportOpen(false)} initialFormat={academicExportFormat} />
         <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} initialCategory={settingsInitialCategory} />
         <LicenseEntryDialog open={licenseEntryOpen} onClose={() => setLicenseEntryOpen(false)} />
         <LicenseInfoDialog open={licenseInfoOpen} licenseState={licenseState} licensedTo={licensedTo} daysRemaining={daysRemaining} onClose={() => setLicenseInfoOpen(false)} />

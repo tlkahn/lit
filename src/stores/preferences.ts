@@ -38,6 +38,12 @@ export interface PreferencesState {
   llmOpenaiApiKeySet: boolean;
   llmAnthropicApiKeySet: boolean;
   llmDeleteAnnotationThreads: boolean;
+  academicPandocPath: string;
+  academicCrossrefPath: string;
+  academicPdfEngine: string;
+  academicDefaultCsl: string;
+  academicDefaultTemplate: string;
+  academicDefaultReferenceDoc: string;
   loaded: boolean;
   loadPreferences: () => Promise<void>;
 }
@@ -95,6 +101,12 @@ function mapPreferences(prefs: Preferences) {
     llmPromptTr: (prefs["llm.prompts.tr"] as string) ?? "Translate the following text. If a hint is provided, follow it.",
     llmPromptQ: (prefs["llm.prompts.q"] as string) ?? "Answer the following question about the provided context.",
     llmDeleteAnnotationThreads: (prefs["llm.deleteAnnotationThreads"] as boolean) ?? false,
+    academicPandocPath: (prefs["academic.pandocPath"] as string) ?? "",
+    academicCrossrefPath: (prefs["academic.crossrefFilterPath"] as string) ?? "",
+    academicPdfEngine: (prefs["academic.pdfEngine"] as string) ?? "",
+    academicDefaultCsl: (prefs["academic.defaultCsl"] as string) ?? "",
+    academicDefaultTemplate: (prefs["academic.defaultTemplate"] as string) ?? "",
+    academicDefaultReferenceDoc: (prefs["academic.defaultReferenceDoc"] as string) ?? "",
   };
 }
 
@@ -127,6 +139,12 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   llmOpenaiApiKeySet: false,
   llmAnthropicApiKeySet: false,
   llmDeleteAnnotationThreads: false,
+  academicPandocPath: "",
+  academicCrossrefPath: "",
+  academicPdfEngine: "",
+  academicDefaultCsl: "",
+  academicDefaultTemplate: "",
+  academicDefaultReferenceDoc: "",
   loaded: false,
 
   loadPreferences: async () => {

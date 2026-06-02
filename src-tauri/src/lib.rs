@@ -381,6 +381,8 @@ pub fn run() {
             commands::merge_split::cancel_title_suggestion,
             commands::merge_split::execute_split,
             commands::merge_split::merge_documents,
+            commands::academic_export::detect_pandoc,
+            commands::academic_export::export_document,
             context_menu::show_trash_context_menu,
             context_menu::show_sidebar_context_menu,
             context_menu::show_mindmap_context_menu,

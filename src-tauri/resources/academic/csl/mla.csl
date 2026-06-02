@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8"?>
+<style xmlns="http://purl.org/net/xbiblio/csl" class="in-text" version="1.0" demote-non-dropping-particle="never" default-locale="en-US">
+  <info>
+    <title>Modern Language Association 9th edition</title>
+    <title-short>MLA</title-short>
+    <id>http://www.zotero.org/styles/modern-language-association</id>
+    <link href="http://www.zotero.org/styles/modern-language-association" rel="self"/>
+    <category citation-format="author"/>
+    <category field="humanities"/>
+    <updated>2024-01-01T00:00:00+00:00</updated>
+    <rights license="http://creativecommons.org/licenses/by-sa/3.0/">This work is licensed under a Creative Commons Attribution-ShareAlike 3.0 License</rights>
+  </info>
+  <macro name="author">
+    <names variable="author">
+      <name and="text" delimiter=", " delimiter-precedes-last="always" name-as-sort-order="first" sort-separator=", "/>
+      <substitute>
+        <names variable="editor"/>
+        <text variable="title"/>
+      </substitute>
+    </names>
+  </macro>
+  <macro name="author-short">
+    <names variable="author">
+      <name form="short" and="text" delimiter=", "/>
+      <substitute>
+        <names variable="editor" form="short"/>
+        <text variable="title" form="short" font-style="italic"/>
+      </substitute>
+    </names>
+  </macro>
+  <macro name="title">
+    <choose>
+      <if type="book" match="any">
+        <text variable="title" font-style="italic"/>
+      </if>
+      <else>
+        <text variable="title" quotes="true"/>
+      </else>
+    </choose>
+  </macro>
+  <macro name="container">
+    <choose>
+      <if type="article-journal">
+        <group delimiter=", ">
+          <text variable="container-title" font-style="italic"/>
+          <group prefix="vol. ">
+            <text variable="volume"/>
+          </group>
+          <group prefix="no. ">
+            <text variable="issue"/>
+          </group>
+          <date variable="issued">
+            <date-part name="year"/>
+          </date>
+          <group prefix="pp. ">
+            <text variable="page"/>
+          </group>
+        </group>
+      </if>
+      <else-if type="chapter" match="any">
+        <group delimiter=", ">
+          <text variable="container-title" font-style="italic"/>
+          <group delimiter=" ">
+            <text term="editor" form="verb-short"/>
+            <names variable="editor">
+              <name and="text" delimiter=", "/>
+            </names>
+          </group>
+          <text variable="publisher"/>
+          <date variable="issued">
+            <date-part name="year"/>
+          </date>
+          <group prefix="pp. ">
+            <text variable="page"/>
+          </group>
+        </group>
+      </else-if>
+    </choose>
+  </macro>
+  <macro name="publisher">
+    <choose>
+      <if type="book" match="any">
+        <group delimiter=", ">
+          <text variable="publisher"/>
+          <date variable="issued">
+            <date-part name="year"/>
+          </date>
+        </group>
+      </if>
+    </choose>
+  </macro>
+  <macro name="access">
+    <choose>
+      <if variable="DOI">
+        <text variable="DOI" prefix="https://doi.org/"/>
+      </if>
+    </choose>
+  </macro>
+  <citation>
+    <layout prefix="(" suffix=")" delimiter="; ">
+      <group delimiter=" ">
+        <text macro="author-short"/>
+        <text variable="locator"/>
+      </group>
+    </layout>
+  </citation>
+  <bibliography hanging-indent="true" entry-spacing="0" line-spacing="2">
+    <sort>
+      <key macro="author"/>
+    </sort>
+    <layout suffix=".">
+      <group delimiter=". ">
+        <text macro="author"/>
+        <text macro="title"/>
+        <text macro="container"/>
+        <text macro="publisher"/>
+      </group>
+      <text macro="access" prefix=". "/>
+    </layout>
+  </bibliography>
+</style>

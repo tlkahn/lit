@@ -33,9 +33,24 @@ fn ensure_placeholders() {
 /// `tauri_build::build()` doesn't fail in worktrees or fresh checkouts
 /// where gitignored artifacts haven't been fetched yet.
 fn ensure_placeholders_in(base: &Path, triple: &str) {
+    let academic = base.join("resources").join("academic");
+    let csl_dir = academic.join("csl");
+
     let placeholders = [
         base.join("binaries").join(format!("lit-cli-{triple}")),
         base.join("libs").join("libpdfium.dylib"),
+        academic.join("lit-reference.docx"),
+        academic.join("lit-article.tex"),
+        csl_dir.join("apa.csl"),
+        csl_dir.join("chicago-author-date.csl"),
+        csl_dir.join("ieee.csl"),
+        csl_dir.join("vancouver.csl"),
+        csl_dir.join("mla.csl"),
+        csl_dir.join("acm-sig-proceedings.csl"),
+        csl_dir.join("nature.csl"),
+        csl_dir.join("harvard-cite-them-right.csl"),
+        csl_dir.join("american-medical-association.csl"),
+        csl_dir.join("springer-basic-author-date.csl"),
     ];
 
     for path in &placeholders {

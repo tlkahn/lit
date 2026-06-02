@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="utf-8"?>
+<style xmlns="http://purl.org/net/xbiblio/csl" class="in-text" version="1.0" demote-non-dropping-particle="sort-only" default-locale="en-GB">
+  <info>
+    <title>Cite Them Right 12th edition - Harvard</title>
+    <title-short>Harvard CTR</title-short>
+    <id>http://www.zotero.org/styles/harvard-cite-them-right</id>
+    <link href="http://www.zotero.org/styles/harvard-cite-them-right" rel="self"/>
+    <category citation-format="author-date"/>
+    <category field="generic-base"/>
+    <updated>2024-01-01T00:00:00+00:00</updated>
+    <rights license="http://creativecommons.org/licenses/by-sa/3.0/">This work is licensed under a Creative Commons Attribution-ShareAlike 3.0 License</rights>
+  </info>
+  <macro name="author">
+    <names variable="author">
+      <name and="text" delimiter=", " delimiter-precedes-last="never" initialize-with=". " name-as-sort-order="all" sort-separator=", "/>
+      <substitute>
+        <names variable="editor"/>
+        <text variable="title"/>
+      </substitute>
+    </names>
+  </macro>
+  <macro name="author-short">
+    <names variable="author">
+      <name form="short" and="text" delimiter=", "/>
+      <substitute>
+        <names variable="editor" form="short"/>
+        <text variable="title" form="short"/>
+      </substitute>
+    </names>
+  </macro>
+  <macro name="issued">
+    <date variable="issued" prefix="(" suffix=")">
+      <date-part name="year"/>
+    </date>
+  </macro>
+  <macro name="issued-year">
+    <date variable="issued">
+      <date-part name="year"/>
+    </date>
+  </macro>
+  <macro name="title">
+    <choose>
+      <if type="book" match="any">
+        <text variable="title" font-style="italic"/>
+      </if>
+      <else>
+        <text variable="title" quotes="true"/>
+      </else>
+    </choose>
+  </macro>
+  <macro name="container">
+    <choose>
+      <if type="article-journal">
+        <group delimiter=", ">
+          <text variable="container-title" font-style="italic"/>
+          <text variable="volume"/>
+          <text variable="issue" prefix="(" suffix=")"/>
+          <group prefix="pp. ">
+            <text variable="page"/>
+          </group>
+        </group>
+      </if>
+      <else-if type="chapter" match="any">
+        <group delimiter=". ">
+          <group delimiter=" ">
+            <text term="in" text-case="capitalize-first"/>
+            <names variable="editor">
+              <name and="text" delimiter=", " initialize-with=". "/>
+              <label form="short" prefix=" (" suffix=")"/>
+            </names>
+          </group>
+          <text variable="container-title" font-style="italic"/>
+          <group prefix="pp. ">
+            <text variable="page"/>
+          </group>
+        </group>
+      </else-if>
+    </choose>
+  </macro>
+  <macro name="publisher">
+    <choose>
+      <if type="book chapter" match="any">
+        <group delimiter=": ">
+          <text variable="publisher-place"/>
+          <text variable="publisher"/>
+        </group>
+      </if>
+    </choose>
+  </macro>
+  <macro name="access">
+    <choose>
+      <if variable="DOI">
+        <text variable="DOI" prefix="doi:"/>
+      </if>
+    </choose>
+  </macro>
+  <citation et-al-min="4" et-al-use-first="1" disambiguate-add-year-suffix="true" collapse="year">
+    <sort>
+      <key macro="author-short"/>
+      <key macro="issued-year"/>
+    </sort>
+    <layout prefix="(" suffix=")" delimiter="; ">
+      <group delimiter=", ">
+        <text macro="author-short"/>
+        <text macro="issued-year"/>
+        <text variable="locator"/>
+      </group>
+    </layout>
+  </citation>
+  <bibliography hanging-indent="true" entry-spacing="0">
+    <sort>
+      <key macro="author"/>
+      <key macro="issued-year"/>
+    </sort>
+    <layout suffix=".">
+      <group delimiter=" ">
+        <text macro="author"/>
+        <text macro="issued"/>
+      </group>
+      <group delimiter=". " prefix=" ">
+        <text macro="title"/>
+        <text macro="container"/>
+        <text macro="publisher"/>
+      </group>
+      <text macro="access" prefix=". "/>
+    </layout>
+  </bibliography>
+</style>

@@ -907,6 +907,198 @@ describe("PreferencesStore", () => {
     expect(usePreferencesStore.getState().llmDeleteAnnotationThreads).toBe(true);
   });
 
+  // --- Academic Export fields ---
+
+  it("defaults academicPandocPath to empty string", () => {
+    const state = usePreferencesStore.getState();
+    expect(state.academicPandocPath).toBe("");
+  });
+
+  it("defaults academicCrossrefPath to empty string", () => {
+    const state = usePreferencesStore.getState();
+    expect(state.academicCrossrefPath).toBe("");
+  });
+
+  it("defaults academicPdfEngine to empty string", () => {
+    const state = usePreferencesStore.getState();
+    expect(state.academicPdfEngine).toBe("");
+  });
+
+  it("defaults academicDefaultCsl to empty string", () => {
+    const state = usePreferencesStore.getState();
+    expect(state.academicDefaultCsl).toBe("");
+  });
+
+  it("defaults academicDefaultTemplate to empty string", () => {
+    const state = usePreferencesStore.getState();
+    expect(state.academicDefaultTemplate).toBe("");
+  });
+
+  it("defaults academicDefaultReferenceDoc to empty string", () => {
+    const state = usePreferencesStore.getState();
+    expect(state.academicDefaultReferenceDoc).toBe("");
+  });
+
+  it("maps academic.pandocPath from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "academic.pandocPath": "/usr/local/bin/pandoc",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().academicPandocPath).toBe("/usr/local/bin/pandoc");
+  });
+
+  it("maps academic.crossrefFilterPath from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "academic.crossrefFilterPath": "/usr/local/bin/pandoc-crossref",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().academicCrossrefPath).toBe("/usr/local/bin/pandoc-crossref");
+  });
+
+  it("maps academic.pdfEngine from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "academic.pdfEngine": "xelatex",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().academicPdfEngine).toBe("xelatex");
+  });
+
+  it("maps academic.defaultCsl from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "academic.defaultCsl": "ieee",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().academicDefaultCsl).toBe("ieee");
+  });
+
+  it("maps academic.defaultTemplate from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "academic.defaultTemplate": "/path/to/template.tex",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().academicDefaultTemplate).toBe("/path/to/template.tex");
+  });
+
+  it("maps academic.defaultReferenceDoc from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "academic.defaultReferenceDoc": "/path/to/reference.docx",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().academicDefaultReferenceDoc).toBe("/path/to/reference.docx");
+  });
+
+  it("defaults academic fields to empty string when keys missing from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    const state = usePreferencesStore.getState();
+    expect(state.academicPandocPath).toBe("");
+    expect(state.academicCrossrefPath).toBe("");
+    expect(state.academicPdfEngine).toBe("");
+    expect(state.academicDefaultCsl).toBe("");
+    expect(state.academicDefaultTemplate).toBe("");
+    expect(state.academicDefaultReferenceDoc).toBe("");
+  });
+
+  it("updates academic fields on preferences://changed event", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().academicPandocPath).toBe("");
+
+    emitMockEvent("preferences://changed", {
+      "workbench.colorTheme": null,
+      "workbench.darkMode": "auto",
+      "workbench.sideBar.location": "left",
+      "academic.pandocPath": "/opt/pandoc",
+      "academic.pdfEngine": "lualatex",
+    });
+
+    const state = usePreferencesStore.getState();
+    expect(state.academicPandocPath).toBe("/opt/pandoc");
+    expect(state.academicPdfEngine).toBe("lualatex");
+  });
+
   it("defaults bottomPanelPosition to 'bottom'", () => {
     const state = usePreferencesStore.getState();
     expect(state.bottomPanelPosition).toBe("bottom");
