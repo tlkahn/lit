@@ -70,9 +70,24 @@ pub fn extract_export_frontmatter(file_path: &Path) -> ExportFrontmatter {
 
 /// Scan directories in PATH for a binary with the given name.
 pub fn find_in_path(binary_name: &str) -> Option<PathBuf> {
-    let path_var = std::env::var("PATH").ok()?;
+    let path_var = std::env::var("PATH").unwrap_or_default();
+    let extra_dirs: &[&str] = if cfg!(target_os = "macos") {
+        &[
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/Library/TeX/texbin",
+        ]
+    } else {
+        &[]
+    };
     for dir in std::env::split_paths(&path_var) {
         let candidate = dir.join(binary_name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    for dir in extra_dirs {
+        let candidate = Path::new(dir).join(binary_name);
         if candidate.is_file() {
             return Some(candidate);
         }
@@ -371,7 +386,7 @@ pub fn detect_pandoc(
 
     let pandoc_version = get_version(&pandoc_path)?;
 
-    let crossref_path = resolve_binary("academic.crossrefPath", "pandoc-crossref", &prefs);
+    let crossref_path = resolve_binary("academic.crossrefFilterPath", "pandoc-crossref", &prefs);
     let crossref_version = crossref_path
         .as_ref()
         .and_then(|p| get_version(p).ok());
@@ -408,12 +423,16 @@ pub async fn export_document(
 
     let output_path = PathBuf::from(&request.output_path);
     let format = request.format.clone();
+    match format.as_str() {
+        "latex" | "pdf" | "html" | "docx" => {}
+        _ => return Err(format!("unsupported format: {format}")),
+    }
     let resource_path = input_path.parent().unwrap_or(&workspace_root).to_path_buf();
 
     let prefs = preferences::read_preferences(&app_handle);
     let pandoc_path = resolve_binary("academic.pandocPath", "pandoc", &prefs)
         .ok_or_else(|| "pandoc not found".to_string())?;
-    let crossref_path = resolve_binary("academic.crossrefPath", "pandoc-crossref", &prefs);
+    let crossref_path = resolve_binary("academic.crossrefFilterPath", "pandoc-crossref", &prefs);
 
     // Extract frontmatter overrides from the document
     let frontmatter = extract_export_frontmatter(&input_path);
@@ -440,7 +459,7 @@ pub async fn export_document(
     let reference_doc = if format == "docx" {
         if let Some(ref rd) = request.reference_doc.as_ref().or(frontmatter.reference_doc.as_ref()) {
             let p = PathBuf::from(rd);
-            if p.is_file() { Some(p) } else { None }
+            if p.is_file() { Some(p) } else { resolve_reference_doc(&prefs, resource_dir.as_deref()) }
         } else {
             resolve_reference_doc(&prefs, resource_dir.as_deref())
         }
@@ -486,10 +505,31 @@ pub async fn export_document(
             template.as_deref(),
         );
 
-        let output = Command::new(&pandoc_path)
+        let mut child = Command::new(&pandoc_path)
             .args(&args)
-            .output()
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
             .map_err(|e| format!("failed to run pandoc: {e}"))?;
+
+        let timeout = std::time::Duration::from_secs(300);
+        let start = std::time::Instant::now();
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) => {
+                    if start.elapsed() >= timeout {
+                        let _ = child.kill();
+                        return Err("pandoc timed out after 5 minutes".to_string());
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                }
+                Err(e) => return Err(format!("failed to wait on pandoc: {e}")),
+            }
+        }
+        let output = child.wait_with_output()
+            .map_err(|e| format!("failed to read pandoc output: {e}"))?;
 
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         let success = output.status.success();

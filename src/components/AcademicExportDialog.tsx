@@ -100,8 +100,8 @@ export function AcademicExportDialog({ open, onClose, initialFormat }: AcademicE
       if (dest) {
         setOutputPath(dest);
       }
-    } catch {
-      // dialog cancelled or unavailable
+    } catch (e) {
+      console.error("Save dialog failed:", e);
     }
   }
 
@@ -169,7 +169,10 @@ export function AcademicExportDialog({ open, onClose, initialFormat }: AcademicE
               data-testid="academic-export-format"
               className="w-full rounded border border-border bg-bg-secondary px-3 py-1.5 text-sm text-text-normal"
               value={format}
-              onChange={(e) => setFormat(e.target.value as ExportFormat)}
+              onChange={(e) => {
+                setFormat(e.target.value as ExportFormat);
+                setOutputPath("");
+              }}
             >
               {(Object.keys(FORMAT_LABELS) as ExportFormat[]).map((f) => (
                 <option key={f} value={f}>{FORMAT_LABELS[f]}</option>
