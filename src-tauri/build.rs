@@ -40,7 +40,6 @@ fn ensure_placeholders_in(base: &Path, triple: &str) {
         base.join("binaries").join(format!("lit-cli-{triple}")),
         base.join("libs").join("libpdfium.dylib"),
         academic.join("lit-reference.docx"),
-        academic.join("lit-article.tex"),
         csl_dir.join("apa.csl"),
         csl_dir.join("chicago-author-date.csl"),
         csl_dir.join("ieee.csl"),
