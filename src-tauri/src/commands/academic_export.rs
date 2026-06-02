@@ -306,13 +306,12 @@ pub fn resolve_csl(
 }
 
 /// Resolve the pandoc template to use.
-/// Priority: request override -> frontmatter -> preference -> bundled default (latex/pdf only).
+/// Priority: request override -> frontmatter -> preference.
+/// No bundled default — pandoc's own default template handles all commands/packages.
 pub fn resolve_template(
     request_override: Option<&str>,
     frontmatter_template: Option<&str>,
     prefs: &preferences::Preferences,
-    resource_dir: Option<&Path>,
-    format: &str,
 ) -> Option<PathBuf> {
     let try_path = |value: &str| -> Option<PathBuf> {
         let p = PathBuf::from(value);
@@ -342,14 +341,7 @@ pub fn resolve_template(
             }
         }
     }
-    // Bundled default only for latex/pdf
-    if format == "latex" || format == "pdf" {
-        resource_dir
-            .map(|rd| rd.join("academic").join("lit-article.tex"))
-            .filter(|p| p.is_file())
-    } else {
-        None
-    }
+    None
 }
 
 /// Resolve the reference DOCX for pandoc's `--reference-doc` flag.
@@ -430,6 +422,19 @@ pub fn build_pandoc_args(
 
     if let Some(tmpl) = template {
         args.push(format!("--template={}", tmpl.to_string_lossy()));
+    }
+    if format == "pdf" || format == "latex" {
+        for var in [
+            "geometry:margin=1in",
+            "fontsize=12pt",
+            "colorlinks=true",
+            "linkcolor=blue",
+            "citecolor=blue",
+            "urlcolor=blue",
+            "indent=true",
+        ] {
+            args.push(format!("--variable={var}"));
+        }
     }
 
     args
@@ -540,8 +545,6 @@ pub async fn export_document(
         request.template.as_deref(),
         frontmatter.template.as_deref(),
         &prefs,
-        resource_dir.as_deref(),
-        &format,
     );
 
     // Resolve CJK font for PDF/LaTeX: frontmatter → preference → auto-detect
@@ -1010,12 +1013,6 @@ mod tests {
         }
     }
 
-    fn make_template_dir(base: &std::path::Path) {
-        let academic = base.join("academic");
-        std::fs::create_dir_all(&academic).unwrap();
-        std::fs::write(academic.join("lit-article.tex"), "fake").unwrap();
-    }
-
     // CSL resolver tests
     #[test]
     fn test_resolve_csl_request_override_path() {
@@ -1101,43 +1098,10 @@ mod tests {
 
     // Template resolver tests
     #[test]
-    fn test_resolve_template_for_latex() {
-        let tmp = std::env::temp_dir().join("test_tmpl_latex");
-        make_template_dir(&tmp);
+    fn test_resolve_template_none_without_overrides() {
         let prefs = preferences::Preferences::default();
-        let result = resolve_template(None, None, &prefs, Some(&tmp), "latex");
-        assert_eq!(result, Some(tmp.join("academic/lit-article.tex")));
-        std::fs::remove_dir_all(&tmp).unwrap();
-    }
-
-    #[test]
-    fn test_resolve_template_for_pdf() {
-        let tmp = std::env::temp_dir().join("test_tmpl_pdf");
-        make_template_dir(&tmp);
-        let prefs = preferences::Preferences::default();
-        let result = resolve_template(None, None, &prefs, Some(&tmp), "pdf");
-        assert_eq!(result, Some(tmp.join("academic/lit-article.tex")));
-        std::fs::remove_dir_all(&tmp).unwrap();
-    }
-
-    #[test]
-    fn test_resolve_template_not_for_html() {
-        let tmp = std::env::temp_dir().join("test_tmpl_html");
-        make_template_dir(&tmp);
-        let prefs = preferences::Preferences::default();
-        let result = resolve_template(None, None, &prefs, Some(&tmp), "html");
+        let result = resolve_template(None, None, &prefs);
         assert!(result.is_none());
-        std::fs::remove_dir_all(&tmp).unwrap();
-    }
-
-    #[test]
-    fn test_resolve_template_not_for_docx() {
-        let tmp = std::env::temp_dir().join("test_tmpl_docx");
-        make_template_dir(&tmp);
-        let prefs = preferences::Preferences::default();
-        let result = resolve_template(None, None, &prefs, Some(&tmp), "docx");
-        assert!(result.is_none());
-        std::fs::remove_dir_all(&tmp).unwrap();
     }
 
     #[test]
@@ -1147,7 +1111,7 @@ mod tests {
         let custom = tmp.join("custom.tex");
         std::fs::write(&custom, "fake").unwrap();
         let prefs = preferences::Preferences::default();
-        let result = resolve_template(Some(&custom.to_string_lossy()), None, &prefs, None, "latex");
+        let result = resolve_template(Some(&custom.to_string_lossy()), None, &prefs);
         assert_eq!(result, Some(custom));
         std::fs::remove_dir_all(&tmp).unwrap();
     }
@@ -1165,7 +1129,7 @@ mod tests {
             "academic.defaultTemplate".to_string(),
             serde_json::Value::String(pref_tmpl.to_string_lossy().to_string()),
         );
-        let result = resolve_template(None, Some(&fm_tmpl.to_string_lossy()), &prefs, None, "latex");
+        let result = resolve_template(None, Some(&fm_tmpl.to_string_lossy()), &prefs);
         assert_eq!(result, Some(fm_tmpl));
         std::fs::remove_dir_all(&tmp).unwrap();
     }
@@ -1353,31 +1317,42 @@ mod tests {
         assert!(timed_out, "should have timed out after 1 second");
     }
 
-    #[test]
-    fn test_template_contains_pandoc_compat_shims() {
-        let template_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("resources")
-            .join("academic")
-            .join("lit-article.tex");
-        let content = std::fs::read_to_string(&template_path)
-            .expect("lit-article.tex must exist");
+    // --- Default style variable tests ---
 
-        assert!(
-            content.contains("\\tightlist"),
-            "template must define \\tightlist for pandoc tight lists"
+    #[test]
+    fn test_build_pandoc_args_default_style_variables() {
+        for fmt in &["pdf", "latex"] {
+            let args = build_pandoc_args(
+                Path::new("/input.md"), Path::new("/output"), fmt,
+                Path::new("/notes"), None, None, None, None, None,
+            );
+            assert!(args.contains(&"--variable=geometry:margin=1in".to_string()), "{fmt}: missing geometry");
+            assert!(args.contains(&"--variable=fontsize=12pt".to_string()), "{fmt}: missing fontsize");
+            assert!(args.contains(&"--variable=colorlinks=true".to_string()), "{fmt}: missing colorlinks");
+            assert!(args.contains(&"--variable=linkcolor=blue".to_string()), "{fmt}: missing linkcolor");
+            assert!(args.contains(&"--variable=citecolor=blue".to_string()), "{fmt}: missing citecolor");
+            assert!(args.contains(&"--variable=urlcolor=blue".to_string()), "{fmt}: missing urlcolor");
+            assert!(args.contains(&"--variable=indent=true".to_string()), "{fmt}: missing indent");
+        }
+    }
+
+    #[test]
+    fn test_build_pandoc_args_custom_template_still_has_variables() {
+        let args = build_pandoc_args(
+            Path::new("/input.md"), Path::new("/output.pdf"), "pdf",
+            Path::new("/notes"), None, None, None, None, Some(Path::new("/t/custom.tex")),
         );
-        assert!(
-            content.contains("\\pandocbounded"),
-            "template must define \\pandocbounded for pandoc 3.x bounded figures"
+        assert!(args.contains(&"--template=/t/custom.tex".to_string()));
+        assert!(args.contains(&"--variable=geometry:margin=1in".to_string()));
+    }
+
+    #[test]
+    fn test_build_pandoc_args_html_no_variables() {
+        let args = build_pandoc_args(
+            Path::new("/input.md"), Path::new("/output.html"), "html",
+            Path::new("/notes"), None, None, None, None, None,
         );
-        assert!(
-            content.contains("soul"),
-            "template must include soul package for strikethrough support"
-        );
-        assert!(
-            content.contains("\\includesvg"),
-            "template must define \\includesvg fallback for SVG images"
-        );
+        assert!(!args.iter().any(|a| a.starts_with("--variable=")));
     }
 
     // --- CJK detection tests ---

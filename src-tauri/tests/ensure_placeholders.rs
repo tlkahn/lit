@@ -11,7 +11,6 @@ fn ensure_placeholders_in(base: &Path, triple: &str) {
         base.join("binaries").join(format!("lit-cli-{triple}")),
         base.join("libs").join("libpdfium.dylib"),
         academic.join("lit-reference.docx"),
-        academic.join("lit-article.tex"),
         csl_dir.join("apa.csl"),
         csl_dir.join("chicago-author-date.csl"),
         csl_dir.join("ieee.csl"),
@@ -43,7 +42,6 @@ fn creates_missing_placeholders() {
     assert!(tmp.path().join("binaries/lit-cli-aarch64-apple-darwin").exists());
     assert!(tmp.path().join("libs/libpdfium.dylib").exists());
     assert!(tmp.path().join("resources/academic/lit-reference.docx").exists());
-    assert!(tmp.path().join("resources/academic/lit-article.tex").exists());
     assert!(tmp.path().join("resources/academic/csl/apa.csl").exists());
     assert!(tmp.path().join("resources/academic/csl/chicago-author-date.csl").exists());
     assert!(tmp.path().join("resources/academic/csl/ieee.csl").exists());
@@ -78,6 +76,5 @@ fn works_with_different_triples() {
 
     assert!(tmp.path().join("binaries/lit-cli-x86_64-unknown-linux-gnu").exists());
     assert!(tmp.path().join("libs/libpdfium.dylib").exists());
-    assert!(tmp.path().join("resources/academic/lit-article.tex").exists());
     assert!(tmp.path().join("resources/academic/csl/apa.csl").exists());
 }
