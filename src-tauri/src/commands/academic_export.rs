@@ -1280,4 +1280,31 @@ mod tests {
 
         assert!(timed_out, "should have timed out after 1 second");
     }
+
+    #[test]
+    fn test_template_contains_pandoc_compat_shims() {
+        let template_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .join("academic")
+            .join("lit-article.tex");
+        let content = std::fs::read_to_string(&template_path)
+            .expect("lit-article.tex must exist");
+
+        assert!(
+            content.contains("\\tightlist"),
+            "template must define \\tightlist for pandoc tight lists"
+        );
+        assert!(
+            content.contains("\\pandocbounded"),
+            "template must define \\pandocbounded for pandoc 3.x bounded figures"
+        );
+        assert!(
+            content.contains("soul"),
+            "template must include soul package for strikethrough support"
+        );
+        assert!(
+            content.contains("\\includesvg"),
+            "template must define \\includesvg fallback for SVG images"
+        );
+    }
 }

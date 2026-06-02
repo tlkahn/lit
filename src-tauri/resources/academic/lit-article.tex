@@ -54,6 +54,33 @@ $if(highlighting-macros)$
 $highlighting-macros$
 $endif$
 
+%% — pandoc 3.x compatibility shims ————————————————
+
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}%
+}
+
+\providecommand{\pandocbounded}[1]{%
+  \begingroup
+  \settoheight{\dimen0}{#1}%
+  \ifdim\dimen0>\textheight
+    \resizebox{!}{\textheight}{#1}%
+  \else
+    #1%
+  \fi
+  \endgroup
+}
+
+$if(strikeout)$
+\usepackage{soul}
+$endif$
+
+\IfFileExists{svg.sty}{%
+  \usepackage{svg}%
+}{%
+  \providecommand{\includesvg}[2][]{\fbox{\footnotesize [SVG image]}}%
+}
+
 %% — header-includes ————————————————————————————
 $for(header-includes)$
 $header-includes$
