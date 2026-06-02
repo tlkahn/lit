@@ -22,7 +22,7 @@ export function ThreadHeader({
   const status = useLlmResponseStore((s) => s.status);
 
   return (
-    <div className="flex items-center justify-between border-b border-divider px-2 py-1">
+    <div className="flex items-center justify-between px-2 py-1">
       <div className="flex items-center gap-2">
         <ThreadSelector
           conversations={conversations}
