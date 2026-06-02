@@ -312,10 +312,7 @@ pub fn resolve_template(
     request_override: Option<&str>,
     frontmatter_template: Option<&str>,
     prefs: &preferences::Preferences,
-    _resource_dir: Option<&Path>,
-    format: &str,
 ) -> Option<PathBuf> {
-    let _ = format;
     let try_path = |value: &str| -> Option<PathBuf> {
         let p = PathBuf::from(value);
         if p.is_file() {
@@ -425,7 +422,8 @@ pub fn build_pandoc_args(
 
     if let Some(tmpl) = template {
         args.push(format!("--template={}", tmpl.to_string_lossy()));
-    } else if format == "pdf" || format == "latex" {
+    }
+    if format == "pdf" || format == "latex" {
         for var in [
             "geometry:margin=1in",
             "fontsize=12pt",
@@ -547,8 +545,6 @@ pub async fn export_document(
         request.template.as_deref(),
         frontmatter.template.as_deref(),
         &prefs,
-        resource_dir.as_deref(),
-        &format,
     );
 
     // Resolve CJK font for PDF/LaTeX: frontmatter → preference → auto-detect
@@ -1102,30 +1098,9 @@ mod tests {
 
     // Template resolver tests
     #[test]
-    fn test_resolve_template_for_latex() {
+    fn test_resolve_template_none_without_overrides() {
         let prefs = preferences::Preferences::default();
-        let result = resolve_template(None, None, &prefs, None, "latex");
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_resolve_template_for_pdf() {
-        let prefs = preferences::Preferences::default();
-        let result = resolve_template(None, None, &prefs, None, "pdf");
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_resolve_template_not_for_html() {
-        let prefs = preferences::Preferences::default();
-        let result = resolve_template(None, None, &prefs, None, "html");
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_resolve_template_not_for_docx() {
-        let prefs = preferences::Preferences::default();
-        let result = resolve_template(None, None, &prefs, None, "docx");
+        let result = resolve_template(None, None, &prefs);
         assert!(result.is_none());
     }
 
@@ -1136,7 +1111,7 @@ mod tests {
         let custom = tmp.join("custom.tex");
         std::fs::write(&custom, "fake").unwrap();
         let prefs = preferences::Preferences::default();
-        let result = resolve_template(Some(&custom.to_string_lossy()), None, &prefs, None, "latex");
+        let result = resolve_template(Some(&custom.to_string_lossy()), None, &prefs);
         assert_eq!(result, Some(custom));
         std::fs::remove_dir_all(&tmp).unwrap();
     }
@@ -1154,7 +1129,7 @@ mod tests {
             "academic.defaultTemplate".to_string(),
             serde_json::Value::String(pref_tmpl.to_string_lossy().to_string()),
         );
-        let result = resolve_template(None, Some(&fm_tmpl.to_string_lossy()), &prefs, None, "latex");
+        let result = resolve_template(None, Some(&fm_tmpl.to_string_lossy()), &prefs);
         assert_eq!(result, Some(fm_tmpl));
         std::fs::remove_dir_all(&tmp).unwrap();
     }
@@ -1362,13 +1337,13 @@ mod tests {
     }
 
     #[test]
-    fn test_build_pandoc_args_custom_template_no_variables() {
+    fn test_build_pandoc_args_custom_template_still_has_variables() {
         let args = build_pandoc_args(
             Path::new("/input.md"), Path::new("/output.pdf"), "pdf",
             Path::new("/notes"), None, None, None, None, Some(Path::new("/t/custom.tex")),
         );
         assert!(args.contains(&"--template=/t/custom.tex".to_string()));
-        assert!(!args.iter().any(|a| a.starts_with("--variable=")));
+        assert!(args.contains(&"--variable=geometry:margin=1in".to_string()));
     }
 
     #[test]
