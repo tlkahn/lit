@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tauri::{Emitter, Manager};
@@ -513,6 +514,27 @@ pub async fn export_document(
             .spawn()
             .map_err(|e| format!("failed to run pandoc: {e}"))?;
 
+        let child_stdout = child.stdout.take();
+        let child_stderr = child.stderr.take();
+
+        let stdout_thread = std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut pipe) = child_stdout {
+                let _ = pipe.read_to_end(&mut buf);
+            }
+            buf
+        });
+
+        let stderr_thread = std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut pipe) = child_stderr {
+                let _ = pipe.read_to_end(&mut buf);
+            }
+            buf
+        });
+
+        tracing::debug!(format = %format, "spawned pandoc, draining pipes");
+
         let timeout = std::time::Duration::from_secs(300);
         let start = std::time::Instant::now();
         loop {
@@ -521,18 +543,30 @@ pub async fn export_document(
                 Ok(None) => {
                     if start.elapsed() >= timeout {
                         let _ = child.kill();
+                        let _ = stdout_thread.join();
+                        let _ = stderr_thread.join();
                         return Err("pandoc timed out after 5 minutes".to_string());
                     }
                     std::thread::sleep(std::time::Duration::from_millis(200));
                 }
-                Err(e) => return Err(format!("failed to wait on pandoc: {e}")),
+                Err(e) => {
+                    let _ = child.kill();
+                    let _ = stdout_thread.join();
+                    let _ = stderr_thread.join();
+                    return Err(format!("failed to wait on pandoc: {e}"));
+                }
             }
         }
-        let output = child.wait_with_output()
-            .map_err(|e| format!("failed to read pandoc output: {e}"))?;
 
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        let success = output.status.success();
+        let status = child.wait()
+            .map_err(|e| format!("failed to collect pandoc exit status: {e}"))?;
+        let stderr_bytes = stderr_thread.join().unwrap_or_default();
+        let _ = stdout_thread.join();
+
+        let stderr = String::from_utf8_lossy(&stderr_bytes).to_string();
+        let success = status.success();
+
+        tracing::debug!(stderr_len = stderr_bytes.len(), success, "pandoc finished");
 
         let latex_errors = if format == "pdf" {
             parse_latex_errors(&stderr)
@@ -1139,5 +1173,111 @@ mod tests {
         let result = resolve_reference_doc(&prefs, Some(&tmp_dir));
         assert_eq!(result, Some(ref_doc));
         std::fs::remove_dir_all(&tmp_dir).unwrap();
+    }
+
+    #[test]
+    fn test_large_stderr_does_not_deadlock() {
+        use std::process::{Command, Stdio};
+        use std::io::Read;
+
+        // Spawn a process that writes 200KB to stderr — enough to fill the OS pipe buffer
+        let mut child = Command::new("python3")
+            .args(["-c", "import sys; sys.stderr.write('x' * 200_000)"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("python3 must be available");
+
+        let child_stdout = child.stdout.take();
+        let child_stderr = child.stderr.take();
+
+        let stdout_thread = std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut pipe) = child_stdout {
+                let _ = pipe.read_to_end(&mut buf);
+            }
+            buf
+        });
+        let stderr_thread = std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut pipe) = child_stderr {
+                let _ = pipe.read_to_end(&mut buf);
+            }
+            buf
+        });
+
+        let timeout = std::time::Duration::from_secs(10);
+        let start = std::time::Instant::now();
+        loop {
+            match child.try_wait().unwrap() {
+                Some(_) => break,
+                None => {
+                    assert!(start.elapsed() < timeout, "process hung — pipe deadlock");
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+            }
+        }
+
+        let status = child.wait().unwrap();
+        let stderr_bytes = stderr_thread.join().unwrap();
+        let _ = stdout_thread.join();
+
+        assert!(status.success());
+        assert_eq!(stderr_bytes.len(), 200_000);
+    }
+
+    #[test]
+    fn test_timeout_kills_subprocess_with_drain() {
+        use std::process::{Command, Stdio};
+        use std::io::Read;
+
+        let mut child = Command::new("sleep")
+            .arg("3600")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("sleep must be available");
+
+        let child_stdout = child.stdout.take();
+        let child_stderr = child.stderr.take();
+
+        let stdout_thread = std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut pipe) = child_stdout {
+                let _ = pipe.read_to_end(&mut buf);
+            }
+            buf
+        });
+        let stderr_thread = std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut pipe) = child_stderr {
+                let _ = pipe.read_to_end(&mut buf);
+            }
+            buf
+        });
+
+        let timeout = std::time::Duration::from_secs(1);
+        let start = std::time::Instant::now();
+        let mut timed_out = false;
+        loop {
+            match child.try_wait().unwrap() {
+                Some(_) => break,
+                None => {
+                    if start.elapsed() >= timeout {
+                        let _ = child.kill();
+                        timed_out = true;
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+            }
+        }
+
+        let _ = stdout_thread.join();
+        let _ = stderr_thread.join();
+
+        assert!(timed_out, "should have timed out after 1 second");
     }
 }
