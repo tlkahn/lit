@@ -31,6 +31,7 @@ describe("useKeymaps", () => {
   beforeEach(() => {
     _clear();
     resetEditorViewRef();
+    document.body.innerHTML = "";
     usePaneStore.setState(createInitialState());
     useBottomPanelStore.setState({ activeTab: "linked", unfolded: false, hasOpenedLlm: false });
     mockInvoke((cmd) => {
@@ -48,6 +49,8 @@ describe("useKeymaps", () => {
           { key: "Mod-Shift-d", command: "pane.splitDown" },
           { key: "Mod-Alt-ArrowRight", command: "pane.focusNext" },
           { key: "Mod-Alt-ArrowLeft", command: "pane.focusPrev" },
+          { key: "Mod-]", command: "pane.focusContentNext" },
+          { key: "Mod-[", command: "pane.focusContentPrev" },
           { key: "Ctrl-g", command: "editor.selectNextOccurrence", when: "editorFocus" },
           { key: "Ctrl-`", command: "panel.toggleBottom" },
         ];
@@ -823,5 +826,259 @@ describe("useKeymaps", () => {
     executeCommand("pane.close");
     const afterClose = usePaneStore.getState();
     expect(collectLeaves(afterClose.root)).toHaveLength(1);
+  });
+
+  // --- pane.focusContentNext / pane.focusContentPrev ---
+
+  it("pane.focusContentNext is registered after ensureCommandsRegistered", async () => {
+    await loadHook();
+    expect(hasCommand("pane.focusContentNext")).toBe(true);
+  });
+
+  it("pane.focusContentPrev is registered after ensureCommandsRegistered", async () => {
+    await loadHook();
+    expect(hasCommand("pane.focusContentPrev")).toBe(true);
+  });
+
+  it("pane.focusContentNext advances focus when focus is inside content pane", async () => {
+    await loadHook();
+    const twoLeafState = makeTwoLeafState();
+    usePaneStore.setState(twoLeafState);
+    const [leaf1, leaf2] = collectLeaves(usePaneStore.getState().root);
+
+    // Register pane views with real DOM to make isFocusInsideContentPane() return true
+    const container1 = document.createElement("div");
+    const input1 = document.createElement("input");
+    container1.appendChild(input1);
+    document.body.appendChild(container1);
+    const mockView1 = { dom: container1, focus: vi.fn() } as unknown as EditorView;
+    registerPaneView(leaf1!.id, mockView1);
+
+    const container2 = document.createElement("div");
+    document.body.appendChild(container2);
+    const mockView2 = { dom: container2, focus: vi.fn() } as unknown as EditorView;
+    registerPaneView(leaf2!.id, mockView2);
+
+    // Focus inside first pane's DOM so isFocusInsideContentPane() returns true
+    input1.focus();
+
+    executeCommand("pane.focusContentNext");
+
+    expect(usePaneStore.getState().focusedPaneId).toBe(leaf2!.id);
+    expect(mockView2.focus).toHaveBeenCalled();
+  });
+
+  it("pane.focusContentPrev retreats focus when focus is inside content pane", async () => {
+    await loadHook();
+    const twoLeafState = makeTwoLeafState();
+    usePaneStore.setState({ ...twoLeafState, focusedPaneId: "leaf-2" });
+    const [leaf1, leaf2] = collectLeaves(usePaneStore.getState().root);
+
+    const container1 = document.createElement("div");
+    document.body.appendChild(container1);
+    const mockView1 = { dom: container1, focus: vi.fn() } as unknown as EditorView;
+    registerPaneView(leaf1!.id, mockView1);
+
+    const container2 = document.createElement("div");
+    const input2 = document.createElement("input");
+    container2.appendChild(input2);
+    document.body.appendChild(container2);
+    const mockView2 = { dom: container2, focus: vi.fn() } as unknown as EditorView;
+    registerPaneView(leaf2!.id, mockView2);
+
+    // Focus inside second pane
+    input2.focus();
+
+    executeCommand("pane.focusContentPrev");
+
+    expect(usePaneStore.getState().focusedPaneId).toBe(leaf1!.id);
+    expect(mockView1.focus).toHaveBeenCalled();
+  });
+
+  it("pane.focusContentNext does NOT advance when focus is outside content pane, but transfers DOM focus", async () => {
+    await loadHook();
+    const twoLeafState = makeTwoLeafState();
+    usePaneStore.setState(twoLeafState);
+    const [leaf1] = collectLeaves(usePaneStore.getState().root);
+
+    // Put a sidebar button (not inside any pane)
+    const sidebarButton = document.createElement("button");
+    document.body.appendChild(sidebarButton);
+    sidebarButton.focus();
+
+    const container1 = document.createElement("div");
+    document.body.appendChild(container1);
+    const mockView1 = { dom: container1, focus: vi.fn() } as unknown as EditorView;
+    registerPaneView(leaf1!.id, mockView1);
+
+    executeCommand("pane.focusContentNext");
+
+    // Should NOT have advanced — still on leaf-1
+    expect(usePaneStore.getState().focusedPaneId).toBe(leaf1!.id);
+    // But should have transferred DOM focus
+    expect(mockView1.focus).toHaveBeenCalled();
+  });
+
+  it("pane.focusContentNext with single pane transfers DOM focus (returns to editor from sidebar)", async () => {
+    await loadHook();
+    usePaneStore.setState(createInitialState());
+    const leaf = collectLeaves(usePaneStore.getState().root)[0]!;
+
+    const sidebarButton = document.createElement("button");
+    document.body.appendChild(sidebarButton);
+    sidebarButton.focus();
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const mockView = { dom: container, focus: vi.fn() } as unknown as EditorView;
+    registerPaneView(leaf.id, mockView);
+
+    executeCommand("pane.focusContentNext");
+
+    expect(mockView.focus).toHaveBeenCalled();
+  });
+
+  it("pane.focusContentNext appears in command palette even with single pane", async () => {
+    await loadHook();
+    usePaneStore.setState(createInitialState());
+    const visible = getVisibleCommands("content");
+    const ids = visible.map((c) => c.id);
+    expect(ids).toContain("pane.focusContentNext");
+    expect(ids).toContain("pane.focusContentPrev");
+  });
+
+  it("Mod-] keydown triggers pane.focusContentNext", async () => {
+    const { result } = await loadHook();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const twoLeafState = makeTwoLeafState();
+    usePaneStore.setState(twoLeafState);
+    const [leaf1, leaf2] = collectLeaves(usePaneStore.getState().root);
+
+    const container1 = document.createElement("div");
+    const input1 = document.createElement("input");
+    container1.appendChild(input1);
+    document.body.appendChild(container1);
+    const mockView1 = { dom: container1, focus: vi.fn() } as unknown as EditorView;
+    registerPaneView(leaf1!.id, mockView1);
+
+    const container2 = document.createElement("div");
+    document.body.appendChild(container2);
+    const mockView2 = { dom: container2, focus: vi.fn() } as unknown as EditorView;
+    registerPaneView(leaf2!.id, mockView2);
+
+    input1.focus();
+
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "]", ctrlKey: true, bubbles: true }),
+    );
+
+    expect(usePaneStore.getState().focusedPaneId).toBe(leaf2!.id);
+  });
+
+  it("pane.focusContentNext wraps around with three panes", async () => {
+    await loadHook();
+    const l1: PaneLeaf = { type: "leaf", id: "p1", pagePath: null };
+    const l2: PaneLeaf = { type: "leaf", id: "p2", pagePath: null };
+    const l3: PaneLeaf = { type: "leaf", id: "p3", pagePath: null };
+    const root: PaneSplit = {
+      type: "split", id: "s1", direction: "horizontal",
+      children: [l1, l2, l3], sizes: [33, 34, 33],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "p1" });
+
+    // Register views with DOM containers
+    const containers = ["p1", "p2", "p3"].map((id) => {
+      const c = document.createElement("div");
+      const input = document.createElement("input");
+      c.appendChild(input);
+      document.body.appendChild(c);
+      const view = { dom: c, focus: vi.fn() } as unknown as EditorView;
+      registerPaneView(id, view);
+      return { id, container: c, input, view };
+    });
+
+    // Focus inside p1
+    containers[0]!.input.focus();
+
+    executeCommand("pane.focusContentNext");
+    expect(usePaneStore.getState().focusedPaneId).toBe("p2");
+
+    // Simulate focus moving to p2's DOM (as transferDomFocus would do)
+    containers[1]!.input.focus();
+
+    executeCommand("pane.focusContentNext");
+    expect(usePaneStore.getState().focusedPaneId).toBe("p3");
+
+    // Simulate focus in p3
+    containers[2]!.input.focus();
+
+    executeCommand("pane.focusContentNext");
+    expect(usePaneStore.getState().focusedPaneId).toBe("p1");
+  });
+
+  it("pane.focusContentNext after focus leaves content pane returns without advancing", async () => {
+    await loadHook();
+    const twoLeafState = makeTwoLeafState();
+    usePaneStore.setState(twoLeafState);
+    const [leaf1, leaf2] = collectLeaves(usePaneStore.getState().root);
+
+    const container1 = document.createElement("div");
+    const input1 = document.createElement("input");
+    container1.appendChild(input1);
+    document.body.appendChild(container1);
+    registerPaneView(leaf1!.id, { dom: container1, focus: vi.fn() } as unknown as EditorView);
+
+    const container2 = document.createElement("div");
+    document.body.appendChild(container2);
+    registerPaneView(leaf2!.id, { dom: container2, focus: vi.fn() } as unknown as EditorView);
+
+    // Start inside pane 1, advance to pane 2
+    input1.focus();
+    executeCommand("pane.focusContentNext");
+    expect(usePaneStore.getState().focusedPaneId).toBe(leaf2!.id);
+
+    // Now focus moves to sidebar (outside content panes)
+    const sidebarButton = document.createElement("button");
+    document.body.appendChild(sidebarButton);
+    sidebarButton.focus();
+
+    // Execute again — should NOT advance, should stay on leaf2
+    executeCommand("pane.focusContentNext");
+    expect(usePaneStore.getState().focusedPaneId).toBe(leaf2!.id);
+  });
+
+  it("pane.focusContentNext after splitRight works with new pane", async () => {
+    await loadHook();
+    usePaneStore.setState(createInitialState());
+    const initialLeaf = collectLeaves(usePaneStore.getState().root)[0]!;
+
+    // Register initial pane view
+    const container1 = document.createElement("div");
+    const input1 = document.createElement("input");
+    container1.appendChild(input1);
+    document.body.appendChild(container1);
+    registerPaneView(initialLeaf.id, { dom: container1, focus: vi.fn() } as unknown as EditorView);
+
+    // Split creates a new pane
+    executeCommand("pane.splitRight");
+    const leaves = collectLeaves(usePaneStore.getState().root);
+    expect(leaves).toHaveLength(2);
+    const newLeaf = leaves[1]!;
+
+    // Register new pane view
+    const container2 = document.createElement("div");
+    document.body.appendChild(container2);
+    const mockView2 = { dom: container2, focus: vi.fn() } as unknown as EditorView;
+    registerPaneView(newLeaf.id, mockView2);
+
+    // Focus is on new pane (splitPane focuses it), simulate its DOM
+    const input2 = document.createElement("input");
+    container2.appendChild(input2);
+    input2.focus();
+
+    // Content next should wrap to the first pane
+    executeCommand("pane.focusContentNext");
+    expect(usePaneStore.getState().focusedPaneId).toBe(initialLeaf.id);
   });
 });
