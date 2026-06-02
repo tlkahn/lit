@@ -344,6 +344,14 @@ pub fn resolve_template(
     None
 }
 
+fn is_valid_docx(path: &Path) -> bool {
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut magic = [0u8; 4];
+    matches!(f.read_exact(&mut magic), Ok(())) && magic == [0x50, 0x4B, 0x03, 0x04]
+}
+
 /// Resolve the reference DOCX for pandoc's `--reference-doc` flag.
 /// Checks user preferences first, then falls back to a bundled template.
 pub fn resolve_reference_doc(
@@ -354,7 +362,7 @@ pub fn resolve_reference_doc(
         if let Some(s) = val.as_str() {
             if !s.is_empty() {
                 let p = PathBuf::from(s);
-                if p.is_file() {
+                if p.is_file() && is_valid_docx(&p) {
                     return Some(p);
                 }
             }
@@ -363,6 +371,7 @@ pub fn resolve_reference_doc(
     resource_dir
         .map(|d| d.join("academic").join("lit-reference.docx"))
         .filter(|p| p.is_file())
+        .filter(|p| is_valid_docx(p))
 }
 
 /// Build the argument list for a pandoc invocation.
@@ -524,7 +533,7 @@ pub async fn export_document(
     let reference_doc = if format == "docx" {
         if let Some(ref rd) = request.reference_doc.as_ref().or(frontmatter.reference_doc.as_ref()) {
             let p = PathBuf::from(rd);
-            if p.is_file() { Some(p) } else { resolve_reference_doc(&prefs, resource_dir.as_deref()) }
+            if p.is_file() && is_valid_docx(&p) { Some(p) } else { resolve_reference_doc(&prefs, resource_dir.as_deref()) }
         } else {
             resolve_reference_doc(&prefs, resource_dir.as_deref())
         }
@@ -922,7 +931,9 @@ mod tests {
     #[test]
     fn test_resolve_reference_doc_from_prefs() {
         let tmp = std::env::temp_dir().join("test_ref_doc.docx");
-        std::fs::write(&tmp, "fake").unwrap();
+        let mut content = vec![0x50, 0x4B, 0x03, 0x04];
+        content.extend_from_slice(b"fake zip");
+        std::fs::write(&tmp, &content).unwrap();
         let mut prefs = preferences::Preferences::default();
         prefs.extra.insert(
             "academic.defaultReferenceDoc".to_string(),
@@ -1204,7 +1215,9 @@ mod tests {
         let academic_dir = tmp_dir.join("academic");
         std::fs::create_dir_all(&academic_dir).unwrap();
         let ref_doc = academic_dir.join("lit-reference.docx");
-        std::fs::write(&ref_doc, "fake").unwrap();
+        let mut content = vec![0x50, 0x4B, 0x03, 0x04];
+        content.extend_from_slice(b"fake zip");
+        std::fs::write(&ref_doc, &content).unwrap();
         let prefs = preferences::Preferences::default();
         let result = resolve_reference_doc(&prefs, Some(&tmp_dir));
         assert_eq!(result, Some(ref_doc));
@@ -1472,5 +1485,78 @@ mod tests {
         );
         let result = resolve_cjk_font(None, &prefs, "你好世界");
         assert_eq!(result.as_deref(), Some(default_cjk_font()));
+    }
+
+    // --- is_valid_docx / reference-doc validation tests ---
+
+    #[test]
+    fn test_is_valid_docx_with_placeholder_file() {
+        let tmp = std::env::temp_dir().join("test_invalid_docx.docx");
+        std::fs::write(&tmp, "placeholder").unwrap();
+        assert!(!is_valid_docx(&tmp));
+        std::fs::remove_file(&tmp).unwrap();
+    }
+
+    #[test]
+    fn test_is_valid_docx_with_empty_file() {
+        let tmp = std::env::temp_dir().join("test_empty_docx.docx");
+        std::fs::write(&tmp, b"").unwrap();
+        assert!(!is_valid_docx(&tmp));
+        std::fs::remove_file(&tmp).unwrap();
+    }
+
+    #[test]
+    fn test_is_valid_docx_with_zip_magic() {
+        let tmp = std::env::temp_dir().join("test_valid_docx.docx");
+        let mut content = vec![0x50, 0x4B, 0x03, 0x04];
+        content.extend_from_slice(b"rest of zip data");
+        std::fs::write(&tmp, &content).unwrap();
+        assert!(is_valid_docx(&tmp));
+        std::fs::remove_file(&tmp).unwrap();
+    }
+
+    #[test]
+    fn test_is_valid_docx_nonexistent() {
+        assert!(!is_valid_docx(Path::new("/nonexistent/file.docx")));
+    }
+
+    #[test]
+    fn test_resolve_reference_doc_rejects_placeholder_bundled() {
+        let tmp_dir = std::env::temp_dir().join("test_ref_doc_placeholder");
+        let academic_dir = tmp_dir.join("academic");
+        std::fs::create_dir_all(&academic_dir).unwrap();
+        std::fs::write(academic_dir.join("lit-reference.docx"), "placeholder").unwrap();
+        let prefs = preferences::Preferences::default();
+        let result = resolve_reference_doc(&prefs, Some(&tmp_dir));
+        assert!(result.is_none());
+        std::fs::remove_dir_all(&tmp_dir).unwrap();
+    }
+
+    #[test]
+    fn test_resolve_reference_doc_rejects_placeholder_pref() {
+        let tmp = std::env::temp_dir().join("test_ref_doc_pref_placeholder.docx");
+        std::fs::write(&tmp, "placeholder").unwrap();
+        let mut prefs = preferences::Preferences::default();
+        prefs.extra.insert(
+            "academic.defaultReferenceDoc".to_string(),
+            serde_json::Value::String(tmp.to_string_lossy().to_string()),
+        );
+        let result = resolve_reference_doc(&prefs, None);
+        assert!(result.is_none());
+        std::fs::remove_file(&tmp).unwrap();
+    }
+
+    #[test]
+    fn test_resolve_reference_doc_accepts_valid_bundled() {
+        let tmp_dir = std::env::temp_dir().join("test_ref_doc_valid_bundled");
+        let academic_dir = tmp_dir.join("academic");
+        std::fs::create_dir_all(&academic_dir).unwrap();
+        let mut content = vec![0x50, 0x4B, 0x03, 0x04];
+        content.extend_from_slice(b"fake zip");
+        std::fs::write(academic_dir.join("lit-reference.docx"), &content).unwrap();
+        let prefs = preferences::Preferences::default();
+        let result = resolve_reference_doc(&prefs, Some(&tmp_dir));
+        assert_eq!(result, Some(academic_dir.join("lit-reference.docx")));
+        std::fs::remove_dir_all(&tmp_dir).unwrap();
     }
 }
