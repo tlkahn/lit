@@ -47,6 +47,64 @@ pub struct ExportFrontmatter {
     pub template: Option<String>,
     pub reference_doc: Option<String>,
     pub pdf_engine: Option<String>,
+    pub cjk_mainfont: Option<String>,
+}
+
+/// Returns true if `text` contains any CJK characters (Chinese, Japanese, Korean).
+pub fn contains_cjk(text: &str) -> bool {
+    text.chars().any(|c| matches!(c,
+        // CJK Symbols and Punctuation
+        '\u{3000}'..='\u{303F}' |
+        // Hiragana
+        '\u{3040}'..='\u{309F}' |
+        // Katakana
+        '\u{30A0}'..='\u{30FF}' |
+        // CJK Unified Ideographs Extension A
+        '\u{3400}'..='\u{4DBF}' |
+        // CJK Unified Ideographs
+        '\u{4E00}'..='\u{9FFF}' |
+        // Hangul Syllables
+        '\u{AC00}'..='\u{D7AF}' |
+        // Halfwidth and Fullwidth Forms
+        '\u{FF00}'..='\u{FFEF}' |
+        // CJK Unified Ideographs Extension B
+        '\u{20000}'..='\u{2A6DF}'
+    ))
+}
+
+/// Returns the platform-appropriate default CJK font.
+pub fn default_cjk_font() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "PingFang SC"
+    } else {
+        "Noto Sans CJK SC"
+    }
+}
+
+/// Resolve which CJK font (if any) to inject as a pandoc variable.
+///
+/// Returns `None` when the frontmatter already specifies `CJKmainfont` (pandoc
+/// reads it natively). Otherwise checks the user preference, then auto-detects
+/// from content.
+pub fn resolve_cjk_font(
+    frontmatter_cjk: Option<&str>,
+    prefs: &preferences::Preferences,
+    content: &str,
+) -> Option<String> {
+    if frontmatter_cjk.is_some() {
+        return None;
+    }
+    if let Some(val) = prefs.extra.get("academic.cjkFont") {
+        if let Some(s) = val.as_str() {
+            if !s.is_empty() {
+                return Some(s.to_string());
+            }
+        }
+    }
+    if contains_cjk(content) {
+        return Some(default_cjk_font().to_string());
+    }
+    None
 }
 
 pub fn extract_export_frontmatter(file_path: &Path) -> ExportFrontmatter {
@@ -66,6 +124,7 @@ pub fn extract_export_frontmatter(file_path: &Path) -> ExportFrontmatter {
         template: get_str("template"),
         reference_doc: get_str("reference-doc"),
         pdf_engine: get_str("pdf-engine"),
+        cjk_mainfont: get_str("CJKmainfont"),
     }
 }
 
@@ -485,6 +544,14 @@ pub async fn export_document(
         &format,
     );
 
+    // Resolve CJK font for PDF/LaTeX: frontmatter → preference → auto-detect
+    let cjk_font = if format == "pdf" || format == "latex" {
+        let content = std::fs::read_to_string(&input_path).unwrap_or_default();
+        resolve_cjk_font(frontmatter.cjk_mainfont.as_deref(), &prefs, &content)
+    } else {
+        None
+    };
+
     let win = window.clone();
     let fmt_for_event = format.clone();
 
@@ -494,7 +561,7 @@ pub async fn export_document(
             format: fmt_for_event.clone(),
         });
 
-        let args = build_pandoc_args(
+        let mut args = build_pandoc_args(
             &input_path,
             &output_path,
             &format,
@@ -505,6 +572,10 @@ pub async fn export_document(
             csl.as_deref(),
             template.as_deref(),
         );
+
+        if let Some(ref font) = cjk_font {
+            args.push(format!("--variable=CJKmainfont={font}"));
+        }
 
         let mut child = Command::new(&pandoc_path)
             .args(&args)
@@ -1104,12 +1175,13 @@ mod tests {
         let dir = std::env::temp_dir().join("test_fm_all");
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("note.md");
-        std::fs::write(&file, "---\ncsl: ieee\ntemplate: /my/t.tex\nreference-doc: /r.docx\npdf-engine: lualatex\n---\nBody\n").unwrap();
+        std::fs::write(&file, "---\ncsl: ieee\ntemplate: /my/t.tex\nreference-doc: /r.docx\npdf-engine: lualatex\nCJKmainfont: Noto Serif CJK SC\n---\nBody\n").unwrap();
         let fm = extract_export_frontmatter(&file);
         assert_eq!(fm.csl.as_deref(), Some("ieee"));
         assert_eq!(fm.template.as_deref(), Some("/my/t.tex"));
         assert_eq!(fm.reference_doc.as_deref(), Some("/r.docx"));
         assert_eq!(fm.pdf_engine.as_deref(), Some("lualatex"));
+        assert_eq!(fm.cjk_mainfont.as_deref(), Some("Noto Serif CJK SC"));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1306,5 +1378,124 @@ mod tests {
             content.contains("\\includesvg"),
             "template must define \\includesvg fallback for SVG images"
         );
+    }
+
+    // --- CJK detection tests ---
+
+    #[test]
+    fn test_contains_cjk_empty() {
+        assert!(!contains_cjk(""));
+    }
+
+    #[test]
+    fn test_contains_cjk_ascii_only() {
+        assert!(!contains_cjk("Hello, world! This is plain English text."));
+    }
+
+    #[test]
+    fn test_contains_cjk_chinese() {
+        assert!(contains_cjk("这是中文"));
+    }
+
+    #[test]
+    fn test_contains_cjk_japanese() {
+        assert!(contains_cjk("これはテスト"));
+    }
+
+    #[test]
+    fn test_contains_cjk_korean() {
+        assert!(contains_cjk("한국어"));
+    }
+
+    #[test]
+    fn test_contains_cjk_punctuation() {
+        assert!(contains_cjk("。，"));
+    }
+
+    #[test]
+    fn test_contains_cjk_mixed_with_ascii() {
+        assert!(contains_cjk("Hello 世界"));
+    }
+
+    #[test]
+    fn test_contains_cjk_fullwidth() {
+        assert!(contains_cjk("ＡＢＣ"));
+    }
+
+    // --- default_cjk_font ---
+
+    #[test]
+    fn test_default_cjk_font() {
+        let font = default_cjk_font();
+        assert!(!font.is_empty());
+        if cfg!(target_os = "macos") {
+            assert_eq!(font, "PingFang SC");
+        } else {
+            assert_eq!(font, "Noto Sans CJK SC");
+        }
+    }
+
+    // --- ExportFrontmatter CJK field ---
+
+    #[test]
+    fn test_frontmatter_default_no_cjk() {
+        let fm = ExportFrontmatter::default();
+        assert!(fm.cjk_mainfont.is_none());
+    }
+
+    #[test]
+    fn test_extract_frontmatter_cjk_mainfont() {
+        let dir = std::env::temp_dir().join("test_fm_cjk");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("note.md");
+        std::fs::write(&file, "---\nCJKmainfont: \"Noto Serif CJK SC\"\n---\nBody\n").unwrap();
+        let fm = extract_export_frontmatter(&file);
+        assert_eq!(fm.cjk_mainfont.as_deref(), Some("Noto Serif CJK SC"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // --- resolve_cjk_font tests ---
+
+    #[test]
+    fn test_resolve_cjk_font_frontmatter_skips() {
+        let prefs = preferences::Preferences::default();
+        let result = resolve_cjk_font(Some("PingFang SC"), &prefs, "这是中文");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_resolve_cjk_font_pref_override() {
+        let mut prefs = preferences::Preferences::default();
+        prefs.extra.insert(
+            "academic.cjkFont".to_string(),
+            serde_json::Value::String("Source Han Serif SC".to_string()),
+        );
+        let result = resolve_cjk_font(None, &prefs, "这是中文");
+        assert_eq!(result.as_deref(), Some("Source Han Serif SC"));
+    }
+
+    #[test]
+    fn test_resolve_cjk_font_auto_detect() {
+        let prefs = preferences::Preferences::default();
+        let result = resolve_cjk_font(None, &prefs, "Hello 世界");
+        assert_eq!(result.as_deref(), Some(default_cjk_font()));
+    }
+
+    #[test]
+    fn test_resolve_cjk_font_no_cjk_returns_none() {
+        let prefs = preferences::Preferences::default();
+        let result = resolve_cjk_font(None, &prefs, "Plain ASCII text only.");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_resolve_cjk_font_empty_pref_ignored() {
+        let mut prefs = preferences::Preferences::default();
+        prefs.extra.insert(
+            "academic.cjkFont".to_string(),
+            serde_json::Value::String("".to_string()),
+        );
+        let result = resolve_cjk_font(None, &prefs, "你好世界");
+        assert_eq!(result.as_deref(), Some(default_cjk_font()));
     }
 }
