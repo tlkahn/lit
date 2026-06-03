@@ -56,6 +56,7 @@ describe("insertCompanionAnnotation", () => {
     expect(result.slice(25, 27)).toBe("\n\n");
     expect(result.slice(27)).toContain("<!---");
     expect(result.slice(27)).toContain("The answer.");
+    expect(result).toMatch(/--->\n/);  // trailing newline after closing tag
 
     view.destroy();
   });
@@ -93,6 +94,7 @@ describe("insertCompanionAtCursor", () => {
     expect(result.slice(5, 7)).toBe("\n\n");
     expect(result.slice(7)).toContain("<!---");
     expect(result.slice(7)).toContain("The answer.");
+    expect(result).toMatch(/--->\n/);  // trailing newline after closing tag
 
     view.destroy();
   });

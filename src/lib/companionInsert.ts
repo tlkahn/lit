@@ -23,7 +23,7 @@ export function insertCompanionAnnotation(
     changes: {
       from: sourceAnnotation.char_end,
       to: sourceAnnotation.char_end,
-      insert: "\n\n" + dsl,
+      insert: "\n\n" + dsl + "\n",
     },
   });
 }
@@ -36,7 +36,7 @@ export function insertCompanionAtCursor(
   const pos = view.state.selection.main.to;
   const prefix = pos === 0 ? "" : "\n\n";
   view.dispatch({
-    changes: { from: pos, insert: prefix + dsl },
+    changes: { from: pos, insert: prefix + dsl + "\n" },
   });
   view.focus();
 }
