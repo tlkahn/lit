@@ -175,14 +175,8 @@ pub async fn suggest_merge_title(
         .map(|s| s.to_string());
 
     let provider = llm::create_provider(&model, base_url.as_deref());
-    let env_var_name = provider.key_env_var();
-    let api_key = llm::resolve_api_key_with_keychain(
-        None,
-        provider.id(),
-        store.as_ref(),
-        env_var_name,
-    )
-    .ok_or_else(|| "No API key found. Set one in Settings or via environment variable.".to_string())?;
+    let api_key = llm::resolve_api_key(provider.id(), store.as_ref())
+        .ok_or_else(|| "No API key found. Set one in Settings.".to_string())?;
 
     let (tx, rx) = oneshot::channel();
 

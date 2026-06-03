@@ -68,7 +68,6 @@ pub struct LlmPromptArgs {
     #[serde(default)]
     pub options: HashMap<String, serde_json::Value>,
     pub base_url: Option<String>,
-    pub api_key: Option<String>,
 }
 
 pub fn log_prompt_info(
@@ -130,13 +129,7 @@ pub async fn llm_prompt_streaming(
         let _ = window.emit("llm://truncated", &info);
     }
 
-    let env_var_name = provider.key_env_var();
-    let api_key = llm::resolve_api_key_with_keychain(
-        args.api_key.as_deref(),
-        provider.id(),
-        store.as_ref(),
-        env_var_name,
-    );
+    let api_key = llm::resolve_api_key(provider.id(), store.as_ref());
 
     let model = args.model.clone();
     let state_ref = state.clone_ref();
@@ -218,13 +211,7 @@ pub async fn llm_test_connection(
     store: tauri::State<'_, Arc<dyn CredentialStore>>,
 ) -> Result<(), String> {
     let provider = llm::create_provider(&model, base_url.as_deref());
-    let env_var_name = provider.key_env_var();
-    let api_key = llm::resolve_api_key_with_keychain(
-        None,
-        provider.id(),
-        store.as_ref(),
-        env_var_name,
-    );
+    let api_key = llm::resolve_api_key(provider.id(), store.as_ref());
     test_connection_inner(&model, api_key.as_deref(), base_url.as_deref()).await
 }
 
@@ -505,7 +492,7 @@ mod tests {
         let result = test_connection_inner("gpt-4o", None, Some(&server.uri())).await;
         std::env::remove_var("OPENAI_API_KEY");
 
-        // With api_key=None and no env fallback, the call should fail (no key provided)
+        // With api_key=None the call should fail (no key provided)
         assert!(result.is_err(), "expected error when api_key is None, but got Ok — inner function should not resolve env vars");
 
         let received = server.received_requests().await.unwrap();

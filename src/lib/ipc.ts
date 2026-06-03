@@ -268,7 +268,6 @@ export interface LlmPromptStreamingArgs {
   messages?: Array<{ role: string; content: string }>;
   options?: Record<string, unknown>;
   baseUrl?: string;
-  apiKey?: string;
 }
 
 export async function llmPromptStreaming(args: LlmPromptStreamingArgs): Promise<void> {
@@ -280,7 +279,6 @@ export async function llmPromptStreaming(args: LlmPromptStreamingArgs): Promise<
       messages: args.messages ?? [],
       options: args.options ?? {},
       base_url: args.baseUrl ?? null,
-      api_key: args.apiKey ?? null,
     },
   });
 }

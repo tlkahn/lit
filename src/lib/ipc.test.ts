@@ -1403,7 +1403,6 @@ describe("ipc", () => {
         messages: [],
         options: {},
         base_url: null,
-        api_key: null,
       },
     });
   });
@@ -1416,7 +1415,6 @@ describe("ipc", () => {
       messages: [{ role: "user", content: "hi" }],
       options: { temperature: 0.5 },
       baseUrl: "https://api.example.com",
-      apiKey: "sk-123",
     });
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("llm_prompt_streaming", {
@@ -1427,7 +1425,6 @@ describe("ipc", () => {
         messages: [{ role: "user", content: "hi" }],
         options: { temperature: 0.5 },
         base_url: "https://api.example.com",
-        api_key: "sk-123",
       },
     });
   });
