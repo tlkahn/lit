@@ -41,6 +41,15 @@ release_validate_tag() {
   fi
 }
 
+release_checkout_tag() {
+  local tag="$1"
+  RELEASE_ORIGINAL_REF="$(git symbolic-ref --short HEAD 2>/dev/null || git rev-parse HEAD)"
+  export RELEASE_ORIGINAL_REF
+  echo "── Checking out tag $tag (was on $RELEASE_ORIGINAL_REF)..."
+  git checkout "$tag" --detach
+  trap 'echo "── Restoring $RELEASE_ORIGINAL_REF..."; git checkout "$RELEASE_ORIGINAL_REF" --' EXIT
+}
+
 release_check_tools() {
   local required=(bun cargo codesign aws hugo gh jq)
   local missing=()

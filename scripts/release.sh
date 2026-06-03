@@ -41,6 +41,7 @@ echo "  Lit Release — $TAG"
 echo "════════════════════════════════════════════════════════"
 
 release_validate_tag "$TAG"
+release_checkout_tag "$TAG"
 release_check_tools
 release_check_env "$DRY_RUN" "$SKIP_WEBSITE"
 release_detect_signing_id
