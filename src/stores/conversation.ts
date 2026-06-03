@@ -19,6 +19,7 @@ import { startLlmStream, cancelLlmStream } from "../lib/llmClient";
 import { useLlmResponseStore } from "./llmResponse";
 import { useModalLockStore } from "./modalLock";
 import { usePreferencesStore } from "./preferences";
+import { useSecretStoreStore } from "./secretStore";
 
 interface StreamArgs {
   model: string;
@@ -83,6 +84,13 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
     content: string,
     streamArgs: StreamArgs,
   ) => {
+    try {
+      await useSecretStoreStore.getState().ensureUnlocked();
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : String(e) });
+      return;
+    }
+
     const myGeneration = ++_streamGeneration;
 
     const storeMessages = get().messages;
