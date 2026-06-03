@@ -9,6 +9,7 @@ import { useLlmResponseStore } from "../stores/llmResponse";
 import { useConversationStore } from "../stores/conversation";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useBottomPanelStore } from "../stores/bottomPanel";
+import { useSecretStoreStore } from "../stores/secretStore";
 import { setFiringAnnotation, clearFiringAnnotation, annotationThreadKeysField, setAnnotationThreadKeys } from "../editor/livePreview/annotationWidgets";
 
 export interface FireAnnotationArgs {
@@ -165,6 +166,13 @@ export async function fireAnnotation(args: FireAnnotationArgs): Promise<(() => v
     };
 
     return dispose;
+  }
+
+  try {
+    await useSecretStoreStore.getState().ensureUnlocked();
+  } catch {
+    doCleanup();
+    return;
   }
 
   useLlmResponseStore.getState().startStream({

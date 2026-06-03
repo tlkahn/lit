@@ -11,6 +11,7 @@ vi.mock("../lib/ipc", () => ({
   conversationDeleteMessagesAfter: vi.fn(),
   conversationFindByAnchor: vi.fn(),
   conversationDeleteByAnchor: vi.fn(),
+  conversationUpdateTitle: vi.fn(),
   llmBuildContext: vi.fn(),
   GLOBAL_NODE_ID: "_global",
 }));
@@ -29,6 +30,7 @@ import {
   conversationDeleteMessagesAfter,
   conversationFindByAnchor,
   conversationDeleteByAnchor,
+  conversationUpdateTitle,
   llmBuildContext,
   GLOBAL_NODE_ID,
 } from "../lib/ipc";
@@ -38,6 +40,7 @@ import { startLlmStream, cancelLlmStream, type LlmStreamCallbacks } from "../lib
 import { useLlmResponseStore } from "./llmResponse";
 import { useModalLockStore } from "./modalLock";
 import { usePreferencesStore } from "./preferences";
+import { useSecretStoreStore } from "./secretStore";
 
 const mockedCancelLlmStream = cancelLlmStream as ReturnType<typeof vi.fn>;
 
@@ -50,6 +53,7 @@ const mockedStartLlmStream = startLlmStream as ReturnType<typeof vi.fn>;
 const mockedConversationDeleteMessagesAfter = conversationDeleteMessagesAfter as ReturnType<typeof vi.fn>;
 const mockedConversationFindByAnchor = conversationFindByAnchor as ReturnType<typeof vi.fn>;
 const mockedConversationDeleteByAnchor = conversationDeleteByAnchor as ReturnType<typeof vi.fn>;
+const mockedConversationUpdateTitle = conversationUpdateTitle as ReturnType<typeof vi.fn>;
 const mockedLlmBuildContext = llmBuildContext as ReturnType<typeof vi.fn>;
 
 const FAKE_UUID = "00000000-0000-0000-0000-000000000001";
@@ -94,7 +98,10 @@ describe("conversation store", () => {
     useLlmResponseStore.getState().reset();
     useModalLockStore.setState({ llmLocked: false });
     usePreferencesStore.setState({ llmDeleteAnnotationThreads: false });
+    useSecretStoreStore.setState({ exists: true, unlocked: true, loading: false, promptOpen: false });
+    useSecretStoreStore.getState()._resetSettler();
     vi.clearAllMocks();
+    mockedConversationUpdateTitle.mockResolvedValue(undefined);
   });
 
   it("initial state has null activeConversationId, empty arrays, null error", () => {
@@ -1967,5 +1974,247 @@ describe("conversation store", () => {
 
     // The message must be posted to the correct annotation thread, NOT the sabotaged one.
     expect(mockedConversationAddMessage).toHaveBeenCalledWith(THREAD_ID, "user", "fire content");
+  });
+
+  // --- Group U: ensureUnlocked guard on LLM calls ---
+
+  /** Flush microtask queue N times so pending awaits resolve before we settle. */
+  const flush = (n = 5) =>
+    Array.from({ length: n }).reduce<Promise<void>>(
+      (p) => p.then(() => new Promise((r) => queueMicrotask(r))),
+      Promise.resolve(),
+    );
+
+  it("sendMessage calls ensureUnlocked before persisting user message", async () => {
+    useSecretStoreStore.setState({ exists: true, unlocked: false });
+    useConversationStore.setState({ activeConversationId: FAKE_UUID });
+    const persistedMsg: MessageRow = {
+      id: 10, conversation_id: FAKE_UUID, role: "user",
+      content: "hello", seq: 1, created_at: "2025-01-01T00:00:01Z",
+    };
+    mockedConversationAddMessage.mockResolvedValue(persistedMsg);
+    mockedStartLlmStream.mockResolvedValue(undefined);
+
+    const sendPromise = useConversationStore.getState().sendMessage({
+      content: "hello",
+      model: "test-model",
+    });
+
+    await flush();
+
+    expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+    expect(mockedConversationAddMessage).not.toHaveBeenCalled();
+    expect(mockedStartLlmStream).not.toHaveBeenCalled();
+
+    useSecretStoreStore.getState().settleUnlock(true);
+    await sendPromise;
+
+    expect(mockedConversationAddMessage).toHaveBeenCalled();
+    expect(mockedStartLlmStream).toHaveBeenCalled();
+  });
+
+  it("sendMessage sets error and returns early when ensureUnlocked is cancelled", async () => {
+    useSecretStoreStore.setState({ exists: true, unlocked: false });
+    useConversationStore.setState({ activeConversationId: FAKE_UUID });
+
+    const sendPromise = useConversationStore.getState().sendMessage({
+      content: "hello",
+      model: "test-model",
+    });
+
+    await flush();
+    useSecretStoreStore.getState().settleUnlock(false);
+    await sendPromise;
+
+    expect(mockedConversationAddMessage).not.toHaveBeenCalled();
+    expect(mockedStartLlmStream).not.toHaveBeenCalled();
+    expect(useConversationStore.getState().error).toBe("Passphrase entry cancelled");
+    expect(useConversationStore.getState().messages).toEqual([]);
+    expect(useModalLockStore.getState().llmLocked).toBe(false);
+  });
+
+  it("sendMessage proceeds without prompting when store is already unlocked", async () => {
+    useSecretStoreStore.setState({ exists: true, unlocked: true });
+    useConversationStore.setState({ activeConversationId: FAKE_UUID });
+    const persistedMsg: MessageRow = {
+      id: 10, conversation_id: FAKE_UUID, role: "user",
+      content: "hello", seq: 1, created_at: "2025-01-01T00:00:01Z",
+    };
+    mockedConversationAddMessage.mockResolvedValue(persistedMsg);
+    mockedStartLlmStream.mockResolvedValue(undefined);
+
+    await useConversationStore.getState().sendMessage({
+      content: "hello",
+      model: "test-model",
+    });
+
+    expect(useSecretStoreStore.getState().promptOpen).toBe(false);
+    expect(mockedStartLlmStream).toHaveBeenCalled();
+  });
+
+  it("sendMessage prompts for passphrase when store does not exist", async () => {
+    useSecretStoreStore.setState({ exists: false, unlocked: false });
+    useConversationStore.setState({ activeConversationId: FAKE_UUID });
+    const persistedMsg: MessageRow = {
+      id: 10, conversation_id: FAKE_UUID, role: "user",
+      content: "hello", seq: 1, created_at: "2025-01-01T00:00:01Z",
+    };
+    mockedConversationAddMessage.mockResolvedValue(persistedMsg);
+    mockedStartLlmStream.mockResolvedValue(undefined);
+
+    const sendPromise = useConversationStore.getState().sendMessage({
+      content: "hello",
+      model: "test-model",
+    });
+
+    // ensureUnlocked is reached before conversationAddMessage,
+    // so prompt opens immediately
+    await flush();
+    expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+    expect(mockedConversationAddMessage).not.toHaveBeenCalled();
+    expect(mockedStartLlmStream).not.toHaveBeenCalled();
+
+    // Simulate user creating passphrase
+    useSecretStoreStore.getState().settleUnlock(true);
+    await sendPromise;
+
+    expect(mockedConversationAddMessage).toHaveBeenCalled();
+    expect(mockedStartLlmStream).toHaveBeenCalled();
+  });
+
+  it("retryLastMessage sets error when ensureUnlocked is cancelled", async () => {
+    useSecretStoreStore.setState({ exists: true, unlocked: false });
+    const userMsg: MessageRow = {
+      id: 1, conversation_id: FAKE_UUID, role: "user",
+      content: "hello", seq: 1, created_at: "2025-01-01T00:00:00Z",
+    };
+    const assistantMsg: MessageRow = {
+      id: 2, conversation_id: FAKE_UUID, role: "assistant",
+      content: "hi", seq: 2, created_at: "2025-01-01T00:00:01Z",
+    };
+    useConversationStore.setState({
+      activeConversationId: FAKE_UUID,
+      messages: [userMsg, assistantMsg],
+    });
+
+    const retryPromise = useConversationStore.getState().retryLastMessage({ model: "m" });
+
+    await flush();
+    useSecretStoreStore.getState().settleUnlock(false);
+    await retryPromise;
+
+    expect(mockedConversationDeleteMessagesAfter).not.toHaveBeenCalled();
+    expect(mockedStartLlmStream).not.toHaveBeenCalled();
+    expect(useConversationStore.getState().messages).toEqual([userMsg, assistantMsg]);
+    expect(useConversationStore.getState().error).toBe("Passphrase entry cancelled");
+  });
+
+  it("editMessage sets error when ensureUnlocked is cancelled", async () => {
+    useSecretStoreStore.setState({ exists: true, unlocked: false });
+    const userMsg: MessageRow = {
+      id: 1, conversation_id: FAKE_UUID, role: "user",
+      content: "hello", seq: 1, created_at: "2025-01-01T00:00:00Z",
+    };
+    const assistantMsg: MessageRow = {
+      id: 2, conversation_id: FAKE_UUID, role: "assistant",
+      content: "hi", seq: 2, created_at: "2025-01-01T00:00:01Z",
+    };
+    useConversationStore.setState({
+      activeConversationId: FAKE_UUID,
+      messages: [userMsg, assistantMsg],
+    });
+
+    const editPromise = useConversationStore.getState().editMessage(1, "new content", { model: "m" });
+
+    await flush();
+    useSecretStoreStore.getState().settleUnlock(false);
+    await editPromise;
+
+    expect(mockedConversationDeleteMessagesAfter).not.toHaveBeenCalled();
+    expect(mockedConversationAddMessage).not.toHaveBeenCalled();
+    expect(mockedStartLlmStream).not.toHaveBeenCalled();
+    expect(useConversationStore.getState().messages).toEqual([userMsg, assistantMsg]);
+    expect(useConversationStore.getState().error).toBe("Passphrase entry cancelled");
+  });
+
+  it("sendMessage does NOT persist user message when ensureUnlocked is cancelled (orphan prevention)", async () => {
+    useSecretStoreStore.setState({ exists: true, unlocked: false });
+    useConversationStore.setState({ activeConversationId: FAKE_UUID });
+    const persistedMsg: MessageRow = {
+      id: 10, conversation_id: FAKE_UUID, role: "user",
+      content: "hello", seq: 1, created_at: "2025-01-01T00:00:01Z",
+    };
+    mockedConversationAddMessage.mockResolvedValue(persistedMsg);
+
+    const sendPromise = useConversationStore.getState().sendMessage({
+      content: "hello",
+      model: "test-model",
+    });
+
+    await flush();
+    useSecretStoreStore.getState().settleUnlock(false);
+    await sendPromise;
+
+    // The key assertion: conversationAddMessage must NOT have been called
+    // because ensureUnlocked was cancelled BEFORE the message was persisted.
+    expect(mockedConversationAddMessage).not.toHaveBeenCalled();
+    expect(useConversationStore.getState().messages).toEqual([]);
+    expect(mockedStartLlmStream).not.toHaveBeenCalled();
+  });
+
+  it("retryLastMessage does NOT delete messages when ensureUnlocked is cancelled (orphan prevention)", async () => {
+    useSecretStoreStore.setState({ exists: true, unlocked: false });
+    const userMsg: MessageRow = {
+      id: 1, conversation_id: FAKE_UUID, role: "user",
+      content: "hello", seq: 1, created_at: "2025-01-01T00:00:00Z",
+    };
+    const assistantMsg: MessageRow = {
+      id: 2, conversation_id: FAKE_UUID, role: "assistant",
+      content: "hi", seq: 2, created_at: "2025-01-01T00:00:01Z",
+    };
+    useConversationStore.setState({
+      activeConversationId: FAKE_UUID,
+      messages: [userMsg, assistantMsg],
+    });
+
+    const retryPromise = useConversationStore.getState().retryLastMessage({ model: "m" });
+
+    await flush();
+    useSecretStoreStore.getState().settleUnlock(false);
+    await retryPromise;
+
+    // The key assertion: conversationDeleteMessagesAfter must NOT have been called
+    // because ensureUnlocked was cancelled BEFORE any DB mutation.
+    expect(mockedConversationDeleteMessagesAfter).not.toHaveBeenCalled();
+    expect(useConversationStore.getState().messages).toEqual([userMsg, assistantMsg]);
+    expect(mockedStartLlmStream).not.toHaveBeenCalled();
+  });
+
+  it("editMessage does NOT delete or persist messages when ensureUnlocked is cancelled (orphan prevention)", async () => {
+    useSecretStoreStore.setState({ exists: true, unlocked: false });
+    const userMsg: MessageRow = {
+      id: 1, conversation_id: FAKE_UUID, role: "user",
+      content: "hello", seq: 1, created_at: "2025-01-01T00:00:00Z",
+    };
+    const assistantMsg: MessageRow = {
+      id: 2, conversation_id: FAKE_UUID, role: "assistant",
+      content: "hi", seq: 2, created_at: "2025-01-01T00:00:01Z",
+    };
+    useConversationStore.setState({
+      activeConversationId: FAKE_UUID,
+      messages: [userMsg, assistantMsg],
+    });
+
+    const editPromise = useConversationStore.getState().editMessage(1, "new content", { model: "m" });
+
+    await flush();
+    useSecretStoreStore.getState().settleUnlock(false);
+    await editPromise;
+
+    // The key assertions: NO DB mutations should have occurred
+    expect(mockedConversationDeleteMessagesAfter).not.toHaveBeenCalled();
+    expect(mockedConversationAddMessage).not.toHaveBeenCalled();
+    expect(useConversationStore.getState().messages).toEqual([userMsg, assistantMsg]);
+    expect(mockedStartLlmStream).not.toHaveBeenCalled();
   });
 });

@@ -19,6 +19,7 @@ import { usePreferencesStore } from "./stores/preferences";
 import { useFocusModeStore } from "./stores/focusMode";
 import { useLicenseStore } from "./stores/license";
 import { useConversationStore } from "./stores/conversation";
+import { useSecretStoreStore } from "./stores/secretStore";
 import { getStartupContext, mergeDocuments, executeSplit } from "./lib/ipc";
 import type { MergePlan } from "./lib/ipc";
 import { listen } from "@tauri-apps/api/event";
@@ -31,6 +32,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { AnnotationBuilderModal } from "./components/AnnotationBuilderModal";
 import { ExportDialog } from "./components/ExportDialog";
 import { SettingsModal } from "./components/SettingsModal";
+import { PassphraseModal } from "./components/PassphraseModal";
 import { useModalLock } from "./hooks/useModalLock";
 import { useSubgraphExport } from "./hooks/useSubgraphExport";
 import { SubgraphExportPicker } from "./components/SubgraphExportPicker";
@@ -323,6 +325,9 @@ function App() {
   useModalLock(mergePreviewOpen);
   useModalLock(splitPreviewOpen);
 
+  const passphrasePromptOpen = useSecretStoreStore((s) => s.promptOpen);
+  useModalLock(passphrasePromptOpen);
+
   useEffect(() => {
     const handler = () => setQuickSwitcherOpen((prev) => !prev);
     window.addEventListener("lit:toggle-quick-switcher", handler);
@@ -506,6 +511,7 @@ function App() {
         )}
         <AcademicExportDialog open={academicExportOpen} onClose={() => setAcademicExportOpen(false)} initialFormat={academicExportFormat} />
         <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} initialCategory={settingsInitialCategory} />
+        <PassphraseModal />
         <LicenseEntryDialog open={licenseEntryOpen} onClose={() => setLicenseEntryOpen(false)} />
         <LicenseInfoDialog open={licenseInfoOpen} licenseState={licenseState} licensedTo={licensedTo} daysRemaining={daysRemaining} onClose={() => setLicenseInfoOpen(false)} />
         <SubgraphExportPicker

@@ -17,7 +17,7 @@ pub mod seed;
 pub mod socket;
 pub mod workspace;
 
-use commands::credential::{CredentialStore, KeychainStore};
+use commands::credential::{CredentialStore, EncryptedFileStore};
 use commands::graph::GraphRegistry;
 use commands::license::LicenseManager;
 use commands::oplog::OpLogRegistry;
@@ -120,7 +120,6 @@ pub fn run() {
         .manage(Arc::new(GraphRegistry::new()))
         .manage(Arc::new(commands::graph::GraphBuildState::new()))
         .manage(Arc::new(seed::SeedState::new()))
-        .manage(Arc::new(KeychainStore) as Arc<dyn CredentialStore>)
         .manage(Arc::new(OpLogRegistry::new()))
         .manage(BibCache::new())
         .manage(commands::llm::LlmState::new())
@@ -131,6 +130,9 @@ pub fn run() {
                 .path()
                 .app_data_dir()
                 .expect("failed to resolve app data dir");
+            let enc_store = std::sync::Arc::new(EncryptedFileStore::new(data_dir.clone()));
+            app.manage(enc_store.clone() as Arc<dyn CredentialStore>);
+            app.manage(enc_store);
             let trial_signing_key =
                 SigningKey::from_bytes(license::TRIAL_SIGNING_KEY_BYTES);
             let license_verifying_key =
@@ -363,6 +365,11 @@ pub fn run() {
             commands::credential::get_api_key,
             commands::credential::has_api_key,
             commands::credential::delete_api_key,
+            commands::credential::init_secret_store,
+            commands::credential::unlock_secret_store,
+            commands::credential::lock_secret_store,
+            commands::credential::secret_store_status,
+            commands::credential::change_secret_store_passphrase,
             commands::trash::trash_page,
             commands::trash::restore_page,
             commands::trash::purge_page,

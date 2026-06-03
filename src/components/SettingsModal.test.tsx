@@ -5,6 +5,7 @@ import { mockInvoke } from "../test/tauri-mock";
 import { usePreferencesStore } from "../stores/preferences";
 import { useThemeStore } from "../stores/theme";
 import { CATEGORIES, SETTINGS_REGISTRY } from "../lib/settingsRegistry";
+import { useSecretStoreStore } from "../stores/secretStore";
 
 const defaults = {
   darkMode: "auto" as const,
@@ -55,6 +56,8 @@ beforeEach(() => {
     return undefined;
   });
   usePreferencesStore.setState(defaults);
+  useSecretStoreStore.getState()._resetSettler();
+  useSecretStoreStore.setState({ exists: false, unlocked: false, loading: false, promptOpen: false });
   useThemeStore.setState({
     availableThemes: [
       { name: "Dracula", version: "1.0", author: "Dracula Team", directory_name: "dracula" },
@@ -663,6 +666,7 @@ describe("SettingsModal", () => {
     });
 
     it("saving key calls set_api_key IPC and updates store", async () => {
+      useSecretStoreStore.setState({ unlocked: true });
       let container!: HTMLElement;
       await act(async () => {
         ({ container } = render(<SettingsModal open={true} onClose={vi.fn()} />));
@@ -680,8 +684,18 @@ describe("SettingsModal", () => {
     });
 
     it("deleting key calls delete_api_key IPC and updates store", async () => {
+      useSecretStoreStore.setState({ unlocked: true });
+      mockInvoke((cmd, args) => {
+        invokeCalls.push({ cmd, args: args ?? {} });
+        if (cmd === "has_api_key") return true;
+        if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
+        return undefined;
+      });
       usePreferencesStore.setState({ llmOpenaiApiKeySet: true });
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      let container!: HTMLElement;
+      await act(async () => {
+        ({ container } = render(<SettingsModal open={true} onClose={vi.fn()} />));
+      });
       const clearBtn = container.querySelector("[data-testid='settings-llmOpenaiApiKeySet-clear']")!;
       await act(async () => {
         fireEvent.click(clearBtn);
@@ -1606,8 +1620,10 @@ describe("SettingsModal", () => {
   // --- Password save/delete error rollback ---
 
   it("password save optimistically updates store and rolls back on IPC failure", async () => {
+    useSecretStoreStore.setState({ unlocked: true });
+    const setApiKeyCalled = vi.fn();
     mockInvoke((cmd) => {
-      if (cmd === "set_api_key") throw new Error("keychain locked");
+      if (cmd === "set_api_key") { setApiKeyCalled(); throw new Error("keychain locked"); }
       if (cmd === "has_api_key") return false;
       if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
       return undefined;
@@ -1618,12 +1634,20 @@ describe("SettingsModal", () => {
     fireEvent.change(input, { target: { value: "sk-test" } });
     await act(async () => {
       fireEvent.click(saveBtn);
-      expect(usePreferencesStore.getState().llmOpenaiApiKeySet).toBe(true);
     });
-    expect(usePreferencesStore.getState().llmOpenaiApiKeySet).toBe(false);
+    // After ensureUnlocked resolves (async), setApiKey is called and fails,
+    // the optimistic update is set then rolled back
+    await vi.waitFor(() => {
+      expect(setApiKeyCalled).toHaveBeenCalled();
+    });
+    // After IPC failure, the store rolls back to false
+    await vi.waitFor(() => {
+      expect(usePreferencesStore.getState().llmOpenaiApiKeySet).toBe(false);
+    });
   });
 
   it("password delete optimistically updates store and rolls back on IPC failure", async () => {
+    useSecretStoreStore.setState({ unlocked: true });
     mockInvoke((cmd) => {
       if (cmd === "delete_api_key") throw new Error("keychain locked");
       if (cmd === "has_api_key") return true;
@@ -1631,13 +1655,17 @@ describe("SettingsModal", () => {
       return undefined;
     });
     usePreferencesStore.setState({ llmOpenaiApiKeySet: true });
-    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    let container!: HTMLElement;
+    await act(async () => {
+      ({ container } = render(<SettingsModal open={true} onClose={vi.fn()} />));
+    });
     const clearBtn = container.querySelector("[data-testid='settings-llmOpenaiApiKeySet-clear']")!;
     await act(async () => {
       fireEvent.click(clearBtn);
-      expect(usePreferencesStore.getState().llmOpenaiApiKeySet).toBe(false);
     });
-    expect(usePreferencesStore.getState().llmOpenaiApiKeySet).toBe(true);
+    await vi.waitFor(() => {
+      expect(usePreferencesStore.getState().llmOpenaiApiKeySet).toBe(true);
+    });
   });
 
   // --- Textarea whitespace preservation ---
@@ -1904,6 +1932,264 @@ describe("SettingsModal", () => {
       const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
       const buttons = Array.from(sidebar.querySelectorAll("button")).map((b) => b.textContent);
       expect(buttons).toContain("Academic Export");
+    });
+  });
+
+  // --- Secret store integration ---
+
+  describe("secret store integration", () => {
+    // Reset secret store state before each test in this block
+    beforeEach(() => {
+
+      useSecretStoreStore.getState()._resetSettler();
+      useSecretStoreStore.setState({
+        exists: false,
+        unlocked: false,
+        loading: false,
+        promptOpen: false,
+      });
+    });
+
+    it("skips hasApiKey check when store is locked (exists but not unlocked)", async () => {
+
+      useSecretStoreStore.setState({ exists: true, unlocked: false });
+
+      const localCalls: { cmd: string; args: Record<string, unknown> }[] = [];
+      mockInvoke((cmd, args) => {
+        localCalls.push({ cmd, args: args ?? {} });
+        if (cmd === "has_api_key") return false;
+        if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
+        return undefined;
+      });
+
+      await act(async () => {
+        render(<SettingsModal open={true} onClose={vi.fn()} />);
+      });
+
+      const hasApiKeyCalls = localCalls.filter((c) => c.cmd === "has_api_key");
+      expect(hasApiKeyCalls).toHaveLength(0);
+    });
+
+    it("calls hasApiKey when store is unlocked", async () => {
+
+      useSecretStoreStore.setState({ exists: true, unlocked: true });
+
+      const localCalls: { cmd: string; args: Record<string, unknown> }[] = [];
+      mockInvoke((cmd, args) => {
+        localCalls.push({ cmd, args: args ?? {} });
+        if (cmd === "has_api_key") return false;
+        if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
+        return undefined;
+      });
+
+      await act(async () => {
+        render(<SettingsModal open={true} onClose={vi.fn()} />);
+      });
+
+      const hasApiKeyCalls = localCalls.filter((c) => c.cmd === "has_api_key");
+      expect(hasApiKeyCalls).toHaveLength(2);
+    });
+
+    it("calls hasApiKey when store does not exist yet", async () => {
+
+      useSecretStoreStore.setState({ exists: false, unlocked: false });
+
+      const localCalls: { cmd: string; args: Record<string, unknown> }[] = [];
+      mockInvoke((cmd, args) => {
+        localCalls.push({ cmd, args: args ?? {} });
+        if (cmd === "has_api_key") return false;
+        if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
+        return undefined;
+      });
+
+      await act(async () => {
+        render(<SettingsModal open={true} onClose={vi.fn()} />);
+      });
+
+      const hasApiKeyCalls = localCalls.filter((c) => c.cmd === "has_api_key");
+      expect(hasApiKeyCalls).toHaveLength(2);
+    });
+
+    it("Lock button visible when secret store exists", () => {
+
+      useSecretStoreStore.setState({ exists: true, unlocked: true });
+
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const lockBtn = container.querySelector("[data-testid='secret-store-lock-btn']");
+      expect(lockBtn).toBeTruthy();
+    });
+
+    it("Lock button hidden when secret store does not exist", () => {
+
+      useSecretStoreStore.setState({ exists: false, unlocked: false });
+
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const lockBtn = container.querySelector("[data-testid='secret-store-lock-btn']");
+      expect(lockBtn).toBeNull();
+    });
+
+    it("Change Passphrase button visible when secret store exists", () => {
+
+      useSecretStoreStore.setState({ exists: true, unlocked: true });
+
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const changeBtn = container.querySelector("[data-testid='secret-store-change-passphrase-btn']");
+      expect(changeBtn).toBeTruthy();
+    });
+
+    it("Change Passphrase button hidden when secret store does not exist", () => {
+
+      useSecretStoreStore.setState({ exists: false, unlocked: false });
+
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const changeBtn = container.querySelector("[data-testid='secret-store-change-passphrase-btn']");
+      expect(changeBtn).toBeNull();
+    });
+
+    it("Lock button calls lockSecretStore IPC and refreshes state", async () => {
+
+      useSecretStoreStore.setState({ exists: true, unlocked: true });
+
+      const localCalls: { cmd: string; args: Record<string, unknown> }[] = [];
+      mockInvoke((cmd, args) => {
+        localCalls.push({ cmd, args: args ?? {} });
+        if (cmd === "lock_secret_store") return undefined;
+        if (cmd === "secret_store_status") return { exists: true, unlocked: false };
+        if (cmd === "has_api_key") return false;
+        if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
+        return undefined;
+      });
+
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const lockBtn = container.querySelector("[data-testid='secret-store-lock-btn']")!;
+      await act(async () => {
+        fireEvent.click(lockBtn);
+      });
+
+      await vi.waitFor(() => {
+        expect(localCalls).toContainEqual({ cmd: "lock_secret_store", args: {} });
+      });
+    });
+
+    it("password save calls ensureUnlocked before setApiKey", async () => {
+
+      // Store is already unlocked so ensureUnlocked resolves immediately
+      useSecretStoreStore.setState({ exists: true, unlocked: true });
+
+      const localCalls: string[] = [];
+      mockInvoke((cmd) => {
+        localCalls.push(cmd);
+        if (cmd === "has_api_key") return false;
+        if (cmd === "set_api_key") return undefined;
+        if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
+        return undefined;
+      });
+
+      let container!: HTMLElement;
+      await act(async () => {
+        ({ container } = render(<SettingsModal open={true} onClose={vi.fn()} />));
+      });
+      const input = container.querySelector("[data-testid='settings-llmOpenaiApiKeySet']")!;
+      const saveBtn = container.querySelector("[data-testid='settings-llmOpenaiApiKeySet-save']")!;
+      await act(async () => {
+        fireEvent.change(input, { target: { value: "sk-test" } });
+        fireEvent.click(saveBtn);
+      });
+      await vi.waitFor(() => {
+        expect(localCalls).toContain("set_api_key");
+      });
+      expect(usePreferencesStore.getState().llmOpenaiApiKeySet).toBe(true);
+    });
+
+    it("password delete calls ensureUnlocked before deleteApiKey", async () => {
+      // Store is already unlocked so ensureUnlocked resolves immediately
+      useSecretStoreStore.setState({ exists: true, unlocked: true });
+
+      const localCalls: string[] = [];
+      mockInvoke((cmd) => {
+        localCalls.push(cmd);
+        if (cmd === "has_api_key") return true;
+        if (cmd === "delete_api_key") return undefined;
+        if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
+        return undefined;
+      });
+
+      usePreferencesStore.setState({ llmOpenaiApiKeySet: true });
+      let container!: HTMLElement;
+      await act(async () => {
+        ({ container } = render(<SettingsModal open={true} onClose={vi.fn()} />));
+      });
+      const clearBtn = container.querySelector("[data-testid='settings-llmOpenaiApiKeySet-clear']")!;
+      await act(async () => {
+        fireEvent.click(clearBtn);
+      });
+      await vi.waitFor(() => {
+        expect(localCalls).toContain("delete_api_key");
+      });
+      expect(usePreferencesStore.getState().llmOpenaiApiKeySet).toBe(false);
+    });
+
+    it("password delete does not call deleteApiKey when store is locked and passphrase is not provided", async () => {
+      // Store exists but is locked; ensureUnlocked will open prompt and block
+      useSecretStoreStore.setState({ exists: true, unlocked: false });
+
+      const localCalls: string[] = [];
+      mockInvoke((cmd) => {
+        localCalls.push(cmd);
+        if (cmd === "has_api_key") return true;
+        if (cmd === "delete_api_key") return undefined;
+        if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
+        return undefined;
+      });
+
+      usePreferencesStore.setState({ llmOpenaiApiKeySet: true });
+      let container!: HTMLElement;
+      await act(async () => {
+        ({ container } = render(<SettingsModal open={true} onClose={vi.fn()} />));
+      });
+      const clearBtn = container.querySelector("[data-testid='settings-llmOpenaiApiKeySet-clear']")!;
+      await act(async () => {
+        fireEvent.click(clearBtn);
+      });
+
+      // ensureUnlocked opens prompt and blocks — delete_api_key should NOT be called
+      expect(localCalls).not.toContain("delete_api_key");
+      // Store should NOT have been optimistically updated either
+      expect(usePreferencesStore.getState().llmOpenaiApiKeySet).toBe(true);
+    });
+
+    it("password delete aborts when user cancels passphrase entry", async () => {
+      // Store exists but is locked
+      useSecretStoreStore.setState({ exists: true, unlocked: false });
+
+      const localCalls: string[] = [];
+      mockInvoke((cmd) => {
+        localCalls.push(cmd);
+        if (cmd === "has_api_key") return true;
+        if (cmd === "delete_api_key") return undefined;
+        if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
+        return undefined;
+      });
+
+      usePreferencesStore.setState({ llmOpenaiApiKeySet: true });
+      let container!: HTMLElement;
+      await act(async () => {
+        ({ container } = render(<SettingsModal open={true} onClose={vi.fn()} />));
+      });
+      const clearBtn = container.querySelector("[data-testid='settings-llmOpenaiApiKeySet-clear']")!;
+      await act(async () => {
+        fireEvent.click(clearBtn);
+      });
+
+      // Simulate user cancelling passphrase prompt
+      await act(async () => {
+        useSecretStoreStore.getState().settleUnlock(false);
+      });
+
+      // delete_api_key should NOT have been called
+      expect(localCalls).not.toContain("delete_api_key");
+      // Store value should remain true (key still saved)
+      expect(usePreferencesStore.getState().llmOpenaiApiKeySet).toBe(true);
     });
   });
 });

@@ -230,6 +230,33 @@ export async function deleteApiKey(provider: string): Promise<void> {
   return invoke<void>("delete_api_key", { provider });
 }
 
+// Secret store commands
+
+export interface SecretStoreStatus {
+  exists: boolean;
+  unlocked: boolean;
+}
+
+export async function initSecretStore(passphrase: string): Promise<void> {
+  return invoke<void>("init_secret_store", { passphrase });
+}
+
+export async function unlockSecretStore(passphrase: string): Promise<void> {
+  return invoke<void>("unlock_secret_store", { passphrase });
+}
+
+export async function lockSecretStore(): Promise<void> {
+  return invoke<void>("lock_secret_store");
+}
+
+export async function secretStoreStatus(): Promise<SecretStoreStatus> {
+  return invoke<SecretStoreStatus>("secret_store_status");
+}
+
+export async function changeSecretStorePassphrase(oldPassphrase: string, newPassphrase: string): Promise<void> {
+  return invoke<void>("change_secret_store_passphrase", { oldPassphrase, newPassphrase });
+}
+
 export const GLOBAL_NODE_ID = "_global" as const;
 
 // LLM commands
