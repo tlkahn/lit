@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { useLlmResponseStore } from "./llmResponse";
 
-export type TabId = "linked" | "unlinked" | "annotations" | "llm-response";
+export type TabId = "linked" | "unlinked" | "outgoing" | "annotations" | "llm-response";
 
 const DEFAULT_PANEL_HEIGHT = 200;
 const MIN_PANEL_HEIGHT = 100;
@@ -34,8 +34,10 @@ export interface BottomPanelState {
   panelWidth: number;
   linkedCount: number | null;
   unlinkedCount: number | null;
+  outgoingCount: number | null;
   annotationCount: number;
   hasOpenedUnlinked: boolean;
+  hasOpenedOutgoing: boolean;
   hasOpenedAnnotations: boolean;
   hasOpenedLlm: boolean;
   handleTabClick: (tab: TabId) => void;
@@ -44,6 +46,7 @@ export interface BottomPanelState {
   setPanelWidth: (w: number) => void;
   setLinkedCount: (v: number | null) => void;
   setUnlinkedCount: (v: number | null) => void;
+  setOutgoingCount: (v: number | null) => void;
   setAnnotationCount: (v: number) => void;
   resetForPage: () => void;
 }
@@ -55,8 +58,10 @@ export const useBottomPanelStore = create<BottomPanelState>((set, get) => ({
   panelWidth: loadPanelWidth(),
   linkedCount: null,
   unlinkedCount: null,
+  outgoingCount: null,
   annotationCount: 0,
   hasOpenedUnlinked: false,
+  hasOpenedOutgoing: false,
   hasOpenedAnnotations: false,
   hasOpenedLlm: false,
 
@@ -64,6 +69,7 @@ export const useBottomPanelStore = create<BottomPanelState>((set, get) => ({
     const { unfolded, activeTab } = get();
     const updates: Partial<BottomPanelState> = {};
     if (tab === "unlinked") updates.hasOpenedUnlinked = true;
+    if (tab === "outgoing") updates.hasOpenedOutgoing = true;
     if (tab === "annotations") updates.hasOpenedAnnotations = true;
     if (tab === "llm-response") updates.hasOpenedLlm = true;
     if (!unfolded) {
@@ -83,6 +89,7 @@ export const useBottomPanelStore = create<BottomPanelState>((set, get) => ({
       const updates: Partial<BottomPanelState> = { unfolded: true };
       if (activeTab === "llm-response") updates.hasOpenedLlm = true;
       else if (activeTab === "unlinked") updates.hasOpenedUnlinked = true;
+      else if (activeTab === "outgoing") updates.hasOpenedOutgoing = true;
       else if (activeTab === "annotations") updates.hasOpenedAnnotations = true;
       set(updates);
     } else {
@@ -104,6 +111,7 @@ export const useBottomPanelStore = create<BottomPanelState>((set, get) => ({
 
   setLinkedCount: (v: number | null) => set({ linkedCount: v }),
   setUnlinkedCount: (v: number | null) => set({ unlinkedCount: v }),
+  setOutgoingCount: (v: number | null) => set({ outgoingCount: v }),
   setAnnotationCount: (v: number) => set({ annotationCount: v }),
 
   resetForPage: () => {
@@ -113,10 +121,12 @@ export const useBottomPanelStore = create<BottomPanelState>((set, get) => ({
       unfolded: false,
       linkedCount: null,
       unlinkedCount: null,
+      outgoingCount: null,
       annotationCount: 0,
       hasOpenedAnnotations: false,
       hasOpenedLlm: llmActive ? get().hasOpenedLlm : false,
       hasOpenedUnlinked: activeTab === "unlinked" && unfolded ? true : false,
+      hasOpenedOutgoing: activeTab === "outgoing" && unfolded ? true : false,
     });
   },
 }));

@@ -21,6 +21,8 @@ describe("bottomPanel setUnfolded", () => {
       hasOpenedUnlinked: false,
       hasOpenedAnnotations: false,
       hasOpenedLlm: false,
+      outgoingCount: null,
+      hasOpenedOutgoing: false,
     });
   });
 
@@ -43,11 +45,67 @@ describe("bottomPanel setUnfolded", () => {
     expect(useBottomPanelStore.getState().hasOpenedAnnotations).toBe(true);
   });
 
+  it("sets hasOpenedOutgoing when unfolding with outgoing tab active", () => {
+    useBottomPanelStore.setState({ activeTab: "outgoing", hasOpenedOutgoing: false });
+    useBottomPanelStore.getState().setUnfolded(true);
+    expect(useBottomPanelStore.getState().hasOpenedOutgoing).toBe(true);
+  });
+
   it("does not set hasOpened flags when folding", () => {
     useBottomPanelStore.setState({ activeTab: "llm-response", unfolded: true, hasOpenedLlm: false });
     useBottomPanelStore.getState().setUnfolded(false);
     expect(useBottomPanelStore.getState().hasOpenedLlm).toBe(false);
     expect(useBottomPanelStore.getState().unfolded).toBe(false);
+  });
+});
+
+describe("bottomPanel handleTabClick outgoing", () => {
+  beforeEach(() => {
+    useBottomPanelStore.setState({
+      activeTab: "linked",
+      unfolded: false,
+      linkedCount: null,
+      unlinkedCount: null,
+      annotationCount: 0,
+      hasOpenedUnlinked: false,
+      hasOpenedAnnotations: false,
+      hasOpenedLlm: false,
+      outgoingCount: null,
+      hasOpenedOutgoing: false,
+    });
+  });
+
+  it("sets hasOpenedOutgoing to true", () => {
+    useBottomPanelStore.getState().handleTabClick("outgoing");
+    expect(useBottomPanelStore.getState().hasOpenedOutgoing).toBe(true);
+  });
+});
+
+describe("bottomPanel setOutgoingCount", () => {
+  beforeEach(() => {
+    useBottomPanelStore.setState({
+      activeTab: "linked",
+      unfolded: false,
+      linkedCount: null,
+      unlinkedCount: null,
+      annotationCount: 0,
+      hasOpenedUnlinked: false,
+      hasOpenedAnnotations: false,
+      hasOpenedLlm: false,
+      outgoingCount: null,
+      hasOpenedOutgoing: false,
+    });
+  });
+
+  it("updates count", () => {
+    useBottomPanelStore.getState().setOutgoingCount(5);
+    expect(useBottomPanelStore.getState().outgoingCount).toBe(5);
+  });
+
+  it("clears count with null", () => {
+    useBottomPanelStore.setState({ outgoingCount: 3 });
+    useBottomPanelStore.getState().setOutgoingCount(null);
+    expect(useBottomPanelStore.getState().outgoingCount).toBeNull();
   });
 });
 
@@ -62,6 +120,8 @@ describe("bottomPanel resetForPage", () => {
       hasOpenedUnlinked: false,
       hasOpenedAnnotations: false,
       hasOpenedLlm: false,
+      outgoingCount: null,
+      hasOpenedOutgoing: false,
     });
     useLlmResponseStore.getState().reset();
   });
@@ -107,6 +167,24 @@ describe("bottomPanel resetForPage", () => {
     expect(s.annotationCount).toBe(0);
     expect(s.hasOpenedAnnotations).toBe(false);
     expect(s.hasOpenedLlm).toBe(true);
+  });
+
+  it("resets outgoingCount to null", () => {
+    useBottomPanelStore.setState({ outgoingCount: 7 });
+    useBottomPanelStore.getState().resetForPage();
+    expect(useBottomPanelStore.getState().outgoingCount).toBeNull();
+  });
+
+  it("resets hasOpenedOutgoing to false when not active+unfolded", () => {
+    useBottomPanelStore.setState({ activeTab: "linked", unfolded: true, hasOpenedOutgoing: true });
+    useBottomPanelStore.getState().resetForPage();
+    expect(useBottomPanelStore.getState().hasOpenedOutgoing).toBe(false);
+  });
+
+  it("preserves hasOpenedOutgoing when outgoing is active and unfolded", () => {
+    useBottomPanelStore.setState({ activeTab: "outgoing", unfolded: true, hasOpenedOutgoing: false });
+    useBottomPanelStore.getState().resetForPage();
+    expect(useBottomPanelStore.getState().hasOpenedOutgoing).toBe(true);
   });
 });
 

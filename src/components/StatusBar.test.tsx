@@ -28,8 +28,10 @@ beforeEach(() => {
     panelHeight: 200,
     linkedCount: null,
     unlinkedCount: null,
+    outgoingCount: null,
     annotationCount: 0,
     hasOpenedUnlinked: false,
+    hasOpenedOutgoing: false,
     hasOpenedAnnotations: false,
   });
   usePreferencesStore.setState({
@@ -225,6 +227,7 @@ describe("StatusBar", () => {
       render(<StatusBar />);
       expect(screen.getByTestId("bottom-panel-tabs")).toBeInTheDocument();
       expect(screen.queryByTestId("tab-linked")).toBeNull();
+      expect(screen.queryByTestId("tab-outgoing")).toBeNull();
       expect(screen.queryByTestId("tab-unlinked")).toBeNull();
       expect(screen.queryByTestId("tab-annotations")).toBeNull();
       expect(screen.getByTestId("tab-llm-response")).toBeInTheDocument();
@@ -398,6 +401,61 @@ describe("StatusBar", () => {
       expect(state.activeTab).toBe("llm-response");
       expect(state.unfolded).toBe(true);
       expect(state.hasOpenedLlm).toBe(true);
+    });
+
+    it("shows outgoing links tab when page is open", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
+        focusedPaneId: "p1",
+      });
+      render(<StatusBar />);
+      expect(screen.getByTestId("tab-outgoing")).toBeInTheDocument();
+      expect(screen.getByTestId("tab-outgoing")).toHaveTextContent("Outgoing Links");
+    });
+
+    it("shows count in outgoing links button text when outgoingCount is set", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
+        focusedPaneId: "p1",
+      });
+      useBottomPanelStore.setState({ outgoingCount: 7 });
+      render(<StatusBar />);
+      expect(screen.getByTestId("tab-outgoing")).toHaveTextContent("Outgoing Links (7)");
+    });
+
+    it("clicking outgoing links tab activates it", async () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
+        focusedPaneId: "p1",
+      });
+      render(<StatusBar />);
+      await userEvent.click(screen.getByTestId("tab-outgoing"));
+      const state = useBottomPanelStore.getState();
+      expect(state.activeTab).toBe("outgoing");
+      expect(state.unfolded).toBe(true);
+      expect(state.hasOpenedOutgoing).toBe(true);
+    });
+
+    it("outgoing links tab appears between linked and unlinked tabs", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
+        focusedPaneId: "p1",
+      });
+      usePreferencesStore.setState({ experimentalUnlinkedReferences: true });
+      render(<StatusBar />);
+      const tabs = screen.getByTestId("bottom-panel-tabs");
+      const buttons = Array.from(tabs.querySelectorAll("[data-testid]")).map(
+        (el) => el.getAttribute("data-testid"),
+      );
+      const linkedIdx = buttons.indexOf("tab-linked");
+      const outgoingIdx = buttons.indexOf("tab-outgoing");
+      const unlinkedIdx = buttons.indexOf("tab-unlinked");
+      expect(linkedIdx).toBeLessThan(outgoingIdx);
+      expect(outgoingIdx).toBeLessThan(unlinkedIdx);
     });
   });
 

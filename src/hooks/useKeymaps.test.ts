@@ -33,7 +33,7 @@ describe("useKeymaps", () => {
     resetEditorViewRef();
     document.body.innerHTML = "";
     usePaneStore.setState(createInitialState());
-    useBottomPanelStore.setState({ activeTab: "linked", unfolded: false, hasOpenedLlm: false });
+    useBottomPanelStore.setState({ activeTab: "linked", unfolded: false, hasOpenedLlm: false, hasOpenedOutgoing: false });
     mockInvoke((cmd) => {
       if (cmd === "get_keymaps") {
         return [

@@ -55,8 +55,10 @@ beforeEach(() => {
     panelHeight: 200,
     linkedCount: null,
     unlinkedCount: null,
+    outgoingCount: null,
     annotationCount: 0,
     hasOpenedUnlinked: false,
+    hasOpenedOutgoing: false,
     hasOpenedAnnotations: false,
   });
   usePreferencesStore.setState({

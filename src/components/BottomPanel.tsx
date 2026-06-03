@@ -1,6 +1,7 @@
 import { useEffect, useRef, type RefObject } from "react";
 import { BacklinksPanel } from "./BacklinksPanel";
 import { UnlinkedMentionsPanel } from "./UnlinkedMentionsPanel";
+import { OutgoingLinksPanel } from "./OutgoingLinksPanel";
 import { AnnotationPanel } from "./AnnotationPanel";
 import { ConversationPanel } from "./ConversationPanel";
 import { ResizeHandle, getResizeConfig, type ResizeConfig } from "./ResizeHandle";
@@ -43,10 +44,12 @@ export function BottomPanel({ pageId, direction = "bottom" }: BottomPanelProps) 
   const panelHeight = useBottomPanelStore((s) => s.panelHeight);
   const panelWidth = useBottomPanelStore((s) => s.panelWidth);
   const hasOpenedUnlinked = useBottomPanelStore((s) => s.hasOpenedUnlinked);
+  const hasOpenedOutgoing = useBottomPanelStore((s) => s.hasOpenedOutgoing);
   const hasOpenedAnnotations = useBottomPanelStore((s) => s.hasOpenedAnnotations);
   const hasOpenedLlm = useBottomPanelStore((s) => s.hasOpenedLlm);
   const setLinkedCount = useBottomPanelStore((s) => s.setLinkedCount);
   const setUnlinkedCount = useBottomPanelStore((s) => s.setUnlinkedCount);
+  const setOutgoingCount = useBottomPanelStore((s) => s.setOutgoingCount);
   const setAnnotationCount = useBottomPanelStore((s) => s.setAnnotationCount);
   const setPanelHeight = useBottomPanelStore((s) => s.setPanelHeight);
   const setPanelWidth = useBottomPanelStore((s) => s.setPanelWidth);
@@ -128,6 +131,11 @@ export function BottomPanel({ pageId, direction = "bottom" }: BottomPanelProps) 
         {pageId && hasOpenedUnlinked && (
           <div style={tabWrapperStyle("unlinked")}>
             <UnlinkedMentionsPanel pageId={pageId} onCountChange={setUnlinkedCount} contentHeight={isVertical ? undefined : panelHeight} />
+          </div>
+        )}
+        {pageId && hasOpenedOutgoing && (
+          <div style={tabWrapperStyle("outgoing")}>
+            <OutgoingLinksPanel pageId={pageId} onCountChange={setOutgoingCount} contentHeight={isVertical ? undefined : panelHeight} />
           </div>
         )}
         {pageId && annotationEnabled && hasOpenedAnnotations && (

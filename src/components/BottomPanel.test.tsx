@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 import { BottomPanel } from "./BottomPanel";
-import { getBacklinks, getUnlinkedMentions } from "../lib/ipc";
+import { getBacklinks, getUnlinkedMentions, getForwardLinks } from "../lib/ipc";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePreferencesStore } from "../stores/preferences";
 import { useBottomPanelStore, MIN_PANEL_WIDTH } from "../stores/bottomPanel";
@@ -19,6 +19,7 @@ vi.mock("../lib/ipc", async (importOriginal) => {
     ...orig,
     getBacklinks: vi.fn(async () => []),
     getUnlinkedMentions: vi.fn(async () => []),
+    getForwardLinks: vi.fn(async () => []),
     parseAnnotations: vi.fn(async () => []),
     resolveAnnotationScope: vi.fn(async () => null),
     conversationList: vi.fn(async () => []),
@@ -82,12 +83,15 @@ beforeEach(() => {
     panelHeight: 200,
     linkedCount: null,
     unlinkedCount: null,
+    outgoingCount: null,
     annotationCount: 0,
     hasOpenedUnlinked: false,
+    hasOpenedOutgoing: false,
     hasOpenedAnnotations: false,
   });
   vi.mocked(getBacklinks).mockResolvedValue([]);
   vi.mocked(getUnlinkedMentions).mockResolvedValue([]);
+  vi.mocked(getForwardLinks).mockResolvedValue([]);
   useConversationStore.getState().reset();
 });
 
@@ -191,6 +195,25 @@ describe("BottomPanel", () => {
       });
     });
 
+    it("shows outgoing content when activeTab is outgoing and hasOpenedOutgoing", async () => {
+      useWorkspaceStore.setState({ graphReady: true });
+      await act(async () => {
+        render(<BottomPanel pageId="target.md" />);
+      });
+
+      act(() => {
+        useBottomPanelStore.setState({
+          unfolded: true,
+          activeTab: "outgoing",
+          hasOpenedOutgoing: true,
+        });
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("This page does not link to any other pages")).toBeInTheDocument();
+      });
+    });
+
     it("shows annotation content when activeTab is annotations and hasOpenedAnnotations", async () => {
       testEditorView = setupEditorWithAnnotations([
         makeAnnotation({ char_start: 0, char_end: 10, body: "my note" }),
@@ -230,6 +253,28 @@ describe("BottomPanel", () => {
 
       await waitFor(() => {
         expect(getUnlinkedMentions).toHaveBeenCalled();
+      });
+    });
+
+    it("does not mount OutgoingLinksPanel until hasOpenedOutgoing is true", async () => {
+      vi.mocked(getForwardLinks).mockClear();
+      useWorkspaceStore.setState({ graphReady: true });
+
+      render(<BottomPanel pageId="target.md" />);
+
+      act(() => {
+        useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
+      });
+
+      await act(async () => {});
+      expect(getForwardLinks).not.toHaveBeenCalled();
+
+      await act(async () => {
+        useBottomPanelStore.setState({ activeTab: "outgoing", hasOpenedOutgoing: true });
+      });
+
+      await waitFor(() => {
+        expect(getForwardLinks).toHaveBeenCalled();
       });
     });
 

@@ -26,6 +26,7 @@ function BottomPanelTabs() {
   const unfolded = useBottomPanelStore((s) => s.unfolded);
   const linkedCount = useBottomPanelStore((s) => s.linkedCount);
   const unlinkedCount = useBottomPanelStore((s) => s.unlinkedCount);
+  const outgoingCount = useBottomPanelStore((s) => s.outgoingCount);
   const annotationCount = useBottomPanelStore((s) => s.annotationCount);
   const handleTabClick = useBottomPanelStore((s) => s.handleTabClick);
 
@@ -42,6 +43,14 @@ function BottomPanelTabs() {
             label="Linked References"
             count={linkedCount}
             active={activeTab === "linked"}
+            unfolded={unfolded}
+            onClick={handleTabClick}
+          />
+          <TabButton
+            tab="outgoing"
+            label="Outgoing Links"
+            count={outgoingCount}
+            active={activeTab === "outgoing"}
             unfolded={unfolded}
             onClick={handleTabClick}
           />
