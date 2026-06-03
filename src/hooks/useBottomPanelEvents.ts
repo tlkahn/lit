@@ -118,9 +118,12 @@ export function useBottomPanelEvents() {
 
   // Annotation count → fall back to linked when annotations disappear
   useEffect(() => {
+    let prevCount = useBottomPanelStore.getState().tabMeta.annotations.count ?? 0;
     return useBottomPanelStore.subscribe((state) => {
       const annotationCount = state.tabMeta.annotations.count ?? 0;
-      if (annotationCount === 0 && state.activeTab === "annotations") {
+      const wasPositive = prevCount > 0;
+      prevCount = annotationCount;
+      if (wasPositive && annotationCount === 0 && state.activeTab === "annotations") {
         useBottomPanelStore.setState({ activeTab: "linked" });
       }
     });

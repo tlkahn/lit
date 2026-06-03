@@ -197,6 +197,48 @@ describe("bottomPanel panelWidth", () => {
   });
 });
 
+describe("bottomPanel handleTabClick annotations", () => {
+  beforeEach(() => {
+    useBottomPanelStore.setState({
+      activeTab: "linked",
+      unfolded: false,
+      tabMeta: defaultTabMeta(),
+    });
+  });
+
+  it("opens and activates annotations tab", () => {
+    useBottomPanelStore.getState().handleTabClick("annotations");
+    const s = useBottomPanelStore.getState();
+    expect(s.activeTab).toBe("annotations");
+    expect(s.unfolded).toBe(true);
+    expect(s.tabMeta.annotations.hasOpened).toBe(true);
+  });
+
+  it("folds panel when annotations is already active and unfolded", () => {
+    useBottomPanelStore.setState({
+      activeTab: "annotations",
+      unfolded: true,
+      tabMeta: { ...defaultTabMeta(), annotations: { count: 2, hasOpened: true } },
+    });
+    useBottomPanelStore.getState().handleTabClick("annotations");
+    const s = useBottomPanelStore.getState();
+    expect(s.unfolded).toBe(false);
+  });
+
+  it("switches to annotations from another tab without folding", () => {
+    useBottomPanelStore.setState({
+      activeTab: "linked",
+      unfolded: true,
+      tabMeta: defaultTabMeta(),
+    });
+    useBottomPanelStore.getState().handleTabClick("annotations");
+    const s = useBottomPanelStore.getState();
+    expect(s.activeTab).toBe("annotations");
+    expect(s.unfolded).toBe(true);
+  });
+});
+
+
 describe("bottomPanel panelHeight clamping", () => {
   beforeEach(() => {
     localStorage.removeItem(STORAGE_KEY);

@@ -334,6 +334,33 @@ describe("useBottomPanelEvents", () => {
 
       expect(useBottomPanelStore.getState().activeTab).toBe("linked");
     });
+
+    it("does NOT reset activeTab when annotations tab is clicked with default count 0", () => {
+      renderHook(() => useBottomPanelEvents());
+
+      act(() => {
+        useBottomPanelStore.getState().handleTabClick("annotations");
+      });
+
+      const state = useBottomPanelStore.getState();
+      expect(state.activeTab).toBe("annotations");
+      expect(state.unfolded).toBe(true);
+    });
+
+    it("allows toggle (second click folds) when annotations tab has count 0", () => {
+      renderHook(() => useBottomPanelEvents());
+
+      act(() => {
+        useBottomPanelStore.getState().handleTabClick("annotations");
+      });
+      expect(useBottomPanelStore.getState().activeTab).toBe("annotations");
+      expect(useBottomPanelStore.getState().unfolded).toBe(true);
+
+      act(() => {
+        useBottomPanelStore.getState().handleTabClick("annotations");
+      });
+      expect(useBottomPanelStore.getState().unfolded).toBe(false);
+    });
   });
 
   describe("page change reset", () => {
