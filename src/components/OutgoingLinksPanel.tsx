@@ -1,22 +1,21 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { listen } from "@tauri-apps/api/event";
-import { getBacklinks, type BacklinkEntry } from "../lib/ipc";
+import { getForwardLinks, type LinkEntry } from "../lib/ipc";
 import { useWorkspaceStore } from "../stores/workspace";
 import { highlightWikilinks } from "../lib/highlightWikilinks";
 import { useRecordDeparture } from "../hooks/useRecordDeparture";
 
-interface BacklinksPanelProps {
+interface OutgoingLinksPanelProps {
   pageId: string;
   onCountChange?: (count: number) => void;
   contentHeight?: number;
   active?: boolean;
 }
 
-export function BacklinksPanel({ pageId, onCountChange, contentHeight, active = true }: BacklinksPanelProps) {
-  const [entries, setEntries] = useState<BacklinkEntry[]>([]);
+export function OutgoingLinksPanel({ pageId, onCountChange, contentHeight, active = true }: OutgoingLinksPanelProps) {
+  const [entries, setEntries] = useState<LinkEntry[]>([]);
   const selectPage = useWorkspaceStore((s) => s.selectPage);
-  const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
   const graphReady = useWorkspaceStore((s) => s.graphReady);
   const pageIdRef = useRef(pageId);
   pageIdRef.current = pageId;
@@ -26,29 +25,29 @@ export function BacklinksPanel({ pageId, onCountChange, contentHeight, active = 
 
   const recordDeparture = useRecordDeparture(pageIdRef);
 
-  const fetchBacklinks = useCallback(async () => {
+  const fetchForwardLinks = useCallback(async () => {
     const capturedId = pageIdRef.current;
     try {
-      const result = await getBacklinks(capturedId);
+      const result = await getForwardLinks(capturedId);
       if (pageIdRef.current !== capturedId) return;
       setEntries(result);
     } catch (err) {
       if (pageIdRef.current !== capturedId) return;
-      console.warn("Failed to fetch backlinks:", err);
+      console.warn("Failed to fetch outgoing links:", err);
       setEntries([]);
     }
   }, []);
 
   useEffect(() => {
-    if (graphReady) fetchBacklinks();
-  }, [pageId, graphReady, fetchBacklinks]);
+    if (graphReady) fetchForwardLinks();
+  }, [pageId, graphReady, fetchForwardLinks]);
 
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     listen("lit:graph-updated", () => {
       if (activeRef.current) {
-        fetchBacklinks();
+        fetchForwardLinks();
       } else {
         staleRef.current = true;
       }
@@ -56,14 +55,14 @@ export function BacklinksPanel({ pageId, onCountChange, contentHeight, active = 
       if (cancelled) { fn(); } else { unlisten = fn; }
     });
     return () => { cancelled = true; unlisten?.(); };
-  }, [fetchBacklinks]);
+  }, [fetchForwardLinks]);
 
   useEffect(() => {
     if (active && staleRef.current) {
       staleRef.current = false;
-      fetchBacklinks();
+      fetchForwardLinks();
     }
-  }, [active, fetchBacklinks]);
+  }, [active, fetchForwardLinks]);
 
   useEffect(() => {
     if (graphReady) onCountChange?.(entries.length);
@@ -79,7 +78,7 @@ export function BacklinksPanel({ pageId, onCountChange, contentHeight, active = 
 
   if (!graphReady) {
     return (
-      <div className="px-4 py-2" data-testid="backlinks-building">
+      <div className="px-4 py-2" data-testid="outgoing-building">
         <div className="flex items-center gap-2 py-1">
           <svg
             className="h-3 w-3 animate-spin text-text-faint"
@@ -100,12 +99,12 @@ export function BacklinksPanel({ pageId, onCountChange, contentHeight, active = 
     <div className="flex h-full flex-col px-4 py-2">
       {entries.length === 0 ? (
         <p className="text-xs text-text-faint">
-          No other pages link to this page
+          This page does not link to any other pages
         </p>
       ) : (
         <div
           ref={scrollRef}
-          data-testid="backlinks-scroll-container"
+          data-testid="outgoing-scroll-container"
           data-virtual-scroll
           className={`overflow-y-auto${contentHeight == null ? " min-h-0 flex-1" : ""}`}
           style={contentHeight != null ? { height: contentHeight } : undefined}
@@ -116,7 +115,7 @@ export function BacklinksPanel({ pageId, onCountChange, contentHeight, active = 
               const entry = entries[i]!;
               return (
                 <div
-                  key={`${entry.source_id}-${i}`}
+                  key={`${entry.target_id}-${i}`}
                   ref={virtualizer.measureElement}
                   data-index={i}
                   className="text-xs"
@@ -133,18 +132,18 @@ export function BacklinksPanel({ pageId, onCountChange, contentHeight, active = 
                     className="font-medium text-interactive-accent hover:underline"
                     onClick={() => {
                       recordDeparture();
-                      selectPage(entry.source_id);
+                      selectPage(entry.target_id);
                     }}
                   >
-                    {entry.source_title || entry.source_id}
+                    {entry.target_title || entry.target_id}
                   </button>
                   {entry.context && (
                     <p
-                      data-testid={`backlink-context-${i}`}
+                      data-testid={`outgoing-context-${i}`}
                       className="mt-0.5 cursor-pointer text-text-muted hover:text-text-normal"
                       onClick={() => {
                         recordDeparture();
-                        selectPageAtLine(entry.source_id, entry.source_line);
+                        selectPage(entry.target_id);
                       }}
                     >
                       {highlightWikilinks(entry.context)}

@@ -302,6 +302,101 @@ describe("BacklinksPanel", () => {
     });
   });
 
+  it("logs warning when IPC call fails", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_backlinks") throw new Error("IPC failure");
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    render(<BacklinksPanel pageId="target.md" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("No other pages link to this page")).toBeInTheDocument();
+    });
+    expect(consoleSpy).toHaveBeenCalledWith("Failed to fetch backlinks:", expect.any(Error));
+    consoleSpy.mockRestore();
+  });
+
+  it("discards stale fetch results when pageId changes during in-flight IPC call", async () => {
+    let firstCallResolve: ((value: BacklinkEntry[]) => void) | undefined;
+    let callCount = 0;
+
+    mockInvoke((cmd, args) => {
+      if (cmd === "get_backlinks") {
+        callCount++;
+        const pid = (args as Record<string, unknown>)?.pageId;
+        if (callCount === 1 && pid === "first.md") {
+          // First call: return a deferred promise that we control
+          return new Promise<BacklinkEntry[]>((resolve) => {
+            firstCallResolve = resolve;
+          });
+        }
+        if (pid === "second.md") {
+          // Second call: resolve immediately
+          return [makeEntry({ source_title: "ForSecond" })];
+        }
+        return [];
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    const { rerender } = render(<BacklinksPanel pageId="first.md" />);
+
+    // Immediately rerender with a different pageId before first fetch resolves
+    rerender(<BacklinksPanel pageId="second.md" />);
+
+    // Wait for the second (immediate) fetch to populate the DOM
+    await waitFor(() => {
+      expect(screen.getByText("ForSecond")).toBeInTheDocument();
+    });
+
+    // Now resolve the first (stale) fetch
+    await act(async () => {
+      firstCallResolve!([makeEntry({ source_title: "ForFirst" })]);
+    });
+
+    // The stale result should NOT appear — ForSecond should remain
+    expect(screen.queryByText("ForFirst")).not.toBeInTheDocument();
+    expect(screen.getByText("ForSecond")).toBeInTheDocument();
+  });
+
+  it("skips IPC on graph-updated when active=false and refetches when active becomes true", async () => {
+    let callCount = 0;
+    mockInvoke((cmd) => {
+      if (cmd === "get_backlinks") {
+        callCount++;
+        return [makeEntry({ source_title: `Call${callCount}` })];
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    const { rerender } = render(<BacklinksPanel pageId="target.md" active={false} />);
+
+    // Wait for initial mount fetch
+    await waitFor(() => {
+      expect(callCount).toBe(1);
+    });
+
+    // Fire graph-updated while inactive — should NOT trigger another fetch
+    act(() => {
+      emitMockEvent("lit:graph-updated", {});
+    });
+
+    // Give time for any async call to fire
+    await act(async () => {});
+    expect(callCount).toBe(1);
+
+    // Now activate — should trigger stale refetch
+    rerender(<BacklinksPanel pageId="target.md" active={true} />);
+
+    await waitFor(() => {
+      expect(callCount).toBe(2);
+    });
+  });
+
   it("refetches when pageId changes", async () => {
     mockInvoke((cmd, args) => {
       if (cmd === "get_backlinks") {

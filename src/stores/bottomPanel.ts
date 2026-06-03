@@ -1,7 +1,20 @@
 import { create } from "zustand";
 import { useLlmResponseStore } from "./llmResponse";
 
-export type TabId = "linked" | "unlinked" | "annotations" | "llm-response";
+export type TabId = "linked" | "unlinked" | "outgoing" | "annotations" | "llm-response";
+
+export type TabMeta = { count: number | null; hasOpened: boolean };
+export type TabMetaMap = Record<TabId, TabMeta>;
+
+export function defaultTabMeta(): TabMetaMap {
+  return {
+    linked: { count: null, hasOpened: true },
+    unlinked: { count: null, hasOpened: false },
+    outgoing: { count: null, hasOpened: false },
+    annotations: { count: 0, hasOpened: false },
+    "llm-response": { count: null, hasOpened: false },
+  };
+}
 
 const DEFAULT_PANEL_HEIGHT = 200;
 const MIN_PANEL_HEIGHT = 100;
@@ -32,19 +45,13 @@ export interface BottomPanelState {
   unfolded: boolean;
   panelHeight: number;
   panelWidth: number;
-  linkedCount: number | null;
-  unlinkedCount: number | null;
-  annotationCount: number;
-  hasOpenedUnlinked: boolean;
-  hasOpenedAnnotations: boolean;
-  hasOpenedLlm: boolean;
+  tabMeta: TabMetaMap;
   handleTabClick: (tab: TabId) => void;
   setUnfolded: (v: boolean) => void;
   setPanelHeight: (h: number) => void;
   setPanelWidth: (w: number) => void;
-  setLinkedCount: (v: number | null) => void;
-  setUnlinkedCount: (v: number | null) => void;
-  setAnnotationCount: (v: number) => void;
+  setTabCount: (tab: TabId, count: number | null) => void;
+  markOpened: (tab: TabId) => void;
   resetForPage: () => void;
 }
 
@@ -53,38 +60,25 @@ export const useBottomPanelStore = create<BottomPanelState>((set, get) => ({
   unfolded: false,
   panelHeight: loadPanelHeight(),
   panelWidth: loadPanelWidth(),
-  linkedCount: null,
-  unlinkedCount: null,
-  annotationCount: 0,
-  hasOpenedUnlinked: false,
-  hasOpenedAnnotations: false,
-  hasOpenedLlm: false,
+  tabMeta: defaultTabMeta(),
 
   handleTabClick: (tab: TabId) => {
-    const { unfolded, activeTab } = get();
-    const updates: Partial<BottomPanelState> = {};
-    if (tab === "unlinked") updates.hasOpenedUnlinked = true;
-    if (tab === "annotations") updates.hasOpenedAnnotations = true;
-    if (tab === "llm-response") updates.hasOpenedLlm = true;
+    const { unfolded, activeTab, tabMeta: prev } = get();
+    const tabMeta = { ...prev, [tab]: { ...prev[tab], hasOpened: true } };
     if (!unfolded) {
-      updates.activeTab = tab;
-      updates.unfolded = true;
+      set({ activeTab: tab, unfolded: true, tabMeta });
     } else if (activeTab === tab) {
-      updates.unfolded = false;
+      set({ unfolded: false, tabMeta });
     } else {
-      updates.activeTab = tab;
+      set({ activeTab: tab, tabMeta });
     }
-    set(updates);
   },
 
   setUnfolded: (v: boolean) => {
     if (v) {
-      const { activeTab } = get();
-      const updates: Partial<BottomPanelState> = { unfolded: true };
-      if (activeTab === "llm-response") updates.hasOpenedLlm = true;
-      else if (activeTab === "unlinked") updates.hasOpenedUnlinked = true;
-      else if (activeTab === "annotations") updates.hasOpenedAnnotations = true;
-      set(updates);
+      const { activeTab, tabMeta: prev } = get();
+      const tabMeta = { ...prev, [activeTab]: { ...prev[activeTab], hasOpened: true } };
+      set({ unfolded: true, tabMeta });
     } else {
       set({ unfolded: false });
     }
@@ -102,22 +96,34 @@ export const useBottomPanelStore = create<BottomPanelState>((set, get) => ({
     localStorage.setItem(WIDTH_STORAGE_KEY, String(clamped));
   },
 
-  setLinkedCount: (v: number | null) => set({ linkedCount: v }),
-  setUnlinkedCount: (v: number | null) => set({ unlinkedCount: v }),
-  setAnnotationCount: (v: number) => set({ annotationCount: v }),
+  setTabCount: (tab: TabId, count: number | null) =>
+    set((s) => ({ tabMeta: { ...s.tabMeta, [tab]: { ...s.tabMeta[tab], count } } })),
+
+  markOpened: (tab: TabId) =>
+    set((s) => ({ tabMeta: { ...s.tabMeta, [tab]: { ...s.tabMeta[tab], hasOpened: true } } })),
 
   resetForPage: () => {
-    const { activeTab, unfolded } = get();
+    const { activeTab, unfolded, tabMeta: prev } = get();
     const llmActive = useLlmResponseStore.getState().status !== "idle";
-    set({
-      unfolded: false,
-      linkedCount: null,
-      unlinkedCount: null,
-      annotationCount: 0,
-      hasOpenedAnnotations: false,
-      hasOpenedLlm: llmActive ? get().hasOpenedLlm : false,
-      hasOpenedUnlinked: activeTab === "unlinked" && unfolded ? true : false,
-    });
+
+    const tabMeta: TabMetaMap = {
+      linked: { count: null, hasOpened: true },
+      unlinked: {
+        count: null,
+        hasOpened: activeTab === "unlinked" && unfolded,
+      },
+      outgoing: {
+        count: null,
+        hasOpened: activeTab === "outgoing" && unfolded,
+      },
+      annotations: { count: 0, hasOpened: false },
+      "llm-response": {
+        count: prev["llm-response"].count,
+        hasOpened: llmActive ? prev["llm-response"].hasOpened : false,
+      },
+    };
+
+    set({ unfolded: false, tabMeta });
   },
 }));
 

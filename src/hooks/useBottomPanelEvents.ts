@@ -33,11 +33,11 @@ export function useBottomPanelEvents() {
     const handler = () => {
       const view = getCurrentEditorView();
       if (!view) {
-        useBottomPanelStore.getState().setAnnotationCount(0);
+        useBottomPanelStore.getState().setTabCount("annotations", 0);
         return;
       }
       const data = view.state.field(annotationDataField, false);
-      useBottomPanelStore.getState().setAnnotationCount(data ? data.length : 0);
+      useBottomPanelStore.getState().setTabCount("annotations", data ? data.length : 0);
     };
     window.addEventListener("lit:annotations-changed", handler);
     return () => window.removeEventListener("lit:annotations-changed", handler);
@@ -47,10 +47,11 @@ export function useBottomPanelEvents() {
   useEffect(() => {
     const handler = () => {
       const { annotationEnabled } = usePreferencesStore.getState();
-      const { annotationCount } = useBottomPanelStore.getState();
+      const store = useBottomPanelStore.getState();
+      const annotationCount = store.tabMeta.annotations.count ?? 0;
       if (annotationEnabled && annotationCount > 0) {
+        store.markOpened("annotations");
         useBottomPanelStore.setState({
-          hasOpenedAnnotations: true,
           activeTab: "annotations",
           unfolded: true,
         });
@@ -65,12 +66,13 @@ export function useBottomPanelEvents() {
     const handler = () => {
       const { annotationEnabled } = usePreferencesStore.getState();
       const store = useBottomPanelStore.getState();
-      if (!annotationEnabled || store.annotationCount === 0) return;
+      const annotationCount = store.tabMeta.annotations.count ?? 0;
+      if (!annotationEnabled || annotationCount === 0) return;
       if (store.unfolded && store.activeTab === "annotations") {
         store.setUnfolded(false);
       } else {
+        store.markOpened("annotations");
         useBottomPanelStore.setState({
-          hasOpenedAnnotations: true,
           activeTab: "annotations",
           unfolded: true,
         });
@@ -88,9 +90,10 @@ export function useBottomPanelEvents() {
       if (prev === state.annotationDisplayMode) return;
 
       const store = useBottomPanelStore.getState();
-      if (state.annotationEnabled && state.annotationDisplayMode === "footnote" && store.annotationCount > 0) {
+      const annotationCount = store.tabMeta.annotations.count ?? 0;
+      if (state.annotationEnabled && state.annotationDisplayMode === "footnote" && annotationCount > 0) {
+        store.markOpened("annotations");
         useBottomPanelStore.setState({
-          hasOpenedAnnotations: true,
           activeTab: "annotations",
           unfolded: true,
         });
@@ -116,7 +119,8 @@ export function useBottomPanelEvents() {
   // Annotation count → fall back to linked when annotations disappear
   useEffect(() => {
     return useBottomPanelStore.subscribe((state) => {
-      if (state.annotationCount === 0 && state.activeTab === "annotations") {
+      const annotationCount = state.tabMeta.annotations.count ?? 0;
+      if (annotationCount === 0 && state.activeTab === "annotations") {
         useBottomPanelStore.setState({ activeTab: "linked" });
       }
     });

@@ -11,7 +11,7 @@ import {
 import { usePreferencesStore } from "../stores/preferences";
 import { usePaneStore, createInitialState, collectLeaves, type PaneSplit, type PaneLeaf, type PaneNode } from "../stores/panes";
 import { registerPaneView, _resetForTesting as resetEditorViewRef } from "../lib/editorViewRef";
-import { useBottomPanelStore } from "../stores/bottomPanel";
+import { useBottomPanelStore, defaultTabMeta } from "../stores/bottomPanel";
 import type { EditorView } from "@codemirror/view";
 
 function makeTwoLeafState(): { root: PaneNode; focusedPaneId: string } {
@@ -33,7 +33,7 @@ describe("useKeymaps", () => {
     resetEditorViewRef();
     document.body.innerHTML = "";
     usePaneStore.setState(createInitialState());
-    useBottomPanelStore.setState({ activeTab: "linked", unfolded: false, hasOpenedLlm: false });
+    useBottomPanelStore.setState({ activeTab: "linked", unfolded: false, tabMeta: defaultTabMeta() });
     mockInvoke((cmd) => {
       if (cmd === "get_keymaps") {
         return [
@@ -506,7 +506,7 @@ describe("useKeymaps", () => {
     const state = useBottomPanelStore.getState();
     expect(state.activeTab).toBe("llm-response");
     expect(state.unfolded).toBe(true);
-    expect(state.hasOpenedLlm).toBe(true);
+    expect(state.tabMeta["llm-response"].hasOpened).toBe(true);
   });
 
   it("executing app.askQuestion toggles LLM tab closed when already open", async () => {

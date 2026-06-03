@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   useBottomPanelStore,
+  defaultTabMeta,
   DEFAULT_PANEL_HEIGHT,
   DEFAULT_PANEL_WIDTH,
   WIDTH_STORAGE_KEY,
@@ -15,39 +16,76 @@ describe("bottomPanel setUnfolded", () => {
     useBottomPanelStore.setState({
       activeTab: "linked",
       unfolded: false,
-      linkedCount: null,
-      unlinkedCount: null,
-      annotationCount: 0,
-      hasOpenedUnlinked: false,
-      hasOpenedAnnotations: false,
-      hasOpenedLlm: false,
+      tabMeta: defaultTabMeta(),
     });
   });
 
   it("sets hasOpenedLlm when unfolding with llm-response tab active", () => {
-    useBottomPanelStore.setState({ activeTab: "llm-response", hasOpenedLlm: false });
+    useBottomPanelStore.setState({ activeTab: "llm-response" });
     useBottomPanelStore.getState().setUnfolded(true);
-    expect(useBottomPanelStore.getState().hasOpenedLlm).toBe(true);
+    expect(useBottomPanelStore.getState().tabMeta["llm-response"].hasOpened).toBe(true);
     expect(useBottomPanelStore.getState().unfolded).toBe(true);
   });
 
   it("sets hasOpenedUnlinked when unfolding with unlinked tab active", () => {
-    useBottomPanelStore.setState({ activeTab: "unlinked", hasOpenedUnlinked: false });
+    useBottomPanelStore.setState({ activeTab: "unlinked" });
     useBottomPanelStore.getState().setUnfolded(true);
-    expect(useBottomPanelStore.getState().hasOpenedUnlinked).toBe(true);
+    expect(useBottomPanelStore.getState().tabMeta.unlinked.hasOpened).toBe(true);
   });
 
   it("sets hasOpenedAnnotations when unfolding with annotations tab active", () => {
-    useBottomPanelStore.setState({ activeTab: "annotations", hasOpenedAnnotations: false });
+    useBottomPanelStore.setState({ activeTab: "annotations" });
     useBottomPanelStore.getState().setUnfolded(true);
-    expect(useBottomPanelStore.getState().hasOpenedAnnotations).toBe(true);
+    expect(useBottomPanelStore.getState().tabMeta.annotations.hasOpened).toBe(true);
+  });
+
+  it("sets hasOpenedOutgoing when unfolding with outgoing tab active", () => {
+    useBottomPanelStore.setState({ activeTab: "outgoing" });
+    useBottomPanelStore.getState().setUnfolded(true);
+    expect(useBottomPanelStore.getState().tabMeta.outgoing.hasOpened).toBe(true);
   });
 
   it("does not set hasOpened flags when folding", () => {
-    useBottomPanelStore.setState({ activeTab: "llm-response", unfolded: true, hasOpenedLlm: false });
+    useBottomPanelStore.setState({ activeTab: "llm-response", unfolded: true });
     useBottomPanelStore.getState().setUnfolded(false);
-    expect(useBottomPanelStore.getState().hasOpenedLlm).toBe(false);
+    expect(useBottomPanelStore.getState().tabMeta["llm-response"].hasOpened).toBe(false);
     expect(useBottomPanelStore.getState().unfolded).toBe(false);
+  });
+});
+
+describe("bottomPanel handleTabClick outgoing", () => {
+  beforeEach(() => {
+    useBottomPanelStore.setState({
+      activeTab: "linked",
+      unfolded: false,
+      tabMeta: defaultTabMeta(),
+    });
+  });
+
+  it("sets hasOpenedOutgoing to true", () => {
+    useBottomPanelStore.getState().handleTabClick("outgoing");
+    expect(useBottomPanelStore.getState().tabMeta.outgoing.hasOpened).toBe(true);
+  });
+});
+
+describe("bottomPanel setTabCount outgoing", () => {
+  beforeEach(() => {
+    useBottomPanelStore.setState({
+      activeTab: "linked",
+      unfolded: false,
+      tabMeta: defaultTabMeta(),
+    });
+  });
+
+  it("updates count", () => {
+    useBottomPanelStore.getState().setTabCount("outgoing", 5);
+    expect(useBottomPanelStore.getState().tabMeta.outgoing.count).toBe(5);
+  });
+
+  it("clears count with null", () => {
+    useBottomPanelStore.getState().setTabCount("outgoing", 3);
+    useBottomPanelStore.getState().setTabCount("outgoing", null);
+    expect(useBottomPanelStore.getState().tabMeta.outgoing.count).toBeNull();
   });
 });
 
@@ -56,57 +94,69 @@ describe("bottomPanel resetForPage", () => {
     useBottomPanelStore.setState({
       activeTab: "linked",
       unfolded: false,
-      linkedCount: null,
-      unlinkedCount: null,
-      annotationCount: 0,
-      hasOpenedUnlinked: false,
-      hasOpenedAnnotations: false,
-      hasOpenedLlm: false,
+      tabMeta: defaultTabMeta(),
     });
     useLlmResponseStore.getState().reset();
   });
 
   it("preserves hasOpenedLlm when llmResponse status is streaming", () => {
     useLlmResponseStore.getState().startStream({ question: "q" });
-    useBottomPanelStore.setState({ hasOpenedLlm: true });
+    useBottomPanelStore.getState().markOpened("llm-response");
     useBottomPanelStore.getState().resetForPage();
-    expect(useBottomPanelStore.getState().hasOpenedLlm).toBe(true);
+    expect(useBottomPanelStore.getState().tabMeta["llm-response"].hasOpened).toBe(true);
   });
 
   it("preserves hasOpenedLlm when llmResponse status is done", () => {
     useLlmResponseStore.getState().startStream({ question: "q" });
     useLlmResponseStore.getState().finishStream();
-    useBottomPanelStore.setState({ hasOpenedLlm: true });
+    useBottomPanelStore.getState().markOpened("llm-response");
     useBottomPanelStore.getState().resetForPage();
-    expect(useBottomPanelStore.getState().hasOpenedLlm).toBe(true);
+    expect(useBottomPanelStore.getState().tabMeta["llm-response"].hasOpened).toBe(true);
   });
 
   it("preserves hasOpenedLlm when llmResponse status is error", () => {
     useLlmResponseStore.getState().startStream({ question: "q" });
     useLlmResponseStore.getState().setError("fail");
-    useBottomPanelStore.setState({ hasOpenedLlm: true });
+    useBottomPanelStore.getState().markOpened("llm-response");
     useBottomPanelStore.getState().resetForPage();
-    expect(useBottomPanelStore.getState().hasOpenedLlm).toBe(true);
+    expect(useBottomPanelStore.getState().tabMeta["llm-response"].hasOpened).toBe(true);
   });
 
   it("resets hasOpenedLlm when llmResponse status is idle", () => {
-    useBottomPanelStore.setState({ hasOpenedLlm: true });
+    useBottomPanelStore.getState().markOpened("llm-response");
     useBottomPanelStore.getState().resetForPage();
-    expect(useBottomPanelStore.getState().hasOpenedLlm).toBe(false);
+    expect(useBottomPanelStore.getState().tabMeta["llm-response"].hasOpened).toBe(false);
   });
 
   it("still resets counts and annotations when LLM is streaming", () => {
     useLlmResponseStore.getState().startStream({ question: "q" });
-    useBottomPanelStore.setState({
-      hasOpenedLlm: true,
-      annotationCount: 3,
-      hasOpenedAnnotations: true,
-    });
+    useBottomPanelStore.getState().markOpened("llm-response");
+    useBottomPanelStore.getState().setTabCount("annotations", 3);
+    useBottomPanelStore.getState().markOpened("annotations");
     useBottomPanelStore.getState().resetForPage();
     const s = useBottomPanelStore.getState();
-    expect(s.annotationCount).toBe(0);
-    expect(s.hasOpenedAnnotations).toBe(false);
-    expect(s.hasOpenedLlm).toBe(true);
+    expect(s.tabMeta.annotations.count).toBe(0);
+    expect(s.tabMeta.annotations.hasOpened).toBe(false);
+    expect(s.tabMeta["llm-response"].hasOpened).toBe(true);
+  });
+
+  it("resets outgoingCount to null", () => {
+    useBottomPanelStore.getState().setTabCount("outgoing", 7);
+    useBottomPanelStore.getState().resetForPage();
+    expect(useBottomPanelStore.getState().tabMeta.outgoing.count).toBeNull();
+  });
+
+  it("resets hasOpenedOutgoing to false when not active+unfolded", () => {
+    useBottomPanelStore.setState({ activeTab: "linked", unfolded: true });
+    useBottomPanelStore.getState().markOpened("outgoing");
+    useBottomPanelStore.getState().resetForPage();
+    expect(useBottomPanelStore.getState().tabMeta.outgoing.hasOpened).toBe(false);
+  });
+
+  it("preserves hasOpenedOutgoing when outgoing is active and unfolded", () => {
+    useBottomPanelStore.setState({ activeTab: "outgoing", unfolded: true });
+    useBottomPanelStore.getState().resetForPage();
+    expect(useBottomPanelStore.getState().tabMeta.outgoing.hasOpened).toBe(true);
   });
 });
 

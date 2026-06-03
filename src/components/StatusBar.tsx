@@ -24,9 +24,10 @@ function BottomPanelTabs() {
 
   const activeTab = useBottomPanelStore((s) => s.activeTab);
   const unfolded = useBottomPanelStore((s) => s.unfolded);
-  const linkedCount = useBottomPanelStore((s) => s.linkedCount);
-  const unlinkedCount = useBottomPanelStore((s) => s.unlinkedCount);
-  const annotationCount = useBottomPanelStore((s) => s.annotationCount);
+  const linkedCount = useBottomPanelStore((s) => s.tabMeta.linked.count);
+  const unlinkedCount = useBottomPanelStore((s) => s.tabMeta.unlinked.count);
+  const outgoingCount = useBottomPanelStore((s) => s.tabMeta.outgoing.count);
+  const annotationCount = useBottomPanelStore((s) => s.tabMeta.annotations.count);
   const handleTabClick = useBottomPanelStore((s) => s.handleTabClick);
 
   const experimentalUnlinkedReferences = usePreferencesStore(
@@ -45,6 +46,14 @@ function BottomPanelTabs() {
             unfolded={unfolded}
             onClick={handleTabClick}
           />
+          <TabButton
+            tab="outgoing"
+            label="Outgoing Links"
+            count={outgoingCount}
+            active={activeTab === "outgoing"}
+            unfolded={unfolded}
+            onClick={handleTabClick}
+          />
           {experimentalUnlinkedReferences && (
             <TabButton
               tab="unlinked"
@@ -55,7 +64,7 @@ function BottomPanelTabs() {
               onClick={handleTabClick}
             />
           )}
-          {annotationEnabled && annotationCount > 0 && (
+          {annotationEnabled && annotationCount != null && annotationCount > 0 && (
             <TabButton
               tab="annotations"
               label="Annotations"

@@ -6,7 +6,7 @@ import { StatusBar } from "./StatusBar";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePaneStore } from "../stores/panes";
 import { useCursorInfoStore } from "../stores/cursorInfo";
-import { useBottomPanelStore } from "../stores/bottomPanel";
+import { useBottomPanelStore, defaultTabMeta } from "../stores/bottomPanel";
 import { usePreferencesStore } from "../stores/preferences";
 import { useLlmResponseStore } from "../stores/llmResponse";
 import { useStatusMessageStore } from "../stores/statusMessage";
@@ -26,11 +26,7 @@ beforeEach(() => {
     activeTab: "linked",
     unfolded: false,
     panelHeight: 200,
-    linkedCount: null,
-    unlinkedCount: null,
-    annotationCount: 0,
-    hasOpenedUnlinked: false,
-    hasOpenedAnnotations: false,
+    tabMeta: defaultTabMeta(),
   });
   usePreferencesStore.setState({
     experimentalUnlinkedReferences: true,
@@ -225,6 +221,7 @@ describe("StatusBar", () => {
       render(<StatusBar />);
       expect(screen.getByTestId("bottom-panel-tabs")).toBeInTheDocument();
       expect(screen.queryByTestId("tab-linked")).toBeNull();
+      expect(screen.queryByTestId("tab-outgoing")).toBeNull();
       expect(screen.queryByTestId("tab-unlinked")).toBeNull();
       expect(screen.queryByTestId("tab-annotations")).toBeNull();
       expect(screen.getByTestId("tab-llm-response")).toBeInTheDocument();
@@ -264,7 +261,7 @@ describe("StatusBar", () => {
         root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
         focusedPaneId: "p1",
       });
-      useBottomPanelStore.setState({ linkedCount: 3 });
+      useBottomPanelStore.setState({ tabMeta: { ...defaultTabMeta(), linked: { count: 3, hasOpened: true } } });
       render(<StatusBar />);
       expect(screen.getByTestId("tab-linked")).toHaveTextContent("Linked References (3)");
     });
@@ -287,7 +284,7 @@ describe("StatusBar", () => {
         root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
         focusedPaneId: "p1",
       });
-      useBottomPanelStore.setState({ annotationCount: 5 });
+      useBottomPanelStore.setState({ tabMeta: { ...defaultTabMeta(), annotations: { count: 5, hasOpened: false } } });
       usePreferencesStore.setState({ annotationEnabled: false });
       render(<StatusBar />);
       expect(screen.queryByTestId("tab-annotations")).toBeNull();
@@ -300,7 +297,7 @@ describe("StatusBar", () => {
         focusedPaneId: "p1",
       });
       usePreferencesStore.setState({ annotationEnabled: true });
-      useBottomPanelStore.setState({ annotationCount: 0 });
+      useBottomPanelStore.setState({ tabMeta: { ...defaultTabMeta(), annotations: { count: 0, hasOpened: false } } });
       render(<StatusBar />);
       expect(screen.queryByTestId("tab-annotations")).toBeNull();
     });
@@ -312,7 +309,7 @@ describe("StatusBar", () => {
         focusedPaneId: "p1",
       });
       usePreferencesStore.setState({ annotationEnabled: true });
-      useBottomPanelStore.setState({ annotationCount: 2 });
+      useBottomPanelStore.setState({ tabMeta: { ...defaultTabMeta(), annotations: { count: 2, hasOpened: false } } });
       render(<StatusBar />);
       expect(screen.getByTestId("tab-annotations")).toHaveTextContent("Annotations (2)");
     });
@@ -324,7 +321,7 @@ describe("StatusBar", () => {
         focusedPaneId: "p1",
       });
       useCursorInfoStore.setState({ line: 5, col: 10 });
-      useBottomPanelStore.setState({ linkedCount: 1 });
+      useBottomPanelStore.setState({ tabMeta: { ...defaultTabMeta(), linked: { count: 1, hasOpened: true } } });
       render(<StatusBar />);
 
       const statusBar = screen.getByTestId("status-bar");
@@ -380,7 +377,7 @@ describe("StatusBar", () => {
         root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
         focusedPaneId: "p1",
       });
-      useBottomPanelStore.setState({ hasOpenedLlm: false });
+      useBottomPanelStore.setState({ tabMeta: { ...defaultTabMeta(), "llm-response": { count: null, hasOpened: false } } });
       render(<StatusBar />);
       expect(screen.getByTestId("tab-llm-response")).toBeInTheDocument();
     });
@@ -397,7 +394,62 @@ describe("StatusBar", () => {
       const state = useBottomPanelStore.getState();
       expect(state.activeTab).toBe("llm-response");
       expect(state.unfolded).toBe(true);
-      expect(state.hasOpenedLlm).toBe(true);
+      expect(state.tabMeta["llm-response"].hasOpened).toBe(true);
+    });
+
+    it("shows outgoing links tab when page is open", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
+        focusedPaneId: "p1",
+      });
+      render(<StatusBar />);
+      expect(screen.getByTestId("tab-outgoing")).toBeInTheDocument();
+      expect(screen.getByTestId("tab-outgoing")).toHaveTextContent("Outgoing Links");
+    });
+
+    it("shows count in outgoing links button text when outgoingCount is set", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
+        focusedPaneId: "p1",
+      });
+      useBottomPanelStore.setState({ tabMeta: { ...defaultTabMeta(), outgoing: { count: 7, hasOpened: false } } });
+      render(<StatusBar />);
+      expect(screen.getByTestId("tab-outgoing")).toHaveTextContent("Outgoing Links (7)");
+    });
+
+    it("clicking outgoing links tab activates it", async () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
+        focusedPaneId: "p1",
+      });
+      render(<StatusBar />);
+      await userEvent.click(screen.getByTestId("tab-outgoing"));
+      const state = useBottomPanelStore.getState();
+      expect(state.activeTab).toBe("outgoing");
+      expect(state.unfolded).toBe(true);
+      expect(state.tabMeta.outgoing.hasOpened).toBe(true);
+    });
+
+    it("outgoing links tab appears between linked and unlinked tabs", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
+        focusedPaneId: "p1",
+      });
+      usePreferencesStore.setState({ experimentalUnlinkedReferences: true });
+      render(<StatusBar />);
+      const tabs = screen.getByTestId("bottom-panel-tabs");
+      const buttons = Array.from(tabs.querySelectorAll("[data-testid]")).map(
+        (el) => el.getAttribute("data-testid"),
+      );
+      const linkedIdx = buttons.indexOf("tab-linked");
+      const outgoingIdx = buttons.indexOf("tab-outgoing");
+      const unlinkedIdx = buttons.indexOf("tab-unlinked");
+      expect(linkedIdx).toBeLessThan(outgoingIdx);
+      expect(outgoingIdx).toBeLessThan(unlinkedIdx);
     });
   });
 

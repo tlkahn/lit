@@ -19,21 +19,26 @@ interface UnlinkedMentionsPanelProps {
   pageId: string;
   onCountChange?: (count: number) => void;
   contentHeight?: number;
+  active?: boolean;
 }
 
-export function UnlinkedMentionsPanel({ pageId, onCountChange, contentHeight }: UnlinkedMentionsPanelProps) {
+export function UnlinkedMentionsPanel({ pageId, onCountChange, contentHeight, active = true }: UnlinkedMentionsPanelProps) {
   const [entries, setEntries] = useState<UnlinkedMention[]>([]);
   const [loading, setLoading] = useState(true);
   const selectPage = useWorkspaceStore((s) => s.selectPage);
   const pageIdRef = useRef(pageId);
   pageIdRef.current = pageId;
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const staleRef = useRef(false);
 
   const fetchMentions = useCallback(async () => {
     setLoading(true);
     try {
       const result = await getUnlinkedMentions(pageIdRef.current);
       setEntries(result);
-    } catch {
+    } catch (err) {
+      console.warn("Failed to fetch unlinked mentions:", err);
       setEntries([]);
     } finally {
       setLoading(false);
@@ -48,12 +53,23 @@ export function UnlinkedMentionsPanel({ pageId, onCountChange, contentHeight }: 
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     listen("lit:graph-updated", () => {
-      fetchMentions();
+      if (activeRef.current) {
+        fetchMentions();
+      } else {
+        staleRef.current = true;
+      }
     }).then((fn) => {
       if (cancelled) { fn(); } else { unlisten = fn; }
     });
     return () => { cancelled = true; unlisten?.(); };
   }, [fetchMentions]);
+
+  useEffect(() => {
+    if (active && staleRef.current) {
+      staleRef.current = false;
+      fetchMentions();
+    }
+  }, [active, fetchMentions]);
 
   useEffect(() => {
     if (!loading) {
