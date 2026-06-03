@@ -4,7 +4,7 @@ import { getKeymaps } from "../lib/ipc";
 import { resolveKeymaps, type AppBinding } from "../lib/keymapResolver";
 import { registerCommand, registerHandler, hasCommand, executeCommand } from "../lib/commandRegistry";
 import { toggleBold, toggleItalic, insertLink, toggleComment } from "../editor/editorCommands";
-import { selectNextOccurrence } from "@codemirror/search";
+import { selectNextOccurrence, findNext, findPrevious } from "@codemirror/search";
 import { navigateBack, navigateForward } from "../editor/jumpHistory";
 import { openInExternalEditor, setPreference } from "../lib/ipc";
 import { useWorkspaceStore } from "../stores/workspace";
@@ -45,6 +45,8 @@ function ensureCommandsRegistered() {
   registerHandler("editor.navigateBack", (view) => navigateBack(view as EditorView));
   registerHandler("editor.navigateForward", (view) => navigateForward(view as EditorView));
   registerHandler("editor.selectNextOccurrence", (view) => selectNextOccurrence(view as EditorView));
+  registerHandler("editor.findNext", (view) => findNext(view as EditorView));
+  registerHandler("editor.findPrevious", (view) => findPrevious(view as EditorView));
   registerHandler("app.gotoHeading", () => {
     window.dispatchEvent(new CustomEvent("lit:toggle-quick-switcher"));
   });
@@ -85,11 +87,27 @@ function ensureCommandsRegistered() {
     },
   });
   registerCommand({
+    id: "app.showEditorView",
+    label: "Show Editor View",
+    keywords: ["editor", "text", "write"],
+    action: () => {
+      window.dispatchEvent(new CustomEvent("lit:set-view-mode", { detail: "editor" }));
+    },
+  });
+  registerCommand({
+    id: "app.showMindmapView",
+    label: "Show Mindmap View",
+    keywords: ["mindmap", "tree", "outline"],
+    action: () => {
+      window.dispatchEvent(new CustomEvent("lit:set-view-mode", { detail: "mindmap" }));
+    },
+  });
+  registerCommand({
     id: "app.showGraphView",
     label: "Show Graph View",
     keywords: ["graph", "network", "visualize"],
     action: () => {
-      window.dispatchEvent(new CustomEvent("lit:toggle-graph-view"));
+      window.dispatchEvent(new CustomEvent("lit:set-view-mode", { detail: "graph" }));
     },
   });
   registerCommand({

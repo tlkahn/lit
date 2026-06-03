@@ -265,15 +265,25 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
   }, [viewMode, headingTree]);
 
   useEffect(() => {
-    const handler = (e: Event) => {
+    const setModeHandler = (e: Event) => {
+      const mode = (e as CustomEvent<string>).detail;
+      if (mode === "editor" || mode === "mindmap" || mode === "graph") {
+        setViewMode(mode);
+      }
+    };
+    const toggleGraphHandler = (e: Event) => {
       const detail = (e as CustomEvent<{ mode?: "local" | "full" }>).detail;
       setViewMode((prev) => (prev === "graph" ? "editor" : "graph"));
       if (detail?.mode) {
         useGraphViewState.getState().setMode(detail.mode);
       }
     };
-    window.addEventListener("lit:toggle-graph-view", handler);
-    return () => window.removeEventListener("lit:toggle-graph-view", handler);
+    window.addEventListener("lit:set-view-mode", setModeHandler);
+    window.addEventListener("lit:toggle-graph-view", toggleGraphHandler);
+    return () => {
+      window.removeEventListener("lit:set-view-mode", setModeHandler);
+      window.removeEventListener("lit:toggle-graph-view", toggleGraphHandler);
+    };
   }, []);
 
   useEffect(() => {
@@ -359,6 +369,7 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
             <button
               onClick={() => setViewMode("editor")}
               aria-label="Editor"
+              title="Editor (⌘1)"
               className={`rounded px-2 py-0.5 text-xs ${viewMode === "editor" ? "bg-interactive-accent text-white" : "text-text-faint hover:text-text-muted"}`}
             >
               Editor
@@ -366,6 +377,7 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
             <button
               onClick={() => setViewMode("mindmap")}
               aria-label="Mindmap"
+              title="Mindmap (⌘2)"
               className={`rounded px-2 py-0.5 text-xs ${viewMode === "mindmap" ? "bg-interactive-accent text-white" : "text-text-faint hover:text-text-muted"}`}
             >
               Mindmap
@@ -373,6 +385,7 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
             <button
               onClick={() => setViewMode("graph")}
               aria-label="Graph"
+              title="Graph (⌘3)"
               className={`rounded px-2 py-0.5 text-xs ${viewMode === "graph" ? "bg-interactive-accent text-white" : "text-text-faint hover:text-text-muted"}`}
             >
               Graph

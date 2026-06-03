@@ -63,10 +63,26 @@ describe("resolveKeymaps", () => {
 });
 
 describe("keymaps/default.json", () => {
-  it("contains Mod-Shift-g binding for app.showGraphView", () => {
+  it("contains Mod-g binding for editor.findNext", () => {
     const entry = defaultKeymaps.find(
       (b: { key: string; command: string }) =>
-        b.key === "Mod-Shift-g" && b.command === "app.showGraphView",
+        b.key === "Mod-g" && b.command === "editor.findNext",
+    );
+    expect(entry).toBeDefined();
+  });
+
+  it("contains Mod-Shift-g binding for editor.findPrevious", () => {
+    const entry = defaultKeymaps.find(
+      (b: { key: string; command: string }) =>
+        b.key === "Mod-Shift-g" && b.command === "editor.findPrevious",
+    );
+    expect(entry).toBeDefined();
+  });
+
+  it("contains Mod-3 binding for app.showGraphView", () => {
+    const entry = defaultKeymaps.find(
+      (b: { key: string; command: string }) =>
+        b.key === "Mod-3" && b.command === "app.showGraphView",
     );
     expect(entry).toBeDefined();
   });

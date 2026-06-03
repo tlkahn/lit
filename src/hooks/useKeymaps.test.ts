@@ -44,7 +44,11 @@ describe("useKeymaps", () => {
           { key: "Mod-Shift-n", command: "app.newPage" },
           { key: "Mod-r", command: "app.gotoHeading" },
           { key: "Mod-Shift-e", command: "editor.openInExternalEditor", when: "editorFocus" },
-          { key: "Mod-Shift-g", command: "app.showGraphView" },
+          { key: "Mod-g", command: "editor.findNext", when: "editorFocus" },
+          { key: "Mod-Shift-g", command: "editor.findPrevious", when: "editorFocus" },
+          { key: "Mod-1", command: "app.showEditorView" },
+          { key: "Mod-2", command: "app.showMindmapView" },
+          { key: "Mod-3", command: "app.showGraphView" },
           { key: "Mod-d", command: "pane.splitRight" },
           { key: "Mod-Shift-d", command: "pane.splitDown" },
           { key: "Mod-Alt-ArrowRight", command: "pane.focusNext" },
@@ -152,31 +156,52 @@ describe("useKeymaps", () => {
     expect(hasCommand("app.showLocalGraph")).toBe(true);
   });
 
-  it("executing app.showGraphView dispatches lit:toggle-graph-view event", async () => {
+  it("executing app.showGraphView dispatches lit:set-view-mode with 'graph'", async () => {
     await loadHook();
     const listener = vi.fn();
-    window.addEventListener("lit:toggle-graph-view", listener);
+    window.addEventListener("lit:set-view-mode", listener);
     executeCommand("app.showGraphView");
-    window.removeEventListener("lit:toggle-graph-view", listener);
+    window.removeEventListener("lit:set-view-mode", listener);
     expect(listener).toHaveBeenCalledTimes(1);
+    expect((listener.mock.calls[0]![0] as CustomEvent).detail).toBe("graph");
   });
 
-  it("Mod-Shift-g keydown dispatches lit:toggle-graph-view", async () => {
+  it("Mod-3 keydown dispatches lit:set-view-mode with 'graph'", async () => {
     const { result } = await loadHook();
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     const listener = vi.fn();
-    window.addEventListener("lit:toggle-graph-view", listener);
+    window.addEventListener("lit:set-view-mode", listener);
 
     const event = new KeyboardEvent("keydown", {
-      key: "g",
+      key: "3",
       ctrlKey: true,
-      shiftKey: true,
     });
     document.dispatchEvent(event);
 
-    window.removeEventListener("lit:toggle-graph-view", listener);
+    window.removeEventListener("lit:set-view-mode", listener);
     expect(listener).toHaveBeenCalledTimes(1);
+    expect((listener.mock.calls[0]![0] as CustomEvent).detail).toBe("graph");
+  });
+
+  it("editor.findNext is registered after ensureCommandsRegistered", async () => {
+    await loadHook();
+    expect(hasCommand("editor.findNext")).toBe(true);
+  });
+
+  it("editor.findPrevious is registered after ensureCommandsRegistered", async () => {
+    await loadHook();
+    expect(hasCommand("editor.findPrevious")).toBe(true);
+  });
+
+  it("app.showEditorView is registered after ensureCommandsRegistered", async () => {
+    await loadHook();
+    expect(hasCommand("app.showEditorView")).toBe(true);
+  });
+
+  it("app.showMindmapView is registered after ensureCommandsRegistered", async () => {
+    await loadHook();
+    expect(hasCommand("app.showMindmapView")).toBe(true);
   });
 
   it("workbench.toggleSideBar is registered after ensureCommandsRegistered", async () => {
