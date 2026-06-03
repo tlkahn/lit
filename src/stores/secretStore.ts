@@ -46,7 +46,6 @@ export const useSecretStoreStore = create<SecretStoreState>((set, get) => ({
       return Promise.resolve();
     }
 
-    // If there's already a pending promise, return it (avoid opening multiple prompts)
     if (state._pendingPromise) {
       return state._pendingPromise;
     }
@@ -56,7 +55,19 @@ export const useSecretStoreStore = create<SecretStoreState>((set, get) => ({
       settler = { resolve, reject };
     });
 
-    set({ _settler: settler!, _pendingPromise: pendingPromise, promptOpen: true });
+    set({ _settler: settler!, _pendingPromise: pendingPromise });
+
+    get().refresh().then(() => {
+      if (get().unlocked) {
+        const s = get()._settler;
+        if (s) {
+          set({ _settler: null, _pendingPromise: null });
+          s.resolve();
+        }
+        return;
+      }
+      set({ promptOpen: true });
+    });
 
     return pendingPromise;
   },

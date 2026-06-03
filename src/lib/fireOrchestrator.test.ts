@@ -12,6 +12,7 @@ import { firingAnnotationsField, annotationThreadKeysField } from "../editor/liv
 vi.mock("./ipc", () => ({
   resolveAnnotationScopeWithMode: vi.fn(async () => null),
   annotationFindUuid: vi.fn(async () => "fake-uuid-123"),
+  secretStoreStatus: vi.fn(async () => ({ exists: true, unlocked: false })),
 }));
 
 vi.mock("./llmClient", () => ({

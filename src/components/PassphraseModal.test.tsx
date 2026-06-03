@@ -1,15 +1,10 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, fireEvent, waitFor, act } from "@testing-library/react";
 import { PassphraseModal } from "./PassphraseModal";
 import { useSecretStoreStore } from "../stores/secretStore";
 import { mockInvoke } from "../test/tauri-mock";
 
-/**
- * Reset the store. When `promptOpen: true` is requested, we call
- * `ensureUnlocked()` so that the internal settler is properly wired up
- * (settleUnlock is a no-op without a settler).
- */
-function resetStore(overrides: Partial<Record<string, unknown>> = {}) {
+async function resetStore(overrides: Partial<Record<string, unknown>> = {}) {
   useSecretStoreStore.getState()._resetSettler();
   useSecretStoreStore.setState({
     exists: false,
@@ -19,15 +14,16 @@ function resetStore(overrides: Partial<Record<string, unknown>> = {}) {
     ...overrides,
   });
   if (overrides.promptOpen) {
-    // Need a settler so settleUnlock works. Reset first, then ensureUnlocked
-    // sets promptOpen + creates the settler.
+    const statusExists = overrides.exists ?? false;
+    mockInvoke((cmd) => {
+      if (cmd === "secret_store_status") return { exists: statusExists, unlocked: false };
+      throw new Error(`Unknown command: ${cmd}`);
+    });
     useSecretStoreStore.setState({ promptOpen: false, unlocked: false });
-    // ensureUnlocked() returns a promise that won't settle until settleUnlock
-    // is called. Catch the rejection so cancel tests don't cause unhandled
-    // rejection errors (settleUnlock(false) rejects this promise).
     useSecretStoreStore.getState().ensureUnlocked().catch(() => {});
-    // Now apply overrides again (ensureUnlocked set promptOpen: true already,
-    // but we may need to set exists, etc.)
+    await vi.waitFor(() => {
+      expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+    });
     useSecretStoreStore.setState({
       ...overrides,
       promptOpen: true,
@@ -36,25 +32,25 @@ function resetStore(overrides: Partial<Record<string, unknown>> = {}) {
 }
 
 describe("PassphraseModal", () => {
-  beforeEach(() => {
-    resetStore();
+  beforeEach(async () => {
+    await resetStore();
   });
 
-  it("renders nothing when promptOpen is false", () => {
-    resetStore({ promptOpen: false });
+  it("renders nothing when promptOpen is false", async () => {
+    await resetStore({ promptOpen: false });
     const { container } = render(<PassphraseModal />);
     expect(container.querySelector("[data-testid='passphrase-modal-dialog']")).toBeNull();
   });
 
-  it("renders dialog when promptOpen is true", () => {
-    resetStore({ promptOpen: true });
+  it("renders dialog when promptOpen is true", async () => {
+    await resetStore({ promptOpen: true });
     const { container } = render(<PassphraseModal />);
     expect(container.querySelector("[data-testid='passphrase-modal-dialog']")).toBeTruthy();
   });
 
   describe("init mode (!exists)", () => {
-    beforeEach(() => {
-      resetStore({ promptOpen: true, exists: false });
+    beforeEach(async () => {
+      await resetStore({ promptOpen: true, exists: false });
     });
 
     it("shows Create Passphrase title", () => {
@@ -184,8 +180,8 @@ describe("PassphraseModal", () => {
   });
 
   describe("unlock mode (exists && !unlocked)", () => {
-    beforeEach(() => {
-      resetStore({ promptOpen: true, exists: true, unlocked: false });
+    beforeEach(async () => {
+      await resetStore({ promptOpen: true, exists: true, unlocked: false });
     });
 
     it("shows Unlock title", () => {
@@ -281,15 +277,15 @@ describe("PassphraseModal", () => {
   });
 
   describe("cancel behavior", () => {
-    it("Escape calls settleUnlock(false)", () => {
-      resetStore({ promptOpen: true, exists: true, unlocked: false });
+    it("Escape calls settleUnlock(false)", async () => {
+      await resetStore({ promptOpen: true, exists: true, unlocked: false });
       render(<PassphraseModal />);
       fireEvent.keyDown(document, { key: "Escape" });
       expect(useSecretStoreStore.getState().promptOpen).toBe(false);
     });
 
-    it("Cancel button calls settleUnlock(false)", () => {
-      resetStore({ promptOpen: true, exists: true, unlocked: false });
+    it("Cancel button calls settleUnlock(false)", async () => {
+      await resetStore({ promptOpen: true, exists: true, unlocked: false });
       const { container } = render(<PassphraseModal />);
       fireEvent.click(container.querySelector("[data-testid='passphrase-modal-cancel']")!);
       expect(useSecretStoreStore.getState().promptOpen).toBe(false);
@@ -297,8 +293,8 @@ describe("PassphraseModal", () => {
   });
 
   describe("reset on open", () => {
-    it("clears fields and error when dialog reopens", () => {
-      resetStore({ promptOpen: true, exists: true, unlocked: false });
+    it("clears fields and error when dialog reopens", async () => {
+      await resetStore({ promptOpen: true, exists: true, unlocked: false });
       const { container, rerender } = render(<PassphraseModal />);
       const passInput = container.querySelector("[data-testid='passphrase-modal-passphrase']") as HTMLInputElement;
       fireEvent.change(passInput, { target: { value: "typed-something" } });

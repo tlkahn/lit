@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useSecretStoreStore } from "./secretStore";
 import { mockInvoke } from "../test/tauri-mock";
 
@@ -118,36 +118,49 @@ describe("secretStore store", () => {
       expect(useSecretStoreStore.getState().promptOpen).toBe(false);
     });
 
-    it("sets promptOpen true when locked", () => {
+    it("sets promptOpen true when locked", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "secret_store_status") return { exists: true, unlocked: false };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
       useSecretStoreStore.setState({ exists: true, unlocked: false });
 
-      // Don't await -- the promise won't resolve until settler is called
       const promise = useSecretStoreStore.getState().ensureUnlocked();
-      expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+      await vi.waitFor(() => {
+        expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+      });
 
-      // Clean up: reject to avoid unhandled promise
       useSecretStoreStore.getState().settleUnlock(false);
       promise.catch(() => {});
     });
 
-    it("opens prompt in init mode when store does not exist yet", () => {
+    it("opens prompt in init mode when store does not exist yet", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "secret_store_status") return { exists: false, unlocked: false };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
       useSecretStoreStore.setState({ exists: false, unlocked: false });
 
-      // Don't await -- the promise won't resolve until settler is called
       const promise = useSecretStoreStore.getState().ensureUnlocked();
-      // Should open the prompt so user can create a passphrase
-      expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+      await vi.waitFor(() => {
+        expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+      });
 
-      // Clean up: reject to avoid unhandled promise
       useSecretStoreStore.getState().settleUnlock(false);
       promise.catch(() => {});
     });
 
     it("resolves when settleUnlock(true) is called in init mode (no store yet)", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "secret_store_status") return { exists: false, unlocked: false };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
       useSecretStoreStore.setState({ exists: false, unlocked: false });
 
       const promise = useSecretStoreStore.getState().ensureUnlocked();
-      expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+      await vi.waitFor(() => {
+        expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+      });
 
       useSecretStoreStore.getState().settleUnlock(true);
 
@@ -156,10 +169,16 @@ describe("secretStore store", () => {
     });
 
     it("rejects when settleUnlock(false) is called in init mode (no store yet)", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "secret_store_status") return { exists: false, unlocked: false };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
       useSecretStoreStore.setState({ exists: false, unlocked: false });
 
       const promise = useSecretStoreStore.getState().ensureUnlocked();
-      expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+      await vi.waitFor(() => {
+        expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+      });
 
       useSecretStoreStore.getState().settleUnlock(false);
 
@@ -168,10 +187,16 @@ describe("secretStore store", () => {
     });
 
     it("resolves when settleUnlock(true) is called", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "secret_store_status") return { exists: true, unlocked: false };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
       useSecretStoreStore.setState({ exists: true, unlocked: false });
 
       const promise = useSecretStoreStore.getState().ensureUnlocked();
-      expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+      await vi.waitFor(() => {
+        expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+      });
 
       useSecretStoreStore.getState().settleUnlock(true);
 
@@ -180,10 +205,16 @@ describe("secretStore store", () => {
     });
 
     it("rejects when settleUnlock(false) is called", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "secret_store_status") return { exists: true, unlocked: false };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
       useSecretStoreStore.setState({ exists: true, unlocked: false });
 
       const promise = useSecretStoreStore.getState().ensureUnlocked();
-      expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+      await vi.waitFor(() => {
+        expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+      });
 
       useSecretStoreStore.getState().settleUnlock(false);
 
@@ -192,6 +223,10 @@ describe("secretStore store", () => {
     });
 
     it("multiple ensureUnlocked calls return the same promise", () => {
+      mockInvoke((cmd) => {
+        if (cmd === "secret_store_status") return { exists: true, unlocked: false };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
       useSecretStoreStore.setState({ exists: true, unlocked: false });
 
       const p1 = useSecretStoreStore.getState().ensureUnlocked();
@@ -205,6 +240,36 @@ describe("secretStore store", () => {
       p2.catch(() => {});
     });
 
+    it("resolves without prompt when refresh reveals already unlocked", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "secret_store_status") return { exists: true, unlocked: true };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      useSecretStoreStore.setState({ exists: false, unlocked: false });
+
+      const promise = useSecretStoreStore.getState().ensureUnlocked();
+      await expect(promise).resolves.toBeUndefined();
+      expect(useSecretStoreStore.getState().promptOpen).toBe(false);
+    });
+
+    it("refresh updates exists before opening prompt so modal shows correct mode", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "secret_store_status") return { exists: true, unlocked: false };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      useSecretStoreStore.setState({ exists: false, unlocked: false });
+
+      const promise = useSecretStoreStore.getState().ensureUnlocked();
+      await vi.waitFor(() => {
+        expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+      });
+
+      expect(useSecretStoreStore.getState().exists).toBe(true);
+
+      useSecretStoreStore.getState().settleUnlock(false);
+      promise.catch(() => {});
+    });
+
     it("settleUnlock with no pending promise is a no-op", () => {
       // Should not throw
       useSecretStoreStore.getState().settleUnlock(true);
@@ -212,25 +277,26 @@ describe("secretStore store", () => {
     });
 
     it("setState with _settler and _pendingPromise null clears pending unlock", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "secret_store_status") return { exists: true, unlocked: false };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
       useSecretStoreStore.setState({ exists: true, unlocked: false });
 
-      // Create a pending promise
       const p1 = useSecretStoreStore.getState().ensureUnlocked();
-      expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+      await vi.waitFor(() => {
+        expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+      });
 
-      // Reset the store state including settler fields via setState
-      // (After the fix, _settler and _pendingPromise are in the store)
       useSecretStoreStore.setState({
         promptOpen: false,
         _settler: null,
         _pendingPromise: null,
       });
 
-      // A subsequent ensureUnlocked should create a FRESH promise, not return p1
       const p2 = useSecretStoreStore.getState().ensureUnlocked();
       expect(p2).not.toBe(p1);
 
-      // Clean up both promises
       useSecretStoreStore.getState().settleUnlock(false);
       p1.catch(() => {});
       p2.catch(() => {});
@@ -246,16 +312,25 @@ describe("secretStore store", () => {
     });
 
     it("after settling, a new ensureUnlocked creates a fresh promise", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "secret_store_status") return { exists: true, unlocked: false };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
       useSecretStoreStore.setState({ exists: true, unlocked: false });
 
       const p1 = useSecretStoreStore.getState().ensureUnlocked();
+      await vi.waitFor(() => {
+        expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+      });
       useSecretStoreStore.getState().settleUnlock(false);
       await p1.catch(() => {});
 
-      // Store still shows unlocked: false, so calling again should create new promise
       const p2 = useSecretStoreStore.getState().ensureUnlocked();
       expect(p2).not.toBe(p1);
 
+      await vi.waitFor(() => {
+        expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+      });
       useSecretStoreStore.getState().settleUnlock(true);
       await expect(p2).resolves.toBeUndefined();
     });

@@ -13,6 +13,7 @@ vi.mock("../lib/ipc", () => ({
   conversationDeleteByAnchor: vi.fn(),
   conversationUpdateTitle: vi.fn(),
   llmBuildContext: vi.fn(),
+  secretStoreStatus: vi.fn(),
   GLOBAL_NODE_ID: "_global",
 }));
 
@@ -32,6 +33,7 @@ import {
   conversationDeleteByAnchor,
   conversationUpdateTitle,
   llmBuildContext,
+  secretStoreStatus,
   GLOBAL_NODE_ID,
 } from "../lib/ipc";
 import type { ConversationRow, MessageRow, Annotation } from "../lib/ipc";
@@ -55,6 +57,7 @@ const mockedConversationFindByAnchor = conversationFindByAnchor as ReturnType<ty
 const mockedConversationDeleteByAnchor = conversationDeleteByAnchor as ReturnType<typeof vi.fn>;
 const mockedConversationUpdateTitle = conversationUpdateTitle as ReturnType<typeof vi.fn>;
 const mockedLlmBuildContext = llmBuildContext as ReturnType<typeof vi.fn>;
+const mockedSecretStoreStatus = secretStoreStatus as ReturnType<typeof vi.fn>;
 
 const FAKE_UUID = "00000000-0000-0000-0000-000000000001";
 
@@ -102,6 +105,7 @@ describe("conversation store", () => {
     useSecretStoreStore.getState()._resetSettler();
     vi.clearAllMocks();
     mockedConversationUpdateTitle.mockResolvedValue(undefined);
+    mockedSecretStoreStatus.mockResolvedValue({ exists: true, unlocked: false });
   });
 
   it("initial state has null activeConversationId, empty arrays, null error", () => {
