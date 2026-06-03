@@ -373,6 +373,7 @@ export function useKeymaps(): {
           if (binding.when === "editorFocus" && getCurrentEditorView() == null) continue;
           if (binding.when === "!editorFocus" && getCurrentEditorView() != null) continue;
           e.preventDefault();
+          e.stopImmediatePropagation();
           executeCommand(binding.command);
           return;
         }

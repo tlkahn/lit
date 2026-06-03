@@ -1106,4 +1106,28 @@ describe("useKeymaps", () => {
     executeCommand("pane.focusContentNext");
     expect(usePaneStore.getState().focusedPaneId).toBe(initialLeaf.id);
   });
+
+  it("fires a toggle command only once when two hook instances are mounted", async () => {
+    const { useKeymaps } = await import("./useKeymaps");
+    const hook1 = renderHook(() => useKeymaps());
+    const hook2 = renderHook(() => useKeymaps());
+    await waitFor(() => expect(hook1.result.current.loading).toBe(false));
+    await waitFor(() => expect(hook2.result.current.loading).toBe(false));
+
+    const listener = vi.fn();
+    window.addEventListener("lit:toggle-bottom-panel", listener);
+
+    const event = new KeyboardEvent("keydown", {
+      key: "`",
+      ctrlKey: true,
+      bubbles: true,
+    });
+    document.dispatchEvent(event);
+
+    window.removeEventListener("lit:toggle-bottom-panel", listener);
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    hook1.unmount();
+    hook2.unmount();
+  });
 });
