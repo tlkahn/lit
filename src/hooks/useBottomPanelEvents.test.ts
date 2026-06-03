@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { useBottomPanelEvents } from "./useBottomPanelEvents";
-import { useBottomPanelStore } from "../stores/bottomPanel";
+import { useBottomPanelStore, defaultTabMeta } from "../stores/bottomPanel";
 import { usePreferencesStore } from "../stores/preferences";
 import { usePaneStore } from "../stores/panes";
 import { EditorState } from "@codemirror/state";
@@ -53,13 +53,7 @@ beforeEach(() => {
     activeTab: "linked",
     unfolded: false,
     panelHeight: 200,
-    linkedCount: null,
-    unlinkedCount: null,
-    outgoingCount: null,
-    annotationCount: 0,
-    hasOpenedUnlinked: false,
-    hasOpenedOutgoing: false,
-    hasOpenedAnnotations: false,
+    tabMeta: defaultTabMeta(),
   });
   usePreferencesStore.setState({
     experimentalUnlinkedReferences: true,
@@ -133,24 +127,24 @@ describe("useBottomPanelEvents", () => {
         window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
       });
 
-      expect(useBottomPanelStore.getState().annotationCount).toBe(2);
+      expect(useBottomPanelStore.getState().tabMeta.annotations.count).toBe(2);
     });
 
     it("sets annotationCount to 0 when no editor view", () => {
-      useBottomPanelStore.setState({ annotationCount: 5 });
+      useBottomPanelStore.getState().setTabCount("annotations", 5);
       renderHook(() => useBottomPanelEvents());
 
       act(() => {
         window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
       });
 
-      expect(useBottomPanelStore.getState().annotationCount).toBe(0);
+      expect(useBottomPanelStore.getState().tabMeta.annotations.count).toBe(0);
     });
   });
 
   describe("lit:show-annotation", () => {
     it("opens annotations tab when annotationEnabled and annotations exist", () => {
-      useBottomPanelStore.setState({ annotationCount: 3 });
+      useBottomPanelStore.getState().setTabCount("annotations", 3);
       renderHook(() => useBottomPanelEvents());
 
       act(() => {
@@ -158,14 +152,14 @@ describe("useBottomPanelEvents", () => {
       });
 
       const state = useBottomPanelStore.getState();
-      expect(state.hasOpenedAnnotations).toBe(true);
+      expect(state.tabMeta.annotations.hasOpened).toBe(true);
       expect(state.activeTab).toBe("annotations");
       expect(state.unfolded).toBe(true);
     });
 
     it("does nothing when annotationEnabled is false", () => {
       usePreferencesStore.setState({ annotationEnabled: false });
-      useBottomPanelStore.setState({ annotationCount: 3 });
+      useBottomPanelStore.getState().setTabCount("annotations", 3);
       renderHook(() => useBottomPanelEvents());
 
       act(() => {
@@ -192,7 +186,7 @@ describe("useBottomPanelEvents", () => {
 
   describe("lit:toggle-annotation-panel", () => {
     it("opens annotations tab when folded", () => {
-      useBottomPanelStore.setState({ annotationCount: 2 });
+      useBottomPanelStore.getState().setTabCount("annotations", 2);
       renderHook(() => useBottomPanelEvents());
 
       act(() => {
@@ -200,14 +194,14 @@ describe("useBottomPanelEvents", () => {
       });
 
       const state = useBottomPanelStore.getState();
-      expect(state.hasOpenedAnnotations).toBe(true);
+      expect(state.tabMeta.annotations.hasOpened).toBe(true);
       expect(state.activeTab).toBe("annotations");
       expect(state.unfolded).toBe(true);
     });
 
     it("folds when already on annotations tab and unfolded", () => {
+      useBottomPanelStore.getState().setTabCount("annotations", 2);
       useBottomPanelStore.setState({
-        annotationCount: 2,
         activeTab: "annotations",
         unfolded: true,
       });
@@ -221,8 +215,8 @@ describe("useBottomPanelEvents", () => {
     });
 
     it("switches to annotations tab when on different tab and unfolded", () => {
+      useBottomPanelStore.getState().setTabCount("annotations", 2);
       useBottomPanelStore.setState({
-        annotationCount: 2,
         activeTab: "linked",
         unfolded: true,
       });
@@ -235,13 +229,13 @@ describe("useBottomPanelEvents", () => {
       const state = useBottomPanelStore.getState();
       expect(state.activeTab).toBe("annotations");
       expect(state.unfolded).toBe(true);
-      expect(state.hasOpenedAnnotations).toBe(true);
+      expect(state.tabMeta.annotations.hasOpened).toBe(true);
     });
   });
 
   describe("annotation display mode watcher", () => {
     it("shows annotations tab when mode changes to footnote and annotations exist", () => {
-      useBottomPanelStore.setState({ annotationCount: 2 });
+      useBottomPanelStore.getState().setTabCount("annotations", 2);
       renderHook(() => useBottomPanelEvents());
 
       act(() => {
@@ -249,7 +243,7 @@ describe("useBottomPanelEvents", () => {
       });
 
       const state = useBottomPanelStore.getState();
-      expect(state.hasOpenedAnnotations).toBe(true);
+      expect(state.tabMeta.annotations.hasOpened).toBe(true);
       expect(state.activeTab).toBe("annotations");
       expect(state.unfolded).toBe(true);
     });
@@ -257,10 +251,10 @@ describe("useBottomPanelEvents", () => {
     it("folds when mode changes to pill and on annotations tab", () => {
       // Start with footnote mode so the change to pill is detected
       usePreferencesStore.setState({ annotationDisplayMode: "footnote" });
+      useBottomPanelStore.getState().setTabCount("annotations", 2);
       useBottomPanelStore.setState({
         activeTab: "annotations",
         unfolded: true,
-        annotationCount: 2,
       });
       renderHook(() => useBottomPanelEvents());
 
@@ -327,15 +321,15 @@ describe("useBottomPanelEvents", () => {
 
   describe("annotation count fallback", () => {
     it("switches to linked tab when annotationCount drops to 0 while on annotations tab", () => {
+      useBottomPanelStore.getState().setTabCount("annotations", 3);
       useBottomPanelStore.setState({
         activeTab: "annotations",
         unfolded: true,
-        annotationCount: 3,
       });
       renderHook(() => useBottomPanelEvents());
 
       act(() => {
-        useBottomPanelStore.setState({ annotationCount: 0 });
+        useBottomPanelStore.getState().setTabCount("annotations", 0);
       });
 
       expect(useBottomPanelStore.getState().activeTab).toBe("linked");
@@ -344,11 +338,9 @@ describe("useBottomPanelEvents", () => {
 
   describe("page change reset", () => {
     it("calls resetForPage when focused pane page changes", () => {
-      useBottomPanelStore.setState({
-        annotationCount: 5,
-        hasOpenedAnnotations: true,
-        hasOpenedUnlinked: true,
-      });
+      useBottomPanelStore.getState().setTabCount("annotations", 5);
+      useBottomPanelStore.getState().markOpened("annotations");
+      useBottomPanelStore.getState().markOpened("unlinked");
       renderHook(() => useBottomPanelEvents());
 
       // Spy on resetForPage after hook is set up
@@ -368,12 +360,12 @@ describe("useBottomPanelEvents", () => {
 
       expect(spiedReset).toHaveBeenCalled();
       const state = useBottomPanelStore.getState();
-      expect(state.annotationCount).toBe(0);
-      expect(state.hasOpenedAnnotations).toBe(false);
+      expect(state.tabMeta.annotations.count).toBe(0);
+      expect(state.tabMeta.annotations.hasOpened).toBe(false);
     });
 
     it("resets linkedCount to null when focused pane page changes", () => {
-      useBottomPanelStore.setState({ linkedCount: 5 });
+      useBottomPanelStore.getState().setTabCount("linked", 5);
       renderHook(() => useBottomPanelEvents());
 
       act(() => {
@@ -383,7 +375,7 @@ describe("useBottomPanelEvents", () => {
         });
       });
 
-      expect(useBottomPanelStore.getState().linkedCount).toBe(null);
+      expect(useBottomPanelStore.getState().tabMeta.linked.count).toBe(null);
     });
 
     it("folds the panel when focused pane page changes", () => {
@@ -415,7 +407,8 @@ describe("useBottomPanelEvents", () => {
     });
 
     it("stays open when page becomes null and active tab is llm-response", () => {
-      useBottomPanelStore.setState({ unfolded: true, activeTab: "llm-response", hasOpenedLlm: true });
+      useBottomPanelStore.getState().markOpened("llm-response");
+      useBottomPanelStore.setState({ unfolded: true, activeTab: "llm-response" });
       renderHook(() => useBottomPanelEvents());
 
       act(() => {

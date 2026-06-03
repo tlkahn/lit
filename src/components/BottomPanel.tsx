@@ -43,14 +43,15 @@ export function BottomPanel({ pageId, direction = "bottom" }: BottomPanelProps) 
   const unfolded = useBottomPanelStore((s) => s.unfolded);
   const panelHeight = useBottomPanelStore((s) => s.panelHeight);
   const panelWidth = useBottomPanelStore((s) => s.panelWidth);
-  const hasOpenedUnlinked = useBottomPanelStore((s) => s.hasOpenedUnlinked);
-  const hasOpenedOutgoing = useBottomPanelStore((s) => s.hasOpenedOutgoing);
-  const hasOpenedAnnotations = useBottomPanelStore((s) => s.hasOpenedAnnotations);
-  const hasOpenedLlm = useBottomPanelStore((s) => s.hasOpenedLlm);
-  const setLinkedCount = useBottomPanelStore((s) => s.setLinkedCount);
-  const setUnlinkedCount = useBottomPanelStore((s) => s.setUnlinkedCount);
-  const setOutgoingCount = useBottomPanelStore((s) => s.setOutgoingCount);
-  const setAnnotationCount = useBottomPanelStore((s) => s.setAnnotationCount);
+  const hasOpenedUnlinked = useBottomPanelStore((s) => s.tabMeta.unlinked.hasOpened);
+  const hasOpenedOutgoing = useBottomPanelStore((s) => s.tabMeta.outgoing.hasOpened);
+  const hasOpenedAnnotations = useBottomPanelStore((s) => s.tabMeta.annotations.hasOpened);
+  const hasOpenedLlm = useBottomPanelStore((s) => s.tabMeta["llm-response"].hasOpened);
+  const setTabCount = useBottomPanelStore((s) => s.setTabCount);
+  const setLinkedCount = (count: number | null) => setTabCount("linked", count);
+  const setUnlinkedCount = (count: number | null) => setTabCount("unlinked", count);
+  const setOutgoingCount = (count: number | null) => setTabCount("outgoing", count);
+  const setAnnotationCount = (count: number) => setTabCount("annotations", count);
   const setPanelHeight = useBottomPanelStore((s) => s.setPanelHeight);
   const setPanelWidth = useBottomPanelStore((s) => s.setPanelWidth);
 
@@ -125,17 +126,17 @@ export function BottomPanel({ pageId, direction = "bottom" }: BottomPanelProps) 
       >
         {pageId && (
           <div style={tabWrapperStyle("linked")}>
-            <BacklinksPanel pageId={pageId} onCountChange={setLinkedCount} contentHeight={isVertical ? undefined : panelHeight} />
+            <BacklinksPanel pageId={pageId} onCountChange={setLinkedCount} contentHeight={isVertical ? undefined : panelHeight} active={activeTab === "linked"} />
           </div>
         )}
         {pageId && hasOpenedUnlinked && (
           <div style={tabWrapperStyle("unlinked")}>
-            <UnlinkedMentionsPanel pageId={pageId} onCountChange={setUnlinkedCount} contentHeight={isVertical ? undefined : panelHeight} />
+            <UnlinkedMentionsPanel pageId={pageId} onCountChange={setUnlinkedCount} contentHeight={isVertical ? undefined : panelHeight} active={activeTab === "unlinked"} />
           </div>
         )}
         {pageId && hasOpenedOutgoing && (
           <div style={tabWrapperStyle("outgoing")}>
-            <OutgoingLinksPanel pageId={pageId} onCountChange={setOutgoingCount} contentHeight={isVertical ? undefined : panelHeight} />
+            <OutgoingLinksPanel pageId={pageId} onCountChange={setOutgoingCount} contentHeight={isVertical ? undefined : panelHeight} active={activeTab === "outgoing"} />
           </div>
         )}
         {pageId && annotationEnabled && hasOpenedAnnotations && (

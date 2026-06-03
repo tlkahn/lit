@@ -4,7 +4,7 @@ import { BottomPanel } from "./BottomPanel";
 import { getBacklinks, getUnlinkedMentions, getForwardLinks } from "../lib/ipc";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePreferencesStore } from "../stores/preferences";
-import { useBottomPanelStore, MIN_PANEL_WIDTH } from "../stores/bottomPanel";
+import { useBottomPanelStore, MIN_PANEL_WIDTH, defaultTabMeta } from "../stores/bottomPanel";
 import { useLlmResponseStore } from "../stores/llmResponse";
 import { useConversationStore } from "../stores/conversation";
 import { EditorState } from "@codemirror/state";
@@ -81,13 +81,7 @@ beforeEach(() => {
     activeTab: "linked",
     unfolded: false,
     panelHeight: 200,
-    linkedCount: null,
-    unlinkedCount: null,
-    outgoingCount: null,
-    annotationCount: 0,
-    hasOpenedUnlinked: false,
-    hasOpenedOutgoing: false,
-    hasOpenedAnnotations: false,
+    tabMeta: defaultTabMeta(),
   });
   vi.mocked(getBacklinks).mockResolvedValue([]);
   vi.mocked(getUnlinkedMentions).mockResolvedValue([]);
@@ -115,7 +109,7 @@ describe("BottomPanel", () => {
       useBottomPanelStore.setState({
         unfolded: true,
         activeTab: "llm-response",
-        hasOpenedLlm: true,
+        tabMeta: { ...defaultTabMeta(), "llm-response": { count: null, hasOpened: true } },
       });
     });
 
@@ -186,7 +180,7 @@ describe("BottomPanel", () => {
         useBottomPanelStore.setState({
           unfolded: true,
           activeTab: "unlinked",
-          hasOpenedUnlinked: true,
+          tabMeta: { ...defaultTabMeta(), unlinked: { count: null, hasOpened: true } },
         });
       });
 
@@ -205,7 +199,7 @@ describe("BottomPanel", () => {
         useBottomPanelStore.setState({
           unfolded: true,
           activeTab: "outgoing",
-          hasOpenedOutgoing: true,
+          tabMeta: { ...defaultTabMeta(), outgoing: { count: null, hasOpened: true } },
         });
       });
 
@@ -224,7 +218,7 @@ describe("BottomPanel", () => {
         useBottomPanelStore.setState({
           unfolded: true,
           activeTab: "annotations",
-          hasOpenedAnnotations: true,
+          tabMeta: { ...defaultTabMeta(), annotations: { count: 0, hasOpened: true } },
         });
       });
 
@@ -248,7 +242,10 @@ describe("BottomPanel", () => {
       expect(getUnlinkedMentions).not.toHaveBeenCalled();
 
       await act(async () => {
-        useBottomPanelStore.setState({ activeTab: "unlinked", hasOpenedUnlinked: true });
+        useBottomPanelStore.setState({
+          activeTab: "unlinked",
+          tabMeta: { ...defaultTabMeta(), unlinked: { count: null, hasOpened: true } },
+        });
       });
 
       await waitFor(() => {
@@ -270,7 +267,10 @@ describe("BottomPanel", () => {
       expect(getForwardLinks).not.toHaveBeenCalled();
 
       await act(async () => {
-        useBottomPanelStore.setState({ activeTab: "outgoing", hasOpenedOutgoing: true });
+        useBottomPanelStore.setState({
+          activeTab: "outgoing",
+          tabMeta: { ...defaultTabMeta(), outgoing: { count: null, hasOpened: true } },
+        });
       });
 
       await waitFor(() => {
@@ -316,7 +316,7 @@ describe("BottomPanel", () => {
         useBottomPanelStore.setState({
           unfolded: true,
           activeTab: "unlinked",
-          hasOpenedUnlinked: true,
+          tabMeta: { ...defaultTabMeta(), unlinked: { count: null, hasOpened: true } },
         });
       });
       const tabpanel = screen.getByRole("tabpanel");
@@ -345,7 +345,10 @@ describe("BottomPanel", () => {
       });
 
       await act(async () => {
-        useBottomPanelStore.setState({ activeTab: "unlinked", hasOpenedUnlinked: true });
+        useBottomPanelStore.setState({
+          activeTab: "unlinked",
+          tabMeta: { ...defaultTabMeta(), unlinked: { count: null, hasOpened: true } },
+        });
       });
       await waitFor(() => {
         expect(screen.getByTestId("unlinked-scroll-container")).toBeInTheDocument();
@@ -766,7 +769,7 @@ describe("BottomPanel", () => {
       useLlmResponseStore.getState().reset();
     });
 
-    it("renders ConversationPanel when activeTab is llm-response and hasOpenedLlm", async () => {
+    it("renders ConversationPanel when activeTab is llm-response and hasOpened", async () => {
       await act(async () => {
         render(<BottomPanel pageId="target.md" />);
       });
@@ -775,14 +778,14 @@ describe("BottomPanel", () => {
         useBottomPanelStore.setState({
           unfolded: true,
           activeTab: "llm-response",
-          hasOpenedLlm: true,
+          tabMeta: { ...defaultTabMeta(), "llm-response": { count: null, hasOpened: true } },
         });
       });
 
       expect(screen.getByTestId("conversation-panel")).toBeInTheDocument();
     });
 
-    it("does not mount ConversationPanel until hasOpenedLlm is true", async () => {
+    it("does not mount ConversationPanel until hasOpened is true", async () => {
       await act(async () => {
         render(<BottomPanel pageId="target.md" />);
       });
@@ -791,7 +794,7 @@ describe("BottomPanel", () => {
         useBottomPanelStore.setState({
           unfolded: true,
           activeTab: "llm-response",
-          hasOpenedLlm: false,
+          tabMeta: { ...defaultTabMeta(), "llm-response": { count: null, hasOpened: false } },
         });
       });
 
@@ -807,7 +810,7 @@ describe("BottomPanel", () => {
         useBottomPanelStore.setState({
           unfolded: true,
           activeTab: "llm-response",
-          hasOpenedLlm: true,
+          tabMeta: { ...defaultTabMeta(), "llm-response": { count: null, hasOpened: true } },
         });
       });
 
@@ -832,7 +835,7 @@ describe("BottomPanel", () => {
         useBottomPanelStore.setState({
           unfolded: true,
           activeTab: "llm-response",
-          hasOpenedLlm: true,
+          tabMeta: { ...defaultTabMeta(), "llm-response": { count: null, hasOpened: true } },
         });
       });
 
@@ -849,7 +852,7 @@ describe("BottomPanel", () => {
         useBottomPanelStore.setState({
           unfolded: true,
           activeTab: "llm-response",
-          hasOpenedLlm: true,
+          tabMeta: { ...defaultTabMeta(), "llm-response": { count: null, hasOpened: true } },
           panelHeight: 350,
         });
       });

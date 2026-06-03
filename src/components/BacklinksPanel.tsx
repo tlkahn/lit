@@ -3,63 +3,38 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { listen } from "@tauri-apps/api/event";
 import { getBacklinks, type BacklinkEntry } from "../lib/ipc";
 import { useWorkspaceStore } from "../stores/workspace";
-import { getCurrentEditorView } from "../lib/editorViewRef";
-import { globalJumpTracker } from "../editor/jumpTracker";
-
-function highlightWikilinks(text: string): (string | JSX.Element)[] {
-  const parts: (string | JSX.Element)[] = [];
-  const regex = /\[\[[^\]]+\]\]/g;
-  let last = 0;
-  let match: RegExpExecArray | null;
-  let key = 0;
-  while ((match = regex.exec(text)) !== null) {
-    if (match.index > last) {
-      parts.push(text.slice(last, match.index));
-    }
-    parts.push(
-      <span key={key++} className="text-interactive-accent font-medium">
-        {match[0]}
-      </span>,
-    );
-    last = match.index + match[0].length;
-  }
-  if (last < text.length) {
-    parts.push(text.slice(last));
-  }
-  return parts;
-}
+import { highlightWikilinks } from "../lib/highlightWikilinks";
+import { useRecordDeparture } from "../hooks/useRecordDeparture";
 
 interface BacklinksPanelProps {
   pageId: string;
   onCountChange?: (count: number) => void;
   contentHeight?: number;
+  active?: boolean;
 }
 
-export function BacklinksPanel({ pageId, onCountChange, contentHeight }: BacklinksPanelProps) {
+export function BacklinksPanel({ pageId, onCountChange, contentHeight, active = true }: BacklinksPanelProps) {
   const [entries, setEntries] = useState<BacklinkEntry[]>([]);
   const selectPage = useWorkspaceStore((s) => s.selectPage);
   const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
   const graphReady = useWorkspaceStore((s) => s.graphReady);
   const pageIdRef = useRef(pageId);
   pageIdRef.current = pageId;
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const staleRef = useRef(false);
 
-  const recordDeparture = useCallback(() => {
-    const view = getCurrentEditorView();
-    const notePath = pageIdRef.current;
-    if (!view || !notePath) return;
-    const head = view.state.selection.main.head;
-    const line = view.state.doc.lineAt(head);
-    globalJumpTracker.recordJump(
-      { notePath, line: line.number, col: head - line.from },
-      { notePath: "", line: 0, col: 0 },
-    );
-  }, []);
+  const recordDeparture = useRecordDeparture(pageIdRef);
 
   const fetchBacklinks = useCallback(async () => {
+    const capturedId = pageIdRef.current;
     try {
-      const result = await getBacklinks(pageIdRef.current);
+      const result = await getBacklinks(capturedId);
+      if (pageIdRef.current !== capturedId) return;
       setEntries(result);
-    } catch {
+    } catch (err) {
+      if (pageIdRef.current !== capturedId) return;
+      console.warn("Failed to fetch backlinks:", err);
       setEntries([]);
     }
   }, []);
@@ -72,12 +47,23 @@ export function BacklinksPanel({ pageId, onCountChange, contentHeight }: Backlin
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     listen("lit:graph-updated", () => {
-      fetchBacklinks();
+      if (activeRef.current) {
+        fetchBacklinks();
+      } else {
+        staleRef.current = true;
+      }
     }).then((fn) => {
       if (cancelled) { fn(); } else { unlisten = fn; }
     });
     return () => { cancelled = true; unlisten?.(); };
   }, [fetchBacklinks]);
+
+  useEffect(() => {
+    if (active && staleRef.current) {
+      staleRef.current = false;
+      fetchBacklinks();
+    }
+  }, [active, fetchBacklinks]);
 
   useEffect(() => {
     if (graphReady) onCountChange?.(entries.length);
