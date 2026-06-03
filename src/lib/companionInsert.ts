@@ -27,3 +27,16 @@ export function insertCompanionAnnotation(
     },
   });
 }
+
+export function insertCompanionAtCursor(
+  view: EditorView,
+  responseText: string,
+): void {
+  const dsl = buildCompanionDsl(responseText);
+  const pos = view.state.selection.main.to;
+  const prefix = pos === 0 ? "" : "\n\n";
+  view.dispatch({
+    changes: { from: pos, insert: prefix + dsl },
+  });
+  view.focus();
+}

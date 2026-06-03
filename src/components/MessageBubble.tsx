@@ -6,14 +6,13 @@ interface MessageBubbleProps {
   message: MessageRow;
   isLast?: boolean;
   showEditorActions?: boolean;
-  hadSelection?: boolean;
   fireSourceAnnotation?: Annotation | null;
   onEdit?: (seq: number) => void;
   onEditSubmit?: (seq: number, newContent: string) => void;
   onRetry?: () => void;
 }
 
-function MessageBubbleInner({ message, isLast, showEditorActions, hadSelection, fireSourceAnnotation, onEdit, onEditSubmit, onRetry }: MessageBubbleProps) {
+function MessageBubbleInner({ message, isLast, showEditorActions, fireSourceAnnotation, onEdit, onEditSubmit, onRetry }: MessageBubbleProps) {
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState(message.content);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -64,27 +63,13 @@ function MessageBubbleInner({ message, isLast, showEditorActions, hadSelection, 
       )}
       {isAssistant && showEditorActions && (
         <button
-          data-testid={hadSelection ? "message-replace-btn" : "message-insert-btn"}
-          aria-label={hadSelection ? "Replace selection" : "Insert at cursor"}
-          className="text-xs text-muted hover:text-normal px-1"
-          onClick={() => {
-            window.dispatchEvent(
-              new CustomEvent("lit:llm-insert-raw", { detail: { text: message.content } }),
-            );
-          }}
-        >
-          <span className="nerd-font" aria-hidden="true">{hadSelection ? '' : ''}</span>
-        </button>
-      )}
-      {isAssistant && showEditorActions && fireSourceAnnotation && (
-        <button
           data-testid="message-companion-btn"
           aria-label="Insert as companion"
           className="text-xs text-muted hover:text-normal px-1"
           onClick={() => {
             window.dispatchEvent(
               new CustomEvent("lit:insert-companion-annotation", {
-                detail: { sourceAnnotation: fireSourceAnnotation, responseText: message.content },
+                detail: { sourceAnnotation: fireSourceAnnotation ?? null, responseText: message.content },
               }),
             );
           }}

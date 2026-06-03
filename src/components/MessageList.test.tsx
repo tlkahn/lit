@@ -3,7 +3,6 @@ import { render, fireEvent, act } from "@testing-library/react";
 import { MessageList } from "./MessageList";
 import type { MessageRow } from "../lib/ipc";
 import { useLlmResponseStore } from "../stores/llmResponse";
-import { useEditorSelectionStore } from "../stores/editorSelection";
 import * as renderMarkdownModule from "../lib/renderMarkdown";
 
 function makeMessage(overrides: Partial<MessageRow> = {}): MessageRow {
@@ -228,15 +227,13 @@ describe("MessageList", () => {
       <MessageList messages={messages} onEdit={vi.fn()} onEditSubmit={vi.fn()} onRetry={vi.fn()} />,
     );
     const lastAssistant = container.querySelectorAll("[data-testid='message-bubble-assistant']")[0]!;
-    expect(lastAssistant.querySelector("[data-testid='message-insert-btn']")).toBeNull();
-    expect(lastAssistant.querySelector("[data-testid='message-replace-btn']")).toBeNull();
+    expect(lastAssistant.querySelector("[data-testid='message-companion-btn']")).toBeNull();
   });
 
-  it("shows Insert at cursor on latest assistant message when status is done and no editor selection", () => {
+  it("shows companion button on latest assistant message when status is done", () => {
     useLlmResponseStore.getState().startStream({ question: "test" });
     useLlmResponseStore.getState().appendChunk("response");
     useLlmResponseStore.getState().finishStream();
-    useEditorSelectionStore.getState().setSelection(0, 0);
     const messages = [
       makeMessage({ id: 1, seq: 1, role: "user", content: "Q1" }),
       makeMessage({ id: 2, seq: 2, role: "assistant", content: "A1" }),
@@ -245,24 +242,7 @@ describe("MessageList", () => {
       <MessageList messages={messages} onEdit={vi.fn()} onEditSubmit={vi.fn()} onRetry={vi.fn()} />,
     );
     const lastAssistant = container.querySelectorAll("[data-testid='message-bubble-assistant']")[0]!;
-    expect(lastAssistant.querySelector("[data-testid='message-insert-btn']")).toBeTruthy();
-  });
-
-  it("shows Replace selection on latest assistant message when editor has selection", () => {
-    useLlmResponseStore.getState().startStream({ question: "test" });
-    useLlmResponseStore.getState().appendChunk("response");
-    useLlmResponseStore.getState().finishStream();
-    useEditorSelectionStore.getState().setSelection(0, 10);
-    const messages = [
-      makeMessage({ id: 1, seq: 1, role: "user", content: "Q1" }),
-      makeMessage({ id: 2, seq: 2, role: "assistant", content: "A1" }),
-    ];
-    const { container } = render(
-      <MessageList messages={messages} onEdit={vi.fn()} onEditSubmit={vi.fn()} onRetry={vi.fn()} />,
-    );
-    const lastAssistant = container.querySelectorAll("[data-testid='message-bubble-assistant']")[0]!;
-    expect(lastAssistant.querySelector("[data-testid='message-replace-btn']")).toBeTruthy();
-    expect(lastAssistant.querySelector("[data-testid='message-insert-btn']")).toBeNull();
+    expect(lastAssistant.querySelector("[data-testid='message-companion-btn']")).toBeTruthy();
   });
 
   // Bug 3: Scroll container needs h-full for proper height constraint

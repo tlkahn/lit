@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import type { Annotation } from "./ipc";
-import { buildCompanionDsl, insertCompanionAnnotation } from "./companionInsert";
+import { buildCompanionDsl, insertCompanionAnnotation, insertCompanionAtCursor } from "./companionInsert";
 
 vi.mock("./ipc", () => ({
   parseAnnotations: vi.fn(async () => []),
@@ -72,6 +72,77 @@ describe("insertCompanionAnnotation", () => {
 
     const result = view.state.doc.toString();
     expect(result.slice(6, 25)).toBe("<!--- q | why? --->");
+
+    view.destroy();
+  });
+});
+
+describe("insertCompanionAtCursor", () => {
+  it("inserts companion DSL at the current cursor position", () => {
+    const doc = "hello world";
+    const view = new EditorView({
+      state: EditorState.create({ doc }),
+      parent: document.createElement("div"),
+    });
+    view.dispatch({ selection: { anchor: 5 } });
+
+    insertCompanionAtCursor(view, "The answer.");
+
+    const result = view.state.doc.toString();
+    expect(result.slice(0, 5)).toBe("hello");
+    expect(result.slice(5, 7)).toBe("\n\n");
+    expect(result.slice(7)).toContain("<!---");
+    expect(result.slice(7)).toContain("The answer.");
+
+    view.destroy();
+  });
+
+  it("does not prepend \\n\\n when cursor is at position 0", () => {
+    const doc = "hello world";
+    const view = new EditorView({
+      state: EditorState.create({ doc }),
+      parent: document.createElement("div"),
+    });
+
+    insertCompanionAtCursor(view, "response");
+
+    const result = view.state.doc.toString();
+    expect(result.startsWith("\n\n")).toBe(false);
+    expect(result).toMatch(/^<!---/);
+    expect(result).toContain("response");
+
+    view.destroy();
+  });
+
+  it("inserts after selection end for backward (right-to-left) selection", () => {
+    const doc = "hello world";
+    const view = new EditorView({
+      state: EditorState.create({ doc }),
+      parent: document.createElement("div"),
+    });
+    view.dispatch({ selection: { anchor: 10, head: 5 } });
+
+    insertCompanionAtCursor(view, "response");
+
+    const result = view.state.doc.toString();
+    expect(result.slice(0, 10)).toBe("hello worl");
+    expect(result.slice(10, 12)).toBe("\n\n");
+    expect(result.slice(12)).toContain("response");
+
+    view.destroy();
+  });
+
+  it("calls view.focus() after insertion", () => {
+    const doc = "hello world";
+    const view = new EditorView({
+      state: EditorState.create({ doc }),
+      parent: document.createElement("div"),
+    });
+    const focusSpy = vi.spyOn(view, "focus");
+
+    insertCompanionAtCursor(view, "response");
+
+    expect(focusSpy).toHaveBeenCalledTimes(1);
 
     view.destroy();
   });

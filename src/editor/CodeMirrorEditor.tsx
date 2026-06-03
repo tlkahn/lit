@@ -57,17 +57,6 @@ export function CodeMirrorEditor({ doc, onChange, onSelectionChange, resolveImag
     return () => window.removeEventListener("lit:request-editor-focus", handler);
   }, [view]);
 
-  useEffect(() => {
-    if (!view) return;
-    const handler = (e: Event) => {
-      const { text } = (e as CustomEvent<{ text: string }>).detail;
-      view.dispatch(view.state.replaceSelection(text));
-      view.focus();
-    };
-    window.addEventListener("lit:llm-insert-raw", handler);
-    return () => window.removeEventListener("lit:llm-insert-raw", handler);
-  }, [view]);
-
   return (
     <div
       ref={containerRef}
