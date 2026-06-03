@@ -64,7 +64,7 @@ function BottomPanelTabs() {
               onClick={handleTabClick}
             />
           )}
-          {annotationEnabled && (
+          {annotationEnabled && annotationCount !== null && annotationCount > 0 && (
             <TabButton
               tab="annotations"
               label="Annotations"
