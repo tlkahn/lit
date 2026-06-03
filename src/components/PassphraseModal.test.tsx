@@ -21,9 +21,7 @@ function resetStore(overrides: Partial<Record<string, unknown>> = {}) {
   if (overrides.promptOpen) {
     // Need a settler so settleUnlock works. Reset first, then ensureUnlocked
     // sets promptOpen + creates the settler.
-    // ensureUnlocked resolves immediately when !exists, so temporarily set
-    // exists: true to force the prompt-open path.
-    useSecretStoreStore.setState({ promptOpen: false, unlocked: false, exists: true });
+    useSecretStoreStore.setState({ promptOpen: false, unlocked: false });
     // ensureUnlocked() returns a promise that won't settle until settleUnlock
     // is called. Catch the rejection so cancel tests don't cause unhandled
     // rejection errors (settleUnlock(false) rejects this promise).
@@ -81,8 +79,8 @@ describe("PassphraseModal", () => {
       const { container } = render(<PassphraseModal />);
       const passInput = container.querySelector("[data-testid='passphrase-modal-passphrase']") as HTMLInputElement;
       const confirmInput = container.querySelector("[data-testid='passphrase-modal-confirm']") as HTMLInputElement;
-      fireEvent.change(passInput, { target: { value: "secret1" } });
-      fireEvent.change(confirmInput, { target: { value: "secret2" } });
+      fireEvent.change(passInput, { target: { value: "secret1abc" } });
+      fireEvent.change(confirmInput, { target: { value: "secret2abc" } });
       const btn = container.querySelector("[data-testid='passphrase-modal-submit']") as HTMLButtonElement;
       expect(btn.disabled).toBe(true);
     });
@@ -91,8 +89,8 @@ describe("PassphraseModal", () => {
       const { container } = render(<PassphraseModal />);
       const passInput = container.querySelector("[data-testid='passphrase-modal-passphrase']") as HTMLInputElement;
       const confirmInput = container.querySelector("[data-testid='passphrase-modal-confirm']") as HTMLInputElement;
-      fireEvent.change(passInput, { target: { value: "secret1" } });
-      fireEvent.change(confirmInput, { target: { value: "secret1" } });
+      fireEvent.change(passInput, { target: { value: "secret12" } });
+      fireEvent.change(confirmInput, { target: { value: "secret12" } });
       const btn = container.querySelector("[data-testid='passphrase-modal-submit']") as HTMLButtonElement;
       expect(btn.disabled).toBe(false);
     });
@@ -107,8 +105,8 @@ describe("PassphraseModal", () => {
       const { container } = render(<PassphraseModal />);
       const passInput = container.querySelector("[data-testid='passphrase-modal-passphrase']") as HTMLInputElement;
       const confirmInput = container.querySelector("[data-testid='passphrase-modal-confirm']") as HTMLInputElement;
-      fireEvent.change(passInput, { target: { value: "mypass" } });
-      fireEvent.change(confirmInput, { target: { value: "mypass" } });
+      fireEvent.change(passInput, { target: { value: "mypass12" } });
+      fireEvent.change(confirmInput, { target: { value: "mypass12" } });
       fireEvent.click(container.querySelector("[data-testid='passphrase-modal-submit']")!);
 
       await waitFor(() => {
@@ -125,8 +123,8 @@ describe("PassphraseModal", () => {
       const { container } = render(<PassphraseModal />);
       const passInput = container.querySelector("[data-testid='passphrase-modal-passphrase']") as HTMLInputElement;
       const confirmInput = container.querySelector("[data-testid='passphrase-modal-confirm']") as HTMLInputElement;
-      fireEvent.change(passInput, { target: { value: "mypass" } });
-      fireEvent.change(confirmInput, { target: { value: "mypass" } });
+      fireEvent.change(passInput, { target: { value: "mypass12" } });
+      fireEvent.change(confirmInput, { target: { value: "mypass12" } });
       fireEvent.click(container.querySelector("[data-testid='passphrase-modal-submit']")!);
 
       await waitFor(() => {
@@ -134,6 +132,54 @@ describe("PassphraseModal", () => {
         expect(err).toBeTruthy();
         expect(err!.textContent).toContain("Init failed");
       });
+    });
+
+    it("submit button is disabled when passphrase is shorter than 8 characters", () => {
+      const { container } = render(<PassphraseModal />);
+      const passInput = container.querySelector("[data-testid='passphrase-modal-passphrase']") as HTMLInputElement;
+      const confirmInput = container.querySelector("[data-testid='passphrase-modal-confirm']") as HTMLInputElement;
+      // "short" is 5 characters -- below the 8-character minimum
+      fireEvent.change(passInput, { target: { value: "short" } });
+      fireEvent.change(confirmInput, { target: { value: "short" } });
+      const btn = container.querySelector("[data-testid='passphrase-modal-submit']") as HTMLButtonElement;
+      expect(btn.disabled).toBe(true);
+    });
+
+    it("submit button is disabled when passphrase is exactly 7 characters", () => {
+      const { container } = render(<PassphraseModal />);
+      const passInput = container.querySelector("[data-testid='passphrase-modal-passphrase']") as HTMLInputElement;
+      const confirmInput = container.querySelector("[data-testid='passphrase-modal-confirm']") as HTMLInputElement;
+      fireEvent.change(passInput, { target: { value: "seven77" } });
+      fireEvent.change(confirmInput, { target: { value: "seven77" } });
+      const btn = container.querySelector("[data-testid='passphrase-modal-submit']") as HTMLButtonElement;
+      expect(btn.disabled).toBe(true);
+    });
+
+    it("submit button is enabled when passphrase is exactly 8 characters and matches confirm", () => {
+      const { container } = render(<PassphraseModal />);
+      const passInput = container.querySelector("[data-testid='passphrase-modal-passphrase']") as HTMLInputElement;
+      const confirmInput = container.querySelector("[data-testid='passphrase-modal-confirm']") as HTMLInputElement;
+      fireEvent.change(passInput, { target: { value: "exactly8" } });
+      fireEvent.change(confirmInput, { target: { value: "exactly8" } });
+      const btn = container.querySelector("[data-testid='passphrase-modal-submit']") as HTMLButtonElement;
+      expect(btn.disabled).toBe(false);
+    });
+
+    it("shows minimum length hint when passphrase is too short in init mode", () => {
+      const { container } = render(<PassphraseModal />);
+      const passInput = container.querySelector("[data-testid='passphrase-modal-passphrase']") as HTMLInputElement;
+      fireEvent.change(passInput, { target: { value: "short" } });
+      const hint = container.querySelector("[data-testid='passphrase-modal-hint']");
+      expect(hint).toBeTruthy();
+      expect(hint!.textContent).toContain("at least 8 characters");
+    });
+
+    it("does not show minimum length hint when passphrase meets requirement", () => {
+      const { container } = render(<PassphraseModal />);
+      const passInput = container.querySelector("[data-testid='passphrase-modal-passphrase']") as HTMLInputElement;
+      fireEvent.change(passInput, { target: { value: "longenough" } });
+      const hint = container.querySelector("[data-testid='passphrase-modal-hint']");
+      expect(hint).toBeNull();
     });
   });
 

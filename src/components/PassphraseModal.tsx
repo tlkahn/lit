@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useSecretStoreStore } from "../stores/secretStore";
 import { initSecretStore, unlockSecretStore } from "../lib/ipc";
 
+const MIN_PASSPHRASE_LENGTH = 8;
+
 export function PassphraseModal() {
   const promptOpen = useSecretStoreStore((s) => s.promptOpen);
   const exists = useSecretStoreStore((s) => s.exists);
@@ -65,7 +67,7 @@ export function PassphraseModal() {
   if (!promptOpen) return null;
 
   const canSubmit = isInitMode
-    ? passphrase.length > 0 && passphrase === confirm && !submitting
+    ? passphrase.length >= MIN_PASSPHRASE_LENGTH && passphrase === confirm && !submitting
     : passphrase.length > 0 && !submitting;
 
   return (
@@ -110,6 +112,11 @@ export function PassphraseModal() {
             placeholder="Confirm passphrase"
             data-testid="passphrase-modal-confirm"
           />
+        )}
+        {isInitMode && passphrase.length > 0 && passphrase.length < MIN_PASSPHRASE_LENGTH && (
+          <p className="mb-3 text-xs text-text-muted" data-testid="passphrase-modal-hint">
+            Passphrase must be at least {MIN_PASSPHRASE_LENGTH} characters
+          </p>
         )}
         {error && (
           <p className="mb-3 text-xs text-red-500" data-testid="passphrase-modal-error">

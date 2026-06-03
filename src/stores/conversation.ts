@@ -84,13 +84,6 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
     content: string,
     streamArgs: StreamArgs,
   ) => {
-    try {
-      await useSecretStoreStore.getState().ensureUnlocked();
-    } catch (e) {
-      set({ error: e instanceof Error ? e.message : String(e) });
-      return;
-    }
-
     const myGeneration = ++_streamGeneration;
 
     const storeMessages = get().messages;
@@ -236,6 +229,13 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
     }
     if (useLlmResponseStore.getState().status === "streaming") return;
 
+    try {
+      await useSecretStoreStore.getState().ensureUnlocked();
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : String(e) });
+      return;
+    }
+
     let userMsg: Awaited<ReturnType<typeof conversationAddMessage>>;
     try {
       userMsg = await conversationAddMessage(convId, "user", args.content);
@@ -314,6 +314,13 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
     const lastUserMsg = lastUserIdx >= 0 ? msgs[lastUserIdx] : undefined;
     if (!lastUserMsg) return;
 
+    try {
+      await useSecretStoreStore.getState().ensureUnlocked();
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : String(e) });
+      return;
+    }
+
     await conversationDeleteMessagesAfter(convId, lastUserMsg.seq);
     set((s) => ({ messages: s.messages.filter((m) => m.seq <= lastUserMsg.seq) }));
 
@@ -324,6 +331,13 @@ export const useConversationStore = create<ConversationStore>((set, get) => {
     const convId = get().activeConversationId;
     if (convId === null) return;
     if (useLlmResponseStore.getState().status === "streaming") return;
+
+    try {
+      await useSecretStoreStore.getState().ensureUnlocked();
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : String(e) });
+      return;
+    }
 
     await conversationDeleteMessagesAfter(convId, seq - 1);
     set((s) => ({ messages: s.messages.filter((m) => m.seq < seq) }));

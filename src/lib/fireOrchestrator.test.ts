@@ -6,6 +6,7 @@ import { useModalLockStore } from "../stores/modalLock";
 import { usePreferencesStore } from "../stores/preferences";
 import { useLlmResponseStore } from "../stores/llmResponse";
 import { useBottomPanelStore } from "../stores/bottomPanel";
+import { useSecretStoreStore } from "../stores/secretStore";
 import { firingAnnotationsField, annotationThreadKeysField } from "../editor/livePreview/annotationWidgets";
 
 vi.mock("./ipc", () => ({
@@ -28,6 +29,12 @@ const mockStream = startLlmStream as ReturnType<typeof vi.fn>;
 const mockFindUuid = annotationFindUuid as ReturnType<typeof vi.fn>;
 
 const flushPromises = () => new Promise(resolve => setTimeout(resolve, 0));
+
+const flush = (n = 5) =>
+  Array.from({ length: n }).reduce<Promise<void>>(
+    (p) => p.then(() => new Promise((r) => queueMicrotask(r))),
+    Promise.resolve(),
+  );
 
 function makeView(doc = "hello world", withFiringField = false): EditorView {
   const extensions = withFiringField ? [firingAnnotationsField, annotationThreadKeysField] : [];
@@ -60,6 +67,8 @@ beforeEach(() => {
   useWorkspaceStore.setState({ currentPagePath: "test/page.md" });
   useBottomPanelStore.setState({ activeTab: "linked", unfolded: false });
   mockFindUuid.mockResolvedValue("fake-uuid-123");
+  useSecretStoreStore.getState()._resetSettler();
+  useSecretStoreStore.setState({ exists: true, unlocked: true, loading: false, promptOpen: false });
 });
 
 describe("buildFirePrompt", () => {
@@ -737,6 +746,73 @@ describe("fireAnnotation", () => {
     useLlmResponseStore.getState().finishStream();
 
     expect(useModalLockStore.getState().llmLocked).toBe(false);
+    view.destroy();
+  });
+
+  // --- ensureUnlocked guard on replacing fire path ---
+
+  it("replacing type: calls ensureUnlocked before startLlmStream when store is locked", async () => {
+    useSecretStoreStore.setState({ exists: true, unlocked: false });
+    const view = makeView();
+    const ann = makeAnnotation({ annotation_type: "llm" });
+
+    const firePromise = fireAnnotation({ view, annotation: ann });
+
+    await flush();
+
+    // ensureUnlocked should have opened the passphrase prompt
+    expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+    // startLlmStream should NOT have been called yet
+    expect(mockStream).not.toHaveBeenCalled();
+
+    // Simulate user entering passphrase
+    useSecretStoreStore.getState().settleUnlock(true);
+    await firePromise;
+
+    // Now startLlmStream should have been called
+    expect(mockStream).toHaveBeenCalledOnce();
+    view.destroy();
+  });
+
+  it("replacing type: cleans up and does not call startLlmStream when ensureUnlocked is cancelled", async () => {
+    useSecretStoreStore.setState({ exists: true, unlocked: false });
+    const completeSpy = vi.fn();
+    window.addEventListener("lit:fire-complete", completeSpy);
+    const view = makeView("hello world", true);
+    const ann = makeAnnotation({ annotation_type: "llm", char_start: 0 });
+
+    const firePromise = fireAnnotation({ view, annotation: ann });
+
+    await flush();
+
+    // Prompt should be open
+    expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+
+    // User cancels
+    useSecretStoreStore.getState().settleUnlock(false);
+    await firePromise;
+
+    // startLlmStream should NOT have been called
+    expect(mockStream).not.toHaveBeenCalled();
+    // Cleanup should have occurred
+    expect(useModalLockStore.getState().llmLocked).toBe(false);
+    expect(completeSpy).toHaveBeenCalledOnce();
+    expect(view.state.field(firingAnnotationsField).has(0)).toBe(false);
+    window.removeEventListener("lit:fire-complete", completeSpy);
+    view.destroy();
+  });
+
+  it("replacing type: proceeds without prompting when store is already unlocked", async () => {
+    useSecretStoreStore.setState({ exists: true, unlocked: true });
+    const view = makeView();
+    const ann = makeAnnotation({ annotation_type: "llm" });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    // No prompt should have been opened
+    expect(useSecretStoreStore.getState().promptOpen).toBe(false);
+    // Stream should have been called
+    expect(mockStream).toHaveBeenCalledOnce();
     view.destroy();
   });
 });

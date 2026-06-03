@@ -124,9 +124,13 @@ function renderControl(params: RenderControlParams) {
             });
           }}
           onDelete={() => {
-            usePreferencesStore.setState({ [entry.storeField]: false } as Partial<PreferencesState>);
-            deleteApiKey(entry.provider).catch(() => {
-              usePreferencesStore.setState({ [entry.storeField]: true } as Partial<PreferencesState>);
+            params.ensureUnlocked().then(() => {
+              usePreferencesStore.setState({ [entry.storeField]: false } as Partial<PreferencesState>);
+              deleteApiKey(entry.provider).catch(() => {
+                usePreferencesStore.setState({ [entry.storeField]: true } as Partial<PreferencesState>);
+              });
+            }).catch(() => {
+              // User cancelled passphrase entry — abort delete
             });
           }}
         />

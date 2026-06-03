@@ -11,6 +11,10 @@ export interface SecretStoreState {
   unlocked: boolean;
   loading: boolean;
   promptOpen: boolean;
+  /** @internal settler for the pending unlock promise */
+  _settler: Settler | null;
+  /** @internal the pending unlock promise */
+  _pendingPromise: Promise<void> | null;
   refresh: () => Promise<void>;
   ensureUnlocked: () => Promise<void>;
   settleUnlock: (success: boolean) => void;
@@ -18,14 +22,13 @@ export interface SecretStoreState {
   _resetSettler: () => void;
 }
 
-let _settler: Settler | null = null;
-let _pendingPromise: Promise<void> | null = null;
-
 export const useSecretStoreStore = create<SecretStoreState>((set, get) => ({
   exists: false,
   unlocked: false,
   loading: false,
   promptOpen: false,
+  _settler: null,
+  _pendingPromise: null,
 
   refresh: async () => {
     set({ loading: true });
@@ -38,32 +41,32 @@ export const useSecretStoreStore = create<SecretStoreState>((set, get) => ({
   },
 
   ensureUnlocked: () => {
-    if (get().unlocked || !get().exists) {
+    const state = get();
+    if (state.unlocked) {
       return Promise.resolve();
     }
 
     // If there's already a pending promise, return it (avoid opening multiple prompts)
-    if (_pendingPromise) {
-      return _pendingPromise;
+    if (state._pendingPromise) {
+      return state._pendingPromise;
     }
 
-    _pendingPromise = new Promise<void>((resolve, reject) => {
-      _settler = { resolve, reject };
+    let settler: Settler;
+    const pendingPromise = new Promise<void>((resolve, reject) => {
+      settler = { resolve, reject };
     });
 
-    set({ promptOpen: true });
+    set({ _settler: settler!, _pendingPromise: pendingPromise, promptOpen: true });
 
-    return _pendingPromise;
+    return pendingPromise;
   },
 
   settleUnlock: (success: boolean) => {
+    const { _settler } = get();
     if (!_settler) return;
 
     const settler = _settler;
-    _settler = null;
-    _pendingPromise = null;
-
-    set({ promptOpen: false });
+    set({ _settler: null, _pendingPromise: null, promptOpen: false });
 
     if (success) {
       settler.resolve();
@@ -73,7 +76,6 @@ export const useSecretStoreStore = create<SecretStoreState>((set, get) => ({
   },
 
   _resetSettler: () => {
-    _settler = null;
-    _pendingPromise = null;
+    set({ _settler: null, _pendingPromise: null });
   },
 }));

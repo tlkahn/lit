@@ -3,15 +3,15 @@ import { useSecretStoreStore } from "./secretStore";
 import { mockInvoke } from "../test/tauri-mock";
 
 function resetStore() {
-  // Reset the store state AND clear any pending promise settlers
+  // Reset the store state including settler fields (now part of the store)
   useSecretStoreStore.setState({
     exists: false,
     unlocked: false,
     loading: false,
     promptOpen: false,
+    _settler: null,
+    _pendingPromise: null,
   });
-  // Also call the internal reset to clear the settler
-  useSecretStoreStore.getState()._resetSettler();
 }
 
 describe("secretStore store", () => {
@@ -130,11 +130,40 @@ describe("secretStore store", () => {
       promise.catch(() => {});
     });
 
-    it("resolves immediately when store does not exist yet", async () => {
+    it("opens prompt in init mode when store does not exist yet", () => {
       useSecretStoreStore.setState({ exists: false, unlocked: false });
 
-      await useSecretStoreStore.getState().ensureUnlocked();
-      // Should not open prompt when store doesn't exist
+      // Don't await -- the promise won't resolve until settler is called
+      const promise = useSecretStoreStore.getState().ensureUnlocked();
+      // Should open the prompt so user can create a passphrase
+      expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+
+      // Clean up: reject to avoid unhandled promise
+      useSecretStoreStore.getState().settleUnlock(false);
+      promise.catch(() => {});
+    });
+
+    it("resolves when settleUnlock(true) is called in init mode (no store yet)", async () => {
+      useSecretStoreStore.setState({ exists: false, unlocked: false });
+
+      const promise = useSecretStoreStore.getState().ensureUnlocked();
+      expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+
+      useSecretStoreStore.getState().settleUnlock(true);
+
+      await expect(promise).resolves.toBeUndefined();
+      expect(useSecretStoreStore.getState().promptOpen).toBe(false);
+    });
+
+    it("rejects when settleUnlock(false) is called in init mode (no store yet)", async () => {
+      useSecretStoreStore.setState({ exists: false, unlocked: false });
+
+      const promise = useSecretStoreStore.getState().ensureUnlocked();
+      expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+
+      useSecretStoreStore.getState().settleUnlock(false);
+
+      await expect(promise).rejects.toThrow("Passphrase entry cancelled");
       expect(useSecretStoreStore.getState().promptOpen).toBe(false);
     });
 
@@ -180,6 +209,40 @@ describe("secretStore store", () => {
       // Should not throw
       useSecretStoreStore.getState().settleUnlock(true);
       expect(useSecretStoreStore.getState().promptOpen).toBe(false);
+    });
+
+    it("setState with _settler and _pendingPromise null clears pending unlock", async () => {
+      useSecretStoreStore.setState({ exists: true, unlocked: false });
+
+      // Create a pending promise
+      const p1 = useSecretStoreStore.getState().ensureUnlocked();
+      expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+
+      // Reset the store state including settler fields via setState
+      // (After the fix, _settler and _pendingPromise are in the store)
+      useSecretStoreStore.setState({
+        promptOpen: false,
+        _settler: null,
+        _pendingPromise: null,
+      });
+
+      // A subsequent ensureUnlocked should create a FRESH promise, not return p1
+      const p2 = useSecretStoreStore.getState().ensureUnlocked();
+      expect(p2).not.toBe(p1);
+
+      // Clean up both promises
+      useSecretStoreStore.getState().settleUnlock(false);
+      p1.catch(() => {});
+      p2.catch(() => {});
+    });
+
+    it("settler state is accessible via getState", () => {
+      const state = useSecretStoreStore.getState();
+      // After the fix, these properties exist on the store state
+      expect(state).toHaveProperty("_settler");
+      expect(state).toHaveProperty("_pendingPromise");
+      expect(state._settler).toBeNull();
+      expect(state._pendingPromise).toBeNull();
     });
 
     it("after settling, a new ensureUnlocked creates a fresh promise", async () => {
