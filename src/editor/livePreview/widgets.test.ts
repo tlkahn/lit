@@ -9,6 +9,7 @@ import {
   EditableTableWidget,
   MermaidWidget,
   HorizontalRuleWidget,
+  clearFailedImageCache,
 } from "./widgets";
 import { calloutFoldField } from "./callout";
 import { renderMermaid, getMermaidCached } from "./mermaid";
@@ -152,6 +153,96 @@ describe("ImageWidget", () => {
     const el = widget.toDOM();
     expect(el.tagName).toBe("IMG");
     expect(widget.estimatedHeight).toBe(200);
+  });
+});
+
+describe("ImageWidget — failed image caching", () => {
+  beforeEach(() => {
+    clearFailedImageCache();
+  });
+
+  it("toDOM does not set src for a cached-failed URL", () => {
+    const w1 = new ImageWidget("broken.png", "alt");
+    const el1 = w1.toDOM();
+    el1.dispatchEvent(new Event("error"));
+
+    const w2 = new ImageWidget("broken.png", "alt");
+    const el2 = w2.toDOM();
+    expect(el2.getAttribute("src")).toBeNull();
+    expect(el2.classList.contains("cm-preview-image-error")).toBe(true);
+  });
+
+  it("updateDOM does not re-set src for cached-failed URL", () => {
+    const w1 = new ImageWidget("broken.png", "alt");
+    const dom = w1.toDOM();
+    dom.dispatchEvent(new Event("error"));
+
+    const w2 = new ImageWidget("broken.png", "alt");
+    w2.updateDOM(dom);
+    expect(dom.getAttribute("src")).toBeNull();
+    expect(dom.classList.contains("cm-preview-image-error")).toBe(true);
+  });
+
+  it("new URL is not blocked by cache of old URL", () => {
+    const w1 = new ImageWidget("broken.png", "alt");
+    const el1 = w1.toDOM();
+    el1.dispatchEvent(new Event("error"));
+
+    const w2 = new ImageWidget("fixed.png", "alt");
+    const el2 = w2.toDOM();
+    expect(el2.getAttribute("src")).toBe("fixed.png");
+    expect(el2.classList.contains("cm-preview-image-error")).toBe(false);
+  });
+
+  it("clearFailedImageCache allows re-fetch of previously failed URL", () => {
+    const w1 = new ImageWidget("broken.png", "alt");
+    const el1 = w1.toDOM();
+    el1.dispatchEvent(new Event("error"));
+
+    clearFailedImageCache();
+
+    const w2 = new ImageWidget("broken.png", "alt");
+    const el2 = w2.toDOM();
+    expect(el2.getAttribute("src")).toBe("broken.png");
+  });
+
+  it("successful load prevents URL from being cached as failed", () => {
+    const w1 = new ImageWidget("ok.png", "alt");
+    const el1 = w1.toDOM();
+    expect(el1.getAttribute("src")).toBe("ok.png");
+    el1.dispatchEvent(new Event("load"));
+
+    const w2 = new ImageWidget("ok.png", "alt");
+    const el2 = w2.toDOM();
+    expect(el2.getAttribute("src")).toBe("ok.png");
+  });
+
+  describe("thumbnail mode", () => {
+    it("toDOM does not set src for a cached-failed URL", () => {
+      const w1 = new ImageWidget("broken.png", "alt", true);
+      const el1 = w1.toDOM();
+      const img1 = el1.querySelector("img")!;
+      img1.dispatchEvent(new Event("error"));
+
+      const w2 = new ImageWidget("broken.png", "alt", true);
+      const el2 = w2.toDOM();
+      const img2 = el2.querySelector("img")!;
+      expect(img2.getAttribute("src")).toBeNull();
+      expect(img2.classList.contains("cm-preview-image-error")).toBe(true);
+    });
+
+    it("updateDOM does not re-set src for cached-failed URL", () => {
+      const w1 = new ImageWidget("broken.png", "alt", true);
+      const dom = w1.toDOM();
+      const img1 = dom.querySelector("img")!;
+      img1.dispatchEvent(new Event("error"));
+
+      const w2 = new ImageWidget("broken.png", "alt", true);
+      w2.updateDOM(dom);
+      const img2 = dom.querySelector("img")!;
+      expect(img2.getAttribute("src")).toBeNull();
+      expect(img2.classList.contains("cm-preview-image-error")).toBe(true);
+    });
   });
 });
 

@@ -241,6 +241,14 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
     objectFit: "contain",
   },
 
+  // Broken image indicator
+  ".cm-preview-image-error": {
+    minWidth: "24px",
+    minHeight: "24px",
+    display: "inline-block",
+    opacity: "0.5",
+  },
+
   // Mermaid thumbnails
   ".cm-preview-mermaid--thumbnail": {
     maxHeight: "120px",

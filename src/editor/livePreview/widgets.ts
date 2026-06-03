@@ -9,6 +9,22 @@ import "katex/dist/katex.min.css";
 
 const SPINNER_SVG = `<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><style>.spinner{transform-origin:center;animation:rotate .75s linear infinite}@keyframes rotate{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}</style><g class="spinner"><circle cx="12" cy="2.5" r="1.5" opacity=".14"/><circle cx="16.75" cy="3.77" r="1.5" opacity=".29"/><circle cx="20.23" cy="7.25" r="1.5" opacity=".43"/><circle cx="21.5" cy="12" r="1.5" opacity=".57"/><circle cx="20.23" cy="16.75" r="1.5" opacity=".71"/><circle cx="16.75" cy="20.23" r="1.5" opacity=".86"/><circle cx="12" cy="21.5" r="1.5"/></g></svg>`;
 
+const failedImageSrcs = new Set<string>();
+
+export function clearFailedImageCache(): void {
+  failedImageSrcs.clear();
+}
+
+function attachImageHandlers(img: HTMLImageElement, src: string): void {
+  img.addEventListener("error", () => {
+    failedImageSrcs.add(src);
+    img.classList.add("cm-preview-image-error");
+  }, { once: true });
+  img.addEventListener("load", () => {
+    failedImageSrcs.delete(src);
+  }, { once: true });
+}
+
 export class ImageWidget extends WidgetType {
   constructor(
     readonly src: string,
@@ -23,8 +39,13 @@ export class ImageWidget extends WidgetType {
       const container = document.createElement("div");
       container.className = "cm-preview-image-thumbnail";
       const img = document.createElement("img");
-      img.src = this.src;
       img.alt = this.alt;
+      if (failedImageSrcs.has(this.src)) {
+        img.classList.add("cm-preview-image-error");
+      } else {
+        img.src = this.src;
+        attachImageHandlers(img, this.src);
+      }
       container.appendChild(img);
       container.addEventListener("mousedown", (e) => {
         e.preventDefault();
@@ -34,11 +55,16 @@ export class ImageWidget extends WidgetType {
     }
     const img = document.createElement("img");
     img.className = "cm-preview-image";
-    img.src = this.src;
     img.alt = this.alt;
     img.style.maxWidth = "100%";
     img.style.maxHeight = "300px";
     img.style.display = "block";
+    if (failedImageSrcs.has(this.src)) {
+      img.classList.add("cm-preview-image-error");
+    } else {
+      img.src = this.src;
+      attachImageHandlers(img, this.src);
+    }
     return img;
   }
 
@@ -46,13 +72,27 @@ export class ImageWidget extends WidgetType {
     if (this.thumbnail) {
       const img = dom.querySelector("img");
       if (!img) return false;
-      img.src = this.src;
       img.alt = this.alt;
+      if (failedImageSrcs.has(this.src)) {
+        img.removeAttribute("src");
+        img.classList.add("cm-preview-image-error");
+      } else {
+        img.classList.remove("cm-preview-image-error");
+        img.src = this.src;
+        attachImageHandlers(img, this.src);
+      }
       return true;
     }
     const img = dom as HTMLImageElement;
-    img.src = this.src;
     img.alt = this.alt;
+    if (failedImageSrcs.has(this.src)) {
+      img.removeAttribute("src");
+      img.classList.add("cm-preview-image-error");
+    } else {
+      img.classList.remove("cm-preview-image-error");
+      img.src = this.src;
+      attachImageHandlers(img, this.src);
+    }
     return true;
   }
 
