@@ -33,8 +33,10 @@ export function insertCompanionAtCursor(
   responseText: string,
 ): void {
   const dsl = buildCompanionDsl(responseText);
-  const pos = view.state.selection.main.head;
+  const pos = view.state.selection.main.to;
+  const prefix = pos === 0 ? "" : "\n\n";
   view.dispatch({
-    changes: { from: pos, insert: "\n\n" + dsl },
+    changes: { from: pos, insert: prefix + dsl },
   });
+  view.focus();
 }

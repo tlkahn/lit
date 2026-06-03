@@ -84,7 +84,6 @@ describe("insertCompanionAtCursor", () => {
       state: EditorState.create({ doc }),
       parent: document.createElement("div"),
     });
-    // Move cursor to end of "hello"
     view.dispatch({ selection: { anchor: 5 } });
 
     insertCompanionAtCursor(view, "The answer.");
@@ -98,7 +97,7 @@ describe("insertCompanionAtCursor", () => {
     view.destroy();
   });
 
-  it("inserts at position 0 when cursor is at start", () => {
+  it("does not prepend \\n\\n when cursor is at position 0", () => {
     const doc = "hello world";
     const view = new EditorView({
       state: EditorState.create({ doc }),
@@ -108,8 +107,42 @@ describe("insertCompanionAtCursor", () => {
     insertCompanionAtCursor(view, "response");
 
     const result = view.state.doc.toString();
-    expect(result.startsWith("\n\n")).toBe(true);
+    expect(result.startsWith("\n\n")).toBe(false);
+    expect(result).toMatch(/^<!---/);
     expect(result).toContain("response");
+
+    view.destroy();
+  });
+
+  it("inserts after selection end for backward (right-to-left) selection", () => {
+    const doc = "hello world";
+    const view = new EditorView({
+      state: EditorState.create({ doc }),
+      parent: document.createElement("div"),
+    });
+    view.dispatch({ selection: { anchor: 10, head: 5 } });
+
+    insertCompanionAtCursor(view, "response");
+
+    const result = view.state.doc.toString();
+    expect(result.slice(0, 10)).toBe("hello worl");
+    expect(result.slice(10, 12)).toBe("\n\n");
+    expect(result.slice(12)).toContain("response");
+
+    view.destroy();
+  });
+
+  it("calls view.focus() after insertion", () => {
+    const doc = "hello world";
+    const view = new EditorView({
+      state: EditorState.create({ doc }),
+      parent: document.createElement("div"),
+    });
+    const focusSpy = vi.spyOn(view, "focus");
+
+    insertCompanionAtCursor(view, "response");
+
+    expect(focusSpy).toHaveBeenCalledTimes(1);
 
     view.destroy();
   });
