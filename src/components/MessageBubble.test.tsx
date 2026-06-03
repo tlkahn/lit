@@ -200,69 +200,32 @@ describe("MessageBubble", () => {
     expect(document.activeElement).toBe(textarea);
   });
 
-  // Insert at cursor button glyph
-  it("insert-at-cursor button has nerd-font glyph and aria-label", () => {
-    const msg = makeMessage({ role: "assistant", content: "Generated text" });
-    const { getByTestId } = render(
-      <MessageBubble message={msg} isLast showEditorActions hadSelection={false} />,
-    );
-    const btn = getByTestId("message-insert-btn");
-    expect(btn.getAttribute("aria-label")).toBe("Insert at cursor");
-    const span = btn.querySelector(".nerd-font");
-    expect(span).toBeTruthy();
-    expect(span!.textContent).toBe("");
-  });
-
-  // Replace selection button glyph
-  it("replace-selection button has nerd-font glyph and aria-label", () => {
-    const msg = makeMessage({ role: "assistant", content: "Generated text" });
-    const { getByTestId, queryByTestId } = render(
-      <MessageBubble message={msg} isLast showEditorActions hadSelection />,
-    );
-    const btn = getByTestId("message-replace-btn");
-    expect(btn.getAttribute("aria-label")).toBe("Replace selection");
-    const span = btn.querySelector(".nerd-font");
-    expect(span).toBeTruthy();
-    expect(span!.textContent).toBe("");
-    expect(queryByTestId("message-insert-btn")).toBeNull();
-  });
-
   // Insert as companion button glyph
   it("companion button has nerd-font glyph and aria-label", () => {
-    const annotation = makeAnnotation();
     const msg = makeMessage({ role: "assistant", content: "Generated text" });
     const { getByTestId } = render(
-      <MessageBubble message={msg} isLast showEditorActions hadSelection={false} fireSourceAnnotation={annotation} />,
+      <MessageBubble message={msg} isLast showEditorActions />,
     );
     const btn = getByTestId("message-companion-btn");
     expect(btn.getAttribute("aria-label")).toBe("Insert as companion");
     const span = btn.querySelector(".nerd-font");
     expect(span).toBeTruthy();
-    expect(span!.textContent).toBe("");
   });
 
-  it("does not show Insert/Replace when showEditorActions is false", () => {
+  it("shows companion button without fireSourceAnnotation", () => {
+    const msg = makeMessage({ role: "assistant", content: "Generated text" });
+    const { getByTestId } = render(
+      <MessageBubble message={msg} isLast showEditorActions />,
+    );
+    expect(getByTestId("message-companion-btn")).toBeTruthy();
+  });
+
+  it("does not show companion button when showEditorActions is false", () => {
     const msg = makeMessage({ role: "assistant", content: "Old response" });
     const { queryByTestId } = render(
-      <MessageBubble message={msg} isLast={false} showEditorActions={false} hadSelection={false} />,
+      <MessageBubble message={msg} isLast={false} showEditorActions={false} />,
     );
-    expect(queryByTestId("message-insert-btn")).toBeNull();
-    expect(queryByTestId("message-replace-btn")).toBeNull();
     expect(queryByTestId("message-companion-btn")).toBeNull();
-  });
-
-  it("dispatches lit:llm-insert-raw on Insert click", () => {
-    const handler = vi.fn();
-    window.addEventListener("lit:llm-insert-raw", handler as EventListener);
-    const msg = makeMessage({ role: "assistant", content: "Insert this" });
-    const { getByTestId } = render(
-      <MessageBubble message={msg} isLast showEditorActions hadSelection={false} />,
-    );
-    fireEvent.click(getByTestId("message-insert-btn"));
-    expect(handler).toHaveBeenCalledTimes(1);
-    const event = handler.mock.calls[0]![0] as CustomEvent;
-    expect(event.detail).toEqual({ text: "Insert this" });
-    window.removeEventListener("lit:llm-insert-raw", handler as EventListener);
   });
 
   // Edit mode hides actions (regression)
@@ -313,12 +276,26 @@ describe("MessageBubble", () => {
     const annotation = makeAnnotation();
     const msg = makeMessage({ role: "assistant", content: "Companion text" });
     const { getByTestId } = render(
-      <MessageBubble message={msg} isLast showEditorActions hadSelection={false} fireSourceAnnotation={annotation} />,
+      <MessageBubble message={msg} isLast showEditorActions fireSourceAnnotation={annotation} />,
     );
     fireEvent.click(getByTestId("message-companion-btn"));
     expect(handler).toHaveBeenCalledTimes(1);
     const event = handler.mock.calls[0]![0] as CustomEvent;
     expect(event.detail).toEqual({ sourceAnnotation: annotation, responseText: "Companion text" });
+    window.removeEventListener("lit:insert-companion-annotation", handler as EventListener);
+  });
+
+  it("dispatches companion annotation with sourceAnnotation: null when fireSourceAnnotation not set", () => {
+    const handler = vi.fn();
+    window.addEventListener("lit:insert-companion-annotation", handler as EventListener);
+    const msg = makeMessage({ role: "assistant", content: "Companion text" });
+    const { getByTestId } = render(
+      <MessageBubble message={msg} isLast showEditorActions />,
+    );
+    fireEvent.click(getByTestId("message-companion-btn"));
+    expect(handler).toHaveBeenCalledTimes(1);
+    const event = handler.mock.calls[0]![0] as CustomEvent;
+    expect(event.detail).toEqual({ sourceAnnotation: null, responseText: "Companion text" });
     window.removeEventListener("lit:insert-companion-annotation", handler as EventListener);
   });
 });

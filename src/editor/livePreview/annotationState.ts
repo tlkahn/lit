@@ -14,7 +14,7 @@ import { useBottomPanelStore } from "../../stores/bottomPanel";
 import { scopeHighlightExtension } from "./scopeHighlight";
 import { escapeAnnotationKeymap } from "./escapeAnnotation";
 import { fireAnnotation } from "../../lib/fireOrchestrator";
-import { insertCompanionAnnotation } from "../../lib/companionInsert";
+import { insertCompanionAnnotation, insertCompanionAtCursor } from "../../lib/companionInsert";
 
 export const setDisplayMode = StateEffect.define<AnnotationDisplayMode>();
 
@@ -252,8 +252,12 @@ const companionInsertPlugin = ViewPlugin.fromClass(
     constructor(private view: EditorView) {
       this.handler = (e: Event) => {
         const detail = (e as CustomEvent).detail;
-        if (detail?.sourceAnnotation && detail?.responseText) {
-          insertCompanionAnnotation(this.view, detail.sourceAnnotation, detail.responseText);
+        if (detail?.responseText) {
+          if (detail.sourceAnnotation) {
+            insertCompanionAnnotation(this.view, detail.sourceAnnotation, detail.responseText);
+          } else {
+            insertCompanionAtCursor(this.view, detail.responseText);
+          }
         }
       };
       window.addEventListener("lit:insert-companion-annotation", this.handler);

@@ -2,7 +2,6 @@ import { useRef, useEffect, useCallback } from "react";
 import type { MessageRow } from "../lib/ipc";
 import { MessageBubble } from "./MessageBubble";
 import { useLlmResponseStore } from "../stores/llmResponse";
-import { useEditorSelectionStore } from "../stores/editorSelection";
 import { renderMarkdown } from "../lib/renderMarkdown";
 
 interface MessageListProps {
@@ -20,9 +19,6 @@ export function MessageList({ messages, onEdit, onEditSubmit, onRetry }: Message
   const responseText = useLlmResponseStore((s) => s.responseText);
   const errorMessage = useLlmResponseStore((s) => s.errorMessage);
   const fireSourceAnnotation = useLlmResponseStore((s) => s.fireSourceAnnotation);
-  const editorFrom = useEditorSelectionStore((s) => s.from);
-  const editorTo = useEditorSelectionStore((s) => s.to);
-  const hadSelection = editorFrom !== editorTo;
   const showEditorActions = status !== "streaming";
   const scrollRef = useRef<HTMLDivElement>(null);
   const userScrolledUpRef = useRef(false);
@@ -55,7 +51,6 @@ export function MessageList({ messages, onEdit, onEditSubmit, onRetry }: Message
           message={msg}
           isLast={msg.role === "assistant" && i === lastAssistantIdx}
           showEditorActions={msg.role === "assistant" && i === lastAssistantIdx && showEditorActions}
-          hadSelection={hadSelection}
           fireSourceAnnotation={fireSourceAnnotation}
           onEdit={onEdit}
           onEditSubmit={onEditSubmit}

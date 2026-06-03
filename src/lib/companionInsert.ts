@@ -27,3 +27,14 @@ export function insertCompanionAnnotation(
     },
   });
 }
+
+export function insertCompanionAtCursor(
+  view: EditorView,
+  responseText: string,
+): void {
+  const dsl = buildCompanionDsl(responseText);
+  const pos = view.state.selection.main.head;
+  view.dispatch({
+    changes: { from: pos, insert: "\n\n" + dsl },
+  });
+}

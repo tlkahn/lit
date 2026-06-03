@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import type { Annotation } from "./ipc";
-import { buildCompanionDsl, insertCompanionAnnotation } from "./companionInsert";
+import { buildCompanionDsl, insertCompanionAnnotation, insertCompanionAtCursor } from "./companionInsert";
 
 vi.mock("./ipc", () => ({
   parseAnnotations: vi.fn(async () => []),
@@ -72,6 +72,44 @@ describe("insertCompanionAnnotation", () => {
 
     const result = view.state.doc.toString();
     expect(result.slice(6, 25)).toBe("<!--- q | why? --->");
+
+    view.destroy();
+  });
+});
+
+describe("insertCompanionAtCursor", () => {
+  it("inserts companion DSL at the current cursor position", () => {
+    const doc = "hello world";
+    const view = new EditorView({
+      state: EditorState.create({ doc }),
+      parent: document.createElement("div"),
+    });
+    // Move cursor to end of "hello"
+    view.dispatch({ selection: { anchor: 5 } });
+
+    insertCompanionAtCursor(view, "The answer.");
+
+    const result = view.state.doc.toString();
+    expect(result.slice(0, 5)).toBe("hello");
+    expect(result.slice(5, 7)).toBe("\n\n");
+    expect(result.slice(7)).toContain("<!---");
+    expect(result.slice(7)).toContain("The answer.");
+
+    view.destroy();
+  });
+
+  it("inserts at position 0 when cursor is at start", () => {
+    const doc = "hello world";
+    const view = new EditorView({
+      state: EditorState.create({ doc }),
+      parent: document.createElement("div"),
+    });
+
+    insertCompanionAtCursor(view, "response");
+
+    const result = view.state.doc.toString();
+    expect(result.startsWith("\n\n")).toBe(true);
+    expect(result).toContain("response");
 
     view.destroy();
   });

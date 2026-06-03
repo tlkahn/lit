@@ -1,6 +1,5 @@
 import { useRef, useEffect, useState } from "react";
 import { useLlmResponseStore } from "../stores/llmResponse";
-import { useEditorSelectionStore } from "../stores/editorSelection";
 import { cancelStream } from "../lib/llmOrchestrator";
 import { renderMarkdown } from "../lib/renderMarkdown";
 import { type EditorContext } from "../types";
@@ -74,10 +73,6 @@ export function LlmResponsePanel({ contentHeight, onSubmit }: LlmResponsePanelPr
   const errorMessage = useLlmResponseStore((s) => s.errorMessage);
   const fireSourceAnnotation = useLlmResponseStore((s) => s.fireSourceAnnotation);
 
-  const editorFrom = useEditorSelectionStore((s) => s.from);
-  const editorTo = useEditorSelectionStore((s) => s.to);
-  const hadSelection = editorFrom !== editorTo;
-
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -122,49 +117,20 @@ export function LlmResponsePanel({ contentHeight, onSubmit }: LlmResponsePanelPr
             >
               Copy
             </button>
-            {hadSelection ? (
-              <button
-                data-testid="llm-replace-btn"
-                className="rounded px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover"
-                onClick={() => {
-                  if (!responseText) return;
-                  window.dispatchEvent(
-                    new CustomEvent("lit:llm-insert-raw", { detail: { text: responseText } }),
-                  );
-                }}
-              >
-                Replace selection
-              </button>
-            ) : (
-              <button
-                data-testid="llm-insert-btn"
-                className="rounded px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover"
-                onClick={() => {
-                  if (!responseText) return;
-                  window.dispatchEvent(
-                    new CustomEvent("lit:llm-insert-raw", { detail: { text: responseText } }),
-                  );
-                }}
-              >
-                Insert at cursor
-              </button>
-            )}
-            {fireSourceAnnotation && (
-              <button
-                data-testid="llm-companion-btn"
-                className="rounded px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover"
-                onClick={() => {
-                  if (!responseText) return;
-                  window.dispatchEvent(
-                    new CustomEvent("lit:insert-companion-annotation", {
-                      detail: { sourceAnnotation: fireSourceAnnotation, responseText },
-                    }),
-                  );
-                }}
-              >
-                Insert as companion
-              </button>
-            )}
+            <button
+              data-testid="llm-companion-btn"
+              className="rounded px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover"
+              onClick={() => {
+                if (!responseText) return;
+                window.dispatchEvent(
+                  new CustomEvent("lit:insert-companion-annotation", {
+                    detail: { sourceAnnotation: fireSourceAnnotation ?? null, responseText },
+                  }),
+                );
+              }}
+            >
+              Insert as companion
+            </button>
           </div>
         )}
       </div>

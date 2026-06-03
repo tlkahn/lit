@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, fireEvent, act } from "@testing-library/react";
+import { render, fireEvent } from "@testing-library/react";
 import { useLlmResponseStore } from "../stores/llmResponse";
-import { useEditorSelectionStore } from "../stores/editorSelection";
 import { LlmResponsePanel } from "./LlmResponsePanel";
 
 vi.mock("../lib/llmOrchestrator", () => ({
@@ -12,7 +11,6 @@ import { cancelStream } from "../lib/llmOrchestrator";
 describe("LlmResponsePanel", () => {
   beforeEach(() => {
     useLlmResponseStore.getState().reset();
-    useEditorSelectionStore.setState({ from: 0, to: 0 });
   });
 
   // Cycle 6.1 — Renders streaming text
@@ -43,7 +41,7 @@ describe("LlmResponsePanel", () => {
     useLlmResponseStore.getState().appendChunk("partial");
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
     expect(container.querySelector("[data-testid='llm-copy-btn']")).toBeNull();
-    expect(container.querySelector("[data-testid='llm-insert-btn']")).toBeNull();
+    expect(container.querySelector("[data-testid='llm-companion-btn']")).toBeNull();
   });
 
   // Cycle 6.3 — Copy button
@@ -72,7 +70,7 @@ describe("LlmResponsePanel", () => {
     useLlmResponseStore.getState().setError("fail");
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
     expect(container.querySelector("[data-testid='llm-copy-btn']")).toBeNull();
-    expect(container.querySelector("[data-testid='llm-insert-btn']")).toBeNull();
+    expect(container.querySelector("[data-testid='llm-companion-btn']")).toBeNull();
   });
 
   // Idle state
@@ -144,7 +142,7 @@ describe("LlmResponsePanel", () => {
     expect(container.querySelector("[data-testid='llm-stop-btn']")).toBeNull();
     expect(container.querySelector("[data-testid='llm-question-input']")).toBeTruthy();
     expect(container.querySelector("[data-testid='llm-copy-btn']")).toBeTruthy();
-    expect(container.querySelector("[data-testid='llm-insert-btn']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='llm-companion-btn']")).toBeTruthy();
     expect(container.textContent).toContain("[Stopped]");
   });
 
@@ -252,108 +250,47 @@ describe("LlmResponsePanel", () => {
     expect(document.activeElement).not.toBe(textarea);
   });
 
-  // --- Selection-aware buttons ---
+  // --- Companion button ---
 
-  it("shows 'Insert at cursor' when no selection", () => {
-    useEditorSelectionStore.setState({ from: 0, to: 0 });
+  it("shows companion button when status is done", () => {
     useLlmResponseStore.getState().startStream({ question: "q" });
     useLlmResponseStore.getState().appendChunk("response");
     useLlmResponseStore.getState().finishStream();
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
-    expect(container.querySelector("[data-testid='llm-insert-btn']")).toBeTruthy();
-    expect(container.querySelector("[data-testid='llm-replace-btn']")).toBeNull();
+    expect(container.querySelector("[data-testid='llm-companion-btn']")).toBeTruthy();
   });
 
-  it("shows 'Replace selection' when editor has selection", () => {
-    useEditorSelectionStore.setState({ from: 10, to: 20 });
-    useLlmResponseStore.getState().startStream({ question: "q" });
-    useLlmResponseStore.getState().appendChunk("response");
-    useLlmResponseStore.getState().finishStream();
-    const { container } = render(<LlmResponsePanel contentHeight={300} />);
-    expect(container.querySelector("[data-testid='llm-replace-btn']")).toBeTruthy();
-    expect(container.querySelector("[data-testid='llm-insert-btn']")).toBeNull();
-  });
-
-  it("dynamically toggles button when editor selection changes", () => {
-    useEditorSelectionStore.setState({ from: 0, to: 0 });
-    useLlmResponseStore.getState().startStream({ question: "q" });
-    useLlmResponseStore.getState().appendChunk("response");
-    useLlmResponseStore.getState().finishStream();
-    const { container } = render(<LlmResponsePanel contentHeight={300} />);
-    expect(container.querySelector("[data-testid='llm-insert-btn']")).toBeTruthy();
-    expect(container.querySelector("[data-testid='llm-replace-btn']")).toBeNull();
-
-    act(() => { useEditorSelectionStore.setState({ from: 5, to: 15 }); });
-    expect(container.querySelector("[data-testid='llm-replace-btn']")).toBeTruthy();
-    expect(container.querySelector("[data-testid='llm-insert-btn']")).toBeNull();
-
-    act(() => { useEditorSelectionStore.setState({ from: 3, to: 3 }); });
-    expect(container.querySelector("[data-testid='llm-insert-btn']")).toBeTruthy();
-    expect(container.querySelector("[data-testid='llm-replace-btn']")).toBeNull();
-  });
-
-  it("Insert at cursor dispatches lit:llm-insert-raw with raw text", () => {
+  it("companion button dispatches lit:insert-companion-annotation with responseText", () => {
     useLlmResponseStore.getState().startStream({ question: "q" });
     useLlmResponseStore.getState().appendChunk("response");
     useLlmResponseStore.getState().finishStream();
 
     const handler = vi.fn();
-    window.addEventListener("lit:llm-insert-raw", handler);
+    window.addEventListener("lit:insert-companion-annotation", handler);
 
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
-    fireEvent.click(container.querySelector("[data-testid='llm-insert-btn']")!);
+    fireEvent.click(container.querySelector("[data-testid='llm-companion-btn']")!);
 
     expect(handler).toHaveBeenCalledTimes(1);
-    expect((handler.mock.calls[0]![0] as CustomEvent).detail.text).toBe("response");
+    const detail = (handler.mock.calls[0]![0] as CustomEvent).detail;
+    expect(detail.sourceAnnotation).toBeNull();
+    expect(detail.responseText).toBe("response");
 
-    window.removeEventListener("lit:llm-insert-raw", handler);
+    window.removeEventListener("lit:insert-companion-annotation", handler);
   });
 
-  it("Replace selection dispatches lit:llm-insert-raw", () => {
-    useEditorSelectionStore.setState({ from: 10, to: 20 });
-    useLlmResponseStore.getState().startStream({ question: "q" });
-    useLlmResponseStore.getState().appendChunk("new");
-    useLlmResponseStore.getState().finishStream();
-
-    const handler = vi.fn();
-    window.addEventListener("lit:llm-insert-raw", handler);
-
-    const { container } = render(<LlmResponsePanel contentHeight={300} />);
-    fireEvent.click(container.querySelector("[data-testid='llm-replace-btn']")!);
-
-    expect(handler).toHaveBeenCalledTimes(1);
-    expect((handler.mock.calls[0]![0] as CustomEvent).detail.text).toBe("new");
-
-    window.removeEventListener("lit:llm-insert-raw", handler);
-  });
-
-  it("does not dispatch insert when responseText empty (no selection)", () => {
+  it("does not dispatch companion event when responseText is empty", () => {
     useLlmResponseStore.getState().startStream({ question: "q" });
     useLlmResponseStore.getState().finishStream();
 
     const handler = vi.fn();
-    window.addEventListener("lit:llm-insert-raw", handler);
+    window.addEventListener("lit:insert-companion-annotation", handler);
 
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
-    fireEvent.click(container.querySelector("[data-testid='llm-insert-btn']")!);
+    fireEvent.click(container.querySelector("[data-testid='llm-companion-btn']")!);
 
     expect(handler).not.toHaveBeenCalled();
-    window.removeEventListener("lit:llm-insert-raw", handler);
-  });
-
-  it("does not dispatch insert when responseText empty (with selection)", () => {
-    useEditorSelectionStore.setState({ from: 10, to: 20 });
-    useLlmResponseStore.getState().startStream({ question: "q" });
-    useLlmResponseStore.getState().finishStream();
-
-    const handler = vi.fn();
-    window.addEventListener("lit:llm-insert-raw", handler);
-
-    const { container } = render(<LlmResponsePanel contentHeight={300} />);
-    fireEvent.click(container.querySelector("[data-testid='llm-replace-btn']")!);
-
-    expect(handler).not.toHaveBeenCalled();
-    window.removeEventListener("lit:llm-insert-raw", handler);
+    window.removeEventListener("lit:insert-companion-annotation", handler);
   });
 
   // --- Styling & layout ---
@@ -426,39 +363,15 @@ describe("LlmResponsePanel", () => {
 
   // --- Cycle 10: Insert as companion button ---
 
-  it("shows 'Insert as companion' button when fireSourceAnnotation is set and status is done", () => {
-    const ann = {
-      form: "compact" as const,
-      annotation_type: "question" as const,
-      certainty: "neutral" as const,
-      scope: { kind: "sentence" as const, value: 1 },
-      body: "why?",
-      date: null,
-      is_structured: true,
-      char_start: 0,
-      char_end: 14,
-      original: "<!--- q | why? --->",
-      uuid: null,
-    };
-    useLlmResponseStore.getState().startStream({
-      question: "why?",
-      fireSourceAnnotation: ann,
-    });
-    useLlmResponseStore.getState().appendChunk("the answer");
+  it("shows companion button even when fireSourceAnnotation is null", () => {
+    useLlmResponseStore.getState().startStream({ question: "q" });
+    useLlmResponseStore.getState().appendChunk("response");
     useLlmResponseStore.getState().finishStream();
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
     expect(container.querySelector("[data-testid='llm-companion-btn']")).toBeTruthy();
   });
 
-  it("does not show companion button when fireSourceAnnotation is null", () => {
-    useLlmResponseStore.getState().startStream({ question: "q" });
-    useLlmResponseStore.getState().appendChunk("response");
-    useLlmResponseStore.getState().finishStream();
-    const { container } = render(<LlmResponsePanel contentHeight={300} />);
-    expect(container.querySelector("[data-testid='llm-companion-btn']")).toBeNull();
-  });
-
-  it("clicking companion button dispatches lit:insert-companion-annotation event", () => {
+  it("clicking companion button dispatches with fireSourceAnnotation when set", () => {
     const ann = {
       form: "compact" as const,
       annotation_type: "question" as const,
@@ -493,24 +406,9 @@ describe("LlmResponsePanel", () => {
     window.removeEventListener("lit:insert-companion-annotation", handler);
   });
 
-  it("does not dispatch companion event when responseText is empty", () => {
-    const ann = {
-      form: "compact" as const,
-      annotation_type: "question" as const,
-      certainty: "neutral" as const,
-      scope: { kind: "sentence" as const, value: 1 },
-      body: "why?",
-      date: null,
-      is_structured: true,
-      char_start: 0,
-      char_end: 14,
-      original: "<!--- q | why? --->",
-      uuid: null,
-    };
-    useLlmResponseStore.getState().startStream({
-      question: "why?",
-      fireSourceAnnotation: ann,
-    });
+  it("clicking companion button dispatches with sourceAnnotation: null when fireSourceAnnotation not set", () => {
+    useLlmResponseStore.getState().startStream({ question: "q" });
+    useLlmResponseStore.getState().appendChunk("response");
     useLlmResponseStore.getState().finishStream();
 
     const handler = vi.fn();
@@ -519,7 +417,11 @@ describe("LlmResponsePanel", () => {
     const { container } = render(<LlmResponsePanel contentHeight={300} />);
     fireEvent.click(container.querySelector("[data-testid='llm-companion-btn']")!);
 
-    expect(handler).not.toHaveBeenCalled();
+    expect(handler).toHaveBeenCalledTimes(1);
+    const detail = (handler.mock.calls[0]![0] as CustomEvent).detail;
+    expect(detail.sourceAnnotation).toBeNull();
+    expect(detail.responseText).toBe("response");
+
     window.removeEventListener("lit:insert-companion-annotation", handler);
   });
 });
