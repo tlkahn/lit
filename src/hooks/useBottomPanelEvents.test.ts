@@ -214,6 +214,18 @@ describe("useBottomPanelEvents", () => {
       expect(useBottomPanelStore.getState().unfolded).toBe(false);
     });
 
+    it("opens annotations tab when folded and count is 0", () => {
+      renderHook(() => useBottomPanelEvents());
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("lit:toggle-annotation-panel"));
+      });
+
+      const state = useBottomPanelStore.getState();
+      expect(state.activeTab).toBe("annotations");
+      expect(state.unfolded).toBe(true);
+    });
+
     it("switches to annotations tab when on different tab and unfolded", () => {
       useBottomPanelStore.getState().setTabCount("annotations", 2);
       useBottomPanelStore.setState({

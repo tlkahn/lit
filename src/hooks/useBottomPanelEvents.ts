@@ -65,9 +65,8 @@ export function useBottomPanelEvents() {
   useEffect(() => {
     const handler = () => {
       const { annotationEnabled } = usePreferencesStore.getState();
+      if (!annotationEnabled) return;
       const store = useBottomPanelStore.getState();
-      const annotationCount = store.tabMeta.annotations.count ?? 0;
-      if (!annotationEnabled || annotationCount === 0) return;
       if (store.unfolded && store.activeTab === "annotations") {
         store.setUnfolded(false);
       } else {

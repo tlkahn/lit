@@ -290,7 +290,7 @@ describe("StatusBar", () => {
       expect(screen.queryByTestId("tab-annotations")).toBeNull();
     });
 
-    it("hides annotations tab when annotationCount is 0", () => {
+    it("shows annotations tab even when annotationCount is 0", () => {
       useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
       usePaneStore.setState({
         root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
@@ -299,7 +299,8 @@ describe("StatusBar", () => {
       usePreferencesStore.setState({ annotationEnabled: true });
       useBottomPanelStore.setState({ tabMeta: { ...defaultTabMeta(), annotations: { count: 0, hasOpened: false } } });
       render(<StatusBar />);
-      expect(screen.queryByTestId("tab-annotations")).toBeNull();
+      expect(screen.getByTestId("tab-annotations")).toBeInTheDocument();
+      expect(screen.getByTestId("tab-annotations")).toHaveTextContent("Annotations");
     });
 
     it("shows annotations tab when enabled and count > 0", () => {
