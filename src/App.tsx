@@ -19,7 +19,6 @@ import { usePreferencesStore } from "./stores/preferences";
 import { useMarkConfigStore } from "./stores/markConfig";
 import { useFocusModeStore } from "./stores/focusMode";
 import { useLicenseStore } from "./stores/license";
-import { useConversationStore } from "./stores/conversation";
 import { useSecretStoreStore } from "./stores/secretStore";
 import { getStartupContext, mergeDocuments, executeSplit } from "./lib/ipc";
 import type { MergePlan } from "./lib/ipc";
@@ -231,15 +230,6 @@ function App() {
       });
       if (cancelled) { unDeepLink(); return; }
       unlisteners.push(unDeepLink);
-
-      const unAnnotationsRemoved = await listen<{ items: Array<{ node_id: string; uuid: string }> }>(
-        "lit:annotations-removed",
-        (event) => {
-          useConversationStore.getState().handleAnnotationsRemoved(event.payload.items);
-        },
-      );
-      if (cancelled) { unAnnotationsRemoved(); return; }
-      unlisteners.push(unAnnotationsRemoved);
     };
 
     setup();

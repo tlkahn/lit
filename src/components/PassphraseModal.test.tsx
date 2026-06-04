@@ -394,7 +394,7 @@ describe("PassphraseModal", () => {
     it("modal dismissed after 400ms", async () => {
       vi.useFakeTimers();
       await resetStore({ promptOpen: true, exists: true, unlocked: false });
-      let resolveRefresh: (v: any) => void;
+      let resolveRefresh: (v: unknown) => void;
       const refreshPromise = new Promise((r) => { resolveRefresh = r; });
       mockInvoke((cmd) => {
         if (cmd === "unlock_secret_store") return undefined;
@@ -483,7 +483,7 @@ describe("PassphraseModal", () => {
     it("Escape ignored during dismissed state", async () => {
       vi.useFakeTimers();
       await resetStore({ promptOpen: true, exists: true, unlocked: false });
-      let resolveRefresh: (v: any) => void;
+      let resolveRefresh: (v: unknown) => void;
       const refreshPromise = new Promise((r) => { resolveRefresh = r; });
       mockInvoke((cmd) => {
         if (cmd === "unlock_secret_store") return undefined;
@@ -511,7 +511,7 @@ describe("PassphraseModal", () => {
     it("Enter ignored during dismissed state", async () => {
       vi.useFakeTimers();
       await resetStore({ promptOpen: true, exists: true, unlocked: false });
-      let resolveRefresh: (v: any) => void;
+      let resolveRefresh: (v: unknown) => void;
       const refreshPromise = new Promise((r) => { resolveRefresh = r; });
       let unlockCallCount = 0;
       mockInvoke((cmd) => {

@@ -35,7 +35,6 @@ const defaults = {
   llmPromptLlm: "Execute the following instruction using the provided context.",
   llmPromptTr: "Translate the following text. If a hint is provided, follow it.",
   llmPromptQ: "Answer the following question about the provided context.",
-  llmDeleteAnnotationThreads: false,
   academicPandocPath: "",
   academicCrossrefPath: "",
   academicPdfEngine: "",

@@ -10,10 +10,14 @@ vi.mock("../stores/workspace", () => ({
   useWorkspaceStore: { getState: () => ({ currentPagePath: null }) },
 }));
 
+import type { EditorView } from "@codemirror/view";
 import { getCurrentEditorView } from "./editorViewRef";
 import { useWorkspaceStore } from "../stores/workspace";
 
 const mockedGetView = vi.mocked(getCurrentEditorView);
+const mockableStore = useWorkspaceStore as unknown as {
+  getState: () => { currentPagePath: string | null };
+};
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -34,8 +38,8 @@ describe("requestEditorContext", () => {
         sliceDoc: (from: number, to: number) => "hello world".slice(from, to),
       },
     };
-    mockedGetView.mockReturnValue(fakeView as any);
-    (useWorkspaceStore as any).getState = () => ({ currentPagePath: "notes/test.md" });
+    mockedGetView.mockReturnValue(fakeView as unknown as EditorView);
+    mockableStore.getState = () => ({ currentPagePath: "notes/test.md" });
 
     const ctx = requestEditorContext();
     expect(ctx.selectionText).toBe("world");
@@ -51,8 +55,8 @@ describe("requestEditorContext", () => {
         sliceDoc: () => "",
       },
     };
-    mockedGetView.mockReturnValue(fakeView as any);
-    (useWorkspaceStore as any).getState = () => ({ currentPagePath: "test.md" });
+    mockedGetView.mockReturnValue(fakeView as unknown as EditorView);
+    mockableStore.getState = () => ({ currentPagePath: "test.md" });
 
     const ctx = requestEditorContext();
     expect(ctx.selectionText).toBe("");
@@ -67,8 +71,8 @@ describe("requestEditorContext", () => {
         sliceDoc: () => "",
       },
     };
-    mockedGetView.mockReturnValue(fakeView as any);
-    (useWorkspaceStore as any).getState = () => ({ currentPagePath: null });
+    mockedGetView.mockReturnValue(fakeView as unknown as EditorView);
+    mockableStore.getState = () => ({ currentPagePath: null });
 
     const ctx = requestEditorContext();
     expect(ctx.filePath).toBe("");
@@ -88,8 +92,8 @@ describe("enrichWithEditorContext", () => {
         sliceDoc: (from: number, to: number) => "hello world".slice(from, to),
       },
     };
-    mockedGetView.mockReturnValue(fakeView as any);
-    (useWorkspaceStore as any).getState = () => ({ currentPagePath: "notes/test.md" });
+    mockedGetView.mockReturnValue(fakeView as unknown as EditorView);
+    mockableStore.getState = () => ({ currentPagePath: "notes/test.md" });
 
     expect(enrichWithEditorContext("explain this")).toBe(
       "File: notes/test.md\n\nContext:\nworld\n\nexplain this",
@@ -103,8 +107,8 @@ describe("enrichWithEditorContext", () => {
         sliceDoc: () => "",
       },
     };
-    mockedGetView.mockReturnValue(fakeView as any);
-    (useWorkspaceStore as any).getState = () => ({ currentPagePath: "notes/test.md" });
+    mockedGetView.mockReturnValue(fakeView as unknown as EditorView);
+    mockableStore.getState = () => ({ currentPagePath: "notes/test.md" });
 
     expect(enrichWithEditorContext("explain this")).toBe(
       "File: notes/test.md\n\nexplain this",
@@ -118,8 +122,8 @@ describe("enrichWithEditorContext", () => {
         sliceDoc: () => "",
       },
     };
-    mockedGetView.mockReturnValue(fakeView as any);
-    (useWorkspaceStore as any).getState = () => ({ currentPagePath: null });
+    mockedGetView.mockReturnValue(fakeView as unknown as EditorView);
+    mockableStore.getState = () => ({ currentPagePath: null });
 
     expect(enrichWithEditorContext("explain this")).toBeUndefined();
   });

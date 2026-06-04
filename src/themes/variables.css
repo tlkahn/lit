@@ -55,12 +55,6 @@
   --crossref-invalid-color: var(--text-error);
   --crossref-highlight-color: var(--text-accent);
 
-  /* Chat bubbles */
-  --chat-bubble-user: #007AFF;
-  --chat-bubble-user-text: #ffffff;
-  --chat-bubble-assistant: #34C759;
-  --chat-bubble-assistant-text: #ffffff;
-
   /* Fonts */
   --font-text-theme: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
   --font-interface-theme: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
@@ -133,12 +127,6 @@
   --crossref-citeproc-color: var(--color-purple);
   --crossref-invalid-color: var(--text-error);
   --crossref-highlight-color: var(--text-accent);
-
-  /* Chat bubbles (Apple dark-mode adapted) */
-  --chat-bubble-user: #409CFF;
-  --chat-bubble-user-text: #ffffff;
-  --chat-bubble-assistant: #32D74B;
-  --chat-bubble-assistant-text: #ffffff;
 
   /* Fonts */
   --font-text-theme: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;

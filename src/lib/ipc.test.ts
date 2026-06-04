@@ -78,7 +78,6 @@ import {
   deleteApiKey,
   llmPromptStreaming,
   llmBuildContext,
-  GLOBAL_NODE_ID,
   llmCancel,
   testLlmConnection,
   undoLastOperation,
@@ -91,19 +90,9 @@ import {
   suggestMergeTitle,
   cancelTitleSuggestion,
   mergeDocuments,
-  conversationCreate,
-  conversationList,
-  conversationGet,
-  conversationMessages,
-  conversationAddMessage,
-  conversationDelete,
-  conversationDeleteMessagesAfter,
   annotationFindUuid,
-  conversationFindByAnchor,
-  conversationDeleteByAnchor,
   detectPandoc,
   exportDocument,
-  type MessageRole,
   type SecretStoreStatus,
   initSecretStore,
   unlockSecretStore,
@@ -566,102 +555,11 @@ describe("ipc", () => {
           }
           return { "a.md": 0.4, "b.md": 0.6 };
         }
-        case "conversation_delete":
-          return null;
-        case "conversation_delete_messages_after":
-          return null;
-        case "conversation_add_message": {
-          const a = args as Record<string, unknown>;
-          return {
-            id: 99,
-            conversation_id: a.conversationId,
-            role: a.role,
-            content: a.content,
-            seq: 0,
-            created_at: "2025-01-01T00:00:00Z",
-          };
-        }
-        case "conversation_messages": {
-          return [
-            {
-              id: 1,
-              conversation_id: (args as Record<string, unknown>).conversationId,
-              role: "user",
-              content: "Hello",
-              seq: 0,
-              created_at: "2025-01-01T00:00:00Z",
-            },
-            {
-              id: 2,
-              conversation_id: (args as Record<string, unknown>).conversationId,
-              role: "assistant",
-              content: "Hi there",
-              seq: 1,
-              created_at: "2025-01-01T00:00:01Z",
-            },
-          ];
-        }
-        case "conversation_get": {
-          const a = args as Record<string, unknown>;
-          return {
-            id: a.conversationId,
-            node_id: "notes/a.md",
-            anchor_type: null,
-            anchor_id: null,
-            anchor_key: null,
-            title: "Fetched Chat",
-            created_at: "2025-01-01T00:00:00Z",
-            updated_at: "2025-01-01T00:00:00Z",
-          };
-        }
-        case "conversation_list": {
-          return [
-            {
-              id: "conv-1",
-              node_id: (args as Record<string, unknown>).nodeId,
-              anchor_type: null,
-              anchor_id: null,
-              anchor_key: null,
-              title: "Chat 1",
-              created_at: "2025-01-01T00:00:00Z",
-              updated_at: "2025-01-02T00:00:00Z",
-            },
-          ];
-        }
-        case "conversation_create": {
-          const a = args as Record<string, unknown>;
-          return {
-            id: a.id,
-            node_id: a.nodeId,
-            anchor_type: a.anchorType ?? null,
-            anchor_id: a.anchorId ?? null,
-            anchor_key: a.anchorKey ?? null,
-            title: a.title ?? null,
-            created_at: "2025-01-01T00:00:00Z",
-            updated_at: "2025-01-01T00:00:00Z",
-          };
-        }
         case "annotation_find_uuid": {
           const a = args as Record<string, unknown>;
           if (a.body === null) return "uuid-for-null-body";
           return "test-uuid-abc";
         }
-        case "conversation_find_by_anchor": {
-          const a = args as Record<string, unknown>;
-          if (a.anchorKey === "missing") return null;
-          return {
-            id: "conv-found",
-            node_id: a.nodeId,
-            anchor_type: a.anchorType,
-            anchor_id: null,
-            anchor_key: a.anchorKey,
-            title: "Anchored Chat",
-            created_at: "2025-01-01T00:00:00Z",
-            updated_at: "2025-01-01T00:00:00Z",
-          };
-        }
-        case "conversation_delete_by_anchor":
-          return null;
         case "detect_pandoc":
           return {
             pandoc_path: "/usr/local/bin/pandoc",
@@ -1558,10 +1456,6 @@ describe("ipc", () => {
     expect(result.truncation).toBeNull();
   });
 
-  it("GLOBAL_NODE_ID equals _global", () => {
-    expect(GLOBAL_NODE_ID).toBe("_global");
-  });
-
   it("trashPage calls trash_page with relativePath", async () => {
     const entry = await trashPage("Doomed.md");
     expect(entry.original_path).toBe("Doomed.md");
@@ -1703,105 +1597,6 @@ describe("ipc", () => {
     });
   });
 
-  it("conversationDeleteMessagesAfter calls with conversationId and seq", async () => {
-    await conversationDeleteMessagesAfter("conv-1", 2);
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("conversation_delete_messages_after", {
-      conversationId: "conv-1",
-      seq: 2,
-    });
-  });
-
-  it("conversationDelete calls with conversationId", async () => {
-    await conversationDelete("conv-1");
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("conversation_delete", { conversationId: "conv-1" });
-  });
-
-  it("conversationAddMessage returns the new MessageRow", async () => {
-    const msg = await conversationAddMessage("conv-1", "user", "What is TDD?");
-    expect(msg.id).toBe(99);
-    expect(msg.conversation_id).toBe("conv-1");
-    expect(msg.role).toBe("user");
-    expect(msg.content).toBe("What is TDD?");
-    expect(msg.seq).toBe(0);
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("conversation_add_message", {
-      conversationId: "conv-1",
-      role: "user",
-      content: "What is TDD?",
-    });
-  });
-
-  it("conversationMessages returns messages for a conversation", async () => {
-    const msgs = await conversationMessages("conv-1");
-    expect(msgs).toHaveLength(2);
-    expect(msgs[0]!.role).toBe("user");
-    expect(msgs[0]!.content).toBe("Hello");
-    expect(msgs[0]!.seq).toBe(0);
-    expect(msgs[1]!.role).toBe("assistant");
-    expect(msgs[1]!.seq).toBe(1);
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("conversation_messages", { conversationId: "conv-1" });
-  });
-
-  it("conversationGet returns a single conversation", async () => {
-    const row = await conversationGet("conv-1");
-    expect(row.id).toBe("conv-1");
-    expect(row.title).toBe("Fetched Chat");
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("conversation_get", { conversationId: "conv-1" });
-  });
-
-  it("conversationList returns conversations for a node", async () => {
-    const rows = await conversationList("notes/a.md");
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.id).toBe("conv-1");
-    expect(rows[0]!.title).toBe("Chat 1");
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("conversation_list", { nodeId: "notes/a.md" });
-  });
-
-  it("MessageRole type constrains role field", async () => {
-    const msg = await conversationAddMessage("conv-1", "user", "hi");
-    const role: MessageRole = msg.role;
-    expect(role).toBe("user");
-  });
-
-  it("conversationCreate passes anchorKey to Rust command", async () => {
-    const row = await conversationCreate("conv-1", "notes/a.md", "annotation", 42, "ann-uuid-1", "My Chat");
-    expect(row.id).toBe("conv-1");
-    expect(row.node_id).toBe("notes/a.md");
-    expect(row.anchor_type).toBe("annotation");
-    expect(row.anchor_id).toBe(42);
-    expect(row.anchor_key).toBe("ann-uuid-1");
-    expect(row.title).toBe("My Chat");
-    expect(row.created_at).toBe("2025-01-01T00:00:00Z");
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("conversation_create", {
-      id: "conv-1",
-      nodeId: "notes/a.md",
-      anchorType: "annotation",
-      anchorId: 42,
-      anchorKey: "ann-uuid-1",
-      title: "My Chat",
-    });
-  });
-
-  it("conversationCreate sends anchorKey null when omitted", async () => {
-    const row = await conversationCreate("conv-1", "notes/a.md");
-    expect(row.anchor_key).toBeNull();
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("conversation_create", {
-      id: "conv-1",
-      nodeId: "notes/a.md",
-      anchorType: null,
-      anchorId: null,
-      anchorKey: null,
-      title: null,
-    });
-  });
-
   it("annotationFindUuid invokes with correct args", async () => {
     const uuid = await annotationFindUuid("a.md", "question", "What?", 10);
     expect(uuid).toBe("test-uuid-abc");
@@ -1823,34 +1618,6 @@ describe("ipc", () => {
       annotationType: "note",
       body: null,
       charStartHint: 0,
-    });
-  });
-
-  it("conversationFindByAnchor returns ConversationRow", async () => {
-    const row = await conversationFindByAnchor("a.md", "annotation", "uuid-1");
-    expect(row).not.toBeNull();
-    expect(row!.id).toBe("conv-found");
-    expect(row!.anchor_key).toBe("uuid-1");
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("conversation_find_by_anchor", {
-      nodeId: "a.md",
-      anchorType: "annotation",
-      anchorKey: "uuid-1",
-    });
-  });
-
-  it("conversationFindByAnchor returns null when not found", async () => {
-    const row = await conversationFindByAnchor("a.md", "annotation", "missing");
-    expect(row).toBeNull();
-  });
-
-  it("conversationDeleteByAnchor invokes with correct args", async () => {
-    await conversationDeleteByAnchor("a.md", "annotation", "uuid-1");
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("conversation_delete_by_anchor", {
-      nodeId: "a.md",
-      anchorType: "annotation",
-      anchorKey: "uuid-1",
     });
   });
 

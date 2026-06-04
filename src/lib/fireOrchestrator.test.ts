@@ -1,35 +1,30 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import type { Annotation } from "./ipc";
 import { useModalLockStore } from "../stores/modalLock";
 import { usePreferencesStore } from "../stores/preferences";
-import { useLlmResponseStore } from "../stores/llmResponse";
-import { useBottomPanelStore } from "../stores/bottomPanel";
+import { useStatusMessageStore } from "../stores/statusMessage";
 import { useSecretStoreStore } from "../stores/secretStore";
-import { firingAnnotationsField, annotationThreadKeysField } from "../editor/livePreview/annotationWidgets";
+import { firingAnnotationsField } from "../editor/livePreview/annotationWidgets";
 
 vi.mock("./ipc", () => ({
   resolveAnnotationScopeWithMode: vi.fn(async () => null),
-  annotationFindUuid: vi.fn(async () => "fake-uuid-123"),
   secretStoreStatus: vi.fn(async () => ({ exists: true, unlocked: false })),
 }));
 
 vi.mock("./llmClient", () => ({
   startLlmStream: vi.fn(async () => {}),
+  cancelLlmStream: vi.fn(async () => {}),
 }));
 
-import { resolveAnnotationScopeWithMode, annotationFindUuid } from "./ipc";
-import { startLlmStream } from "./llmClient";
+import { resolveAnnotationScopeWithMode } from "./ipc";
+import { startLlmStream, cancelLlmStream } from "./llmClient";
 import { fireAnnotation, buildFirePrompt, getTypePrompt, stripAnnotations } from "./fireOrchestrator";
-import { useConversationStore } from "../stores/conversation";
-import { useWorkspaceStore } from "../stores/workspace";
 
 const mockResolve = resolveAnnotationScopeWithMode as ReturnType<typeof vi.fn>;
 const mockStream = startLlmStream as ReturnType<typeof vi.fn>;
-const mockFindUuid = annotationFindUuid as ReturnType<typeof vi.fn>;
-
-const flushPromises = () => new Promise(resolve => setTimeout(resolve, 0));
+const mockCancel = cancelLlmStream as ReturnType<typeof vi.fn>;
 
 const flush = (n = 5) =>
   Array.from({ length: n }).reduce<Promise<void>>(
@@ -38,7 +33,7 @@ const flush = (n = 5) =>
   );
 
 function makeView(doc = "hello world", withFiringField = false): EditorView {
-  const extensions = withFiringField ? [firingAnnotationsField, annotationThreadKeysField] : [];
+  const extensions = withFiringField ? [firingAnnotationsField] : [];
   return new EditorView({
     state: EditorState.create({ doc, extensions }),
     parent: document.createElement("div"),
@@ -64,12 +59,17 @@ function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
 beforeEach(() => {
   vi.clearAllMocks();
   useModalLockStore.setState({ llmLocked: false, openCount: 0, locked: false });
-  useLlmResponseStore.getState().reset();
-  useWorkspaceStore.setState({ currentPagePath: "test/page.md" });
-  useBottomPanelStore.setState({ activeTab: "linked", unfolded: false });
-  mockFindUuid.mockResolvedValue("fake-uuid-123");
+  useStatusMessageStore.setState({ message: null, variant: "success" });
   useSecretStoreStore.getState()._resetSettler();
   useSecretStoreStore.setState({ exists: true, unlocked: true, loading: false, promptOpen: false });
+});
+
+afterEach(() => {
+  // Drain any lit:cancel-fire listeners leaked by tests whose stream mock
+  // resolves without invoking onDone/onError (so doCleanup never ran). Each
+  // leaked handler removes itself and is idempotent via its own cleanedUp flag.
+  window.dispatchEvent(new CustomEvent("lit:cancel-fire"));
+  mockStream.mockImplementation(async () => {});
 });
 
 describe("buildFirePrompt", () => {
@@ -209,20 +209,27 @@ describe("fireAnnotation", () => {
     await fireAnnotation({ view, annotation: makeAnnotation() });
 
     expect(useModalLockStore.getState().llmLocked).toBe(false);
-    expect(useLlmResponseStore.getState().status).toBe("error");
+    expect(useStatusMessageStore.getState().message).toBe("fail");
+    expect(useStatusMessageStore.getState().variant).toBe("error");
     view.destroy();
   });
 
-  it("starts stream in llmResponse store", async () => {
-    const view = makeView();
-    let statusDuringCall = "";
+  it("unlocks and shows error when startLlmStream throws synchronously", async () => {
     mockStream.mockImplementation(async () => {
-      statusDuringCall = useLlmResponseStore.getState().status;
+      throw new Error("boom");
     });
 
-    await fireAnnotation({ view, annotation: makeAnnotation({ body: "test" }) });
+    const completeSpy = vi.fn();
+    window.addEventListener("lit:fire-complete", completeSpy);
+    const view = makeView();
 
-    expect(statusDuringCall).toBe("streaming");
+    await fireAnnotation({ view, annotation: makeAnnotation() });
+
+    expect(useModalLockStore.getState().llmLocked).toBe(false);
+    expect(useStatusMessageStore.getState().message).toBe("boom");
+    expect(useStatusMessageStore.getState().variant).toBe("error");
+    expect(completeSpy).toHaveBeenCalledOnce();
+    window.removeEventListener("lit:fire-complete", completeSpy);
     view.destroy();
   });
 
@@ -273,16 +280,6 @@ describe("fireAnnotation", () => {
 
     const result = view.state.doc.toString();
     expect(result).toBe(doc);
-    view.destroy();
-  });
-
-  it("replacing type: sets fireSourceAnnotation on the response store", async () => {
-    const view = makeView();
-    const ann = makeAnnotation({ annotation_type: "llm" });
-
-    await fireAnnotation({ view, annotation: ann });
-
-    expect(useLlmResponseStore.getState().fireSourceAnnotation).toBe(ann);
     view.destroy();
   });
 
@@ -373,377 +370,75 @@ describe("fireAnnotation", () => {
     view.destroy();
   });
 
-  // --- Cycle 6.1: Persisting fires route through conversation store ---
+  // --- Question type fires through the replacing (inline companion) path ---
 
-  it("persisting type: calls sendAnnotationFire on conversation store", async () => {
-    const sendSpy = vi.fn().mockResolvedValue(undefined);
-    useConversationStore.setState({ sendAnnotationFire: sendSpy });
-    mockFindUuid.mockResolvedValue("uuid-abc");
+  it("question type: calls startLlmStream (replacing path)", async () => {
     const view = makeView();
     const ann = makeAnnotation({ annotation_type: "question", body: "what is this?" });
 
     await fireAnnotation({ view, annotation: ann });
 
-    expect(sendSpy).toHaveBeenCalledOnce();
-    const callArg = sendSpy.mock.calls[0]![0] as Record<string, unknown>;
-    expect(callArg.nodeId).toBe("test/page.md");
-    expect(callArg.annotationUuid).toBe("uuid-abc");
-    expect(callArg.annotation).toBe(ann);
-    expect(callArg.content).toBe("what is this?");
-    expect(callArg.model).toBe(usePreferencesStore.getState().llmModel);
+    expect(mockStream).toHaveBeenCalledOnce();
+    const [streamArgs] = mockStream.mock.calls[0]!;
+    expect(streamArgs.model).toBe(usePreferencesStore.getState().llmModel);
     view.destroy();
   });
 
-  it("persisting type: does NOT call startLlmStream directly", async () => {
-    useConversationStore.setState({ sendAnnotationFire: vi.fn(async () => {}) });
-    const view = makeView();
-    const ann = makeAnnotation({ annotation_type: "question" });
-
-    await fireAnnotation({ view, annotation: ann });
-
-    expect(mockStream).not.toHaveBeenCalled();
-    view.destroy();
-  });
-
-  it("persisting type: passes system prompt and textOverride", async () => {
+  it("question type: reads llmPromptQ system prompt from preferences", async () => {
     usePreferencesStore.setState({ llmPromptQ: "Custom Q prompt" });
-    const sendSpy = vi.fn().mockResolvedValue(undefined);
-    useConversationStore.setState({ sendAnnotationFire: sendSpy });
-    mockResolve.mockResolvedValue({ start: 0, end: 5 });
-    const view = makeView("hello world");
+    const view = makeView();
     const ann = makeAnnotation({ annotation_type: "question", body: "what?" });
 
     await fireAnnotation({ view, annotation: ann });
 
-    const callArg = sendSpy.mock.calls[0]![0] as Record<string, unknown>;
-    expect(callArg.system).toBe("Custom Q prompt");
-    expect(callArg.textOverride).toContain("hello");
-    expect(callArg.textOverride).toContain("what?");
+    const callArgs = mockStream.mock.calls[0]![0];
+    expect(callArgs.system).toBe("Custom Q prompt");
     view.destroy();
   });
 
-  it("persisting type: calls annotationFindUuid with correct args", async () => {
-    useConversationStore.setState({ sendAnnotationFire: vi.fn(async () => {}) });
-    const view = makeView();
+  it("question type: removes source and inserts companion annotation", async () => {
+    const doc = "before <!--- q | explain this ---> after";
+    const view = makeView(doc);
     const ann = makeAnnotation({
       annotation_type: "question",
-      body: "my question",
-      char_start: 5,
+      body: "explain this",
+      char_start: 7,
+      char_end: 34,
+      original: "<!--- q | explain this --->",
+    });
+
+    mockStream.mockImplementation(async (_args: unknown, callbacks: { onChunk: (t: string) => void; onDone: () => void }) => {
+      callbacks.onChunk("replacement text");
+      callbacks.onDone();
     });
 
     await fireAnnotation({ view, annotation: ann });
 
-    expect(mockFindUuid).toHaveBeenCalledWith("test/page.md", "question", "my question", 5);
+    const result = view.state.doc.toString();
+    expect(result).not.toContain("<!--- q | explain this --->");
+    expect(result).toContain("<!--- n | replacement text --->");
+    expect(result).toMatch(/^before /);
+    expect(result).toContain(" after");
     view.destroy();
   });
 
-  it("persisting type: clears firing and unlocks when sendAnnotationFire resolves", async () => {
-    useConversationStore.setState({ sendAnnotationFire: vi.fn(async () => {}) });
-    const completeSpy = vi.fn();
-    window.addEventListener("lit:fire-complete", completeSpy);
-    const view = makeView("hello world", true);
-    const ann = makeAnnotation({ annotation_type: "question", char_start: 0 });
-
-    await fireAnnotation({ view, annotation: ann });
-    await flushPromises();
-
-    expect(useModalLockStore.getState().llmLocked).toBe(false);
-    expect(view.state.field(firingAnnotationsField).has(0)).toBe(false);
-    expect(completeSpy).toHaveBeenCalledOnce();
-    window.removeEventListener("lit:fire-complete", completeSpy);
-    view.destroy();
-  });
-
-  it("persisting type: clears firing and unlocks when sendAnnotationFire rejects", async () => {
-    useConversationStore.setState({
-      sendAnnotationFire: vi.fn(async () => { throw new Error("stream failed"); }),
+  it("question type: unlocks and dispatches lit:fire-complete on done", async () => {
+    mockStream.mockImplementation(async (_args: unknown, callbacks: { onDone: () => void }) => {
+      callbacks.onDone();
     });
     const completeSpy = vi.fn();
     window.addEventListener("lit:fire-complete", completeSpy);
-    const view = makeView("hello world", true);
-    const ann = makeAnnotation({ annotation_type: "question", char_start: 0 });
-
-    await fireAnnotation({ view, annotation: ann });
-    await flushPromises();
-
-    expect(useModalLockStore.getState().llmLocked).toBe(false);
-    expect(view.state.field(firingAnnotationsField).has(0)).toBe(false);
-    expect(completeSpy).toHaveBeenCalledOnce();
-    window.removeEventListener("lit:fire-complete", completeSpy);
-    view.destroy();
-  });
-
-  it("persisting type: skips sendAnnotationFire when annotationFindUuid returns null", async () => {
-    const sendSpy = vi.fn().mockResolvedValue(undefined);
-    useConversationStore.setState({ sendAnnotationFire: sendSpy });
-    mockFindUuid.mockResolvedValue(null);
-    const completeSpy = vi.fn();
-    window.addEventListener("lit:fire-complete", completeSpy);
-    const view = makeView("hello world", true);
-    const ann = makeAnnotation({ annotation_type: "question", char_start: 0 });
-
-    await fireAnnotation({ view, annotation: ann });
-
-    expect(sendSpy).not.toHaveBeenCalled();
-    expect(useModalLockStore.getState().llmLocked).toBe(false);
-    expect(view.state.field(firingAnnotationsField).has(0)).toBe(false);
-    expect(completeSpy).toHaveBeenCalledOnce();
-    expect(useLlmResponseStore.getState().status).toBe("error");
-    expect(useLlmResponseStore.getState().errorMessage).toBe("Annotation not found in index. Save the file and try again.");
-    expect(useBottomPanelStore.getState().activeTab).toBe("llm-response");
-    window.removeEventListener("lit:fire-complete", completeSpy);
-    view.destroy();
-  });
-
-  it("persisting type: skips when currentPagePath is null", async () => {
-    useWorkspaceStore.setState({ currentPagePath: null });
-    const sendSpy = vi.fn().mockResolvedValue(undefined);
-    useConversationStore.setState({ sendAnnotationFire: sendSpy });
-    const completeSpy = vi.fn();
-    window.addEventListener("lit:fire-complete", completeSpy);
-    const view = makeView("hello world", true);
-    const ann = makeAnnotation({ annotation_type: "question", char_start: 0 });
-
-    await fireAnnotation({ view, annotation: ann });
-
-    expect(mockFindUuid).not.toHaveBeenCalled();
-    expect(sendSpy).not.toHaveBeenCalled();
-    expect(useModalLockStore.getState().llmLocked).toBe(false);
-    expect(view.state.field(firingAnnotationsField).has(0)).toBe(false);
-    expect(completeSpy).toHaveBeenCalledOnce();
-    expect(useLlmResponseStore.getState().status).toBe("error");
-    expect(useLlmResponseStore.getState().errorMessage).toBe("No active file. Open a file and try again.");
-    expect(useBottomPanelStore.getState().activeTab).toBe("llm-response");
-    window.removeEventListener("lit:fire-complete", completeSpy);
-    view.destroy();
-  });
-
-  it("persisting type: clears firing and shows error when annotationFindUuid throws", async () => {
-    const sendSpy = vi.fn().mockResolvedValue(undefined);
-    useConversationStore.setState({ sendAnnotationFire: sendSpy });
-    mockFindUuid.mockRejectedValue(new Error("IPC error"));
-    const completeSpy = vi.fn();
-    window.addEventListener("lit:fire-complete", completeSpy);
-    const view = makeView("hello world", true);
-    const ann = makeAnnotation({ annotation_type: "question", char_start: 0 });
-
-    await fireAnnotation({ view, annotation: ann });
-
-    expect(sendSpy).not.toHaveBeenCalled();
-    expect(useModalLockStore.getState().llmLocked).toBe(false);
-    expect(view.state.field(firingAnnotationsField).has(0)).toBe(false);
-    expect(completeSpy).toHaveBeenCalledOnce();
-    expect(useLlmResponseStore.getState().status).toBe("error");
-    expect(useLlmResponseStore.getState().errorMessage).toBe("Failed to look up annotation. Save the file and try again.");
-    expect(useBottomPanelStore.getState().activeTab).toBe("llm-response");
-    window.removeEventListener("lit:fire-complete", completeSpy);
-    view.destroy();
-  });
-
-  it("persisting type: does NOT call startStream on llmResponse store", async () => {
-    useConversationStore.setState({ sendAnnotationFire: vi.fn(async () => {}) });
     const view = makeView();
-    const ann = makeAnnotation({ annotation_type: "question" });
 
-    await fireAnnotation({ view, annotation: ann });
-
-    expect(useLlmResponseStore.getState().status).toBe("idle");
-    view.destroy();
-  });
-
-  // --- Cycle 6.2: Persisting fire opens LLM panel ---
-
-  it("persisting type: opens LLM panel", async () => {
-    useConversationStore.setState({ sendAnnotationFire: vi.fn(async () => {}) });
-    const view = makeView();
-    const ann = makeAnnotation({ annotation_type: "question" });
-
-    await fireAnnotation({ view, annotation: ann });
-
-    expect(useBottomPanelStore.getState().activeTab).toBe("llm-response");
-    expect(useBottomPanelStore.getState().unfolded).toBe(true);
-    view.destroy();
-  });
-
-  // --- Cycle 6.3: Subscription-based firing cleanup ---
-
-  it("persisting type: stream completion clears firing", async () => {
-    useConversationStore.setState({
-      sendAnnotationFire: vi.fn(async () => {
-        useLlmResponseStore.getState().startStream({ question: "test" });
-      }),
-    });
-    const completeSpy = vi.fn();
-    window.addEventListener("lit:fire-complete", completeSpy);
-    const view = makeView("hello world", true);
-    const ann = makeAnnotation({ annotation_type: "question", char_start: 0 });
-
-    await fireAnnotation({ view, annotation: ann });
-
-    expect(view.state.field(firingAnnotationsField).has(0)).toBe(true);
-    expect(completeSpy).not.toHaveBeenCalled();
-
-    useLlmResponseStore.getState().finishStream();
-
-    expect(view.state.field(firingAnnotationsField).has(0)).toBe(false);
-    expect(completeSpy).toHaveBeenCalledOnce();
-    window.removeEventListener("lit:fire-complete", completeSpy);
-    view.destroy();
-  });
-
-  it("persisting type: stream error clears firing", async () => {
-    useConversationStore.setState({
-      sendAnnotationFire: vi.fn(async () => {
-        useLlmResponseStore.getState().startStream({ question: "test" });
-      }),
-    });
-    const completeSpy = vi.fn();
-    window.addEventListener("lit:fire-complete", completeSpy);
-    const view = makeView("hello world", true);
-    const ann = makeAnnotation({ annotation_type: "question", char_start: 0 });
-
-    await fireAnnotation({ view, annotation: ann });
-
-    expect(view.state.field(firingAnnotationsField).has(0)).toBe(true);
-    expect(completeSpy).not.toHaveBeenCalled();
-
-    useLlmResponseStore.getState().setError("stream failed");
-
-    expect(view.state.field(firingAnnotationsField).has(0)).toBe(false);
-    expect(completeSpy).toHaveBeenCalledOnce();
-    window.removeEventListener("lit:fire-complete", completeSpy);
-    view.destroy();
-  });
-
-  it("persisting type: adds annotation UUID to annotationThreadKeysField", async () => {
-    useConversationStore.setState({ sendAnnotationFire: vi.fn(async () => {}) });
-    mockFindUuid.mockResolvedValue("uuid-thread-123");
-    const view = makeView("hello world", true);
-    const ann = makeAnnotation({ annotation_type: "question", char_start: 0 });
-
-    await fireAnnotation({ view, annotation: ann });
-
-    const threadKeys = view.state.field(annotationThreadKeysField);
-    expect(threadKeys.has("uuid-thread-123")).toBe(true);
-    view.destroy();
-  });
-
-  it("persisting type: returns a dispose function", async () => {
-    useConversationStore.setState({
-      sendAnnotationFire: vi.fn(async () => {
-        useLlmResponseStore.getState().startStream({ question: "test" });
-      }),
-    });
-    const view = makeView("hello world", true);
-    const ann = makeAnnotation({ annotation_type: "question", char_start: 0 });
-
-    const result = await fireAnnotation({ view, annotation: ann });
-
-    expect(typeof result).toBe("function");
-    view.destroy();
-  });
-
-  it("persisting type: destroying view mid-stream does not throw when stream finishes", async () => {
-    useConversationStore.setState({
-      sendAnnotationFire: vi.fn(async () => {
-        useLlmResponseStore.getState().startStream({ question: "test" });
-      }),
-    });
-    const view = makeView("hello world", true);
-    const ann = makeAnnotation({ annotation_type: "question", char_start: 0 });
-
-    const dispose = await fireAnnotation({ view, annotation: ann });
-    expect(typeof dispose).toBe("function");
-
-    // Destroy the view mid-stream
-    view.destroy();
-    // Call dispose (simulates what fireAnnotationPlugin.destroy() does)
-    (dispose as () => void)();
-
-    // Finishing the stream should not throw even though the view is destroyed
-    expect(() => {
-      useLlmResponseStore.getState().finishStream();
-    }).not.toThrow();
-  });
-
-  it("persisting type: passes annotation body as content, scope+body as textOverride", async () => {
-    const sendSpy = vi.fn().mockResolvedValue(undefined);
-    useConversationStore.setState({ sendAnnotationFire: sendSpy });
-    mockFindUuid.mockResolvedValue("uuid-content-test");
-    mockResolve.mockResolvedValue({ start: 0, end: 5 });
-    const view = makeView("hello world");
-    const ann = makeAnnotation({ annotation_type: "question", body: "what is this?" });
-
-    await fireAnnotation({ view, annotation: ann });
-
-    const callArg = sendSpy.mock.calls[0]![0] as Record<string, unknown>;
-    expect(callArg.content).toBe("what is this?");
-    expect(callArg.textOverride).toContain("hello");
-    expect(callArg.textOverride).toContain("what is this?");
-    view.destroy();
-  });
-
-  it("persisting type: uses scope text as content when annotation body is null", async () => {
-    const sendSpy = vi.fn().mockResolvedValue(undefined);
-    useConversationStore.setState({ sendAnnotationFire: sendSpy });
-    mockFindUuid.mockResolvedValue("uuid-null-body");
-    mockResolve.mockResolvedValue({ start: 0, end: 5 });
-    const view = makeView("hello world");
-    const ann = makeAnnotation({ annotation_type: "question", body: null });
-
-    await fireAnnotation({ view, annotation: ann });
-
-    const callArg = sendSpy.mock.calls[0]![0] as Record<string, unknown>;
-    // content should NOT be empty — it should be the scope text via buildFirePrompt
-    expect(callArg.content).not.toBe("");
-    expect(callArg.content).toBe(buildFirePrompt("hello", null));
-    view.destroy();
-  });
-
-  // --- Fix: persisting branch cleanup / unlock tests ---
-
-  it("persisting type: passes derived title to sendAnnotationFire", async () => {
-    const sendSpy = vi.fn().mockResolvedValue(undefined);
-    useConversationStore.setState({ sendAnnotationFire: sendSpy });
-    mockFindUuid.mockResolvedValue("uuid-title-test");
-
-    // Case 1: annotation with body
-    const view1 = makeView();
-    const ann1 = makeAnnotation({ annotation_type: "question", body: "what is X?" });
-    await fireAnnotation({ view: view1, annotation: ann1 });
-    // Need to reset lock for next fire
-    useModalLockStore.setState({ llmLocked: false });
-
-    const callArg1 = sendSpy.mock.calls[0]![0] as Record<string, unknown>;
-    expect(callArg1.title).toBe("question: what is X?");
-    view1.destroy();
-
-    // Case 2: annotation with null body
-    const view2 = makeView();
-    const ann2 = makeAnnotation({ annotation_type: "question", body: null });
-    await fireAnnotation({ view: view2, annotation: ann2 });
-
-    const callArg2 = sendSpy.mock.calls[1]![0] as Record<string, unknown>;
-    expect(callArg2.title).toBe("question");
-    view2.destroy();
-  });
-
-  it("persisting type: unlocks when sendAnnotationFire resolves with non-streaming status", async () => {
-    // sendAnnotationFire resolves without starting a stream (status stays idle)
-    useConversationStore.setState({ sendAnnotationFire: vi.fn(async () => {}) });
-    const view = makeView("hello world", true);
-    const ann = makeAnnotation({ annotation_type: "question", char_start: 0 });
-
-    await fireAnnotation({ view, annotation: ann });
-    await flushPromises();
+    await fireAnnotation({ view, annotation: makeAnnotation({ annotation_type: "question" }) });
 
     expect(useModalLockStore.getState().llmLocked).toBe(false);
+    expect(completeSpy).toHaveBeenCalledOnce();
+    window.removeEventListener("lit:fire-complete", completeSpy);
     view.destroy();
   });
 
-  it("non-fireable type: returns early without calling startLlmStream or sendAnnotationFire", async () => {
-    const sendSpy = vi.fn().mockResolvedValue(undefined);
-    useConversationStore.setState({ sendAnnotationFire: sendSpy });
+  it("non-fireable type: returns early without calling startLlmStream", async () => {
     const completeSpy = vi.fn();
     window.addEventListener("lit:fire-complete", completeSpy);
     const view = makeView("hello world", true);
@@ -752,7 +447,7 @@ describe("fireAnnotation", () => {
     await fireAnnotation({ view, annotation: ann });
 
     expect(mockStream).not.toHaveBeenCalled();
-    expect(sendSpy).not.toHaveBeenCalled();
+    expect(mockResolve).not.toHaveBeenCalled();
     expect(useModalLockStore.getState().llmLocked).toBe(false);
     expect(view.state.field(firingAnnotationsField).has(0)).toBe(false);
     expect(completeSpy).toHaveBeenCalledOnce();
@@ -760,26 +455,27 @@ describe("fireAnnotation", () => {
     view.destroy();
   });
 
-  it("persisting type: unlocks when stream finishes via subscriber", async () => {
-    // sendAnnotationFire starts a stream — the subscriber should unlock on done
-    useConversationStore.setState({
-      sendAnnotationFire: vi.fn(async () => {
-        useLlmResponseStore.getState().startStream({ question: "test" });
-      }),
-    });
+  it("lit:cancel-fire event calls cancelLlmStream and unlocks", async () => {
+    mockStream.mockImplementation(() => new Promise(() => {}));
+    const completeSpy = vi.fn();
     const view = makeView("hello world", true);
-    const ann = makeAnnotation({ annotation_type: "question", char_start: 0 });
+    const ann = makeAnnotation({ annotation_type: "llm", char_start: 0 });
 
-    await fireAnnotation({ view, annotation: ann });
+    const firePromise = fireAnnotation({ view, annotation: ann });
+    await flush();
 
-    // Status is streaming, so .finally() should NOT have unlocked
-    expect(useModalLockStore.getState().llmLocked).toBe(true);
+    window.addEventListener("lit:fire-complete", completeSpy);
+    window.dispatchEvent(new CustomEvent("lit:cancel-fire"));
+    await flush();
 
-    // Finish the stream — subscriber should call cleanup and unlock
-    useLlmResponseStore.getState().finishStream();
-
+    expect(mockCancel).toHaveBeenCalledOnce();
     expect(useModalLockStore.getState().llmLocked).toBe(false);
+    expect(completeSpy).toHaveBeenCalledOnce();
+    expect(view.state.field(firingAnnotationsField).has(0)).toBe(false);
+
+    window.removeEventListener("lit:fire-complete", completeSpy);
     view.destroy();
+    void firePromise;
   });
 
   // --- ensureUnlocked guard on replacing fire path ---

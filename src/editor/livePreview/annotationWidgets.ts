@@ -58,42 +58,6 @@ export const llmLockedField = StateField.define<boolean>({
   },
 });
 
-// --- Annotation thread keys (Phase 6) ---
-
-export const setAnnotationThreadKeys = StateEffect.define<Set<string>>();
-
-export const annotationThreadKeysField = StateField.define<Set<string>>({
-  create: () => new Set(),
-  update(value, tr) {
-    for (const effect of tr.effects) {
-      if (effect.is(setAnnotationThreadKeys)) return effect.value;
-    }
-    return value;
-  },
-});
-
-// --- Thread indicator ---
-
-function supportsThread(type: string): boolean {
-  return type !== "mark";
-}
-
-function createThreadIndicator(ann: Annotation): HTMLSpanElement {
-  const indicator = document.createElement("span");
-  indicator.className = "cm-annotation-thread-indicator";
-  indicator.textContent = "\u{1F4AC}";
-  indicator.onmousedown = (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    window.dispatchEvent(
-      new CustomEvent("lit:open-annotation-thread", {
-        detail: { annotation: ann },
-      }),
-    );
-  };
-  return indicator;
-}
-
 // --- Fire button ---
 
 export function createFireButton(ann: Annotation, isFiring?: boolean, llmLocked?: boolean): HTMLSpanElement | null {
@@ -104,6 +68,15 @@ export function createFireButton(ann: Annotation, isFiring?: boolean, llmLocked?
 
   if (isFiring) {
     btn.classList.add("cm-annotation-spinner");
+    const stop = document.createElement("span");
+    stop.className = "cm-annotation-stop-icon";
+    stop.textContent = "\u{f04d}"; // nerdfont nf-fa-stop
+    btn.appendChild(stop);
+    btn.onmousedown = (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      window.dispatchEvent(new CustomEvent("lit:cancel-fire"));
+    };
     return btn;
   }
 
@@ -195,7 +168,6 @@ export class PillWidget extends WidgetType {
     readonly annotation: Annotation,
     readonly isFiring: boolean = false,
     readonly llmLocked: boolean = false,
-    readonly hasThread: boolean = false,
   ) {
     super();
   }
@@ -210,9 +182,6 @@ export class PillWidget extends WidgetType {
     };
     const fireBtn = createFireButton(this.annotation, this.isFiring, this.llmLocked);
     if (fireBtn) pill.appendChild(fireBtn);
-    if (this.hasThread && supportsThread(this.annotation.annotation_type)) {
-      pill.appendChild(createThreadIndicator(this.annotation));
-    }
     return pill;
   }
 
@@ -223,8 +192,7 @@ export class PillWidget extends WidgetType {
       this.annotation.char_end === other.annotation.char_end &&
       this.annotation.mark === other.annotation.mark &&
       this.isFiring === other.isFiring &&
-      this.llmLocked === other.llmLocked &&
-      this.hasThread === other.hasThread
+      this.llmLocked === other.llmLocked
     );
   }
 
@@ -242,7 +210,6 @@ export class MarkerWidget extends WidgetType {
     readonly annotation: Annotation,
     readonly isFiring: boolean = false,
     readonly llmLocked: boolean = false,
-    readonly hasThread: boolean = false,
   ) {
     super();
   }
@@ -260,8 +227,7 @@ export class MarkerWidget extends WidgetType {
         : (TYPE_ICON[ann.annotation_type] ?? "…")) + certaintyMark(ann.certainty);
 
     const fireBtn = createFireButton(ann, this.isFiring, this.llmLocked);
-    const showThread = this.hasThread && supportsThread(ann.annotation_type);
-    if (!fireBtn && !showThread) {
+    if (!fireBtn) {
       sup.onmouseenter = (e) => handleAnnotationHover(view, ann, { altKey: e.altKey });
       sup.onmouseleave = () => handleAnnotationLeave(view);
       sup.onclick = (e) => {
@@ -281,12 +247,11 @@ export class MarkerWidget extends WidgetType {
     wrap.className = "cm-annotation-marker-wrap";
     wrap.appendChild(sup);
     if (fireBtn) wrap.appendChild(fireBtn);
-    if (showThread) wrap.appendChild(createThreadIndicator(ann));
 
     wrap.onmouseenter = (e) => handleAnnotationHover(view, ann, { altKey: e.altKey });
     wrap.onmouseleave = () => handleAnnotationLeave(view);
     wrap.onclick = (e) => {
-      if ((e.target as HTMLElement).closest(".cm-annotation-fire-btn, .cm-annotation-thread-indicator")) return;
+      if ((e.target as HTMLElement).closest(".cm-annotation-fire-btn")) return;
       e.preventDefault();
       if (e.metaKey || e.ctrlKey) {
         dispatchEditEvent(ann);
@@ -306,8 +271,7 @@ export class MarkerWidget extends WidgetType {
       this.annotation.char_end === other.annotation.char_end &&
       this.annotation.mark === other.annotation.mark &&
       this.isFiring === other.isFiring &&
-      this.llmLocked === other.llmLocked &&
-      this.hasThread === other.hasThread
+      this.llmLocked === other.llmLocked
     );
   }
 
@@ -371,7 +335,6 @@ export class CalloutWidget extends WidgetType {
     readonly pos: number,
     readonly isFiring: boolean = false,
     readonly llmLocked: boolean = false,
-    readonly hasThread: boolean = false,
   ) {
     super();
   }
@@ -391,7 +354,7 @@ export class CalloutWidget extends WidgetType {
     const header = document.createElement("div");
     header.className = "cm-annotation-callout-header";
     header.onclick = (e) => {
-      if ((e.target as HTMLElement).closest(".cm-annotation-fold-icon, .cm-annotation-fire-btn, .cm-annotation-thread-indicator")) return;
+      if ((e.target as HTMLElement).closest(".cm-annotation-fold-icon, .cm-annotation-fire-btn")) return;
       e.preventDefault();
       dispatchEditEvent(ann);
     };
@@ -418,7 +381,6 @@ export class CalloutWidget extends WidgetType {
 
     const fireBtn = createFireButton(ann, this.isFiring, this.llmLocked);
     if (fireBtn) header.appendChild(fireBtn);
-    if (this.hasThread && supportsThread(ann.annotation_type)) header.appendChild(createThreadIndicator(ann));
 
     const arrow = document.createElement("span");
     arrow.className = "cm-annotation-fold-icon";
@@ -450,8 +412,7 @@ export class CalloutWidget extends WidgetType {
       this.annotation.mark === other.annotation.mark &&
       this.isCollapsed === other.isCollapsed &&
       this.isFiring === other.isFiring &&
-      this.llmLocked === other.llmLocked &&
-      this.hasThread === other.hasThread
+      this.llmLocked === other.llmLocked
     );
   }
 

@@ -8,7 +8,6 @@ import { usePaneStore } from "../stores/panes";
 import { useCursorInfoStore } from "../stores/cursorInfo";
 import { useBottomPanelStore, defaultTabMeta } from "../stores/bottomPanel";
 import { usePreferencesStore } from "../stores/preferences";
-import { useLlmResponseStore } from "../stores/llmResponse";
 import { useStatusMessageStore } from "../stores/statusMessage";
 
 beforeEach(() => {
@@ -32,7 +31,6 @@ beforeEach(() => {
     experimentalUnlinkedReferences: true,
     annotationEnabled: true,
   });
-  useLlmResponseStore.getState().reset();
   useStatusMessageStore.setState({ message: null, variant: "success" });
 });
 
@@ -212,7 +210,7 @@ describe("StatusBar", () => {
       expect(screen.getByTestId("tab-linked")).toBeInTheDocument();
     });
 
-    it("hides page-dependent tabs but shows LLM tab when no page is open", () => {
+    it("renders no tabs when no page is open", () => {
       useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
       usePaneStore.setState({
         root: { type: "leaf", id: "p1", pagePath: null },
@@ -224,7 +222,7 @@ describe("StatusBar", () => {
       expect(screen.queryByTestId("tab-outgoing")).toBeNull();
       expect(screen.queryByTestId("tab-unlinked")).toBeNull();
       expect(screen.queryByTestId("tab-annotations")).toBeNull();
-      expect(screen.getByTestId("tab-llm-response")).toBeInTheDocument();
+      expect(screen.queryByTestId("tab-llm-response")).toBeNull();
     });
 
     it("tab buttons hidden during indexing", () => {
@@ -358,44 +356,6 @@ describe("StatusBar", () => {
       useBottomPanelStore.setState({ activeTab: "linked", unfolded: false });
       render(<StatusBar />);
       expect(screen.getByTestId("tab-linked")).toHaveAttribute("aria-selected", "false");
-    });
-
-    it("shows LLM tab when llmResponseStore status is not idle", () => {
-      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
-      usePaneStore.setState({
-        root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
-        focusedPaneId: "p1",
-      });
-      useLlmResponseStore.getState().startStream({ question: "q" });
-      render(<StatusBar />);
-      expect(screen.getByTestId("tab-llm-response")).toBeInTheDocument();
-      expect(screen.getByTestId("tab-llm-response")).toHaveTextContent("LLM");
-    });
-
-    it("shows LLM tab unconditionally regardless of llm status or hasOpenedLlm", () => {
-      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
-      usePaneStore.setState({
-        root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
-        focusedPaneId: "p1",
-      });
-      useBottomPanelStore.setState({ tabMeta: { ...defaultTabMeta(), "llm-response": { count: null, hasOpened: false } } });
-      render(<StatusBar />);
-      expect(screen.getByTestId("tab-llm-response")).toBeInTheDocument();
-    });
-
-    it("clicking LLM tab activates llm-response tab", async () => {
-      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
-      usePaneStore.setState({
-        root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
-        focusedPaneId: "p1",
-      });
-      useLlmResponseStore.getState().startStream({ question: "q" });
-      render(<StatusBar />);
-      await userEvent.click(screen.getByTestId("tab-llm-response"));
-      const state = useBottomPanelStore.getState();
-      expect(state.activeTab).toBe("llm-response");
-      expect(state.unfolded).toBe(true);
-      expect(state.tabMeta["llm-response"].hasOpened).toBe(true);
     });
 
     it("shows outgoing links tab when page is open", () => {
@@ -576,46 +536,6 @@ describe("StatusBar", () => {
       render(<StatusBar />);
       const el = screen.getByTestId("status-bar-message");
       expect(el.className).toContain("text-text-muted");
-    });
-  });
-
-  describe("LLM error display", () => {
-    it("shows error message when llmResponse store has an error", () => {
-      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
-      usePaneStore.setState({
-        root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
-        focusedPaneId: "p1",
-      });
-      useLlmResponseStore.getState().setError("Invalid API key");
-      render(<StatusBar />);
-      const errorEl = screen.getByTestId("status-bar-llm-error");
-      expect(errorEl).toBeInTheDocument();
-      expect(errorEl).toHaveTextContent("Invalid API key");
-    });
-
-    it("does NOT show error when errorMessage is empty", () => {
-      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
-      usePaneStore.setState({
-        root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
-        focusedPaneId: "p1",
-      });
-      render(<StatusBar />);
-      expect(screen.queryByTestId("status-bar-llm-error")).toBeNull();
-    });
-
-    it("error clears when next LLM action starts", () => {
-      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
-      usePaneStore.setState({
-        root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
-        focusedPaneId: "p1",
-      });
-      useLlmResponseStore.getState().setError("Network failure");
-      const { rerender } = render(<StatusBar />);
-      expect(screen.getByTestId("status-bar-llm-error")).toBeInTheDocument();
-
-      useLlmResponseStore.getState().startStream({ question: "retry" });
-      rerender(<StatusBar />);
-      expect(screen.queryByTestId("status-bar-llm-error")).toBeNull();
     });
   });
 });

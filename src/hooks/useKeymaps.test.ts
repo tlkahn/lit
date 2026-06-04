@@ -518,46 +518,6 @@ describe("useKeymaps", () => {
     expect(state.focusedPaneId).toBe("solo");
   });
 
-  // --- Cycle C1: app.askQuestion command registration ---
-
-  it("app.askQuestion is registered after ensureCommandsRegistered", async () => {
-    await loadHook();
-    expect(hasCommand("app.askQuestion")).toBe(true);
-  });
-
-  it("executing app.askQuestion opens bottom panel with LLM tab", async () => {
-    await loadHook();
-    executeCommand("app.askQuestion");
-    const state = useBottomPanelStore.getState();
-    expect(state.activeTab).toBe("llm-response");
-    expect(state.unfolded).toBe(true);
-    expect(state.tabMeta["llm-response"].hasOpened).toBe(true);
-  });
-
-  it("executing app.askQuestion toggles LLM tab closed when already open", async () => {
-    await loadHook();
-    executeCommand("app.askQuestion");
-    expect(useBottomPanelStore.getState().unfolded).toBe(true);
-    executeCommand("app.askQuestion");
-    expect(useBottomPanelStore.getState().unfolded).toBe(false);
-  });
-
-  it("executing app.askQuestion switches to LLM tab from another tab", async () => {
-    useBottomPanelStore.setState({ activeTab: "linked", unfolded: true });
-    await loadHook();
-    executeCommand("app.askQuestion");
-    const state = useBottomPanelStore.getState();
-    expect(state.activeTab).toBe("llm-response");
-    expect(state.unfolded).toBe(true);
-  });
-
-  it("app.askQuestion appears in command palette", async () => {
-    await loadHook();
-    const visible = getVisibleCommands("ask");
-    const ids = visible.map((c) => c.id);
-    expect(ids).toContain("app.askQuestion");
-  });
-
   // --- Cycle C4: Default keybinding for app.fireAnnotation ---
 
   it("app.fireAnnotation is registered after ensureCommandsRegistered", async () => {

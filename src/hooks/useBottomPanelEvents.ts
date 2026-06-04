@@ -145,8 +145,8 @@ export function useBottomPanelEvents() {
         if (currentPage !== null) {
           useBottomPanelStore.getState().resetForPage();
         } else {
-          const { activeTab, unfolded } = useBottomPanelStore.getState();
-          if (unfolded && activeTab !== "llm-response") {
+          const { unfolded } = useBottomPanelStore.getState();
+          if (unfolded) {
             useBottomPanelStore.setState({ unfolded: false });
           }
         }

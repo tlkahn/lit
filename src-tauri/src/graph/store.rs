@@ -5,9 +5,9 @@ use rusqlite::{Connection, OptionalExtension};
 use tracing::{debug, info};
 
 use super::error::GraphError;
-use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, ConversationRow, IndexableAnnotation, LinkEntry, MessageRow, ParsedNode, Stats, TagPageResult, TagSearchResult};
+use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, IndexableAnnotation, LinkEntry, ParsedNode, Stats, TagPageResult, TagSearchResult};
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 13;
+pub const CURRENT_SCHEMA_VERSION: i64 = 14;
 
 fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rusqlite::Error> {
     Ok(AnnotationSearchResult {
@@ -22,19 +22,6 @@ fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rus
         char_start: row.get(8)?,
         char_end: row.get(9)?,
         uuid: row.get(10)?,
-    })
-}
-
-fn map_conversation_row(row: &rusqlite::Row) -> Result<ConversationRow, rusqlite::Error> {
-    Ok(ConversationRow {
-        id: row.get(0)?,
-        node_id: row.get(1)?,
-        anchor_type: row.get(2)?,
-        anchor_id: row.get(3)?,
-        title: row.get(4)?,
-        created_at: row.get(5)?,
-        updated_at: row.get(6)?,
-        anchor_key: row.get(7)?,
     })
 }
 
@@ -420,6 +407,18 @@ impl Store {
             )?;
         }
 
+        if version < 14 {
+            info!(from = version, to = 14, "migrating schema: removing conversations — existing conversation data is removed");
+            self.conn.execute_batch(
+                "DROP INDEX IF EXISTS idx_conversations_anchor;
+                 DROP INDEX IF EXISTS idx_conversations_node_id;
+                 DROP INDEX IF EXISTS idx_conv_messages_conv_id;
+                 DROP TABLE IF EXISTS conversation_messages;
+                 DROP TABLE IF EXISTS conversations;
+                 UPDATE meta SET value = '14' WHERE key = 'schema_version';"
+            )?;
+        }
+
         Ok(())
     }
 
@@ -499,7 +498,6 @@ impl Store {
     pub fn delete_node(&self, id: &str) -> Result<(), GraphError> {
         self.conn.execute_batch("SAVEPOINT delete_node")?;
         let result = (|| -> Result<(), GraphError> {
-            self.conn.execute("DELETE FROM conversations WHERE node_id = ?1", [id])?;
             self.conn.execute("DELETE FROM annotations_fts WHERE node_id = ?1", [id])?;
             self.conn.execute("DELETE FROM annotations WHERE node_id = ?1", [id])?;
             self.conn.execute("DELETE FROM nodes WHERE id = ?1", [id])?;
@@ -1188,181 +1186,6 @@ impl Store {
         Ok(uuid)
     }
 
-    // --- Conversations ---
-
-    pub fn create_conversation(
-        &self,
-        id: &str,
-        node_id: &str,
-        anchor_type: Option<&str>,
-        anchor_id: Option<i64>,
-        anchor_key: Option<&str>,
-        title: Option<&str>,
-    ) -> Result<ConversationRow, GraphError> {
-        self.conn.query_row(
-            "INSERT INTO conversations(id, node_id, anchor_type, anchor_id, anchor_key, title, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-             RETURNING id, node_id, anchor_type, anchor_id, title, created_at, updated_at, anchor_key",
-            rusqlite::params![id, node_id, anchor_type, anchor_id, anchor_key, title],
-            |row| map_conversation_row(row),
-        ).map_err(|e| e.into())
-    }
-
-    pub fn get_conversation(&self, id: &str) -> Result<Option<ConversationRow>, GraphError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, node_id, anchor_type, anchor_id, title, created_at, updated_at, anchor_key
-             FROM conversations WHERE id = ?1"
-        )?;
-        let mut rows = stmt.query([id])?;
-        match rows.next()? {
-            Some(row) => Ok(Some(map_conversation_row(row)?)),
-            None => Ok(None),
-        }
-    }
-
-    pub fn list_conversations(&self, node_id: &str) -> Result<Vec<ConversationRow>, GraphError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, node_id, anchor_type, anchor_id, title, created_at, updated_at, anchor_key
-             FROM conversations WHERE node_id = ?1
-             ORDER BY updated_at DESC"
-        )?;
-        let results = stmt
-            .query_map([node_id], |row| map_conversation_row(row))?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(results)
-    }
-
-    pub fn delete_conversation(&self, id: &str) -> Result<(), GraphError> {
-        self.conn.execute("DELETE FROM conversations WHERE id = ?1", [id])?;
-        Ok(())
-    }
-
-    pub fn find_conversation_by_anchor(
-        &self,
-        node_id: &str,
-        anchor_type: &str,
-        anchor_key: &str,
-    ) -> Result<Option<ConversationRow>, GraphError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, node_id, anchor_type, anchor_id, title, created_at, updated_at, anchor_key
-             FROM conversations
-             WHERE node_id = ?1 AND anchor_type = ?2 AND anchor_key = ?3",
-        )?;
-        let mut rows = stmt.query(rusqlite::params![node_id, anchor_type, anchor_key])?;
-        match rows.next()? {
-            Some(row) => Ok(Some(map_conversation_row(row)?)),
-            None => Ok(None),
-        }
-    }
-
-    pub fn delete_conversations_by_anchor(
-        &self,
-        node_id: &str,
-        anchor_type: &str,
-        anchor_key: &str,
-    ) -> Result<(), GraphError> {
-        self.conn.execute(
-            "DELETE FROM conversations
-             WHERE node_id = ?1 AND anchor_type = ?2 AND anchor_key = ?3",
-            rusqlite::params![node_id, anchor_type, anchor_key],
-        )?;
-        Ok(())
-    }
-
-    pub fn update_conversation_title(&self, id: &str, title: &str) -> Result<(), GraphError> {
-        self.conn.execute(
-            "UPDATE conversations SET title = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
-            rusqlite::params![id, title],
-        )?;
-        Ok(())
-    }
-
-    #[cfg(test)]
-    fn touch_conversation(&self, id: &str) -> Result<(), GraphError> {
-        self.conn.execute(
-            "UPDATE conversations SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
-            [id],
-        )?;
-        Ok(())
-    }
-
-    pub fn add_message(
-        &self,
-        conversation_id: &str,
-        role: &str,
-        content: &str,
-    ) -> Result<MessageRow, GraphError> {
-        self.conn.execute_batch("SAVEPOINT add_message")?;
-        let result = (|| -> Result<MessageRow, GraphError> {
-            let msg = self.conn.query_row(
-                "INSERT INTO conversation_messages(conversation_id, role, content, seq, created_at)
-                 VALUES (?1, ?2, ?3,
-                         (SELECT COALESCE(MAX(seq), -1) + 1 FROM conversation_messages WHERE conversation_id = ?1),
-                         strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-                 RETURNING id, conversation_id, role, content, seq, created_at",
-                rusqlite::params![conversation_id, role, content],
-                |row| {
-                    Ok(MessageRow {
-                        id: row.get(0)?,
-                        conversation_id: row.get(1)?,
-                        role: row.get(2)?,
-                        content: row.get(3)?,
-                        seq: row.get(4)?,
-                        created_at: row.get(5)?,
-                    })
-                },
-            )?;
-            self.conn.execute(
-                "UPDATE conversations SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
-                [conversation_id],
-            )?;
-            Ok(msg)
-        })();
-        match result {
-            Ok(msg) => {
-                self.conn.execute_batch("RELEASE add_message")?;
-                Ok(msg)
-            }
-            Err(e) => {
-                self.conn.execute_batch("ROLLBACK TO add_message")?;
-                self.conn.execute_batch("RELEASE add_message")?;
-                Err(e)
-            }
-        }
-    }
-
-    pub fn list_messages(&self, conversation_id: &str) -> Result<Vec<MessageRow>, GraphError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, conversation_id, role, content, seq, created_at
-             FROM conversation_messages WHERE conversation_id = ?1
-             ORDER BY seq"
-        )?;
-        let results = stmt
-            .query_map([conversation_id], |row| {
-                Ok(MessageRow {
-                    id: row.get(0)?,
-                    conversation_id: row.get(1)?,
-                    role: row.get(2)?,
-                    content: row.get(3)?,
-                    seq: row.get(4)?,
-                    created_at: row.get(5)?,
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(results)
-    }
-
-    /// Delete messages strictly after `seq` (exclusive boundary).
-    ///
-    /// The message at `seq` is retained. To regenerate from turn N, pass `N - 1`.
-    pub fn delete_messages_after(&self, conversation_id: &str, seq: i32) -> Result<(), GraphError> {
-        self.conn.execute(
-            "DELETE FROM conversation_messages WHERE conversation_id = ?1 AND seq > ?2",
-            rusqlite::params![conversation_id, seq],
-        )?;
-        Ok(())
-    }
-
     // --- Transactions ---
 
     pub fn begin_transaction(&self) -> Result<(), GraphError> {
@@ -1496,8 +1319,6 @@ mod tests {
             let mut positions = HashMap::new();
             positions.insert("a.md".into(), Position { x: 1.0, y: 2.0 });
             store.save_positions(&positions).unwrap();
-            store.create_conversation("conv-1", "a.md", None, None, None, Some("Chat")).unwrap();
-            store.add_message("conv-1", "user", "Hello").unwrap();
 
             store.conn.execute(
                 "UPDATE meta SET value = '999' WHERE key = 'schema_version'", [],
@@ -1507,7 +1328,7 @@ mod tests {
         let store = Store::open(&db_path).unwrap();
         assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
 
-        for table in &["annotations", "annotations_fts", "node_positions", "conversations", "conversation_messages"] {
+        for table in &["annotations", "annotations_fts", "node_positions"] {
             let count: i64 = store.conn.query_row(
                 &format!("SELECT COUNT(*) FROM {}", table), [], |r| r.get(0),
             ).unwrap();
@@ -2603,23 +2424,127 @@ mod tests {
     // --- Cycle 2: Schema v6 ---
 
     #[test]
-    fn schema_version_is_thirteen() {
-        assert_eq!(CURRENT_SCHEMA_VERSION, 13);
+    fn schema_version_is_fourteen() {
+        assert_eq!(CURRENT_SCHEMA_VERSION, 14);
     }
 
     #[test]
-    fn migration_v11_adds_uuid_and_anchor_key() {
+    fn migration_v11_adds_uuid() {
         let store = Store::open_memory().unwrap();
 
         let has_uuid: bool = store.conn
             .prepare("SELECT uuid FROM annotations LIMIT 0")
             .is_ok();
         assert!(has_uuid, "annotations table should have uuid column");
+    }
 
-        let has_anchor_key: bool = store.conn
-            .prepare("SELECT anchor_key FROM conversations LIMIT 0")
-            .is_ok();
-        assert!(has_anchor_key, "conversations table should have anchor_key column");
+    #[test]
+    fn migration_v14_drops_conversation_tables_on_fresh_db() {
+        let store = Store::open_memory().unwrap();
+        assert_eq!(store.schema_version().unwrap(), 14);
+        for table in &["conversations", "conversation_messages"] {
+            let count: i64 = store.conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                [table],
+                |r| r.get(0),
+            ).unwrap();
+            assert_eq!(count, 0, "table {table} should not exist after v14 migration");
+        }
+    }
+
+    #[test]
+    fn v13_to_v14_migration_drops_conversations_and_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
+            conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+            conn.execute_batch(
+                "CREATE TABLE nodes (
+                    id TEXT PRIMARY KEY, title TEXT, first_paragraph TEXT,
+                    frontmatter JSON, mtime INTEGER, is_stub INTEGER DEFAULT 0, tags_text TEXT DEFAULT ''
+                );
+                CREATE TABLE tags (node_id TEXT, tag TEXT);
+                CREATE TABLE aliases (node_id TEXT, alias TEXT);
+                CREATE TABLE edges (source TEXT, target TEXT, context TEXT, raw_target TEXT DEFAULT '', source_line INTEGER DEFAULT 0);
+                CREATE TABLE sync (path TEXT PRIMARY KEY, mtime INTEGER);
+                CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+                CREATE TABLE annotations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    node_id TEXT NOT NULL, annotation_type TEXT NOT NULL,
+                    certainty TEXT NOT NULL, body TEXT, date TEXT,
+                    source_line INTEGER NOT NULL, char_start INTEGER NOT NULL, char_end INTEGER NOT NULL,
+                    scope_kind TEXT NOT NULL, scope_value TEXT NOT NULL,
+                    uuid TEXT NOT NULL
+                );
+                CREATE INDEX idx_annotations_node_id ON annotations(node_id);
+                CREATE INDEX idx_annotations_type ON annotations(annotation_type);
+                CREATE VIRTUAL TABLE annotations_fts USING fts5(
+                    body, node_id UNINDEXED, annotation_type UNINDEXED,
+                    tokenize = 'trigram case_sensitive 0'
+                );
+                CREATE TABLE node_positions (
+                    node_id TEXT PRIMARY KEY, x REAL NOT NULL, y REAL NOT NULL
+                );
+                CREATE TABLE conversations (
+                    id TEXT PRIMARY KEY,
+                    node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+                    anchor_type TEXT,
+                    anchor_id INTEGER,
+                    anchor_key TEXT,
+                    title TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX idx_conversations_node_id ON conversations(node_id);
+                CREATE UNIQUE INDEX idx_conversations_anchor ON conversations(node_id, anchor_type, anchor_key);
+                CREATE TABLE conversation_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                    role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
+                    content TEXT NOT NULL,
+                    seq INTEGER NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX idx_conv_messages_conv_id ON conversation_messages(conversation_id);
+                INSERT INTO meta(key, value) VALUES ('schema_version', '13');
+                INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub)
+                    VALUES ('a.md', 'Alpha', 'p1', '{}', 1, 0);
+                INSERT INTO conversations(id, node_id, anchor_type, anchor_id, anchor_key, title, created_at, updated_at)
+                    VALUES ('conv-1', 'a.md', NULL, NULL, NULL, 'Chat', '2025-01-01', '2025-01-01');
+                INSERT INTO conversation_messages(conversation_id, role, content, seq, created_at)
+                    VALUES ('conv-1', 'user', 'Hello', 0, '2025-01-01');",
+            ).unwrap();
+        }
+
+        let store = Store::open(&db_path).unwrap();
+
+        // schema upgraded to 14
+        assert_eq!(store.schema_version().unwrap(), 14);
+
+        // both conversation tables are gone
+        for table in &["conversations", "conversation_messages"] {
+            let count: i64 = store.conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                [table],
+                |r| r.get(0),
+            ).unwrap();
+            assert_eq!(count, 0, "table {table} should be dropped by v14 migration");
+        }
+
+        // querying the dropped tables now errors
+        assert!(
+            store.conn.query_row("SELECT COUNT(*) FROM conversations", [], |r| r.get::<_, i64>(0)).is_err(),
+            "conversations table should no longer be queryable"
+        );
+
+        // unrelated data (node) survives
+        let title: String = store.conn
+            .query_row("SELECT title FROM nodes WHERE id = 'a.md'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(title, "Alpha");
     }
 
     #[test]
@@ -3733,568 +3658,6 @@ mod tests {
         assert!(!loaded.contains_key("A"));
     }
 
-    // --- Conversations: v9 migration ---
-
-    #[test]
-    fn migration_v9_creates_conversation_tables() {
-        let store = Store::open_memory().unwrap();
-        let tables: Vec<String> = {
-            let mut stmt = store
-                .conn
-                .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
-                .unwrap();
-            stmt.query_map([], |row| row.get(0))
-                .unwrap()
-                .collect::<Result<_, _>>()
-                .unwrap()
-        };
-        assert!(tables.contains(&"conversations".to_string()));
-        assert!(tables.contains(&"conversation_messages".to_string()));
-    }
-
-    // --- Conversations: create_conversation ---
-
-    #[test]
-    fn create_conversation_inserts_row() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None, Some("My Chat")).unwrap();
-
-        let row = store.get_conversation("conv-1").unwrap().expect("should exist");
-        assert_eq!(row.id, "conv-1");
-        assert_eq!(row.node_id, "a.md");
-        assert_eq!(row.title, Some("My Chat".into()));
-    }
-
-    #[test]
-    fn create_conversation_sets_timestamps() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
-
-        let row = store.get_conversation("conv-1").unwrap().unwrap();
-        assert!(!row.created_at.is_empty());
-        assert!(!row.updated_at.is_empty());
-        assert!(row.created_at.ends_with('Z'));
-        assert_eq!(row.created_at, row.updated_at);
-    }
-
-    #[test]
-    fn create_conversation_duplicate_id_fails() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
-        assert!(store.create_conversation("conv-1", "a.md", None, None, None, None).is_err());
-    }
-
-    #[test]
-    fn create_conversation_returns_row_directly() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-
-        let row: ConversationRow = store.create_conversation("conv-1", "a.md", Some("annotation"), Some(7), None, Some("Chat")).unwrap();
-        assert_eq!(row.id, "conv-1");
-        assert_eq!(row.node_id, "a.md");
-        assert_eq!(row.anchor_type, Some("annotation".into()));
-        assert_eq!(row.anchor_id, Some(7));
-        assert_eq!(row.title, Some("Chat".into()));
-        assert!(!row.created_at.is_empty());
-        assert!(row.created_at.ends_with('Z'));
-        assert_eq!(row.created_at, row.updated_at);
-    }
-
-    // --- Conversations: get_conversation ---
-
-    #[test]
-    fn get_conversation_returns_none_for_missing() {
-        let store = Store::open_memory().unwrap();
-        assert_eq!(store.get_conversation("nonexistent").unwrap(), None);
-    }
-
-    #[test]
-    fn get_conversation_returns_inserted_row() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", Some("annotation"), Some(42), None, Some("Title")).unwrap();
-
-        let row = store.get_conversation("conv-1").unwrap().unwrap();
-        assert_eq!(row.id, "conv-1");
-        assert_eq!(row.node_id, "a.md");
-        assert_eq!(row.anchor_type, Some("annotation".into()));
-        assert_eq!(row.anchor_id, Some(42));
-        assert_eq!(row.title, Some("Title".into()));
-    }
-
-    // --- Conversations: list_conversations ---
-
-    #[test]
-    fn list_conversations_empty() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-        assert!(store.list_conversations("a.md").unwrap().is_empty());
-    }
-
-    #[test]
-    fn list_conversations_returns_matching() {
-        let store = Store::open_memory().unwrap();
-        let node_a = make_node("a.md", "A", &[], json!({}));
-        let node_b = make_node("b.md", "B", &[], json!({}));
-        store.upsert_node(&node_a, 1).unwrap();
-        store.upsert_node(&node_b, 1).unwrap();
-        store.create_conversation("conv-a1", "a.md", None, None, None, None).unwrap();
-        store.create_conversation("conv-a2", "a.md", None, None, None, None).unwrap();
-        store.create_conversation("conv-b1", "b.md", None, None, None, None).unwrap();
-
-        let list = store.list_conversations("a.md").unwrap();
-        assert_eq!(list.len(), 2);
-        assert!(list.iter().all(|c| c.node_id == "a.md"));
-    }
-
-    // --- Conversations: delete_conversation ---
-
-    #[test]
-    fn delete_conversation_removes_row() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
-        store.delete_conversation("conv-1").unwrap();
-        assert_eq!(store.get_conversation("conv-1").unwrap(), None);
-    }
-
-    #[test]
-    fn delete_conversation_nonexistent_is_noop() {
-        let store = Store::open_memory().unwrap();
-        store.delete_conversation("nonexistent").unwrap();
-    }
-
-    // --- Conversations: find_conversation_by_anchor ---
-
-    #[test]
-    fn find_conversation_by_anchor_returns_match() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", Some("annotation"), Some(7), None, Some("Chat")).unwrap();
-        store.conn.execute(
-            "UPDATE conversations SET anchor_key = ?1 WHERE id = ?2",
-            rusqlite::params!["abc-123", "conv-1"],
-        ).unwrap();
-
-        let result = store
-            .find_conversation_by_anchor("a.md", "annotation", "abc-123")
-            .unwrap();
-        assert!(result.is_some());
-        let row = result.unwrap();
-        assert_eq!(row.id, "conv-1");
-        assert_eq!(row.anchor_key, Some("abc-123".into()));
-    }
-
-    #[test]
-    fn find_conversation_by_anchor_scoped_to_node() {
-        let store = Store::open_memory().unwrap();
-        let node_a = make_node("a.md", "A", &[], json!({}));
-        let node_b = make_node("b.md", "B", &[], json!({}));
-        store.upsert_node(&node_a, 1).unwrap();
-        store.upsert_node(&node_b, 1).unwrap();
-
-        store.create_conversation("conv-a", "a.md", Some("annotation"), Some(1), None, None).unwrap();
-        store.create_conversation("conv-b", "b.md", Some("annotation"), Some(2), None, None).unwrap();
-        store.conn.execute(
-            "UPDATE conversations SET anchor_key = 'shared-key' WHERE id IN ('conv-a', 'conv-b')",
-            [],
-        ).unwrap();
-
-        let result = store
-            .find_conversation_by_anchor("a.md", "annotation", "shared-key")
-            .unwrap();
-        assert_eq!(result.unwrap().id, "conv-a");
-    }
-
-    // --- Conversations: delete_conversations_by_anchor ---
-
-    #[test]
-    fn delete_conversations_by_anchor_removes_matching() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", Some("annotation"), Some(1), None, None).unwrap();
-        store.conn.execute(
-            "UPDATE conversations SET anchor_key = 'key-1' WHERE id = 'conv-1'",
-            [],
-        ).unwrap();
-        store.add_message("conv-1", "user", "hello").unwrap();
-
-        store.delete_conversations_by_anchor("a.md", "annotation", "key-1").unwrap();
-
-        assert_eq!(store.get_conversation("conv-1").unwrap(), None);
-        let msg_count: i64 = store
-            .conn
-            .query_row("SELECT COUNT(*) FROM conversation_messages", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(msg_count, 0);
-    }
-
-    #[test]
-    fn delete_conversations_by_anchor_leaves_others() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-
-        store.create_conversation("conv-1", "a.md", Some("annotation"), Some(1), None, None).unwrap();
-        store.create_conversation("conv-2", "a.md", Some("annotation"), Some(2), None, None).unwrap();
-        store.conn.execute(
-            "UPDATE conversations SET anchor_key = 'key-1' WHERE id = 'conv-1'",
-            [],
-        ).unwrap();
-        store.conn.execute(
-            "UPDATE conversations SET anchor_key = 'key-2' WHERE id = 'conv-2'",
-            [],
-        ).unwrap();
-
-        store.delete_conversations_by_anchor("a.md", "annotation", "key-1").unwrap();
-
-        assert_eq!(store.get_conversation("conv-1").unwrap(), None);
-        assert!(store.get_conversation("conv-2").unwrap().is_some());
-    }
-
-    // --- Conversations: map_conversation_row ---
-
-    #[test]
-    fn map_conversation_row_maps_all_fields() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", Some("file"), Some(42), None, Some("Test Title")).unwrap();
-
-        let row = store.conn.query_row(
-            "SELECT id, node_id, anchor_type, anchor_id, title, created_at, updated_at, anchor_key
-             FROM conversations WHERE id = ?1",
-            ["conv-1"],
-            |row| map_conversation_row(row),
-        ).unwrap();
-
-        assert_eq!(row.id, "conv-1");
-        assert_eq!(row.node_id, "a.md");
-        assert_eq!(row.anchor_type.as_deref(), Some("file"));
-        assert_eq!(row.anchor_id, Some(42));
-        assert_eq!(row.title.as_deref(), Some("Test Title"));
-        assert!(!row.created_at.is_empty());
-        assert!(!row.updated_at.is_empty());
-    }
-
-    // --- Conversations: get_message_by_id ---
-
-    // --- Conversations: touch_conversation ---
-
-    #[test]
-    fn touch_conversation_updates_timestamp() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
-
-        store.conn.execute(
-            "UPDATE conversations SET updated_at = '2000-01-01T00:00:00Z' WHERE id = 'conv-1'",
-            [],
-        ).unwrap();
-
-        store.touch_conversation("conv-1").unwrap();
-        let row = store.get_conversation("conv-1").unwrap().unwrap();
-        assert_ne!(row.updated_at, "2000-01-01T00:00:00Z");
-    }
-
-    // --- Conversations: add_message ---
-
-    #[test]
-    fn add_message_returns_message_row_directly() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
-
-        let msg: MessageRow = store.add_message("conv-1", "user", "Hello world").unwrap();
-        assert_eq!(msg.conversation_id, "conv-1");
-        assert_eq!(msg.role, "user");
-        assert_eq!(msg.content, "Hello world");
-        assert_eq!(msg.seq, 0);
-        assert!(!msg.created_at.is_empty());
-        assert!(msg.created_at.ends_with('Z'));
-    }
-
-    #[test]
-    fn add_message_inserts_row() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
-
-        let msg = store.add_message("conv-1", "user", "Hello").unwrap();
-        assert!(msg.id > 0);
-
-        let msgs = store.list_messages("conv-1").unwrap();
-        assert_eq!(msgs.len(), 1);
-        assert_eq!(msgs[0].role, "user");
-        assert_eq!(msgs[0].content, "Hello");
-        assert_eq!(msgs[0].seq, 0);
-    }
-
-    #[test]
-    fn add_message_to_nonexistent_conversation_fails() {
-        let store = Store::open_memory().unwrap();
-        assert!(store.add_message("nonexistent", "user", "Hello").is_err());
-    }
-
-    #[test]
-    fn add_message_invalid_role_fails() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
-        assert!(store.add_message("conv-1", "invalid_role", "Hello").is_err());
-    }
-
-    #[test]
-    fn add_message_touches_conversation() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
-
-        store.conn.execute(
-            "UPDATE conversations SET updated_at = '2000-01-01T00:00:00Z' WHERE id = 'conv-1'",
-            [],
-        ).unwrap();
-
-        store.add_message("conv-1", "user", "Hello").unwrap();
-        let row = store.get_conversation("conv-1").unwrap().unwrap();
-        assert_ne!(row.updated_at, "2000-01-01T00:00:00Z");
-    }
-
-    // --- Conversations: list_messages ---
-
-    #[test]
-    fn list_messages_empty() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
-        assert!(store.list_messages("conv-1").unwrap().is_empty());
-    }
-
-    #[test]
-    fn list_messages_returns_in_order() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
-
-        store.add_message("conv-1", "user", "First").unwrap();
-        store.add_message("conv-1", "assistant", "Second").unwrap();
-        store.add_message("conv-1", "user", "Third").unwrap();
-
-        let msgs = store.list_messages("conv-1").unwrap();
-        assert_eq!(msgs.len(), 3);
-        assert_eq!(msgs[0].seq, 0);
-        assert_eq!(msgs[0].content, "First");
-        assert_eq!(msgs[1].seq, 1);
-        assert_eq!(msgs[1].content, "Second");
-        assert_eq!(msgs[2].seq, 2);
-        assert_eq!(msgs[2].content, "Third");
-    }
-
-    // --- Conversations: delete_messages_after ---
-
-    #[test]
-    fn delete_messages_after_removes_later_messages() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
-
-        store.add_message("conv-1", "user", "msg0").unwrap();
-        store.add_message("conv-1", "assistant", "msg1").unwrap();
-        store.add_message("conv-1", "user", "msg2").unwrap();
-        store.add_message("conv-1", "assistant", "msg3").unwrap();
-
-        store.delete_messages_after("conv-1", 1).unwrap();
-
-        let msgs = store.list_messages("conv-1").unwrap();
-        assert_eq!(msgs.len(), 2);
-        assert_eq!(msgs[0].seq, 0);
-        assert_eq!(msgs[1].seq, 1);
-    }
-
-    #[test]
-    fn delete_messages_after_noop_when_no_match() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
-        store.add_message("conv-1", "user", "msg0").unwrap();
-
-        store.delete_messages_after("conv-1", 10).unwrap();
-        assert_eq!(store.list_messages("conv-1").unwrap().len(), 1);
-    }
-
-    #[test]
-    fn delete_messages_after_is_exclusive_of_boundary_seq() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
-
-        store.add_message("conv-1", "user", "msg0").unwrap();
-        store.add_message("conv-1", "assistant", "msg1").unwrap();
-        store.add_message("conv-1", "user", "msg2").unwrap();
-
-        // seq=1 is the boundary: it and everything before it must survive
-        store.delete_messages_after("conv-1", 1).unwrap();
-
-        let msgs = store.list_messages("conv-1").unwrap();
-        assert_eq!(msgs.len(), 2, "boundary seq and earlier are retained");
-        assert_eq!(msgs[0].seq, 0);
-        assert_eq!(msgs[1].seq, 1);
-        // seq=2 must be gone
-        assert!(
-            msgs.iter().all(|m| m.seq <= 1),
-            "messages strictly after the boundary seq must be deleted"
-        );
-    }
-
-    #[test]
-    fn add_message_is_atomic() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None, Some("Chat")).unwrap();
-
-        store.conn.execute_batch(
-            "CREATE TRIGGER test_block_touch_conversation
-             BEFORE UPDATE OF updated_at ON conversations
-             BEGIN
-                 SELECT RAISE(ABORT, 'blocked by test trigger');
-             END;"
-        ).unwrap();
-
-        let result = store.add_message("conv-1", "user", "Hello");
-        assert!(result.is_err(), "add_message should fail when touch trigger blocks");
-
-        let msg_count: i64 = store.conn.query_row(
-            "SELECT COUNT(*) FROM conversation_messages", [], |r| r.get(0),
-        ).unwrap();
-        assert_eq!(msg_count, 0, "message INSERT should be rolled back");
-
-        store.conn.execute_batch("DROP TRIGGER test_block_touch_conversation;").unwrap();
-    }
-
-    // --- Conversations: CASCADE and delete_node ---
-
-    #[test]
-    fn delete_conversation_cascades_messages() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
-        store.add_message("conv-1", "user", "msg").unwrap();
-
-        store.delete_conversation("conv-1").unwrap();
-
-        let count: i64 = store
-            .conn
-            .query_row("SELECT COUNT(*) FROM conversation_messages", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(count, 0);
-    }
-
-    #[test]
-    fn delete_node_removes_conversations() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None, None).unwrap();
-        store.add_message("conv-1", "user", "msg").unwrap();
-
-        store.delete_node("a.md").unwrap();
-
-        assert_eq!(store.get_conversation("conv-1").unwrap(), None);
-        let msg_count: i64 = store
-            .conn
-            .query_row("SELECT COUNT(*) FROM conversation_messages", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(msg_count, 0);
-    }
-
-    // --- Conversations: integration tests ---
-
-    #[test]
-    fn full_conversation_flow() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-
-        store.create_conversation("conv-1", "a.md", None, None, None, Some("Chat")).unwrap();
-        store.add_message("conv-1", "user", "Q1").unwrap();
-        store.add_message("conv-1", "assistant", "A1").unwrap();
-        store.add_message("conv-1", "user", "Q2").unwrap();
-        store.add_message("conv-1", "assistant", "A2").unwrap();
-
-        let msgs = store.list_messages("conv-1").unwrap();
-        assert_eq!(msgs.len(), 4);
-
-        store.delete_messages_after("conv-1", 1).unwrap();
-        let msgs = store.list_messages("conv-1").unwrap();
-        assert_eq!(msgs.len(), 2);
-
-        store.add_message("conv-1", "user", "Q2-branch").unwrap();
-        let msgs = store.list_messages("conv-1").unwrap();
-        assert_eq!(msgs.len(), 3);
-        assert_eq!(msgs[2].content, "Q2-branch");
-
-        let convs = store.list_conversations("a.md").unwrap();
-        assert_eq!(convs.len(), 1);
-
-        store.delete_conversation("conv-1").unwrap();
-        assert!(store.list_conversations("a.md").unwrap().is_empty());
-        assert!(store.list_messages("conv-1").unwrap().is_empty());
-    }
-
-    #[test]
-    fn create_conversation_file_and_annotation_scoped() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-
-        store.create_conversation("file-conv", "a.md", None, None, None, None).unwrap();
-        let file_row = store.get_conversation("file-conv").unwrap().unwrap();
-        assert_eq!(file_row.anchor_type, None);
-        assert_eq!(file_row.anchor_id, None);
-
-        store.create_conversation("ann-conv", "a.md", Some("annotation"), Some(7), None, Some("On note")).unwrap();
-        let ann_row = store.get_conversation("ann-conv").unwrap().unwrap();
-        assert_eq!(ann_row.anchor_type, Some("annotation".into()));
-        assert_eq!(ann_row.anchor_id, Some(7));
-        assert_eq!(ann_row.title, Some("On note".into()));
-    }
-
-    #[test]
-    fn create_conversation_with_anchor_key() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-
-        let row = store.create_conversation(
-            "conv-1", "a.md", Some("annotation"), Some(7), Some("abc-uuid-123"), Some("Chat"),
-        ).unwrap();
-        assert_eq!(row.anchor_key, Some("abc-uuid-123".into()));
-    }
-
     #[test]
     fn v8_to_v9_migration_preserves_data() {
         let dir = tempfile::tempdir().unwrap();
@@ -4341,353 +3704,6 @@ mod tests {
             .query_row("SELECT title FROM nodes WHERE id = 'a.md'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(title, "Alpha");
-
-        store.create_conversation("conv-1", "a.md", None, None, None, Some("Test")).unwrap();
-        store.add_message("conv-1", "user", "Hello").unwrap();
-        let msgs = store.list_messages("conv-1").unwrap();
-        assert_eq!(msgs.len(), 1);
-    }
-
-    #[test]
-    fn upsert_node_preserves_conversations() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "Old Title", &["tag1"], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None, Some("Chat")).unwrap();
-        store.add_message("conv-1", "user", "Hello").unwrap();
-
-        let node2 = make_node("a.md", "New Title", &["tag2"], json!({}));
-        store.upsert_node(&node2, 2).unwrap();
-
-        let title: String = store.conn.query_row(
-            "SELECT title FROM nodes WHERE id = 'a.md'", [], |r| r.get(0),
-        ).unwrap();
-        assert_eq!(title, "New Title");
-
-        let conv = store.get_conversation("conv-1").unwrap().expect("conversation survives");
-        assert_eq!(conv.node_id, "a.md");
-        let msgs = store.list_messages("conv-1").unwrap();
-        assert_eq!(msgs.len(), 1);
-        assert_eq!(msgs[0].content, "Hello");
-    }
-
-    #[test]
-    fn v9_to_v10_migration_adds_cascade_to_conversations() {
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("test.db");
-
-        {
-            let conn = Connection::open(&db_path).unwrap();
-            conn.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
-            conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
-            conn.execute_batch(
-                "CREATE TABLE nodes (
-                    id TEXT PRIMARY KEY, title TEXT, first_paragraph TEXT,
-                    frontmatter JSON, mtime INTEGER, is_stub INTEGER DEFAULT 0, tags_text TEXT DEFAULT ''
-                );
-                CREATE TABLE tags (node_id TEXT, tag TEXT);
-                CREATE TABLE aliases (node_id TEXT, alias TEXT);
-                CREATE TABLE edges (source TEXT, target TEXT, context TEXT, raw_target TEXT DEFAULT '', source_line INTEGER DEFAULT 0);
-                CREATE TABLE sync (path TEXT PRIMARY KEY, mtime INTEGER);
-                CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
-                CREATE TABLE annotations (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    node_id TEXT NOT NULL, annotation_type TEXT NOT NULL,
-                    certainty TEXT NOT NULL, body TEXT, date TEXT,
-                    source_line INTEGER NOT NULL, char_start INTEGER NOT NULL, char_end INTEGER NOT NULL,
-                    scope_kind TEXT NOT NULL, scope_value TEXT NOT NULL
-                );
-                CREATE VIRTUAL TABLE annotations_fts USING fts5(
-                    body, node_id UNINDEXED, annotation_type UNINDEXED,
-                    tokenize = 'trigram case_sensitive 0'
-                );
-                CREATE TABLE node_positions (
-                    node_id TEXT PRIMARY KEY, x REAL NOT NULL, y REAL NOT NULL
-                );
-                CREATE TABLE conversations (
-                    id TEXT PRIMARY KEY,
-                    node_id TEXT NOT NULL REFERENCES nodes(id),
-                    anchor_type TEXT,
-                    anchor_id INTEGER,
-                    title TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-                CREATE INDEX idx_conversations_node_id ON conversations(node_id);
-                CREATE TABLE conversation_messages (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-                    role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
-                    content TEXT NOT NULL,
-                    seq INTEGER NOT NULL,
-                    created_at TEXT NOT NULL
-                );
-                CREATE INDEX idx_conv_messages_conv_id ON conversation_messages(conversation_id);
-                INSERT INTO meta(key, value) VALUES ('schema_version', '9');
-                INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub)
-                    VALUES ('a.md', 'Alpha', 'First paragraph', '{}', 1, 0);
-                INSERT INTO conversations(id, node_id, anchor_type, anchor_id, title, created_at, updated_at)
-                    VALUES ('conv-1', 'a.md', NULL, NULL, 'Chat', '2025-01-01', '2025-01-01');
-                INSERT INTO conversation_messages(conversation_id, role, content, seq, created_at)
-                    VALUES ('conv-1', 'user', 'Hello', 0, '2025-01-01');",
-            ).unwrap();
-        }
-
-        let store = Store::open(&db_path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
-
-        let title: String = store.conn.query_row(
-            "SELECT title FROM nodes WHERE id = 'a.md'", [], |r| r.get(0),
-        ).unwrap();
-        assert_eq!(title, "Alpha");
-
-        let conv = store.get_conversation("conv-1").unwrap().expect("conversation survives migration");
-        assert_eq!(conv.node_id, "a.md");
-        let msgs = store.list_messages("conv-1").unwrap();
-        assert_eq!(msgs.len(), 1);
-        assert_eq!(msgs[0].content, "Hello");
-
-        store.conn.execute("DELETE FROM nodes WHERE id = 'a.md'", []).unwrap();
-        assert_eq!(store.get_conversation("conv-1").unwrap(), None);
-        let msg_count: i64 = store.conn.query_row(
-            "SELECT COUNT(*) FROM conversation_messages", [], |r| r.get(0),
-        ).unwrap();
-        assert_eq!(msg_count, 0);
-    }
-
-    #[test]
-    fn delete_node_cascades_conversations_via_fk() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-        store.create_conversation("conv-1", "a.md", None, None, None, Some("Chat")).unwrap();
-        store.add_message("conv-1", "user", "Hello").unwrap();
-
-        store.conn.execute("DELETE FROM nodes WHERE id = 'a.md'", []).unwrap();
-
-        assert_eq!(store.get_conversation("conv-1").unwrap(), None);
-        let msg_count: i64 = store.conn.query_row(
-            "SELECT COUNT(*) FROM conversation_messages", [], |r| r.get(0),
-        ).unwrap();
-        assert_eq!(msg_count, 0);
-    }
-
-    #[test]
-    fn get_first_paragraphs_empty_ids() {
-        let store = Store::open_memory().unwrap();
-        let result = store.get_first_paragraphs(&[]).unwrap();
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn get_first_paragraphs_returns_data() {
-        let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("a.md", "A", &[], json!({})), 1).unwrap();
-        store.upsert_node(&make_node("b.md", "B", &[], json!({})), 1).unwrap();
-        let ids = vec!["a.md".into(), "b.md".into()];
-        let result = store.get_first_paragraphs(&ids).unwrap();
-        assert_eq!(result.len(), 2);
-        assert!(result["a.md"].contains("A"));
-        assert!(result["b.md"].contains("B"));
-    }
-
-    #[test]
-    fn get_first_paragraphs_missing_ids_omitted() {
-        let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("a.md", "A", &[], json!({})), 1).unwrap();
-        let ids = vec!["a.md".into(), "ghost.md".into()];
-        let result = store.get_first_paragraphs(&ids).unwrap();
-        assert_eq!(result.len(), 1);
-        assert!(!result.contains_key("ghost.md"));
-    }
-
-    // --- Cycle A: v12 migration enforces NOT NULL on uuid ---
-
-    #[test]
-    fn migration_v12_enforces_uuid_not_null() {
-        let store = Store::open_memory().unwrap();
-
-        let mut stmt = store.conn.prepare("PRAGMA table_info(annotations)").unwrap();
-        let columns: Vec<(String, i64)> = stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(1)?, row.get::<_, i64>(3)?))
-        }).unwrap().filter_map(|r| r.ok()).collect();
-
-        let uuid_col = columns.iter().find(|(name, _)| name == "uuid");
-        assert!(uuid_col.is_some(), "annotations table should have uuid column");
-        assert_eq!(uuid_col.unwrap().1, 1, "uuid column should have notnull=1");
-
-        assert_eq!(CURRENT_SCHEMA_VERSION, 13);
-    }
-
-    // --- Cycle C: search/list annotations return uuid ---
-
-    #[test]
-    fn search_annotations_returns_uuid() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-
-        let ann = super::IndexableAnnotation {
-            body: Some("Silk Road trade route".into()),
-            ..make_annotation("note", None)
-        };
-        store.upsert_annotations("a.md", &[ann]).unwrap();
-
-        let results = store.search_annotations("Silk Road", None, 10).unwrap();
-        assert_eq!(results.len(), 1);
-        let uuid = &results[0].uuid;
-        assert_eq!(uuid.len(), 36, "uuid should be 36-char hyphenated format");
-        assert!(uuid.contains('-'), "uuid should contain hyphens");
-    }
-
-    #[test]
-    fn list_annotations_returns_uuid() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-
-        store.upsert_annotations("a.md", &[make_annotation("note", Some("hello"))]).unwrap();
-
-        let results = store.list_annotations(Some("a.md"), None, 10).unwrap();
-        assert_eq!(results.len(), 1);
-        let uuid = &results[0].uuid;
-        assert_eq!(uuid.len(), 36);
-        assert!(uuid.contains('-'));
-    }
-
-    // --- Cycle: v13 UNIQUE anchor constraint ---
-
-    #[test]
-    fn duplicate_anchor_key_insert_fails() {
-        let store = Store::open_memory().unwrap();
-        let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
-
-        store.create_conversation(
-            "conv-1", "a.md", Some("annotation"), Some(1), Some("uuid-abc"), Some("Chat"),
-        ).unwrap();
-
-        let result = store.create_conversation(
-            "conv-2", "a.md", Some("annotation"), Some(1), Some("uuid-abc"), Some("Chat 2"),
-        );
-        assert!(result.is_err(), "duplicate anchor triple should be rejected");
-    }
-
-    #[test]
-    fn v12_to_v13_migration_deduplicates_anchors() {
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("test.db");
-
-        {
-            let conn = Connection::open(&db_path).unwrap();
-            conn.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
-            conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
-            conn.execute_batch(
-                "CREATE TABLE nodes (
-                    id TEXT PRIMARY KEY, title TEXT, first_paragraph TEXT,
-                    frontmatter JSON, mtime INTEGER, is_stub INTEGER DEFAULT 0, tags_text TEXT DEFAULT ''
-                );
-                CREATE TABLE tags (node_id TEXT, tag TEXT);
-                CREATE TABLE aliases (node_id TEXT, alias TEXT);
-                CREATE TABLE edges (source TEXT, target TEXT, context TEXT, raw_target TEXT DEFAULT '', source_line INTEGER DEFAULT 0);
-                CREATE TABLE sync (path TEXT PRIMARY KEY, mtime INTEGER);
-                CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
-                CREATE TABLE annotations (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    node_id TEXT NOT NULL, annotation_type TEXT NOT NULL,
-                    certainty TEXT NOT NULL, body TEXT, date TEXT,
-                    source_line INTEGER NOT NULL, char_start INTEGER NOT NULL, char_end INTEGER NOT NULL,
-                    scope_kind TEXT NOT NULL, scope_value TEXT NOT NULL,
-                    uuid TEXT NOT NULL
-                );
-                CREATE INDEX idx_annotations_node_id ON annotations(node_id);
-                CREATE INDEX idx_annotations_type ON annotations(annotation_type);
-                CREATE VIRTUAL TABLE annotations_fts USING fts5(
-                    body, node_id UNINDEXED, annotation_type UNINDEXED,
-                    tokenize = 'trigram case_sensitive 0'
-                );
-                CREATE TABLE node_positions (
-                    node_id TEXT PRIMARY KEY, x REAL NOT NULL, y REAL NOT NULL
-                );
-                CREATE TABLE conversations (
-                    id TEXT PRIMARY KEY,
-                    node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-                    anchor_type TEXT,
-                    anchor_id INTEGER,
-                    anchor_key TEXT,
-                    title TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-                CREATE INDEX idx_conversations_node_id ON conversations(node_id);
-                CREATE INDEX idx_conversations_anchor ON conversations(node_id, anchor_type, anchor_key);
-                CREATE TABLE conversation_messages (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-                    role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
-                    content TEXT NOT NULL,
-                    seq INTEGER NOT NULL,
-                    created_at TEXT NOT NULL
-                );
-                CREATE INDEX idx_conv_messages_conv_id ON conversation_messages(conversation_id);
-                INSERT INTO meta(key, value) VALUES ('schema_version', '12');
-                INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub)
-                    VALUES ('a.md', 'Alpha', 'p1', '{}', 1, 0);
-
-                -- duplicate anchor triple: conv-dup1 (earlier) should survive, conv-dup2 should be deleted
-                INSERT INTO conversations(id, node_id, anchor_type, anchor_id, anchor_key, title, created_at, updated_at)
-                    VALUES ('conv-dup1', 'a.md', 'annotation', 1, 'uuid-abc', 'First', '2025-01-01', '2025-01-01');
-                INSERT INTO conversation_messages(conversation_id, role, content, seq, created_at)
-                    VALUES ('conv-dup1', 'user', 'msg-keep', 0, '2025-01-01');
-
-                INSERT INTO conversations(id, node_id, anchor_type, anchor_id, anchor_key, title, created_at, updated_at)
-                    VALUES ('conv-dup2', 'a.md', 'annotation', 1, 'uuid-abc', 'Second', '2025-01-02', '2025-01-02');
-                INSERT INTO conversation_messages(conversation_id, role, content, seq, created_at)
-                    VALUES ('conv-dup2', 'user', 'msg-remove', 0, '2025-01-02');
-
-                -- two NULL anchor_key conversations: both should survive
-                INSERT INTO conversations(id, node_id, anchor_type, anchor_id, anchor_key, title, created_at, updated_at)
-                    VALUES ('conv-null1', 'a.md', NULL, NULL, NULL, 'Page chat 1', '2025-01-01', '2025-01-01');
-                INSERT INTO conversations(id, node_id, anchor_type, anchor_id, anchor_key, title, created_at, updated_at)
-                    VALUES ('conv-null2', 'a.md', NULL, NULL, NULL, 'Page chat 2', '2025-01-01', '2025-01-01');",
-            ).unwrap();
-        }
-
-        let store = Store::open(&db_path).unwrap();
-
-        // 1. Schema version is 13
-        assert_eq!(store.schema_version().unwrap(), 13);
-
-        // 2. Earliest duplicate survived, later one deleted
-        let surv = store.get_conversation("conv-dup1").unwrap();
-        assert!(surv.is_some(), "earliest duplicate should survive");
-        let gone = store.get_conversation("conv-dup2").unwrap();
-        assert!(gone.is_none(), "later duplicate should be deleted");
-
-        // 3. Messages for deleted duplicate are cascade-deleted
-        let gone_msgs: i64 = store.conn.query_row(
-            "SELECT COUNT(*) FROM conversation_messages WHERE conversation_id = 'conv-dup2'",
-            [], |r| r.get(0),
-        ).unwrap();
-        assert_eq!(gone_msgs, 0, "messages for deleted duplicate should be cascade-deleted");
-
-        // 4. Messages for surviving conversation preserved
-        let kept_msgs = store.list_messages("conv-dup1").unwrap();
-        assert_eq!(kept_msgs.len(), 1);
-        assert_eq!(kept_msgs[0].content, "msg-keep");
-
-        // 5. Both NULL-anchor conversations survive
-        let null1 = store.get_conversation("conv-null1").unwrap();
-        assert!(null1.is_some(), "first NULL-anchor conversation should survive");
-        let null2 = store.get_conversation("conv-null2").unwrap();
-        assert!(null2.is_some(), "second NULL-anchor conversation should survive");
-
-        // 6. Index is UNIQUE
-        let idx_sql: String = store.conn.query_row(
-            "SELECT sql FROM sqlite_master WHERE name = 'idx_conversations_anchor'",
-            [], |r| r.get(0),
-        ).unwrap();
-        assert!(idx_sql.contains("UNIQUE"), "idx_conversations_anchor should be UNIQUE");
     }
 
     #[test]

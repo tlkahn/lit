@@ -10,9 +10,6 @@ pub enum GraphError {
     #[error("node not found: {id}")]
     NodeNotFound { id: String },
 
-    #[error("conversation not found: {id}")]
-    ConversationNotFound { id: String },
-
     #[error("I/O error at {path}: {source}")]
     Io {
         source: std::io::Error,
@@ -68,16 +65,6 @@ mod tests {
             id: "some-node".into(),
         };
         assert_eq!(err.to_string(), "node not found: some-node");
-    }
-
-    #[test]
-    fn conversation_not_found_displays_id() {
-        let err = GraphError::ConversationNotFound {
-            id: "conv-abc".into(),
-        };
-        let msg = err.to_string();
-        assert!(msg.contains("conversation not found"));
-        assert!(msg.contains("conv-abc"));
     }
 
     #[test]

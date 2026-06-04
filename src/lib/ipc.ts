@@ -257,8 +257,6 @@ export async function changeSecretStorePassphrase(oldPassphrase: string, newPass
   return invoke<void>("change_secret_store_passphrase", { oldPassphrase, newPassphrase });
 }
 
-export const GLOBAL_NODE_ID = "_global" as const;
-
 // LLM commands
 
 export interface LlmPromptStreamingArgs {
@@ -984,84 +982,6 @@ export async function mergeDocuments(
   });
 }
 
-// Conversation commands
-
-export interface ConversationRow {
-  id: string;
-  node_id: string;
-  anchor_type: string | null;
-  anchor_id: number | null;
-  anchor_key: string | null;
-  title: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export type MessageRole = "user" | "assistant" | "system";
-
-export interface MessageRow {
-  id: number;
-  conversation_id: string;
-  role: MessageRole;
-  content: string;
-  seq: number;
-  created_at: string;
-}
-
-/**
- * Delete messages strictly after `seq` (exclusive boundary).
- *
- * The message at `seq` is retained. To regenerate from turn N, pass `N - 1`.
- */
-export async function conversationDeleteMessagesAfter(
-  conversationId: string,
-  seq: number,
-): Promise<void> {
-  return invoke<void>("conversation_delete_messages_after", { conversationId, seq });
-}
-
-export async function conversationDelete(conversationId: string): Promise<void> {
-  return invoke<void>("conversation_delete", { conversationId });
-}
-
-export async function conversationAddMessage(
-  conversationId: string,
-  role: MessageRole,
-  content: string,
-): Promise<MessageRow> {
-  return invoke<MessageRow>("conversation_add_message", { conversationId, role, content });
-}
-
-export async function conversationMessages(conversationId: string): Promise<MessageRow[]> {
-  return invoke<MessageRow[]>("conversation_messages", { conversationId });
-}
-
-export async function conversationGet(conversationId: string): Promise<ConversationRow> {
-  return invoke<ConversationRow>("conversation_get", { conversationId });
-}
-
-export async function conversationList(nodeId: string): Promise<ConversationRow[]> {
-  return invoke<ConversationRow[]>("conversation_list", { nodeId });
-}
-
-export async function conversationCreate(
-  id: string,
-  nodeId: string,
-  anchorType?: string,
-  anchorId?: number,
-  anchorKey?: string,
-  title?: string,
-): Promise<ConversationRow> {
-  return invoke<ConversationRow>("conversation_create", {
-    id,
-    nodeId,
-    anchorType: anchorType ?? null,
-    anchorId: anchorId ?? null,
-    anchorKey: anchorKey ?? null,
-    title: title ?? null,
-  });
-}
-
 export async function annotationFindUuid(
   nodeId: string,
   annotationType: string,
@@ -1076,39 +996,8 @@ export async function annotationFindUuid(
   });
 }
 
-export async function conversationFindByAnchor(
-  nodeId: string,
-  anchorType: string,
-  anchorKey: string,
-): Promise<ConversationRow | null> {
-  return invoke<ConversationRow | null>("conversation_find_by_anchor", {
-    nodeId,
-    anchorType,
-    anchorKey,
-  });
-}
-
-export async function conversationUpdateTitle(
-  conversationId: string,
-  title: string,
-): Promise<void> {
-  return invoke<void>("conversation_update_title", { conversationId, title });
-}
-
 export async function migrateAnnotations(content: string): Promise<string> {
   return invoke<string>("migrate_annotations", { content });
-}
-
-export async function conversationDeleteByAnchor(
-  nodeId: string,
-  anchorType: string,
-  anchorKey: string,
-): Promise<void> {
-  return invoke<void>("conversation_delete_by_anchor", {
-    nodeId,
-    anchorType,
-    anchorKey,
-  });
 }
 
 // Academic export

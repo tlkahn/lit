@@ -444,20 +444,5 @@ describe("useBottomPanelEvents", () => {
 
       expect(useBottomPanelStore.getState().unfolded).toBe(false);
     });
-
-    it("stays open when page becomes null and active tab is llm-response", () => {
-      useBottomPanelStore.getState().markOpened("llm-response");
-      useBottomPanelStore.setState({ unfolded: true, activeTab: "llm-response" });
-      renderHook(() => useBottomPanelEvents());
-
-      act(() => {
-        usePaneStore.setState({
-          root: { type: "leaf", id: "p1", pagePath: null },
-          focusedPaneId: "p1",
-        });
-      });
-
-      expect(useBottomPanelStore.getState().unfolded).toBe(true);
-    });
   });
 });

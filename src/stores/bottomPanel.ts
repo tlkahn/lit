@@ -1,7 +1,6 @@
 import { create } from "zustand";
-import { useLlmResponseStore } from "./llmResponse";
 
-export type TabId = "linked" | "unlinked" | "outgoing" | "annotations" | "llm-response";
+export type TabId = "linked" | "unlinked" | "outgoing" | "annotations";
 
 export type TabMeta = { count: number | null; hasOpened: boolean };
 export type TabMetaMap = Record<TabId, TabMeta>;
@@ -12,7 +11,6 @@ export function defaultTabMeta(): TabMetaMap {
     unlinked: { count: null, hasOpened: false },
     outgoing: { count: null, hasOpened: false },
     annotations: { count: 0, hasOpened: false },
-    "llm-response": { count: null, hasOpened: false },
   };
 }
 
@@ -103,8 +101,7 @@ export const useBottomPanelStore = create<BottomPanelState>((set, get) => ({
     set((s) => ({ tabMeta: { ...s.tabMeta, [tab]: { ...s.tabMeta[tab], hasOpened: true } } })),
 
   resetForPage: () => {
-    const { activeTab, unfolded, tabMeta: prev } = get();
-    const llmActive = useLlmResponseStore.getState().status !== "idle";
+    const { activeTab, unfolded } = get();
 
     const tabMeta: TabMetaMap = {
       linked: { count: null, hasOpened: true },
@@ -117,10 +114,6 @@ export const useBottomPanelStore = create<BottomPanelState>((set, get) => ({
         hasOpened: activeTab === "outgoing" && unfolded,
       },
       annotations: { count: 0, hasOpened: false },
-      "llm-response": {
-        count: prev["llm-response"].count,
-        hasOpened: llmActive ? prev["llm-response"].hasOpened : false,
-      },
     };
 
     set({ unfolded: false, tabMeta });
