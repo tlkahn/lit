@@ -2,6 +2,8 @@ import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
 import type { DarkModePref, Preferences } from "../lib/ipc";
 import { getPreferences } from "../lib/ipc";
+import type { AnnotationBuilderDefaults } from "../lib/annotationBuilderDefaults";
+import { isValidBuilderDefaults } from "../lib/annotationBuilderDefaults";
 
 export type FoldingShowControls = "mouseover" | "always" | "never";
 
@@ -44,6 +46,8 @@ export interface PreferencesState {
   academicDefaultCsl: string;
   academicDefaultTemplate: string;
   academicDefaultReferenceDoc: string;
+  annotationPrefillLastUsed: boolean;
+  annotationBuilderDefaults: AnnotationBuilderDefaults | null;
   loaded: boolean;
   loadPreferences: () => Promise<void>;
 }
@@ -107,6 +111,8 @@ function mapPreferences(prefs: Preferences) {
     academicDefaultCsl: (prefs["academic.defaultCsl"] as string) ?? "",
     academicDefaultTemplate: (prefs["academic.defaultTemplate"] as string) ?? "",
     academicDefaultReferenceDoc: (prefs["academic.defaultReferenceDoc"] as string) ?? "",
+    annotationPrefillLastUsed: (prefs["annotations.prefillLastUsed"] as boolean) ?? false,
+    annotationBuilderDefaults: isValidBuilderDefaults(prefs["annotations.builderDefaults"]) ? prefs["annotations.builderDefaults"] : null,
   };
 }
 
@@ -145,6 +151,8 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   academicDefaultCsl: "",
   academicDefaultTemplate: "",
   academicDefaultReferenceDoc: "",
+  annotationPrefillLastUsed: false,
+  annotationBuilderDefaults: null,
   loaded: false,
 
   loadPreferences: async () => {

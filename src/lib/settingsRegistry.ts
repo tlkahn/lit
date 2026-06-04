@@ -184,6 +184,14 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
       { value: "footnote", label: "Footnote" },
     ],
   },
+  {
+    category: "Annotations",
+    label: "Pre-fill last-used values in builder",
+    storeField: "annotationPrefillLastUsed",
+    jsonKey: "annotations.prefillLastUsed",
+    controlType: "toggle",
+    testId: "settings-annotationPrefillLastUsed",
+  },
   // LLM
   {
     category: "LLM",
