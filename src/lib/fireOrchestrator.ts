@@ -191,7 +191,10 @@ export async function fireAnnotation(args: FireAnnotationArgs): Promise<(() => v
 
         if (fireType === "replacing") {
           try {
-            insertCompanionAnnotation(view, annotation, responseText);
+            insertCompanionAnnotation(view, annotation, responseText, {
+              removeSource: true,
+              effects: [clearFiringAnnotation.of(annotation.char_start)],
+            });
           } catch { /* view destroyed */ }
         }
 

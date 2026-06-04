@@ -1,3 +1,4 @@
+import type { ChangeSpec, StateEffect } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import type { Annotation } from "./ipc";
 import { generateDsl } from "./annotationDsl";
@@ -17,15 +18,20 @@ export function insertCompanionAnnotation(
   view: EditorView,
   sourceAnnotation: Annotation,
   responseText: string,
+  options?: { removeSource?: boolean; effects?: StateEffect<any>[] },
 ): void {
   const dsl = buildCompanionDsl(responseText);
-  view.dispatch({
-    changes: {
-      from: sourceAnnotation.char_end,
-      to: sourceAnnotation.char_end,
-      insert: "\n\n" + dsl + "\n",
-    },
+  const changes: ChangeSpec[] = [];
+  if (options?.removeSource) {
+    changes.push({ from: sourceAnnotation.char_start, to: sourceAnnotation.char_end });
+  }
+  const prefix = options?.removeSource && sourceAnnotation.char_start === 0 ? "" : "\n\n";
+  changes.push({
+    from: sourceAnnotation.char_end,
+    to: sourceAnnotation.char_end,
+    insert: prefix + dsl + "\n",
   });
+  view.dispatch({ changes, effects: options?.effects });
 }
 
 export function insertCompanionAtCursor(
