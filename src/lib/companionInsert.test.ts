@@ -92,7 +92,28 @@ describe("insertCompanionAnnotation", () => {
     expect(result).not.toContain("<!--- q | why? --->");
     expect(result).toContain("The answer.");
     expect(result).toMatch(/^before /);
+    expect(result).not.toMatch(/^before \n\n\n/);
     expect(result).toContain(" after");
+  });
+
+  it("removeSource: true at char_start === 0 does not produce leading blank lines", () => {
+    const doc = "<!--- q | why? ---> after";
+    const view = new EditorView({
+      state: EditorState.create({ doc }),
+      parent: document.createElement("div"),
+    });
+    const ann = makeAnnotation({ char_start: 0, char_end: 19 });
+
+    insertCompanionAnnotation(view, ann, "The answer.", { removeSource: true });
+
+    const result = view.state.doc.toString();
+    expect(result).not.toContain("<!--- q | why? --->");
+    expect(result.startsWith("\n")).toBe(false);
+    expect(result).toMatch(/^<!---/);
+    expect(result).toContain("The answer.");
+    expect(result).toContain(" after");
+
+    view.destroy();
   });
 
   it("removeSource: true produces a single undo step", () => {
