@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, waitFor, act } from "@testing-library/react";
+import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 import App from "./App";
 import { mockInvoke, mockListen, emitMockEvent } from "./test/tauri-mock";
 import { useWorkspaceStore } from "./stores/workspace";
@@ -8,8 +8,9 @@ import { useLicenseStore } from "./stores/license";
 import { usePaneStore } from "./stores/panes";
 import { useBottomPanelStore } from "./stores/bottomPanel";
 import { _resetForTesting as resetRegistry } from "./lib/paneContentRegistry";
-import { _resetForTesting as resetEditorViewRef } from "./lib/editorViewRef";
+import { _resetForTesting as resetEditorViewRef, setCurrentEditorView } from "./lib/editorViewRef";
 import { SIDEBAR_WIDTH_PX } from "./components/Sidebar";
+import type { AnnotationBuilderEventDetail } from "./lib/annotationDsl";
 
 const samplePages = [
   {
@@ -801,5 +802,38 @@ describe("App", () => {
     useBottomPanelStore.setState({ unfolded: false });
     render(<App />);
     expect(screen.getByTestId("bottom-panel")).toBeInTheDocument();
+  });
+
+  it("create-mode annotation insert replaces the original selected range", async () => {
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+
+    const dispatch = vi.fn();
+    const mockView = {
+      dispatch,
+      state: { selection: { main: { head: 99 } } },
+      focus: vi.fn(),
+    };
+    setCurrentEditorView(mockView as any);
+
+    render(<App />);
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent<AnnotationBuilderEventDetail>("lit:open-annotation-builder", {
+          detail: { mode: "create", selectedText: "hello", originalRange: { from: 10, to: 15 } },
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("annotation-builder-backdrop")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("annotation-insert-btn"));
+
+    expect(dispatch).toHaveBeenCalled();
+    const changes = dispatch.mock.calls[0]![0].changes;
+    expect(changes.from).toBe(10);
+    expect(changes.to).toBe(15);
   });
 });

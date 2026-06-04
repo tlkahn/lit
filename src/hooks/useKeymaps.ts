@@ -221,7 +221,7 @@ function ensureCommandsRegistered() {
         const selectedText = sel.from !== sel.to ? view.state.sliceDoc(sel.from, sel.to) : undefined;
         window.dispatchEvent(
           new CustomEvent<AnnotationBuilderEventDetail>("lit:open-annotation-builder", {
-            detail: { mode: "create", selectedText },
+            detail: { mode: "create", selectedText, originalRange: selectedText ? { from: sel.from, to: sel.to } : undefined },
           }),
         );
       } else {
