@@ -16,6 +16,7 @@ import { useMenuLicenseSync } from "./hooks/useMenuLicenseSync";
 import { useWorkspaceStore, getRecentWorkspaces } from "./stores/workspace";
 import { useThemeStore } from "./stores/theme";
 import { usePreferencesStore } from "./stores/preferences";
+import { useMarkConfigStore } from "./stores/markConfig";
 import { useFocusModeStore } from "./stores/focusMode";
 import { useLicenseStore } from "./stores/license";
 import { useConversationStore } from "./stores/conversation";
@@ -73,6 +74,7 @@ function App() {
   const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
   const triggerReload = useWorkspaceStore((s) => s.triggerReload);
   const initThemes = useThemeStore((s) => s.loadThemes);
+  const loadMarkConfig = useMarkConfigStore((s) => s.loadConfig);
   const loadPreferences = usePreferencesStore((s) => s.loadPreferences);
   const colorTheme = usePreferencesStore((s) => s.colorTheme);
   const syncFromPreferences = useThemeStore((s) => s.syncFromPreferences);
@@ -92,6 +94,12 @@ function App() {
   useEffect(() => {
     syncFromPreferences();
   }, [colorTheme, syncFromPreferences]);
+
+  // Mark config is workspace-scoped (reads .lit/marks.toml and requires a
+  // registered workspace), so load it on open and reload on workspace switch.
+  useEffect(() => {
+    if (workspacePath) loadMarkConfig();
+  }, [workspacePath, loadMarkConfig]);
 
   useEffect(() => {
     if (workspacePath) return;

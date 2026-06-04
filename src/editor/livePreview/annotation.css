@@ -325,3 +325,70 @@
 .dark .scope-highlight {
   background: rgba(68, 138, 255, 0.20);
 }
+
+/* Minimal mark pill — compact badge holding only the mark icon. Inherits
+   flex/border-radius/cursor from .cm-annotation-pill. */
+.cm-annotation-pill-minimal {
+  padding: 0 4px;
+  gap: 0;
+  min-width: 1.4em;
+  justify-content: center;
+}
+
+/* Mark type pill color — neutral/muted, since the in-text decoration is the
+   primary signal (plan 8d). */
+.cm-annotation-pill[data-annotation-type="mark"] {
+  background: rgba(120, 120, 120, 0.15);
+  color: rgb(120, 120, 120);
+}
+
+/* Built-in philological mark decorations.
+   Values mirror src-tauri/src/annotation/marks_builtin.toml byte-for-byte —
+   keep them in sync. Dynamic overrides from .lit/marks.toml are appended after
+   this stylesheet by markStyles.ts and win at equal specificity. */
+.cm-mark-nb { font-weight: bold; }
+.cm-mark-it { font-style: italic; }
+.cm-mark-ul { text-decoration: underline; }
+.cm-mark-st { text-decoration: line-through; }
+.cm-mark-sc { font-variant: small-caps; }
+.cm-mark-hi { background: rgba(255, 235, 59, 0.35); }
+.cm-mark-sic { text-decoration: wavy underline #e53935; }
+.cm-mark-crux { opacity: 0.6; }
+.cm-mark-crux::before { content: "†"; }
+.cm-mark-crux::after { content: "†"; }
+.cm-mark-lac { text-decoration: dashed underline; }
+.cm-mark-lac::before { content: "["; }
+.cm-mark-lac::after { content: "]"; }
+.cm-mark-del { text-decoration: line-through; opacity: 0.5; }
+.cm-mark-sup { background: rgba(144, 202, 249, 0.15); }
+.cm-mark-sup::before { content: "⟨"; }
+.cm-mark-sup::after { content: "⟩"; }
+.cm-mark-conj { font-style: italic; text-decoration: dashed underline; }
+.cm-mark-dub { text-decoration: dotted underline; opacity: 0.7; }
+.cm-mark-gloss { font-size: 0.85em; opacity: 0.65; }
+.cm-mark-interp { background: rgba(158, 158, 158, 0.1); }
+.cm-mark-interp::before { content: "⟦"; }
+.cm-mark-interp::after { content: "⟧"; }
+.cm-mark-em { text-decoration: underline; background: rgba(68, 138, 255, 0.08); }
+
+/* Keep backgrounds/underlines intact across line wraps, mirroring
+   .scope-highlight. */
+.cm-mark-nb,
+.cm-mark-it,
+.cm-mark-ul,
+.cm-mark-st,
+.cm-mark-sc,
+.cm-mark-hi,
+.cm-mark-sic,
+.cm-mark-crux,
+.cm-mark-lac,
+.cm-mark-del,
+.cm-mark-sup,
+.cm-mark-conj,
+.cm-mark-dub,
+.cm-mark-gloss,
+.cm-mark-interp,
+.cm-mark-em {
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}

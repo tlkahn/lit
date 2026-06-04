@@ -62,6 +62,7 @@ import {
   parseAnnotations,
   resolveAnnotationScope,
   resolveAnnotationScopeWithMode,
+  getMarkConfig,
   searchAnnotations,
   listAnnotations,
   exportData,
@@ -300,6 +301,11 @@ describe("ipc", () => {
           if ((a?.charStart as number) === 0) return null;
           return { start: 2, end: 15 };
         }
+        case "get_mark_config":
+          return {
+            nb: { label: "nota bene", icon: "B", style: { "font-weight": "bold" } },
+            crux: { label: "crux desperationis", before: "†", after: "†" },
+          };
         case "search_annotations": {
           const a = args as Record<string, unknown> | undefined;
           if (a?.annotationType) {
@@ -1251,6 +1257,15 @@ describe("ipc", () => {
       "backward",
     );
     expect(result).toBeNull();
+  });
+
+  it("getMarkConfig returns the merged mark config", async () => {
+    const config = await getMarkConfig();
+    expect(config.nb!.label).toBe("nota bene");
+    expect(config.nb!.icon).toBe("B");
+    expect(config.crux!.before).toBe("†");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("get_mark_config");
   });
 
   it("searchAnnotations returns results", async () => {

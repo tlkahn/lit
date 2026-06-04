@@ -3,6 +3,7 @@ import type { Annotation, AnnotationType, Certainty, Scope } from "./ipc";
 export interface AnnotationFields {
   id: string | null;
   type: AnnotationType | null;
+  mark?: string;
   certainty: Certainty;
   scope: Scope | null;
   body: string;
@@ -49,7 +50,11 @@ const EXPLICIT_SCOPE_RE = /[_\\]/;
 export function annotationToFields(ann: Annotation): AnnotationFields {
   const hasAuthoredId = /^(?:<!---\s*\[|%%!\s*\[)/.test(ann.original);
   const id = hasAuthoredId ? (ann.uuid ?? null) : null;
-  const type: AnnotationType | null = ann.annotation_type === "bare" ? null : ann.annotation_type;
+  const type: AnnotationType | null =
+    ann.annotation_type === "bare" || ann.annotation_type === "mark"
+      ? null
+      : ann.annotation_type;
+  const mark = ann.annotation_type === "mark" ? (ann.mark ?? undefined) : undefined;
   const certainty: Certainty = ann.certainty;
 
   let scope: Scope | null;
@@ -66,7 +71,7 @@ export function annotationToFields(ann: Annotation): AnnotationFields {
   const body = ann.body ?? "";
   const date = ann.date ?? null;
 
-  return { id, type, certainty, scope, body, date };
+  return { id, type, mark, certainty, scope, body, date };
 }
 
 const TYPE_KEYWORDS: Record<string, string> = {
@@ -125,10 +130,10 @@ function isBlockForm(body: string): boolean {
 }
 
 export function generateDsl(fields: AnnotationFields): string {
-  const { id, type, certainty, scope, body, date } = fields;
+  const { id, type, mark, certainty, scope, body, date } = fields;
 
   const idStr = id ? `[${id}]` : "";
-  const typeStr = serializeType(type);
+  const typeStr = mark ? mark : serializeType(type);
   const certStr = serializeCertainty(certainty);
   const scopeStr = serializeScope(scope);
   const dateStr = date ? `@${date}` : "";

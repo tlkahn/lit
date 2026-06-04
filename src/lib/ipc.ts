@@ -760,6 +760,7 @@ export type AnnotationType =
   | "apparatus"
   | "translation"
   | "llm"
+  | "mark"
   | "bare";
 
 export type Certainty = "tentative" | "firm" | "neutral";
@@ -792,6 +793,7 @@ export interface Annotation {
   char_end: number;
   original: string;
   uuid?: string | null;
+  mark?: string | null;
 }
 
 export interface ScopeRange {
@@ -831,6 +833,22 @@ export async function resolveAnnotationScopeWithMode(
     lang,
     mode,
   });
+}
+
+/// A single philological mark definition: how the mark is labelled and styled.
+export interface MarkDef {
+  label: string;
+  icon?: string | null;
+  before?: string | null;
+  after?: string | null;
+  style?: Record<string, string> | null;
+}
+
+/// A map of mark code -> definition (the Rust side is a transparent HashMap).
+export type MarkConfig = Record<string, MarkDef>;
+
+export async function getMarkConfig(): Promise<MarkConfig> {
+  return invoke<MarkConfig>("get_mark_config");
 }
 
 export interface AnnotationSearchResult {

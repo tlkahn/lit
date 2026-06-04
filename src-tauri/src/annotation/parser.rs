@@ -48,6 +48,17 @@ mod tests {
     }
 
     #[test]
+    fn mark_annotation_integration() {
+        let doc = "word<!--- nb _ ---> rest";
+        let anns = parse_annotations(doc);
+        assert_eq!(anns.len(), 1);
+        assert_eq!(anns[0].annotation_type, AnnotationType::Mark);
+        assert_eq!(anns[0].mark, Some("nb".to_string()));
+        assert!(anns[0].char_start > 0);
+        assert!(anns[0].char_end > anns[0].char_start);
+    }
+
+    #[test]
     fn single_block_annotation() {
         let doc = "Text before.\n<!---\nn!\n\\p\n@2026-03-28\n---\nThe body.\n--->\nText after.";
         let anns = parse_annotations(doc);

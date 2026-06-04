@@ -12,6 +12,7 @@ import { useWorkspaceStore } from "../../stores/workspace";
 import { useConversationStore } from "../../stores/conversation";
 import { useBottomPanelStore } from "../../stores/bottomPanel";
 import { scopeHighlightExtension } from "./scopeHighlight";
+import { markDecorationExtension } from "./markDecorations";
 import { escapeAnnotationKeymap } from "./escapeAnnotation";
 import { fireAnnotation } from "../../lib/fireOrchestrator";
 import { insertCompanionAnnotation, insertCompanionAtCursor } from "../../lib/companionInsert";
@@ -385,6 +386,7 @@ export function annotationExtension(): Extension {
     llmLockBridgePlugin,
     annotationThreadKeysField,
     scopeHighlightExtension(),
+    markDecorationExtension(),
     keymap.of(escapeAnnotationKeymap),
     fireAnnotationPlugin,
     companionInsertPlugin,

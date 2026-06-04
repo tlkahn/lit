@@ -1,4 +1,5 @@
 import type { AnnotationType } from "../../lib/ipc";
+import { useMarkConfigStore } from "../../stores/markConfig";
 
 export const TYPE_ICON: Record<AnnotationType, string> = {
   note: "N",
@@ -8,8 +9,15 @@ export const TYPE_ICON: Record<AnnotationType, string> = {
   apparatus: "⊕",
   translation: "译",
   llm: "⚡",
+  mark: "◆",
   bare: "…",
 };
+
+// Pill badge text for a mark code; falls back to the code itself.
+export function getMarkIcon(code: string): string {
+  const def = useMarkConfigStore.getState().getDef(code);
+  return def?.icon ?? code;
+}
 
 export function certaintyMark(certainty: string): string {
   if (certainty === "tentative") return "?";

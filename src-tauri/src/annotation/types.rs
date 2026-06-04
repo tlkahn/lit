@@ -10,6 +10,7 @@ pub enum AnnotationType {
     Apparatus,
     Translation,
     Llm,
+    Mark,
     Bare,
 }
 
@@ -186,6 +187,8 @@ pub struct Annotation {
     pub original: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uuid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mark: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -464,6 +467,7 @@ mod tests {
             char_end: 50,
             original: "<!--- n? __ | a note @2026-03 --->".to_string(),
             uuid: None,
+            mark: None,
         };
         let json = serde_json::to_string(&ann).unwrap();
         let parsed: Annotation = serde_json::from_str(&json).unwrap();
@@ -522,6 +526,7 @@ mod tests {
             char_end: 10,
             original: "<!---: n --->".to_string(),
             uuid: None,
+            mark: None,
         };
         let json = serde_json::to_string(&ann).unwrap();
         assert!(!json.contains("uuid"), "JSON should omit uuid when None, got: {json}");
@@ -541,6 +546,7 @@ mod tests {
             char_end: 10,
             original: "<!---: n --->".to_string(),
             uuid: Some("abc".to_string()),
+            mark: None,
         };
         let json = serde_json::to_string(&ann).unwrap();
         assert!(json.contains(r#""uuid":"abc""#), "JSON should include uuid when Some, got: {json}");
@@ -562,10 +568,67 @@ mod tests {
             char_end: 10,
             original: "<!---[scanner-id] n | test --->".to_string(),
             uuid: Some("scanner-id".to_string()),
+            mark: None,
         };
         let json = serde_json::to_string(&ann).unwrap();
         assert!(json.contains(r#""uuid":"scanner-id""#), "JSON should contain scanner-id, got: {json}");
         let parsed: Annotation = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.uuid, Some("scanner-id".to_string()));
+    }
+
+    #[test]
+    fn mark_annotation_type_serializes_lowercase() {
+        let json = serde_json::to_string(&AnnotationType::Mark).unwrap();
+        assert_eq!(json, "\"mark\"");
+        let parsed: AnnotationType = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, AnnotationType::Mark);
+    }
+
+    #[test]
+    fn annotation_json_omits_mark_when_none() {
+        let ann = Annotation {
+            form: AnnotationForm::Compact,
+            annotation_type: AnnotationType::Note,
+            certainty: Certainty::Neutral,
+            scope: Scope::Sentence(1),
+            body: None,
+            date: None,
+            is_structured: false,
+            char_start: 0,
+            char_end: 10,
+            original: "<!---: n --->".to_string(),
+            uuid: None,
+            mark: None,
+        };
+        let json = serde_json::to_string(&ann).unwrap();
+        assert!(!json.contains("\"mark\""), "JSON should omit mark when None, got: {json}");
+    }
+
+    #[test]
+    fn annotation_json_includes_mark_when_some() {
+        let ann = Annotation {
+            form: AnnotationForm::Compact,
+            annotation_type: AnnotationType::Mark,
+            certainty: Certainty::Neutral,
+            scope: Scope::Words(1),
+            body: None,
+            date: None,
+            is_structured: true,
+            char_start: 0,
+            char_end: 10,
+            original: "<!--- nb _ --->".to_string(),
+            uuid: None,
+            mark: Some("nb".to_string()),
+        };
+        let json = serde_json::to_string(&ann).unwrap();
+        assert!(json.contains(r#""mark":"nb""#), "JSON should include mark when Some, got: {json}");
+        let parsed: Annotation = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.mark, Some("nb".to_string()));
+    }
+
+    #[test]
+    fn from_str_does_not_map_mark_codes() {
+        assert_eq!(AnnotationType::from_str("nb"), None);
+        assert_eq!(AnnotationType::from_str("mark"), None);
     }
 }

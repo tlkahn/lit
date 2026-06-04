@@ -345,6 +345,7 @@ pub fn run() {
             commands::annotation::list_annotations,
             commands::annotation::annotation_find_uuid,
             commands::annotation::migrate_annotations,
+            commands::annotation::get_mark_config,
             commands::conversation::conversation_create,
             commands::conversation::conversation_get,
             commands::conversation::conversation_list,

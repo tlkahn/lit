@@ -375,6 +375,7 @@ pub fn extract_annotations(content: &str) -> Vec<super::types::IndexableAnnotati
                 AnnotationType::Apparatus => "apparatus",
                 AnnotationType::Translation => "translation",
                 AnnotationType::Llm => "llm",
+                AnnotationType::Mark => "mark",
                 AnnotationType::Bare => "bare",
             }
             .to_string();

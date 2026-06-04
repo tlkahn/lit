@@ -1,5 +1,6 @@
 use std::sync::LazyLock;
 use regex::Regex;
+use super::marks;
 use super::types::*;
 
 static DATE_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -20,6 +21,7 @@ pub fn parse_compact(inner: &str) -> Annotation {
     let mut certainty = Certainty::Neutral;
     let mut scope = Scope::Sentence(1);
     let mut is_structured = false;
+    let mut mark: Option<String> = None;
 
     let type_keywords = ["todo", "app", "llm", "cf", "tr", "n", "q"];
     for &kw in &type_keywords {
@@ -36,6 +38,31 @@ pub fn parse_compact(inner: &str) -> Annotation {
                 if let Some(t) = AnnotationType::from_str(kw) {
                     annotation_type = t;
                     remaining = after;
+                    is_structured = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    // When no type keyword matched, the type-keyword position may instead hold a
+    // philological mark code (e.g. `nb`, `sic`). Match longest-first and require a
+    // terminator of whitespace/?/!/|/EOS — note `:` is deliberately NOT a mark
+    // terminator (unlike type keywords) to avoid ambiguity with body separators.
+    if annotation_type == AnnotationType::Bare {
+        for code in marks::builtin_mark_codes() {
+            if remaining.starts_with(code.as_str()) {
+                let next_ch = remaining[code.len()..].chars().next();
+                if next_ch.is_none()
+                    || next_ch == Some(' ')
+                    || next_ch == Some('\t')
+                    || next_ch == Some('?')
+                    || next_ch == Some('!')
+                    || next_ch == Some('|')
+                {
+                    annotation_type = AnnotationType::Mark;
+                    mark = Some(code.clone());
+                    remaining = &remaining[code.len()..];
                     is_structured = true;
                     break;
                 }
@@ -116,6 +143,7 @@ pub fn parse_compact(inner: &str) -> Annotation {
             char_end: 0,
             original: String::new(),
             uuid: None,
+            mark: None,
         };
     }
 
@@ -131,6 +159,7 @@ pub fn parse_compact(inner: &str) -> Annotation {
         char_end: 0,
         original: String::new(),
         uuid: None,
+        mark,
     }
 }
 
@@ -392,5 +421,86 @@ mod tests {
         assert_eq!(parse_compact("n | note").annotation_type, AnnotationType::Note);
         assert_eq!(parse_compact("todo | task").annotation_type, AnnotationType::Todo);
         assert_eq!(parse_compact("tr | translate").annotation_type, AnnotationType::Translation);
+    }
+
+    #[test]
+    fn mark_basic_word_scope() {
+        let ann = parse_compact("nb _");
+        assert_eq!(ann.annotation_type, AnnotationType::Mark);
+        assert_eq!(ann.mark, Some("nb".to_string()));
+        assert_eq!(ann.scope, Scope::Words(1));
+        assert!(ann.is_structured);
+        assert_eq!(ann.body, None);
+    }
+
+    #[test]
+    fn mark_with_eos_no_scope() {
+        let ann = parse_compact("sic");
+        assert_eq!(ann.annotation_type, AnnotationType::Mark);
+        assert_eq!(ann.mark, Some("sic".to_string()));
+        assert!(ann.is_structured);
+        assert_eq!(ann.body, None);
+    }
+
+    #[test]
+    fn mark_with_certainty() {
+        let ann = parse_compact("sic? _");
+        assert_eq!(ann.annotation_type, AnnotationType::Mark);
+        assert_eq!(ann.mark, Some("sic".to_string()));
+        assert_eq!(ann.certainty, Certainty::Tentative);
+        assert_eq!(ann.scope, Scope::Words(1));
+    }
+
+    #[test]
+    fn mark_with_pipe_body() {
+        let ann = parse_compact("crux | dagger here");
+        assert_eq!(ann.annotation_type, AnnotationType::Mark);
+        assert_eq!(ann.mark, Some("crux".to_string()));
+        assert_eq!(ann.body, Some("dagger here".to_string()));
+    }
+
+    #[test]
+    fn mark_longest_first() {
+        let ann = parse_compact("interp _");
+        assert_eq!(ann.annotation_type, AnnotationType::Mark);
+        assert_eq!(ann.mark, Some("interp".to_string()));
+
+        // `nb_` has no valid terminator after `nb` (`_` is not whitespace/?/!/|/EOS),
+        // so it stays Bare and the whole token becomes the body.
+        let ann = parse_compact("nb_");
+        assert_eq!(ann.annotation_type, AnnotationType::Bare);
+        assert_eq!(ann.mark, None);
+        assert_eq!(ann.body, Some("nb_".to_string()));
+    }
+
+    #[test]
+    fn type_keyword_beats_mark() {
+        // The type-keyword loop runs first; `n` resolves to Note before the mark
+        // detection block (which is gated on annotation_type == Bare) can run.
+        let ann = parse_compact("n _");
+        assert_eq!(ann.annotation_type, AnnotationType::Note);
+        assert_eq!(ann.mark, None);
+    }
+
+    #[test]
+    fn unknown_code_falls_through() {
+        let ann = parse_compact("xyz _");
+        assert_eq!(ann.annotation_type, AnnotationType::Bare);
+        assert_eq!(ann.mark, None);
+
+        // `nbx` starts with the code `nb` but the next char `x` is not a valid
+        // terminator, so no mark is detected.
+        let ann = parse_compact("nbx _");
+        assert_eq!(ann.annotation_type, AnnotationType::Bare);
+        assert_eq!(ann.mark, None);
+    }
+
+    #[test]
+    fn mark_with_anchor() {
+        let ann = parse_compact(r#"em ^"phrase" | text"#);
+        assert_eq!(ann.annotation_type, AnnotationType::Mark);
+        assert_eq!(ann.mark, Some("em".to_string()));
+        assert_eq!(ann.scope, Scope::Anchor("phrase".to_string()));
+        assert_eq!(ann.body, Some("text".to_string()));
     }
 }

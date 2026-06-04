@@ -5,7 +5,7 @@ import type { AnnotationBuilderEventDetail } from "../../lib/annotationDsl";
 import { canFire } from "../../lib/fireClassification";
 import { renderMarkdown, renderInlineMarkdown } from "../../lib/renderMarkdown";
 import { handleAnnotationHover, handleAnnotationLeave } from "./annotationHover";
-import { TYPE_ICON, certaintyClass, certaintyMark, truncateBody } from "./annotationConstants";
+import { TYPE_ICON, getMarkIcon, certaintyClass, certaintyMark, truncateBody } from "./annotationConstants";
 import "./annotation.css";
 
 export { certaintyClass, certaintyMark };
@@ -137,7 +137,24 @@ function dispatchEditEvent(ann: Annotation): void {
   );
 }
 
+// Minimal display-only pill for mark annotations: just the mark icon, no body/date.
+function buildMinimalMarkPill(ann: Annotation): HTMLSpanElement {
+  const pill = document.createElement("span");
+  pill.className = "cm-annotation-pill cm-annotation-pill-minimal";
+  pill.dataset.annotationType = ann.annotation_type;
+  pill.dataset.mark = ann.mark ?? "";
+
+  const icon = document.createElement("span");
+  icon.className = "cm-annotation-pill-icon";
+  icon.textContent = getMarkIcon(ann.mark ?? "");
+  pill.appendChild(icon);
+
+  return pill;
+}
+
 function buildPillDOM(ann: Annotation): HTMLSpanElement {
+  if (ann.annotation_type === "mark") return buildMinimalMarkPill(ann);
+
   const pill = document.createElement("span");
   pill.className = "cm-annotation-pill";
   const cert = certaintyClass(ann.certainty);
@@ -187,7 +204,9 @@ export class PillWidget extends WidgetType {
     };
     const fireBtn = createFireButton(this.annotation, this.isFiring, this.llmLocked);
     if (fireBtn) pill.appendChild(fireBtn);
-    if (this.hasThread) pill.appendChild(createThreadIndicator(this.annotation));
+    if (this.hasThread && this.annotation.annotation_type !== "mark") {
+      pill.appendChild(createThreadIndicator(this.annotation));
+    }
     return pill;
   }
 
@@ -196,6 +215,7 @@ export class PillWidget extends WidgetType {
       this.annotation.original === other.annotation.original &&
       this.annotation.char_start === other.annotation.char_start &&
       this.annotation.char_end === other.annotation.char_end &&
+      this.annotation.mark === other.annotation.mark &&
       this.isFiring === other.isFiring &&
       this.llmLocked === other.llmLocked &&
       this.hasThread === other.hasThread

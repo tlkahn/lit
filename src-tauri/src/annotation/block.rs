@@ -1,5 +1,6 @@
 use std::sync::LazyLock;
 use regex::Regex;
+use super::marks;
 use super::types::*;
 
 static DATE_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -17,6 +18,7 @@ pub fn parse_block(inner: &str) -> Annotation {
     let mut certainty = Certainty::Neutral;
     let mut scope = Scope::Sentence(1);
     let mut date = None;
+    let mut mark: Option<String> = None;
 
     for line in head.lines() {
         let line = line.trim();
@@ -40,17 +42,23 @@ pub fn parse_block(inner: &str) -> Annotation {
         }
 
         if annotation_type == AnnotationType::Bare {
-            let (type_part, cert_part) = if line.ends_with('?') || line.ends_with('!') {
-                let mark = line.chars().last().unwrap();
-                (&line[..line.len() - 1], Some(mark))
+            let (type_part, cert_char) = if line.ends_with('?') || line.ends_with('!') {
+                let c = line.chars().last().unwrap();
+                (&line[..line.len() - 1], Some(c))
             } else {
                 (line, None)
             };
 
             if let Some(t) = AnnotationType::from_str(type_part) {
                 annotation_type = t;
-                if let Some(mark) = cert_part {
-                    certainty = Certainty::from_char(mark);
+                if let Some(c) = cert_char {
+                    certainty = Certainty::from_char(c);
+                }
+            } else if marks::is_mark_code(type_part) {
+                annotation_type = AnnotationType::Mark;
+                mark = Some(type_part.to_string());
+                if let Some(c) = cert_char {
+                    certainty = Certainty::from_char(c);
                 }
             }
         }
@@ -73,6 +81,7 @@ pub fn parse_block(inner: &str) -> Annotation {
         char_end: 0,
         original: String::new(),
         uuid: None,
+        mark,
     }
 }
 
@@ -272,5 +281,40 @@ mod tests {
         assert_eq!(ann.scope, Scope::Asymmetric {
             unit: ScopeKind::Paragraph, before: 3, after: 1,
         });
+    }
+
+    #[test]
+    fn block_mark_basic() {
+        let inner = "nb\n_\n---\nbold text";
+        let ann = parse_block(inner);
+        assert_eq!(ann.annotation_type, AnnotationType::Mark);
+        assert_eq!(ann.mark, Some("nb".to_string()));
+        assert_eq!(ann.scope, Scope::Words(1));
+        assert_eq!(ann.body, Some("bold text".to_string()));
+    }
+
+    #[test]
+    fn block_mark_with_certainty() {
+        let inner = "sic?\n---\nbody";
+        let ann = parse_block(inner);
+        assert_eq!(ann.annotation_type, AnnotationType::Mark);
+        assert_eq!(ann.mark, Some("sic".to_string()));
+        assert_eq!(ann.certainty, Certainty::Tentative);
+    }
+
+    #[test]
+    fn block_mark_unknown_stays_bare() {
+        let inner = "xyz\n---\nbody";
+        let ann = parse_block(inner);
+        assert_eq!(ann.annotation_type, AnnotationType::Bare);
+        assert_eq!(ann.mark, None);
+    }
+
+    #[test]
+    fn block_type_keyword_still_wins() {
+        let inner = "n\n---\nbody";
+        let ann = parse_block(inner);
+        assert_eq!(ann.annotation_type, AnnotationType::Note);
+        assert_eq!(ann.mark, None);
     }
 }
