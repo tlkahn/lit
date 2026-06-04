@@ -1,16 +1,13 @@
 import type { EditorView } from "@codemirror/view";
 import type { Annotation, AnnotationType } from "./ipc";
-import { resolveAnnotationScopeWithMode, annotationFindUuid } from "./ipc";
+import { resolveAnnotationScopeWithMode } from "./ipc";
 import { startLlmStream } from "./llmClient";
 import { classifyFireType } from "./fireClassification";
 import { useModalLockStore } from "../stores/modalLock";
 import { usePreferencesStore, type PreferencesState } from "../stores/preferences";
 import { useLlmResponseStore } from "../stores/llmResponse";
-import { useConversationStore } from "../stores/conversation";
-import { useWorkspaceStore } from "../stores/workspace";
-import { useBottomPanelStore } from "../stores/bottomPanel";
 import { useSecretStoreStore } from "../stores/secretStore";
-import { setFiringAnnotation, clearFiringAnnotation, annotationThreadKeysField, setAnnotationThreadKeys } from "../editor/livePreview/annotationWidgets";
+import { setFiringAnnotation, clearFiringAnnotation } from "../editor/livePreview/annotationWidgets";
 import { insertCompanionAnnotation } from "./companionInsert";
 
 export interface FireAnnotationArgs {
@@ -94,81 +91,6 @@ export async function fireAnnotation(args: FireAnnotationArgs): Promise<(() => v
     return;
   }
 
-  if (fireType === "persisting") {
-    const nodeId = useWorkspaceStore.getState().currentPagePath;
-    if (!nodeId) {
-      useLlmResponseStore.getState().setError("No active file. Open a file and try again.");
-      useBottomPanelStore.getState().handleTabClick("llm-response");
-      doCleanup();
-      return;
-    }
-
-    let uuid: string | null;
-    try {
-      uuid = await annotationFindUuid(
-        nodeId, annotation.annotation_type, annotation.body, annotation.char_start,
-      );
-    } catch (err) {
-      console.warn("annotationFindUuid failed:", err);
-      useLlmResponseStore.getState().setError("Failed to look up annotation. Save the file and try again.");
-      useBottomPanelStore.getState().handleTabClick("llm-response");
-      doCleanup();
-      return;
-    }
-    if (!uuid) {
-      useLlmResponseStore.getState().setError("Annotation not found in index. Save the file and try again.");
-      useBottomPanelStore.getState().handleTabClick("llm-response");
-      doCleanup();
-      return;
-    }
-
-    const currentKeys = view.state.field(annotationThreadKeysField, false) ?? new Set<string>();
-    const newKeys = new Set(currentKeys);
-    newKeys.add(uuid);
-    view.dispatch({ effects: setAnnotationThreadKeys.of(newKeys) });
-
-    useBottomPanelStore.getState().handleTabClick("llm-response");
-
-    const title = annotation.body
-      ? `${annotation.annotation_type}: ${annotation.body}`
-      : annotation.annotation_type;
-
-    const cleanup = () => {
-      unsubscribe();
-      doCleanup();
-    };
-
-    const unsubscribe = useLlmResponseStore.subscribe((state, prev) => {
-      if (cleanedUp) return;
-      if (state.status !== prev.status && (state.status === "done" || state.status === "error")) {
-        cleanup();
-      }
-    });
-
-    useConversationStore.getState().sendAnnotationFire({
-      nodeId,
-      annotationUuid: uuid,
-      annotation,
-      content: annotation.body ?? text,
-      textOverride: text,
-      model: prefs.llmModel,
-      system: system || undefined,
-      title,
-    })
-      .catch((err) => console.error("sendAnnotationFire failed:", err))
-      .finally(() => {
-        if (useLlmResponseStore.getState().status !== "streaming") {
-          cleanup();
-        }
-      });
-
-    const dispose = () => {
-      cleanup();
-    };
-
-    return dispose;
-  }
-
   try {
     await useSecretStoreStore.getState().ensureUnlocked();
   } catch {
@@ -178,7 +100,6 @@ export async function fireAnnotation(args: FireAnnotationArgs): Promise<(() => v
 
   useLlmResponseStore.getState().startStream({
     question: annotation.body ?? "",
-    fireSourceAnnotation: annotation,
   });
 
   await startLlmStream(
@@ -189,14 +110,12 @@ export async function fireAnnotation(args: FireAnnotationArgs): Promise<(() => v
         const responseText = useLlmResponseStore.getState().responseText;
         useLlmResponseStore.getState().finishStream();
 
-        if (fireType === "replacing") {
-          try {
-            insertCompanionAnnotation(view, annotation, responseText, {
-              removeSource: true,
-              effects: [clearFiringAnnotation.of(annotation.char_start)],
-            });
-          } catch { /* view destroyed */ }
-        }
+        try {
+          insertCompanionAnnotation(view, annotation, responseText, {
+            removeSource: true,
+            effects: [clearFiringAnnotation.of(annotation.char_start)],
+          });
+        } catch { /* view destroyed */ }
 
         doCleanup();
       },

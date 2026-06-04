@@ -15,8 +15,8 @@ describe("fireClassification", () => {
       expect(classifyFireType("translation")).toBe("replacing");
     });
 
-    it("question is persisting", () => {
-      expect(classifyFireType("question")).toBe("persisting");
+    it("question is replacing", () => {
+      expect(classifyFireType("question")).toBe("replacing");
     });
 
     it("note returns null (not fire-eligible)", () => {
@@ -41,8 +41,8 @@ describe("fireClassification", () => {
       expect(isReplacingType("llm")).toBe(true);
     });
 
-    it("returns false for question", () => {
-      expect(isReplacingType("question")).toBe(false);
+    it("returns true for question", () => {
+      expect(isReplacingType("question")).toBe(true);
     });
 
     it("returns false for bare", () => {

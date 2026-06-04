@@ -3,7 +3,6 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { useCursorInfoStore } from "../stores/cursorInfo";
 import { useBottomPanelStore } from "../stores/bottomPanel";
 import { usePreferencesStore } from "../stores/preferences";
-import { useLlmResponseStore } from "../stores/llmResponse";
 import { useStatusMessageStore } from "../stores/statusMessage";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import { getNextUntitledName } from "../lib/naming";
@@ -76,14 +75,6 @@ function BottomPanelTabs() {
           )}
         </>
       )}
-      <TabButton
-        tab="llm-response"
-        label="LLM"
-        count={null}
-        active={activeTab === "llm-response"}
-        unfolded={unfolded}
-        onClick={handleTabClick}
-      />
     </div>
   );
 }
@@ -133,7 +124,6 @@ export function StatusBar() {
   const createPage = useWorkspaceStore((s) => s.createPage);
   const line = useCursorInfoStore((s) => s.line);
   const col = useCursorInfoStore((s) => s.col);
-  const errorMessage = useLlmResponseStore((s) => s.errorMessage);
   const statusMessage = useStatusMessageStore((s) => s.message);
   const statusVariant = useStatusMessageStore((s) => s.variant);
 
@@ -189,15 +179,6 @@ export function StatusBar() {
             className={`mr-2 max-w-[40%] truncate ${statusVariant === "error" ? "text-text-error" : "text-text-muted"}`}
           >
             {statusMessage}
-          </span>
-        )}
-        {errorMessage && (
-          <span
-            data-testid="status-bar-llm-error"
-            className="max-w-[40%] truncate text-text-error"
-            title={errorMessage}
-          >
-            {errorMessage}
           </span>
         )}
         <BottomPanelTabs />

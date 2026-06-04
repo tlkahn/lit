@@ -10,14 +10,12 @@ describe("llmResponse store", () => {
     const s = useLlmResponseStore.getState();
     expect(s.status).toBe("idle");
     expect(s.responseText).toBe("");
-    expect(s.question).toBe("");
   });
 
   it("startStream sets streaming state", () => {
     useLlmResponseStore.getState().startStream({ question: "summarize" });
     const s = useLlmResponseStore.getState();
     expect(s.status).toBe("streaming");
-    expect(s.question).toBe("summarize");
     expect(s.responseText).toBe("");
   });
 
@@ -49,39 +47,6 @@ describe("llmResponse store", () => {
     const s = useLlmResponseStore.getState();
     expect(s.status).toBe("idle");
     expect(s.responseText).toBe("");
-    expect(s.question).toBe("");
-  });
-
-  it("fireSourceAnnotation defaults to null", () => {
-    expect(useLlmResponseStore.getState().fireSourceAnnotation).toBeNull();
-  });
-
-  it("startStream sets fireSourceAnnotation when provided", () => {
-    const ann = {
-      form: "compact" as const,
-      annotation_type: "question" as const,
-      certainty: "neutral" as const,
-      scope: { kind: "sentence" as const, value: 1 },
-      body: "why?",
-      date: null,
-      is_structured: true,
-      char_start: 0,
-      char_end: 10,
-      original: "<!--- q | why? --->",
-      uuid: null,
-    };
-    useLlmResponseStore.getState().startStream({
-      question: "why?",
-      fireSourceAnnotation: ann,
-    });
-    expect(useLlmResponseStore.getState().fireSourceAnnotation).toBe(ann);
-  });
-
-  it("startStream defaults fireSourceAnnotation to null when not provided", () => {
-    useLlmResponseStore.getState().startStream({
-      question: "q",
-    });
-    expect(useLlmResponseStore.getState().fireSourceAnnotation).toBeNull();
   });
 
   it("stopStream sets status to done and preserves accumulated text", () => {
@@ -105,27 +70,5 @@ describe("llmResponse store", () => {
     useLlmResponseStore.getState().stopStream();
     expect(useLlmResponseStore.getState().responseText).toBe(STOP_INDICATOR);
     expect(useLlmResponseStore.getState().status).toBe("done");
-  });
-
-  it("reset clears fireSourceAnnotation", () => {
-    const ann = {
-      form: "compact" as const,
-      annotation_type: "question" as const,
-      certainty: "neutral" as const,
-      scope: { kind: "sentence" as const, value: 1 },
-      body: "why?",
-      date: null,
-      is_structured: true,
-      char_start: 0,
-      char_end: 10,
-      original: "<!--- q | why? --->",
-      uuid: null,
-    };
-    useLlmResponseStore.getState().startStream({
-      question: "q",
-      fireSourceAnnotation: ann,
-    });
-    useLlmResponseStore.getState().reset();
-    expect(useLlmResponseStore.getState().fireSourceAnnotation).toBeNull();
   });
 });

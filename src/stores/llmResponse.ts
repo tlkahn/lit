@@ -1,17 +1,13 @@
 import { create } from "zustand";
-import type { Annotation } from "../lib/ipc";
 
 export const STOP_INDICATOR = "\n\n**[Stopped]**";
 
 export interface LlmResponseState {
   status: "idle" | "streaming" | "done" | "error";
-  question: string;
   responseText: string;
   errorMessage: string;
-  fireSourceAnnotation: Annotation | null;
   startStream: (opts: {
     question: string;
-    fireSourceAnnotation?: Annotation | null;
   }) => void;
   appendChunk: (text: string) => void;
   finishStream: () => void;
@@ -22,18 +18,14 @@ export interface LlmResponseState {
 
 export const useLlmResponseStore = create<LlmResponseState>((set) => ({
   status: "idle",
-  question: "",
   responseText: "",
   errorMessage: "",
-  fireSourceAnnotation: null,
 
-  startStream: (opts) =>
+  startStream: () =>
     set({
       status: "streaming",
-      question: opts.question,
       responseText: "",
       errorMessage: "",
-      fireSourceAnnotation: opts.fireSourceAnnotation ?? null,
     }),
 
   appendChunk: (text) =>
@@ -49,9 +41,7 @@ export const useLlmResponseStore = create<LlmResponseState>((set) => ({
   reset: () =>
     set({
       status: "idle",
-      question: "",
       responseText: "",
       errorMessage: "",
-      fireSourceAnnotation: null,
     }),
 }));

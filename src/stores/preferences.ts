@@ -39,7 +39,6 @@ export interface PreferencesState {
   bottomPanelPosition: BottomPanelPosition;
   llmOpenaiApiKeySet: boolean;
   llmAnthropicApiKeySet: boolean;
-  llmDeleteAnnotationThreads: boolean;
   academicPandocPath: string;
   academicCrossrefPath: string;
   academicPdfEngine: string;
@@ -104,7 +103,6 @@ function mapPreferences(prefs: Preferences) {
     llmPromptLlm: (prefs["llm.prompts.llm"] as string) ?? "Execute the following instruction using the provided context.",
     llmPromptTr: (prefs["llm.prompts.tr"] as string) ?? "Translate the following text. If a hint is provided, follow it.",
     llmPromptQ: (prefs["llm.prompts.q"] as string) ?? "Answer the following question about the provided context.",
-    llmDeleteAnnotationThreads: (prefs["llm.deleteAnnotationThreads"] as boolean) ?? false,
     academicPandocPath: (prefs["academic.pandocPath"] as string) ?? "",
     academicCrossrefPath: (prefs["academic.crossrefFilterPath"] as string) ?? "",
     academicPdfEngine: (prefs["academic.pdfEngine"] as string) ?? "",
@@ -144,7 +142,6 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   llmPromptQ: "Answer the following question about the provided context.",
   llmOpenaiApiKeySet: false,
   llmAnthropicApiKeySet: false,
-  llmDeleteAnnotationThreads: false,
   academicPandocPath: "",
   academicCrossrefPath: "",
   academicPdfEngine: "",

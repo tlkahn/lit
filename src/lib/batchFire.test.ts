@@ -73,7 +73,7 @@ describe("batchFireReplacingAnnotations", () => {
   });
 
   it("skips persisting types", async () => {
-    const ann1 = makeAnnotation({ annotation_type: "question", char_start: 0, char_end: 20 });
+    const ann1 = makeAnnotation({ annotation_type: "note", char_start: 0, char_end: 20 });
     const ann2 = makeAnnotation({ annotation_type: "llm", char_start: 30, char_end: 50 });
     const view = makeView([ann1, ann2]);
 
@@ -98,7 +98,7 @@ describe("batchFireReplacingAnnotations", () => {
   });
 
   it("no-ops when no replacing annotations exist", async () => {
-    const ann = makeAnnotation({ annotation_type: "question", char_start: 0, char_end: 20 });
+    const ann = makeAnnotation({ annotation_type: "note", char_start: 0, char_end: 20 });
     const view = makeView([ann]);
 
     await batchFireReplacingAnnotations(view);

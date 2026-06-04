@@ -1,11 +1,11 @@
 import type { AnnotationType } from "./ipc";
 
-export type FireType = "replacing" | "persisting";
+export type FireType = "replacing";
 
 const FIRE_TYPE_MAP: Record<AnnotationType, FireType | null> = {
   llm: "replacing",
   translation: "replacing",
-  question: "persisting",
+  question: "replacing",
   todo: null,
   note: null,
   crossref: null,

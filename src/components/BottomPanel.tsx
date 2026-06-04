@@ -3,7 +3,6 @@ import { BacklinksPanel } from "./BacklinksPanel";
 import { UnlinkedMentionsPanel } from "./UnlinkedMentionsPanel";
 import { OutgoingLinksPanel } from "./OutgoingLinksPanel";
 import { AnnotationPanel } from "./AnnotationPanel";
-import { ConversationPanel } from "./ConversationPanel";
 import { ResizeHandle, getResizeConfig, type ResizeConfig } from "./ResizeHandle";
 import { usePreferencesStore } from "../stores/preferences";
 import { useBottomPanelStore } from "../stores/bottomPanel";
@@ -46,7 +45,6 @@ export function BottomPanel({ pageId, direction = "bottom" }: BottomPanelProps) 
   const hasOpenedUnlinked = useBottomPanelStore((s) => s.tabMeta.unlinked.hasOpened);
   const hasOpenedOutgoing = useBottomPanelStore((s) => s.tabMeta.outgoing.hasOpened);
   const hasOpenedAnnotations = useBottomPanelStore((s) => s.tabMeta.annotations.hasOpened);
-  const hasOpenedLlm = useBottomPanelStore((s) => s.tabMeta["llm-response"].hasOpened);
   const setTabCount = useBottomPanelStore((s) => s.setTabCount);
   const setLinkedCount = (count: number | null) => setTabCount("linked", count);
   const setUnlinkedCount = (count: number | null) => setTabCount("unlinked", count);
@@ -142,11 +140,6 @@ export function BottomPanel({ pageId, direction = "bottom" }: BottomPanelProps) 
         {pageId && annotationEnabled && hasOpenedAnnotations && (
           <div style={tabWrapperStyle("annotations")}>
             <AnnotationPanel pageId={pageId} onCountChange={setAnnotationCount} contentHeight={isVertical ? undefined : panelHeight} />
-          </div>
-        )}
-        {hasOpenedLlm && (
-          <div style={tabWrapperStyle("llm-response")}>
-            <ConversationPanel pageId={pageId ?? undefined} />
           </div>
         )}
       </div>

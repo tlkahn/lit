@@ -18,7 +18,7 @@ export function insertCompanionAnnotation(
   view: EditorView,
   sourceAnnotation: Annotation,
   responseText: string,
-  options?: { removeSource?: boolean; effects?: StateEffect<any>[] },
+  options?: { removeSource?: boolean; effects?: StateEffect<unknown>[] },
 ): void {
   const dsl = buildCompanionDsl(responseText);
   const changes: ChangeSpec[] = [];

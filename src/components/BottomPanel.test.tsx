@@ -5,8 +5,6 @@ import { getBacklinks, getUnlinkedMentions, getForwardLinks } from "../lib/ipc";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePreferencesStore } from "../stores/preferences";
 import { useBottomPanelStore, MIN_PANEL_WIDTH, defaultTabMeta } from "../stores/bottomPanel";
-import { useLlmResponseStore } from "../stores/llmResponse";
-import { useConversationStore } from "../stores/conversation";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { annotationDataField, setAnnotationData } from "../editor/livePreview/annotationState";
@@ -22,20 +20,8 @@ vi.mock("../lib/ipc", async (importOriginal) => {
     getForwardLinks: vi.fn(async () => []),
     parseAnnotations: vi.fn(async () => []),
     resolveAnnotationScope: vi.fn(async () => null),
-    conversationList: vi.fn(async () => []),
-    conversationCreate: vi.fn(async () => "conv-new"),
-    conversationDelete: vi.fn(async () => {}),
-    conversationMessages: vi.fn(async () => []),
-    conversationGet: vi.fn(async () => ({})),
-    conversationAddMessage: vi.fn(async () => ({})),
-    conversationDeleteMessagesAfter: vi.fn(async () => {}),
   };
 });
-
-vi.mock("../lib/llmClient", () => ({
-  startLlmStream: vi.fn(),
-  cancelLlmStream: vi.fn(),
-}));
 
 
 function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
@@ -86,7 +72,6 @@ beforeEach(() => {
   vi.mocked(getBacklinks).mockResolvedValue([]);
   vi.mocked(getUnlinkedMentions).mockResolvedValue([]);
   vi.mocked(getForwardLinks).mockResolvedValue([]);
-  useConversationStore.getState().reset();
 });
 
 afterEach(() => {
@@ -102,18 +87,16 @@ describe("BottomPanel", () => {
     expect(panel.style.height).toBe("0px");
   });
 
-  it("renders without pageId — ConversationPanel mounts but Backlinks do not", () => {
+  it("renders without pageId — Backlinks do not mount", () => {
     render(<BottomPanel />);
 
     act(() => {
       useBottomPanelStore.setState({
         unfolded: true,
-        activeTab: "llm-response",
-        tabMeta: { ...defaultTabMeta(), "llm-response": { count: null, hasOpened: true } },
+        activeTab: "linked",
       });
     });
 
-    expect(screen.getByTestId("conversation-panel")).toBeInTheDocument();
     expect(screen.queryByText("No other pages link to this page")).toBeNull();
   });
 
@@ -761,103 +744,6 @@ describe("BottomPanel", () => {
         });
         expect(tabpanel.style.height).toBe("300px");
       });
-    });
-  });
-
-  describe("Conversation panel mounting", () => {
-    beforeEach(() => {
-      useLlmResponseStore.getState().reset();
-    });
-
-    it("renders ConversationPanel when activeTab is llm-response and hasOpened", async () => {
-      await act(async () => {
-        render(<BottomPanel pageId="target.md" />);
-      });
-
-      act(() => {
-        useBottomPanelStore.setState({
-          unfolded: true,
-          activeTab: "llm-response",
-          tabMeta: { ...defaultTabMeta(), "llm-response": { count: null, hasOpened: true } },
-        });
-      });
-
-      expect(screen.getByTestId("conversation-panel")).toBeInTheDocument();
-    });
-
-    it("does not mount ConversationPanel until hasOpened is true", async () => {
-      await act(async () => {
-        render(<BottomPanel pageId="target.md" />);
-      });
-
-      act(() => {
-        useBottomPanelStore.setState({
-          unfolded: true,
-          activeTab: "llm-response",
-          tabMeta: { ...defaultTabMeta(), "llm-response": { count: null, hasOpened: false } },
-        });
-      });
-
-      expect(screen.queryByTestId("conversation-panel")).toBeNull();
-    });
-
-    it("hides ConversationPanel via display:none when another tab is active", async () => {
-      await act(async () => {
-        render(<BottomPanel pageId="target.md" />);
-      });
-
-      act(() => {
-        useBottomPanelStore.setState({
-          unfolded: true,
-          activeTab: "llm-response",
-          tabMeta: { ...defaultTabMeta(), "llm-response": { count: null, hasOpened: true } },
-        });
-      });
-
-      const convWrapper = screen.getByTestId("conversation-panel").parentElement!;
-      expect(convWrapper.style.display).not.toBe("none");
-
-      act(() => {
-        useBottomPanelStore.setState({ activeTab: "linked" });
-      });
-
-      expect(convWrapper.style.display).toBe("none");
-    });
-  });
-
-  describe("ConversationPanel integration", () => {
-    it("renders ConversationPanel in the LLM tab slot", async () => {
-      await act(async () => {
-        render(<BottomPanel pageId="target.md" />);
-      });
-
-      act(() => {
-        useBottomPanelStore.setState({
-          unfolded: true,
-          activeTab: "llm-response",
-          tabMeta: { ...defaultTabMeta(), "llm-response": { count: null, hasOpened: true } },
-        });
-      });
-
-      expect(screen.getByTestId("conversation-panel")).toBeInTheDocument();
-      expect(screen.getByTestId("conversation-input")).toBeInTheDocument();
-    });
-
-    it("passes pageId and contentHeight to ConversationPanel", async () => {
-      await act(async () => {
-        render(<BottomPanel pageId="target.md" />);
-      });
-
-      act(() => {
-        useBottomPanelStore.setState({
-          unfolded: true,
-          activeTab: "llm-response",
-          tabMeta: { ...defaultTabMeta(), "llm-response": { count: null, hasOpened: true } },
-          panelHeight: 350,
-        });
-      });
-
-      expect(screen.getByTestId("conversation-panel")).toBeInTheDocument();
     });
   });
 
