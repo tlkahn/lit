@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { AnnotationBuilderModal } from "./AnnotationBuilderModal";
+import { usePreferencesStore } from "../stores/preferences";
+import type { AnnotationBuilderDefaults } from "../lib/annotationBuilderDefaults";
+import { mockInvoke } from "../test/tauri-mock";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -614,6 +617,230 @@ describe("AnnotationBuilderModal", () => {
       fireEvent.change(screen.getByTestId("annotation-scope-select"), { target: { value: "sentence" } });
       const preview = screen.getByTestId("annotation-preview");
       expect(preview.textContent).toContain("\\s");
+    });
+  });
+
+  describe("builder defaults prefill", () => {
+    const SAVED_DEFAULTS: AnnotationBuilderDefaults = {
+      type: "question",
+      certainty: "firm",
+      scopeKind: "paragraph",
+      scopeCount: 3,
+      asymmetric: false,
+      scopeAfter: 1,
+    };
+
+    function enablePrefill(defaults: AnnotationBuilderDefaults = SAVED_DEFAULTS) {
+      usePreferencesStore.setState({
+        annotationPrefillLastUsed: true,
+        annotationBuilderDefaults: defaults,
+      });
+    }
+
+    function disablePrefill() {
+      usePreferencesStore.setState({
+        annotationPrefillLastUsed: false,
+        annotationBuilderDefaults: SAVED_DEFAULTS,
+      });
+    }
+
+    it("prefills from saved defaults when toggle is enabled (create mode)", () => {
+      enablePrefill();
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      expect(screen.getByTestId("annotation-type-select")).toHaveValue("question");
+      expect(screen.getByTestId("annotation-certainty-select")).toHaveValue("firm");
+      expect(screen.getByTestId("annotation-scope-select")).toHaveValue("paragraph");
+      expect(screen.getByTestId("annotation-scope-count")).toHaveValue(3);
+    });
+
+    it("does NOT prefill when toggle is disabled", () => {
+      disablePrefill();
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      expect(screen.getByTestId("annotation-type-select")).toHaveValue("note");
+      expect(screen.getByTestId("annotation-certainty-select")).toHaveValue("neutral");
+      expect(screen.getByTestId("annotation-scope-select")).toHaveValue("none");
+    });
+
+    it("does NOT prefill in edit mode", () => {
+      enablePrefill();
+      render(
+        <AnnotationBuilderModal onClose={onClose} onInsert={onInsert} mode="edit" />,
+      );
+      expect(screen.getByTestId("annotation-type-select")).toHaveValue("note");
+      expect(screen.getByTestId("annotation-certainty-select")).toHaveValue("neutral");
+    });
+
+    it("initialFields overrides saved defaults", () => {
+      enablePrefill();
+      render(
+        <AnnotationBuilderModal
+          onClose={onClose}
+          onInsert={onInsert}
+          initialFields={{ type: "todo", certainty: "tentative" }}
+        />,
+      );
+      expect(screen.getByTestId("annotation-type-select")).toHaveValue("todo");
+      expect(screen.getByTestId("annotation-certainty-select")).toHaveValue("tentative");
+      // scope still comes from defaults since initialFields didn't specify it
+      expect(screen.getByTestId("annotation-scope-select")).toHaveValue("paragraph");
+    });
+
+    it("selectedText overrides saved scopeKind to anchor", () => {
+      enablePrefill();
+      render(
+        <AnnotationBuilderModal
+          onClose={onClose}
+          onInsert={onInsert}
+          selectedText="hello"
+        />,
+      );
+      expect(screen.getByTestId("annotation-scope-select")).toHaveValue("anchor");
+      // type/certainty still from defaults
+      expect(screen.getByTestId("annotation-type-select")).toHaveValue("question");
+      expect(screen.getByTestId("annotation-certainty-select")).toHaveValue("firm");
+    });
+
+    it("writes snapshot on insert", () => {
+      let capturedArgs: Record<string, unknown> | undefined;
+      mockInvoke((cmd, args) => {
+        if (cmd === "set_preference") {
+          capturedArgs = args;
+          return undefined;
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      enablePrefill();
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      fireEvent.change(screen.getByTestId("annotation-type-select"), { target: { value: "question" } });
+      fireEvent.change(screen.getByTestId("annotation-certainty-select"), { target: { value: "firm" } });
+      fireEvent.click(screen.getByTestId("annotation-insert-btn"));
+
+      expect(onInsert).toHaveBeenCalled();
+      expect(capturedArgs).toBeDefined();
+      expect(capturedArgs!.key).toBe("annotations.builderDefaults");
+      const snapshot = capturedArgs!.value as AnnotationBuilderDefaults;
+      expect(snapshot.type).toBe("question");
+      expect(snapshot.certainty).toBe("firm");
+    });
+
+    it("does NOT write snapshot on cancel", () => {
+      let setCalled = false;
+      mockInvoke((cmd) => {
+        if (cmd === "set_preference") {
+          setCalled = true;
+          return undefined;
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      enablePrefill();
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      fireEvent.click(screen.getByTestId("annotation-cancel-btn"));
+
+      expect(onClose).toHaveBeenCalled();
+      expect(setCalled).toBe(false);
+    });
+
+    it("does NOT save snapshot in edit mode", () => {
+      let setCalled = false;
+      mockInvoke((cmd) => {
+        if (cmd === "set_preference") {
+          setCalled = true;
+          return undefined;
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      enablePrefill();
+      render(
+        <AnnotationBuilderModal
+          onClose={onClose}
+          onInsert={onInsert}
+          mode="edit"
+          initialFields={{ type: "note", certainty: "neutral" }}
+        />,
+      );
+      fireEvent.click(screen.getByTestId("annotation-insert-btn"));
+
+      expect(onInsert).toHaveBeenCalled();
+      expect(setCalled).toBe(false);
+    });
+
+    it("does NOT save snapshot when prefill toggle is off", () => {
+      let setCalled = false;
+      mockInvoke((cmd) => {
+        if (cmd === "set_preference") {
+          setCalled = true;
+          return undefined;
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      disablePrefill();
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      fireEvent.click(screen.getByTestId("annotation-insert-btn"));
+
+      expect(onInsert).toHaveBeenCalled();
+      expect(setCalled).toBe(false);
+    });
+
+    it("normalizes anchor scopeKind to none in snapshot", () => {
+      let capturedArgs: Record<string, unknown> | undefined;
+      mockInvoke((cmd, args) => {
+        if (cmd === "set_preference") {
+          capturedArgs = args;
+          return undefined;
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      enablePrefill();
+      render(
+        <AnnotationBuilderModal
+          onClose={onClose}
+          onInsert={onInsert}
+          selectedText="hello world"
+        />,
+      );
+      fireEvent.click(screen.getByTestId("annotation-insert-btn"));
+
+      expect(capturedArgs).toBeDefined();
+      const snapshot = capturedArgs!.value as AnnotationBuilderDefaults;
+      expect(snapshot.scopeKind).toBe("none");
+    });
+
+    it("optimistically updates store on insert", () => {
+      mockInvoke((cmd) => {
+        if (cmd === "set_preference") return undefined;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      enablePrefill();
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      fireEvent.change(screen.getByTestId("annotation-type-select"), { target: { value: "todo" } });
+      fireEvent.click(screen.getByTestId("annotation-insert-btn"));
+
+      const stored = usePreferencesStore.getState().annotationBuilderDefaults;
+      expect(stored).not.toBeNull();
+      expect(stored!.type).toBe("todo");
+    });
+
+    it("prefills asymmetric settings from saved defaults", () => {
+      enablePrefill({
+        type: "note",
+        certainty: "neutral",
+        scopeKind: "sentence",
+        scopeCount: 2,
+        asymmetric: true,
+        scopeAfter: 4,
+      });
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      expect(screen.getByTestId("annotation-scope-select")).toHaveValue("sentence");
+      const toggle = screen.getByTestId("annotation-asymmetric-toggle") as HTMLInputElement;
+      expect(toggle.checked).toBe(true);
+      expect(screen.getByTestId("annotation-scope-before")).toHaveValue(2);
+      expect(screen.getByTestId("annotation-scope-after")).toHaveValue(4);
     });
   });
 });

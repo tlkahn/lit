@@ -1182,4 +1182,95 @@ describe("PreferencesStore", () => {
 
     expect(usePreferencesStore.getState().bottomPanelPosition).toBe("side");
   });
+
+  // --- Annotation builder defaults ---
+
+  it("defaults annotationPrefillLastUsed to false", () => {
+    const state = usePreferencesStore.getState();
+    expect(state.annotationPrefillLastUsed).toBe(false);
+  });
+
+  it("defaults annotationBuilderDefaults to null", () => {
+    const state = usePreferencesStore.getState();
+    expect(state.annotationBuilderDefaults).toBeNull();
+  });
+
+  it("maps annotations.prefillLastUsed: true from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "annotations.prefillLastUsed": true,
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().annotationPrefillLastUsed).toBe(true);
+  });
+
+  it("maps valid annotations.builderDefaults from IPC", async () => {
+    const defaults = {
+      type: "question",
+      certainty: "firm",
+      scopeKind: "paragraph",
+      scopeCount: 2,
+      asymmetric: false,
+      scopeAfter: 1,
+    };
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "annotations.builderDefaults": defaults,
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().annotationBuilderDefaults).toEqual(defaults);
+  });
+
+  it("maps invalid annotations.builderDefaults to null", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "annotations.builderDefaults": { type: 123, bogus: true },
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().annotationBuilderDefaults).toBeNull();
+  });
+
+  it("maps missing annotations.builderDefaults to null", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().annotationBuilderDefaults).toBeNull();
+  });
 });

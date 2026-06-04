@@ -2,6 +2,9 @@ import { useState, useMemo, useEffect, useCallback } from "react";
 import { generateDsl, type AnnotationFields, type EditRawInfo } from "../lib/annotationDsl";
 import { renderMarkdown } from "../lib/renderMarkdown";
 import type { AnnotationType, Certainty, Scope, ScopeKind as IpcScopeKind } from "../lib/ipc";
+import { setPreference } from "../lib/ipc";
+import { usePreferencesStore } from "../stores/preferences";
+import type { AnnotationBuilderDefaults, BuilderScopeKind } from "../lib/annotationBuilderDefaults";
 
 interface AnnotationBuilderModalProps {
   onClose: () => void;
@@ -13,17 +16,15 @@ interface AnnotationBuilderModalProps {
   selectedText?: string;
 }
 
-type ScopeKind = "none" | "words" | "sentence" | "paragraph" | "page" | "anchor" | "document" | "section";
-
-const UNIT_SCOPE_KINDS: ScopeKind[] = ["words", "sentence", "paragraph", "page"];
+const UNIT_SCOPE_KINDS: BuilderScopeKind[] = ["words", "sentence", "paragraph", "page"];
 
 /** Map ipc ScopeKind ("word") to UI ScopeKind ("words") */
-function ipcUnitToScopeKind(unit: IpcScopeKind): ScopeKind {
+function ipcUnitToScopeKind(unit: IpcScopeKind): BuilderScopeKind {
   return unit === "word" ? "words" : unit;
 }
 
 /** Map UI ScopeKind ("words") to ipc ScopeKind ("word") */
-function scopeKindToIpcUnit(kind: ScopeKind): IpcScopeKind {
+function scopeKindToIpcUnit(kind: BuilderScopeKind): IpcScopeKind {
   return kind === "words" ? "word" : kind as IpcScopeKind;
 }
 
@@ -36,6 +37,10 @@ export function AnnotationBuilderModal({
   onEditRaw,
   selectedText,
 }: AnnotationBuilderModalProps) {
+  const prefillEnabled = usePreferencesStore(s => s.annotationPrefillLastUsed);
+  const savedDefaults = usePreferencesStore(s => s.annotationBuilderDefaults);
+  const defaults = (mode !== "edit" && prefillEnabled && savedDefaults) ? savedDefaults : null;
+
   const [id, setId] = useState(() => {
     if (initialFields?.id) return initialFields.id;
     if (mode !== "edit") return crypto.randomUUID();
@@ -43,10 +48,11 @@ export function AnnotationBuilderModal({
   });
   const [type, setType] = useState<AnnotationType | null>(() => {
     if (initialFields?.type !== undefined) return initialFields.type;
+    if (defaults?.type !== undefined) return defaults.type;
     return "note";
   });
-  const [certainty, setCertainty] = useState<Certainty>(initialFields?.certainty ?? "neutral");
-  const [scopeKind, setScopeKind] = useState<ScopeKind>(() => {
+  const [certainty, setCertainty] = useState<Certainty>(initialFields?.certainty ?? defaults?.certainty ?? "neutral");
+  const [scopeKind, setScopeKind] = useState<BuilderScopeKind>(() => {
     if (initialFields?.scope) {
       if (initialFields.scope.kind === "asymmetric") {
         return ipcUnitToScopeKind(initialFields.scope.value.unit);
@@ -54,14 +60,18 @@ export function AnnotationBuilderModal({
       return initialFields.scope.kind;
     }
     if (selectedText) return "anchor";
+    if (defaults) return defaults.scopeKind;
     return "none";
   });
   const [scopeCount, setScopeCount] = useState<number>(() => {
-    if (!initialFields?.scope) return 1;
-    if (initialFields.scope.kind === "asymmetric") return initialFields.scope.value.before;
-    if (initialFields.scope.kind === "anchor") return 1;
-    if (initialFields.scope.kind === "document" || initialFields.scope.kind === "section") return 1;
-    return initialFields.scope.value as number;
+    if (initialFields?.scope) {
+      if (initialFields.scope.kind === "asymmetric") return initialFields.scope.value.before;
+      if (initialFields.scope.kind === "anchor") return 1;
+      if (initialFields.scope.kind === "document" || initialFields.scope.kind === "section") return 1;
+      return initialFields.scope.value as number;
+    }
+    if (defaults) return defaults.scopeCount;
+    return 1;
   });
   const [anchorText, setAnchorText] = useState<string>(() => {
     if (initialFields?.scope?.kind === "anchor") return initialFields.scope.value;
@@ -69,10 +79,13 @@ export function AnnotationBuilderModal({
     return "";
   });
   const [asymmetric, setAsymmetric] = useState(() => {
-    return initialFields?.scope?.kind === "asymmetric";
+    if (initialFields?.scope?.kind === "asymmetric") return true;
+    if (defaults) return defaults.asymmetric;
+    return false;
   });
   const [scopeAfter, setScopeAfter] = useState(() => {
     if (initialFields?.scope?.kind === "asymmetric") return initialFields.scope.value.after;
+    if (defaults) return defaults.scopeAfter;
     return 1;
   });
   const [body, setBody] = useState(initialFields?.body ?? "");
@@ -110,26 +123,38 @@ export function AnnotationBuilderModal({
   const preview = useMemo(() => generateDsl(fields), [fields]);
   const renderedBody = useMemo(() => renderMarkdown(body), [body]);
 
+  const handleInsert = useCallback(() => {
+    if (mode !== "edit" && prefillEnabled) {
+      const snapshot: AnnotationBuilderDefaults = {
+        type, certainty,
+        scopeKind: scopeKind === "anchor" ? "none" : scopeKind,
+        scopeCount, asymmetric, scopeAfter,
+      };
+      const prev = usePreferencesStore.getState().annotationBuilderDefaults;
+      usePreferencesStore.setState({ annotationBuilderDefaults: snapshot });
+      setPreference("annotations.builderDefaults", snapshot).catch(() => {
+        usePreferencesStore.setState({ annotationBuilderDefaults: prev });
+      });
+    }
+    onInsert(preview);
+  }, [mode, prefillEnabled, type, certainty, scopeKind, scopeCount, asymmetric, scopeAfter, onInsert, preview]);
+
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
         e.preventDefault();
         e.stopPropagation();
-        onInsert(preview);
+        handleInsert();
       }
     },
-    [onClose, onInsert, preview],
+    [onClose, handleInsert],
   );
 
   useEffect(() => {
     document.addEventListener("keydown", handleKeyDown, true);
     return () => document.removeEventListener("keydown", handleKeyDown, true);
   }, [handleKeyDown]);
-
-  const handleInsert = () => {
-    onInsert(preview);
-  };
 
   return (
     <div
@@ -186,7 +211,7 @@ export function AnnotationBuilderModal({
             <select
               data-testid="annotation-scope-select"
               value={scopeKind}
-              onChange={(e) => setScopeKind(e.target.value as ScopeKind)}
+              onChange={(e) => setScopeKind(e.target.value as BuilderScopeKind)}
             >
               <option value="none">Default (sentence)</option>
               <option value="words">Words</option>
