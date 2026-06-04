@@ -11,6 +11,7 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { useBottomPanelStore } from "../stores/bottomPanel";
 import { useSecretStoreStore } from "../stores/secretStore";
 import { setFiringAnnotation, clearFiringAnnotation, annotationThreadKeysField, setAnnotationThreadKeys } from "../editor/livePreview/annotationWidgets";
+import { insertCompanionAnnotation } from "./companionInsert";
 
 export interface FireAnnotationArgs {
   view: EditorView;
@@ -177,6 +178,7 @@ export async function fireAnnotation(args: FireAnnotationArgs): Promise<(() => v
 
   useLlmResponseStore.getState().startStream({
     question: annotation.body ?? "",
+    fireSourceAnnotation: annotation,
   });
 
   await startLlmStream(
@@ -189,9 +191,7 @@ export async function fireAnnotation(args: FireAnnotationArgs): Promise<(() => v
 
         if (fireType === "replacing") {
           try {
-            view.dispatch({
-              changes: { from: annotation.char_start, to: annotation.char_end, insert: responseText },
-            });
+            insertCompanionAnnotation(view, annotation, responseText);
           } catch { /* view destroyed */ }
         }
 

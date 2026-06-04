@@ -227,7 +227,7 @@ describe("fireAnnotation", () => {
 
   // --- Cycle 9: Replacing fire behavior ---
 
-  it("replacing type: replaces annotation range with response text on done", async () => {
+  it("replacing type: inserts response as companion annotation after source", async () => {
     const doc = "hello world";
     const view = makeView(doc);
     const ann = makeAnnotation({ annotation_type: "llm", char_start: 0, char_end: 11 });
@@ -239,17 +239,19 @@ describe("fireAnnotation", () => {
 
     await fireAnnotation({ view, annotation: ann });
 
-    expect(view.state.doc.toString()).toBe("replacement text");
+    const result = view.state.doc.toString();
+    expect(result).toContain("hello world");
+    expect(result).toContain("<!--- n | replacement text --->");
     view.destroy();
   });
 
-  it("replacing type: does NOT set fireSourceAnnotation", async () => {
+  it("replacing type: sets fireSourceAnnotation on the response store", async () => {
     const view = makeView();
     const ann = makeAnnotation({ annotation_type: "llm" });
 
     await fireAnnotation({ view, annotation: ann });
 
-    expect(useLlmResponseStore.getState().fireSourceAnnotation).toBeNull();
+    expect(useLlmResponseStore.getState().fireSourceAnnotation).toBe(ann);
     view.destroy();
   });
 
