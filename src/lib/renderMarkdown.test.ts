@@ -102,6 +102,12 @@ describe("renderMarkdown", () => {
     expect(result).not.toContain("cm-preview-math");
   });
 
+  it("preserves double-backtick code spans with internal single backtick", () => {
+    const result = renderMarkdown("``$x` and more``");
+    expect(result).toContain("<code>");
+    expect(result).not.toContain("cm-preview-math");
+  });
+
   it("preserves style attributes in KaTeX output after sanitization", () => {
     mockKatex.renderToString.mockReturnValueOnce(
       '<span class="katex" style="color:red;">E=mc^2</span>',

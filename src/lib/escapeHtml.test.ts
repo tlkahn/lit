@@ -18,8 +18,12 @@ describe("escapeHtml", () => {
     expect(escapeHtml('a"b')).toBe("a&quot;b");
   });
 
-  it("escapes all four characters in one string", () => {
-    expect(escapeHtml('&<>"')).toBe("&amp;&lt;&gt;&quot;");
+  it("escapes single quote", () => {
+    expect(escapeHtml("a'b")).toBe("a&#39;b");
+  });
+
+  it("escapes all five characters in one string", () => {
+    expect(escapeHtml('&<>"\'')).toBe("&amp;&lt;&gt;&quot;&#39;");
   });
 
   it("passes through string with no special characters", () => {

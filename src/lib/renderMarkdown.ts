@@ -24,7 +24,7 @@ function extractAndRenderMath(text: string): MathExtraction {
     return `￰CODEPH${idx}￰`;
   });
 
-  working = working.replace(/``[^`]+``/g, (match) => {
+  working = working.replace(/``(?:[^`]|`(?!`))+``/g, (match) => {
     const idx = codePlaceholders.length;
     codePlaceholders.push(match);
     return `￰CODEPH${idx}￰`;
