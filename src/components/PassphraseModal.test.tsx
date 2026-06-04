@@ -349,7 +349,8 @@ describe("PassphraseModal", () => {
       });
     });
 
-    it("Cmd+Enter also submits", async () => {
+    // Verifies modifier keys don't interfere with Enter submission
+    it("Enter with metaKey still submits", async () => {
       await resetStore({ promptOpen: true, exists: true, unlocked: false });
       mockInvoke((cmd) => {
         if (cmd === "unlock_secret_store") return undefined;
@@ -393,11 +394,11 @@ describe("PassphraseModal", () => {
     it("modal dismissed after 400ms", async () => {
       vi.useFakeTimers();
       await resetStore({ promptOpen: true, exists: true, unlocked: false });
-      let resolveUnlock: () => void;
-      const unlockPromise = new Promise<void>((r) => { resolveUnlock = r; });
+      let resolveRefresh: (v: any) => void;
+      const refreshPromise = new Promise((r) => { resolveRefresh = r; });
       mockInvoke((cmd) => {
-        if (cmd === "unlock_secret_store") return unlockPromise;
-        if (cmd === "secret_store_status") return { exists: true, unlocked: true };
+        if (cmd === "unlock_secret_store") return undefined;
+        if (cmd === "secret_store_status") return refreshPromise;
         throw new Error(`Unknown command: ${cmd}`);
       });
 
@@ -406,14 +407,16 @@ describe("PassphraseModal", () => {
       fireEvent.change(passInput, { target: { value: "mypass" } });
       fireEvent.click(container.querySelector("[data-testid='passphrase-modal-submit']")!);
 
+      await act(async () => {});
+
       expect(container.querySelector("[data-testid='passphrase-modal-dialog']")).toBeTruthy();
 
       act(() => { vi.advanceTimersByTime(400); });
 
       expect(container.querySelector("[data-testid='passphrase-modal-dialog']")).toBeNull();
 
-      resolveUnlock!();
-      await act(async () => { await unlockPromise; });
+      resolveRefresh!({ exists: true, unlocked: true });
+      await act(async () => { await refreshPromise; });
       vi.useRealTimers();
     });
 
@@ -480,11 +483,11 @@ describe("PassphraseModal", () => {
     it("Escape ignored during dismissed state", async () => {
       vi.useFakeTimers();
       await resetStore({ promptOpen: true, exists: true, unlocked: false });
-      let resolveUnlock: () => void;
-      const unlockPromise = new Promise<void>((r) => { resolveUnlock = r; });
+      let resolveRefresh: (v: any) => void;
+      const refreshPromise = new Promise((r) => { resolveRefresh = r; });
       mockInvoke((cmd) => {
-        if (cmd === "unlock_secret_store") return unlockPromise;
-        if (cmd === "secret_store_status") return { exists: true, unlocked: true };
+        if (cmd === "unlock_secret_store") return undefined;
+        if (cmd === "secret_store_status") return refreshPromise;
         throw new Error(`Unknown command: ${cmd}`);
       });
 
@@ -493,29 +496,30 @@ describe("PassphraseModal", () => {
       fireEvent.change(passInput, { target: { value: "mypass" } });
       fireEvent.click(document.querySelector("[data-testid='passphrase-modal-submit']")!);
 
+      await act(async () => {});
       act(() => { vi.advanceTimersByTime(400); });
 
       fireEvent.keyDown(document, { key: "Escape" });
 
       expect(useSecretStoreStore.getState().promptOpen).toBe(true);
 
-      resolveUnlock!();
-      await act(async () => { await unlockPromise; });
+      resolveRefresh!({ exists: true, unlocked: true });
+      await act(async () => { await refreshPromise; });
       vi.useRealTimers();
     });
 
     it("Enter ignored during dismissed state", async () => {
       vi.useFakeTimers();
       await resetStore({ promptOpen: true, exists: true, unlocked: false });
-      let resolveUnlock: () => void;
-      const unlockPromise = new Promise<void>((r) => { resolveUnlock = r; });
+      let resolveRefresh: (v: any) => void;
+      const refreshPromise = new Promise((r) => { resolveRefresh = r; });
       let unlockCallCount = 0;
       mockInvoke((cmd) => {
         if (cmd === "unlock_secret_store") {
           unlockCallCount++;
-          return unlockPromise;
+          return undefined;
         }
-        if (cmd === "secret_store_status") return { exists: true, unlocked: true };
+        if (cmd === "secret_store_status") return refreshPromise;
         throw new Error(`Unknown command: ${cmd}`);
       });
 
@@ -524,14 +528,15 @@ describe("PassphraseModal", () => {
       fireEvent.change(passInput, { target: { value: "mypass" } });
       fireEvent.click(document.querySelector("[data-testid='passphrase-modal-submit']")!);
 
+      await act(async () => {});
       act(() => { vi.advanceTimersByTime(400); });
 
       fireEvent.keyDown(document, { key: "Enter" });
 
       expect(unlockCallCount).toBe(1);
 
-      resolveUnlock!();
-      await act(async () => { await unlockPromise; });
+      resolveRefresh!({ exists: true, unlocked: true });
+      await act(async () => { await refreshPromise; });
       vi.useRealTimers();
     });
   });

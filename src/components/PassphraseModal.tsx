@@ -47,50 +47,56 @@ export function PassphraseModal() {
     ? passphrase.length >= MIN_PASSPHRASE_LENGTH && passphrase === confirm && !submitting
     : passphrase.length > 0 && !submitting;
 
+  const passphraseRef = useRef(passphrase);
+  passphraseRef.current = passphrase;
+  const canSubmitRef = useRef(canSubmit);
+  canSubmitRef.current = canSubmit;
+  const dismissedRef = useRef(dismissed);
+  dismissedRef.current = dismissed;
+
   const handleSubmit = useCallback(async () => {
     setSubmitting(true);
     setShowTick(true);
     setError(null);
-    dismissTimerRef.current = setTimeout(() => setDismissed(true), 400);
     try {
       if (isInitMode) {
-        await initSecretStore(passphrase);
+        await initSecretStore(passphraseRef.current);
       } else {
-        await unlockSecretStore(passphrase);
+        await unlockSecretStore(passphraseRef.current);
       }
+      dismissTimerRef.current = setTimeout(() => setDismissed(true), 400);
+      await refresh();
       if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
       dismissTimerRef.current = null;
-      await refresh();
       settleUnlock(true);
     } catch (e) {
-      if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
-      dismissTimerRef.current = null;
-      setDismissed(false);
       setShowTick(false);
       setSubmitting(false);
       const message = e instanceof Error ? e.message : String(e);
       setError(message);
     }
-  }, [isInitMode, passphrase, refresh, settleUnlock]);
+  }, [isInitMode, refresh, settleUnlock]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !dismissed) {
+      if (e.key === "Escape" && !dismissedRef.current) {
+        e.stopPropagation();
         handleCancel();
         return;
       }
-      if (e.key === "Enter" && canSubmit && !dismissed) {
+      if (e.key === "Enter" && canSubmitRef.current && !dismissedRef.current) {
+        e.stopPropagation();
         e.preventDefault();
         handleSubmit();
       }
     },
-    [handleCancel, canSubmit, dismissed, handleSubmit],
+    [handleCancel, handleSubmit],
   );
 
   useEffect(() => {
     if (!promptOpen) return;
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => document.removeEventListener("keydown", handleKeyDown, true);
   }, [promptOpen, handleKeyDown]);
 
   if (!promptOpen) return null;

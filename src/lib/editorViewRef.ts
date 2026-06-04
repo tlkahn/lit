@@ -32,6 +32,10 @@ export function getCurrentEditorView(): EditorView | null {
   return legacyView;
 }
 
+export function isEditorFocused(): boolean {
+  return getCurrentEditorView() != null && isFocusInsideContentPane();
+}
+
 export function isFocusInsideContentPane(): boolean {
   const active = document.activeElement;
   if (active == null || active === document.body) {
