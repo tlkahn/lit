@@ -227,10 +227,16 @@ describe("fireAnnotation", () => {
 
   // --- Cycle 9: Replacing fire behavior ---
 
-  it("replacing type: inserts response as companion annotation after source", async () => {
-    const doc = "hello world";
+  it("replacing type: removes source and inserts companion annotation", async () => {
+    const doc = "before <!--- llm | explain this ---> after";
     const view = makeView(doc);
-    const ann = makeAnnotation({ annotation_type: "llm", char_start: 0, char_end: 11 });
+    const ann = makeAnnotation({
+      annotation_type: "llm",
+      body: "explain this",
+      char_start: 7,
+      char_end: 36,
+      original: "<!--- llm | explain this --->",
+    });
 
     mockStream.mockImplementation(async (_args: unknown, callbacks: { onChunk: (t: string) => void; onDone: () => void }) => {
       callbacks.onChunk("replacement text");
@@ -240,8 +246,32 @@ describe("fireAnnotation", () => {
     await fireAnnotation({ view, annotation: ann });
 
     const result = view.state.doc.toString();
-    expect(result).toContain("hello world");
+    expect(result).not.toContain("<!--- llm | explain this --->");
     expect(result).toContain("<!--- n | replacement text --->");
+    expect(result).toMatch(/^before /);
+    expect(result).toContain(" after");
+    view.destroy();
+  });
+
+  it("replacing type: on error, source annotation is not removed", async () => {
+    const doc = "before <!--- llm | explain this ---> after";
+    const view = makeView(doc);
+    const ann = makeAnnotation({
+      annotation_type: "llm",
+      body: "explain this",
+      char_start: 7,
+      char_end: 36,
+      original: "<!--- llm | explain this --->",
+    });
+
+    mockStream.mockImplementation(async (_args: unknown, callbacks: { onError: (e: { message: string; retryable: boolean }) => void }) => {
+      callbacks.onError({ message: "API key invalid", retryable: false });
+    });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    const result = view.state.doc.toString();
+    expect(result).toBe(doc);
     view.destroy();
   });
 

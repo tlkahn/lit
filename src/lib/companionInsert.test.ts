@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
+import { history, undo } from "@codemirror/commands";
 import type { Annotation } from "./ipc";
 import { buildCompanionDsl, insertCompanionAnnotation, insertCompanionAtCursor } from "./companionInsert";
 
@@ -74,6 +75,57 @@ describe("insertCompanionAnnotation", () => {
     const result = view.state.doc.toString();
     expect(result.slice(6, 25)).toBe("<!--- q | why? --->");
 
+    view.destroy();
+  });
+
+  it("removeSource: true deletes source and inserts companion", () => {
+    const doc = "before <!--- q | why? ---> after";
+    const view = new EditorView({
+      state: EditorState.create({ doc }),
+      parent: document.createElement("div"),
+    });
+    const ann = makeAnnotation({ char_start: 7, char_end: 26 });
+
+    insertCompanionAnnotation(view, ann, "The answer.", { removeSource: true });
+
+    const result = view.state.doc.toString();
+    expect(result).not.toContain("<!--- q | why? --->");
+    expect(result).toContain("The answer.");
+    expect(result).toMatch(/^before /);
+    expect(result).toContain(" after");
+  });
+
+  it("removeSource: true produces a single undo step", () => {
+    const doc = "before <!--- q | why? ---> after";
+    const view = new EditorView({
+      state: EditorState.create({ doc, extensions: [history()] }),
+      parent: document.createElement("div"),
+    });
+    const ann = makeAnnotation({ char_start: 7, char_end: 26 });
+
+    insertCompanionAnnotation(view, ann, "The answer.", { removeSource: true });
+
+    expect(view.state.doc.toString()).not.toBe(doc);
+
+    undo(view);
+
+    expect(view.state.doc.toString()).toBe(doc);
+    view.destroy();
+  });
+
+  it("default (no options) preserves source annotation", () => {
+    const doc = "before <!--- q | why? ---> after";
+    const view = new EditorView({
+      state: EditorState.create({ doc }),
+      parent: document.createElement("div"),
+    });
+    const ann = makeAnnotation({ char_start: 7, char_end: 26 });
+
+    insertCompanionAnnotation(view, ann, "The answer.");
+
+    const result = view.state.doc.toString();
+    expect(result).toContain("<!--- q | why? --->");
+    expect(result).toContain("The answer.");
     view.destroy();
   });
 });
