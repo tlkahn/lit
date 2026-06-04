@@ -2,7 +2,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 use tauri::State;
 
-use crate::annotation::marks::{merged_config, sorted_mark_codes, MarkConfig};
+use crate::annotation::marks::{sorted_mark_codes, MarkConfig, MarkConfigCache};
 use crate::annotation::parser::parse_annotations as do_parse;
 use crate::annotation::scope_resolver::{resolve_scope_range, resolve_scope_range_with_mode};
 use crate::annotation::types::{Annotation, ResolutionMode, Scope, ScopeRange};
@@ -11,10 +11,11 @@ use crate::annotation::types::{Annotation, ResolutionMode, Scope, ScopeRange};
 pub fn parse_annotations(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    mark_cache: State<MarkConfigCache>,
     content: String,
 ) -> Result<Vec<Annotation>, String> {
     let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
-    let codes = sorted_mark_codes(&merged_config(&root));
+    let codes = sorted_mark_codes(&mark_cache.merged_config_cached(&root));
     Ok(do_parse(&content, &codes))
 }
 
@@ -148,14 +149,16 @@ pub fn migrate_annotations(content: String) -> String {
 pub fn get_mark_config(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    mark_cache: State<MarkConfigCache>,
 ) -> Result<MarkConfig, String> {
     let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
-    Ok(merged_config(&root))
+    Ok(mark_cache.merged_config_cached(&root))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::annotation::marks::merged_config;
     use crate::annotation::types::{AnnotationType, ResolutionMode};
     use crate::graph::indexer::GraphIndex;
 

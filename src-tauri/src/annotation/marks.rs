@@ -7,8 +7,9 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::Path;
-use std::sync::LazyLock;
+use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
+use std::time::SystemTime;
 
 /// A single mark definition: how the mark is labelled and styled.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -105,6 +106,51 @@ pub fn merged_config(root: &Path) -> MarkConfig {
         }
     }
     merged
+}
+
+struct MarkCacheEntry {
+    config: MarkConfig,
+    mtime: SystemTime,
+}
+
+pub struct MarkConfigCache {
+    store: Mutex<HashMap<PathBuf, MarkCacheEntry>>,
+}
+
+impl MarkConfigCache {
+    pub fn new() -> Self {
+        Self {
+            store: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub fn merged_config_cached(&self, root: &Path) -> MarkConfig {
+        let toml_path = workspace_override_path(root);
+        let current_mtime = std::fs::metadata(&toml_path)
+            .and_then(|m| m.modified())
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+
+        let mut store = self.store.lock().unwrap();
+        if let Some(cached) = store.get(root) {
+            if cached.mtime == current_mtime {
+                return cached.config.clone();
+            }
+        }
+
+        let config = merged_config(root);
+        store.insert(
+            root.to_path_buf(),
+            MarkCacheEntry {
+                config: config.clone(),
+                mtime: current_mtime,
+            },
+        );
+        config
+    }
+
+    pub fn invalidate(&self, root: &Path) {
+        self.store.lock().unwrap().remove(root);
+    }
 }
 
 #[cfg(test)]
@@ -239,5 +285,77 @@ mod tests {
         merged_keys.sort();
         builtin_keys.sort();
         assert_eq!(merged_keys, builtin_keys);
+    }
+
+    #[test]
+    fn cache_hit_on_same_mtime() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join(".lit")).unwrap();
+        std::fs::write(
+            dir.path().join(".lit").join("marks.toml"),
+            "[zz]\nlabel = \"custom\"\n",
+        )
+        .unwrap();
+        let cache = MarkConfigCache::new();
+        let first = cache.merged_config_cached(dir.path());
+        assert!(first.0.contains_key("zz"));
+        // Second call should return the cached value (same mtime).
+        let second = cache.merged_config_cached(dir.path());
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn cache_invalidation_on_mtime_change() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let toml_path = dir.path().join(".lit").join("marks.toml");
+        std::fs::create_dir_all(dir.path().join(".lit")).unwrap();
+        std::fs::write(&toml_path, "[zz]\nlabel = \"v1\"\n").unwrap();
+
+        let cache = MarkConfigCache::new();
+        let first = cache.merged_config_cached(dir.path());
+        assert_eq!(first.0.get("zz").unwrap().label, "v1");
+
+        // Rewrite with different content then bump mtime to ensure the cache sees a change.
+        std::fs::write(&toml_path, "[zz]\nlabel = \"v2\"\n").unwrap();
+        let future = SystemTime::now() + std::time::Duration::from_secs(2);
+        let times = std::fs::FileTimes::new().set_modified(future);
+        std::fs::File::options()
+            .write(true)
+            .open(&toml_path)
+            .unwrap()
+            .set_times(times)
+            .unwrap();
+
+        let second = cache.merged_config_cached(dir.path());
+        assert_eq!(second.0.get("zz").unwrap().label, "v2");
+    }
+
+    #[test]
+    fn cache_missing_file_sentinel() {
+        let dir = tempfile::TempDir::new().unwrap();
+        // No .lit/marks.toml exists.
+        let cache = MarkConfigCache::new();
+        let first = cache.merged_config_cached(dir.path());
+        assert_eq!(first.0.len(), 16, "should return builtin defaults");
+        // Second call uses the UNIX_EPOCH sentinel — still returns builtins.
+        let second = cache.merged_config_cached(dir.path());
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn cache_invalidate_forces_reload() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join(".lit")).unwrap();
+        std::fs::write(
+            dir.path().join(".lit").join("marks.toml"),
+            "[zz]\nlabel = \"original\"\n",
+        )
+        .unwrap();
+        let cache = MarkConfigCache::new();
+        let _ = cache.merged_config_cached(dir.path());
+        cache.invalidate(dir.path());
+        // After invalidation, next call rebuilds from disk.
+        let refreshed = cache.merged_config_cached(dir.path());
+        assert!(refreshed.0.contains_key("zz"));
     }
 }

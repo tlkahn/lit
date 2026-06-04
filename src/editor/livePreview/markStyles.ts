@@ -12,7 +12,9 @@ const STYLE_ID = "lit-mark-styles";
 // but must NOT contain the metacharacters that could close the declaration /
 // block or break out of a value: `{`, `}`, `;`, `"`.
 const CSS_PROP_RE = /^[a-z-]+$/i;
-const CSS_VALUE_RE = /^[^{};"]+$/;
+const CSS_VALUE_RE = /^[^{};"\\\n]+$/;
+// eslint-disable-next-line no-control-regex
+const CSS_CONTENT_RE = /^[^\x00-\x08\x0b-\x1f]+$/;
 
 // Escape a string for use inside a CSS `content: "…"` value: backslashes,
 // double-quotes, and newlines would otherwise break out of (or invalidate) the
@@ -39,8 +41,8 @@ export function buildMarkStylesCss(config: MarkConfig): string {
       ([prop, value]) => CSS_PROP_RE.test(prop) && CSS_VALUE_RE.test(value),
     );
     const hasStyle = validStyleEntries.length > 0;
-    const hasBefore = def.before != null;
-    const hasAfter = def.after != null;
+    const hasBefore = def.before != null && CSS_CONTENT_RE.test(def.before);
+    const hasAfter = def.after != null && CSS_CONTENT_RE.test(def.after);
     if (!hasStyle && !hasBefore && !hasAfter) continue;
 
     // Escape the user-supplied code so CSS metacharacters can't break the

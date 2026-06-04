@@ -27,6 +27,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, WebviewWindowBuilder};
 use workspace::write_hash::WriteHashRegistry;
+use annotation::marks::MarkConfigCache;
 use bib::cache::BibCache;
 
 pub struct InitialWorkspace(pub Mutex<Option<String>>);
@@ -122,6 +123,7 @@ pub fn run() {
         .manage(Arc::new(seed::SeedState::new()))
         .manage(Arc::new(OpLogRegistry::new()))
         .manage(BibCache::new())
+        .manage(MarkConfigCache::new())
         .manage(commands::llm::LlmState::new())
         .manage(commands::merge_split::TitleSuggestState::new())
         .manage(context_menu::PendingContextMenu::default())

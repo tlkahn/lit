@@ -130,6 +130,69 @@ describe("buildMarkStylesCss", () => {
     expect(css).not.toContain("body");
   });
 
+  it("drops style entries with a trailing backslash in the value", () => {
+    const config: MarkConfig = {
+      bad: {
+        label: "bad",
+        style: { color: "red\\", "font-weight": "bold" },
+      },
+    };
+    const css = buildMarkStylesCss(config);
+    expect(css).not.toContain("color");
+    expect(css).toContain("font-weight: bold");
+  });
+
+  it("drops style entries with a newline in the value", () => {
+    const config: MarkConfig = {
+      bad: {
+        label: "bad",
+        style: { color: "red\n} body { display: none", opacity: "0.5" },
+      },
+    };
+    const css = buildMarkStylesCss(config);
+    expect(css).not.toContain("body");
+    expect(css).toContain("opacity: 0.5");
+  });
+
+  it("skips before/after when they contain a null byte", () => {
+    const config: MarkConfig = {
+      bad: {
+        label: "bad",
+        before: "a\x00b",
+        after: "c\x00d",
+        style: { opacity: "0.5" },
+      },
+    };
+    const css = buildMarkStylesCss(config);
+    expect(css).not.toContain("::before");
+    expect(css).not.toContain("::after");
+    expect(css).toContain("opacity: 0.5");
+  });
+
+  it("skips before with control char but still emits sibling style block", () => {
+    const config: MarkConfig = {
+      bad: {
+        label: "bad",
+        before: "a\x01b",
+        style: { "font-weight": "bold" },
+      },
+    };
+    const css = buildMarkStylesCss(config);
+    expect(css).not.toContain("::before");
+    expect(css).toContain("font-weight: bold");
+  });
+
+  it("allows unicode symbols in before/after", () => {
+    const config: MarkConfig = {
+      crux: { label: "crux", before: "†", after: "⸗" },
+    };
+    const css = buildMarkStylesCss(config);
+    expect(css).toContain("†");
+    expect(css).toContain("⸗");
+    expect(css).toContain("::before");
+    expect(css).toContain("::after");
+  });
+
   it("preserves legitimate complex property/value pairs", () => {
     const config: MarkConfig = {
       ok: {
