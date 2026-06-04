@@ -1,17 +1,17 @@
 import type { AnnotationType } from "./ipc";
 
-const FIRE_TYPE_MAP: Record<AnnotationType, string | null> = {
-  llm: "replacing",
-  translation: "replacing",
-  question: "replacing",
-  todo: null,
-  note: null,
-  crossref: null,
-  apparatus: null,
-  mark: null,
-  bare: null,
+const FIRE_CLASSIFICATION: Record<AnnotationType, boolean> = {
+  llm: true,
+  translation: true,
+  question: true,
+  todo: false,
+  note: false,
+  crossref: false,
+  apparatus: false,
+  mark: false,
+  bare: false,
 };
 
 export function canFire(type: AnnotationType): boolean {
-  return FIRE_TYPE_MAP[type] != null;
+  return FIRE_CLASSIFICATION[type];
 }
