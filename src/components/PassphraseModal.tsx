@@ -14,6 +14,9 @@ export function PassphraseModal() {
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [showTick, setShowTick] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+  const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isInitMode = !exists;
 
@@ -24,51 +27,80 @@ export function PassphraseModal() {
       setConfirm("");
       setError(null);
       setSubmitting(false);
+      setShowTick(false);
+      setDismissed(false);
     }
     prevOpenRef.current = promptOpen;
   }, [promptOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
+    };
+  }, []);
 
   const handleCancel = useCallback(() => {
     settleUnlock(false);
   }, [settleUnlock]);
 
+  const canSubmit = isInitMode
+    ? passphrase.length >= MIN_PASSPHRASE_LENGTH && passphrase === confirm && !submitting
+    : passphrase.length > 0 && !submitting;
+
+  const passphraseRef = useRef(passphrase);
+  passphraseRef.current = passphrase;
+  const canSubmitRef = useRef(canSubmit);
+  canSubmitRef.current = canSubmit;
+  const dismissedRef = useRef(dismissed);
+  dismissedRef.current = dismissed;
+
+  const handleSubmit = useCallback(async () => {
+    setSubmitting(true);
+    setShowTick(true);
+    setError(null);
+    try {
+      if (isInitMode) {
+        await initSecretStore(passphraseRef.current);
+      } else {
+        await unlockSecretStore(passphraseRef.current);
+      }
+      dismissTimerRef.current = setTimeout(() => setDismissed(true), 400);
+      await refresh();
+      if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
+      dismissTimerRef.current = null;
+      settleUnlock(true);
+    } catch (e) {
+      setShowTick(false);
+      setSubmitting(false);
+      const message = e instanceof Error ? e.message : String(e);
+      setError(message);
+    }
+  }, [isInitMode, refresh, settleUnlock]);
+
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
-      if (e.key === "Escape") handleCancel();
+      if (e.key === "Escape" && !dismissedRef.current) {
+        e.stopPropagation();
+        handleCancel();
+        return;
+      }
+      if (e.key === "Enter" && canSubmitRef.current && !dismissedRef.current) {
+        e.stopPropagation();
+        e.preventDefault();
+        handleSubmit();
+      }
     },
-    [handleCancel],
+    [handleCancel, handleSubmit],
   );
 
   useEffect(() => {
     if (!promptOpen) return;
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => document.removeEventListener("keydown", handleKeyDown, true);
   }, [promptOpen, handleKeyDown]);
 
-  const handleSubmit = useCallback(async () => {
-    setSubmitting(true);
-    setError(null);
-    try {
-      if (isInitMode) {
-        await initSecretStore(passphrase);
-      } else {
-        await unlockSecretStore(passphrase);
-      }
-      await refresh();
-      settleUnlock(true);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      setError(message);
-    } finally {
-      setSubmitting(false);
-    }
-  }, [isInitMode, passphrase, refresh, settleUnlock]);
-
   if (!promptOpen) return null;
-
-  const canSubmit = isInitMode
-    ? passphrase.length >= MIN_PASSPHRASE_LENGTH && passphrase === confirm && !submitting
-    : passphrase.length > 0 && !submitting;
+  if (dismissed) return null;
 
   return (
     <div
@@ -137,7 +169,11 @@ export function PassphraseModal() {
             disabled={!canSubmit}
             data-testid="passphrase-modal-submit"
           >
-            {isInitMode ? "Create" : "Unlock"}
+            {showTick ? (
+              <span data-testid="passphrase-modal-tick">{""}</span>
+            ) : (
+              isInitMode ? "Create" : "Unlock"
+            )}
           </button>
         </div>
       </div>

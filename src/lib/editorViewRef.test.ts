@@ -8,6 +8,7 @@ import {
   setCurrentEditorView,
   getCurrentEditorView,
   isFocusInsideContentPane,
+  isEditorFocused,
   _resetForTesting,
 } from "./editorViewRef";
 
@@ -134,5 +135,58 @@ describe("isFocusInsideContentPane", () => {
     paneWrapper.focus();
     expect(document.activeElement).toBe(paneWrapper);
     expect(isFocusInsideContentPane()).toBe(true);
+  });
+});
+
+describe("isEditorFocused", () => {
+  beforeEach(() => {
+    _resetForTesting();
+    document.body.innerHTML = "";
+    (document.activeElement as HTMLElement)?.blur?.();
+  });
+
+  it("returns true when editor view exists and focus is inside content pane", () => {
+    const container = document.createElement("div");
+    const inner = document.createElement("input");
+    container.appendChild(inner);
+    document.body.appendChild(container);
+
+    const view = fakeViewWithDom(container);
+    registerPaneView("pane1", view);
+    setFocusedPane("pane1");
+
+    inner.focus();
+    expect(isEditorFocused()).toBe(true);
+  });
+
+  it("returns false when editor view exists but focus is outside content pane", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+
+    const view = fakeViewWithDom(container);
+    registerPaneView("pane1", view);
+    setFocusedPane("pane1");
+
+    const sidebar = document.createElement("button");
+    document.body.appendChild(sidebar);
+    sidebar.focus();
+    expect(isEditorFocused()).toBe(false);
+  });
+
+  it("returns false when focus is inside content pane but no editor view is current", () => {
+    const paneWrapper = document.createElement("div");
+    paneWrapper.setAttribute("data-testid", "editor-pane");
+    const inner = document.createElement("input");
+    paneWrapper.appendChild(inner);
+    document.body.appendChild(paneWrapper);
+
+    inner.focus();
+    expect(isFocusInsideContentPane()).toBe(true);
+    expect(getCurrentEditorView()).toBeNull();
+    expect(isEditorFocused()).toBe(false);
+  });
+
+  it("returns false when neither condition is met", () => {
+    expect(isEditorFocused()).toBe(false);
   });
 });
