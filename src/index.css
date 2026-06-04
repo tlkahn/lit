@@ -150,3 +150,13 @@ select:disabled {
   --tw-prose-th-borders: var(--background-modifier-border);
   --tw-prose-td-borders: var(--background-modifier-border);
 }
+
+.prose pre {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.prose img {
+  max-width: 100%;
+  height: auto;
+}
