@@ -1,10 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import type { Annotation } from "./ipc";
 import { useModalLockStore } from "../stores/modalLock";
 import { usePreferencesStore } from "../stores/preferences";
-import { useLlmResponseStore } from "../stores/llmResponse";
+import { useStatusMessageStore } from "../stores/statusMessage";
 import { useSecretStoreStore } from "../stores/secretStore";
 import { firingAnnotationsField } from "../editor/livePreview/annotationWidgets";
 
@@ -15,14 +15,16 @@ vi.mock("./ipc", () => ({
 
 vi.mock("./llmClient", () => ({
   startLlmStream: vi.fn(async () => {}),
+  cancelLlmStream: vi.fn(async () => {}),
 }));
 
 import { resolveAnnotationScopeWithMode } from "./ipc";
-import { startLlmStream } from "./llmClient";
+import { startLlmStream, cancelLlmStream } from "./llmClient";
 import { fireAnnotation, buildFirePrompt, getTypePrompt, stripAnnotations } from "./fireOrchestrator";
 
 const mockResolve = resolveAnnotationScopeWithMode as ReturnType<typeof vi.fn>;
 const mockStream = startLlmStream as ReturnType<typeof vi.fn>;
+const mockCancel = cancelLlmStream as ReturnType<typeof vi.fn>;
 
 const flush = (n = 5) =>
   Array.from({ length: n }).reduce<Promise<void>>(
@@ -57,9 +59,17 @@ function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
 beforeEach(() => {
   vi.clearAllMocks();
   useModalLockStore.setState({ llmLocked: false, openCount: 0, locked: false });
-  useLlmResponseStore.getState().reset();
+  useStatusMessageStore.setState({ message: null, variant: "success" });
   useSecretStoreStore.getState()._resetSettler();
   useSecretStoreStore.setState({ exists: true, unlocked: true, loading: false, promptOpen: false });
+});
+
+afterEach(() => {
+  // Drain any lit:cancel-fire listeners leaked by tests whose stream mock
+  // resolves without invoking onDone/onError (so doCleanup never ran). Each
+  // leaked handler removes itself and is idempotent via its own cleanedUp flag.
+  window.dispatchEvent(new CustomEvent("lit:cancel-fire"));
+  mockStream.mockImplementation(async () => {});
 });
 
 describe("buildFirePrompt", () => {
@@ -199,20 +209,27 @@ describe("fireAnnotation", () => {
     await fireAnnotation({ view, annotation: makeAnnotation() });
 
     expect(useModalLockStore.getState().llmLocked).toBe(false);
-    expect(useLlmResponseStore.getState().status).toBe("error");
+    expect(useStatusMessageStore.getState().message).toBe("fail");
+    expect(useStatusMessageStore.getState().variant).toBe("error");
     view.destroy();
   });
 
-  it("starts stream in llmResponse store", async () => {
-    const view = makeView();
-    let statusDuringCall = "";
+  it("unlocks and shows error when startLlmStream throws synchronously", async () => {
     mockStream.mockImplementation(async () => {
-      statusDuringCall = useLlmResponseStore.getState().status;
+      throw new Error("boom");
     });
 
-    await fireAnnotation({ view, annotation: makeAnnotation({ body: "test" }) });
+    const completeSpy = vi.fn();
+    window.addEventListener("lit:fire-complete", completeSpy);
+    const view = makeView();
 
-    expect(statusDuringCall).toBe("streaming");
+    await fireAnnotation({ view, annotation: makeAnnotation() });
+
+    expect(useModalLockStore.getState().llmLocked).toBe(false);
+    expect(useStatusMessageStore.getState().message).toBe("boom");
+    expect(useStatusMessageStore.getState().variant).toBe("error");
+    expect(completeSpy).toHaveBeenCalledOnce();
+    window.removeEventListener("lit:fire-complete", completeSpy);
     view.destroy();
   });
 
@@ -405,19 +422,6 @@ describe("fireAnnotation", () => {
     view.destroy();
   });
 
-  it("question type: starts stream in llmResponse store (no bottom panel involvement)", async () => {
-    const view = makeView();
-    let statusDuringCall = "";
-    mockStream.mockImplementation(async () => {
-      statusDuringCall = useLlmResponseStore.getState().status;
-    });
-
-    await fireAnnotation({ view, annotation: makeAnnotation({ annotation_type: "question", body: "q" }) });
-
-    expect(statusDuringCall).toBe("streaming");
-    view.destroy();
-  });
-
   it("question type: unlocks and dispatches lit:fire-complete on done", async () => {
     mockStream.mockImplementation(async (_args: unknown, callbacks: { onDone: () => void }) => {
       callbacks.onDone();
@@ -443,11 +447,35 @@ describe("fireAnnotation", () => {
     await fireAnnotation({ view, annotation: ann });
 
     expect(mockStream).not.toHaveBeenCalled();
+    expect(mockResolve).not.toHaveBeenCalled();
     expect(useModalLockStore.getState().llmLocked).toBe(false);
     expect(view.state.field(firingAnnotationsField).has(0)).toBe(false);
     expect(completeSpy).toHaveBeenCalledOnce();
     window.removeEventListener("lit:fire-complete", completeSpy);
     view.destroy();
+  });
+
+  it("lit:cancel-fire event calls cancelLlmStream and unlocks", async () => {
+    mockStream.mockImplementation(() => new Promise(() => {}));
+    const completeSpy = vi.fn();
+    const view = makeView("hello world", true);
+    const ann = makeAnnotation({ annotation_type: "llm", char_start: 0 });
+
+    const firePromise = fireAnnotation({ view, annotation: ann });
+    await flush();
+
+    window.addEventListener("lit:fire-complete", completeSpy);
+    window.dispatchEvent(new CustomEvent("lit:cancel-fire"));
+    await flush();
+
+    expect(mockCancel).toHaveBeenCalledOnce();
+    expect(useModalLockStore.getState().llmLocked).toBe(false);
+    expect(completeSpy).toHaveBeenCalledOnce();
+    expect(view.state.field(firingAnnotationsField).has(0)).toBe(false);
+
+    window.removeEventListener("lit:fire-complete", completeSpy);
+    view.destroy();
+    void firePromise;
   });
 
   // --- ensureUnlocked guard on replacing fire path ---

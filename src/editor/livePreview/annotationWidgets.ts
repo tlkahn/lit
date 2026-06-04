@@ -68,6 +68,15 @@ export function createFireButton(ann: Annotation, isFiring?: boolean, llmLocked?
 
   if (isFiring) {
     btn.classList.add("cm-annotation-spinner");
+    const stop = document.createElement("span");
+    stop.className = "cm-annotation-stop-icon";
+    stop.textContent = "\u{f04d}"; // nerdfont nf-fa-stop
+    btn.appendChild(stop);
+    btn.onmousedown = (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      window.dispatchEvent(new CustomEvent("lit:cancel-fire"));
+    };
     return btn;
   }
 

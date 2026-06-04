@@ -863,12 +863,25 @@ describe("firingAnnotationsField", () => {
 });
 
 describe("spinner rendering", () => {
-  it("createFireButton with isFiring=true has cm-annotation-spinner class and no ▶ text", () => {
+  it("createFireButton with isFiring=true has cm-annotation-spinner class and a stop icon, not the play glyph", () => {
     const ann = makeAnnotation({ annotation_type: "llm" });
     const btn = createFireButton(ann, true);
     expect(btn).toBeTruthy();
     expect(btn!.classList.contains("cm-annotation-spinner")).toBe(true);
-    expect(btn!.textContent).toBe("");
+    expect(btn!.querySelector(".cm-annotation-stop-icon")).toBeTruthy();
+    expect(btn!.textContent).not.toContain("▶");
+  });
+
+  it("createFireButton spinner dispatches lit:cancel-fire on mousedown", () => {
+    const ann = makeAnnotation({ annotation_type: "llm" });
+    const btn = createFireButton(ann, true);
+    expect(btn).toBeTruthy();
+    expect(btn!.onmousedown).toBeTruthy();
+    const listener = vi.fn();
+    window.addEventListener("lit:cancel-fire", listener);
+    btn!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(listener).toHaveBeenCalledOnce();
+    window.removeEventListener("lit:cancel-fire", listener);
   });
 
   it("createFireButton with isFiring=false has ▶ text", () => {
