@@ -84,6 +84,51 @@ describe("renderMarkdown", () => {
     expect(result).toContain("<code>");
     expect(result).not.toContain("cm-preview-math");
   });
+
+  it("renders display math containing dollar signs", () => {
+    const result = renderMarkdown("$$\\text{costs \\$5}$$");
+    expect(result).toContain("cm-preview-math-display");
+  });
+
+  it("preserves tilde-fenced code blocks containing dollar signs", () => {
+    const result = renderMarkdown("~~~\n$notmath$\n~~~");
+    expect(result).toContain("<code>");
+    expect(result).not.toContain("cm-preview-math");
+  });
+
+  it("preserves double-backtick code spans containing dollar signs", () => {
+    const result = renderMarkdown("``$notmath$``");
+    expect(result).toContain("<code>");
+    expect(result).not.toContain("cm-preview-math");
+  });
+
+  it("preserves style attributes in KaTeX output after sanitization", () => {
+    mockKatex.renderToString.mockReturnValueOnce(
+      '<span class="katex" style="color:red;">E=mc^2</span>',
+    );
+    const result = renderMarkdown("$E=mc^2$");
+    expect(result).toContain("style=");
+  });
+
+  it("preserves MathML elements including semantics and annotation in KaTeX output", () => {
+    mockKatex.renderToString.mockReturnValueOnce(
+      '<span class="katex"><math><semantics><mrow><mi>x</mi></mrow><annotation encoding="application/x-tex">x</annotation></semantics></math></span>',
+    );
+    const result = renderMarkdown("$x$");
+    expect(result).toContain("<math>");
+    expect(result).toContain("<mi>");
+    expect(result).toContain("<semantics>");
+    expect(result).toContain("<annotation");
+  });
+
+  it("strips script tags injected into KaTeX output", () => {
+    mockKatex.renderToString.mockReturnValueOnce(
+      '<span class="katex"><script>alert(1)</script>safe</span>',
+    );
+    const result = renderMarkdown("$x$");
+    expect(result).not.toContain("<script>");
+    expect(result).toContain("safe");
+  });
 });
 
 describe("renderInlineMarkdown", () => {
