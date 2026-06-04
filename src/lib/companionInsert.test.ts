@@ -39,6 +39,26 @@ describe("buildCompanionDsl", () => {
     expect(dsl).toContain("\n---\n");
     expect(dsl).toContain("line1\nline2\nline3");
   });
+
+  it("inherits paragraph scope when provided", () => {
+    const dsl = buildCompanionDsl("answer", { kind: "paragraph", value: 1 });
+    expect(dsl).toContain("\\p");
+  });
+
+  it("inherits document scope when provided", () => {
+    const dsl = buildCompanionDsl("answer", { kind: "document", value: 0 });
+    expect(dsl).toContain("\\d");
+  });
+
+  it("inherits section scope when provided", () => {
+    const dsl = buildCompanionDsl("answer", { kind: "section", value: 0 });
+    expect(dsl).toContain("\\h");
+  });
+
+  it("defaults to no scope when omitted", () => {
+    const dsl = buildCompanionDsl("answer");
+    expect(dsl).not.toMatch(/\\[spdh]/);
+  });
 });
 
 describe("insertCompanionAnnotation", () => {
@@ -131,6 +151,67 @@ describe("insertCompanionAnnotation", () => {
     undo(view);
 
     expect(view.state.doc.toString()).toBe(doc);
+    view.destroy();
+  });
+
+  it("inherits paragraph scope from source annotation", () => {
+    const doc = "hello <!--- q \\p | why? ---> world";
+    const view = new EditorView({
+      state: EditorState.create({ doc }),
+      parent: document.createElement("div"),
+    });
+    const ann = makeAnnotation({
+      char_start: 6,
+      char_end: 28,
+      scope: { kind: "paragraph", value: 1 },
+      original: "<!--- q \\p | why? --->",
+    });
+
+    insertCompanionAnnotation(view, ann, "The answer.");
+
+    const result = view.state.doc.toString();
+    expect(result).toContain("\\p");
+    view.destroy();
+  });
+
+  it("inherits document scope from source annotation", () => {
+    const doc = "hello <!--- q \\d | why? ---> world";
+    const view = new EditorView({
+      state: EditorState.create({ doc }),
+      parent: document.createElement("div"),
+    });
+    const ann = makeAnnotation({
+      char_start: 6,
+      char_end: 28,
+      scope: { kind: "document", value: 0 },
+      original: "<!--- q \\d | why? --->",
+    });
+
+    insertCompanionAnnotation(view, ann, "The answer.");
+
+    const result = view.state.doc.toString();
+    expect(result).toContain("\\d");
+    view.destroy();
+  });
+
+  it("does not emit scope for implicit sentence scope", () => {
+    const doc = "hello <!--- q | why? ---> world";
+    const view = new EditorView({
+      state: EditorState.create({ doc }),
+      parent: document.createElement("div"),
+    });
+    const ann = makeAnnotation({
+      char_start: 6,
+      char_end: 25,
+      scope: { kind: "sentence", value: 1 },
+      original: "<!--- q | why? --->",
+    });
+
+    insertCompanionAnnotation(view, ann, "The answer.");
+
+    const result = view.state.doc.toString();
+    const companionPart = result.slice(result.indexOf("\n\n") + 2);
+    expect(companionPart).not.toMatch(/\\[spdh]/);
     view.destroy();
   });
 

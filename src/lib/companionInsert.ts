@@ -1,14 +1,14 @@
 import type { ChangeSpec, StateEffect } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
-import type { Annotation } from "./ipc";
-import { generateDsl } from "./annotationDsl";
+import type { Annotation, Scope } from "./ipc";
+import { annotationToFields, generateDsl } from "./annotationDsl";
 
-export function buildCompanionDsl(responseText: string): string {
+export function buildCompanionDsl(responseText: string, scope?: Scope | null): string {
   return generateDsl({
     id: null,
     type: "note",
     certainty: "neutral",
-    scope: null,
+    scope: scope ?? null,
     body: responseText,
     date: null,
   });
@@ -20,7 +20,8 @@ export function insertCompanionAnnotation(
   responseText: string,
   options?: { removeSource?: boolean; effects?: StateEffect<unknown>[] },
 ): void {
-  const dsl = buildCompanionDsl(responseText);
+  const inheritedScope = annotationToFields(sourceAnnotation).scope;
+  const dsl = buildCompanionDsl(responseText, inheritedScope);
   const changes: ChangeSpec[] = [];
   if (options?.removeSource) {
     changes.push({ from: sourceAnnotation.char_start, to: sourceAnnotation.char_end });
