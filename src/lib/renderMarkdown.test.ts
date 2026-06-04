@@ -1,5 +1,19 @@
-import { describe, it, expect } from "vitest";
-import { renderMarkdown } from "./renderMarkdown";
+import { describe, it, expect, vi } from "vitest";
+import { renderMarkdown, renderInlineMarkdown } from "./renderMarkdown";
+import { getKatexSync } from "../editor/livePreview/katexLoader";
+
+const mockKatex = {
+  render: vi.fn(),
+  renderToString: vi.fn((tex: string) => `<span class="katex">${tex}</span>`),
+};
+
+vi.mock("../editor/livePreview/katexLoader", () => ({
+  getKatexSync: vi.fn(() => mockKatex),
+  loadKatex: vi.fn(async () => mockKatex),
+  resetKatexLoader: vi.fn(),
+}));
+
+vi.mock("katex/dist/katex.min.css", () => ({}));
 
 describe("renderMarkdown", () => {
   it("renders markdown to sanitized HTML", () => {
@@ -30,5 +44,62 @@ describe("renderMarkdown", () => {
     const anchor = div.querySelector("a");
     expect(anchor?.getAttribute("target")).toBe("_blank");
     expect(anchor?.getAttribute("rel")).toContain("noopener");
+  });
+
+  it("renders inline math with KaTeX", () => {
+    const result = renderMarkdown("The equation $E=mc^2$ is famous.");
+    expect(result).toContain("cm-preview-math-inline");
+    expect(result).toContain("katex");
+    expect(result).toContain("E=mc^2");
+  });
+
+  it("renders display math with KaTeX", () => {
+    const result = renderMarkdown("$$\\int_0^1 x^2 dx$$");
+    expect(result).toContain("cm-preview-math-display");
+    expect(result).toContain("katex");
+  });
+
+  it("shows placeholder when KaTeX is not loaded", () => {
+    vi.mocked(getKatexSync).mockReturnValueOnce(null);
+    const result = renderMarkdown("$E=mc^2$");
+    expect(result).toContain("cm-preview-math-placeholder");
+    expect(result).toContain("E=mc^2");
+    expect(result).not.toContain("katex");
+  });
+
+  it("does not treat LaTeX underscores as italic", () => {
+    const result = renderMarkdown("$a_i + b_j$");
+    expect(result).not.toContain("<em>");
+    expect(result).toContain("cm-preview-math-inline");
+  });
+
+  it("renders mixed markdown and math", () => {
+    const result = renderMarkdown("**bold** and $x^2$");
+    expect(result).toContain("<strong>bold</strong>");
+    expect(result).toContain("cm-preview-math-inline");
+  });
+
+  it("preserves code blocks containing dollar signs", () => {
+    const result = renderMarkdown("`$notmath$`");
+    expect(result).toContain("<code>");
+    expect(result).not.toContain("cm-preview-math");
+  });
+});
+
+describe("renderInlineMarkdown", () => {
+  it("renders inline math", () => {
+    const result = renderInlineMarkdown("$E=mc^2$");
+    expect(result).toContain("cm-preview-math-inline");
+    expect(result).toContain("katex");
+  });
+
+  it("renders mixed inline markdown and math", () => {
+    const result = renderInlineMarkdown("**bold** and $x^2$");
+    expect(result).toContain("<strong>bold</strong>");
+    expect(result).toContain("cm-preview-math-inline");
+  });
+
+  it("returns empty string for empty input", () => {
+    expect(renderInlineMarkdown("")).toBe("");
   });
 });
