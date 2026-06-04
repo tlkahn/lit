@@ -292,6 +292,250 @@ describe("PassphraseModal", () => {
     });
   });
 
+  describe("keyboard confirm", () => {
+    it("Enter submits in unlock mode with non-empty passphrase", async () => {
+      await resetStore({ promptOpen: true, exists: true, unlocked: false });
+      mockInvoke((cmd) => {
+        if (cmd === "unlock_secret_store") return undefined;
+        if (cmd === "secret_store_status") return { exists: true, unlocked: true };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      const { container } = render(<PassphraseModal />);
+      const passInput = container.querySelector("[data-testid='passphrase-modal-passphrase']") as HTMLInputElement;
+      fireEvent.change(passInput, { target: { value: "mypass" } });
+      fireEvent.keyDown(document, { key: "Enter" });
+
+      await waitFor(() => {
+        expect(useSecretStoreStore.getState().promptOpen).toBe(false);
+      });
+    });
+
+    it("Enter does nothing when passphrase is empty", async () => {
+      await resetStore({ promptOpen: true, exists: true, unlocked: false });
+      const { container } = render(<PassphraseModal />);
+      fireEvent.keyDown(document, { key: "Enter" });
+      expect(container.querySelector("[data-testid='passphrase-modal-dialog']")).toBeTruthy();
+    });
+
+    it("Enter does nothing when passwords mismatch in init mode", async () => {
+      await resetStore({ promptOpen: true, exists: false });
+      const { container } = render(<PassphraseModal />);
+      const passInput = container.querySelector("[data-testid='passphrase-modal-passphrase']") as HTMLInputElement;
+      const confirmInput = container.querySelector("[data-testid='passphrase-modal-confirm']") as HTMLInputElement;
+      fireEvent.change(passInput, { target: { value: "secret1abc" } });
+      fireEvent.change(confirmInput, { target: { value: "secret2abc" } });
+      fireEvent.keyDown(document, { key: "Enter" });
+      expect(container.querySelector("[data-testid='passphrase-modal-dialog']")).toBeTruthy();
+    });
+
+    it("Enter submits in init mode when passwords match and >= 8 chars", async () => {
+      await resetStore({ promptOpen: true, exists: false });
+      mockInvoke((cmd) => {
+        if (cmd === "init_secret_store") return undefined;
+        if (cmd === "secret_store_status") return { exists: true, unlocked: true };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      const { container } = render(<PassphraseModal />);
+      const passInput = container.querySelector("[data-testid='passphrase-modal-passphrase']") as HTMLInputElement;
+      const confirmInput = container.querySelector("[data-testid='passphrase-modal-confirm']") as HTMLInputElement;
+      fireEvent.change(passInput, { target: { value: "mypass12" } });
+      fireEvent.change(confirmInput, { target: { value: "mypass12" } });
+      fireEvent.keyDown(document, { key: "Enter" });
+
+      await waitFor(() => {
+        expect(useSecretStoreStore.getState().promptOpen).toBe(false);
+      });
+    });
+
+    it("Cmd+Enter also submits", async () => {
+      await resetStore({ promptOpen: true, exists: true, unlocked: false });
+      mockInvoke((cmd) => {
+        if (cmd === "unlock_secret_store") return undefined;
+        if (cmd === "secret_store_status") return { exists: true, unlocked: true };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      const { container } = render(<PassphraseModal />);
+      const passInput = container.querySelector("[data-testid='passphrase-modal-passphrase']") as HTMLInputElement;
+      fireEvent.change(passInput, { target: { value: "mypass" } });
+      fireEvent.keyDown(document, { key: "Enter", metaKey: true });
+
+      await waitFor(() => {
+        expect(useSecretStoreStore.getState().promptOpen).toBe(false);
+      });
+    });
+  });
+
+  describe("optimistic dismiss", () => {
+    it("shows checkmark tick after submit", async () => {
+      await resetStore({ promptOpen: true, exists: true, unlocked: false });
+      let resolveUnlock: () => void;
+      const unlockPromise = new Promise<void>((r) => { resolveUnlock = r; });
+      mockInvoke((cmd) => {
+        if (cmd === "unlock_secret_store") return unlockPromise;
+        if (cmd === "secret_store_status") return { exists: true, unlocked: true };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      const { container } = render(<PassphraseModal />);
+      const passInput = container.querySelector("[data-testid='passphrase-modal-passphrase']") as HTMLInputElement;
+      fireEvent.change(passInput, { target: { value: "mypass" } });
+      fireEvent.click(container.querySelector("[data-testid='passphrase-modal-submit']")!);
+
+      expect(container.querySelector("[data-testid='passphrase-modal-tick']")).toBeTruthy();
+
+      resolveUnlock!();
+      await act(async () => { await unlockPromise; });
+    });
+
+    it("modal dismissed after 400ms", async () => {
+      vi.useFakeTimers();
+      await resetStore({ promptOpen: true, exists: true, unlocked: false });
+      let resolveUnlock: () => void;
+      const unlockPromise = new Promise<void>((r) => { resolveUnlock = r; });
+      mockInvoke((cmd) => {
+        if (cmd === "unlock_secret_store") return unlockPromise;
+        if (cmd === "secret_store_status") return { exists: true, unlocked: true };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      const { container } = render(<PassphraseModal />);
+      const passInput = container.querySelector("[data-testid='passphrase-modal-passphrase']") as HTMLInputElement;
+      fireEvent.change(passInput, { target: { value: "mypass" } });
+      fireEvent.click(container.querySelector("[data-testid='passphrase-modal-submit']")!);
+
+      expect(container.querySelector("[data-testid='passphrase-modal-dialog']")).toBeTruthy();
+
+      act(() => { vi.advanceTimersByTime(400); });
+
+      expect(container.querySelector("[data-testid='passphrase-modal-dialog']")).toBeNull();
+
+      resolveUnlock!();
+      await act(async () => { await unlockPromise; });
+      vi.useRealTimers();
+    });
+
+    it("modal re-appears with error on IPC failure", async () => {
+      await resetStore({ promptOpen: true, exists: true, unlocked: false });
+      mockInvoke((cmd) => {
+        if (cmd === "unlock_secret_store") throw new Error("Wrong passphrase");
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      const { container } = render(<PassphraseModal />);
+      const passInput = container.querySelector("[data-testid='passphrase-modal-passphrase']") as HTMLInputElement;
+      fireEvent.change(passInput, { target: { value: "wrong" } });
+      fireEvent.click(container.querySelector("[data-testid='passphrase-modal-submit']")!);
+
+      await waitFor(() => {
+        expect(container.querySelector("[data-testid='passphrase-modal-error']")).toBeTruthy();
+      });
+
+      expect(container.querySelector("[data-testid='passphrase-modal-dialog']")).toBeTruthy();
+      expect(container.querySelector("[data-testid='passphrase-modal-error']")!.textContent).toContain("Wrong passphrase");
+    });
+
+    it("passphrase preserved after error recovery", async () => {
+      await resetStore({ promptOpen: true, exists: true, unlocked: false });
+      mockInvoke((cmd) => {
+        if (cmd === "unlock_secret_store") throw new Error("Wrong passphrase");
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      const { container } = render(<PassphraseModal />);
+      const passInput = container.querySelector("[data-testid='passphrase-modal-passphrase']") as HTMLInputElement;
+      fireEvent.change(passInput, { target: { value: "myattempt" } });
+      fireEvent.click(container.querySelector("[data-testid='passphrase-modal-submit']")!);
+
+      await waitFor(() => {
+        expect(container.querySelector("[data-testid='passphrase-modal-error']")).toBeTruthy();
+      });
+
+      const input = container.querySelector("[data-testid='passphrase-modal-passphrase']") as HTMLInputElement;
+      expect(input.value).toBe("myattempt");
+    });
+
+    it("fast IPC success closes modal immediately via store", async () => {
+      await resetStore({ promptOpen: true, exists: true, unlocked: false });
+      mockInvoke((cmd) => {
+        if (cmd === "unlock_secret_store") return undefined;
+        if (cmd === "secret_store_status") return { exists: true, unlocked: true };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      const { container } = render(<PassphraseModal />);
+      const passInput = container.querySelector("[data-testid='passphrase-modal-passphrase']") as HTMLInputElement;
+      fireEvent.change(passInput, { target: { value: "mypass" } });
+      fireEvent.click(container.querySelector("[data-testid='passphrase-modal-submit']")!);
+
+      await waitFor(() => {
+        expect(useSecretStoreStore.getState().promptOpen).toBe(false);
+      });
+
+      expect(container.querySelector("[data-testid='passphrase-modal-dialog']")).toBeNull();
+    });
+
+    it("Escape ignored during dismissed state", async () => {
+      vi.useFakeTimers();
+      await resetStore({ promptOpen: true, exists: true, unlocked: false });
+      let resolveUnlock: () => void;
+      const unlockPromise = new Promise<void>((r) => { resolveUnlock = r; });
+      mockInvoke((cmd) => {
+        if (cmd === "unlock_secret_store") return unlockPromise;
+        if (cmd === "secret_store_status") return { exists: true, unlocked: true };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      render(<PassphraseModal />);
+      const passInput = document.querySelector("[data-testid='passphrase-modal-passphrase']") as HTMLInputElement;
+      fireEvent.change(passInput, { target: { value: "mypass" } });
+      fireEvent.click(document.querySelector("[data-testid='passphrase-modal-submit']")!);
+
+      act(() => { vi.advanceTimersByTime(400); });
+
+      fireEvent.keyDown(document, { key: "Escape" });
+
+      expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+
+      resolveUnlock!();
+      await act(async () => { await unlockPromise; });
+      vi.useRealTimers();
+    });
+
+    it("Enter ignored during dismissed state", async () => {
+      vi.useFakeTimers();
+      await resetStore({ promptOpen: true, exists: true, unlocked: false });
+      let resolveUnlock: () => void;
+      const unlockPromise = new Promise<void>((r) => { resolveUnlock = r; });
+      let unlockCallCount = 0;
+      mockInvoke((cmd) => {
+        if (cmd === "unlock_secret_store") {
+          unlockCallCount++;
+          return unlockPromise;
+        }
+        if (cmd === "secret_store_status") return { exists: true, unlocked: true };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      render(<PassphraseModal />);
+      const passInput = document.querySelector("[data-testid='passphrase-modal-passphrase']") as HTMLInputElement;
+      fireEvent.change(passInput, { target: { value: "mypass" } });
+      fireEvent.click(document.querySelector("[data-testid='passphrase-modal-submit']")!);
+
+      act(() => { vi.advanceTimersByTime(400); });
+
+      fireEvent.keyDown(document, { key: "Enter" });
+
+      expect(unlockCallCount).toBe(1);
+
+      resolveUnlock!();
+      await act(async () => { await unlockPromise; });
+      vi.useRealTimers();
+    });
+  });
+
   describe("reset on open", () => {
     it("clears fields and error when dialog reopens", async () => {
       await resetStore({ promptOpen: true, exists: true, unlocked: false });
