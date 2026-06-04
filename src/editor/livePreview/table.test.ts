@@ -219,6 +219,31 @@ describe("renderInlineMarkdown", () => {
   it("renders underscore bold", () => {
     expect(renderInlineMarkdown("__bold__")).toBe("<strong>bold</strong>");
   });
+
+  it("preserves style attributes in KaTeX output after sanitization", () => {
+    mockKatex.renderToString.mockReturnValueOnce(
+      '<span class="katex" style="color:red;">E=mc^2</span>',
+    );
+    const result = renderInlineMarkdown("$E=mc^2$");
+    expect(result).toContain("style=");
+  });
+
+  it("does not treat dollar amounts as math", () => {
+    const result = renderInlineMarkdown("costs $10 and $20");
+    expect(result).not.toContain("cm-preview-math");
+    expect(result).toContain("$10");
+    expect(result).toContain("$20");
+  });
+
+  it("does not treat spaced dollars as math", () => {
+    const result = renderInlineMarkdown("$ not math $");
+    expect(result).not.toContain("cm-preview-math");
+  });
+
+  it("does not treat escaped dollars as math", () => {
+    const result = renderInlineMarkdown("\\$x\\$");
+    expect(result).not.toContain("cm-preview-math");
+  });
 });
 
 describe("serializeTable", () => {

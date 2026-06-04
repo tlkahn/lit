@@ -1,5 +1,5 @@
-import { getKatexSync } from "./katexLoader";
-import "katex/dist/katex.min.css";
+import { escapeHtml } from "../../lib/escapeHtml";
+import { renderMathToHtml } from "../../lib/renderMath";
 
 export type Alignment = "left" | "right" | "center" | "default";
 
@@ -62,31 +62,14 @@ export function renderInlineMarkdown(text: string): string {
   working = working.replace(/`([^`]*)`/g, (_, content) => {
     const idx = placeholders.length;
     placeholders.push(`<code>${escapeHtml(content)}</code>`);
-    return `￰PH${idx}￰`;
+    return `￰TBLPH${idx}￰`;
   });
 
   // Inline math
-  working = working.replace(/\$([^$]+)\$/g, (_, latex) => {
+  working = working.replace(/(?<![\\$])\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\d)/g, (_, latex) => {
     const idx = placeholders.length;
-    const katex = getKatexSync();
-    if (katex) {
-      try {
-        const html = katex.renderToString(latex, {
-          throwOnError: false,
-          displayMode: false,
-        });
-        placeholders.push(`<span class="cm-preview-math-inline">${html}</span>`);
-      } catch {
-        placeholders.push(
-          `<span class="cm-preview-math-inline cm-preview-math-error">${escapeHtml(latex)}</span>`,
-        );
-      }
-    } else {
-      placeholders.push(
-        `<span class="cm-preview-math-inline cm-preview-math-placeholder">${escapeHtml(latex)}</span>`,
-      );
-    }
-    return `￰PH${idx}￰`;
+    placeholders.push(renderMathToHtml(latex, false));
+    return `￰TBLPH${idx}￰`;
   });
 
   // Pass 2: HTML-escape text segments between placeholders
@@ -145,17 +128,9 @@ export function renderInlineMarkdown(text: string): string {
   );
 
   // Pass 4: re-insert placeholders
-  working = working.replace(/￰PH(\d+)￰/g, (_, idx) => placeholders[Number(idx)]!);
+  working = working.replace(/￰TBLPH(\d+)￰/g, (_, idx) => placeholders[Number(idx)]!);
 
   return working;
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
 
 export function getCellPosition(
@@ -216,10 +191,10 @@ export function serializeTable(data: ParsedTable): string {
 }
 
 function escapeSegments(text: string): string {
-  const parts = text.split(/(￰PH\d+￰)/);
+  const parts = text.split(/(￰TBLPH\d+￰)/);
   return parts
     .map((part) => {
-      if (/^￰PH\d+￰$/.test(part)) return part;
+      if (/^￰TBLPH\d+￰$/.test(part)) return part;
       return escapeHtml(part);
     })
     .join("");
