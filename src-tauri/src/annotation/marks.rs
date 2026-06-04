@@ -40,11 +40,15 @@ static BUILTIN: LazyLock<MarkConfig> = LazyLock::new(|| {
 
 static BUILTIN_CODES: LazyLock<Vec<String>> = LazyLock::new(|| {
     let mut codes: Vec<String> = BUILTIN.0.keys().cloned().collect();
-    // Longest-first so multi-char codes win during prefix matching; lexical
-    // tiebreaker keeps the ordering deterministic for tests.
-    codes.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+    sort_codes(&mut codes);
     codes
 });
+
+/// Sort mark codes longest-first so multi-char codes win during prefix
+/// matching; the lexical tiebreaker keeps the ordering deterministic.
+fn sort_codes(codes: &mut [String]) {
+    codes.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+}
 
 /// The built-in mark configuration, parsed once and cached.
 pub fn builtin_config() -> &'static MarkConfig {
@@ -59,6 +63,22 @@ pub fn builtin_mark_codes() -> &'static [String] {
 /// Whether `s` is a known built-in mark code.
 pub fn is_mark_code(s: &str) -> bool {
     BUILTIN.0.contains_key(s)
+}
+
+/// All mark codes from `config`, sorted longest-first (then lexically).
+///
+/// Use this to feed the parse layer with workspace-extended codes (e.g. from
+/// `merged_config`) so custom `.lit/marks.toml` codes are recognized. The sort
+/// order matches [`builtin_mark_codes`], which the prefix matcher relies on.
+pub fn sorted_mark_codes(config: &MarkConfig) -> Vec<String> {
+    let mut codes: Vec<String> = config.0.keys().cloned().collect();
+    sort_codes(&mut codes);
+    codes
+}
+
+/// Whether `s` is one of the provided mark `codes`.
+pub fn is_known_mark_code(s: &str, codes: &[String]) -> bool {
+    codes.iter().any(|c| c == s)
 }
 
 /// The path to a workspace's mark override file.
@@ -139,6 +159,38 @@ mod tests {
         assert!(!is_mark_code("n"));
         assert!(!is_mark_code("xyz"));
         assert!(!is_mark_code(""));
+    }
+
+    #[test]
+    fn sorted_mark_codes_matches_builtin_order() {
+        assert_eq!(sorted_mark_codes(builtin_config()), builtin_mark_codes());
+    }
+
+    #[test]
+    fn is_known_mark_code_respects_passed_codes() {
+        let codes = vec!["zz".to_string(), "nb".to_string()];
+        assert!(is_known_mark_code("zz", &codes));
+        assert!(is_known_mark_code("nb", &codes));
+        assert!(!is_known_mark_code("crux", &codes));
+        assert!(!is_known_mark_code("", &codes));
+    }
+
+    #[test]
+    fn sorted_mark_codes_includes_custom_from_merged_config() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join(".lit")).unwrap();
+        std::fs::write(
+            dir.path().join(".lit").join("marks.toml"),
+            "[zz]\nlabel = \"custom code\"\n",
+        )
+        .unwrap();
+        let codes = sorted_mark_codes(&merged_config(dir.path()));
+        assert!(codes.iter().any(|c| c == "zz"));
+        assert!(codes.iter().any(|c| c == "nb"));
+        // Longest-first invariant still holds.
+        for pair in codes.windows(2) {
+            assert!(pair[0].len() >= pair[1].len());
+        }
     }
 
     #[test]

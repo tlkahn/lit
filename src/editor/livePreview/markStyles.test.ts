@@ -65,6 +65,91 @@ describe("buildMarkStylesCss", () => {
     expect(body).toContain("text-decoration: line-through");
     expect(body).toContain("opacity: 0.5");
   });
+
+  it("escapes the mark code in selectors (style block)", () => {
+    const config: MarkConfig = {
+      "foo.bar": { label: "x", style: { color: "red" } },
+    };
+    const css = buildMarkStylesCss(config);
+    // CSS.escape turns "foo.bar" into "foo\.bar" — assert against its output
+    // rather than hand-writing backslashes.
+    expect(css).toContain(`.cm-mark-${CSS.escape("foo.bar")}`);
+    // The raw, unescaped selector (which would match an element with class
+    // "cm-mark-foo" AND class "bar") must NOT appear.
+    expect(css).not.toContain(".cm-mark-foo.bar {");
+  });
+
+  it("escapes the mark code in ::before / ::after selectors", () => {
+    const config: MarkConfig = {
+      "foo.bar": { label: "x", before: "[", after: "]" },
+    };
+    const css = buildMarkStylesCss(config);
+    expect(css).toContain(`.cm-mark-${CSS.escape("foo.bar")}::before`);
+    expect(css).toContain(`.cm-mark-${CSS.escape("foo.bar")}::after`);
+    expect(css).not.toContain(".cm-mark-foo.bar::before");
+    expect(css).not.toContain(".cm-mark-foo.bar::after");
+  });
+
+  it("drops style entries with a malformed property name", () => {
+    const config: MarkConfig = {
+      bad: {
+        label: "bad",
+        // A property name that tries to close the block and open a new one.
+        style: { "color: red; } body { display": "none", opacity: "0.5" },
+      },
+    };
+    const css = buildMarkStylesCss(config);
+    // The injected "body" selector must not leak into the output.
+    expect(css).not.toContain("body");
+    // The legitimate sibling declaration still survives.
+    expect(css).toContain("opacity: 0.5");
+  });
+
+  it("drops style entries with a malformed value", () => {
+    const config: MarkConfig = {
+      bad: {
+        label: "bad",
+        style: { color: "red; } body { display: none", "font-weight": "bold" },
+      },
+    };
+    const css = buildMarkStylesCss(config);
+    expect(css).not.toContain("} body {");
+    expect(css).not.toContain("display: none");
+    expect(css).toContain("font-weight: bold");
+  });
+
+  it("emits no empty block when every style entry is malformed", () => {
+    const config: MarkConfig = {
+      bad: {
+        label: "bad",
+        style: { "co lor": "red", opacity: "0.5; } body {" },
+      },
+    };
+    const css = buildMarkStylesCss(config);
+    expect(css).not.toContain(".cm-mark-bad");
+    expect(css).not.toContain("body");
+  });
+
+  it("preserves legitimate complex property/value pairs", () => {
+    const config: MarkConfig = {
+      ok: {
+        label: "ok",
+        style: {
+          "font-weight": "bold",
+          opacity: "0.6",
+          border: "1px solid #ccc",
+          color: "var(--x)",
+          background: "rgb(0, 0, 0)",
+        },
+      },
+    };
+    const css = buildMarkStylesCss(config);
+    expect(css).toContain("font-weight: bold");
+    expect(css).toContain("opacity: 0.6");
+    expect(css).toContain("border: 1px solid #ccc");
+    expect(css).toContain("color: var(--x)");
+    expect(css).toContain("background: rgb(0, 0, 0)");
+  });
 });
 
 describe("injectMarkStyles", () => {

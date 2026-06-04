@@ -74,6 +74,10 @@ export const annotationThreadKeysField = StateField.define<Set<string>>({
 
 // --- Thread indicator ---
 
+function supportsThread(type: string): boolean {
+  return type !== "mark";
+}
+
 function createThreadIndicator(ann: Annotation): HTMLSpanElement {
   const indicator = document.createElement("span");
   indicator.className = "cm-annotation-thread-indicator";
@@ -141,6 +145,8 @@ function dispatchEditEvent(ann: Annotation): void {
 function buildMinimalMarkPill(ann: Annotation): HTMLSpanElement {
   const pill = document.createElement("span");
   pill.className = "cm-annotation-pill cm-annotation-pill-minimal";
+  const cert = certaintyClass(ann.certainty);
+  if (cert) pill.classList.add(cert);
   pill.dataset.annotationType = ann.annotation_type;
   pill.dataset.mark = ann.mark ?? "";
 
@@ -204,7 +210,7 @@ export class PillWidget extends WidgetType {
     };
     const fireBtn = createFireButton(this.annotation, this.isFiring, this.llmLocked);
     if (fireBtn) pill.appendChild(fireBtn);
-    if (this.hasThread && this.annotation.annotation_type !== "mark") {
+    if (this.hasThread && supportsThread(this.annotation.annotation_type)) {
       pill.appendChild(createThreadIndicator(this.annotation));
     }
     return pill;
@@ -248,10 +254,14 @@ export class MarkerWidget extends WidgetType {
     const cert = certaintyClass(ann.certainty);
     if (cert) sup.classList.add(cert);
     sup.dataset.annotationType = ann.annotation_type;
-    sup.textContent = (TYPE_ICON[ann.annotation_type] ?? "…") + certaintyMark(ann.certainty);
+    sup.textContent =
+      (ann.annotation_type === "mark"
+        ? getMarkIcon(ann.mark ?? "")
+        : (TYPE_ICON[ann.annotation_type] ?? "…")) + certaintyMark(ann.certainty);
 
     const fireBtn = createFireButton(ann, this.isFiring, this.llmLocked);
-    if (!fireBtn && !this.hasThread) {
+    const showThread = this.hasThread && supportsThread(ann.annotation_type);
+    if (!fireBtn && !showThread) {
       sup.onmouseenter = (e) => handleAnnotationHover(view, ann, { altKey: e.altKey });
       sup.onmouseleave = () => handleAnnotationLeave(view);
       sup.onclick = (e) => {
@@ -271,7 +281,7 @@ export class MarkerWidget extends WidgetType {
     wrap.className = "cm-annotation-marker-wrap";
     wrap.appendChild(sup);
     if (fireBtn) wrap.appendChild(fireBtn);
-    if (this.hasThread) wrap.appendChild(createThreadIndicator(ann));
+    if (showThread) wrap.appendChild(createThreadIndicator(ann));
 
     wrap.onmouseenter = (e) => handleAnnotationHover(view, ann, { altKey: e.altKey });
     wrap.onmouseleave = () => handleAnnotationLeave(view);
@@ -294,6 +304,7 @@ export class MarkerWidget extends WidgetType {
       this.annotation.original === other.annotation.original &&
       this.annotation.char_start === other.annotation.char_start &&
       this.annotation.char_end === other.annotation.char_end &&
+      this.annotation.mark === other.annotation.mark &&
       this.isFiring === other.isFiring &&
       this.llmLocked === other.llmLocked &&
       this.hasThread === other.hasThread
@@ -387,7 +398,10 @@ export class CalloutWidget extends WidgetType {
 
     const icon = document.createElement("span");
     icon.className = "cm-annotation-pill-icon";
-    icon.textContent = TYPE_ICON[ann.annotation_type] ?? "…";
+    icon.textContent =
+      ann.annotation_type === "mark"
+        ? getMarkIcon(ann.mark ?? "")
+        : (TYPE_ICON[ann.annotation_type] ?? "…");
     header.appendChild(icon);
 
     const label = document.createElement("span");
@@ -404,7 +418,7 @@ export class CalloutWidget extends WidgetType {
 
     const fireBtn = createFireButton(ann, this.isFiring, this.llmLocked);
     if (fireBtn) header.appendChild(fireBtn);
-    if (this.hasThread) header.appendChild(createThreadIndicator(ann));
+    if (this.hasThread && supportsThread(ann.annotation_type)) header.appendChild(createThreadIndicator(ann));
 
     const arrow = document.createElement("span");
     arrow.className = "cm-annotation-fold-icon";
@@ -433,6 +447,7 @@ export class CalloutWidget extends WidgetType {
       this.annotation.original === other.annotation.original &&
       this.annotation.char_start === other.annotation.char_start &&
       this.annotation.char_end === other.annotation.char_end &&
+      this.annotation.mark === other.annotation.mark &&
       this.isCollapsed === other.isCollapsed &&
       this.isFiring === other.isFiring &&
       this.llmLocked === other.llmLocked &&

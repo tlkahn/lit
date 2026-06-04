@@ -1,6 +1,6 @@
 import { type Extension, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view";
-import { resolveAnnotationScope, type Annotation } from "../../lib/ipc";
+import { resolveMarkScopes, type ScopeRange } from "../../lib/ipc";
 import { usePreferencesStore } from "../../stores/preferences";
 import { annotationDataField, setAnnotationData } from "./annotationState";
 
@@ -27,7 +27,7 @@ export const markDecorationField = StateField.define<DecorationSet>({
         const ranges = e.value
           .filter((r) => r.from < r.to)
           .sort((a, b) => a.from - b.from || a.to - b.to)
-          .map((r) => Decoration.mark({ class: `cm-mark-${r.code}` }).range(r.from, r.to));
+          .map((r) => Decoration.mark({ class: `cm-mark cm-mark-${r.code}` }).range(r.from, r.to));
         if (ranges.length === 0) return Decoration.none;
         return Decoration.set(ranges, true);
       }
@@ -41,10 +41,10 @@ export const markDecorationField = StateField.define<DecorationSet>({
 const DEBOUNCE_MS = 150;
 
 /**
- * Watches `annotationDataField` for mark-type annotations, resolves each scope
- * via the `resolveAnnotationScope` IPC, and dispatches `setMarkDecorations`.
- * Stale async results are discarded via a per-view generation counter, mirroring
- * the pattern in `annotationHover.ts`.
+ * Watches `annotationDataField` for mark-type annotations, resolves all their
+ * scopes in a single batched `resolveMarkScopes` IPC call, and dispatches
+ * `setMarkDecorations`. Stale async results are discarded via a per-view
+ * generation counter, mirroring the pattern in `annotationHover.ts`.
  */
 const markScopePlugin = ViewPlugin.fromClass(
   class {
@@ -88,26 +88,29 @@ const markScopePlugin = ViewPlugin.fromClass(
         return;
       }
 
-      const resolved = await Promise.all(
-        marks.map((ann) => this.resolveOne(content, ann)),
-      );
+      const lang = usePreferencesStore.getState().annotationDefaultLang;
+      const requests = marks.map((ann) => ({
+        charStart: ann.char_start,
+        scope: ann.scope,
+      }));
+
+      let results: Array<ScopeRange | null>;
+      try {
+        results = await resolveMarkScopes(content, requests, lang);
+      } catch {
+        return;
+      }
 
       if (this.generation !== generation) return;
       if (this.view.state.doc.toString() !== content) return;
 
-      const ranges = resolved.filter((r): r is MarkRange => r !== null);
+      const ranges = marks.flatMap((ann, i) => {
+        const range = results[i];
+        return range && range.start < range.end
+          ? [{ from: range.start, to: range.end, code: ann.mark! }]
+          : [];
+      });
       this.view.dispatch({ effects: setMarkDecorations.of(ranges) });
-    }
-
-    private async resolveOne(content: string, ann: Annotation): Promise<MarkRange | null> {
-      const lang = usePreferencesStore.getState().annotationDefaultLang;
-      try {
-        const range = await resolveAnnotationScope(content, ann.char_start, ann.scope, lang);
-        if (!range || range.start >= range.end) return null;
-        return { from: range.start, to: range.end, code: ann.mark! };
-      } catch {
-        return null;
-      }
     }
 
     destroy() {

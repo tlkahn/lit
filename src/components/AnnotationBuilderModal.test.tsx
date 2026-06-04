@@ -266,6 +266,49 @@ describe("AnnotationBuilderModal", () => {
       fireEvent.click(screen.getByTestId("annotation-insert-btn"));
       expect(onInsert).toHaveBeenCalledWith("<!--- n | edited --->");
     });
+
+    it("preserves mark code on update", () => {
+      render(
+        <AnnotationBuilderModal
+          onClose={onClose}
+          onInsert={onInsert}
+          mode="edit"
+          initialFields={{ mark: "sic", body: "editor's note" }}
+        />,
+      );
+      fireEvent.click(screen.getByTestId("annotation-insert-btn"));
+      const inserted = onInsert.mock.calls[0]?.[0] as string;
+      expect(inserted).toMatch(/sic/);
+      expect(onInsert).toHaveBeenCalledWith("<!--- sic | editor's note --->");
+    });
+
+    it("shows read-only mark badge instead of type select when mark is set", () => {
+      render(
+        <AnnotationBuilderModal
+          onClose={onClose}
+          onInsert={onInsert}
+          mode="edit"
+          initialFields={{ mark: "sic" }}
+        />,
+      );
+      expect(screen.queryByTestId("annotation-type-select")).not.toBeInTheDocument();
+      const badge = screen.getByTestId("annotation-mark-badge");
+      expect(badge).toBeInTheDocument();
+      expect(badge.textContent).toContain("sic");
+    });
+
+    it("still renders type select when no mark", () => {
+      render(
+        <AnnotationBuilderModal
+          onClose={onClose}
+          onInsert={onInsert}
+          mode="edit"
+          initialFields={{ type: "note" }}
+        />,
+      );
+      expect(screen.getByTestId("annotation-type-select")).toBeInTheDocument();
+      expect(screen.queryByTestId("annotation-mark-badge")).not.toBeInTheDocument();
+    });
   });
 
   describe("Edit Raw button", () => {

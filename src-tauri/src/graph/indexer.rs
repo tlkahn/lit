@@ -263,6 +263,13 @@ pub fn index_workspace_with_progress(
     let mut known_stubs: HashSet<String> = HashSet::new();
     let node_count = all_nodes.len();
 
+    // Workspace-merged mark codes, computed once (reads `.lit/marks.toml`).
+    let mark_codes = if annotations_enabled {
+        crate::annotation::marks::sorted_mark_codes(&crate::annotation::marks::merged_config(root))
+    } else {
+        Vec::new()
+    };
+
     for (i, node) in all_nodes.iter().enumerate() {
         let mtime = file_mtimes.get(&node.id).copied().unwrap_or(0);
         store.upsert_node(node, mtime)?;
@@ -272,7 +279,7 @@ pub fn index_workspace_with_progress(
         {
             let anns = if annotations_enabled {
                 bodies.get(&node.id)
-                    .map(|b| super::extract::extract_annotations(b))
+                    .map(|b| super::extract::extract_annotations(b, &mark_codes))
                     .unwrap_or_default()
             } else {
                 vec![]
@@ -450,6 +457,13 @@ pub fn incremental_reindex(
     let mut stubs_created = 0;
     let mut removed_annotation_uuids: Vec<(String, String)> = Vec::new();
 
+    // Workspace-merged mark codes, computed once (reads `.lit/marks.toml`).
+    let mark_codes = if annotations_enabled {
+        crate::annotation::marks::sorted_mark_codes(&crate::annotation::marks::merged_config(root))
+    } else {
+        Vec::new()
+    };
+
     // Collect stems that changed (for re-resolution of other files)
     let mut changed_stems: Vec<String> = Vec::new();
 
@@ -499,7 +513,7 @@ pub fn incremental_reindex(
                 // Always call upsert even with empty vec so orphaned annotations get cleaned up.
                 {
                     let anns = if annotations_enabled {
-                        super::extract::extract_annotations(&body)
+                        super::extract::extract_annotations(&body, &mark_codes)
                     } else {
                         vec![]
                     };
@@ -1329,6 +1343,38 @@ mod tests {
             fs::create_dir_all(parent).unwrap();
         }
         fs::write(abs, content).unwrap();
+    }
+
+    // --- custom workspace mark codes (end-to-end) ---
+
+    #[test]
+    fn build_recognizes_custom_workspace_mark_code() {
+        let dir = create_workspace();
+        fs::create_dir_all(dir.path().join(".lit")).unwrap();
+        fs::write(
+            dir.path().join(".lit").join("marks.toml"),
+            "[zz]\nlabel = \"custom mark\"\n",
+        )
+        .unwrap();
+        write_md(dir.path(), "a.md", "text<!--- zz _ ---> rest");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let results = gi.list_annotations(Some("a.md"), None, 100).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].annotation_type, "mark",
+            "custom code from .lit/marks.toml must be indexed as a mark"
+        );
+    }
+
+    #[test]
+    fn build_without_custom_marks_falls_back_to_bare() {
+        // Same document, but no `.lit/marks.toml` defining `zz`.
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "text<!--- zz _ ---> rest");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let results = gi.list_annotations(Some("a.md"), None, 100).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].annotation_type, "bare");
     }
 
     // --- get_first_paragraphs ---

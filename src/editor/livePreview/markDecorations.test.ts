@@ -6,11 +6,11 @@ import { usePreferencesStore } from "../../stores/preferences";
 
 vi.mock("../../lib/ipc", () => ({
   parseAnnotations: vi.fn(async () => []),
-  resolveAnnotationScope: vi.fn(),
+  resolveMarkScopes: vi.fn(),
   listAnnotations: vi.fn(async () => []),
 }));
 
-import { resolveAnnotationScope } from "../../lib/ipc";
+import { resolveMarkScopes } from "../../lib/ipc";
 import {
   setMarkDecorations,
   markDecorationField,
@@ -18,7 +18,7 @@ import {
 } from "./markDecorations";
 import { setAnnotationData, annotationDataField } from "./annotationState";
 
-const mockResolve = resolveAnnotationScope as ReturnType<typeof vi.fn>;
+const mockResolve = resolveMarkScopes as ReturnType<typeof vi.fn>;
 
 function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
   return {
@@ -94,6 +94,35 @@ describe("markDecorationField", () => {
     });
     view.dispatch({ effects: setMarkDecorations.of([{ from: 0, to: 5, code: "nb" }]) });
     expect(parent.querySelector(".cm-mark-nb")).not.toBeNull();
+    view.destroy();
+  });
+
+  it("renders the shared cm-mark base class alongside the code class on the same element", () => {
+    const parent = document.createElement("div");
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: "hello world",
+        extensions: [markDecorationExtension()],
+      }),
+      parent,
+    });
+    view.dispatch({ effects: setMarkDecorations.of([{ from: 0, to: 5, code: "nb" }]) });
+    expect(parent.querySelector(".cm-mark")).not.toBeNull();
+    expect(parent.querySelector(".cm-mark.cm-mark-nb")).not.toBeNull();
+    view.destroy();
+  });
+
+  it("gives custom/unknown codes the shared cm-mark base class too", () => {
+    const parent = document.createElement("div");
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: "hello world",
+        extensions: [markDecorationExtension()],
+      }),
+      parent,
+    });
+    view.dispatch({ effects: setMarkDecorations.of([{ from: 0, to: 5, code: "zzz" }]) });
+    expect(parent.querySelector(".cm-mark.cm-mark-zzz")).not.toBeNull();
     view.destroy();
   });
 
@@ -185,7 +214,7 @@ describe("markScopePlugin", () => {
 
   it("resolves a mark annotation into a cm-mark decoration and calls IPC with lang", async () => {
     usePreferencesStore.setState({ annotationDefaultLang: "zh" });
-    mockResolve.mockResolvedValue({ start: 0, end: 4 });
+    mockResolve.mockResolvedValue([{ start: 0, end: 4 }]);
     const { view } = mountView("word rest");
 
     view.dispatch({ effects: setAnnotationData.of([makeAnnotation({ char_start: 4 })]) });
@@ -193,8 +222,7 @@ describe("markScopePlugin", () => {
 
     expect(mockResolve).toHaveBeenCalledWith(
       "word rest",
-      4,
-      { kind: "words", value: 1 },
+      [{ charStart: 4, scope: { kind: "words", value: 1 } }],
       "zh",
     );
     expect(ranges(view.state.field(markDecorationField))).toEqual([[0, 4]]);
@@ -202,7 +230,7 @@ describe("markScopePlugin", () => {
   });
 
   it("ignores non-mark annotations", async () => {
-    mockResolve.mockResolvedValue({ start: 0, end: 4 });
+    mockResolve.mockResolvedValue([{ start: 0, end: 4 }]);
     const { view } = mountView("word rest");
 
     view.dispatch({
@@ -218,7 +246,7 @@ describe("markScopePlugin", () => {
   });
 
   it("skips annotations whose scope resolves to null", async () => {
-    mockResolve.mockResolvedValue(null);
+    mockResolve.mockResolvedValue([null]);
     const { view } = mountView("word rest");
 
     view.dispatch({ effects: setAnnotationData.of([makeAnnotation()]) });
@@ -229,14 +257,14 @@ describe("markScopePlugin", () => {
   });
 
   it("discards stale async results when annotation data changes again", async () => {
-    let resolveFirst: (v: { start: number; end: number } | null) => void;
+    let resolveFirst: (v: Array<{ start: number; end: number } | null>) => void;
     mockResolve
       .mockReturnValueOnce(
         new Promise((res) => {
           resolveFirst = res;
         }),
       )
-      .mockResolvedValueOnce({ start: 0, end: 4 });
+      .mockResolvedValueOnce([{ start: 0, end: 4 }]);
 
     const { view } = mountView("word rest");
 
@@ -250,7 +278,7 @@ describe("markScopePlugin", () => {
     await vi.runAllTimersAsync();
 
     // Now let the stale first promise settle late.
-    resolveFirst!({ start: 5, end: 9 });
+    resolveFirst!([{ start: 5, end: 9 }]);
     await Promise.resolve();
     await Promise.resolve();
 
@@ -273,7 +301,7 @@ describe("markScopePlugin", () => {
   });
 
   it("markDecorationExtension renders .cm-mark-nb in the DOM after resolution", async () => {
-    mockResolve.mockResolvedValue({ start: 0, end: 4 });
+    mockResolve.mockResolvedValue([{ start: 0, end: 4 }]);
     const { view, parent } = mountView("word rest");
 
     view.dispatch({ effects: setAnnotationData.of([makeAnnotation()]) });

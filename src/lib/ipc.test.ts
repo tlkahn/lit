@@ -62,6 +62,7 @@ import {
   parseAnnotations,
   resolveAnnotationScope,
   resolveAnnotationScopeWithMode,
+  resolveMarkScopes,
   getMarkConfig,
   searchAnnotations,
   listAnnotations,
@@ -300,6 +301,13 @@ describe("ipc", () => {
           const a = args as Record<string, unknown> | undefined;
           if ((a?.charStart as number) === 0) return null;
           return { start: 2, end: 15 };
+        }
+        case "resolve_mark_scopes": {
+          const a = args as Record<string, unknown> | undefined;
+          const marks = (a?.marks as Array<{ char_start: number }>) ?? [];
+          return marks.map((m) =>
+            m.char_start === 0 ? null : { start: 6, end: 11 },
+          );
         }
         case "get_mark_config":
           return {
@@ -1227,6 +1235,33 @@ describe("ipc", () => {
       "en",
     );
     expect(result).toBeNull();
+  });
+
+  it("resolveMarkScopes batches marks and maps charStart to snake_case", async () => {
+    const result = await resolveMarkScopes(
+      "hello world <!--- n: _ | note --->",
+      [{ charStart: 12, scope: { kind: "words", value: 1 } }],
+      "en",
+    );
+    expect(result).toEqual([{ start: 6, end: 11 }]);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("resolve_mark_scopes", {
+      content: "hello world <!--- n: _ | note --->",
+      marks: [{ char_start: 12, scope: { kind: "words", value: 1 } }],
+      lang: "en",
+    });
+  });
+
+  it("resolveMarkScopes preserves null elements index-aligned with marks", async () => {
+    const result = await resolveMarkScopes(
+      "<!--- n: _ | note --->",
+      [
+        { charStart: 0, scope: { kind: "words", value: 1 } },
+        { charStart: 12, scope: { kind: "words", value: 1 } },
+      ],
+      "en",
+    );
+    expect(result).toEqual([null, { start: 6, end: 11 }]);
   });
 
   it("resolveAnnotationScopeWithMode calls IPC with mode arg", async () => {

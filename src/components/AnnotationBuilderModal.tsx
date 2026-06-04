@@ -81,6 +81,7 @@ export function AnnotationBuilderModal({
     if (mode !== "edit") return new Date().toISOString().slice(0, 10);
     return "";
   });
+  const [mark] = useState<string | undefined>(initialFields?.mark);
 
   const scope: Scope | null = useMemo(() => {
     if (scopeKind === "none") return null;
@@ -96,13 +97,14 @@ export function AnnotationBuilderModal({
   const fields: AnnotationFields = useMemo(
     () => ({
       id: id || null,
-      type: type === "bare" ? null : type,
+      type: mark ? null : type === "bare" ? null : type,
+      mark,
       certainty,
       scope,
       body,
       date: date || null,
     }),
-    [id, type, certainty, scope, body, date],
+    [id, type, mark, certainty, scope, body, date],
   );
 
   const preview = useMemo(() => generateDsl(fields), [fields]);
@@ -141,20 +143,29 @@ export function AnnotationBuilderModal({
         <div className="mb-4 grid grid-cols-2 gap-3">
           <label className="flex flex-col gap-1">
             <span className="text-xs text-text-muted">Type</span>
-            <select
-              data-testid="annotation-type-select"
-              value={type ?? ""}
-              onChange={(e) => setType((e.target.value || null) as AnnotationType | null)}
-            >
-              <option value="">Bare</option>
-              <option value="note">Note (n)</option>
-              <option value="question">Question (q)</option>
-              <option value="todo">Todo</option>
-              <option value="crossref">CrossRef (cf)</option>
-              <option value="apparatus">Apparatus (app)</option>
-              <option value="translation">Translation (tr)</option>
-              <option value="llm">LLM (⚡)</option>
-            </select>
+            {mark ? (
+              <span
+                className="rounded bg-bg-secondary px-2 py-1 text-sm text-text-normal"
+                data-testid="annotation-mark-badge"
+              >
+                {mark}
+              </span>
+            ) : (
+              <select
+                data-testid="annotation-type-select"
+                value={type ?? ""}
+                onChange={(e) => setType((e.target.value || null) as AnnotationType | null)}
+              >
+                <option value="">Bare</option>
+                <option value="note">Note (n)</option>
+                <option value="question">Question (q)</option>
+                <option value="todo">Todo</option>
+                <option value="crossref">CrossRef (cf)</option>
+                <option value="apparatus">Apparatus (app)</option>
+                <option value="translation">Translation (tr)</option>
+                <option value="llm">LLM (⚡)</option>
+              </select>
+            )}
           </label>
 
           <label className="flex flex-col gap-1">

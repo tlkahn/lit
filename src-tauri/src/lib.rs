@@ -341,6 +341,7 @@ pub fn run() {
             commands::annotation::parse_annotations,
             commands::annotation::resolve_annotation_scope,
             commands::annotation::resolve_annotation_scope_with_mode,
+            commands::annotation::resolve_mark_scopes,
             commands::annotation::search_annotations,
             commands::annotation::list_annotations,
             commands::annotation::annotation_find_uuid,

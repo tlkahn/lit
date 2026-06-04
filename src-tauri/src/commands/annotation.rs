@@ -1,14 +1,21 @@
+use serde::Deserialize;
 use std::sync::Arc;
 use tauri::State;
 
-use crate::annotation::marks::{merged_config, MarkConfig};
+use crate::annotation::marks::{merged_config, sorted_mark_codes, MarkConfig};
 use crate::annotation::parser::parse_annotations as do_parse;
 use crate::annotation::scope_resolver::{resolve_scope_range, resolve_scope_range_with_mode};
 use crate::annotation::types::{Annotation, ResolutionMode, Scope, ScopeRange};
 
 #[tauri::command]
-pub fn parse_annotations(content: String) -> Vec<Annotation> {
-    do_parse(&content)
+pub fn parse_annotations(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    content: String,
+) -> Result<Vec<Annotation>, String> {
+    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+    let codes = sorted_mark_codes(&merged_config(&root));
+    Ok(do_parse(&content, &codes))
 }
 
 #[tauri::command]
@@ -31,6 +38,27 @@ pub fn resolve_annotation_scope_with_mode(
 ) -> Option<ScopeRange> {
     let mode = mode.unwrap_or_default();
     resolve_scope_range_with_mode(&content, char_start, &scope, &lang, &mode)
+}
+
+/// One mark's scope-resolution request: where the mark sits and the scope it spans.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MarkScopeRequest {
+    pub char_start: usize,
+    pub scope: Scope,
+}
+
+/// Batched scope resolution: resolves every mark in `marks` in a single IPC call,
+/// returning results index-aligned with the input (`None` for unresolvable marks).
+#[tauri::command]
+pub fn resolve_mark_scopes(
+    content: String,
+    marks: Vec<MarkScopeRequest>,
+    lang: String,
+) -> Vec<Option<ScopeRange>> {
+    marks
+        .iter()
+        .map(|m| resolve_scope_range(&content, m.char_start, &m.scope, &lang))
+        .collect()
 }
 
 #[tauri::command]
@@ -131,16 +159,22 @@ mod tests {
     use crate::annotation::types::{AnnotationType, ResolutionMode};
     use crate::graph::indexer::GraphIndex;
 
+    // The `parse_annotations` command itself takes a `tauri::Window` + `State`,
+    // which are impractical to construct in a unit test (same constraint as the
+    // graph + `get_mark_config` commands). These tests exercise the command's
+    // underlying parse logic via the builtin wrapper.
+    use crate::annotation::parser::parse_annotations_builtin;
+
     #[test]
     fn cmd_parse_annotations_compact() {
-        let result = parse_annotations("<!--- n: | note --->".to_string());
+        let result = parse_annotations_builtin("<!--- n: | note --->");
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].annotation_type, AnnotationType::Note);
     }
 
     #[test]
     fn cmd_parse_annotations_empty() {
-        let result = parse_annotations(String::new());
+        let result = parse_annotations_builtin("");
         assert!(result.is_empty());
     }
 
@@ -167,6 +201,43 @@ mod tests {
             "en".to_string(),
         );
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn cmd_resolve_mark_scopes_batches() {
+        let content = "hello world <!--- n: _ | note --->".to_string();
+        let marks = vec![MarkScopeRequest {
+            char_start: 12,
+            scope: Scope::Words(1),
+        }];
+        let result = resolve_mark_scopes(content, marks, "en".to_string());
+        assert_eq!(result, vec![Some(ScopeRange { start: 6, end: 11 })]);
+    }
+
+    #[test]
+    fn cmd_resolve_mark_scopes_preserves_none_and_order() {
+        let content = "hello world <!--- n: _ | note --->".to_string();
+        let marks = vec![
+            MarkScopeRequest {
+                char_start: 0,
+                scope: Scope::Words(1),
+            },
+            MarkScopeRequest {
+                char_start: 12,
+                scope: Scope::Words(1),
+            },
+        ];
+        let result = resolve_mark_scopes(content, marks, "en".to_string());
+        assert_eq!(
+            result,
+            vec![None, Some(ScopeRange { start: 6, end: 11 })]
+        );
+    }
+
+    #[test]
+    fn cmd_resolve_mark_scopes_empty() {
+        let result = resolve_mark_scopes("anything".to_string(), vec![], "en".to_string());
+        assert!(result.is_empty());
     }
 
     #[test]
@@ -296,8 +367,8 @@ mod tests {
     fn cmd_migrate_parses_identically() {
         let old = "%%! n: _ | a note %%";
         let migrated = migrate_annotations(old.to_string());
-        let old_anns = parse_annotations(old.to_string());
-        let new_anns = parse_annotations(migrated);
+        let old_anns = parse_annotations_builtin(old);
+        let new_anns = parse_annotations_builtin(&migrated);
         assert_eq!(old_anns.len(), new_anns.len());
         assert_eq!(old_anns[0].annotation_type, new_anns[0].annotation_type);
         assert_eq!(old_anns[0].body, new_anns[0].body);

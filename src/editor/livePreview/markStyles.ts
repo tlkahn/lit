@@ -6,6 +6,14 @@ import type { MarkConfig } from "../../lib/ipc";
 // user customizes via .lit/marks.toml.
 const STYLE_ID = "lit-mark-styles";
 
+// Allowlists that reject malformed `.lit/marks.toml` config so it cannot inject
+// arbitrary CSS. The property name must be a plain CSS identifier (letters and
+// hyphens); the value may contain spaces, parentheses, #, commas, colons, etc.
+// but must NOT contain the metacharacters that could close the declaration /
+// block or break out of a value: `{`, `}`, `;`, `"`.
+const CSS_PROP_RE = /^[a-z-]+$/i;
+const CSS_VALUE_RE = /^[^{};"]+$/;
+
 // Escape a string for use inside a CSS `content: "…"` value: backslashes,
 // double-quotes, and newlines would otherwise break out of (or invalidate) the
 // declaration.
@@ -25,25 +33,34 @@ export function buildMarkStylesCss(config: MarkConfig): string {
 
   for (const [code, def] of Object.entries(config)) {
     const styleEntries = def.style ? Object.entries(def.style) : [];
-    const hasStyle = styleEntries.length > 0;
+    // Drop any entry whose property name or value fails the allowlist so
+    // malformed config can't inject CSS.
+    const validStyleEntries = styleEntries.filter(
+      ([prop, value]) => CSS_PROP_RE.test(prop) && CSS_VALUE_RE.test(value),
+    );
+    const hasStyle = validStyleEntries.length > 0;
     const hasBefore = def.before != null;
     const hasAfter = def.after != null;
     if (!hasStyle && !hasBefore && !hasAfter) continue;
 
+    // Escape the user-supplied code so CSS metacharacters can't break the
+    // selector or inject extra rules.
+    const safeCode = CSS.escape(code);
+
     if (hasStyle) {
-      const decls = styleEntries
+      const decls = validStyleEntries
         .map(([prop, value]) => `  ${prop}: ${value};`)
         .join("\n");
-      blocks.push(`.cm-mark-${code} {\n${decls}\n}`);
+      blocks.push(`.cm-mark-${safeCode} {\n${decls}\n}`);
     }
     if (hasBefore) {
       blocks.push(
-        `.cm-mark-${code}::before {\n  content: "${cssEscapeContent(def.before!)}";\n}`,
+        `.cm-mark-${safeCode}::before {\n  content: "${cssEscapeContent(def.before!)}";\n}`,
       );
     }
     if (hasAfter) {
       blocks.push(
-        `.cm-mark-${code}::after {\n  content: "${cssEscapeContent(def.after!)}";\n}`,
+        `.cm-mark-${safeCode}::after {\n  content: "${cssEscapeContent(def.after!)}";\n}`,
       );
     }
   }
