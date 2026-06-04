@@ -1,6 +1,7 @@
 import type { AnnotationType, Certainty } from "./ipc";
 
-export type BuilderScopeKind = "none" | "words" | "sentence" | "paragraph" | "page" | "anchor" | "document" | "section";
+export const BUILDER_SCOPE_KINDS = ["none", "words", "sentence", "paragraph", "page", "anchor", "document", "section"] as const;
+export type BuilderScopeKind = (typeof BUILDER_SCOPE_KINDS)[number];
 
 export interface AnnotationBuilderDefaults {
   type: AnnotationType | null;
@@ -13,7 +14,7 @@ export interface AnnotationBuilderDefaults {
 
 const VALID_TYPES = new Set<string>(["note", "question", "todo", "crossref", "apparatus", "translation", "llm", "bare"]);
 const VALID_CERTAINTIES = new Set<string>(["tentative", "firm", "neutral"]);
-const VALID_SCOPE_KINDS = new Set<string>(["none", "words", "sentence", "paragraph", "page", "anchor", "document", "section"]);
+const VALID_SCOPE_KINDS: ReadonlySet<string> = new Set(BUILDER_SCOPE_KINDS);
 
 export function isValidBuilderDefaults(v: unknown): v is AnnotationBuilderDefaults {
   if (v == null || typeof v !== "object") return false;
@@ -21,8 +22,8 @@ export function isValidBuilderDefaults(v: unknown): v is AnnotationBuilderDefaul
   if (obj.type !== null && (typeof obj.type !== "string" || !VALID_TYPES.has(obj.type))) return false;
   if (typeof obj.certainty !== "string" || !VALID_CERTAINTIES.has(obj.certainty)) return false;
   if (typeof obj.scopeKind !== "string" || !VALID_SCOPE_KINDS.has(obj.scopeKind)) return false;
-  if (typeof obj.scopeCount !== "number") return false;
+  if (typeof obj.scopeCount !== "number" || obj.scopeCount < 1 || !Number.isFinite(obj.scopeCount)) return false;
   if (typeof obj.asymmetric !== "boolean") return false;
-  if (typeof obj.scopeAfter !== "number") return false;
+  if (typeof obj.scopeAfter !== "number" || obj.scopeAfter < 1 || !Number.isFinite(obj.scopeAfter)) return false;
   return true;
 }

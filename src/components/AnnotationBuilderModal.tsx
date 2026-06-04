@@ -4,7 +4,7 @@ import { renderMarkdown } from "../lib/renderMarkdown";
 import type { AnnotationType, Certainty, Scope, ScopeKind as IpcScopeKind } from "../lib/ipc";
 import { setPreference } from "../lib/ipc";
 import { usePreferencesStore } from "../stores/preferences";
-import type { AnnotationBuilderDefaults } from "../lib/annotationBuilderDefaults";
+import type { AnnotationBuilderDefaults, BuilderScopeKind } from "../lib/annotationBuilderDefaults";
 
 interface AnnotationBuilderModalProps {
   onClose: () => void;
@@ -16,17 +16,15 @@ interface AnnotationBuilderModalProps {
   selectedText?: string;
 }
 
-type ScopeKind = "none" | "words" | "sentence" | "paragraph" | "page" | "anchor" | "document" | "section";
-
-const UNIT_SCOPE_KINDS: ScopeKind[] = ["words", "sentence", "paragraph", "page"];
+const UNIT_SCOPE_KINDS: BuilderScopeKind[] = ["words", "sentence", "paragraph", "page"];
 
 /** Map ipc ScopeKind ("word") to UI ScopeKind ("words") */
-function ipcUnitToScopeKind(unit: IpcScopeKind): ScopeKind {
+function ipcUnitToScopeKind(unit: IpcScopeKind): BuilderScopeKind {
   return unit === "word" ? "words" : unit;
 }
 
 /** Map UI ScopeKind ("words") to ipc ScopeKind ("word") */
-function scopeKindToIpcUnit(kind: ScopeKind): IpcScopeKind {
+function scopeKindToIpcUnit(kind: BuilderScopeKind): IpcScopeKind {
   return kind === "words" ? "word" : kind as IpcScopeKind;
 }
 
@@ -54,7 +52,7 @@ export function AnnotationBuilderModal({
     return "note";
   });
   const [certainty, setCertainty] = useState<Certainty>(initialFields?.certainty ?? defaults?.certainty ?? "neutral");
-  const [scopeKind, setScopeKind] = useState<ScopeKind>(() => {
+  const [scopeKind, setScopeKind] = useState<BuilderScopeKind>(() => {
     if (initialFields?.scope) {
       if (initialFields.scope.kind === "asymmetric") {
         return ipcUnitToScopeKind(initialFields.scope.value.unit);
@@ -124,10 +122,20 @@ export function AnnotationBuilderModal({
   const renderedBody = useMemo(() => renderMarkdown(body), [body]);
 
   const handleInsert = useCallback(() => {
-    const snapshot: AnnotationBuilderDefaults = { type, certainty, scopeKind, scopeCount, asymmetric, scopeAfter };
-    setPreference("annotations.builderDefaults", snapshot).catch(() => {});
+    if (mode !== "edit" && prefillEnabled) {
+      const snapshot: AnnotationBuilderDefaults = {
+        type, certainty,
+        scopeKind: scopeKind === "anchor" ? "none" : scopeKind,
+        scopeCount, asymmetric, scopeAfter,
+      };
+      const prev = usePreferencesStore.getState().annotationBuilderDefaults;
+      usePreferencesStore.setState({ annotationBuilderDefaults: snapshot });
+      setPreference("annotations.builderDefaults", snapshot).catch(() => {
+        usePreferencesStore.setState({ annotationBuilderDefaults: prev });
+      });
+    }
     onInsert(preview);
-  }, [type, certainty, scopeKind, scopeCount, asymmetric, scopeAfter, onInsert, preview]);
+  }, [mode, prefillEnabled, type, certainty, scopeKind, scopeCount, asymmetric, scopeAfter, onInsert, preview]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -192,7 +200,7 @@ export function AnnotationBuilderModal({
             <select
               data-testid="annotation-scope-select"
               value={scopeKind}
-              onChange={(e) => setScopeKind(e.target.value as ScopeKind)}
+              onChange={(e) => setScopeKind(e.target.value as BuilderScopeKind)}
             >
               <option value="none">Default (sentence)</option>
               <option value="words">Words</option>

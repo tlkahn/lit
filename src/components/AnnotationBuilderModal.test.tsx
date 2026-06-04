@@ -667,6 +667,7 @@ describe("AnnotationBuilderModal", () => {
         throw new Error(`Unknown command: ${cmd}`);
       });
 
+      enablePrefill();
       render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
       fireEvent.change(screen.getByTestId("annotation-type-select"), { target: { value: "question" } });
       fireEvent.change(screen.getByTestId("annotation-certainty-select"), { target: { value: "firm" } });
@@ -690,11 +691,96 @@ describe("AnnotationBuilderModal", () => {
         throw new Error(`Unknown command: ${cmd}`);
       });
 
+      enablePrefill();
       render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
       fireEvent.click(screen.getByTestId("annotation-cancel-btn"));
 
       expect(onClose).toHaveBeenCalled();
       expect(setCalled).toBe(false);
+    });
+
+    it("does NOT save snapshot in edit mode", () => {
+      let setCalled = false;
+      mockInvoke((cmd) => {
+        if (cmd === "set_preference") {
+          setCalled = true;
+          return undefined;
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      enablePrefill();
+      render(
+        <AnnotationBuilderModal
+          onClose={onClose}
+          onInsert={onInsert}
+          mode="edit"
+          initialFields={{ type: "note", certainty: "neutral" }}
+        />,
+      );
+      fireEvent.click(screen.getByTestId("annotation-insert-btn"));
+
+      expect(onInsert).toHaveBeenCalled();
+      expect(setCalled).toBe(false);
+    });
+
+    it("does NOT save snapshot when prefill toggle is off", () => {
+      let setCalled = false;
+      mockInvoke((cmd) => {
+        if (cmd === "set_preference") {
+          setCalled = true;
+          return undefined;
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      disablePrefill();
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      fireEvent.click(screen.getByTestId("annotation-insert-btn"));
+
+      expect(onInsert).toHaveBeenCalled();
+      expect(setCalled).toBe(false);
+    });
+
+    it("normalizes anchor scopeKind to none in snapshot", () => {
+      let capturedArgs: Record<string, unknown> | undefined;
+      mockInvoke((cmd, args) => {
+        if (cmd === "set_preference") {
+          capturedArgs = args;
+          return undefined;
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      enablePrefill();
+      render(
+        <AnnotationBuilderModal
+          onClose={onClose}
+          onInsert={onInsert}
+          selectedText="hello world"
+        />,
+      );
+      fireEvent.click(screen.getByTestId("annotation-insert-btn"));
+
+      expect(capturedArgs).toBeDefined();
+      const snapshot = capturedArgs!.value as AnnotationBuilderDefaults;
+      expect(snapshot.scopeKind).toBe("none");
+    });
+
+    it("optimistically updates store on insert", () => {
+      mockInvoke((cmd) => {
+        if (cmd === "set_preference") return undefined;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      enablePrefill();
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      fireEvent.change(screen.getByTestId("annotation-type-select"), { target: { value: "todo" } });
+      fireEvent.click(screen.getByTestId("annotation-insert-btn"));
+
+      const stored = usePreferencesStore.getState().annotationBuilderDefaults;
+      expect(stored).not.toBeNull();
+      expect(stored!.type).toBe("todo");
     });
 
     it("prefills asymmetric settings from saved defaults", () => {
