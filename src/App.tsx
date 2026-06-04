@@ -398,7 +398,7 @@ function App() {
       } else {
         setAnnotationBuilderMode("create");
         setEditingAnnotation(undefined);
-        setEditingRange(undefined);
+        setEditingRange(detail?.originalRange);
         setSelectionText(detail?.selectedText);
       }
       setAnnotationBuilderOpen(true);
