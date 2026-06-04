@@ -27,6 +27,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, WebviewWindowBuilder};
 use workspace::write_hash::WriteHashRegistry;
+use annotation::marks::MarkConfigCache;
 use bib::cache::BibCache;
 
 pub struct InitialWorkspace(pub Mutex<Option<String>>);
@@ -122,6 +123,7 @@ pub fn run() {
         .manage(Arc::new(seed::SeedState::new()))
         .manage(Arc::new(OpLogRegistry::new()))
         .manage(BibCache::new())
+        .manage(MarkConfigCache::new())
         .manage(commands::llm::LlmState::new())
         .manage(commands::merge_split::TitleSuggestState::new())
         .manage(context_menu::PendingContextMenu::default())
@@ -341,10 +343,12 @@ pub fn run() {
             commands::annotation::parse_annotations,
             commands::annotation::resolve_annotation_scope,
             commands::annotation::resolve_annotation_scope_with_mode,
+            commands::annotation::resolve_mark_scopes,
             commands::annotation::search_annotations,
             commands::annotation::list_annotations,
             commands::annotation::annotation_find_uuid,
             commands::annotation::migrate_annotations,
+            commands::annotation::get_mark_config,
             commands::conversation::conversation_create,
             commands::conversation::conversation_get,
             commands::conversation::conversation_list,

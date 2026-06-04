@@ -289,6 +289,44 @@ describe("generateDsl", () => {
     });
   });
 
+  describe("mark type", () => {
+    it("nb mark with words scope", () => {
+      expect(
+        generateDsl(fields({ mark: "nb", scope: { kind: "words", value: 1 } })),
+      ).toBe("<!--- nb _ --->");
+    });
+
+    it("sic mark with words scope", () => {
+      expect(
+        generateDsl(fields({ mark: "sic", scope: { kind: "words", value: 1 } })),
+      ).toBe("<!--- sic _ --->");
+    });
+
+    it("crux mark with no scope", () => {
+      expect(generateDsl(fields({ mark: "crux" }))).toBe("<!--- crux --->");
+    });
+
+    it("mark combines with certainty marker", () => {
+      expect(
+        generateDsl(
+          fields({ mark: "sic", certainty: "tentative", scope: { kind: "words", value: 1 } }),
+        ),
+      ).toBe("<!--- sic? _ --->");
+    });
+
+    it("mark with id", () => {
+      expect(
+        generateDsl(fields({ id: "m1", mark: "nb", scope: { kind: "words", value: 1 } })),
+      ).toBe("<!---[m1] nb _ --->");
+    });
+
+    it("mark takes precedence over a non-null type", () => {
+      expect(
+        generateDsl(fields({ mark: "nb", type: "note", scope: { kind: "words", value: 1 } })),
+      ).toBe("<!--- nb _ --->");
+    });
+  });
+
   describe("date formatting", () => {
     it("YYYY-MM format", () => {
       expect(
@@ -408,6 +446,21 @@ describe("annotationToFields", () => {
   it("translation annotation_type passes through", () => {
     const f = annotationToFields(makeAnnotation({ annotation_type: "translation" }));
     expect(f.type).toBe("translation");
+  });
+
+  describe("mark mapping", () => {
+    it("mark annotation_type sets mark and forces type null", () => {
+      const f = annotationToFields(
+        makeAnnotation({ annotation_type: "mark", mark: "nb", original: "<!--- nb _ --->" }),
+      );
+      expect(f.mark).toBe("nb");
+      expect(f.type).toBeNull();
+    });
+
+    it("non-mark annotation has no mark", () => {
+      const f = annotationToFields(makeAnnotation({ annotation_type: "note" }));
+      expect(f.mark).toBeFalsy();
+    });
   });
 
   describe("certainty passthrough", () => {
@@ -622,6 +675,36 @@ describe("annotationToFields", () => {
         original: "<!--- n \\s | one sentence --->",
       });
       expect(generateDsl(annotationToFields(ann))).toBe("<!--- n \\s | one sentence --->");
+    });
+
+    it("nb mark round-trips", () => {
+      const ann = makeAnnotation({
+        annotation_type: "mark",
+        mark: "nb",
+        scope: { kind: "words", value: 1 },
+        original: "<!--- nb _ --->",
+      });
+      expect(generateDsl(annotationToFields(ann))).toBe("<!--- nb _ --->");
+    });
+
+    it("sic mark round-trips", () => {
+      const ann = makeAnnotation({
+        annotation_type: "mark",
+        mark: "sic",
+        scope: { kind: "words", value: 1 },
+        original: "<!--- sic _ --->",
+      });
+      expect(generateDsl(annotationToFields(ann))).toBe("<!--- sic _ --->");
+    });
+
+    it("crux mark round-trips", () => {
+      const ann = makeAnnotation({
+        annotation_type: "mark",
+        mark: "crux",
+        scope: { kind: "sentence", value: 1 },
+        original: "<!--- crux --->",
+      });
+      expect(generateDsl(annotationToFields(ann))).toBe("<!--- crux --->");
     });
 
     it("annotation with uuid round-trips", () => {

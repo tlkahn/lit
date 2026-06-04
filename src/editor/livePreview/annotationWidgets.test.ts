@@ -1,9 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { PillWidget, CalloutWidget, MarkerWidget, toggleAnnotationFoldEffect, annotationFoldField, firingAnnotationsField, setFiringAnnotation, clearFiringAnnotation, createFireButton, llmLockedField, setLlmLockedEffect, annotationThreadKeysField, setAnnotationThreadKeys } from "./annotationWidgets";
 import type { Annotation } from "../../lib/ipc";
 import { useModalLockStore } from "../../stores/modalLock";
+import { useMarkConfigStore } from "../../stores/markConfig";
 
 vi.mock("../../lib/ipc", () => ({
   parseAnnotations: vi.fn(async () => []),
@@ -140,6 +141,112 @@ describe("PillWidget", () => {
     expect(mockHandleLeave).toHaveBeenCalledOnce();
     expect(mockHandleLeave).toHaveBeenCalledWith(view);
     view.destroy();
+  });
+});
+
+describe("PillWidget mark type", () => {
+  beforeEach(() => {
+    useMarkConfigStore.setState({ config: { nb: { label: "nota bene", icon: "B" } }, loaded: true });
+  });
+
+  afterEach(() => {
+    useMarkConfigStore.setState({ config: {}, loaded: false });
+  });
+
+  it("renders cm-annotation-pill-minimal for mark type", () => {
+    const view = makeEditorView();
+    const w = new PillWidget(makeAnnotation({ annotation_type: "mark", mark: "nb", body: "ignored" }));
+    const dom = w.toDOM(view);
+    expect(dom.classList.contains("cm-annotation-pill")).toBe(true);
+    expect(dom.classList.contains("cm-annotation-pill-minimal")).toBe(true);
+    view.destroy();
+  });
+
+  it("mark pill icon comes from getMarkIcon", () => {
+    const view = makeEditorView();
+    const w = new PillWidget(makeAnnotation({ annotation_type: "mark", mark: "nb" }));
+    const dom = w.toDOM(view);
+    expect(dom.querySelector(".cm-annotation-pill-icon")!.textContent).toBe("B");
+    view.destroy();
+  });
+
+  it("mark pill falls back to code when no config icon", () => {
+    useMarkConfigStore.setState({ config: {}, loaded: true });
+    const view = makeEditorView();
+    const w = new PillWidget(makeAnnotation({ annotation_type: "mark", mark: "sic" }));
+    const dom = w.toDOM(view);
+    expect(dom.querySelector(".cm-annotation-pill-icon")!.textContent).toBe("sic");
+    view.destroy();
+  });
+
+  it("mark pill sets data-mark attribute", () => {
+    const view = makeEditorView();
+    const w = new PillWidget(makeAnnotation({ annotation_type: "mark", mark: "nb" }));
+    const dom = w.toDOM(view) as HTMLElement;
+    expect(dom.dataset.mark).toBe("nb");
+    view.destroy();
+  });
+
+  it("mark pill renders no body and no date", () => {
+    const view = makeEditorView();
+    const w = new PillWidget(makeAnnotation({ annotation_type: "mark", mark: "nb", body: "should not show", date: "2026-04" }));
+    const dom = w.toDOM(view);
+    expect(dom.querySelector(".cm-annotation-pill-body")).toBeNull();
+    expect(dom.querySelector(".cm-annotation-date")).toBeNull();
+    view.destroy();
+  });
+
+  it("mark pill adds tentative certainty class", () => {
+    const view = makeEditorView();
+    const w = new PillWidget(makeAnnotation({ annotation_type: "mark", mark: "nb", certainty: "tentative" }));
+    const dom = w.toDOM(view);
+    expect(dom.classList.contains("cm-annotation-tentative")).toBe(true);
+    view.destroy();
+  });
+
+  it("mark pill adds firm certainty class", () => {
+    const view = makeEditorView();
+    const w = new PillWidget(makeAnnotation({ annotation_type: "mark", mark: "nb", certainty: "firm" }));
+    const dom = w.toDOM(view);
+    expect(dom.classList.contains("cm-annotation-firm")).toBe(true);
+    view.destroy();
+  });
+
+  it("neutral mark pill has no certainty class", () => {
+    const view = makeEditorView();
+    const w = new PillWidget(makeAnnotation({ annotation_type: "mark", mark: "nb", certainty: "neutral" }));
+    const dom = w.toDOM(view);
+    expect(dom.classList.contains("cm-annotation-tentative")).toBe(false);
+    expect(dom.classList.contains("cm-annotation-firm")).toBe(false);
+    view.destroy();
+  });
+
+  it("mark pill renders no fire button", () => {
+    const view = makeEditorView();
+    const w = new PillWidget(makeAnnotation({ annotation_type: "mark", mark: "nb" }));
+    const dom = w.toDOM(view);
+    expect(dom.querySelector(".cm-annotation-fire-btn")).toBeNull();
+    view.destroy();
+  });
+
+  it("mark pill renders no thread indicator even when hasThread=true", () => {
+    const view = makeEditorView();
+    const w = new PillWidget(makeAnnotation({ annotation_type: "mark", mark: "nb" }), false, false, true);
+    const dom = w.toDOM(view);
+    expect(dom.querySelector(".cm-annotation-thread-indicator")).toBeNull();
+    view.destroy();
+  });
+
+  it("eq returns false when mark differs", () => {
+    const a = new PillWidget(makeAnnotation({ annotation_type: "mark", original: "<!---*nb--->", char_start: 0, char_end: 10, mark: "nb" }));
+    const b = new PillWidget(makeAnnotation({ annotation_type: "mark", original: "<!---*nb--->", char_start: 0, char_end: 10, mark: "sic" }));
+    expect(a.eq(b)).toBe(false);
+  });
+
+  it("eq returns true when mark matches", () => {
+    const a = new PillWidget(makeAnnotation({ annotation_type: "mark", original: "<!---*nb--->", char_start: 0, char_end: 10, mark: "nb" }));
+    const b = new PillWidget(makeAnnotation({ annotation_type: "mark", original: "<!---*nb--->", char_start: 0, char_end: 10, mark: "nb" }));
+    expect(a.eq(b)).toBe(true);
   });
 });
 
@@ -478,6 +585,96 @@ describe("MarkerWidget", () => {
     expect(mockHandleLeave).toHaveBeenCalledOnce();
     expect(mockHandleLeave).toHaveBeenCalledWith(view);
     view.destroy();
+  });
+});
+
+describe("MarkerWidget mark type", () => {
+  beforeEach(() => {
+    useMarkConfigStore.setState({ config: { nb: { label: "nota bene", icon: "B" } }, loaded: true });
+  });
+
+  afterEach(() => {
+    useMarkConfigStore.setState({ config: {}, loaded: false });
+  });
+
+  it("renders mark icon from getMarkIcon (not the generic diamond)", () => {
+    const view = makeEditorView();
+    const w = new MarkerWidget(makeAnnotation({ annotation_type: "mark", mark: "nb" }));
+    const dom = w.toDOM(view);
+    const sup = dom.querySelector("sup") ?? dom;
+    expect(sup.textContent).toContain("B");
+    expect(sup.textContent).not.toContain("◆");
+    view.destroy();
+  });
+
+  it("mark marker falls back to code when no config icon", () => {
+    useMarkConfigStore.setState({ config: {}, loaded: true });
+    const view = makeEditorView();
+    const w = new MarkerWidget(makeAnnotation({ annotation_type: "mark", mark: "sic" }));
+    const dom = w.toDOM(view);
+    const sup = dom.querySelector("sup") ?? dom;
+    expect(sup.textContent).toContain("sic");
+    view.destroy();
+  });
+
+  it("preserves certainty mark suffix alongside the mark icon", () => {
+    const view = makeEditorView();
+    const w = new MarkerWidget(makeAnnotation({ annotation_type: "mark", mark: "nb", certainty: "firm" }));
+    const dom = w.toDOM(view);
+    const sup = dom.querySelector("sup") ?? dom;
+    expect(sup.textContent).toBe("B!");
+    view.destroy();
+  });
+
+  it("eq returns false when mark differs", () => {
+    const a = new MarkerWidget(makeAnnotation({ annotation_type: "mark", original: "<!---*nb--->", char_start: 0, char_end: 10, mark: "nb" }));
+    const b = new MarkerWidget(makeAnnotation({ annotation_type: "mark", original: "<!---*nb--->", char_start: 0, char_end: 10, mark: "sic" }));
+    expect(a.eq(b)).toBe(false);
+  });
+
+  it("eq returns true when mark matches", () => {
+    const a = new MarkerWidget(makeAnnotation({ annotation_type: "mark", original: "<!---*nb--->", char_start: 0, char_end: 10, mark: "nb" }));
+    const b = new MarkerWidget(makeAnnotation({ annotation_type: "mark", original: "<!---*nb--->", char_start: 0, char_end: 10, mark: "nb" }));
+    expect(a.eq(b)).toBe(true);
+  });
+});
+
+describe("CalloutWidget mark type", () => {
+  beforeEach(() => {
+    useMarkConfigStore.setState({ config: { nb: { label: "nota bene", icon: "B" } }, loaded: true });
+  });
+
+  afterEach(() => {
+    useMarkConfigStore.setState({ config: {}, loaded: false });
+  });
+
+  it("renders mark icon from getMarkIcon in the icon span (not the generic diamond)", () => {
+    const ann = makeAnnotation({ annotation_type: "mark", mark: "nb", form: "block", body: "body" });
+    const w = new CalloutWidget(ann, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    const icon = dom.querySelector(".cm-annotation-pill-icon")!;
+    expect(icon.textContent).toBe("B");
+  });
+
+  it("mark callout icon falls back to code when no config icon", () => {
+    useMarkConfigStore.setState({ config: {}, loaded: true });
+    const ann = makeAnnotation({ annotation_type: "mark", mark: "sic", form: "block", body: "body" });
+    const w = new CalloutWidget(ann, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    const icon = dom.querySelector(".cm-annotation-pill-icon")!;
+    expect(icon.textContent).toBe("sic");
+  });
+
+  it("eq returns false when mark differs", () => {
+    const a = new CalloutWidget(makeAnnotation({ annotation_type: "mark", original: "<!---*nb--->", char_start: 0, char_end: 10, mark: "nb" }), false, 0);
+    const b = new CalloutWidget(makeAnnotation({ annotation_type: "mark", original: "<!---*nb--->", char_start: 0, char_end: 10, mark: "sic" }), false, 0);
+    expect(a.eq(b)).toBe(false);
+  });
+
+  it("eq returns true when mark matches", () => {
+    const a = new CalloutWidget(makeAnnotation({ annotation_type: "mark", original: "<!---*nb--->", char_start: 0, char_end: 10, mark: "nb" }), false, 0);
+    const b = new CalloutWidget(makeAnnotation({ annotation_type: "mark", original: "<!---*nb--->", char_start: 0, char_end: 10, mark: "nb" }), false, 0);
+    expect(a.eq(b)).toBe(true);
   });
 });
 
@@ -870,6 +1067,14 @@ describe("thread indicator", () => {
     view.destroy();
   });
 
+  it("MarkerWidget mark renders no thread indicator even when hasThread=true", () => {
+    const view = makeEditorView();
+    const w = new MarkerWidget(makeAnnotation({ annotation_type: "mark", mark: "nb" }), false, false, true);
+    const dom = w.toDOM(view);
+    expect(dom.querySelector(".cm-annotation-thread-indicator")).toBeNull();
+    view.destroy();
+  });
+
   it("CalloutWidget with hasThread=true renders indicator in header", () => {
     const ann = makeAnnotation({ form: "block", body: "body" });
     const w = new CalloutWidget(ann, false, 0, false, false, true);
@@ -880,6 +1085,13 @@ describe("thread indicator", () => {
   it("CalloutWidget with hasThread=false does NOT render indicator", () => {
     const ann = makeAnnotation({ form: "block", body: "body" });
     const w = new CalloutWidget(ann, false, 0, false, false, false);
+    const dom = w.toDOM(null as unknown as EditorView);
+    expect(dom.querySelector(".cm-annotation-thread-indicator")).toBeNull();
+  });
+
+  it("CalloutWidget mark renders no thread indicator even when hasThread=true", () => {
+    const ann = makeAnnotation({ annotation_type: "mark", mark: "nb", form: "block", body: "body" });
+    const w = new CalloutWidget(ann, false, 0, false, false, true);
     const dom = w.toDOM(null as unknown as EditorView);
     expect(dom.querySelector(".cm-annotation-thread-indicator")).toBeNull();
   });

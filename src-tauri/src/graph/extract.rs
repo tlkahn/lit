@@ -360,10 +360,13 @@ pub fn utf16_offset_to_line(content: &str, utf16_offset: usize) -> u32 {
     line
 }
 
-pub fn extract_annotations(content: &str) -> Vec<super::types::IndexableAnnotation> {
+pub fn extract_annotations(
+    content: &str,
+    mark_codes: &[String],
+) -> Vec<super::types::IndexableAnnotation> {
     use crate::annotation::types::{AnnotationType, Certainty, Scope, ScopeKind};
 
-    let parsed = crate::annotation::parser::parse_annotations(content);
+    let parsed = crate::annotation::parser::parse_annotations(content, mark_codes);
     parsed
         .into_iter()
         .map(|ann| {
@@ -375,6 +378,7 @@ pub fn extract_annotations(content: &str) -> Vec<super::types::IndexableAnnotati
                 AnnotationType::Apparatus => "apparatus",
                 AnnotationType::Translation => "translation",
                 AnnotationType::Llm => "llm",
+                AnnotationType::Mark => "mark",
                 AnnotationType::Bare => "bare",
             }
             .to_string();
@@ -986,7 +990,7 @@ mod tests {
     #[test]
     fn extract_annotations_basic() {
         let content = "Some text <!--- n: _ | a note ---> more";
-        let result = extract_annotations(content);
+        let result = extract_annotations(content, crate::annotation::marks::builtin_mark_codes());
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].annotation_type, "note");
         assert_eq!(result[0].certainty, "neutral");
@@ -997,14 +1001,14 @@ mod tests {
     #[test]
     fn extract_annotations_multiple() {
         let content = "<!--- n: _ | first ---> stuff <!--- q: _ | second --->";
-        let result = extract_annotations(content);
+        let result = extract_annotations(content, crate::annotation::marks::builtin_mark_codes());
         assert_eq!(result.len(), 2);
     }
 
     #[test]
     fn extract_annotations_no_body() {
         let content = "<!--- n: _ --->";
-        let result = extract_annotations(content);
+        let result = extract_annotations(content, crate::annotation::marks::builtin_mark_codes());
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].body, None);
     }
@@ -1012,21 +1016,21 @@ mod tests {
     #[test]
     fn extract_annotations_multiline() {
         let content = "line one\nline two\n<!--- n: _ | note --->";
-        let result = extract_annotations(content);
+        let result = extract_annotations(content, crate::annotation::marks::builtin_mark_codes());
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].source_line, 3);
     }
 
     #[test]
     fn extract_annotations_empty() {
-        let result = extract_annotations("");
+        let result = extract_annotations("", crate::annotation::marks::builtin_mark_codes());
         assert!(result.is_empty());
     }
 
     #[test]
     fn extract_annotations_llm_type() {
         let content = "Some text <!--- llm | summarize ---> more";
-        let result = extract_annotations(content);
+        let result = extract_annotations(content, crate::annotation::marks::builtin_mark_codes());
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].annotation_type, "llm");
     }
@@ -1034,7 +1038,7 @@ mod tests {
     #[test]
     fn extract_annotations_document_scope() {
         let content = r"<!--- llm \d | summarize --->";
-        let result = extract_annotations(content);
+        let result = extract_annotations(content, crate::annotation::marks::builtin_mark_codes());
         assert_eq!(result[0].scope_kind, "document");
         assert_eq!(result[0].scope_value, "");
     }
@@ -1042,7 +1046,7 @@ mod tests {
     #[test]
     fn extract_annotations_section_scope() {
         let content = r"<!--- n: \h | section note --->";
-        let result = extract_annotations(content);
+        let result = extract_annotations(content, crate::annotation::marks::builtin_mark_codes());
         assert_eq!(result[0].scope_kind, "section");
         assert_eq!(result[0].scope_value, "");
     }
@@ -1050,8 +1054,21 @@ mod tests {
     #[test]
     fn extract_annotations_asymmetric_scope() {
         let content = r"<!--- n 3\p1 | asymmetric note --->";
-        let result = extract_annotations(content);
+        let result = extract_annotations(content, crate::annotation::marks::builtin_mark_codes());
         assert_eq!(result[0].scope_kind, "asymmetric_paragraph");
         assert_eq!(result[0].scope_value, "3:1");
+    }
+
+    #[test]
+    fn extract_annotations_custom_code_recognized() {
+        let content = "word<!--- foo _ ---> rest";
+        let codes = vec!["foo".to_string()];
+        let result = extract_annotations(content, &codes);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].annotation_type, "mark");
+
+        // Without the custom code it falls back to a bare annotation.
+        let builtin = extract_annotations(content, crate::annotation::marks::builtin_mark_codes());
+        assert_eq!(builtin[0].annotation_type, "bare");
     }
 }

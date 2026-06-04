@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { EditorView } from "@codemirror/view";
 import { getCurrentEditorView } from "../lib/editorViewRef";
 import { annotationDataField } from "../editor/livePreview/annotationState";
-import { TYPE_ICON, certaintyMark, truncateBody } from "../editor/livePreview/annotationConstants";
+import { TYPE_ICON, getMarkIcon, certaintyMark, truncateBody } from "../editor/livePreview/annotationConstants";
 import type { Annotation } from "../lib/ipc";
 
 interface AnnotationPanelProps {
@@ -126,7 +126,9 @@ export function AnnotationPanel({ pageId, onCountChange, contentHeight }: Annota
                   data-annotation-type={ann.annotation_type}
                   data-testid={`annotation-badge-${i}`}
                 >
-                  {TYPE_ICON[ann.annotation_type] ?? "…"}
+                  {ann.annotation_type === "mark"
+                    ? getMarkIcon(ann.mark ?? "")
+                    : (TYPE_ICON[ann.annotation_type] ?? "…")}
                 </span>
                 <span className="text-text-faint" data-testid={`annotation-certainty-${i}`}>
                   {certaintyMark(ann.certainty)}

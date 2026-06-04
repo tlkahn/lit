@@ -6,6 +6,7 @@ import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { annotationDataField, setAnnotationData } from "../editor/livePreview/annotationState";
 import { setCurrentEditorView } from "../lib/editorViewRef";
+import { useMarkConfigStore } from "../stores/markConfig";
 import type { Annotation } from "../lib/ipc";
 
 vi.mock("../lib/ipc", () => ({
@@ -91,6 +92,33 @@ describe("AnnotationPanel", () => {
     const badge = screen.getByTestId("annotation-badge-0");
     expect(badge.dataset.annotationType).toBe("question");
     expect(badge.textContent).toBe("?");
+  });
+
+  it("mark entry badge shows configured mark icon, not the generic diamond", () => {
+    useMarkConfigStore.setState({ config: { nb: { label: "nota bene", icon: "B" } }, loaded: true });
+    const annotations = [
+      makeAnnotation({ annotation_type: "mark", mark: "nb", char_start: 0, char_end: 10 }),
+    ];
+    editorView = setupEditorView("a".repeat(20), annotations);
+    render(<AnnotationPanel pageId="test.md" />);
+
+    const badge = screen.getByTestId("annotation-badge-0");
+    expect(badge.textContent).toBe("B");
+    expect(badge.textContent).not.toBe("◆");
+    useMarkConfigStore.setState({ config: {}, loaded: false });
+  });
+
+  it("mark entry badge falls back to mark code when no config icon", () => {
+    useMarkConfigStore.setState({ config: {}, loaded: true });
+    const annotations = [
+      makeAnnotation({ annotation_type: "mark", mark: "sic", char_start: 0, char_end: 10 }),
+    ];
+    editorView = setupEditorView("a".repeat(20), annotations);
+    render(<AnnotationPanel pageId="test.md" />);
+
+    const badge = screen.getByTestId("annotation-badge-0");
+    expect(badge.textContent).toBe("sic");
+    useMarkConfigStore.setState({ config: {}, loaded: false });
   });
 
   it("each entry shows certainty mark", () => {

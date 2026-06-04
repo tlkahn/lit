@@ -325,3 +325,27 @@
 .dark .scope-highlight {
   background: rgba(68, 138, 255, 0.20);
 }
+
+/* Minimal mark pill — compact badge holding only the mark icon. Inherits
+   flex/border-radius/cursor from .cm-annotation-pill. */
+.cm-annotation-pill-minimal {
+  padding: 0 4px;
+  gap: 0;
+  min-width: 1.4em;
+  justify-content: center;
+}
+
+/* Mark type pill color — neutral/muted, since the in-text decoration is the
+   primary signal (plan 8d). */
+.cm-annotation-pill[data-annotation-type="mark"] {
+  background: rgba(120, 120, 120, 0.15);
+  color: rgb(120, 120, 120);
+}
+
+/* Keep backgrounds/underlines intact across line wraps, mirroring
+   .scope-highlight. Applies to every mark (built-in and custom) via the
+   shared base class. */
+.cm-mark {
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}

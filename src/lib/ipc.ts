@@ -760,6 +760,7 @@ export type AnnotationType =
   | "apparatus"
   | "translation"
   | "llm"
+  | "mark"
   | "bare";
 
 export type Certainty = "tentative" | "firm" | "neutral";
@@ -792,6 +793,7 @@ export interface Annotation {
   char_end: number;
   original: string;
   uuid?: string | null;
+  mark?: string | null;
 }
 
 export interface ScopeRange {
@@ -831,6 +833,46 @@ export async function resolveAnnotationScopeWithMode(
     lang,
     mode,
   });
+}
+
+/** One mark's scope-resolution request for the batched `resolveMarkScopes` IPC. */
+export interface MarkScopeRequest {
+  charStart: number;
+  scope: Scope;
+}
+
+/**
+ * Batched scope resolution: resolves every mark in a single IPC call. Results are
+ * index-aligned with `marks` (`null` for marks whose scope did not resolve). The
+ * per-mark `charStart` is emitted as snake_case `char_start` because Tauri's arg
+ * casing only converts top-level command keys, not keys inside array payloads.
+ */
+export async function resolveMarkScopes(
+  content: string,
+  marks: MarkScopeRequest[],
+  lang: string,
+): Promise<Array<ScopeRange | null>> {
+  return invoke<Array<ScopeRange | null>>("resolve_mark_scopes", {
+    content,
+    marks: marks.map((m) => ({ char_start: m.charStart, scope: m.scope })),
+    lang,
+  });
+}
+
+/// A single philological mark definition: how the mark is labelled and styled.
+export interface MarkDef {
+  label: string;
+  icon?: string | null;
+  before?: string | null;
+  after?: string | null;
+  style?: Record<string, string> | null;
+}
+
+/// A map of mark code -> definition (the Rust side is a transparent HashMap).
+export type MarkConfig = Record<string, MarkDef>;
+
+export async function getMarkConfig(): Promise<MarkConfig> {
+  return invoke<MarkConfig>("get_mark_config");
 }
 
 export interface AnnotationSearchResult {

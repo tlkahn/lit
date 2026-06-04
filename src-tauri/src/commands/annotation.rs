@@ -1,13 +1,22 @@
+use serde::Deserialize;
 use std::sync::Arc;
 use tauri::State;
 
+use crate::annotation::marks::{sorted_mark_codes, MarkConfig, MarkConfigCache};
 use crate::annotation::parser::parse_annotations as do_parse;
 use crate::annotation::scope_resolver::{resolve_scope_range, resolve_scope_range_with_mode};
 use crate::annotation::types::{Annotation, ResolutionMode, Scope, ScopeRange};
 
 #[tauri::command]
-pub fn parse_annotations(content: String) -> Vec<Annotation> {
-    do_parse(&content)
+pub fn parse_annotations(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    mark_cache: State<MarkConfigCache>,
+    content: String,
+) -> Result<Vec<Annotation>, String> {
+    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+    let codes = sorted_mark_codes(&mark_cache.merged_config_cached(&root));
+    Ok(do_parse(&content, &codes))
 }
 
 #[tauri::command]
@@ -30,6 +39,27 @@ pub fn resolve_annotation_scope_with_mode(
 ) -> Option<ScopeRange> {
     let mode = mode.unwrap_or_default();
     resolve_scope_range_with_mode(&content, char_start, &scope, &lang, &mode)
+}
+
+/// One mark's scope-resolution request: where the mark sits and the scope it spans.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MarkScopeRequest {
+    pub char_start: usize,
+    pub scope: Scope,
+}
+
+/// Batched scope resolution: resolves every mark in `marks` in a single IPC call,
+/// returning results index-aligned with the input (`None` for unresolvable marks).
+#[tauri::command]
+pub fn resolve_mark_scopes(
+    content: String,
+    marks: Vec<MarkScopeRequest>,
+    lang: String,
+) -> Vec<Option<ScopeRange>> {
+    marks
+        .iter()
+        .map(|m| resolve_scope_range(&content, m.char_start, &m.scope, &lang))
+        .collect()
 }
 
 #[tauri::command]
@@ -114,22 +144,40 @@ pub fn migrate_annotations(content: String) -> String {
     result
 }
 
+/// Built-in mark defaults merged with the window's workspace `.lit/marks.toml`.
+#[tauri::command]
+pub fn get_mark_config(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    mark_cache: State<MarkConfigCache>,
+) -> Result<MarkConfig, String> {
+    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+    Ok(mark_cache.merged_config_cached(&root))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::annotation::marks::merged_config;
     use crate::annotation::types::{AnnotationType, ResolutionMode};
     use crate::graph::indexer::GraphIndex;
 
+    // The `parse_annotations` command itself takes a `tauri::Window` + `State`,
+    // which are impractical to construct in a unit test (same constraint as the
+    // graph + `get_mark_config` commands). These tests exercise the command's
+    // underlying parse logic via the builtin wrapper.
+    use crate::annotation::parser::parse_annotations_builtin;
+
     #[test]
     fn cmd_parse_annotations_compact() {
-        let result = parse_annotations("<!--- n: | note --->".to_string());
+        let result = parse_annotations_builtin("<!--- n: | note --->");
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].annotation_type, AnnotationType::Note);
     }
 
     #[test]
     fn cmd_parse_annotations_empty() {
-        let result = parse_annotations(String::new());
+        let result = parse_annotations_builtin("");
         assert!(result.is_empty());
     }
 
@@ -156,6 +204,43 @@ mod tests {
             "en".to_string(),
         );
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn cmd_resolve_mark_scopes_batches() {
+        let content = "hello world <!--- n: _ | note --->".to_string();
+        let marks = vec![MarkScopeRequest {
+            char_start: 12,
+            scope: Scope::Words(1),
+        }];
+        let result = resolve_mark_scopes(content, marks, "en".to_string());
+        assert_eq!(result, vec![Some(ScopeRange { start: 6, end: 11 })]);
+    }
+
+    #[test]
+    fn cmd_resolve_mark_scopes_preserves_none_and_order() {
+        let content = "hello world <!--- n: _ | note --->".to_string();
+        let marks = vec![
+            MarkScopeRequest {
+                char_start: 0,
+                scope: Scope::Words(1),
+            },
+            MarkScopeRequest {
+                char_start: 12,
+                scope: Scope::Words(1),
+            },
+        ];
+        let result = resolve_mark_scopes(content, marks, "en".to_string());
+        assert_eq!(
+            result,
+            vec![None, Some(ScopeRange { start: 6, end: 11 })]
+        );
+    }
+
+    #[test]
+    fn cmd_resolve_mark_scopes_empty() {
+        let result = resolve_mark_scopes("anything".to_string(), vec![], "en".to_string());
+        assert!(result.is_empty());
     }
 
     #[test]
@@ -285,8 +370,8 @@ mod tests {
     fn cmd_migrate_parses_identically() {
         let old = "%%! n: _ | a note %%";
         let migrated = migrate_annotations(old.to_string());
-        let old_anns = parse_annotations(old.to_string());
-        let new_anns = parse_annotations(migrated);
+        let old_anns = parse_annotations_builtin(old);
+        let new_anns = parse_annotations_builtin(&migrated);
         assert_eq!(old_anns.len(), new_anns.len());
         assert_eq!(old_anns[0].annotation_type, new_anns[0].annotation_type);
         assert_eq!(old_anns[0].body, new_anns[0].body);
@@ -326,5 +411,88 @@ mod tests {
         let results = gi.list_annotations(None, Some("note"), 100).unwrap();
         assert_eq!(results.len(), 2);
         assert!(results.iter().all(|r| r.annotation_type == "note"));
+    }
+
+    // --- get_mark_config tests ---
+    //
+    // `get_mark_config` itself takes a `tauri::Window` + `State`, which are
+    // impractical to construct in a unit test (same constraint as the graph
+    // commands above, which exercise `GraphIndex` directly). These tests cover
+    // the command's actual logic — `merged_config` + serialization + the
+    // `get_workspace_root` error path — which together lock the command's
+    // contract.
+
+    use crate::commands::workspace::{get_workspace_root, WorkspaceEntry, WorkspaceRegistry};
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    #[test]
+    fn cmd_get_mark_config_returns_builtin_defaults() {
+        let dir = create_workspace();
+        let cfg = merged_config(dir.path());
+        assert_eq!(cfg.0.len(), 16, "expected exactly 16 builtin mark codes");
+        assert!(cfg.0.contains_key("nb"));
+    }
+
+    #[test]
+    fn cmd_get_mark_config_serializes_to_json_object() {
+        let dir = create_workspace();
+        let cfg = merged_config(dir.path());
+        let v = serde_json::to_value(&cfg).unwrap();
+        assert!(v.is_object(), "MarkConfig must serialize to a code-keyed object");
+        assert_eq!(
+            v.get("nb")
+                .and_then(|n| n.get("label"))
+                .and_then(|l| l.as_str()),
+            Some("nota bene")
+        );
+    }
+
+    #[test]
+    fn cmd_get_mark_config_merges_workspace_override() {
+        let dir = create_workspace();
+        std::fs::create_dir_all(dir.path().join(".lit")).unwrap();
+        std::fs::write(
+            dir.path().join(".lit").join("marks.toml"),
+            "[nb]\nlabel = \"custom bold\"\n\n[zz]\nlabel = \"custom code\"\n",
+        )
+        .unwrap();
+        let cfg = merged_config(dir.path());
+        assert_eq!(cfg.0.get("nb").unwrap().label, "custom bold");
+        assert!(cfg.0.contains_key("crux"));
+        assert_eq!(cfg.0.get("zz").unwrap().label, "custom code");
+    }
+
+    #[test]
+    fn cmd_get_mark_config_unknown_label_errors() {
+        // Documents the error path `get_mark_config` returns when no workspace
+        // is open in the window.
+        let registry = WorkspaceRegistry {
+            workspaces: Mutex::new(HashMap::new()),
+        };
+        let result = get_workspace_root(&registry, "missing");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("missing"));
+    }
+
+    #[test]
+    fn cmd_get_mark_config_resolves_known_workspace_root() {
+        // A registered window resolves to its workspace root, which feeds
+        // `merged_config` inside the command.
+        let dir = create_workspace();
+        let mut map = HashMap::new();
+        map.insert(
+            "test-win".to_string(),
+            WorkspaceEntry {
+                root: dir.path().to_path_buf(),
+                watcher: None,
+            },
+        );
+        let registry = WorkspaceRegistry {
+            workspaces: Mutex::new(map),
+        };
+        let root = get_workspace_root(&registry, "test-win").unwrap();
+        let cfg = merged_config(&root);
+        assert!(cfg.0.contains_key("nb"));
     }
 }

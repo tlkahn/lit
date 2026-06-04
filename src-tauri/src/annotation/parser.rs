@@ -3,15 +3,17 @@ use super::scanner::scan_annotations;
 use super::compact::parse_compact;
 use super::block::{is_block_form, parse_block};
 
-pub fn parse_annotations(content: &str) -> Vec<Annotation> {
+/// Parse all annotations in `content`, recognizing `mark_codes` as valid
+/// philological mark codes (e.g. workspace-extended codes from `.lit/marks.toml`).
+pub fn parse_annotations(content: &str, mark_codes: &[String]) -> Vec<Annotation> {
     let raw_annotations = scan_annotations(content);
     let mut annotations = Vec::with_capacity(raw_annotations.len());
 
     for ra in raw_annotations {
         let mut ann = if is_block_form(&ra.inner) {
-            parse_block(&ra.inner)
+            parse_block(&ra.inner, mark_codes)
         } else {
-            parse_compact(&ra.inner)
+            parse_compact(&ra.inner, mark_codes)
         };
 
         ann.char_start = ra.char_start;
@@ -27,6 +29,12 @@ pub fn parse_annotations(content: &str) -> Vec<Annotation> {
     annotations
 }
 
+/// Convenience wrapper for callers that only need the built-in mark codes
+/// (e.g. tests, or contexts without a workspace).
+pub fn parse_annotations_builtin(content: &str) -> Vec<Annotation> {
+    parse_annotations(content, super::marks::builtin_mark_codes())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -35,7 +43,7 @@ mod tests {
     #[test]
     fn single_compact_annotation() {
         let doc = "The term *anuttara*<!--- n? __ | same sense as TĀ 3.68? @2026-03 ---> appears.";
-        let anns = parse_annotations(doc);
+        let anns = parse_annotations_builtin(doc);
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].annotation_type, AnnotationType::Note);
         assert_eq!(anns[0].certainty, Certainty::Tentative);
@@ -48,9 +56,20 @@ mod tests {
     }
 
     #[test]
+    fn mark_annotation_integration() {
+        let doc = "word<!--- nb _ ---> rest";
+        let anns = parse_annotations_builtin(doc);
+        assert_eq!(anns.len(), 1);
+        assert_eq!(anns[0].annotation_type, AnnotationType::Mark);
+        assert_eq!(anns[0].mark, Some("nb".to_string()));
+        assert!(anns[0].char_start > 0);
+        assert!(anns[0].char_end > anns[0].char_start);
+    }
+
+    #[test]
     fn single_block_annotation() {
         let doc = "Text before.\n<!---\nn!\n\\p\n@2026-03-28\n---\nThe body.\n--->\nText after.";
-        let anns = parse_annotations(doc);
+        let anns = parse_annotations_builtin(doc);
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].annotation_type, AnnotationType::Note);
         assert_eq!(anns[0].certainty, Certainty::Firm);
@@ -62,7 +81,7 @@ mod tests {
     #[test]
     fn mixed_compact_and_block() {
         let doc = "<!--- n: | inline note --->\n\nParagraph.\n\n<!---\ncf\n---\nBlock crossref.\n--->";
-        let anns = parse_annotations(doc);
+        let anns = parse_annotations_builtin(doc);
         assert_eq!(anns.len(), 2);
         assert_eq!(anns[0].form, AnnotationForm::Compact);
         assert_eq!(anns[0].annotation_type, AnnotationType::Note);
@@ -73,7 +92,7 @@ mod tests {
     #[test]
     fn bare_annotation() {
         let doc = "text<!--- compare Vasugupta SpK 1.1 --->more";
-        let anns = parse_annotations(doc);
+        let anns = parse_annotations_builtin(doc);
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].annotation_type, AnnotationType::Bare);
         assert_eq!(anns[0].body, Some("compare Vasugupta SpK 1.1".to_string()));
@@ -82,20 +101,20 @@ mod tests {
     #[test]
     fn skip_code_fenced_annotations() {
         let doc = "```\n<!--- skip --->\n```\n<!--- q? | keep --->";
-        let anns = parse_annotations(doc);
+        let anns = parse_annotations_builtin(doc);
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].annotation_type, AnnotationType::Question);
     }
 
     #[test]
     fn no_annotations() {
-        assert_eq!(parse_annotations("no annotations here").len(), 0);
+        assert_eq!(parse_annotations_builtin("no annotations here").len(), 0);
     }
 
     #[test]
     fn ordering_by_position() {
         let doc = "<!--- a ---> middle <!--- b --->";
-        let anns = parse_annotations(doc);
+        let anns = parse_annotations_builtin(doc);
         assert_eq!(anns.len(), 2);
         assert!(anns[0].char_start < anns[1].char_start);
     }
@@ -103,14 +122,14 @@ mod tests {
     #[test]
     fn original_preserved() {
         let doc = "<!--- todo! | fix this --->";
-        let anns = parse_annotations(doc);
+        let anns = parse_annotations_builtin(doc);
         assert_eq!(anns[0].original, "<!--- todo! | fix this --->");
     }
 
     #[test]
     fn utf16_offsets_with_cjk() {
         let doc = "你好<!--- n: | 注释 --->";
-        let anns = parse_annotations(doc);
+        let anns = parse_annotations_builtin(doc);
         assert_eq!(anns[0].char_start, 2);
         assert_eq!(anns[0].body, Some("注释".to_string()));
     }
@@ -118,14 +137,14 @@ mod tests {
     #[test]
     fn apparatus_type_integration() {
         let doc = "<!--- app: | variant: ms. B has *prakāśa* --->";
-        let anns = parse_annotations(doc);
+        let anns = parse_annotations_builtin(doc);
         assert_eq!(anns[0].annotation_type, AnnotationType::Apparatus);
     }
 
     #[test]
     fn translation_type_integration() {
         let doc = "<!--- tr: _ | cf. Tibetan version @2026-03 --->";
-        let anns = parse_annotations(doc);
+        let anns = parse_annotations_builtin(doc);
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].annotation_type, AnnotationType::Translation);
         assert_eq!(anns[0].scope, Scope::Words(1));
@@ -136,7 +155,7 @@ mod tests {
     #[test]
     fn page_scope_compact_integration() {
         let doc = r"<!--- n: \f | page-level note --->";
-        let anns = parse_annotations(doc);
+        let anns = parse_annotations_builtin(doc);
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].scope, Scope::Page(1));
     }
@@ -144,7 +163,7 @@ mod tests {
     #[test]
     fn page_scope_block_integration() {
         let doc = "<!---\ncf\n\\ff\n---\nTwo pages.\n--->";
-        let anns = parse_annotations(doc);
+        let anns = parse_annotations_builtin(doc);
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].scope, Scope::Page(2));
     }
@@ -152,17 +171,17 @@ mod tests {
     #[test]
     fn underscore_suffix_scope_integration() {
         let doc = r"<!--- n: \p__ | two paragraphs --->";
-        let anns = parse_annotations(doc);
+        let anns = parse_annotations_builtin(doc);
         assert_eq!(anns[0].scope, Scope::Paragraph(2));
         let doc2 = r"<!--- n: \pp | two paragraphs --->";
-        let anns2 = parse_annotations(doc2);
+        let anns2 = parse_annotations_builtin(doc2);
         assert_eq!(anns[0].scope, anns2[0].scope);
     }
 
     #[test]
     fn plain_percent_comments_not_matched() {
         let doc = "<!-- normal --> <!--- real --->";
-        let anns = parse_annotations(doc);
+        let anns = parse_annotations_builtin(doc);
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].inner_check(), true);
     }
@@ -170,7 +189,7 @@ mod tests {
     #[test]
     fn compact_with_id_populates_uuid() {
         let doc = "<!---[abc-123] n? __ | body --->";
-        let anns = parse_annotations(doc);
+        let anns = parse_annotations_builtin(doc);
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].uuid, Some("abc-123".to_string()));
         assert_eq!(anns[0].annotation_type, AnnotationType::Note);
@@ -180,7 +199,7 @@ mod tests {
     #[test]
     fn compact_without_id_uuid_is_none() {
         let doc = "<!--- n? __ | body --->";
-        let anns = parse_annotations(doc);
+        let anns = parse_annotations_builtin(doc);
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].uuid, None);
     }
@@ -188,7 +207,7 @@ mod tests {
     #[test]
     fn block_with_id_populates_uuid() {
         let doc = "<!---[my-uuid]\nn!\n\\p\n---\nThe body.\n--->";
-        let anns = parse_annotations(doc);
+        let anns = parse_annotations_builtin(doc);
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].uuid, Some("my-uuid".to_string()));
         assert_eq!(anns[0].form, AnnotationForm::Block);
@@ -209,7 +228,7 @@ Need to verify this claim.
 
 Second paragraph.<!--- cf \\pp --->
 ";
-        let anns = parse_annotations(doc);
+        let anns = parse_annotations_builtin(doc);
         assert_eq!(anns.len(), 3);
         assert_eq!(anns[0].annotation_type, AnnotationType::Note);
         assert_eq!(anns[0].form, AnnotationForm::Compact);
@@ -217,6 +236,23 @@ Second paragraph.<!--- cf \\pp --->
         assert_eq!(anns[1].form, AnnotationForm::Block);
         assert_eq!(anns[2].annotation_type, AnnotationType::CrossRef);
         assert_eq!(anns[2].form, AnnotationForm::Compact);
+    }
+
+    #[test]
+    fn custom_code_parsed_when_passed() {
+        let codes = vec!["foo".to_string()];
+        let anns = parse_annotations("x<!--- foo _ ---> y", &codes);
+        assert_eq!(anns.len(), 1);
+        assert_eq!(anns[0].annotation_type, AnnotationType::Mark);
+        assert_eq!(anns[0].mark, Some("foo".to_string()));
+    }
+
+    #[test]
+    fn custom_code_ignored_with_builtin_only() {
+        let anns = parse_annotations_builtin("x<!--- foo _ ---> y");
+        assert_eq!(anns.len(), 1);
+        assert_eq!(anns[0].annotation_type, AnnotationType::Bare);
+        assert_eq!(anns[0].mark, None);
     }
 }
 

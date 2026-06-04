@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::annotation::parser::parse_annotations;
+    use crate::annotation::parser::parse_annotations_builtin as parse_annotations;
     use crate::annotation::types::*;
 
     fn parse_one(dsl: &str) -> Annotation {

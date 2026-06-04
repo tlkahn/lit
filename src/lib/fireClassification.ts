@@ -10,6 +10,7 @@ const FIRE_TYPE_MAP: Record<AnnotationType, FireType | null> = {
   note: null,
   crossref: null,
   apparatus: null,
+  mark: null,
   bare: null,
 };
 
