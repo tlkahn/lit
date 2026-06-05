@@ -21,6 +21,34 @@ export interface FireAnnotationEventDetail {
 export const setFiringAnnotation = StateEffect.define<number>();
 export const clearFiringAnnotation = StateEffect.define<number>();
 
+// --- Firing range state (live-remapping from/to for the active firing annotation) ---
+
+export const setFiringRange = StateEffect.define<{ from: number; to: number }>();
+export const clearFiringRange = StateEffect.define<void>();
+
+export const firingRangeField = StateField.define<{ from: number; to: number } | null>({
+  create() {
+    return null;
+  },
+  update(value, tr) {
+    let result = value;
+    if (tr.docChanged && result !== null) {
+      result = {
+        from: tr.changes.mapPos(result.from, 1),
+        to: tr.changes.mapPos(result.to, -1),
+      };
+    }
+    for (const effect of tr.effects) {
+      if (effect.is(setFiringRange)) {
+        result = effect.value;
+      } else if (effect.is(clearFiringRange)) {
+        result = null;
+      }
+    }
+    return result;
+  },
+});
+
 export const firingAnnotationsField = StateField.define<Set<number>>({
   create() {
     return new Set();

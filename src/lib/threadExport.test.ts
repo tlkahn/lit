@@ -220,11 +220,43 @@ describe("deleteThread", () => {
   it("is a no-op (no throw, doc unchanged) when the thread node no longer exists", () => {
     const view = makeView(PREFIX + SUFFIX);
     const before = view.state.doc.toString();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     // Captured offsets point past the end of this (thread-less) document.
     expect(() =>
       deleteThread(view, makeThreadAnnotation({ char_start: 9999, char_end: 99999 })),
     ).not.toThrow();
     expect(view.state.doc.toString()).toBe(before);
+    warnSpy.mockRestore();
+    view.destroy();
+  });
+
+  it("logs a console.warn with range values when bounds-check fails", () => {
+    const view = makeView(PREFIX + SUFFIX);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    deleteThread(view, makeThreadAnnotation({ char_start: 9999, char_end: 99999 }));
+    expect(warnSpy).toHaveBeenCalledOnce();
+    const msg = warnSpy.mock.calls[0]![0] as string;
+    expect(msg).toContain("9999");
+    expect(msg).toContain("99999");
+    warnSpy.mockRestore();
+    view.destroy();
+  });
+
+  it("logs a console.warn when from >= to (inverted range)", () => {
+    const view = makeView(DOC);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    deleteThread(view, makeThreadAnnotation({ char_start: 10, char_end: 5 }));
+    expect(warnSpy).toHaveBeenCalledOnce();
+    warnSpy.mockRestore();
+    view.destroy();
+  });
+
+  it("does NOT log console.warn on a successful delete", () => {
+    const view = makeView(DOC);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    deleteThread(view, makeThreadAnnotation());
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
     view.destroy();
   });
 });

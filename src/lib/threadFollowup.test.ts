@@ -6,7 +6,7 @@ import { useModalLockStore } from "../stores/modalLock";
 import { usePreferencesStore } from "../stores/preferences";
 import { useStatusMessageStore } from "../stores/statusMessage";
 import { useSecretStoreStore } from "../stores/secretStore";
-import { firingAnnotationsField, threadTurnField } from "../editor/livePreview/annotationWidgets";
+import { firingAnnotationsField, firingRangeField, threadTurnField } from "../editor/livePreview/annotationWidgets";
 import { parseThreadBody } from "./threadBody";
 
 vi.mock("./ipc", () => ({
@@ -37,7 +37,7 @@ function makeView(doc: string): EditorView {
   return new EditorView({
     state: EditorState.create({
       doc,
-      extensions: [firingAnnotationsField, threadTurnField],
+      extensions: [firingAnnotationsField, firingRangeField, threadTurnField],
     }),
     parent: document.createElement("div"),
   });
@@ -297,6 +297,34 @@ describe("threadFollowup", () => {
     expect(mockStream).not.toHaveBeenCalled();
     expect(useModalLockStore.getState().llmLocked).toBe(false);
     expect(view.state.doc.toString()).toBe(DOC);
+    view.destroy();
+  });
+
+  it("mid-stream edit: replacement targets shifted range and thread turn is keyed at live position", async () => {
+    mockStream.mockImplementation(async (_a: unknown, cb: { onChunk: (t: string) => void; onDone: () => void }) => {
+      // Simulate a user edit during streaming: insert "XXXX" before the thread.
+      // This shifts the thread from THREAD_START to THREAD_START+4.
+      view.dispatch({ changes: { from: 0, to: 0, insert: "XXXX" } });
+      cb.onChunk("answer C");
+      cb.onDone();
+    });
+    const view = makeView(DOC);
+
+    await threadFollowup({ view, annotation: makeThreadAnnotation(), question: "C" });
+
+    const result = view.state.doc.toString();
+    // New turn should be present
+    expect(result).toContain("[q]: C");
+    expect(result).toContain("answer C");
+    // "XXXX" prefix is intact
+    expect(result.startsWith("XXXX")).toBe(true);
+    // Old DSL is gone (replaced at shifted position)
+    expect(result).not.toContain(THREAD_DSL);
+    // Thread turn is keyed at the shifted position
+    const turnMap = view.state.field(threadTurnField);
+    expect(turnMap.get(THREAD_START + 4)).toBe(2);
+    // No ghost spinner
+    expect(view.state.field(firingAnnotationsField).size).toBe(0);
     view.destroy();
   });
 

@@ -4,7 +4,7 @@ import { syntaxTree } from "@codemirror/language";
 import { parseAnnotations, listAnnotations, type Annotation } from "../../lib/ipc";
 import { type AnnotationDisplayMode } from "../../stores/preferences";
 import { isCursorOnLine } from "./proximity";
-import { PillWidget, MarkerWidget, CalloutWidget, ThreadWidget, annotationFoldField, threadTurnField, setThreadTurnEffect, firingAnnotationsField, llmLockedField, setLlmLockedEffect, setFiringAnnotation, clearFiringAnnotation, toggleAnnotationFoldEffect } from "./annotationWidgets";
+import { PillWidget, MarkerWidget, CalloutWidget, ThreadWidget, annotationFoldField, threadTurnField, setThreadTurnEffect, firingAnnotationsField, firingRangeField, llmLockedField, setLlmLockedEffect, setFiringAnnotation, clearFiringAnnotation, toggleAnnotationFoldEffect } from "./annotationWidgets";
 import { isPerfEnabled, perfMark, perfMeasure } from "./perf";
 import { useModalLockStore } from "../../stores/modalLock";
 import { useWorkspaceStore } from "../../stores/workspace";
@@ -617,6 +617,7 @@ export function annotationExtension(): Extension {
     annotationFoldField,
     threadTurnField,
     firingAnnotationsField,
+    firingRangeField,
     llmLockedField,
     llmLockBridgePlugin,
     scopeHighlightExtension(),

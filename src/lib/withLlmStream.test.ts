@@ -5,7 +5,7 @@ import type { Annotation } from "./ipc";
 import { useModalLockStore } from "../stores/modalLock";
 import { useStatusMessageStore } from "../stores/statusMessage";
 import { useSecretStoreStore } from "../stores/secretStore";
-import { firingAnnotationsField, clearFiringAnnotation } from "../editor/livePreview/annotationWidgets";
+import { firingAnnotationsField, firingRangeField, clearFiringAnnotation } from "../editor/livePreview/annotationWidgets";
 
 vi.mock("./ipc", () => ({
   resolveAnnotationScopeWithMode: vi.fn(async () => null),
@@ -31,7 +31,7 @@ const flush = (n = 5) =>
 
 function makeView(doc = "hello world"): EditorView {
   return new EditorView({
-    state: EditorState.create({ doc, extensions: [firingAnnotationsField] }),
+    state: EditorState.create({ doc, extensions: [firingAnnotationsField, firingRangeField] }),
     parent: document.createElement("div"),
   });
 }
@@ -217,6 +217,97 @@ describe("withLlmStream", () => {
     expect(seenResponse).toBe("ab");
     expect(view.state.field(firingAnnotationsField).size).toBe(0);
     expect(useModalLockStore.getState().llmLocked).toBe(false);
+    view.destroy();
+  });
+
+  it("sets firingRangeField during streaming", async () => {
+    let rangeDuringStream: { from: number; to: number } | null = null;
+    mockStream.mockImplementation(async () => {
+      rangeDuringStream = view.state.field(firingRangeField);
+    });
+    const view = makeView();
+
+    await withLlmStream(view, makeAnnotation({ char_start: 0, char_end: 11 }), {
+      buildArgs: async () => STREAM_ARGS,
+      onDone: () => {},
+    });
+
+    expect(rangeDuringStream).toEqual({ from: 0, to: 11 });
+    view.destroy();
+  });
+
+  it("clears firingRangeField after buildArgs returns null", async () => {
+    const view = makeView();
+
+    await withLlmStream(view, makeAnnotation({ char_start: 0, char_end: 11 }), {
+      buildArgs: async () => null,
+      onDone: () => {},
+    });
+
+    expect(view.state.field(firingRangeField)).toBeNull();
+    view.destroy();
+  });
+
+  it("clears firingRangeField after cancel", async () => {
+    mockStream.mockImplementation(() => new Promise(() => {}));
+    let resolveBuild: (v: typeof STREAM_ARGS) => void = () => {};
+    const buildGate = new Promise<typeof STREAM_ARGS>((r) => {
+      resolveBuild = r;
+    });
+    const view = makeView();
+
+    const promise = withLlmStream(view, makeAnnotation({ char_start: 0, char_end: 11 }), {
+      buildArgs: async () => buildGate,
+      onDone: () => {},
+    });
+    await flush();
+
+    window.dispatchEvent(new CustomEvent("lit:cancel-fire"));
+    await flush();
+
+    expect(view.state.field(firingRangeField)).toBeNull();
+
+    resolveBuild(STREAM_ARGS);
+    await flush();
+    view.destroy();
+    void promise;
+  });
+
+  it("onDone receives liveRange matching the current firingRangeField value", async () => {
+    let receivedRange: { from: number; to: number } | null = null;
+    mockStream.mockImplementation(async (_args: unknown, cb: { onChunk: (t: string) => void; onDone: () => void }) => {
+      cb.onChunk("x");
+      cb.onDone();
+    });
+    const view = makeView();
+
+    await withLlmStream(view, makeAnnotation({ char_start: 0, char_end: 11 }), {
+      buildArgs: async () => STREAM_ARGS,
+      onDone: ({ liveRange }) => {
+        receivedRange = liveRange;
+      },
+    });
+
+    expect(receivedRange).toEqual({ from: 0, to: 11 });
+    view.destroy();
+  });
+
+  it("doCleanup uses live start position after mid-stream edit (no ghost spinner)", async () => {
+    mockStream.mockImplementation(async (_args: unknown, cb: { onError: (e: { message: string; retryable: boolean }) => void }) => {
+      // Simulate user edit: insert "XX" at position 0 before the annotation.
+      // This shifts the firing annotation from pos 0 to pos 2.
+      view.dispatch({ changes: { from: 0, to: 0, insert: "XX" } });
+      cb.onError({ message: "fail", retryable: false });
+    });
+    const view = makeView();
+
+    await withLlmStream(view, makeAnnotation({ char_start: 0, char_end: 11 }), {
+      buildArgs: async () => STREAM_ARGS,
+      onDone: () => {},
+    });
+
+    // The firing set should be empty — the live position (2) was used for the clear.
+    expect(view.state.field(firingAnnotationsField).size).toBe(0);
     view.destroy();
   });
 

@@ -27,8 +27,10 @@ export function buildThreadDsl(sourceAnnotation: Annotation, responseText: strin
     question = "Translate";
   } else if (sourceAnnotation.annotation_type === "llm" && sourceBody === "") {
     question = "Explain";
+  } else if (sourceAnnotation.annotation_type === "question" && sourceBody === "") {
+    question = "Answer";
   } else {
-    question = sourceBody || "Answer";
+    question = sourceBody || "Respond";
   }
 
   const body = serializeThreadBody([{ question, response: responseText }]);

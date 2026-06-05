@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { PillWidget, CalloutWidget, MarkerWidget, ThreadWidget, toggleAnnotationFoldEffect, annotationFoldField, threadTurnField, setThreadTurnEffect, firingAnnotationsField, setFiringAnnotation, clearFiringAnnotation, createFireButton, llmLockedField, setLlmLockedEffect } from "./annotationWidgets";
+import { PillWidget, CalloutWidget, MarkerWidget, ThreadWidget, toggleAnnotationFoldEffect, annotationFoldField, threadTurnField, setThreadTurnEffect, firingAnnotationsField, setFiringAnnotation, clearFiringAnnotation, firingRangeField, setFiringRange, clearFiringRange, createFireButton, llmLockedField, setLlmLockedEffect } from "./annotationWidgets";
 import type { Annotation } from "../../lib/ipc";
 import { useModalLockStore } from "../../stores/modalLock";
 import { useMarkConfigStore } from "../../stores/markConfig";
@@ -1131,6 +1131,69 @@ describe("threadTurnField", () => {
     const before = tr1.state.field(threadTurnField);
     const tr2 = tr1.state.update({ selection: { anchor: 2 } });
     expect(tr2.state.field(threadTurnField)).toBe(before);
+  });
+});
+
+describe("firingRangeField", () => {
+  it("initial state is null", () => {
+    const state = EditorState.create({ extensions: [firingRangeField] });
+    expect(state.field(firingRangeField)).toBeNull();
+  });
+
+  it("setFiringRange stores { from, to }", () => {
+    const state = EditorState.create({ doc: "hello world", extensions: [firingRangeField] });
+    const tr = state.update({ effects: setFiringRange.of({ from: 2, to: 8 }) });
+    expect(tr.state.field(firingRangeField)).toEqual({ from: 2, to: 8 });
+  });
+
+  it("clearFiringRange resets to null", () => {
+    const state = EditorState.create({ doc: "hello world", extensions: [firingRangeField] });
+    const tr1 = state.update({ effects: setFiringRange.of({ from: 2, to: 8 }) });
+    const tr2 = tr1.state.update({ effects: clearFiringRange.of(undefined) });
+    expect(tr2.state.field(firingRangeField)).toBeNull();
+  });
+
+  it("set then clear returns null", () => {
+    const state = EditorState.create({ doc: "hello world", extensions: [firingRangeField] });
+    const tr = state.update({
+      effects: [setFiringRange.of({ from: 2, to: 8 }), clearFiringRange.of(undefined)],
+    });
+    expect(tr.state.field(firingRangeField)).toBeNull();
+  });
+
+  it("insert before range: both shift forward", () => {
+    const state = EditorState.create({ doc: "hello world", extensions: [firingRangeField] });
+    const tr1 = state.update({ effects: setFiringRange.of({ from: 6, to: 11 }) });
+    const tr2 = tr1.state.update({ changes: { from: 0, to: 0, insert: "XX" } });
+    expect(tr2.state.field(firingRangeField)).toEqual({ from: 8, to: 13 });
+  });
+
+  it("insert after range: unchanged", () => {
+    const state = EditorState.create({ doc: "hello world", extensions: [firingRangeField] });
+    const tr1 = state.update({ effects: setFiringRange.of({ from: 0, to: 5 }) });
+    const tr2 = tr1.state.update({ changes: { from: 11, to: 11, insert: "!!" } });
+    expect(tr2.state.field(firingRangeField)).toEqual({ from: 0, to: 5 });
+  });
+
+  it("insert inside range: from unchanged, to shifts", () => {
+    const state = EditorState.create({ doc: "hello world", extensions: [firingRangeField] });
+    const tr1 = state.update({ effects: setFiringRange.of({ from: 0, to: 11 }) });
+    const tr2 = tr1.state.update({ changes: { from: 5, to: 5, insert: "XX" } });
+    expect(tr2.state.field(firingRangeField)!.from).toBe(0);
+    expect(tr2.state.field(firingRangeField)!.to).toBe(13);
+  });
+
+  it("delete before range: both shift backward", () => {
+    const state = EditorState.create({ doc: "hello world", extensions: [firingRangeField] });
+    const tr1 = state.update({ effects: setFiringRange.of({ from: 6, to: 11 }) });
+    const tr2 = tr1.state.update({ changes: { from: 0, to: 3 } });
+    expect(tr2.state.field(firingRangeField)).toEqual({ from: 3, to: 8 });
+  });
+
+  it("null field + doc change: stays null", () => {
+    const state = EditorState.create({ doc: "hello world", extensions: [firingRangeField] });
+    const tr = state.update({ changes: { from: 0, to: 0, insert: "XX" } });
+    expect(tr.state.field(firingRangeField)).toBeNull();
   });
 });
 

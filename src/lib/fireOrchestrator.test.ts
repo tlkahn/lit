@@ -6,7 +6,7 @@ import { useModalLockStore } from "../stores/modalLock";
 import { usePreferencesStore } from "../stores/preferences";
 import { useStatusMessageStore } from "../stores/statusMessage";
 import { useSecretStoreStore } from "../stores/secretStore";
-import { firingAnnotationsField } from "../editor/livePreview/annotationWidgets";
+import { firingAnnotationsField, firingRangeField } from "../editor/livePreview/annotationWidgets";
 
 vi.mock("./ipc", () => ({
   resolveAnnotationScopeWithMode: vi.fn(async () => null),
@@ -33,7 +33,7 @@ const flush = (n = 5) =>
   );
 
 function makeView(doc = "hello world", withFiringField = false): EditorView {
-  const extensions = withFiringField ? [firingAnnotationsField] : [];
+  const extensions = withFiringField ? [firingAnnotationsField, firingRangeField] : [];
   return new EditorView({
     state: EditorState.create({ doc, extensions }),
     parent: document.createElement("div"),
@@ -431,6 +431,40 @@ describe("fireAnnotation", () => {
 
     const firingSet = view.state.field(firingAnnotationsField);
     expect(firingSet.has(0)).toBe(false);
+    view.destroy();
+  });
+
+  it("mid-stream edit: replacement targets shifted range and doc is correct", async () => {
+    const doc = "before <!--- llm | explain this ---> after";
+    const view = makeView(doc, true);
+    const ann = makeAnnotation({
+      annotation_type: "llm",
+      body: "explain this",
+      char_start: 7,
+      char_end: 36,
+      original: "<!--- llm | explain this --->",
+    });
+
+    mockStream.mockImplementation(async (_args: unknown, callbacks: { onChunk: (t: string) => void; onDone: () => void }) => {
+      // Simulate a user edit during streaming: insert "XX" at position 0.
+      // This shifts the annotation from 7..36 to 9..38.
+      view.dispatch({ changes: { from: 0, to: 0, insert: "XX" } });
+      callbacks.onChunk("replacement text");
+      callbacks.onDone();
+    });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    const result = view.state.doc.toString();
+    // The source annotation should be gone (replaced at the shifted range)
+    expect(result).not.toContain("<!--- llm | explain this --->");
+    expect(result).toContain("[q]: explain this");
+    expect(result).toContain("replacement text");
+    // "XX" prefix should be intact
+    expect(result.startsWith("XX")).toBe(true);
+    expect(result).toContain("after");
+    // No ghost spinner
+    expect(view.state.field(firingAnnotationsField).size).toBe(0);
     view.destroy();
   });
 

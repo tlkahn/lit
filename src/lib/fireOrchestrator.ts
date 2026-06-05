@@ -72,38 +72,23 @@ export async function fireAnnotation(args: FireAnnotationArgs): Promise<void> {
       const text = buildFirePrompt(scopeText, annotation.body);
       return { model: prefs.llmModel, text, system: system || undefined };
     },
-    onDone: ({ responseText, markFiringCleared }) => {
+    onDone: ({ responseText, markFiringCleared, liveRange }) => {
       try {
         const threadDsl = buildThreadDsl(annotation, responseText);
-        // The thread DSL may be block-form (multi-line). The block parser
-        // requires the opening `<!---` at column 0 and the closing `--->`
-        // as the last token on its line. If the source annotation was
-        // inline (mid-line) or had trailing text, splicing the DSL in place
-        // would leave the opening mid-line and/or the trailing text on the
-        // close line — neither parser would recognize it, so the thread
-        // would be invisible in live preview. Split the line so the DSL
-        // always begins at column 0 and the close line ends at `--->`.
         const liveDoc = view.state.doc;
-        const startLine = liveDoc.lineAt(annotation.char_start);
-        const atColumn0 = annotation.char_start === startLine.from;
-        const endLine = liveDoc.lineAt(annotation.char_end);
-        const trailing = liveDoc.sliceString(annotation.char_end, endLine.to);
+        const startLine = liveDoc.lineAt(liveRange.from);
+        const atColumn0 = liveRange.from === startLine.from;
+        const endLine = liveDoc.lineAt(liveRange.to);
+        const trailing = liveDoc.sliceString(liveRange.to, endLine.to);
         const hasTrailing = trailing.trim().length > 0;
         const insert =
           (atColumn0 ? "" : "\n") + threadDsl + (hasTrailing ? "\n" : "");
-        // Clear the firing spinner in the SAME transaction as the doc
-        // replacement, keyed off the post-remap position. firingAnnotationsField
-        // remaps existing entries first, then applies effects — so clearing the
-        // mapped position deletes the entry the remap just produced, never a
-        // stale one. (For a replacement whose `from` is the firing position the
-        // mapped position equals char_start, but computing it explicitly keeps
-        // this correct even if the change ever becomes a pure insert.)
         const changes = view.state.changes({
-          from: annotation.char_start,
-          to: annotation.char_end,
+          from: liveRange.from,
+          to: liveRange.to,
           insert,
         });
-        const mapped = changes.mapPos(annotation.char_start, 1);
+        const mapped = changes.mapPos(liveRange.from, 1);
         view.dispatch({ changes, effects: clearFiringAnnotation.of(mapped) });
         markFiringCleared();
       } catch { /* view destroyed */ }

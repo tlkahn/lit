@@ -4,7 +4,7 @@ import { startLlmStream, cancelLlmStream } from "./llmClient";
 import { useModalLockStore } from "../stores/modalLock";
 import { useStatusMessageStore } from "../stores/statusMessage";
 import { useSecretStoreStore } from "../stores/secretStore";
-import { setFiringAnnotation, clearFiringAnnotation } from "../editor/livePreview/annotationWidgets";
+import { setFiringAnnotation, clearFiringAnnotation, setFiringRange, clearFiringRange, firingRangeField } from "../editor/livePreview/annotationWidgets";
 
 export interface WithLlmStreamOptions {
   /**
@@ -27,7 +27,7 @@ export interface WithLlmStreamOptions {
    * (in the same transaction as its doc change) so the harness does not fire a
    * redundant fallback clear during cleanup.
    */
-  onDone: (ctx: { responseText: string; markFiringCleared: () => void }) => void;
+  onDone: (ctx: { responseText: string; markFiringCleared: () => void; liveRange: { from: number; to: number } }) => void;
 }
 
 /**
@@ -65,7 +65,13 @@ export async function withLlmStream(
     window.removeEventListener("lit:cancel-fire", cancelHandler);
     if (!firingCleared) {
       try {
-        view.dispatch({ effects: clearFiringAnnotation.of(annotation.char_start) });
+        const liveStart = view.state.field(firingRangeField, false)?.from ?? annotation.char_start;
+        view.dispatch({
+          effects: [
+            clearFiringAnnotation.of(liveStart),
+            clearFiringRange.of(undefined),
+          ],
+        });
       } catch {
         /* view destroyed */
       }
@@ -81,7 +87,12 @@ export async function withLlmStream(
   window.addEventListener("lit:cancel-fire", cancelHandler);
 
   useModalLockStore.getState().setLlmLocked(true);
-  view.dispatch({ effects: setFiringAnnotation.of(annotation.char_start) });
+  view.dispatch({
+    effects: [
+      setFiringAnnotation.of(annotation.char_start),
+      setFiringRange.of({ from: annotation.char_start, to: annotation.char_end }),
+    ],
+  });
   window.dispatchEvent(new CustomEvent("lit:fire-started", { detail: { annotation } }));
 
   const args = await opts.buildArgs({ isCancelled: () => cancelled });
@@ -107,11 +118,14 @@ export async function withLlmStream(
         responseText += chunk;
       },
       onDone: () => {
+        const range = view.state.field(firingRangeField, false);
+        const liveRange = range ?? { from: annotation.char_start, to: annotation.char_end };
         opts.onDone({
           responseText,
           markFiringCleared: () => {
             firingCleared = true;
           },
+          liveRange,
         });
         doCleanup();
       },

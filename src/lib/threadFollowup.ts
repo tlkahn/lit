@@ -59,7 +59,7 @@ export async function threadFollowup(args: ThreadFollowupArgs): Promise<void> {
         messages,
       };
     },
-    onDone: ({ responseText, markFiringCleared }) => {
+    onDone: ({ responseText, markFiringCleared, liveRange }) => {
       try {
         const newBody = appendTurn(annotation.body ?? "", question, responseText);
         const scope = annotationToFields(annotation).scope;
@@ -72,18 +72,12 @@ export async function threadFollowup(args: ThreadFollowupArgs): Promise<void> {
           date: annotation.date,
         });
         const newTurnIndex = parseThreadBody(newBody).length - 1;
-        // Build the ChangeSet first so the firing-clear and thread-turn effects
-        // can be keyed off the post-remap position, and dispatch everything in a
-        // SINGLE transaction. firingAnnotationsField/threadTurnField remap their
-        // existing entries first and apply effects second, so using `mapped`
-        // collapses onto the single coherent key the remap produces rather than
-        // leaving a stale entry behind.
         const changes = view.state.changes({
-          from: annotation.char_start,
-          to: annotation.char_end,
+          from: liveRange.from,
+          to: liveRange.to,
           insert: dsl,
         });
-        const mapped = changes.mapPos(annotation.char_start, 1);
+        const mapped = changes.mapPos(liveRange.from, 1);
         view.dispatch({
           changes,
           effects: [

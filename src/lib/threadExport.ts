@@ -85,7 +85,10 @@ export function deleteThread(
   const from = range?.from ?? annotation.char_start;
   const to = range?.to ?? annotation.char_end;
   try {
-    if (from < 0 || from >= to || to > view.state.doc.length) return;
+    if (from < 0 || from >= to || to > view.state.doc.length) {
+      console.warn(`deleteThread: bounds-check failed (from=${from}, to=${to}, docLength=${view.state.doc.length})`);
+      return;
+    }
     view.dispatch({ changes: { from, to, insert: "" } });
   } catch {
     /* view destroyed */
