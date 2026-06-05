@@ -99,14 +99,20 @@ export function parseThreadBody(body: string): ThreadTurn[] {
 
 /**
  * Serialize turns back into the wire-format body. Round-trips with
- * `parseThreadBody` for normal and empty-response turns.
+ * `parseThreadBody` for normal and empty-response turns, including
+ * empty-question turns: the leading turn uses the bare no-prefix form, and any
+ * later empty-question turn is emitted with an explicit `[q]: ` delimiter so it
+ * re-parses as its own turn instead of merging into the previous response.
  */
 export function serializeThreadBody(turns: ThreadTurn[]): string {
   return turns
-    .map((turn) => {
+    .map((turn, index) => {
       if (turn.question === "") {
-        // No-prefix single response — emit the response verbatim.
-        return turn.response;
+        // A leading empty-question turn keeps the bare no-prefix form (preamble
+        // / single raw response). A non-leading one needs a `[q]: ` delimiter
+        // to create a fresh turn boundary on re-parse.
+        if (index === 0) return turn.response;
+        return turn.response === "" ? "[q]: " : `[q]: \n\n${turn.response}`;
       }
       if (turn.response === "") {
         // Streaming-in-progress turn — question only.

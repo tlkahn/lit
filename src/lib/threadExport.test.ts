@@ -1,9 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
+import { markdown } from "@codemirror/lang-markdown";
+import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
 import type { Annotation } from "./ipc";
 import { useStatusMessageStore } from "../stores/statusMessage";
 import { firingAnnotationsField, threadTurnField } from "../editor/livePreview/annotationWidgets";
+import { Annotation as AnnotationGrammar } from "../editor/markdown/annotation";
+import { Comment as CommentGrammar } from "../editor/markdown/comment";
 import {
   exportThreadToMarkdown,
   exportTurnToMarkdown,
@@ -25,6 +29,29 @@ function makeView(doc: string): EditorView {
     }),
     parent: document.createElement("div"),
   });
+}
+
+/** A real markdown view whose syntaxTree resolves BlockAnnotation nodes. */
+function makeMarkdownView(doc: string): EditorView {
+  const view = new EditorView({
+    state: EditorState.create({
+      doc,
+      extensions: [markdown({ extensions: [CommentGrammar, AnnotationGrammar] })],
+    }),
+    parent: document.createElement("div"),
+  });
+  ensureSyntaxTree(view.state, view.state.doc.length);
+  return view;
+}
+
+/** Resolve the live span of the BlockAnnotation enclosing `pos`, or null. */
+function liveRangeAt(view: EditorView, pos: number): { from: number; to: number } | null {
+  let n: ReturnType<typeof syntaxTree>["topNode"] | null = syntaxTree(view.state).resolveInner(
+    pos,
+    1,
+  );
+  while (n && n.name !== "BlockAnnotation") n = n.parent;
+  return n ? { from: n.from, to: n.to } : null;
 }
 
 const PREFIX = "before text\n";
@@ -168,5 +195,36 @@ describe("deleteThread", () => {
     const view = makeView(DOC);
     view.destroy();
     expect(() => deleteThread(view, makeThreadAnnotation())).not.toThrow();
+  });
+
+  it("deletes the LIVE thread span after an edit shifts it, not the stale char_start/char_end", () => {
+    const view = makeMarkdownView(DOC);
+    // Shift the whole thread right by 4 while the annotation's captured
+    // char_start/char_end stay at their pre-edit (now stale) values.
+    view.dispatch({ changes: { from: 0, insert: "XXXX" } });
+    ensureSyntaxTree(view.state, view.state.doc.length);
+
+    // Re-resolve the live range at the thread's now-shifted position, the way
+    // the production widget does via view.posAtDOM(container).
+    const live = liveRangeAt(view, THREAD_START + 4 + 5);
+    expect(live).not.toBeNull();
+
+    deleteThread(view, makeThreadAnnotation(), live ?? undefined);
+
+    const result = view.state.doc.toString();
+    expect(result).toBe("XXXX" + PREFIX + SUFFIX);
+    expect(result).not.toContain(THREAD_DSL);
+    view.destroy();
+  });
+
+  it("is a no-op (no throw, doc unchanged) when the thread node no longer exists", () => {
+    const view = makeView(PREFIX + SUFFIX);
+    const before = view.state.doc.toString();
+    // Captured offsets point past the end of this (thread-less) document.
+    expect(() =>
+      deleteThread(view, makeThreadAnnotation({ char_start: 9999, char_end: 99999 })),
+    ).not.toThrow();
+    expect(view.state.doc.toString()).toBe(before);
+    view.destroy();
   });
 });

@@ -64,14 +64,29 @@ export async function copyThreadExport(annotation: Annotation, turn: number): Pr
 }
 
 /**
- * Delete a thread annotation by removing its `char_start..char_end` span from the
- * document. Wrapped in try/catch in case the view has been destroyed.
+ * Delete a thread annotation by removing its span from the document.
+ *
+ * `annotation.char_start`/`char_end` are byte offsets captured at the last
+ * debounced (~150ms) re-parse, so they go stale the instant the user edits.
+ * Prefer `range` — the thread's LIVE span re-resolved at delete time from
+ * CodeMirror's incrementally-maintained syntaxTree (see the widget's Delete
+ * handler, which derives it via `view.posAtDOM`). Falls back to the captured
+ * offsets when no live range is available (e.g. unit views with no language).
+ *
+ * Bounds-checked: an empty/out-of-document/inverted range is a no-op rather
+ * than a corrupting edit, so a thread that no longer exists deletes nothing.
+ * Wrapped in try/catch in case the view has been destroyed.
  */
-export function deleteThread(view: EditorView, annotation: Annotation): void {
+export function deleteThread(
+  view: EditorView,
+  annotation: Annotation,
+  range?: { from: number; to: number },
+): void {
+  const from = range?.from ?? annotation.char_start;
+  const to = range?.to ?? annotation.char_end;
   try {
-    view.dispatch({
-      changes: { from: annotation.char_start, to: annotation.char_end, insert: "" },
-    });
+    if (from < 0 || from >= to || to > view.state.doc.length) return;
+    view.dispatch({ changes: { from, to, insert: "" } });
   } catch {
     /* view destroyed */
   }

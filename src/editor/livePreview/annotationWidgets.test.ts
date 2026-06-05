@@ -1199,6 +1199,22 @@ describe("ThreadWidget", () => {
     expect(dom.querySelector(".cm-annotation-callout-body")!.textContent).toContain("Second response body.");
   });
 
+  it("renders an empty/placeholder state and no body or follow-up trigger when the thread body is whitespace-only", () => {
+    const w = new ThreadWidget(makeThread({ body: "   \n  \n" }), 0, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    expect(dom.querySelector(".cm-annotation-callout-body")).toBeNull();
+    expect(dom.querySelector(".cm-thread-followup-trigger")).toBeNull();
+    expect(dom.querySelector(".cm-thread-empty")).toBeTruthy();
+    expect(dom.querySelector(".cm-thread-question")).toBeNull();
+    expect(dom.querySelector(".cm-thread-turn-counter")).toBeNull();
+    expect(dom.querySelectorAll(".cm-thread-nav-arrow").length).toBe(0);
+  });
+
+  it("keeps estimatedHeight positive for an empty expanded thread", () => {
+    const w = new ThreadWidget(makeThread({ body: "" }), 0, false, 0);
+    expect(w.estimatedHeight).toBeGreaterThan(0);
+  });
+
   it("omits the body entirely when collapsed", () => {
     const w = new ThreadWidget(makeThread(), 0, true, 0);
     const dom = w.toDOM(null as unknown as EditorView);
@@ -1347,6 +1363,8 @@ describe("ThreadWidget", () => {
     del.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     const event = spy.mock.calls[0]![0] as CustomEvent;
     expect(event.detail.annotation).toBe(ann);
+    // No view → no live range can be resolved; deleteThread falls back to offsets.
+    expect(event.detail.range).toBeUndefined();
     window.removeEventListener("lit:thread-delete", spy);
   });
 
@@ -1377,6 +1395,19 @@ describe("ThreadWidget", () => {
     expect(new ThreadWidget(ann, 0, false, 0).eq(new ThreadWidget(ann, 0, true, 0))).toBe(false);
     expect(new ThreadWidget(ann, 0, false, 0).eq(new ThreadWidget(ann, 0, false, 0, true))).toBe(false);
     expect(new ThreadWidget(ann, 0, false, 0).eq(new ThreadWidget(ann, 0, false, 0))).toBe(true);
+  });
+
+  it("eq ignores the global LLM lock state (threads have no fire button)", () => {
+    const ann = makeThread();
+    // Threads have no fire button, so the global LLM lock is not a thread widget
+    // input. Toggling it must NOT force a rebuild: two threads with identical real
+    // inputs stay eq()-equal regardless of the store's llmLocked state. Constructing
+    // ThreadWidget no longer accepts an llmLocked argument at all.
+    useModalLockStore.setState({ llmLocked: false });
+    const a = new ThreadWidget(ann, 0, false, 0, false);
+    useModalLockStore.setState({ llmLocked: true });
+    const b = new ThreadWidget(ann, 0, false, 0, false);
+    expect(a.eq(b)).toBe(true);
   });
 
   it("ignoreEvent returns true for mousedown, false for click", () => {

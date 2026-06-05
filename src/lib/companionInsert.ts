@@ -16,7 +16,7 @@ import { serializeThreadBody } from "./threadBody";
  *   - llm with empty/whitespace/null body -> "Explain" (the scope text the
  *     llm acted on is NOT available here — buildThreadDsl only receives the
  *     source annotation and response — so a fixed verb stands in)
- *   - otherwise -> the source body
+ *   - otherwise -> the source body, or "Answer" when the body is empty/whitespace
  */
 export function buildThreadDsl(sourceAnnotation: Annotation, responseText: string): string {
   const scope = annotationToFields(sourceAnnotation).scope;
@@ -28,7 +28,7 @@ export function buildThreadDsl(sourceAnnotation: Annotation, responseText: strin
   } else if (sourceAnnotation.annotation_type === "llm" && sourceBody === "") {
     question = "Explain";
   } else {
-    question = sourceBody;
+    question = sourceBody || "Answer";
   }
 
   const body = serializeThreadBody([{ question, response: responseText }]);

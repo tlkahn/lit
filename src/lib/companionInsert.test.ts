@@ -272,6 +272,29 @@ describe("buildThreadDsl", () => {
     expect(dsl).not.toMatch(/\[q\]: *$/m);
   });
 
+  it("falls back to a non-empty question for question type with empty body", () => {
+    const ann = makeAnnotation({ annotation_type: "question", body: "   ", original: "<!--- q --->" });
+    const dsl = buildThreadDsl(ann, "The answer.");
+    expect(dsl).toContain("[q]: Answer");
+    expect(dsl).not.toMatch(/\[q\]: *\n/);
+    expect(dsl).not.toMatch(/\[q\]: *$/m);
+    expect(dsl).toContain("The answer.");
+  });
+
+  it("falls back to a non-empty question for question type with null body", () => {
+    const ann = makeAnnotation({ annotation_type: "question", body: null, original: "<!--- q --->" });
+    const dsl = buildThreadDsl(ann, "The answer.");
+    expect(dsl).toContain("[q]: Answer");
+    expect(dsl).not.toMatch(/\[q\]: *$/m);
+  });
+
+  it("uses the source body verbatim for question type with a non-empty body", () => {
+    const ann = makeAnnotation({ annotation_type: "question", body: "why?", original: "<!--- q | why? --->" });
+    const dsl = buildThreadDsl(ann, "Because.");
+    expect(dsl).toContain("[q]: why?");
+    expect(dsl).not.toContain("[q]: Answer");
+  });
+
   it("generates a distinct UUID id on each call", () => {
     const ann = makeAnnotation({ annotation_type: "llm", body: "explain this", original: "<!--- llm | explain this --->" });
     const a = buildThreadDsl(ann, "x");

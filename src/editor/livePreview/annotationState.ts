@@ -414,7 +414,7 @@ function buildAnnotationBlockDecorations(state: EditorView["state"]): BlockDecor
       const isFiring = firingSet.has(from);
       const widget =
         ann.annotation_type === "thread"
-          ? new ThreadWidget(ann, turnState?.get(from) ?? 0, isCollapsed, from, isFiring, llmLocked)
+          ? new ThreadWidget(ann, turnState?.get(from) ?? 0, isCollapsed, from, isFiring)
           : new CalloutWidget(ann, isCollapsed, from, isFiring, llmLocked);
       decos.push({
         from,
@@ -562,7 +562,7 @@ const threadEventsPlugin = ViewPlugin.fromClass(
       };
       this.deleteHandler = (e: Event) => {
         const detail = (e as CustomEvent<ThreadDeleteEventDetail>).detail;
-        if (detail?.annotation) deleteThread(this.view, detail.annotation);
+        if (detail?.annotation) deleteThread(this.view, detail.annotation, detail.range);
       };
       window.addEventListener("lit:thread-followup", this.followupHandler);
       window.addEventListener("lit:thread-export", this.exportHandler);

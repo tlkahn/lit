@@ -265,6 +265,85 @@ describe("fireAnnotation", () => {
     view.destroy();
   });
 
+  it("replacing type: inline source produces block DSL starting at column 0", async () => {
+    const doc = "before <!--- llm | explain this ---> after";
+    const view = makeView(doc);
+    const ann = makeAnnotation({
+      annotation_type: "llm",
+      body: "explain this",
+      char_start: 7,
+      char_end: 36,
+      original: "<!--- llm | explain this --->",
+    });
+
+    mockStream.mockImplementation(async (_args: unknown, callbacks: { onChunk: (t: string) => void; onDone: () => void }) => {
+      // Multi-line response forces block (multi-line) DSL form
+      callbacks.onChunk("line one\nline two\nline three");
+      callbacks.onDone();
+    });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    const result = view.state.doc.toString();
+    const dslLine = result.split("\n").find((l) => l.startsWith("<!---"));
+    expect(dslLine).toBeDefined();
+    // No line may have <!--- preceded by other (non-whitespace) text
+    expect(result).not.toMatch(/\S<!---/);
+    view.destroy();
+  });
+
+  it("replacing type: trailing text after inline source moves to its own line", async () => {
+    const doc = "before <!--- llm | explain this ---> after";
+    const view = makeView(doc);
+    const ann = makeAnnotation({
+      annotation_type: "llm",
+      body: "explain this",
+      char_start: 7,
+      char_end: 36,
+      original: "<!--- llm | explain this --->",
+    });
+
+    mockStream.mockImplementation(async (_args: unknown, callbacks: { onChunk: (t: string) => void; onDone: () => void }) => {
+      callbacks.onChunk("line one\nline two\nline three");
+      callbacks.onDone();
+    });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    const result = view.state.doc.toString();
+    const lines = result.split("\n");
+    const closeLine = lines.find((l) => l.trimEnd().endsWith("--->"));
+    expect(closeLine!.trimEnd()).toMatch(/--->$/);
+    // " after" must NOT be on the close line (no trailing text after `--->`
+    // on the same line)
+    expect(closeLine).not.toMatch(/--->.*after/);
+    view.destroy();
+  });
+
+  it("replacing type: column-0 block source is unchanged (no extra leading newline)", async () => {
+    const doc = "<!--- llm | explain this --->\nrest";
+    const view = makeView(doc);
+    const ann = makeAnnotation({
+      annotation_type: "llm",
+      body: "explain this",
+      char_start: 0,
+      char_end: 29,
+      original: "<!--- llm | explain this --->",
+    });
+
+    mockStream.mockImplementation(async (_args: unknown, callbacks: { onChunk: (t: string) => void; onDone: () => void }) => {
+      callbacks.onChunk("line one\nline two\nline three");
+      callbacks.onDone();
+    });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    const result = view.state.doc.toString();
+    expect(result.startsWith("\n")).toBe(false);
+    expect(result).toMatch(/^<!---/);
+    view.destroy();
+  });
+
   it("replacing type: on error, source annotation is not removed", async () => {
     const doc = "before <!--- llm | explain this ---> after";
     const view = makeView(doc);
@@ -314,6 +393,30 @@ describe("fireAnnotation", () => {
 
     const firingSet = view.state.field(firingAnnotationsField);
     expect(firingSet.has(0)).toBe(false);
+    expect(firingSet.size).toBe(0);
+    view.destroy();
+  });
+
+  it("onDone clears the firing entry after doc replacement (no ghost spinner)", async () => {
+    const doc = "before <!--- llm | explain this ---> after";
+    const view = makeView(doc, true);
+    const ann = makeAnnotation({
+      annotation_type: "llm",
+      body: "explain this",
+      char_start: 7,
+      char_end: 36,
+      original: "<!--- llm | explain this --->",
+    });
+
+    mockStream.mockImplementation(async (_args: unknown, callbacks: { onChunk: (t: string) => void; onDone: () => void }) => {
+      callbacks.onChunk("replacement text");
+      callbacks.onDone();
+    });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    const firingSet = view.state.field(firingAnnotationsField);
+    expect(firingSet.size).toBe(0);
     view.destroy();
   });
 
@@ -482,6 +585,35 @@ describe("fireAnnotation", () => {
     window.removeEventListener("lit:fire-complete", completeSpy);
     view.destroy();
     void firePromise;
+  });
+
+  it("cancel during setup (before stream starts) releases the lock and clears the spinner", async () => {
+    // Force the function to park on ensureUnlocked: locked store whose unlock
+    // promise never settles (replicates the passphrase-modal window).
+    useSecretStoreStore.getState()._resetSettler();
+    useSecretStoreStore.setState({ exists: true, unlocked: false, promptOpen: false });
+    // Safety net: if the stream were ever started, it must not resolve.
+    mockStream.mockImplementation(() => new Promise(() => {}));
+    const view = makeView("hello world", true);
+    const ann = makeAnnotation({ annotation_type: "llm", char_start: 0 });
+
+    const promise = fireAnnotation({ view, annotation: ann });
+    await flush(); // parked on ensureUnlocked: spinner shown, lock held
+
+    // Sanity: mid-setup state.
+    expect(useModalLockStore.getState().llmLocked).toBe(true);
+    expect(view.state.field(firingAnnotationsField).has(0)).toBe(true);
+
+    window.dispatchEvent(new CustomEvent("lit:cancel-fire"));
+    await flush();
+
+    expect(useModalLockStore.getState().llmLocked).toBe(false);
+    expect(view.state.field(firingAnnotationsField).has(0)).toBe(false);
+    expect(mockCancel).toHaveBeenCalled();
+    expect(mockStream).not.toHaveBeenCalled();
+
+    view.destroy();
+    void promise;
   });
 
   // --- ensureUnlocked guard on replacing fire path ---

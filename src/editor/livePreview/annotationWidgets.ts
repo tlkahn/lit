@@ -1,5 +1,6 @@
 import { type EditorView, WidgetType } from "@codemirror/view";
 import { StateEffect, StateField, type Transaction } from "@codemirror/state";
+import { syntaxTree } from "@codemirror/language";
 import type { Annotation } from "../../lib/ipc";
 import type { AnnotationBuilderEventDetail } from "../../lib/annotationDsl";
 import { canFire } from "../../lib/fireClassification";
@@ -465,6 +466,13 @@ export interface ThreadExportEventDetail {
 
 export interface ThreadDeleteEventDetail {
   annotation: Annotation;
+  /**
+   * The thread's LIVE span, re-resolved from the syntaxTree at click time via
+   * `view.posAtDOM`. Undefined when it cannot be resolved (no view, DOM not
+   * measured, or no enclosing BlockAnnotation node) — the delete then falls
+   * back to the annotation's captured char_start/char_end.
+   */
+  range?: { from: number; to: number };
 }
 
 export class ThreadWidget extends WidgetType {
@@ -474,7 +482,6 @@ export class ThreadWidget extends WidgetType {
     readonly isCollapsed: boolean,
     readonly pos: number,
     readonly isFiring: boolean = false,
-    readonly llmLocked: boolean = false,
   ) {
     super();
   }
@@ -594,9 +601,22 @@ export class ThreadWidget extends WidgetType {
       );
     });
     addMenuRow("Delete", () => {
+      // Re-resolve the thread's live span from the syntaxTree at click time so
+      // the delete targets the real range even when the captured offsets have
+      // gone stale (the annotationDataField only refreshes on a ~150ms debounce).
+      let range: { from: number; to: number } | undefined;
+      if (view) {
+        const pos = view.posAtDOM(container);
+        if (pos >= 0) {
+          let n: ReturnType<ReturnType<typeof syntaxTree>["resolveInner"]> | null =
+            syntaxTree(view.state).resolveInner(pos, 1);
+          while (n && n.name !== "BlockAnnotation") n = n.parent;
+          if (n) range = { from: n.from, to: n.to };
+        }
+      }
       window.dispatchEvent(
         new CustomEvent<ThreadDeleteEventDetail>("lit:thread-delete", {
-          detail: { annotation: ann },
+          detail: { annotation: ann, range },
         }),
       );
     });
@@ -627,6 +647,16 @@ export class ThreadWidget extends WidgetType {
     // --- Body ---
     if (!this.isCollapsed) {
       const activeTurn = turns[idx];
+
+      // Whitespace-only body → no turns. Render a placeholder instead of an
+      // empty body div + follow-up trigger, and skip the question/body/trigger.
+      if (turns.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "cm-thread-empty";
+        empty.textContent = "No conversation yet.";
+        container.appendChild(empty);
+        return container;
+      }
 
       if (activeTurn && activeTurn.question !== "") {
         const question = document.createElement("div");
@@ -684,8 +714,7 @@ export class ThreadWidget extends WidgetType {
       this.annotation.char_end === other.annotation.char_end &&
       this.turn === other.turn &&
       this.isCollapsed === other.isCollapsed &&
-      this.isFiring === other.isFiring &&
-      this.llmLocked === other.llmLocked
+      this.isFiring === other.isFiring
     );
   }
 

@@ -138,6 +138,36 @@ describe("serializeThreadBody", () => {
     const reparsed = parseThreadBody(serializeThreadBody(turns));
     expect(reparsed).toEqual([{ question: "", response: "raw response" }]);
   });
+
+  it("round-trips a multi-turn body whose later turn has an empty question", () => {
+    const turns: ThreadTurn[] = [
+      { question: "A", response: "r" },
+      { question: "", response: "x" },
+    ];
+    const reparsed = parseThreadBody(serializeThreadBody(turns));
+    expect(reparsed).toEqual(turns);
+  });
+
+  it("round-trips a later empty-question, empty-response turn", () => {
+    const turns: ThreadTurn[] = [
+      { question: "A", response: "r" },
+      { question: "", response: "" },
+    ];
+    const reparsed = parseThreadBody(serializeThreadBody(turns));
+    expect(reparsed).toEqual(turns);
+  });
+
+  it("emits a [q]: delimiter for a non-leading empty-question turn", () => {
+    const out = serializeThreadBody([
+      { question: "A", response: "r" },
+      { question: "", response: "x" },
+    ]);
+    expect(out.match(/(?:^|\n)\[q\]: /g)?.length).toBe(2);
+  });
+
+  it("keeps the bare no-prefix form for a leading empty-question turn", () => {
+    expect(serializeThreadBody([{ question: "", response: "raw" }])).toBe("raw");
+  });
 });
 
 describe("appendTurn", () => {

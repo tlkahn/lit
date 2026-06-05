@@ -1,14 +1,11 @@
 import type { EditorView } from "@codemirror/view";
 import type { Annotation, AnnotationType } from "./ipc";
 import { resolveAnnotationScopeWithMode } from "./ipc";
-import { startLlmStream, cancelLlmStream } from "./llmClient";
 import { canFire } from "./fireClassification";
-import { useModalLockStore } from "../stores/modalLock";
 import { usePreferencesStore, type PreferencesState } from "../stores/preferences";
-import { useStatusMessageStore } from "../stores/statusMessage";
-import { useSecretStoreStore } from "../stores/secretStore";
-import { setFiringAnnotation, clearFiringAnnotation } from "../editor/livePreview/annotationWidgets";
+import { clearFiringAnnotation } from "../editor/livePreview/annotationWidgets";
 import { buildThreadDsl } from "./companionInsert";
+import { withLlmStream } from "./withLlmStream";
 
 export interface FireAnnotationArgs {
   view: EditorView;
@@ -46,100 +43,70 @@ export function buildFirePrompt(scopeText: string, body: string | null): string 
 export async function fireAnnotation(args: FireAnnotationArgs): Promise<void> {
   const { view, annotation } = args;
 
-  if (useModalLockStore.getState().llmLocked) {
-    throw new Error("LLM is already streaming");
-  }
-
-  useModalLockStore.getState().setLlmLocked(true);
-  view.dispatch({ effects: setFiringAnnotation.of(annotation.char_start) });
-  window.dispatchEvent(new CustomEvent("lit:fire-started", { detail: { annotation } }));
-
-  let cleanedUp = false;
-  let cancelHandler: (() => void) | null = null;
-  const doCleanup = () => {
-    if (cleanedUp) return;
-    cleanedUp = true;
-    if (cancelHandler) window.removeEventListener("lit:cancel-fire", cancelHandler);
-    try { view.dispatch({ effects: clearFiringAnnotation.of(annotation.char_start) }); } catch { /* view destroyed */ }
-    useModalLockStore.getState().setLlmLocked(false);
-    window.dispatchEvent(new CustomEvent("lit:fire-complete", { detail: { annotation } }));
-  };
-
   const prefs = usePreferencesStore.getState();
   const doc = view.state.doc.toString();
   const lang = prefs.annotationDefaultLang;
 
-  if (!canFire(annotation.annotation_type)) {
-    doCleanup();
-    return;
-  }
+  return withLlmStream(view, annotation, {
+    buildArgs: async ({ isCancelled }) => {
+      if (!canFire(annotation.annotation_type)) return null;
 
-  let scopeText = "";
-  try {
-    const range = await resolveAnnotationScopeWithMode(
-      doc,
-      annotation.char_start,
-      annotation.scope,
-      lang,
-      "bidirectional",
-    );
-    if (range) {
-      scopeText = stripAnnotations(doc.slice(range.start, range.end));
-    }
-  } catch (err) {
-    console.warn("Scope resolution failed, proceeding with empty scope:", err);
-  }
+      let scopeText = "";
+      try {
+        const range = await resolveAnnotationScopeWithMode(
+          doc,
+          annotation.char_start,
+          annotation.scope,
+          lang,
+          "bidirectional",
+        );
+        if (range) {
+          scopeText = stripAnnotations(doc.slice(range.start, range.end));
+        }
+      } catch (err) {
+        console.warn("Scope resolution failed, proceeding with empty scope:", err);
+      }
+      if (isCancelled()) return null;
 
-  const system = getTypePrompt(annotation.annotation_type);
-  const text = buildFirePrompt(scopeText, annotation.body);
-
-  try {
-    await useSecretStoreStore.getState().ensureUnlocked();
-  } catch {
-    doCleanup();
-    return;
-  }
-
-  let responseText = "";
-
-  cancelHandler = () => {
-    cancelLlmStream().catch(console.error);
-    doCleanup();
-  };
-  window.addEventListener("lit:cancel-fire", cancelHandler);
-
-  try {
-    await startLlmStream(
-      { model: prefs.llmModel, text, system: system || undefined },
-      {
-        onChunk: (chunk) => {
-          responseText += chunk;
-        },
-        onDone: () => {
-          try {
-            const threadDsl = buildThreadDsl(annotation, responseText);
-            view.dispatch({
-              changes: {
-                from: annotation.char_start,
-                to: annotation.char_end,
-                insert: threadDsl,
-              },
-            });
-          } catch { /* view destroyed */ }
-
-          doCleanup();
-        },
-        onError: (error) => {
-          useStatusMessageStore.getState().show(error.message, "error");
-          doCleanup();
-        },
-      },
-    );
-  } catch (err) {
-    useStatusMessageStore.getState().show(
-      err instanceof Error ? err.message : "LLM stream failed",
-      "error",
-    );
-    doCleanup();
-  }
+      const system = getTypePrompt(annotation.annotation_type);
+      const text = buildFirePrompt(scopeText, annotation.body);
+      return { model: prefs.llmModel, text, system: system || undefined };
+    },
+    onDone: ({ responseText, markFiringCleared }) => {
+      try {
+        const threadDsl = buildThreadDsl(annotation, responseText);
+        // The thread DSL may be block-form (multi-line). The block parser
+        // requires the opening `<!---` at column 0 and the closing `--->`
+        // as the last token on its line. If the source annotation was
+        // inline (mid-line) or had trailing text, splicing the DSL in place
+        // would leave the opening mid-line and/or the trailing text on the
+        // close line — neither parser would recognize it, so the thread
+        // would be invisible in live preview. Split the line so the DSL
+        // always begins at column 0 and the close line ends at `--->`.
+        const liveDoc = view.state.doc;
+        const startLine = liveDoc.lineAt(annotation.char_start);
+        const atColumn0 = annotation.char_start === startLine.from;
+        const endLine = liveDoc.lineAt(annotation.char_end);
+        const trailing = liveDoc.sliceString(annotation.char_end, endLine.to);
+        const hasTrailing = trailing.trim().length > 0;
+        const insert =
+          (atColumn0 ? "" : "\n") + threadDsl + (hasTrailing ? "\n" : "");
+        // Clear the firing spinner in the SAME transaction as the doc
+        // replacement, keyed off the post-remap position. firingAnnotationsField
+        // remaps existing entries first, then applies effects — so clearing the
+        // mapped position deletes the entry the remap just produced, never a
+        // stale one. (For a replacement whose `from` is the firing position the
+        // mapped position equals char_start, but computing it explicitly keeps
+        // this correct even if the change ever becomes a pure insert.)
+        const changes = view.state.changes({
+          from: annotation.char_start,
+          to: annotation.char_end,
+          insert,
+        });
+        const mapped = changes.mapPos(annotation.char_start, 1);
+        view.dispatch({ changes, effects: clearFiringAnnotation.of(mapped) });
+        markFiringCleared();
+      } catch { /* view destroyed */ }
+    },
+  });
 }

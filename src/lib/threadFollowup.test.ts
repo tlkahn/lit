@@ -20,10 +20,12 @@ vi.mock("./llmClient", () => ({
 }));
 
 import { startLlmStream, cancelLlmStream } from "./llmClient";
+import { resolveAnnotationScopeWithMode } from "./ipc";
 import { threadFollowup } from "./threadFollowup";
 
 const mockStream = startLlmStream as ReturnType<typeof vi.fn>;
 const mockCancel = cancelLlmStream as ReturnType<typeof vi.fn>;
+const mockResolveScope = resolveAnnotationScopeWithMode as ReturnType<typeof vi.fn>;
 
 const flush = (n = 5) =>
   Array.from({ length: n }).reduce<Promise<void>>(
@@ -161,6 +163,19 @@ describe("threadFollowup", () => {
     view.destroy();
   });
 
+  it("onDone clears the firing entry after thread DSL regeneration (no ghost spinner)", async () => {
+    mockStream.mockImplementation(async (_a: unknown, cb: { onChunk: (t: string) => void; onDone: () => void }) => {
+      cb.onChunk("answer C");
+      cb.onDone();
+    });
+    const view = makeView(DOC);
+
+    await threadFollowup({ view, annotation: makeThreadAnnotation(), question: "C" });
+
+    expect(view.state.field(firingAnnotationsField).size).toBe(0);
+    view.destroy();
+  });
+
   it("appends the new turn to the document on done", async () => {
     mockStream.mockImplementation(async (_a: unknown, cb: { onChunk: (t: string) => void; onDone: () => void }) => {
       cb.onChunk("answer C");
@@ -244,6 +259,36 @@ describe("threadFollowup", () => {
     void promise;
   });
 
+  it("cancel during setup (before stream starts) releases the lock and clears the spinner", async () => {
+    // Force the function to park on ensureUnlocked: locked store whose unlock
+    // promise never settles (replicates the passphrase-modal window). Refresh
+    // returns { unlocked: false } (mocked secretStoreStatus), so the prompt
+    // opens and the pending promise never resolves during the test.
+    useSecretStoreStore.getState()._resetSettler();
+    useSecretStoreStore.setState({ exists: true, unlocked: false, promptOpen: false });
+    // Safety net: if the stream were ever started, it must not resolve.
+    mockStream.mockImplementation(() => new Promise(() => {}));
+    const view = makeView(DOC);
+
+    const promise = threadFollowup({ view, annotation: makeThreadAnnotation(), question: "C" });
+    await flush(); // parked on ensureUnlocked: spinner shown, lock held
+
+    // Sanity: mid-setup state.
+    expect(useModalLockStore.getState().llmLocked).toBe(true);
+    expect(view.state.field(firingAnnotationsField).has(THREAD_START)).toBe(true);
+
+    window.dispatchEvent(new CustomEvent("lit:cancel-fire"));
+    await flush();
+
+    expect(useModalLockStore.getState().llmLocked).toBe(false);
+    expect(view.state.field(firingAnnotationsField).has(THREAD_START)).toBe(false);
+    expect(mockCancel).toHaveBeenCalled();
+    expect(mockStream).not.toHaveBeenCalled();
+
+    view.destroy();
+    void promise;
+  });
+
   it("is a no-op for a whitespace-only question (does not stream or lock)", async () => {
     const view = makeView(DOC);
 
@@ -252,6 +297,19 @@ describe("threadFollowup", () => {
     expect(mockStream).not.toHaveBeenCalled();
     expect(useModalLockStore.getState().llmLocked).toBe(false);
     expect(view.state.doc.toString()).toBe(DOC);
+    view.destroy();
+  });
+
+  it("does not perform a scope-resolution IPC round-trip during follow-up", async () => {
+    mockStream.mockImplementation(async (_a: unknown, cb: { onChunk: (t: string) => void; onDone: () => void }) => {
+      cb.onChunk("answer C");
+      cb.onDone();
+    });
+    const view = makeView(DOC);
+
+    await threadFollowup({ view, annotation: makeThreadAnnotation(), question: "C" });
+
+    expect(mockResolveScope).not.toHaveBeenCalled();
     view.destroy();
   });
 
