@@ -209,3 +209,78 @@ describe("annotation dispatch latency — 200+ annotations", () => {
     view.destroy();
   });
 });
+
+/**
+ * Build a document of many multiline BlockAnnotation callouts plus trailing
+ * plain lines. generateAnnotationHeavy emits only InlineAnnotations, so this
+ * inline fixture is needed to exercise annotationBlockDecorationField's
+ * full-tree walk specifically.
+ */
+function generateBlockAnnotationHeavy(blockCount: number): string {
+  const blocks: string[] = [];
+  for (let i = 0; i < blockCount; i++) {
+    blocks.push(`<!---\nbody ${i}\n--->`);
+  }
+  return blocks.join("\n\n") + "\n\nplain tail line";
+}
+
+function blockAnnotationsFromTree(view: EditorView): Annotation[] {
+  const { state } = view;
+  const annotations: Annotation[] = [];
+  syntaxTree(state).iterate({
+    enter: (node) => {
+      if (node.name !== "BlockAnnotation") return;
+      annotations.push(
+        makeAnnotation({
+          form: "block",
+          char_start: node.from,
+          char_end: node.to,
+          original: state.doc.sliceString(node.from, node.to),
+        }),
+      );
+    },
+  });
+  return annotations;
+}
+
+describe("annotationBlockDecorationField — block-heavy doc", () => {
+  const BLOCK_COUNT = 200;
+
+  it(`plain-line cursor move skips field rebuild fast (${BLOCK_COUNT} block annotations)`, () => {
+    const doc = generateBlockAnnotationHeavy(BLOCK_COUNT);
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: doc.length - 2 }, // on the trailing plain line
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+        displayModeField,
+        annotationFoldField,
+        firingAnnotationsField,
+        llmLockedField,
+        annotationDecorationPlugin,
+        annotationBlockDecorationField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    ensureSyntaxTree(view.state, view.state.doc.length);
+    view.dispatch({ effects: setAnnotationData.of(blockAnnotationsFromTree(view)) });
+
+    // The field must NOT rebuild on a plain-line cursor move: same value ref.
+    const before = view.state.field(annotationBlockDecorationField);
+    const tailPos = doc.length - 1;
+
+    const start = performance.now();
+    view.dispatch({ selection: { anchor: tailPos } });
+    const elapsed = performance.now() - start;
+
+    expect(view.state.field(annotationBlockDecorationField)).toBe(before);
+    if (elapsed > ADVISORY_MS) {
+      console.warn(
+        `[perf] block-annotation plain-line cursor move: ${elapsed.toFixed(1)}ms (>${ADVISORY_MS}ms target)`,
+      );
+    }
+    expect(elapsed).toBeLessThan(HARD_LIMIT_MS);
+    view.destroy();
+  });
+});
