@@ -400,7 +400,8 @@
   padding-inline: 4px;
 }
 
-.cm-thread-overflow:hover {
+.cm-thread-overflow:hover,
+.cm-thread-overflow.is-open {
   opacity: 1;
 }
 
