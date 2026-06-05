@@ -410,8 +410,9 @@
   inset-inline-end: 0;
   top: 100%;
   z-index: 10;
-  background: var(--cm-callout-bg, rgba(30, 30, 30, 0.98));
-  border: 1px solid rgba(128, 128, 128, 0.3);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  color: var(--text-normal);
   border-radius: 4px;
   padding: 4px 0;
   min-width: 9em;
@@ -428,7 +429,7 @@
 }
 
 .cm-thread-overflow-row:hover {
-  background: rgba(128, 128, 128, 0.15);
+  background: var(--background-modifier-hover);
 }
 
 /* Scope highlight */
