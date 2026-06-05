@@ -711,9 +711,9 @@ export class ThreadWidget extends WidgetType {
           textarea.className = "cm-thread-followup-input";
           textarea.placeholder = "Ask a follow-up…";
           textarea.onkeydown = (ke) => {
+            ke.stopPropagation();
             if (ke.key === "Enter" && (ke.metaKey || ke.ctrlKey)) {
               ke.preventDefault();
-              ke.stopPropagation();
               window.dispatchEvent(
                 new CustomEvent<ThreadFollowupEventDetail>("lit:thread-followup", {
                   detail: { annotation: ann, question: textarea.value },
@@ -721,7 +721,6 @@ export class ThreadWidget extends WidgetType {
               );
             } else if (ke.key === "Escape") {
               ke.preventDefault();
-              ke.stopPropagation();
               textarea.replaceWith(trigger);
             }
           };
@@ -747,7 +746,7 @@ export class ThreadWidget extends WidgetType {
   }
 
   ignoreEvent(event: Event): boolean {
-    return event.type === "mousedown";
+    return event.type === "mousedown" || event.type === "keydown";
   }
 
   get estimatedHeight(): number {

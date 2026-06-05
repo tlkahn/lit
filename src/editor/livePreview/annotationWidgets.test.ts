@@ -1386,6 +1386,31 @@ describe("ThreadWidget", () => {
     view.destroy();
   });
 
+  it("keystrokes in follow-up textarea do not propagate to the editor", () => {
+    const view = makeEditorView("x".repeat(50));
+    const w = new ThreadWidget(makeThread(), 0, false, 0);
+    const dom = w.toDOM(view);
+
+    const wrapper = document.createElement("div");
+    wrapper.appendChild(dom);
+    document.body.appendChild(wrapper);
+
+    const trigger = dom.querySelector(".cm-thread-followup-trigger")! as HTMLElement;
+    trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    const textarea = dom.querySelector(".cm-thread-followup-input")! as HTMLTextAreaElement;
+
+    const parentSpy = vi.fn();
+    wrapper.addEventListener("keydown", parentSpy);
+
+    textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true }));
+    textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
+    textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
+    expect(parentSpy).not.toHaveBeenCalled();
+
+    wrapper.remove();
+    view.destroy();
+  });
+
   it("overflow menu 'Export thread' dispatches lit:thread-export with turn -1", () => {
     const ann = makeThread();
     const w = new ThreadWidget(ann, 0, false, 0);
@@ -1473,9 +1498,10 @@ describe("ThreadWidget", () => {
     expect(a.eq(b)).toBe(true);
   });
 
-  it("ignoreEvent returns true for mousedown, false for click", () => {
+  it("ignoreEvent returns true for mousedown and keydown, false for click", () => {
     const w = new ThreadWidget(makeThread(), 0, false, 0);
     expect(w.ignoreEvent(new MouseEvent("mousedown"))).toBe(true);
+    expect(w.ignoreEvent(new KeyboardEvent("keydown"))).toBe(true);
     expect(w.ignoreEvent(new MouseEvent("click"))).toBe(false);
   });
 });
