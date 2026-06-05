@@ -14,6 +14,7 @@ import {
   findAnnotationAtCursor,
   buildAnnotationDecorations,
   hasAnnotationEffect,
+  shouldRebuildBlocksOnTreeChange,
 } from "./annotationState";
 import {
   annotationFoldField,
@@ -1296,6 +1297,94 @@ describe("syntax-tree progression triggers rebuild", () => {
   });
 });
 
+describe("shouldRebuildBlocksOnTreeChange", () => {
+  it("returns false when annotations array is empty", () => {
+    const state = EditorState.create({
+      doc: "hello world",
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+      ],
+    });
+    expect(shouldRebuildBlocksOnTreeChange(state, [])).toBe(false);
+  });
+
+  it("returns false when all annotations end within parsed territory", () => {
+    const doc = "text <!---n | body---> more content here";
+    const state = EditorState.create({
+      doc,
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+      ],
+    });
+    ensureSyntaxTree(state, state.doc.length);
+    const annotations = [makeAnnotation({ char_start: 5, char_end: 22 })];
+    expect(shouldRebuildBlocksOnTreeChange(state, annotations)).toBe(false);
+  });
+
+  it("returns true when an annotation ends beyond the tree's coverage", () => {
+    // Annotation char_end beyond tree length simulates a partially-parsed
+    // large doc where annotations sit past the parse frontier. In real usage
+    // tree.length < doc.length during incremental parsing while annotation
+    // positions reference the full document.
+    const doc = "hello world";
+    const state = EditorState.create({
+      doc,
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+      ],
+    });
+    const annotations = [makeAnnotation({ char_start: 5, char_end: 1000 })];
+    expect(shouldRebuildBlocksOnTreeChange(state, annotations)).toBe(true);
+  });
+
+  it("block field skips rebuild when annotations are early in a large doc and tree extends past them", () => {
+    const INLINE = "text <!---n | body---> tail\n";
+    const FILLER = "this is a line of plain filler text to pad the document\n".repeat(2000);
+    const doc = INLINE + FILLER;
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: 0 },
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+        displayModeField,
+        annotationFoldField,
+        firingAnnotationsField,
+        llmLockedField,
+        annotationDecorationPlugin,
+        annotationBlockDecorationField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    // Parse enough to cover the annotation but not the entire doc.
+    ensureSyntaxTree(view.state, INLINE.length + 100);
+
+    const ann = makeAnnotation({ char_start: 5, char_end: 22, original: "<!---n | body--->" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    // Force the parser to extend further into the filler (simulates parser
+    // progress past the annotation positions).
+    const treeBefore = syntaxTree(view.state);
+    forceParsing(view, view.state.doc.length, 100000);
+    const swapped = syntaxTree(view.state) !== treeBefore;
+    expect(swapped).toBe(true);
+
+    const fieldBefore = view.state.field(annotationBlockDecorationField);
+    view.dispatch({});
+    const fieldAfter = view.state.field(annotationBlockDecorationField);
+
+    // The guard should prevent a rebuild because all annotations end within
+    // the already-parsed territory of the OLD tree.
+    expect(fieldAfter).toBe(fieldBefore);
+
+    view.destroy();
+  });
+});
+
 describe("buildAnnotationDecorations", () => {
   function makeView(doc: string, cursorPos = 0) {
     const state = EditorState.create({
@@ -1725,6 +1814,28 @@ describe("annotationBlockDecorationField selection guard", () => {
       // Move to a plain tail line (line 7, char 40).
       view.dispatch({ selection: { anchor: 40 } });
       expect(hasCallout(view.state.field(annotationBlockDecorationField).decorations)).toBe(true);
+    } finally {
+      view.destroy();
+    }
+  });
+
+  it("blockSensitiveLines tracks all annotation lines even when cursor suppresses the decoration", async () => {
+    // Cursor ON the block annotation (line 4, char 20) — isCursorOnLine
+    // suppresses the callout decoration. blockSensitiveLines must still
+    // contain all lines spanned by the annotation. If someone reorders the
+    // line-tracking code to run AFTER the isCursorOnLine early-return, this
+    // test breaks.
+    const view = await makeView(20); // inside block (line 4)
+    try {
+      const { blockSensitiveLines, decorations } = view.state.field(annotationBlockDecorationField);
+      // Decoration is suppressed (cursor on annotation line).
+      expect(hasCallout(decorations)).toBe(false);
+      // But all lines spanned by the block annotation (lines 3-5) are tracked.
+      const startLine = view.state.doc.lineAt(BLOCK_START).number;
+      const endLine = view.state.doc.lineAt(BLOCK_END).number;
+      for (let l = startLine; l <= endLine; l++) {
+        expect(blockSensitiveLines.has(l)).toBe(true);
+      }
     } finally {
       view.destroy();
     }
