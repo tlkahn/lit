@@ -749,7 +749,7 @@ export class ThreadWidget extends WidgetType {
     if (event.type === "mousedown") return true;
     if (event.type === "keydown") {
       const t = event.target;
-      return t instanceof HTMLTextAreaElement && t.classList.contains("cm-thread-followup-input");
+      return t instanceof HTMLTextAreaElement && t.classList.contains(CLS.THREAD_FOLLOWUP_INPUT);
     }
     return false;
   }
