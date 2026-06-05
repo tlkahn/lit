@@ -4,7 +4,7 @@ import { syntaxTree } from "@codemirror/language";
 import { parseAnnotations, listAnnotations, type Annotation } from "../../lib/ipc";
 import { type AnnotationDisplayMode } from "../../stores/preferences";
 import { isCursorOnLine } from "./proximity";
-import { PillWidget, MarkerWidget, CalloutWidget, annotationFoldField, firingAnnotationsField, llmLockedField, setLlmLockedEffect, setFiringAnnotation, clearFiringAnnotation, toggleAnnotationFoldEffect } from "./annotationWidgets";
+import { PillWidget, MarkerWidget, CalloutWidget, ThreadWidget, annotationFoldField, threadTurnField, setThreadTurnEffect, firingAnnotationsField, llmLockedField, setLlmLockedEffect, setFiringAnnotation, clearFiringAnnotation, toggleAnnotationFoldEffect } from "./annotationWidgets";
 import { isPerfEnabled, perfMark, perfMeasure } from "./perf";
 import { useModalLockStore } from "../../stores/modalLock";
 import { useWorkspaceStore } from "../../stores/workspace";
@@ -12,6 +12,9 @@ import { scopeHighlightExtension } from "./scopeHighlight";
 import { markDecorationExtension } from "./markDecorations";
 import { escapeAnnotationKeymap } from "./escapeAnnotation";
 import { fireAnnotation } from "../../lib/fireOrchestrator";
+import { threadFollowup } from "../../lib/threadFollowup";
+import { copyThreadExport, deleteThread } from "../../lib/threadExport";
+import type { ThreadFollowupEventDetail, ThreadExportEventDetail, ThreadDeleteEventDetail } from "./annotationWidgets";
 
 export const setDisplayMode = StateEffect.define<AnnotationDisplayMode>();
 
@@ -346,7 +349,8 @@ export function hasAnnotationEffect(tr: { effects: readonly StateEffect<unknown>
     e.is(toggleAnnotationFoldEffect) ||
     e.is(setFiringAnnotation) ||
     e.is(clearFiringAnnotation) ||
-    e.is(setLlmLockedEffect),
+    e.is(setLlmLockedEffect) ||
+    e.is(setThreadTurnEffect),
   );
 }
 
@@ -381,6 +385,7 @@ function buildAnnotationBlockDecorations(state: EditorView["state"]): BlockDecor
   const firingSet = state.field(firingAnnotationsField, false) ?? new Set<number>();
   const llmLocked = state.field(llmLockedField, false) ?? false;
   const foldState = state.field(annotationFoldField, false);
+  const turnState = state.field(threadTurnField, false);
 
   const docLen = state.doc.length;
   const decos: { from: number; to: number; deco: Decoration }[] = [];
@@ -407,12 +412,14 @@ function buildAnnotationBlockDecorations(state: EditorView["state"]): BlockDecor
 
       const isCollapsed = foldState?.get(from) ?? false;
       const isFiring = firingSet.has(from);
+      const widget =
+        ann.annotation_type === "thread"
+          ? new ThreadWidget(ann, turnState?.get(from) ?? 0, isCollapsed, from, isFiring, llmLocked)
+          : new CalloutWidget(ann, isCollapsed, from, isFiring, llmLocked);
       decos.push({
         from,
         to,
-        deco: Decoration.replace({
-          widget: new CalloutWidget(ann, isCollapsed, from, isFiring, llmLocked),
-        }),
+        deco: Decoration.replace({ widget }),
       });
     },
   });
@@ -523,6 +530,55 @@ const fireAnnotationPlugin = ViewPlugin.fromClass(
   },
 );
 
+/**
+ * Bridges the `lit:thread-*` window events emitted by `ThreadWidget` into editor
+ * actions. Mirrors `fireAnnotationPlugin`: re-reads the live view in `update()`
+ * and tears down all listeners in `destroy()`.
+ *
+ * Only the follow-up handler is implemented in this phase; export and delete are
+ * wired as listener shells that Phase 6 (`threadExport`) fills in.
+ */
+const threadEventsPlugin = ViewPlugin.fromClass(
+  class {
+    private followupHandler: (e: Event) => void;
+    private exportHandler: (e: Event) => void;
+    private deleteHandler: (e: Event) => void;
+
+    constructor(private view: EditorView) {
+      this.followupHandler = (e: Event) => {
+        const detail = (e as CustomEvent<ThreadFollowupEventDetail>).detail;
+        if (detail?.annotation && detail.question?.trim()) {
+          threadFollowup({ view: this.view, annotation: detail.annotation, question: detail.question })
+            .catch((err) => console.warn("threadFollowup failed:", err));
+        }
+      };
+      this.exportHandler = (e: Event) => {
+        const detail = (e as CustomEvent<ThreadExportEventDetail>).detail;
+        if (detail?.annotation) {
+          copyThreadExport(detail.annotation, detail.turn).catch((err) =>
+            console.warn("thread export failed:", err),
+          );
+        }
+      };
+      this.deleteHandler = (e: Event) => {
+        const detail = (e as CustomEvent<ThreadDeleteEventDetail>).detail;
+        if (detail?.annotation) deleteThread(this.view, detail.annotation);
+      };
+      window.addEventListener("lit:thread-followup", this.followupHandler);
+      window.addEventListener("lit:thread-export", this.exportHandler);
+      window.addEventListener("lit:thread-delete", this.deleteHandler);
+    }
+    update(update: ViewUpdate) {
+      this.view = update.view;
+    }
+    destroy() {
+      window.removeEventListener("lit:thread-followup", this.followupHandler);
+      window.removeEventListener("lit:thread-export", this.exportHandler);
+      window.removeEventListener("lit:thread-delete", this.deleteHandler);
+    }
+  },
+);
+
 const llmLockBridgePlugin = ViewPlugin.fromClass(
   class {
     private unsub: () => void;
@@ -559,6 +615,7 @@ export function annotationExtension(): Extension {
     annotationDecorationPlugin,
     annotationBlockDecorationField,
     annotationFoldField,
+    threadTurnField,
     firingAnnotationsField,
     llmLockedField,
     llmLockBridgePlugin,
@@ -566,5 +623,6 @@ export function annotationExtension(): Extension {
     markDecorationExtension(),
     keymap.of(escapeAnnotationKeymap),
     fireAnnotationPlugin,
+    threadEventsPlugin,
   ];
 }

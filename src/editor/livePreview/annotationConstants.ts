@@ -9,6 +9,7 @@ export const TYPE_ICON: Record<AnnotationType, string> = {
   apparatus: "⊕",
   translation: "译",
   llm: "⚡",
+  thread: "◇",
   mark: "◆",
   bare: "…",
 };

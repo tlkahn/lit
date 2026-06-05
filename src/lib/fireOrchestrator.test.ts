@@ -235,7 +235,7 @@ describe("fireAnnotation", () => {
 
   // --- Cycle 9: Replacing fire behavior ---
 
-  it("replacing type: removes source and inserts companion annotation", async () => {
+  it("replacing type: transforms source in-place into a thread", async () => {
     const doc = "before <!--- llm | explain this ---> after";
     const view = makeView(doc);
     const ann = makeAnnotation({
@@ -254,8 +254,12 @@ describe("fireAnnotation", () => {
     await fireAnnotation({ view, annotation: ann });
 
     const result = view.state.doc.toString();
+    // source annotation is gone; replaced in-place by a thread
     expect(result).not.toContain("<!--- llm | explain this --->");
-    expect(result).toContain("<!--- n | replacement text --->");
+    expect(result).toContain("th");
+    expect(result).toContain("[q]: explain this");
+    expect(result).toContain("replacement text");
+    // surrounding doc text intact
     expect(result).toMatch(/^before /);
     expect(result).toContain(" after");
     view.destroy();
@@ -396,7 +400,7 @@ describe("fireAnnotation", () => {
     view.destroy();
   });
 
-  it("question type: removes source and inserts companion annotation", async () => {
+  it("question type: transforms source in-place into a thread", async () => {
     const doc = "before <!--- q | explain this ---> after";
     const view = makeView(doc);
     const ann = makeAnnotation({
@@ -416,7 +420,9 @@ describe("fireAnnotation", () => {
 
     const result = view.state.doc.toString();
     expect(result).not.toContain("<!--- q | explain this --->");
-    expect(result).toContain("<!--- n | replacement text --->");
+    expect(result).toContain("th");
+    expect(result).toContain("[q]: explain this");
+    expect(result).toContain("replacement text");
     expect(result).toMatch(/^before /);
     expect(result).toContain(" after");
     view.destroy();

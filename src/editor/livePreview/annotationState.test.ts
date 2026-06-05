@@ -22,6 +22,9 @@ import {
   PillWidget,
   CalloutWidget,
   MarkerWidget,
+  ThreadWidget,
+  threadTurnField,
+  setThreadTurnEffect,
   llmLockedField,
   firingAnnotationsField,
   setFiringAnnotation,
@@ -1108,6 +1111,7 @@ describe("annotationDecorationPlugin rebuild triggers", () => {
       setFiringAnnotation.of(0),
       clearFiringAnnotation.of(0),
       setLlmLockedEffect.of(true),
+      setThreadTurnEffect.of({ pos: 0, turn: 1 }),
     ];
     for (const effect of cases) {
       const tr = EditorState.create({ doc: "x" }).update({ effects: effect });
@@ -1631,10 +1635,10 @@ describe("findAnnotationAtCursor", () => {
 });
 
 describe("annotationExtension", () => {
-  it("returns array with 13 extensions", () => {
+  it("returns array with 15 extensions", () => {
     const ext = annotationExtension();
     expect(Array.isArray(ext)).toBe(true);
-    expect((ext as unknown[]).length).toBe(13);
+    expect((ext as unknown[]).length).toBe(15);
   });
 
   it("includes annotationDataField", () => {
@@ -1913,5 +1917,108 @@ describe("llmLockBridgePlugin", () => {
     await new Promise<void>((r) => queueMicrotask(r));
     // If the destroyed guard is missing, dispatching on a destroyed view would crash.
     // The test passes without throwing.
+  });
+});
+
+describe("buildAnnotationBlockDecorations thread routing", () => {
+  function makeView(doc: string, cursorPos = 0) {
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: cursorPos },
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+        displayModeField,
+        annotationFoldField,
+        threadTurnField,
+        firingAnnotationsField,
+        llmLockedField,
+        annotationBlockDecorationField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    ensureSyntaxTree(view.state, view.state.doc.length);
+    return view;
+  }
+
+  function iterateSet(set: DecorationSet) {
+    const out: { from: number; to: number; widget: unknown }[] = [];
+    const iter = set.iter();
+    while (iter.value) {
+      out.push({ from: iter.from, to: iter.to, widget: iter.value.spec?.widget });
+      iter.next();
+    }
+    return out;
+  }
+
+  const THREAD_BODY = "[q]: First?\n\nFirst answer.\n\n[q]: Second?\n\nSecond answer.";
+
+  it("routes a multiline thread annotation to a ThreadWidget", () => {
+    const doc = "text\n\n<!---\nth\n---\nbody line\n--->\nafter";
+    const from = 6;
+    const to = doc.indexOf("--->") + 4;
+    const view = makeView(doc, doc.length - 1);
+    const ann = makeAnnotation({
+      form: "block",
+      annotation_type: "thread",
+      body: THREAD_BODY,
+      char_start: from,
+      char_end: to,
+      original: doc.slice(from, to),
+    });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    const found = iterateSet(view.state.field(annotationBlockDecorationField).decorations).find(
+      (d) => d.from === from && d.to === to,
+    );
+    expect(found).toBeTruthy();
+    expect(found!.widget).toBeInstanceOf(ThreadWidget);
+    view.destroy();
+  });
+
+  it("routes a non-thread multiline annotation to a CalloutWidget", () => {
+    const doc = "text\n\n<!---\nn\n---\nbody line\n--->\nafter";
+    const from = 6;
+    const to = doc.indexOf("--->") + 4;
+    const view = makeView(doc, doc.length - 1);
+    const ann = makeAnnotation({
+      form: "block",
+      annotation_type: "note",
+      char_start: from,
+      char_end: to,
+      original: doc.slice(from, to),
+    });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    const found = iterateSet(view.state.field(annotationBlockDecorationField).decorations).find(
+      (d) => d.from === from && d.to === to,
+    );
+    expect(found).toBeTruthy();
+    expect(found!.widget).toBeInstanceOf(CalloutWidget);
+    expect(found!.widget).not.toBeInstanceOf(ThreadWidget);
+    view.destroy();
+  });
+
+  it("ThreadWidget receives the current turn index from threadTurnField", () => {
+    const doc = "text\n\n<!---\nth\n---\nbody line\n--->\nafter";
+    const from = 6;
+    const to = doc.indexOf("--->") + 4;
+    const view = makeView(doc, doc.length - 1);
+    const ann = makeAnnotation({
+      form: "block",
+      annotation_type: "thread",
+      body: THREAD_BODY,
+      char_start: from,
+      char_end: to,
+      original: doc.slice(from, to),
+    });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+    view.dispatch({ effects: setThreadTurnEffect.of({ pos: from, turn: 1 }) });
+
+    const found = iterateSet(view.state.field(annotationBlockDecorationField).decorations).find(
+      (d) => d.from === from && d.to === to,
+    );
+    expect((found!.widget as ThreadWidget).turn).toBe(1);
+    view.destroy();
   });
 });

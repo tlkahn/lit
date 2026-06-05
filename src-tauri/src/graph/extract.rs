@@ -378,6 +378,7 @@ pub fn extract_annotations(
                 AnnotationType::Apparatus => "apparatus",
                 AnnotationType::Translation => "translation",
                 AnnotationType::Llm => "llm",
+                AnnotationType::Thread => "thread",
                 AnnotationType::Mark => "mark",
                 AnnotationType::Bare => "bare",
             }
@@ -1033,6 +1034,14 @@ mod tests {
         let result = extract_annotations(content, crate::annotation::marks::builtin_mark_codes());
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].annotation_type, "llm");
+    }
+
+    #[test]
+    fn extract_annotations_thread_type() {
+        let content = "Some text <!--- th | a thread ---> more";
+        let result = extract_annotations(content, crate::annotation::marks::builtin_mark_codes());
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].annotation_type, "thread");
     }
 
     #[test]

@@ -30,5 +30,9 @@ describe("fireClassification", () => {
     it("returns false for apparatus", () => {
       expect(canFire("apparatus")).toBe(false);
     });
+
+    it("returns false for thread", () => {
+      expect(canFire("thread")).toBe(false);
+    });
   });
 });

@@ -10,6 +10,7 @@ pub enum AnnotationType {
     Apparatus,
     Translation,
     Llm,
+    Thread,
     Mark,
     Bare,
 }
@@ -24,6 +25,7 @@ impl AnnotationType {
             "app" => Some(Self::Apparatus),
             "tr" => Some(Self::Translation),
             "llm" => Some(Self::Llm),
+            "th" => Some(Self::Thread),
             _ => None,
         }
     }
@@ -358,6 +360,24 @@ mod tests {
     #[test]
     fn annotation_type_llm() {
         assert_eq!(AnnotationType::from_str("llm"), Some(AnnotationType::Llm));
+    }
+
+    #[test]
+    fn annotation_type_thread() {
+        assert_eq!(AnnotationType::from_str("th"), Some(AnnotationType::Thread));
+    }
+
+    #[test]
+    fn annotation_type_thread_word_does_not_map() {
+        assert_eq!(AnnotationType::from_str("thread"), None);
+    }
+
+    #[test]
+    fn thread_annotation_type_serializes_lowercase() {
+        let json = serde_json::to_string(&AnnotationType::Thread).unwrap();
+        assert_eq!(json, "\"thread\"");
+        let parsed: AnnotationType = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, AnnotationType::Thread);
     }
 
     #[test]

@@ -8,7 +8,7 @@ import { usePreferencesStore, type PreferencesState } from "../stores/preference
 import { useStatusMessageStore } from "../stores/statusMessage";
 import { useSecretStoreStore } from "../stores/secretStore";
 import { setFiringAnnotation, clearFiringAnnotation } from "../editor/livePreview/annotationWidgets";
-import { insertCompanionAnnotation } from "./companionInsert";
+import { buildThreadDsl } from "./companionInsert";
 
 export interface FireAnnotationArgs {
   view: EditorView;
@@ -117,8 +117,13 @@ export async function fireAnnotation(args: FireAnnotationArgs): Promise<void> {
         },
         onDone: () => {
           try {
-            insertCompanionAnnotation(view, annotation, responseText, {
-              removeSource: true,
+            const threadDsl = buildThreadDsl(annotation, responseText);
+            view.dispatch({
+              changes: {
+                from: annotation.char_start,
+                to: annotation.char_end,
+                insert: threadDsl,
+              },
             });
           } catch { /* view destroyed */ }
 
