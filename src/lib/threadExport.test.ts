@@ -80,9 +80,9 @@ function makeThreadAnnotation(overrides: Partial<Annotation> = {}): Annotation {
 }
 
 describe("exportThreadToMarkdown", () => {
-  it("emits one '## Q: <question>' heading + blank line + response per turn, turns separated by a blank line", () => {
+  it("emits one [!question] callout + blank line + response per turn, turns separated by a blank line", () => {
     const md = exportThreadToMarkdown(makeThreadAnnotation());
-    expect(md).toBe("## Q: A\n\nrespA\n\n## Q: B\n\nrespB");
+    expect(md).toBe("> [!question] A\n\nrespA\n\n> [!question] B\n\nrespB");
   });
 
   it("emits the response with NO heading for a no-question turn", () => {
@@ -104,14 +104,14 @@ describe("exportThreadToMarkdown", () => {
 });
 
 describe("exportTurnToMarkdown", () => {
-  it("returns only the requested turn formatted with a heading", () => {
+  it("returns only the requested turn formatted with a callout", () => {
     const md = exportTurnToMarkdown(makeThreadAnnotation(), 1);
-    expect(md).toBe("## Q: B\n\nrespB");
+    expect(md).toBe("> [!question] B\n\nrespB");
   });
 
   it("returns the first turn for index 0", () => {
     const md = exportTurnToMarkdown(makeThreadAnnotation(), 0);
-    expect(md).toBe("## Q: A\n\nrespA");
+    expect(md).toBe("> [!question] A\n\nrespA");
   });
 
   it("returns '' and does not throw for a negative index", () => {
@@ -155,7 +155,7 @@ describe("copyThreadExport", () => {
   it("turn === -1 copies the full thread markdown and shows a success toast", async () => {
     await copyThreadExport(makeThreadAnnotation(), -1);
     await flush();
-    expect(writeText).toHaveBeenCalledWith("## Q: A\n\nrespA\n\n## Q: B\n\nrespB");
+    expect(writeText).toHaveBeenCalledWith("> [!question] A\n\nrespA\n\n> [!question] B\n\nrespB");
     expect(useStatusMessageStore.getState().variant).toBe("success");
     expect(useStatusMessageStore.getState().message).toBeTruthy();
   });
@@ -163,7 +163,7 @@ describe("copyThreadExport", () => {
   it("turn === 0 copies only that turn's markdown", async () => {
     await copyThreadExport(makeThreadAnnotation(), 0);
     await flush();
-    expect(writeText).toHaveBeenCalledWith("## Q: A\n\nrespA");
+    expect(writeText).toHaveBeenCalledWith("> [!question] A\n\nrespA");
   });
 
   it("shows an error toast when writeText rejects", async () => {

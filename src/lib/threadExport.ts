@@ -2,9 +2,9 @@
  * Thread export & delete actions.
  *
  * Pure markdown builders turn a thread annotation's wire-format body into clean
- * markdown source for the clipboard: each turn becomes a `## Q: <question>`
- * heading followed by its response. A no-question turn (the leading no-prefix
- * response case from `parseThreadBody`) emits just the response, with no heading.
+ * markdown source for the clipboard: each turn becomes a `> [!question] <question>`
+ * callout followed by its response. A no-question turn (the leading no-prefix
+ * response case from `parseThreadBody`) emits just the response, with no callout.
  *
  * `copyThreadExport` is the single entry point the editor plugin delegates to: it
  * branches on `turn === -1` (whole thread) vs a single-turn index, copies via the
@@ -18,11 +18,11 @@ import type { EditorView } from "@codemirror/view";
 import { parseThreadBody, type ThreadTurn } from "./threadBody";
 import { useStatusMessageStore } from "../stores/statusMessage";
 
-/** Format a single parsed turn as markdown: heading + response, or bare response. */
+/** Format a single parsed turn as markdown: callout + response, or bare response. */
 function formatTurn(turn: ThreadTurn): string {
   if (turn.question === "") return turn.response;
-  if (turn.response === "") return `## Q: ${turn.question}`;
-  return `## Q: ${turn.question}\n\n${turn.response}`;
+  if (turn.response === "") return `> [!question] ${turn.question}`;
+  return `> [!question] ${turn.question}\n\n${turn.response}`;
 }
 
 /** Render an entire thread annotation as markdown source. Returns "" if empty. */
