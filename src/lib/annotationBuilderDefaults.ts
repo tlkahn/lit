@@ -12,7 +12,7 @@ export interface AnnotationBuilderDefaults {
   scopeAfter: number;
 }
 
-const VALID_TYPES = new Set<string>(["note", "question", "todo", "crossref", "apparatus", "translation", "llm", "bare"]);
+const VALID_TYPES = new Set<string>(["note", "question", "todo", "crossref", "apparatus", "translation", "llm", "thread", "bare"]);
 const VALID_CERTAINTIES = new Set<string>(["tentative", "firm", "neutral"]);
 const VALID_SCOPE_KINDS: ReadonlySet<string> = new Set(BUILDER_SCOPE_KINDS);
 

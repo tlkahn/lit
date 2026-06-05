@@ -3,7 +3,7 @@ import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { history, undo } from "@codemirror/commands";
 import type { Annotation } from "./ipc";
-import { buildCompanionDsl, insertCompanionAnnotation, insertCompanionAtCursor } from "./companionInsert";
+import { buildCompanionDsl, insertCompanionAnnotation, insertCompanionAtCursor, buildThreadDsl } from "./companionInsert";
 
 vi.mock("./ipc", () => ({
   parseAnnotations: vi.fn(async () => []),
@@ -229,6 +229,138 @@ describe("insertCompanionAnnotation", () => {
     expect(result).toContain("<!--- q | why? --->");
     expect(result).toContain("The answer.");
     view.destroy();
+  });
+});
+
+describe("buildThreadDsl", () => {
+  it("emits a thread (th) type code in block form", () => {
+    const ann = makeAnnotation({ annotation_type: "llm", body: "explain this", original: "<!--- llm | explain this --->" });
+    const dsl = buildThreadDsl(ann, "Here is the explanation.");
+    expect(dsl).toMatch(/^<!---\[[0-9a-f-]+\]/);
+    // block form: type code on its own line
+    expect(dsl).toContain("\nth\n");
+    expect(dsl).toContain("\n---\n");
+  });
+
+  it("embeds the source body as the first [q]: turn and the response after it", () => {
+    const ann = makeAnnotation({ annotation_type: "llm", body: "explain this", original: "<!--- llm | explain this --->" });
+    const dsl = buildThreadDsl(ann, "Here is the explanation.");
+    expect(dsl).toContain("[q]: explain this");
+    expect(dsl).toContain("Here is the explanation.");
+  });
+
+  it("uses 'Translate' as the first-turn question for translation type", () => {
+    const ann = makeAnnotation({ annotation_type: "translation", body: "some hint", original: "<!--- tr | some hint --->" });
+    const dsl = buildThreadDsl(ann, "翻译结果");
+    expect(dsl).toContain("[q]: Translate");
+    expect(dsl).toContain("翻译结果");
+  });
+
+  it("falls back to a non-empty question for llm with empty/whitespace body", () => {
+    const ann = makeAnnotation({ annotation_type: "llm", body: "   ", original: "<!--- llm --->" });
+    const dsl = buildThreadDsl(ann, "A summary.");
+    // must not emit a bare empty "[q]: " line
+    expect(dsl).not.toMatch(/\[q\]: *\n/);
+    expect(dsl).not.toMatch(/\[q\]: *$/m);
+    expect(dsl).toContain("A summary.");
+  });
+
+  it("falls back to a non-empty question for llm with null body", () => {
+    const ann = makeAnnotation({ annotation_type: "llm", body: null, original: "<!--- llm --->" });
+    const dsl = buildThreadDsl(ann, "A summary.");
+    expect(dsl).not.toMatch(/\[q\]: *\n/);
+    expect(dsl).not.toMatch(/\[q\]: *$/m);
+  });
+
+  it("falls back to a non-empty question for question type with empty body", () => {
+    const ann = makeAnnotation({ annotation_type: "question", body: "   ", original: "<!--- q --->" });
+    const dsl = buildThreadDsl(ann, "The answer.");
+    expect(dsl).toContain("[q]: Answer");
+    expect(dsl).not.toMatch(/\[q\]: *\n/);
+    expect(dsl).not.toMatch(/\[q\]: *$/m);
+    expect(dsl).toContain("The answer.");
+  });
+
+  it("falls back to a non-empty question for question type with null body", () => {
+    const ann = makeAnnotation({ annotation_type: "question", body: null, original: "<!--- q --->" });
+    const dsl = buildThreadDsl(ann, "The answer.");
+    expect(dsl).toContain("[q]: Answer");
+    expect(dsl).not.toMatch(/\[q\]: *$/m);
+  });
+
+  it("uses the source body verbatim for question type with a non-empty body", () => {
+    const ann = makeAnnotation({ annotation_type: "question", body: "why?", original: "<!--- q | why? --->" });
+    const dsl = buildThreadDsl(ann, "Because.");
+    expect(dsl).toContain("[q]: why?");
+    expect(dsl).not.toContain("[q]: Answer");
+  });
+
+  it("uses 'Respond' as the generic fallback for an unknown fireable type with empty body", () => {
+    const ann = makeAnnotation({ annotation_type: "llm" as Annotation["annotation_type"], body: null, original: "<!--- x --->" });
+    // Force a non-branched type: override annotation_type to something not llm/translation/question
+    (ann as { annotation_type: string }).annotation_type = "summary";
+    const dsl = buildThreadDsl(ann, "The summary.");
+    expect(dsl).toContain("[q]: Respond");
+    expect(dsl).not.toContain("[q]: Answer");
+    expect(dsl).toContain("The summary.");
+  });
+
+  it("uses source body for an unknown fireable type with a non-empty body", () => {
+    const ann = makeAnnotation({ annotation_type: "llm" as Annotation["annotation_type"], body: "custom prompt", original: "<!--- x --->" });
+    (ann as { annotation_type: string }).annotation_type = "summary";
+    const dsl = buildThreadDsl(ann, "result");
+    expect(dsl).toContain("[q]: custom prompt");
+    expect(dsl).not.toContain("[q]: Respond");
+  });
+
+  it("generates a distinct UUID id on each call", () => {
+    const ann = makeAnnotation({ annotation_type: "llm", body: "explain this", original: "<!--- llm | explain this --->" });
+    const a = buildThreadDsl(ann, "x");
+    const b = buildThreadDsl(ann, "x");
+    const idA = a.match(/^<!---\[([0-9a-f-]+)\]/)?.[1];
+    const idB = b.match(/^<!---\[([0-9a-f-]+)\]/)?.[1];
+    expect(idA).toBeTruthy();
+    expect(idB).toBeTruthy();
+    expect(idA).not.toBe(idB);
+  });
+
+  it("inherits paragraph scope from source", () => {
+    const ann = makeAnnotation({
+      annotation_type: "llm",
+      body: "explain this",
+      scope: { kind: "paragraph", value: 1 },
+      original: "<!--- llm \\p | explain this --->",
+    });
+    const dsl = buildThreadDsl(ann, "x");
+    expect(dsl).toContain("\\p");
+  });
+
+  it("inherits document scope from source", () => {
+    const ann = makeAnnotation({
+      annotation_type: "llm",
+      body: "explain this",
+      scope: { kind: "document", value: 0 },
+      original: "<!--- llm \\d | explain this --->",
+    });
+    const dsl = buildThreadDsl(ann, "x");
+    expect(dsl).toContain("\\d");
+  });
+
+  it("omits scope for implicit sentence/1 scope", () => {
+    const ann = makeAnnotation({
+      annotation_type: "llm",
+      body: "explain this",
+      scope: { kind: "sentence", value: 1 },
+      original: "<!--- llm | explain this --->",
+    });
+    const dsl = buildThreadDsl(ann, "x");
+    expect(dsl).not.toMatch(/\\[spdfh]/);
+  });
+
+  it("is block form because the [q]: body contains newlines", () => {
+    const ann = makeAnnotation({ annotation_type: "llm", body: "explain this", original: "<!--- llm | explain this --->" });
+    const dsl = buildThreadDsl(ann, "response");
+    expect(dsl).toContain("\n---\n");
   });
 });
 

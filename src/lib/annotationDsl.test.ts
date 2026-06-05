@@ -284,6 +284,10 @@ describe("generateDsl", () => {
       expect(generateDsl(fields({ type: "translation" }))).toBe("<!--- tr --->");
     });
 
+    it("thread → th", () => {
+      expect(generateDsl(fields({ type: "thread" }))).toBe("<!--- th --->");
+    });
+
     it("bare (null) with no body → minimal", () => {
       expect(generateDsl(fields())).toBe("<!---  --->");
     });

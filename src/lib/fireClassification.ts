@@ -8,6 +8,7 @@ const FIRE_CLASSIFICATION: Record<AnnotationType, boolean> = {
   note: false,
   crossref: false,
   apparatus: false,
+  thread: false,
   mark: false,
   bare: false,
 };

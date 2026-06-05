@@ -6,7 +6,7 @@ import { useModalLockStore } from "../stores/modalLock";
 import { usePreferencesStore } from "../stores/preferences";
 import { useStatusMessageStore } from "../stores/statusMessage";
 import { useSecretStoreStore } from "../stores/secretStore";
-import { firingAnnotationsField } from "../editor/livePreview/annotationWidgets";
+import { firingAnnotationsField, firingRangeField } from "../editor/livePreview/annotationWidgets";
 
 vi.mock("./ipc", () => ({
   resolveAnnotationScopeWithMode: vi.fn(async () => null),
@@ -33,7 +33,7 @@ const flush = (n = 5) =>
   );
 
 function makeView(doc = "hello world", withFiringField = false): EditorView {
-  const extensions = withFiringField ? [firingAnnotationsField] : [];
+  const extensions = withFiringField ? [firingAnnotationsField, firingRangeField] : [];
   return new EditorView({
     state: EditorState.create({ doc, extensions }),
     parent: document.createElement("div"),
@@ -235,7 +235,7 @@ describe("fireAnnotation", () => {
 
   // --- Cycle 9: Replacing fire behavior ---
 
-  it("replacing type: removes source and inserts companion annotation", async () => {
+  it("replacing type: transforms source in-place into a thread", async () => {
     const doc = "before <!--- llm | explain this ---> after";
     const view = makeView(doc);
     const ann = makeAnnotation({
@@ -254,10 +254,93 @@ describe("fireAnnotation", () => {
     await fireAnnotation({ view, annotation: ann });
 
     const result = view.state.doc.toString();
+    // source annotation is gone; replaced in-place by a thread
     expect(result).not.toContain("<!--- llm | explain this --->");
-    expect(result).toContain("<!--- n | replacement text --->");
+    expect(result).toContain("th");
+    expect(result).toContain("[q]: explain this");
+    expect(result).toContain("replacement text");
+    // surrounding doc text intact
     expect(result).toMatch(/^before /);
     expect(result).toContain(" after");
+    view.destroy();
+  });
+
+  it("replacing type: inline source produces block DSL starting at column 0", async () => {
+    const doc = "before <!--- llm | explain this ---> after";
+    const view = makeView(doc);
+    const ann = makeAnnotation({
+      annotation_type: "llm",
+      body: "explain this",
+      char_start: 7,
+      char_end: 36,
+      original: "<!--- llm | explain this --->",
+    });
+
+    mockStream.mockImplementation(async (_args: unknown, callbacks: { onChunk: (t: string) => void; onDone: () => void }) => {
+      // Multi-line response forces block (multi-line) DSL form
+      callbacks.onChunk("line one\nline two\nline three");
+      callbacks.onDone();
+    });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    const result = view.state.doc.toString();
+    const dslLine = result.split("\n").find((l) => l.startsWith("<!---"));
+    expect(dslLine).toBeDefined();
+    // No line may have <!--- preceded by other (non-whitespace) text
+    expect(result).not.toMatch(/\S<!---/);
+    view.destroy();
+  });
+
+  it("replacing type: trailing text after inline source moves to its own line", async () => {
+    const doc = "before <!--- llm | explain this ---> after";
+    const view = makeView(doc);
+    const ann = makeAnnotation({
+      annotation_type: "llm",
+      body: "explain this",
+      char_start: 7,
+      char_end: 36,
+      original: "<!--- llm | explain this --->",
+    });
+
+    mockStream.mockImplementation(async (_args: unknown, callbacks: { onChunk: (t: string) => void; onDone: () => void }) => {
+      callbacks.onChunk("line one\nline two\nline three");
+      callbacks.onDone();
+    });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    const result = view.state.doc.toString();
+    const lines = result.split("\n");
+    const closeLine = lines.find((l) => l.trimEnd().endsWith("--->"));
+    expect(closeLine!.trimEnd()).toMatch(/--->$/);
+    // " after" must NOT be on the close line (no trailing text after `--->`
+    // on the same line)
+    expect(closeLine).not.toMatch(/--->.*after/);
+    view.destroy();
+  });
+
+  it("replacing type: column-0 block source is unchanged (no extra leading newline)", async () => {
+    const doc = "<!--- llm | explain this --->\nrest";
+    const view = makeView(doc);
+    const ann = makeAnnotation({
+      annotation_type: "llm",
+      body: "explain this",
+      char_start: 0,
+      char_end: 29,
+      original: "<!--- llm | explain this --->",
+    });
+
+    mockStream.mockImplementation(async (_args: unknown, callbacks: { onChunk: (t: string) => void; onDone: () => void }) => {
+      callbacks.onChunk("line one\nline two\nline three");
+      callbacks.onDone();
+    });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    const result = view.state.doc.toString();
+    expect(result.startsWith("\n")).toBe(false);
+    expect(result).toMatch(/^<!---/);
     view.destroy();
   });
 
@@ -310,6 +393,30 @@ describe("fireAnnotation", () => {
 
     const firingSet = view.state.field(firingAnnotationsField);
     expect(firingSet.has(0)).toBe(false);
+    expect(firingSet.size).toBe(0);
+    view.destroy();
+  });
+
+  it("onDone clears the firing entry after doc replacement (no ghost spinner)", async () => {
+    const doc = "before <!--- llm | explain this ---> after";
+    const view = makeView(doc, true);
+    const ann = makeAnnotation({
+      annotation_type: "llm",
+      body: "explain this",
+      char_start: 7,
+      char_end: 36,
+      original: "<!--- llm | explain this --->",
+    });
+
+    mockStream.mockImplementation(async (_args: unknown, callbacks: { onChunk: (t: string) => void; onDone: () => void }) => {
+      callbacks.onChunk("replacement text");
+      callbacks.onDone();
+    });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    const firingSet = view.state.field(firingAnnotationsField);
+    expect(firingSet.size).toBe(0);
     view.destroy();
   });
 
@@ -324,6 +431,40 @@ describe("fireAnnotation", () => {
 
     const firingSet = view.state.field(firingAnnotationsField);
     expect(firingSet.has(0)).toBe(false);
+    view.destroy();
+  });
+
+  it("mid-stream edit: replacement targets shifted range and doc is correct", async () => {
+    const doc = "before <!--- llm | explain this ---> after";
+    const view = makeView(doc, true);
+    const ann = makeAnnotation({
+      annotation_type: "llm",
+      body: "explain this",
+      char_start: 7,
+      char_end: 36,
+      original: "<!--- llm | explain this --->",
+    });
+
+    mockStream.mockImplementation(async (_args: unknown, callbacks: { onChunk: (t: string) => void; onDone: () => void }) => {
+      // Simulate a user edit during streaming: insert "XX" at position 0.
+      // This shifts the annotation from 7..36 to 9..38.
+      view.dispatch({ changes: { from: 0, to: 0, insert: "XX" } });
+      callbacks.onChunk("replacement text");
+      callbacks.onDone();
+    });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    const result = view.state.doc.toString();
+    // The source annotation should be gone (replaced at the shifted range)
+    expect(result).not.toContain("<!--- llm | explain this --->");
+    expect(result).toContain("[q]: explain this");
+    expect(result).toContain("replacement text");
+    // "XX" prefix should be intact
+    expect(result.startsWith("XX")).toBe(true);
+    expect(result).toContain("after");
+    // No ghost spinner
+    expect(view.state.field(firingAnnotationsField).size).toBe(0);
     view.destroy();
   });
 
@@ -396,7 +537,7 @@ describe("fireAnnotation", () => {
     view.destroy();
   });
 
-  it("question type: removes source and inserts companion annotation", async () => {
+  it("question type: transforms source in-place into a thread", async () => {
     const doc = "before <!--- q | explain this ---> after";
     const view = makeView(doc);
     const ann = makeAnnotation({
@@ -416,7 +557,9 @@ describe("fireAnnotation", () => {
 
     const result = view.state.doc.toString();
     expect(result).not.toContain("<!--- q | explain this --->");
-    expect(result).toContain("<!--- n | replacement text --->");
+    expect(result).toContain("th");
+    expect(result).toContain("[q]: explain this");
+    expect(result).toContain("replacement text");
     expect(result).toMatch(/^before /);
     expect(result).toContain(" after");
     view.destroy();
@@ -476,6 +619,35 @@ describe("fireAnnotation", () => {
     window.removeEventListener("lit:fire-complete", completeSpy);
     view.destroy();
     void firePromise;
+  });
+
+  it("cancel during setup (before stream starts) releases the lock and clears the spinner", async () => {
+    // Force the function to park on ensureUnlocked: locked store whose unlock
+    // promise never settles (replicates the passphrase-modal window).
+    useSecretStoreStore.getState()._resetSettler();
+    useSecretStoreStore.setState({ exists: true, unlocked: false, promptOpen: false });
+    // Safety net: if the stream were ever started, it must not resolve.
+    mockStream.mockImplementation(() => new Promise(() => {}));
+    const view = makeView("hello world", true);
+    const ann = makeAnnotation({ annotation_type: "llm", char_start: 0 });
+
+    const promise = fireAnnotation({ view, annotation: ann });
+    await flush(); // parked on ensureUnlocked: spinner shown, lock held
+
+    // Sanity: mid-setup state.
+    expect(useModalLockStore.getState().llmLocked).toBe(true);
+    expect(view.state.field(firingAnnotationsField).has(0)).toBe(true);
+
+    window.dispatchEvent(new CustomEvent("lit:cancel-fire"));
+    await flush();
+
+    expect(useModalLockStore.getState().llmLocked).toBe(false);
+    expect(view.state.field(firingAnnotationsField).has(0)).toBe(false);
+    expect(mockCancel).toHaveBeenCalled();
+    expect(mockStream).not.toHaveBeenCalled();
+
+    view.destroy();
+    void promise;
   });
 
   // --- ensureUnlocked guard on replacing fire path ---

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { PillWidget, CalloutWidget, MarkerWidget, toggleAnnotationFoldEffect, annotationFoldField, firingAnnotationsField, setFiringAnnotation, clearFiringAnnotation, createFireButton, llmLockedField, setLlmLockedEffect } from "./annotationWidgets";
+import { PillWidget, CalloutWidget, MarkerWidget, ThreadWidget, toggleAnnotationFoldEffect, annotationFoldField, threadTurnField, setThreadTurnEffect, firingAnnotationsField, setFiringAnnotation, clearFiringAnnotation, firingRangeField, setFiringRange, clearFiringRange, createFireButton, llmLockedField, setLlmLockedEffect } from "./annotationWidgets";
 import type { Annotation } from "../../lib/ipc";
 import { useModalLockStore } from "../../stores/modalLock";
 import { useMarkConfigStore } from "../../stores/markConfig";
@@ -1101,5 +1101,381 @@ describe("CalloutWidget body markdown rendering", () => {
     expect(bodyEl.innerHTML).toContain("<strong>bold</strong>");
     expect(bodyEl.innerHTML).toContain("<em>italic</em>");
     view.destroy();
+  });
+});
+
+describe("threadTurnField", () => {
+  it("initial state is an empty Map", () => {
+    const state = EditorState.create({ extensions: [threadTurnField] });
+    expect(state.field(threadTurnField).size).toBe(0);
+  });
+
+  it("setThreadTurnEffect sets the turn for a position", () => {
+    const state = EditorState.create({ doc: "hello world", extensions: [threadTurnField] });
+    const tr = state.update({ effects: setThreadTurnEffect.of({ pos: 5, turn: 2 }) });
+    expect(tr.state.field(threadTurnField).get(5)).toBe(2);
+  });
+
+  it("remaps positions on document change while preserving the turn value", () => {
+    const state = EditorState.create({ doc: "hello world", extensions: [threadTurnField] });
+    const tr1 = state.update({ effects: setThreadTurnEffect.of({ pos: 10, turn: 3 }) });
+    const tr2 = tr1.state.update({ changes: { from: 0, to: 0, insert: "XX" } });
+    const field = tr2.state.field(threadTurnField);
+    expect(field.get(10)).toBeUndefined();
+    expect(field.get(12)).toBe(3);
+  });
+
+  it("returns the identical Map reference on a no-effect, no-docChange transaction", () => {
+    const state = EditorState.create({ doc: "hello world", extensions: [threadTurnField] });
+    const tr1 = state.update({ effects: setThreadTurnEffect.of({ pos: 5, turn: 1 }) });
+    const before = tr1.state.field(threadTurnField);
+    const tr2 = tr1.state.update({ selection: { anchor: 2 } });
+    expect(tr2.state.field(threadTurnField)).toBe(before);
+  });
+});
+
+describe("firingRangeField", () => {
+  it("initial state is null", () => {
+    const state = EditorState.create({ extensions: [firingRangeField] });
+    expect(state.field(firingRangeField)).toBeNull();
+  });
+
+  it("setFiringRange stores { from, to }", () => {
+    const state = EditorState.create({ doc: "hello world", extensions: [firingRangeField] });
+    const tr = state.update({ effects: setFiringRange.of({ from: 2, to: 8 }) });
+    expect(tr.state.field(firingRangeField)).toEqual({ from: 2, to: 8 });
+  });
+
+  it("clearFiringRange resets to null", () => {
+    const state = EditorState.create({ doc: "hello world", extensions: [firingRangeField] });
+    const tr1 = state.update({ effects: setFiringRange.of({ from: 2, to: 8 }) });
+    const tr2 = tr1.state.update({ effects: clearFiringRange.of(undefined) });
+    expect(tr2.state.field(firingRangeField)).toBeNull();
+  });
+
+  it("set then clear returns null", () => {
+    const state = EditorState.create({ doc: "hello world", extensions: [firingRangeField] });
+    const tr = state.update({
+      effects: [setFiringRange.of({ from: 2, to: 8 }), clearFiringRange.of(undefined)],
+    });
+    expect(tr.state.field(firingRangeField)).toBeNull();
+  });
+
+  it("insert before range: both shift forward", () => {
+    const state = EditorState.create({ doc: "hello world", extensions: [firingRangeField] });
+    const tr1 = state.update({ effects: setFiringRange.of({ from: 6, to: 11 }) });
+    const tr2 = tr1.state.update({ changes: { from: 0, to: 0, insert: "XX" } });
+    expect(tr2.state.field(firingRangeField)).toEqual({ from: 8, to: 13 });
+  });
+
+  it("insert after range: unchanged", () => {
+    const state = EditorState.create({ doc: "hello world", extensions: [firingRangeField] });
+    const tr1 = state.update({ effects: setFiringRange.of({ from: 0, to: 5 }) });
+    const tr2 = tr1.state.update({ changes: { from: 11, to: 11, insert: "!!" } });
+    expect(tr2.state.field(firingRangeField)).toEqual({ from: 0, to: 5 });
+  });
+
+  it("insert inside range: from unchanged, to shifts", () => {
+    const state = EditorState.create({ doc: "hello world", extensions: [firingRangeField] });
+    const tr1 = state.update({ effects: setFiringRange.of({ from: 0, to: 11 }) });
+    const tr2 = tr1.state.update({ changes: { from: 5, to: 5, insert: "XX" } });
+    expect(tr2.state.field(firingRangeField)!.from).toBe(0);
+    expect(tr2.state.field(firingRangeField)!.to).toBe(13);
+  });
+
+  it("delete before range: both shift backward", () => {
+    const state = EditorState.create({ doc: "hello world", extensions: [firingRangeField] });
+    const tr1 = state.update({ effects: setFiringRange.of({ from: 6, to: 11 }) });
+    const tr2 = tr1.state.update({ changes: { from: 0, to: 3 } });
+    expect(tr2.state.field(firingRangeField)).toEqual({ from: 3, to: 8 });
+  });
+
+  it("null field + doc change: stays null", () => {
+    const state = EditorState.create({ doc: "hello world", extensions: [firingRangeField] });
+    const tr = state.update({ changes: { from: 0, to: 0, insert: "XX" } });
+    expect(tr.state.field(firingRangeField)).toBeNull();
+  });
+});
+
+describe("ThreadWidget", () => {
+  const TWO_TURN_BODY =
+    "[q]: First question?\n\nFirst **response** body.\n\n[q]: Second question?\n\nSecond response body.";
+  const ONE_TURN_BODY = "[q]: Only question?\n\nOnly response.";
+
+  function makeThread(overrides: Partial<Annotation> = {}): Annotation {
+    return makeAnnotation({
+      form: "block",
+      annotation_type: "thread",
+      body: TWO_TURN_BODY,
+      char_start: 0,
+      char_end: 40,
+      original: "block-thread",
+      ...overrides,
+    });
+  }
+
+  it("toDOM returns div.cm-annotation-callout with thread type + cm-thread marker", () => {
+    const w = new ThreadWidget(makeThread(), 0, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView) as HTMLElement;
+    expect(dom.tagName).toBe("DIV");
+    expect(dom.classList.contains("cm-annotation-callout")).toBe(true);
+    expect(dom.classList.contains("cm-thread")).toBe(true);
+    expect(dom.dataset.annotationType).toBe("thread");
+  });
+
+  it("renders header icon, label 'thread', and turn counter 1/2 at turn 0", () => {
+    const w = new ThreadWidget(makeThread(), 0, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    const header = dom.querySelector(".cm-annotation-callout-header")!;
+    expect(header.querySelector(".cm-annotation-pill-icon")!.textContent).toBe("◇");
+    expect(header.querySelector(".cm-annotation-callout-label")!.textContent).toBe("thread");
+    expect(header.querySelector(".cm-thread-turn-counter")!.textContent).toBe("1/2");
+  });
+
+  it("shows ◁▷ nav arrows when more than one turn", () => {
+    const w = new ThreadWidget(makeThread(), 0, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    expect(dom.querySelectorAll(".cm-thread-nav-arrow").length).toBe(2);
+  });
+
+  it("hides ◁▷ nav arrows when exactly one turn", () => {
+    const w = new ThreadWidget(makeThread({ body: ONE_TURN_BODY }), 0, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    expect(dom.querySelectorAll(".cm-thread-nav-arrow").length).toBe(0);
+    expect(dom.querySelector(".cm-thread-turn-counter")!.textContent).toBe("1/1");
+  });
+
+  it("renders active turn question as textContent (not markdown) and response via renderMarkdown", () => {
+    const w = new ThreadWidget(makeThread(), 0, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    const question = dom.querySelector(".cm-thread-question")!;
+    expect(question.textContent).toBe("First question?");
+    const body = dom.querySelector(".cm-annotation-callout-body")!;
+    expect(body.innerHTML).toContain("<strong>response</strong>");
+  });
+
+  it("renders the second turn content when turn index is 1", () => {
+    const w = new ThreadWidget(makeThread(), 1, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    expect(dom.querySelector(".cm-thread-question")!.textContent).toBe("Second question?");
+    expect(dom.querySelector(".cm-thread-turn-counter")!.textContent).toBe("2/2");
+    expect(dom.querySelector(".cm-annotation-callout-body")!.textContent).toContain("Second response body.");
+  });
+
+  it("renders an empty/placeholder state and no body or follow-up trigger when the thread body is whitespace-only", () => {
+    const w = new ThreadWidget(makeThread({ body: "   \n  \n" }), 0, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    expect(dom.querySelector(".cm-annotation-callout-body")).toBeNull();
+    expect(dom.querySelector(".cm-thread-followup-trigger")).toBeNull();
+    expect(dom.querySelector(".cm-thread-empty")).toBeTruthy();
+    expect(dom.querySelector(".cm-thread-question")).toBeNull();
+    expect(dom.querySelector(".cm-thread-turn-counter")).toBeNull();
+    expect(dom.querySelectorAll(".cm-thread-nav-arrow").length).toBe(0);
+  });
+
+  it("keeps estimatedHeight positive for an empty expanded thread", () => {
+    const w = new ThreadWidget(makeThread({ body: "" }), 0, false, 0);
+    expect(w.estimatedHeight).toBeGreaterThan(0);
+  });
+
+  it("omits the body entirely when collapsed", () => {
+    const w = new ThreadWidget(makeThread(), 0, true, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    expect(dom.querySelector(".cm-annotation-callout-body")).toBeNull();
+    expect(dom.querySelector(".cm-thread-question")).toBeNull();
+    expect(dom.querySelector(".cm-annotation-callout-header")).toBeTruthy();
+  });
+
+  it("estimatedHeight is 30 collapsed and greater than 30 expanded", () => {
+    const collapsed = new ThreadWidget(makeThread(), 0, true, 0);
+    const expanded = new ThreadWidget(makeThread(), 0, false, 0);
+    expect(collapsed.estimatedHeight).toBe(30);
+    expect(expanded.estimatedHeight).toBeGreaterThan(30);
+  });
+
+  it("clamps an out-of-range turn index without throwing", () => {
+    const w = new ThreadWidget(makeThread(), 9, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    expect(dom.querySelector(".cm-thread-turn-counter")!.textContent).toBe("2/2");
+    expect(dom.querySelector(".cm-thread-question")!.textContent).toBe("Second question?");
+  });
+
+  it("clicking ▷ dispatches setThreadTurnEffect with the incremented clamped turn", () => {
+    const view = makeEditorView("x".repeat(50));
+    const w = new ThreadWidget(makeThread(), 0, false, 7);
+    const dom = w.toDOM(view);
+    const arrows = dom.querySelectorAll(".cm-thread-nav-arrow");
+    const next = arrows[arrows.length - 1] as HTMLElement;
+    const spy = vi.spyOn(view, "dispatch");
+    next.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(spy).toHaveBeenCalled();
+    const effects = (spy.mock.calls[0]![0] as { effects: unknown }).effects as ReturnType<typeof setThreadTurnEffect.of>;
+    expect(effects.is(setThreadTurnEffect)).toBe(true);
+    expect((effects.value as { pos: number; turn: number })).toEqual({ pos: 7, turn: 1 });
+    view.destroy();
+  });
+
+  it("clicking ◁ at turn 0 does not go negative", () => {
+    const view = makeEditorView("x".repeat(50));
+    const w = new ThreadWidget(makeThread(), 0, false, 7);
+    const dom = w.toDOM(view);
+    const prev = dom.querySelector(".cm-thread-nav-arrow")! as HTMLElement;
+    const spy = vi.spyOn(view, "dispatch");
+    prev.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    const effects = (spy.mock.calls[0]![0] as { effects: ReturnType<typeof setThreadTurnEffect.of> }).effects;
+    expect((effects.value as { pos: number; turn: number }).turn).toBe(0);
+    view.destroy();
+  });
+
+  it("renders a spinner and suppresses the follow-up trigger when isFiring", () => {
+    const w = new ThreadWidget(makeThread(), 0, false, 0, true);
+    const dom = w.toDOM(null as unknown as EditorView);
+    expect(dom.querySelector(".cm-annotation-callout-header .cm-annotation-spinner")).toBeTruthy();
+    expect(dom.querySelector(".cm-thread-followup-trigger")).toBeNull();
+  });
+
+  it("does NOT render a fire button (threads are not fireable)", () => {
+    const w = new ThreadWidget(makeThread(), 0, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    expect(dom.querySelector(".cm-annotation-fire-btn")).toBeNull();
+  });
+
+  it("follow-up trigger has proximity-reveal class and expands to a textarea on mousedown", () => {
+    const view = makeEditorView("x".repeat(50));
+    const w = new ThreadWidget(makeThread(), 0, false, 0);
+    const dom = w.toDOM(view);
+    const trigger = dom.querySelector(".cm-thread-followup-trigger")! as HTMLElement;
+    expect(trigger.classList.contains("cm-annotation-fire-proximity")).toBe(true);
+    trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(dom.querySelector(".cm-thread-followup-trigger")).toBeNull();
+    expect(dom.querySelector(".cm-thread-followup-input")).toBeTruthy();
+    view.destroy();
+  });
+
+  it("Cmd+Enter in the follow-up textarea dispatches lit:thread-followup with {annotation, question}", () => {
+    const view = makeEditorView("x".repeat(50));
+    const ann = makeThread();
+    const w = new ThreadWidget(ann, 0, false, 0);
+    const dom = w.toDOM(view);
+    const trigger = dom.querySelector(".cm-thread-followup-trigger")! as HTMLElement;
+    trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    const textarea = dom.querySelector(".cm-thread-followup-input")! as HTMLTextAreaElement;
+    textarea.value = "What about etymology?";
+
+    const spy = vi.fn();
+    window.addEventListener("lit:thread-followup", spy);
+    textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true }));
+    expect(spy).toHaveBeenCalledTimes(1);
+    const event = spy.mock.calls[0]![0] as CustomEvent;
+    expect(event.detail.annotation).toBe(ann);
+    expect(event.detail.question).toBe("What about etymology?");
+    window.removeEventListener("lit:thread-followup", spy);
+    view.destroy();
+  });
+
+  it("Escape in the follow-up textarea restores the trigger", () => {
+    const view = makeEditorView("x".repeat(50));
+    const w = new ThreadWidget(makeThread(), 0, false, 0);
+    const dom = w.toDOM(view);
+    const trigger = dom.querySelector(".cm-thread-followup-trigger")! as HTMLElement;
+    trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    const textarea = dom.querySelector(".cm-thread-followup-input")! as HTMLTextAreaElement;
+    textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(dom.querySelector(".cm-thread-followup-input")).toBeNull();
+    expect(dom.querySelector(".cm-thread-followup-trigger")).toBeTruthy();
+    view.destroy();
+  });
+
+  it("overflow menu 'Export thread' dispatches lit:thread-export with turn -1", () => {
+    const ann = makeThread();
+    const w = new ThreadWidget(ann, 0, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    const rows = dom.querySelectorAll(".cm-thread-overflow-menu > *");
+    const exportThread = Array.from(rows).find((r) => r.textContent === "Export thread")! as HTMLElement;
+    const spy = vi.fn();
+    window.addEventListener("lit:thread-export", spy);
+    exportThread.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    const event = spy.mock.calls[0]![0] as CustomEvent;
+    expect(event.detail.annotation).toBe(ann);
+    expect(event.detail.turn).toBe(-1);
+    window.removeEventListener("lit:thread-export", spy);
+  });
+
+  it("overflow menu 'Export turn' dispatches lit:thread-export with the active turn index", () => {
+    const ann = makeThread();
+    const w = new ThreadWidget(ann, 1, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    const rows = dom.querySelectorAll(".cm-thread-overflow-menu > *");
+    const exportTurn = Array.from(rows).find((r) => r.textContent === "Export turn")! as HTMLElement;
+    const spy = vi.fn();
+    window.addEventListener("lit:thread-export", spy);
+    exportTurn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    const event = spy.mock.calls[0]![0] as CustomEvent;
+    expect(event.detail.turn).toBe(1);
+    window.removeEventListener("lit:thread-export", spy);
+  });
+
+  it("overflow menu 'Delete' dispatches lit:thread-delete with the annotation", () => {
+    const ann = makeThread();
+    const w = new ThreadWidget(ann, 0, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    const rows = dom.querySelectorAll(".cm-thread-overflow-menu > *");
+    const del = Array.from(rows).find((r) => r.textContent === "Delete")! as HTMLElement;
+    const spy = vi.fn();
+    window.addEventListener("lit:thread-delete", spy);
+    del.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    const event = spy.mock.calls[0]![0] as CustomEvent;
+    expect(event.detail.annotation).toBe(ann);
+    // No view → no live range can be resolved; deleteThread falls back to offsets.
+    expect(event.detail.range).toBeUndefined();
+    window.removeEventListener("lit:thread-delete", spy);
+  });
+
+  it("header click dispatches edit event, but nav/fold/overflow/followup clicks do not", () => {
+    const view = makeEditorView("x".repeat(50));
+    const ann = makeThread();
+    const w = new ThreadWidget(ann, 0, false, 0);
+    const dom = w.toDOM(view);
+    const spy = vi.fn();
+    window.addEventListener("lit:open-annotation-builder", spy);
+
+    dom.querySelector(".cm-annotation-callout-label")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    spy.mockClear();
+    (dom.querySelector(".cm-thread-nav-arrow")! as HTMLElement).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    (dom.querySelector(".cm-annotation-fold-icon")! as HTMLElement).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    (dom.querySelector(".cm-thread-overflow")! as HTMLElement).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(spy).not.toHaveBeenCalled();
+
+    window.removeEventListener("lit:open-annotation-builder", spy);
+    view.destroy();
+  });
+
+  it("eq returns false when turn differs and true when all fields match", () => {
+    const ann = makeThread();
+    expect(new ThreadWidget(ann, 0, false, 0).eq(new ThreadWidget(ann, 1, false, 0))).toBe(false);
+    expect(new ThreadWidget(ann, 0, false, 0).eq(new ThreadWidget(ann, 0, true, 0))).toBe(false);
+    expect(new ThreadWidget(ann, 0, false, 0).eq(new ThreadWidget(ann, 0, false, 0, true))).toBe(false);
+    expect(new ThreadWidget(ann, 0, false, 0).eq(new ThreadWidget(ann, 0, false, 0))).toBe(true);
+  });
+
+  it("eq ignores the global LLM lock state (threads have no fire button)", () => {
+    const ann = makeThread();
+    // Threads have no fire button, so the global LLM lock is not a thread widget
+    // input. Toggling it must NOT force a rebuild: two threads with identical real
+    // inputs stay eq()-equal regardless of the store's llmLocked state. Constructing
+    // ThreadWidget no longer accepts an llmLocked argument at all.
+    useModalLockStore.setState({ llmLocked: false });
+    const a = new ThreadWidget(ann, 0, false, 0, false);
+    useModalLockStore.setState({ llmLocked: true });
+    const b = new ThreadWidget(ann, 0, false, 0, false);
+    expect(a.eq(b)).toBe(true);
+  });
+
+  it("ignoreEvent returns true for mousedown, false for click", () => {
+    const w = new ThreadWidget(makeThread(), 0, false, 0);
+    expect(w.ignoreEvent(new MouseEvent("mousedown"))).toBe(true);
+    expect(w.ignoreEvent(new MouseEvent("click"))).toBe(false);
   });
 });

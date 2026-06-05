@@ -1,11 +1,13 @@
 import { type EditorView, WidgetType } from "@codemirror/view";
 import { StateEffect, StateField, type Transaction } from "@codemirror/state";
+import { syntaxTree } from "@codemirror/language";
 import type { Annotation } from "../../lib/ipc";
 import type { AnnotationBuilderEventDetail } from "../../lib/annotationDsl";
 import { canFire } from "../../lib/fireClassification";
 import { renderMarkdown, renderInlineMarkdown } from "../../lib/renderMarkdown";
 import { handleAnnotationHover, handleAnnotationLeave } from "./annotationHover";
 import { TYPE_ICON, getMarkIcon, certaintyClass, certaintyMark, truncateBody } from "./annotationConstants";
+import { parseThreadBody } from "../../lib/threadBody";
 import "./annotation.css";
 
 export { certaintyClass, certaintyMark };
@@ -18,6 +20,34 @@ export interface FireAnnotationEventDetail {
 
 export const setFiringAnnotation = StateEffect.define<number>();
 export const clearFiringAnnotation = StateEffect.define<number>();
+
+// --- Firing range state (live-remapping from/to for the active firing annotation) ---
+
+export const setFiringRange = StateEffect.define<{ from: number; to: number }>();
+export const clearFiringRange = StateEffect.define<void>();
+
+export const firingRangeField = StateField.define<{ from: number; to: number } | null>({
+  create() {
+    return null;
+  },
+  update(value, tr) {
+    let result = value;
+    if (tr.docChanged && result !== null) {
+      result = {
+        from: tr.changes.mapPos(result.from, 1),
+        to: tr.changes.mapPos(result.to, -1),
+      };
+    }
+    for (const effect of tr.effects) {
+      if (effect.is(setFiringRange)) {
+        result = effect.value;
+      } else if (effect.is(clearFiringRange)) {
+        result = null;
+      }
+    }
+    return result;
+  },
+});
 
 export const firingAnnotationsField = StateField.define<Set<number>>({
   create() {
@@ -309,6 +339,30 @@ export const annotationFoldField = StateField.define<Map<number, boolean>>({
   },
 });
 
+// --- Thread turn state ---
+
+export const setThreadTurnEffect = StateEffect.define<{ pos: number; turn: number }>();
+
+export const threadTurnField = StateField.define<Map<number, number>>({
+  create() {
+    return new Map();
+  },
+  update(value: Map<number, number>, tr: Transaction) {
+    if (!tr.docChanged && !tr.effects.length) return value;
+    const newMap = new Map<number, number>();
+    for (const [pos, turn] of value) {
+      const newPos = tr.changes.mapPos(pos, 1);
+      newMap.set(newPos, turn);
+    }
+    for (const effect of tr.effects) {
+      if (effect.is(setThreadTurnEffect)) {
+        newMap.set(effect.value.pos, effect.value.turn);
+      }
+    }
+    return newMap;
+  },
+});
+
 // --- Callout Widget ---
 
 function createFoldSvg(): SVGSVGElement {
@@ -422,5 +476,281 @@ export class CalloutWidget extends WidgetType {
 
   get estimatedHeight(): number {
     return this.isCollapsed ? 30 : 80;
+  }
+}
+
+// --- Thread Widget ---
+
+export interface ThreadFollowupEventDetail {
+  annotation: Annotation;
+  question: string;
+}
+
+export interface ThreadExportEventDetail {
+  annotation: Annotation;
+  /** -1 exports the whole thread; otherwise the index of a single turn. */
+  turn: number;
+}
+
+export interface ThreadDeleteEventDetail {
+  annotation: Annotation;
+  /**
+   * The thread's LIVE span, re-resolved from the syntaxTree at click time via
+   * `view.posAtDOM`. Undefined when it cannot be resolved (no view, DOM not
+   * measured, or no enclosing BlockAnnotation node) — the delete then falls
+   * back to the annotation's captured char_start/char_end.
+   */
+  range?: { from: number; to: number };
+}
+
+export class ThreadWidget extends WidgetType {
+  constructor(
+    readonly annotation: Annotation,
+    readonly turn: number,
+    readonly isCollapsed: boolean,
+    readonly pos: number,
+    readonly isFiring: boolean = false,
+  ) {
+    super();
+  }
+
+  toDOM(view: EditorView): HTMLElement {
+    const ann = this.annotation;
+    const turns = parseThreadBody(ann.body ?? "");
+    const idx = Math.min(Math.max(this.turn, 0), Math.max(turns.length - 1, 0));
+
+    const container = document.createElement("div");
+    container.className = "cm-annotation-callout cm-thread";
+    const cert = certaintyClass(ann.certainty);
+    if (cert) container.classList.add(cert);
+    container.dataset.annotationType = "thread";
+
+    container.onmouseenter = (e) => handleAnnotationHover(view, ann, { altKey: e.altKey });
+    container.onmouseleave = () => handleAnnotationLeave(view);
+
+    // --- Header ---
+    const header = document.createElement("div");
+    header.className = "cm-annotation-callout-header";
+    header.onclick = (e) => {
+      if (
+        (e.target as HTMLElement).closest(
+          ".cm-annotation-fold-icon, .cm-thread-nav-arrow, .cm-thread-overflow, .cm-thread-overflow-menu, .cm-annotation-fire-btn",
+        )
+      )
+        return;
+      e.preventDefault();
+      dispatchEditEvent(ann);
+    };
+
+    const icon = document.createElement("span");
+    icon.className = "cm-annotation-pill-icon";
+    icon.textContent = TYPE_ICON.thread ?? "◇";
+    header.appendChild(icon);
+
+    const label = document.createElement("span");
+    label.className = "cm-annotation-callout-label";
+    label.textContent = "thread";
+    header.appendChild(label);
+
+    if (turns.length >= 1) {
+      const counter = document.createElement("span");
+      counter.className = "cm-thread-turn-counter";
+      counter.textContent = `${idx + 1}/${turns.length}`;
+      header.appendChild(counter);
+    }
+
+    if (turns.length > 1) {
+      const nav = document.createElement("span");
+      nav.className = "cm-thread-nav";
+
+      const prev = document.createElement("span");
+      prev.className = "cm-thread-nav-arrow";
+      prev.textContent = "◁";
+      prev.onmousedown = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const next = Math.max(idx - 1, 0);
+        view.dispatch({ effects: setThreadTurnEffect.of({ pos: this.pos, turn: next }) });
+      };
+      nav.appendChild(prev);
+
+      const fwd = document.createElement("span");
+      fwd.className = "cm-thread-nav-arrow";
+      fwd.textContent = "▷";
+      fwd.onmousedown = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const next = Math.min(idx + 1, turns.length - 1);
+        view.dispatch({ effects: setThreadTurnEffect.of({ pos: this.pos, turn: next }) });
+      };
+      nav.appendChild(fwd);
+
+      header.appendChild(nav);
+    }
+
+    if (this.isFiring) {
+      const spinner = document.createElement("span");
+      spinner.className = "cm-annotation-spinner";
+      header.appendChild(spinner);
+    }
+
+    // Overflow menu (⋮) — Export thread / Export turn / Delete.
+    const overflow = document.createElement("span");
+    overflow.className = "cm-thread-overflow";
+    overflow.textContent = "⋮";
+    const menu = document.createElement("div");
+    menu.className = "cm-thread-overflow-menu";
+
+    const addMenuRow = (text: string, handler: () => void) => {
+      const row = document.createElement("div");
+      row.className = "cm-thread-overflow-row";
+      row.textContent = text;
+      row.onmousedown = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        overflow.classList.remove("is-open");
+        handler();
+      };
+      menu.appendChild(row);
+    };
+
+    addMenuRow("Export thread", () => {
+      window.dispatchEvent(
+        new CustomEvent<ThreadExportEventDetail>("lit:thread-export", {
+          detail: { annotation: ann, turn: -1 },
+        }),
+      );
+    });
+    addMenuRow("Export turn", () => {
+      window.dispatchEvent(
+        new CustomEvent<ThreadExportEventDetail>("lit:thread-export", {
+          detail: { annotation: ann, turn: idx },
+        }),
+      );
+    });
+    addMenuRow("Delete", () => {
+      // Re-resolve the thread's live span from the syntaxTree at click time so
+      // the delete targets the real range even when the captured offsets have
+      // gone stale (the annotationDataField only refreshes on a ~150ms debounce).
+      let range: { from: number; to: number } | undefined;
+      if (view) {
+        const pos = view.posAtDOM(container);
+        if (pos >= 0) {
+          let n: ReturnType<ReturnType<typeof syntaxTree>["resolveInner"]> | null =
+            syntaxTree(view.state).resolveInner(pos, 1);
+          while (n && n.name !== "BlockAnnotation") n = n.parent;
+          if (n) range = { from: n.from, to: n.to };
+        }
+      }
+      window.dispatchEvent(
+        new CustomEvent<ThreadDeleteEventDetail>("lit:thread-delete", {
+          detail: { annotation: ann, range },
+        }),
+      );
+    });
+
+    overflow.appendChild(menu);
+    overflow.onmousedown = (e) => {
+      // Only toggle when clicking the ⋮ glyph itself, not a menu row.
+      if ((e.target as HTMLElement).closest(".cm-thread-overflow-menu")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      overflow.classList.toggle("is-open");
+    };
+    header.appendChild(overflow);
+
+    // Fold chevron.
+    const arrow = document.createElement("span");
+    arrow.className = "cm-annotation-fold-icon";
+    if (this.isCollapsed) arrow.classList.add("is-collapsed");
+    arrow.appendChild(createFoldSvg());
+    arrow.onmousedown = (e) => {
+      e.preventDefault();
+      view.dispatch({ effects: toggleAnnotationFoldEffect.of({ pos: this.pos }) });
+    };
+    header.appendChild(arrow);
+
+    container.appendChild(header);
+
+    // --- Body ---
+    if (!this.isCollapsed) {
+      const activeTurn = turns[idx];
+
+      // Whitespace-only body → no turns. Render a placeholder instead of an
+      // empty body div + follow-up trigger, and skip the question/body/trigger.
+      if (turns.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "cm-thread-empty";
+        empty.textContent = "No conversation yet.";
+        container.appendChild(empty);
+        return container;
+      }
+
+      if (activeTurn && activeTurn.question !== "") {
+        const question = document.createElement("div");
+        question.className = "cm-thread-question";
+        // Plain text — never render attacker-controlled markup in the question line.
+        question.textContent = activeTurn.question;
+        container.appendChild(question);
+      }
+
+      const body = document.createElement("div");
+      body.className = "cm-annotation-callout-body";
+      body.innerHTML = renderMarkdown(activeTurn?.response ?? "");
+      container.appendChild(body);
+
+      // Follow-up trigger (proximity-revealed) — suppressed while streaming.
+      if (!this.isFiring) {
+        const trigger = document.createElement("span");
+        trigger.className = "cm-thread-followup-trigger cm-annotation-fire-proximity";
+        trigger.textContent = "⊕ Follow up";
+        trigger.onmousedown = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const textarea = document.createElement("textarea");
+          textarea.className = "cm-thread-followup-input";
+          textarea.placeholder = "Ask a follow-up…";
+          textarea.onkeydown = (ke) => {
+            if (ke.key === "Enter" && (ke.metaKey || ke.ctrlKey)) {
+              ke.preventDefault();
+              ke.stopPropagation();
+              window.dispatchEvent(
+                new CustomEvent<ThreadFollowupEventDetail>("lit:thread-followup", {
+                  detail: { annotation: ann, question: textarea.value },
+                }),
+              );
+            } else if (ke.key === "Escape") {
+              ke.preventDefault();
+              ke.stopPropagation();
+              textarea.replaceWith(trigger);
+            }
+          };
+          trigger.replaceWith(textarea);
+          textarea.focus();
+        };
+        container.appendChild(trigger);
+      }
+    }
+
+    return container;
+  }
+
+  eq(other: ThreadWidget): boolean {
+    return (
+      this.annotation.original === other.annotation.original &&
+      this.annotation.char_start === other.annotation.char_start &&
+      this.annotation.char_end === other.annotation.char_end &&
+      this.turn === other.turn &&
+      this.isCollapsed === other.isCollapsed &&
+      this.isFiring === other.isFiring
+    );
+  }
+
+  ignoreEvent(event: Event): boolean {
+    return event.type === "mousedown";
+  }
+
+  get estimatedHeight(): number {
+    return this.isCollapsed ? 30 : 120;
   }
 }

@@ -3,7 +3,7 @@ import { isValidBuilderDefaults, BUILDER_SCOPE_KINDS } from "./annotationBuilder
 import type { AnnotationType, Certainty } from "./ipc";
 
 const ANNOTATION_TYPES: (AnnotationType | null)[] = [
-  null, "note", "question", "todo", "crossref", "apparatus", "translation", "llm", "bare",
+  null, "note", "question", "todo", "crossref", "apparatus", "translation", "llm", "thread", "bare",
 ];
 const CERTAINTIES: Certainty[] = ["tentative", "firm", "neutral"];
 

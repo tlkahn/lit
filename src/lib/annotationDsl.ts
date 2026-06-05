@@ -82,6 +82,7 @@ const TYPE_KEYWORDS: Record<string, string> = {
   apparatus: "app",
   translation: "tr",
   llm: "llm",
+  thread: "th",
 };
 
 function serializeType(type: AnnotationType | null): string {

@@ -2,6 +2,49 @@ import type { ChangeSpec, StateEffect } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import type { Annotation, Scope } from "./ipc";
 import { annotationToFields, generateDsl } from "./annotationDsl";
+import { serializeThreadBody } from "./threadBody";
+
+/**
+ * Transform a fired source annotation into a thread DSL string.
+ *
+ * The source annotation's scope is inherited, its question (the prompt that was
+ * fired) becomes the first `[q]:` turn, and `responseText` becomes that turn's
+ * response. A fresh UUID is generated for traceability.
+ *
+ * First-turn question resolution by source type:
+ *   - translation -> "Translate" (the scope text is the implicit input)
+ *   - llm with empty/whitespace/null body -> "Explain" (the scope text the
+ *     llm acted on is NOT available here — buildThreadDsl only receives the
+ *     source annotation and response — so a fixed verb stands in)
+ *   - otherwise -> the source body, or "Answer" when the body is empty/whitespace
+ */
+export function buildThreadDsl(sourceAnnotation: Annotation, responseText: string): string {
+  const scope = annotationToFields(sourceAnnotation).scope;
+
+  const sourceBody = (sourceAnnotation.body ?? "").trim();
+  let question: string;
+  if (sourceAnnotation.annotation_type === "translation") {
+    question = "Translate";
+  } else if (sourceAnnotation.annotation_type === "llm" && sourceBody === "") {
+    question = "Explain";
+  } else if (sourceAnnotation.annotation_type === "question" && sourceBody === "") {
+    question = "Answer";
+  } else {
+    question = sourceBody || "Respond";
+  }
+
+  const body = serializeThreadBody([{ question, response: responseText }]);
+  const id = crypto.randomUUID();
+
+  return generateDsl({
+    id,
+    type: "thread",
+    certainty: "neutral",
+    scope,
+    body,
+    date: null,
+  });
+}
 
 export function buildCompanionDsl(responseText: string, scope?: Scope | null): string {
   return generateDsl({

@@ -758,6 +758,7 @@ export type AnnotationType =
   | "apparatus"
   | "translation"
   | "llm"
+  | "thread"
   | "mark"
   | "bare";
 

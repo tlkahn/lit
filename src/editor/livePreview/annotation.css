@@ -317,6 +317,120 @@
   background: rgba(255, 193, 7, 0.05);
 }
 
+/* Thread type colors */
+.cm-annotation-pill[data-annotation-type="thread"] {
+  background: rgba(171, 71, 188, 0.15);
+  color: rgb(171, 71, 188);
+}
+
+.cm-annotation-marker[data-annotation-type="thread"] {
+  color: rgb(171, 71, 188);
+}
+
+.cm-annotation-callout[data-annotation-type="thread"] {
+  border-inline-start-color: rgba(171, 71, 188, 0.6);
+  background: rgba(171, 71, 188, 0.05);
+}
+
+/* Thread widget chrome */
+.cm-thread-turn-counter {
+  font-size: 0.8em;
+  opacity: 0.7;
+  padding-inline: 4px;
+}
+
+.cm-thread-nav {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.cm-thread-nav-arrow {
+  cursor: pointer;
+  opacity: 0.6;
+  user-select: none;
+}
+
+.cm-thread-nav-arrow:hover {
+  opacity: 1;
+}
+
+/* Left-bar styled question line — padding only, never margin (CM6 height map). */
+.cm-thread-question {
+  padding-block: 4px;
+  padding-inline-start: 8px;
+  border-inline-start: 2px solid rgba(171, 71, 188, 0.6);
+  opacity: 0.85;
+  font-style: italic;
+}
+
+/* Follow-up trigger — proximity reveal, mirrors .cm-annotation-fire-proximity. */
+.cm-thread-followup-trigger {
+  display: inline-block;
+  cursor: pointer;
+  font-size: 0.85em;
+  padding-block: 2px;
+}
+
+.cm-annotation-callout:hover .cm-thread-followup-trigger.cm-annotation-fire-proximity {
+  opacity: 0.6;
+  pointer-events: auto;
+}
+
+.cm-annotation-callout:hover .cm-thread-followup-trigger.cm-annotation-fire-proximity:hover {
+  opacity: 1;
+}
+
+.cm-thread-followup-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px;
+  resize: vertical;
+  min-height: 3em;
+  font: inherit;
+}
+
+/* Overflow ⋮ menu — dropdown hidden until .is-open. */
+.cm-thread-overflow {
+  position: relative;
+  cursor: pointer;
+  opacity: 0.6;
+  user-select: none;
+  padding-inline: 4px;
+}
+
+.cm-thread-overflow:hover {
+  opacity: 1;
+}
+
+.cm-thread-overflow-menu {
+  display: none;
+  position: absolute;
+  inset-inline-end: 0;
+  top: 100%;
+  z-index: 10;
+  background: var(--cm-callout-bg, rgba(30, 30, 30, 0.98));
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 4px;
+  padding: 4px 0;
+  min-width: 9em;
+}
+
+.cm-thread-overflow.is-open .cm-thread-overflow-menu {
+  display: block;
+}
+
+.cm-thread-overflow-row {
+  padding: 4px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.cm-thread-overflow-row:hover {
+  background: rgba(128, 128, 128, 0.15);
+}
+
 /* Scope highlight */
 .scope-highlight {
   background: rgba(68, 138, 255, 0.12);

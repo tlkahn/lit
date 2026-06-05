@@ -1,14 +1,11 @@
 import type { EditorView } from "@codemirror/view";
 import type { Annotation, AnnotationType } from "./ipc";
 import { resolveAnnotationScopeWithMode } from "./ipc";
-import { startLlmStream, cancelLlmStream } from "./llmClient";
 import { canFire } from "./fireClassification";
-import { useModalLockStore } from "../stores/modalLock";
 import { usePreferencesStore, type PreferencesState } from "../stores/preferences";
-import { useStatusMessageStore } from "../stores/statusMessage";
-import { useSecretStoreStore } from "../stores/secretStore";
-import { setFiringAnnotation, clearFiringAnnotation } from "../editor/livePreview/annotationWidgets";
-import { insertCompanionAnnotation } from "./companionInsert";
+import { clearFiringAnnotation } from "../editor/livePreview/annotationWidgets";
+import { buildThreadDsl } from "./companionInsert";
+import { withLlmStream } from "./withLlmStream";
 
 export interface FireAnnotationArgs {
   view: EditorView;
@@ -46,95 +43,55 @@ export function buildFirePrompt(scopeText: string, body: string | null): string 
 export async function fireAnnotation(args: FireAnnotationArgs): Promise<void> {
   const { view, annotation } = args;
 
-  if (useModalLockStore.getState().llmLocked) {
-    throw new Error("LLM is already streaming");
-  }
-
-  useModalLockStore.getState().setLlmLocked(true);
-  view.dispatch({ effects: setFiringAnnotation.of(annotation.char_start) });
-  window.dispatchEvent(new CustomEvent("lit:fire-started", { detail: { annotation } }));
-
-  let cleanedUp = false;
-  let cancelHandler: (() => void) | null = null;
-  const doCleanup = () => {
-    if (cleanedUp) return;
-    cleanedUp = true;
-    if (cancelHandler) window.removeEventListener("lit:cancel-fire", cancelHandler);
-    try { view.dispatch({ effects: clearFiringAnnotation.of(annotation.char_start) }); } catch { /* view destroyed */ }
-    useModalLockStore.getState().setLlmLocked(false);
-    window.dispatchEvent(new CustomEvent("lit:fire-complete", { detail: { annotation } }));
-  };
-
   const prefs = usePreferencesStore.getState();
   const doc = view.state.doc.toString();
   const lang = prefs.annotationDefaultLang;
 
-  if (!canFire(annotation.annotation_type)) {
-    doCleanup();
-    return;
-  }
+  return withLlmStream(view, annotation, {
+    buildArgs: async ({ isCancelled }) => {
+      if (!canFire(annotation.annotation_type)) return null;
 
-  let scopeText = "";
-  try {
-    const range = await resolveAnnotationScopeWithMode(
-      doc,
-      annotation.char_start,
-      annotation.scope,
-      lang,
-      "bidirectional",
-    );
-    if (range) {
-      scopeText = stripAnnotations(doc.slice(range.start, range.end));
-    }
-  } catch (err) {
-    console.warn("Scope resolution failed, proceeding with empty scope:", err);
-  }
+      let scopeText = "";
+      try {
+        const range = await resolveAnnotationScopeWithMode(
+          doc,
+          annotation.char_start,
+          annotation.scope,
+          lang,
+          "bidirectional",
+        );
+        if (range) {
+          scopeText = stripAnnotations(doc.slice(range.start, range.end));
+        }
+      } catch (err) {
+        console.warn("Scope resolution failed, proceeding with empty scope:", err);
+      }
+      if (isCancelled()) return null;
 
-  const system = getTypePrompt(annotation.annotation_type);
-  const text = buildFirePrompt(scopeText, annotation.body);
-
-  try {
-    await useSecretStoreStore.getState().ensureUnlocked();
-  } catch {
-    doCleanup();
-    return;
-  }
-
-  let responseText = "";
-
-  cancelHandler = () => {
-    cancelLlmStream().catch(console.error);
-    doCleanup();
-  };
-  window.addEventListener("lit:cancel-fire", cancelHandler);
-
-  try {
-    await startLlmStream(
-      { model: prefs.llmModel, text, system: system || undefined },
-      {
-        onChunk: (chunk) => {
-          responseText += chunk;
-        },
-        onDone: () => {
-          try {
-            insertCompanionAnnotation(view, annotation, responseText, {
-              removeSource: true,
-            });
-          } catch { /* view destroyed */ }
-
-          doCleanup();
-        },
-        onError: (error) => {
-          useStatusMessageStore.getState().show(error.message, "error");
-          doCleanup();
-        },
-      },
-    );
-  } catch (err) {
-    useStatusMessageStore.getState().show(
-      err instanceof Error ? err.message : "LLM stream failed",
-      "error",
-    );
-    doCleanup();
-  }
+      const system = getTypePrompt(annotation.annotation_type);
+      const text = buildFirePrompt(scopeText, annotation.body);
+      return { model: prefs.llmModel, text, system: system || undefined };
+    },
+    onDone: ({ responseText, markFiringCleared, liveRange }) => {
+      try {
+        const threadDsl = buildThreadDsl(annotation, responseText);
+        const liveDoc = view.state.doc;
+        const startLine = liveDoc.lineAt(liveRange.from);
+        const atColumn0 = liveRange.from === startLine.from;
+        const endLine = liveDoc.lineAt(liveRange.to);
+        const trailing = liveDoc.sliceString(liveRange.to, endLine.to);
+        const hasTrailing = trailing.trim().length > 0;
+        const insert =
+          (atColumn0 ? "" : "\n") + threadDsl + (hasTrailing ? "\n" : "");
+        const changes = view.state.changes({
+          from: liveRange.from,
+          to: liveRange.to,
+          insert,
+        });
+        const mapped = changes.mapPos(liveRange.from, 1);
+        view.dispatch({ changes, effects: clearFiringAnnotation.of(mapped) });
+        markFiringCleared();
+      } catch { /* view destroyed */ }
+    },
+  });
 }

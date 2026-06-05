@@ -22,7 +22,7 @@ pub fn parse_compact(inner: &str, mark_codes: &[String]) -> Annotation {
     let mut is_structured = false;
     let mut mark: Option<String> = None;
 
-    let type_keywords = ["todo", "app", "llm", "cf", "tr", "n", "q"];
+    let type_keywords = ["todo", "app", "llm", "cf", "tr", "th", "n", "q"];
     for &kw in &type_keywords {
         if remaining.starts_with(kw) {
             let after = &remaining[kw.len()..];
@@ -417,10 +417,28 @@ mod tests {
     }
 
     #[test]
+    fn thread_type_compact() {
+        let ann = parse_compact(r"th \p | a thread", marks::builtin_mark_codes());
+        assert_eq!(ann.annotation_type, AnnotationType::Thread);
+        assert_eq!(ann.scope, Scope::Paragraph(1));
+        assert_eq!(ann.body, Some("a thread".to_string()));
+    }
+
+    #[test]
+    fn thread_bare_eos() {
+        let ann = parse_compact("th", marks::builtin_mark_codes());
+        assert_eq!(ann.annotation_type, AnnotationType::Thread);
+        assert!(ann.is_structured);
+        assert_eq!(ann.body, None);
+    }
+
+    #[test]
     fn existing_types_still_parse() {
         assert_eq!(parse_compact("n | note", marks::builtin_mark_codes()).annotation_type, AnnotationType::Note);
         assert_eq!(parse_compact("todo | task", marks::builtin_mark_codes()).annotation_type, AnnotationType::Todo);
         assert_eq!(parse_compact("tr | translate", marks::builtin_mark_codes()).annotation_type, AnnotationType::Translation);
+        assert_eq!(parse_compact("q? | maybe", marks::builtin_mark_codes()).annotation_type, AnnotationType::Question);
+        assert_eq!(parse_compact("llm | go", marks::builtin_mark_codes()).annotation_type, AnnotationType::Llm);
     }
 
     #[test]
