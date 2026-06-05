@@ -6,7 +6,7 @@ import type { AnnotationBuilderEventDetail } from "../../lib/annotationDsl";
 import { canFire } from "../../lib/fireClassification";
 import { renderMarkdown, renderInlineMarkdown } from "../../lib/renderMarkdown";
 import { handleAnnotationHover, handleAnnotationLeave } from "./annotationHover";
-import { TYPE_ICON, getMarkIcon, certaintyClass, certaintyMark, truncateBody } from "./annotationConstants";
+import { CLS, TYPE_ICON, getMarkIcon, certaintyClass, certaintyMark, truncateBody } from "./annotationConstants";
 import { parseThreadBody } from "../../lib/threadBody";
 import "./annotation.css";
 
@@ -94,12 +94,12 @@ export function createFireButton(ann: Annotation, isFiring?: boolean, llmLocked?
   if (!canFire(ann.annotation_type)) return null;
 
   const btn = document.createElement("span");
-  btn.className = "cm-annotation-fire-btn";
+  btn.className = CLS.FIRE_BTN;
 
   if (isFiring) {
-    btn.classList.add("cm-annotation-spinner");
+    btn.classList.add(CLS.SPINNER);
     const stop = document.createElement("span");
-    stop.className = "cm-annotation-stop-icon";
+    stop.className = CLS.STOP_ICON;
     stop.textContent = "\u{f04d}"; // nerdfont nf-fa-stop
     btn.appendChild(stop);
     btn.onmousedown = (e) => {
@@ -111,11 +111,11 @@ export function createFireButton(ann: Annotation, isFiring?: boolean, llmLocked?
   }
 
   if (llmLocked) {
-    btn.classList.add("cm-annotation-fire-disabled");
+    btn.classList.add(CLS.FIRE_DISABLED);
   }
 
   if (!llmLocked) {
-    btn.classList.add("cm-annotation-fire-proximity");
+    btn.classList.add(CLS.FIRE_PROXIMITY);
   }
 
   btn.textContent = "▶";
@@ -147,14 +147,14 @@ function dispatchEditEvent(ann: Annotation): void {
 // Minimal display-only pill for mark annotations: just the mark icon, no body/date.
 function buildMinimalMarkPill(ann: Annotation): HTMLSpanElement {
   const pill = document.createElement("span");
-  pill.className = "cm-annotation-pill cm-annotation-pill-minimal";
+  pill.className = `${CLS.PILL} ${CLS.PILL_MINIMAL}`;
   const cert = certaintyClass(ann.certainty);
   if (cert) pill.classList.add(cert);
   pill.dataset.annotationType = ann.annotation_type;
   pill.dataset.mark = ann.mark ?? "";
 
   const icon = document.createElement("span");
-  icon.className = "cm-annotation-pill-icon";
+  icon.className = CLS.PILL_ICON;
   icon.textContent = getMarkIcon(ann.mark ?? "");
   pill.appendChild(icon);
 
@@ -165,27 +165,27 @@ function buildPillDOM(ann: Annotation): HTMLSpanElement {
   if (ann.annotation_type === "mark") return buildMinimalMarkPill(ann);
 
   const pill = document.createElement("span");
-  pill.className = "cm-annotation-pill";
+  pill.className = CLS.PILL;
   const cert = certaintyClass(ann.certainty);
   if (cert) pill.classList.add(cert);
   pill.dataset.annotationType = ann.annotation_type;
 
   const icon = document.createElement("span");
-  icon.className = "cm-annotation-pill-icon";
+  icon.className = CLS.PILL_ICON;
   icon.textContent = TYPE_ICON[ann.annotation_type] ?? "…";
   pill.appendChild(icon);
 
   const body = truncateBody(ann.body);
   if (body) {
     const bodyEl = document.createElement("span");
-    bodyEl.className = "cm-annotation-pill-body";
+    bodyEl.className = CLS.PILL_BODY;
     bodyEl.innerHTML = renderInlineMarkdown(body);
     pill.appendChild(bodyEl);
   }
 
   if (ann.date) {
     const date = document.createElement("span");
-    date.className = "cm-annotation-date";
+    date.className = CLS.DATE;
     date.textContent = ann.date;
     pill.appendChild(date);
   }
@@ -247,7 +247,7 @@ export class MarkerWidget extends WidgetType {
   toDOM(view: EditorView): HTMLElement {
     const ann = this.annotation;
     const sup = document.createElement("sup");
-    sup.className = "cm-annotation-marker";
+    sup.className = CLS.MARKER;
     const cert = certaintyClass(ann.certainty);
     if (cert) sup.classList.add(cert);
     sup.dataset.annotationType = ann.annotation_type;
@@ -274,14 +274,14 @@ export class MarkerWidget extends WidgetType {
     }
 
     const wrap = document.createElement("span");
-    wrap.className = "cm-annotation-marker-wrap";
+    wrap.className = CLS.MARKER_WRAP;
     wrap.appendChild(sup);
     if (fireBtn) wrap.appendChild(fireBtn);
 
     wrap.onmouseenter = (e) => handleAnnotationHover(view, ann, { altKey: e.altKey });
     wrap.onmouseleave = () => handleAnnotationLeave(view);
     wrap.onclick = (e) => {
-      if ((e.target as HTMLElement).closest(".cm-annotation-fire-btn")) return;
+      if ((e.target as HTMLElement).closest(`.${CLS.FIRE_BTN}`)) return;
       e.preventDefault();
       if (e.metaKey || e.ctrlKey) {
         dispatchEditEvent(ann);
@@ -375,7 +375,7 @@ function createFoldSvg(): SVGSVGElement {
   svg.setAttribute("stroke-width", "2");
   svg.setAttribute("stroke-linecap", "round");
   svg.setAttribute("stroke-linejoin", "round");
-  svg.classList.add("svg-icon");
+  svg.classList.add(CLS.SVG_ICON);
   const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
   path.setAttribute("d", "m6 9 6 6 6-6");
   svg.appendChild(path);
@@ -396,7 +396,7 @@ export class CalloutWidget extends WidgetType {
   toDOM(view: EditorView): HTMLElement {
     const ann = this.annotation;
     const container = document.createElement("div");
-    container.className = "cm-annotation-callout";
+    container.className = CLS.CALLOUT;
 
     const cert = certaintyClass(ann.certainty);
     if (cert) container.classList.add(cert);
@@ -406,15 +406,15 @@ export class CalloutWidget extends WidgetType {
     container.onmouseleave = () => handleAnnotationLeave(view);
 
     const header = document.createElement("div");
-    header.className = "cm-annotation-callout-header";
+    header.className = CLS.CALLOUT_HEADER;
     header.onclick = (e) => {
-      if ((e.target as HTMLElement).closest(".cm-annotation-fold-icon, .cm-annotation-fire-btn")) return;
+      if ((e.target as HTMLElement).closest(`.${CLS.FOLD_ICON}, .${CLS.FIRE_BTN}`)) return;
       e.preventDefault();
       dispatchEditEvent(ann);
     };
 
     const icon = document.createElement("span");
-    icon.className = "cm-annotation-pill-icon";
+    icon.className = CLS.PILL_ICON;
     icon.textContent =
       ann.annotation_type === "mark"
         ? getMarkIcon(ann.mark ?? "")
@@ -422,13 +422,13 @@ export class CalloutWidget extends WidgetType {
     header.appendChild(icon);
 
     const label = document.createElement("span");
-    label.className = "cm-annotation-callout-label";
+    label.className = CLS.CALLOUT_LABEL;
     label.textContent = ann.annotation_type;
     header.appendChild(label);
 
     if (ann.date) {
       const date = document.createElement("span");
-      date.className = "cm-annotation-date";
+      date.className = CLS.DATE;
       date.textContent = ann.date;
       header.appendChild(date);
     }
@@ -437,8 +437,8 @@ export class CalloutWidget extends WidgetType {
     if (fireBtn) header.appendChild(fireBtn);
 
     const arrow = document.createElement("span");
-    arrow.className = "cm-annotation-fold-icon";
-    if (this.isCollapsed) arrow.classList.add("is-collapsed");
+    arrow.className = CLS.FOLD_ICON;
+    if (this.isCollapsed) arrow.classList.add(CLS.IS_COLLAPSED);
     arrow.appendChild(createFoldSvg());
     arrow.onmousedown = (e) => {
       e.preventDefault();
@@ -450,7 +450,7 @@ export class CalloutWidget extends WidgetType {
 
     if (!this.isCollapsed && ann.body) {
       const body = document.createElement("div");
-      body.className = "cm-annotation-callout-body";
+      body.className = CLS.CALLOUT_BODY;
       body.innerHTML = renderMarkdown(ann.body);
       container.appendChild(body);
     }
@@ -520,7 +520,7 @@ export class ThreadWidget extends WidgetType {
     const idx = Math.min(Math.max(this.turn, 0), Math.max(turns.length - 1, 0));
 
     const container = document.createElement("div");
-    container.className = "cm-annotation-callout cm-thread";
+    container.className = `${CLS.CALLOUT} ${CLS.THREAD}`;
     const cert = certaintyClass(ann.certainty);
     if (cert) container.classList.add(cert);
     container.dataset.annotationType = "thread";
@@ -530,11 +530,11 @@ export class ThreadWidget extends WidgetType {
 
     // --- Header ---
     const header = document.createElement("div");
-    header.className = "cm-annotation-callout-header";
+    header.className = CLS.CALLOUT_HEADER;
     header.onclick = (e) => {
       if (
         (e.target as HTMLElement).closest(
-          ".cm-annotation-fold-icon, .cm-thread-nav-arrow, .cm-thread-overflow, .cm-thread-overflow-menu, .cm-annotation-fire-btn",
+          `.${CLS.FOLD_ICON}, .${CLS.THREAD_NAV_ARROW}, .${CLS.THREAD_OVERFLOW}, .${CLS.THREAD_OVERFLOW_MENU}, .${CLS.FIRE_BTN}`,
         )
       )
         return;
@@ -543,28 +543,28 @@ export class ThreadWidget extends WidgetType {
     };
 
     const icon = document.createElement("span");
-    icon.className = "cm-annotation-pill-icon";
+    icon.className = CLS.PILL_ICON;
     icon.textContent = TYPE_ICON.thread ?? "◇";
     header.appendChild(icon);
 
     const label = document.createElement("span");
-    label.className = "cm-annotation-callout-label";
+    label.className = CLS.CALLOUT_LABEL;
     label.textContent = "thread";
     header.appendChild(label);
 
     if (turns.length >= 1) {
       const counter = document.createElement("span");
-      counter.className = "cm-thread-turn-counter";
+      counter.className = CLS.THREAD_TURN_COUNTER;
       counter.textContent = `${idx + 1}/${turns.length}`;
       header.appendChild(counter);
     }
 
     if (turns.length > 1) {
       const nav = document.createElement("span");
-      nav.className = "cm-thread-nav";
+      nav.className = CLS.THREAD_NAV;
 
       const prev = document.createElement("span");
-      prev.className = "cm-thread-nav-arrow";
+      prev.className = CLS.THREAD_NAV_ARROW;
       prev.textContent = "◁";
       prev.onmousedown = (e) => {
         e.preventDefault();
@@ -575,7 +575,7 @@ export class ThreadWidget extends WidgetType {
       nav.appendChild(prev);
 
       const fwd = document.createElement("span");
-      fwd.className = "cm-thread-nav-arrow";
+      fwd.className = CLS.THREAD_NAV_ARROW;
       fwd.textContent = "▷";
       fwd.onmousedown = (e) => {
         e.preventDefault();
@@ -590,25 +590,25 @@ export class ThreadWidget extends WidgetType {
 
     if (this.isFiring) {
       const spinner = document.createElement("span");
-      spinner.className = "cm-annotation-spinner";
+      spinner.className = CLS.SPINNER;
       header.appendChild(spinner);
     }
 
     // Overflow menu (⋮) — Export thread / Export turn / Delete.
     const overflow = document.createElement("span");
-    overflow.className = "cm-thread-overflow";
+    overflow.className = CLS.THREAD_OVERFLOW;
     overflow.textContent = "⋮";
     const menu = document.createElement("div");
-    menu.className = "cm-thread-overflow-menu";
+    menu.className = CLS.THREAD_OVERFLOW_MENU;
 
     const addMenuRow = (text: string, handler: () => void) => {
       const row = document.createElement("div");
-      row.className = "cm-thread-overflow-row";
+      row.className = CLS.THREAD_OVERFLOW_ROW;
       row.textContent = text;
       row.onmousedown = (e) => {
         e.preventDefault();
         e.stopPropagation();
-        overflow.classList.remove("is-open");
+        overflow.classList.remove(CLS.IS_OPEN);
         handler();
       };
       menu.appendChild(row);
@@ -652,17 +652,17 @@ export class ThreadWidget extends WidgetType {
     overflow.appendChild(menu);
     overflow.onmousedown = (e) => {
       // Only toggle when clicking the ⋮ glyph itself, not a menu row.
-      if ((e.target as HTMLElement).closest(".cm-thread-overflow-menu")) return;
+      if ((e.target as HTMLElement).closest(`.${CLS.THREAD_OVERFLOW_MENU}`)) return;
       e.preventDefault();
       e.stopPropagation();
-      overflow.classList.toggle("is-open");
+      overflow.classList.toggle(CLS.IS_OPEN);
     };
     header.appendChild(overflow);
 
     // Fold chevron.
     const arrow = document.createElement("span");
-    arrow.className = "cm-annotation-fold-icon";
-    if (this.isCollapsed) arrow.classList.add("is-collapsed");
+    arrow.className = CLS.FOLD_ICON;
+    if (this.isCollapsed) arrow.classList.add(CLS.IS_COLLAPSED);
     arrow.appendChild(createFoldSvg());
     arrow.onmousedown = (e) => {
       e.preventDefault();
@@ -680,7 +680,7 @@ export class ThreadWidget extends WidgetType {
       // empty body div + follow-up trigger, and skip the question/body/trigger.
       if (turns.length === 0) {
         const empty = document.createElement("div");
-        empty.className = "cm-thread-empty";
+        empty.className = CLS.THREAD_EMPTY;
         empty.textContent = "No conversation yet.";
         container.appendChild(empty);
         return container;
@@ -688,27 +688,27 @@ export class ThreadWidget extends WidgetType {
 
       if (activeTurn && activeTurn.question !== "") {
         const question = document.createElement("div");
-        question.className = "cm-thread-question";
+        question.className = CLS.THREAD_QUESTION;
         // Plain text — never render attacker-controlled markup in the question line.
         question.textContent = activeTurn.question;
         container.appendChild(question);
       }
 
       const body = document.createElement("div");
-      body.className = "cm-annotation-callout-body";
+      body.className = CLS.CALLOUT_BODY;
       body.innerHTML = renderMarkdown(activeTurn?.response ?? "");
       container.appendChild(body);
 
       // Follow-up trigger (proximity-revealed) — suppressed while streaming.
       if (!this.isFiring) {
         const trigger = document.createElement("span");
-        trigger.className = "cm-thread-followup-trigger cm-annotation-fire-proximity";
+        trigger.className = `${CLS.THREAD_FOLLOWUP_TRIGGER} ${CLS.FIRE_PROXIMITY}`;
         trigger.textContent = "⊕ Follow up";
         trigger.onmousedown = (e) => {
           e.preventDefault();
           e.stopPropagation();
           const textarea = document.createElement("textarea");
-          textarea.className = "cm-thread-followup-input";
+          textarea.className = CLS.THREAD_FOLLOWUP_INPUT;
           textarea.placeholder = "Ask a follow-up…";
           textarea.onkeydown = (ke) => {
             ke.stopPropagation();
