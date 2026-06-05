@@ -746,7 +746,12 @@ export class ThreadWidget extends WidgetType {
   }
 
   ignoreEvent(event: Event): boolean {
-    return event.type === "mousedown" || event.type === "keydown";
+    if (event.type === "mousedown") return true;
+    if (event.type === "keydown") {
+      const t = event.target;
+      return t instanceof HTMLTextAreaElement && t.classList.contains("cm-thread-followup-input");
+    }
+    return false;
   }
 
   get estimatedHeight(): number {

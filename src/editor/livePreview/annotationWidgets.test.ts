@@ -1498,10 +1498,20 @@ describe("ThreadWidget", () => {
     expect(a.eq(b)).toBe(true);
   });
 
-  it("ignoreEvent returns true for mousedown and keydown, false for click", () => {
+  it("ignoreEvent returns true for mousedown; true for keydown only from follow-up textarea", () => {
     const w = new ThreadWidget(makeThread(), 0, false, 0);
     expect(w.ignoreEvent(new MouseEvent("mousedown"))).toBe(true);
-    expect(w.ignoreEvent(new KeyboardEvent("keydown"))).toBe(true);
     expect(w.ignoreEvent(new MouseEvent("click"))).toBe(false);
+
+    const textarea = document.createElement("textarea");
+    textarea.className = "cm-thread-followup-input";
+    const keyFromTextarea = new KeyboardEvent("keydown", { bubbles: true });
+    Object.defineProperty(keyFromTextarea, "target", { value: textarea });
+    expect(w.ignoreEvent(keyFromTextarea)).toBe(true);
+
+    const span = document.createElement("span");
+    const keyFromSpan = new KeyboardEvent("keydown", { bubbles: true });
+    Object.defineProperty(keyFromSpan, "target", { value: span });
+    expect(w.ignoreEvent(keyFromSpan)).toBe(false);
   });
 });
