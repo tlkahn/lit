@@ -1,16 +1,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EditorState } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
+import { EditorView, type DecorationSet } from "@codemirror/view";
 import { markdown } from "@codemirror/lang-markdown";
 import { ensureSyntaxTree } from "@codemirror/language";
 import {
   annotationDataField,
   setAnnotationData,
-  annotationDecorationProvider,
+  annotationDecorationPlugin,
+  annotationBlockDecorationField,
   annotationExtension,
   displayModeField,
   setDisplayMode,
   findAnnotationAtCursor,
+  buildAnnotationDecorations,
 } from "./annotationState";
 import {
   annotationFoldField,
@@ -19,6 +21,10 @@ import {
   CalloutWidget,
   MarkerWidget,
   llmLockedField,
+  firingAnnotationsField,
+  setFiringAnnotation,
+  clearFiringAnnotation,
+  setLlmLockedEffect,
 } from "./annotationWidgets";
 import { Annotation as AnnotationGrammar } from "../markdown/annotation";
 import { Comment as CommentGrammar } from "../markdown/comment";
@@ -654,7 +660,7 @@ describe("annotationPlugin", () => {
   });
 });
 
-describe("annotationDecorationProvider", () => {
+describe("annotationDecorationPlugin", () => {
   function makeAnnotationView(doc: string, cursorPos = 0) {
     const state = EditorState.create({
       doc,
@@ -663,7 +669,7 @@ describe("annotationDecorationProvider", () => {
         markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
         annotationDataField,
         displayModeField,
-        annotationDecorationProvider,
+        annotationDecorationPlugin,
         annotationFoldField,
       ],
     });
@@ -673,19 +679,17 @@ describe("annotationDecorationProvider", () => {
   }
 
   function collectDecorations(view: EditorView) {
-    const decoSources = view.state.facet(EditorView.decorations);
+    const set = view.plugin(annotationDecorationPlugin)?.decorations;
     const result: { from: number; to: number; widget: unknown }[] = [];
-    for (const source of decoSources) {
-      if (typeof source === "function") continue;
-      const iter = source.iter();
-      while (iter.value) {
-        result.push({
-          from: iter.from,
-          to: iter.to,
-          widget: iter.value.spec?.widget ?? null,
-        });
-        iter.next();
-      }
+    if (!set) return result;
+    const iter = set.iter();
+    while (iter.value) {
+      result.push({
+        from: iter.from,
+        to: iter.to,
+        widget: iter.value.spec?.widget ?? null,
+      });
+      iter.next();
     }
     return result;
   }
@@ -805,7 +809,7 @@ describe("annotationDecorationProvider", () => {
         markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
         annotationDataField,
         displayModeField,
-        annotationDecorationProvider,
+        annotationDecorationPlugin,
         annotationFoldField,
       ],
     });
@@ -834,7 +838,7 @@ describe("annotationDecorationProvider", () => {
         markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
         annotationDataField,
         displayModeField,
-        annotationDecorationProvider,
+        annotationDecorationPlugin,
         annotationFoldField,
       ],
     });
@@ -863,7 +867,7 @@ describe("annotationDecorationProvider", () => {
         markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
         annotationDataField,
         displayModeField,
-        annotationDecorationProvider,
+        annotationDecorationPlugin,
         annotationFoldField,
       ],
     });
@@ -898,6 +902,293 @@ describe("annotationDecorationProvider", () => {
     const decos = collectDecorations(view);
     expect(decos).toHaveLength(0);
 
+    view.destroy();
+  });
+});
+
+describe("annotationDecorationPlugin rebuild triggers", () => {
+  function makeView(doc: string, cursorPos = 0) {
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: cursorPos },
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+        displayModeField,
+        annotationFoldField,
+        firingAnnotationsField,
+        llmLockedField,
+        annotationDecorationPlugin,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    ensureSyntaxTree(view.state, view.state.doc.length);
+    return view;
+  }
+
+  function getSet(view: EditorView): DecorationSet {
+    return view.plugin(annotationDecorationPlugin)!.decorations;
+  }
+
+  function widgetAt(set: DecorationSet, from: number, to: number): unknown {
+    const iter = set.iter();
+    while (iter.value) {
+      if (iter.from === from && iter.to === to) return iter.value.spec?.widget ?? null;
+      iter.next();
+    }
+    return undefined;
+  }
+
+  it("rebuilds on setDisplayMode effect (pill → footnote swaps widget type)", () => {
+    const doc = "first line\ntext <!---n | body---> more";
+    const view = makeView(doc, 0);
+    const ann = makeAnnotation({ char_start: 16, char_end: 33, original: "<!---n | body--->" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    expect(widgetAt(getSet(view), 16, 33)).toBeInstanceOf(PillWidget);
+
+    view.dispatch({ effects: setDisplayMode.of("footnote") });
+    expect(widgetAt(getSet(view), 16, 33)).toBeInstanceOf(MarkerWidget);
+
+    view.destroy();
+  });
+
+  it("rebuilds on toggleAnnotationFoldEffect (Callout isCollapsed flips)", () => {
+    const doc = "first line\n\n<!---\nbody\n--->\nafter";
+    const view = makeView(doc, 28);
+    const ann = makeAnnotation({ form: "block", char_start: 12, char_end: 27, original: "<!---\nbody\n--->" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    const w1 = widgetAt(getSet(view), 12, 27);
+    expect(w1).toBeInstanceOf(CalloutWidget);
+    expect((w1 as CalloutWidget).isCollapsed).toBe(false);
+
+    view.dispatch({ effects: toggleAnnotationFoldEffect.of({ pos: 12 }) });
+    const w2 = widgetAt(getSet(view), 12, 27);
+    expect((w2 as CalloutWidget).isCollapsed).toBe(true);
+
+    view.destroy();
+  });
+
+  it("rebuilds on setFiringAnnotation / clearFiringAnnotation effects", () => {
+    const doc = "first line\ntext <!---n | body---> more";
+    const view = makeView(doc, 0);
+    const ann = makeAnnotation({ char_start: 16, char_end: 33, original: "<!---n | body--->" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    expect((widgetAt(getSet(view), 16, 33) as PillWidget).isFiring).toBe(false);
+
+    view.dispatch({ effects: setFiringAnnotation.of(16) });
+    expect((widgetAt(getSet(view), 16, 33) as PillWidget).isFiring).toBe(true);
+
+    view.dispatch({ effects: clearFiringAnnotation.of(16) });
+    expect((widgetAt(getSet(view), 16, 33) as PillWidget).isFiring).toBe(false);
+
+    view.destroy();
+  });
+
+  it("rebuilds on setLlmLockedEffect", () => {
+    const doc = "first line\ntext <!---n | body---> more";
+    const view = makeView(doc, 0);
+    const ann = makeAnnotation({ char_start: 16, char_end: 33, original: "<!---n | body--->" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    expect((widgetAt(getSet(view), 16, 33) as PillWidget).llmLocked).toBe(false);
+
+    view.dispatch({ effects: setLlmLockedEffect.of(true) });
+    expect((widgetAt(getSet(view), 16, 33) as PillWidget).llmLocked).toBe(true);
+
+    view.destroy();
+  });
+
+  it("does NOT rebuild when cursor moves between two non-annotation (plain) lines", () => {
+    // doc5: ann InlineAnnotation 11..25 on line 2; plainA line 4 (34..40), plainB line 5 (41..47)
+    const doc = "line1\ntext <!---n | x---> y\nline3\nplainA\nplainB";
+    const view = makeView(doc, 35); // cursor on plainA (line 4)
+    const ann = makeAnnotation({ char_start: 11, char_end: 25, original: "<!---n | x--->" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    // Decoration produced because cursor sits on a plain line, not the annotation line.
+    expect(widgetAt(getSet(view), 11, 25)).toBeInstanceOf(PillWidget);
+
+    const setBefore = getSet(view);
+    view.dispatch({ selection: { anchor: 43 } }); // move to plainB (line 5), also plain
+    expect(getSet(view)).toBe(setBefore); // same reference → no rebuild
+
+    view.destroy();
+  });
+
+  it("DOES rebuild when cursor moves onto an annotation line (sensitive)", () => {
+    const doc = "line1\ntext <!---n | x---> y\nline3\nplainA\nplainB";
+    const view = makeView(doc, 35); // cursor on plainA
+    const ann = makeAnnotation({ char_start: 11, char_end: 25, original: "<!---n | x--->" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    const setBefore = getSet(view);
+    view.dispatch({ selection: { anchor: 13 } }); // move onto annotation line (line 2)
+    expect(getSet(view)).not.toBe(setBefore); // rebuilt
+    // cursor on annotation line suppresses the decoration
+    expect(widgetAt(getSet(view), 11, 25)).toBeUndefined();
+
+    view.destroy();
+  });
+
+  it("rebuilds on docChanged", () => {
+    const doc = "line1\ntext <!---n | x---> y\nline3\nplainA\nplainB";
+    const view = makeView(doc, 35);
+    const ann = makeAnnotation({ char_start: 11, char_end: 25, original: "<!---n | x--->" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    const setBefore = getSet(view);
+    view.dispatch({ changes: { from: doc.length, insert: " tail" } }); // edit far from annotation
+    expect(getSet(view)).not.toBe(setBefore);
+
+    view.destroy();
+  });
+});
+
+describe("buildAnnotationDecorations", () => {
+  function makeView(doc: string, cursorPos = 0) {
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: cursorPos },
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+        displayModeField,
+        annotationFoldField,
+        firingAnnotationsField,
+        llmLockedField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    ensureSyntaxTree(view.state, view.state.doc.length);
+    return view;
+  }
+
+  function iterateSet(set: DecorationSet) {
+    const out: { from: number; to: number; widget: unknown }[] = [];
+    const iter = set.iter();
+    while (iter.value) {
+      out.push({ from: iter.from, to: iter.to, widget: iter.value.spec?.widget ?? null });
+      iter.next();
+    }
+    return out;
+  }
+
+  it("returns empty DecorationSet when no annotations", () => {
+    const view = makeView("first line\nplain text", 0);
+    const { decorations, cursorSensitiveLines } = buildAnnotationDecorations(view);
+    expect(decorations.size).toBe(0);
+    expect(cursorSensitiveLines.size).toBe(0);
+    view.destroy();
+  });
+
+  it("InlineAnnotation → PillWidget decoration", () => {
+    const doc = "first line\ntext <!---n | body---> more";
+    const view = makeView(doc, 0);
+    const ann = makeAnnotation({ char_start: 16, char_end: 33, original: "<!---n | body--->" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    const { decorations } = buildAnnotationDecorations(view);
+    const found = iterateSet(decorations).find((d) => d.from === 16 && d.to === 33);
+    expect(found).toBeTruthy();
+    expect(found!.widget).toBeInstanceOf(PillWidget);
+    view.destroy();
+  });
+
+  it("cursor on annotation line → no decoration", () => {
+    const doc = "first line\ntext <!---n | body---> more";
+    const view = makeView(doc, 16);
+    const ann = makeAnnotation({ char_start: 16, char_end: 33, original: "<!---n | body--->" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    const { decorations } = buildAnnotationDecorations(view);
+    const found = iterateSet(decorations).find((d) => d.from === 16 && d.to === 33);
+    expect(found).toBeUndefined();
+    view.destroy();
+  });
+
+  it("multi-line BlockAnnotation → CalloutWidget", () => {
+    const doc = "first line\n\n<!---\nbody\n--->\nafter";
+    const view = makeView(doc, 28);
+    const ann = makeAnnotation({ form: "block", char_start: 12, char_end: 27, original: "<!---\nbody\n--->" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    const { decorations } = buildAnnotationDecorations(view);
+    const found = iterateSet(decorations).find((d) => d.from === 12 && d.to === 27);
+    expect(found).toBeTruthy();
+    expect(found!.widget).toBeInstanceOf(CalloutWidget);
+    view.destroy();
+  });
+
+  it("footnote mode → MarkerWidget", () => {
+    const doc = "first line\ntext <!---n | body---> more";
+    const view = makeView(doc, 0);
+    view.dispatch({ effects: setDisplayMode.of("footnote") });
+    const ann = makeAnnotation({ char_start: 16, char_end: 33, original: "<!---n | body--->" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    const { decorations } = buildAnnotationDecorations(view);
+    const found = iterateSet(decorations).find((d) => d.from === 16 && d.to === 33);
+    expect(found).toBeTruthy();
+    expect(found!.widget).toBeInstanceOf(MarkerWidget);
+    view.destroy();
+  });
+
+  it("fold state → CalloutWidget isCollapsed=true", () => {
+    const doc = "first line\n\n<!---\nbody\n--->\nafter";
+    const view = makeView(doc, 28);
+    const ann = makeAnnotation({ form: "block", char_start: 12, char_end: 27, original: "<!---\nbody\n--->" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+    view.dispatch({ effects: toggleAnnotationFoldEffect.of({ pos: 12 }) });
+
+    const { decorations } = buildAnnotationDecorations(view);
+    const found = iterateSet(decorations).find((d) => d.from === 12 && d.to === 27);
+    expect(found).toBeTruthy();
+    expect(found!.widget).toBeInstanceOf(CalloutWidget);
+    expect((found!.widget as CalloutWidget).isCollapsed).toBe(true);
+    view.destroy();
+  });
+
+  it("tracks cursor-sensitive lines spanned by annotation", () => {
+    const doc = "first line\n\n<!---\nbody\n--->\nafter";
+    const view = makeView(doc, 28);
+    const ann = makeAnnotation({ form: "block", char_start: 12, char_end: 27, original: "<!---\nbody\n--->" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    const { cursorSensitiveLines } = buildAnnotationDecorations(view);
+    const startLine = view.state.doc.lineAt(ann.char_start).number;
+    const endLine = view.state.doc.lineAt(ann.char_end).number;
+    for (let l = startLine; l <= endLine; l++) {
+      expect(cursorSensitiveLines.has(l)).toBe(true);
+    }
+    expect(cursorSensitiveLines.has(1)).toBe(false);
+    view.destroy();
+  });
+
+  it("out-of-range annotation positions → no decoration and no sensitive lines", () => {
+    const view = makeView("short text", 0);
+    const ann = makeAnnotation({ char_start: -1, char_end: 5 });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    const { decorations, cursorSensitiveLines } = buildAnnotationDecorations(view);
+    expect(decorations.size).toBe(0);
+    expect(cursorSensitiveLines.size).toBe(0);
+    view.destroy();
+  });
+
+  it("firing annotation → widget still produced (field read path intact)", () => {
+    const doc = "first line\ntext <!---n | body---> more";
+    const view = makeView(doc, 0);
+    const ann = makeAnnotation({ char_start: 16, char_end: 33, original: "<!---n | body--->" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+    view.dispatch({ effects: setFiringAnnotation.of(16) });
+
+    const { decorations } = buildAnnotationDecorations(view);
+    const found = iterateSet(decorations).find((d) => d.from === 16 && d.to === 33);
+    expect(found).toBeTruthy();
+    expect(found!.widget).toBeInstanceOf(PillWidget);
     view.destroy();
   });
 });
@@ -941,10 +1232,10 @@ describe("findAnnotationAtCursor", () => {
 });
 
 describe("annotationExtension", () => {
-  it("returns array with 12 extensions", () => {
+  it("returns array with 13 extensions", () => {
     const ext = annotationExtension();
     expect(Array.isArray(ext)).toBe(true);
-    expect((ext as unknown[]).length).toBe(12);
+    expect((ext as unknown[]).length).toBe(13);
   });
 
   it("includes annotationDataField", () => {
@@ -960,6 +1251,81 @@ describe("annotationExtension", () => {
   it("includes llmLockedField", () => {
     const ext = annotationExtension() as unknown[];
     expect(ext).toContain(llmLockedField);
+  });
+
+  it("wires annotationDecorationPlugin into the extension array", () => {
+    const ext = annotationExtension() as unknown[];
+    expect(ext).toContain(annotationDecorationPlugin);
+  });
+
+  it("instantiates a resolvable annotationDecorationPlugin in an EditorView", () => {
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: "hello",
+        extensions: [annotationExtension()],
+      }),
+    });
+    try {
+      expect(view.plugin(annotationDecorationPlugin)).not.toBeNull();
+    } finally {
+      view.destroy();
+    }
+  });
+});
+
+describe("annotationExtension multiline block rendering (regression)", () => {
+  // CodeMirror forbids line-break-spanning replacements from ViewPlugin sources.
+  // Multiline callouts must therefore be delivered via annotationBlockDecorationField.
+  // This guards the full production wiring against the "Decorations that replace
+  // line breaks may not be specified via plugins" RangeError.
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.mocked(parseAnnotations).mockResolvedValue([]);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("renders a multiline BlockAnnotation through the full extension without throwing", async () => {
+    const doc = "first line\n\n<!---\nbody\n--->\nafter";
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: 28 },
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationExtension(),
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    await vi.advanceTimersByTimeAsync(0);
+    ensureSyntaxTree(view.state, view.state.doc.length);
+
+    const ann = makeAnnotation({ form: "block", char_start: 12, char_end: 27, original: "<!---\nbody\n--->" });
+    expect(() => {
+      view.dispatch({ effects: setAnnotationData.of([ann]) });
+    }).not.toThrow();
+
+    // The callout is delivered by the block field, not the plugin's rendered set.
+    const fieldSet = view.state.field(annotationBlockDecorationField);
+    let foundInField = false;
+    const it1 = fieldSet.iter();
+    while (it1.value) {
+      if (it1.from === 12 && it1.to === 27) foundInField = it1.value.spec?.widget instanceof CalloutWidget;
+      it1.next();
+    }
+    expect(foundInField).toBe(true);
+
+    // The plugin's rendered (inline) set excludes the line-spanning callout.
+    const pluginSet = view.plugin(annotationDecorationPlugin)!.inlineDecorations;
+    let foundInPlugin = false;
+    const it2 = pluginSet.iter();
+    while (it2.value) {
+      if (it2.from === 12 && it2.to === 27) foundInPlugin = true;
+      it2.next();
+    }
+    expect(foundInPlugin).toBe(false);
+
+    view.destroy();
   });
 });
 
