@@ -417,14 +417,15 @@ function App() {
     const view = getCurrentEditorView();
     if (view) {
       if (editingRange) {
-        view.dispatch({ changes: { from: editingRange.from, to: editingRange.to, insert: dsl } });
+        const from = annotationBuilderMode === "create" ? editingRange.to : editingRange.from;
+        view.dispatch({ changes: { from, to: editingRange.to, insert: dsl } });
       } else {
         const pos = view.state.selection.main.head;
         view.dispatch({ changes: { from: pos, insert: dsl } });
       }
     }
     setAnnotationBuilderOpen(false);
-  }, [editingRange]);
+  }, [editingRange, annotationBuilderMode]);
 
   const handleEditRaw = useCallback((info: EditRawInfo) => {
     const view = getCurrentEditorView();
