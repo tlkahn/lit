@@ -359,7 +359,9 @@ export function hasAnnotationEffect(tr: { effects: readonly StateEffect<unknown>
  * Mirrors `buildAnnotationDecorations` but is viewport-independent (block
  * annotations are few and the field has no access to view geometry).
  */
-interface BlockDecorationState {
+/** State shape for `annotationBlockDecorationField`. */
+export interface BlockDecorationState {
+  /** The DecorationSet containing line-break-spanning block annotation callouts. */
   decorations: DecorationSet;
   /**
    * Document line numbers spanned by multiline block annotations. Used by the
@@ -423,7 +425,27 @@ function buildAnnotationBlockDecorations(state: EditorView["state"]): BlockDecor
 }
 
 /**
- * Delivers line-break-spanning annotation callouts. A StateField (not the
+ * Returns true when a tree-identity change (parser progress) warrants
+ * rebuilding the block decorations. When there are no annotations, or the
+ * materialized tree on `startState` already covered all annotation positions,
+ * the parser can only be extending into territory that contains no block
+ * annotations — skip the (unbounded) full-tree walk.
+ *
+ * Uses `syntaxTree(startState).length` (the materialized StateField tree) rather
+ * than `syntaxTreeAvailable` (which queries the live parse context and may
+ * reflect progress that hasn't yet been committed to the StateField).
+ */
+export function shouldRebuildBlocksOnTreeChange(
+  startState: EditorView["state"],
+  annotations: Annotation[],
+): boolean {
+  if (annotations.length === 0) return false;
+  const maxEnd = annotations.reduce((m, a) => Math.max(m, a.char_end), 0);
+  return syntaxTree(startState).length < maxEnd;
+}
+
+/**
+ * Delivers line-break-spanning annotation callouts via a `StateField` (not the
  * plugin) because CodeMirror only permits such replacements from field/facet
  * sources. Recomputes on doc change and annotation effects. For selection-only
  * transactions it applies a cursor-sensitivity guard analogous to the plugin's
@@ -431,17 +453,27 @@ function buildAnnotationBlockDecorations(state: EditorView["state"]): BlockDecor
  * full-tree walk — is skipped unless the old or new cursor line spans a block
  * annotation, so plain cursor moves between non-block lines cost nothing while
  * moving onto/off a block line still updates the `isCursorOnLine` suppression.
+ *
+ * Value shape: `BlockDecorationState` — `.decorations` for the DecorationSet,
+ * `.blockSensitiveLines` for the cursor guard set.
  */
 export const annotationBlockDecorationField = StateField.define<BlockDecorationState>({
   create(state) {
     return buildAnnotationBlockDecorations(state);
   },
   update(value, tr) {
-    // Rebuild on doc/effect changes and on parser progress (Language.setState
-    // advancing the tree carries none of those triggers, yet may reveal block
-    // annotations past the prior parse frontier).
-    if (tr.docChanged || hasAnnotationEffect(tr) || syntaxTree(tr.startState) !== syntaxTree(tr.state)) {
+    if (tr.docChanged || hasAnnotationEffect(tr)) {
       return buildAnnotationBlockDecorations(tr.state);
+    }
+    // Parser progress (Language.setState advancing the tree) carries no
+    // docChange or annotation effect. Only rebuild if the old tree hadn't yet
+    // covered all annotation positions — otherwise the extension can't reveal
+    // new block nodes.
+    if (syntaxTree(tr.startState) !== syntaxTree(tr.state)) {
+      if (shouldRebuildBlocksOnTreeChange(tr.startState, tr.startState.field(annotationDataField))) {
+        return buildAnnotationBlockDecorations(tr.state);
+      }
+      return value;
     }
     if (tr.selection) {
       const oldLine = tr.startState.doc.lineAt(tr.startState.selection.main.head).number;
