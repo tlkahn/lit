@@ -144,19 +144,3 @@ export function generateDeeplyNested(lines: number): string {
 
   return out.join("\n");
 }
-
-/**
- * Annotation-heavy fixture: one inline annotation per line.
- *
- * Each line has text BEFORE the `<!---...--->` marker so the parser emits an
- * `InlineAnnotation` (line-safe, ViewPlugin-rendered) rather than a
- * `BlockAnnotation`. The annotation body varies per line so original text is
- * distinct. `generateAnnotationHeavy(250)` yields 250 annotations.
- */
-export function generateAnnotationHeavy(lines: number): string {
-  const out: string[] = [];
-  for (let i = 0; i < lines; i++) {
-    out.push(`Line ${i}: ${sentence(i)} <!---note ${i}---> tail text`);
-  }
-  return out.join("\n");
-}
