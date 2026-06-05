@@ -122,9 +122,6 @@
   border-radius: 4px;
   border-inline-start: 4px solid rgba(68, 138, 255, 0.6);
   background: rgba(68, 138, 255, 0.05);
-  min-width: 0;
-  max-width: 100%;
-  overflow-wrap: break-word;
 }
 
 .cm-annotation-callout-header {
@@ -209,7 +206,8 @@
   padding: 0.5em;
   border-radius: 4px;
   background: rgba(128, 128, 128, 0.08);
-  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
 }
 
 .cm-annotation-callout-body blockquote {

@@ -4,7 +4,7 @@ import { classHighlighter, tagHighlighter, tags } from "@lezer/highlight";
 import type { Extension } from "@codemirror/state";
 
 const shared = EditorView.baseTheme({
-  "&": { height: "100%", minWidth: 0 },
+  "&": { height: "100%" },
   ".cm-scroller": { overflow: "auto", overscrollBehavior: "contain" },
   ".cm-content": {
     padding: "1rem 1.5rem",
