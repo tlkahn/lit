@@ -140,9 +140,29 @@
   padding-top: 6px;
   font-size: 0.9em;
   line-height: 1.5;
+  white-space: normal;
 }
 
+.cm-annotation-callout-body h1,
+.cm-annotation-callout-body h2,
+.cm-annotation-callout-body h3,
+.cm-annotation-callout-body h4,
+.cm-annotation-callout-body h5,
+.cm-annotation-callout-body h6 {
+  margin: 0;
+  padding: 0.3em 0 0.2em;
+  line-height: 1.3;
+}
+
+.cm-annotation-callout-body h1 { font-size: 1.25em; }
+.cm-annotation-callout-body h2 { font-size: 1.15em; }
+.cm-annotation-callout-body h3 { font-size: 1.05em; }
+.cm-annotation-callout-body h4,
+.cm-annotation-callout-body h5,
+.cm-annotation-callout-body h6 { font-size: 1em; }
+
 .cm-annotation-callout-body p {
+  margin: 0;
   padding: 0 0 0.4em;
 }
 
@@ -152,8 +172,27 @@
 
 .cm-annotation-callout-body ul,
 .cm-annotation-callout-body ol {
-  padding-left: 1.5em;
-  padding-bottom: 0.4em;
+  margin: 0;
+  margin-block: 0;
+  padding: 0 0 0.4em 1.5em;
+  list-style: disc;
+}
+
+.cm-annotation-callout-body ol {
+  list-style: decimal;
+}
+
+.cm-annotation-callout-body li {
+  margin: 0;
+  padding: 0.05em 0;
+}
+
+.cm-annotation-callout-body li > p {
+  padding-bottom: 0.1em;
+}
+
+.cm-annotation-callout-body li:last-child > p:last-child {
+  padding-bottom: 0;
 }
 
 .cm-annotation-callout-body code {
