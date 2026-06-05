@@ -1498,6 +1498,86 @@ describe("ThreadWidget", () => {
     expect(a.eq(b)).toBe(true);
   });
 
+  it("clicking ⋮ adds is-open; clicking again removes it", () => {
+    const w = new ThreadWidget(makeThread(), 0, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    const overflow = dom.querySelector(".cm-thread-overflow")! as HTMLElement;
+    overflow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(overflow.classList.contains("is-open")).toBe(true);
+    overflow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(overflow.classList.contains("is-open")).toBe(false);
+  });
+
+  it("Escape keydown on document closes the menu and is preventDefault-ed", () => {
+    const w = new ThreadWidget(makeThread(), 0, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    const overflow = dom.querySelector(".cm-thread-overflow")! as HTMLElement;
+    overflow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(overflow.classList.contains("is-open")).toBe(true);
+
+    const esc = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    document.dispatchEvent(esc);
+    expect(overflow.classList.contains("is-open")).toBe(false);
+    expect(esc.defaultPrevented).toBe(true);
+  });
+
+  it("mousedown outside the overflow element closes the menu", () => {
+    const w = new ThreadWidget(makeThread(), 0, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    document.body.appendChild(dom);
+    const overflow = dom.querySelector(".cm-thread-overflow")! as HTMLElement;
+    overflow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(overflow.classList.contains("is-open")).toBe(true);
+
+    document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(overflow.classList.contains("is-open")).toBe(false);
+    dom.remove();
+  });
+
+  it("non-Escape keystrokes are preventDefault-ed and stopPropagation-ed while menu is open", () => {
+    const w = new ThreadWidget(makeThread(), 0, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    const overflow = dom.querySelector(".cm-thread-overflow")! as HTMLElement;
+    overflow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+
+    const key = new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true });
+    const stopSpy = vi.spyOn(key, "stopPropagation");
+    document.dispatchEvent(key);
+    expect(key.defaultPrevented).toBe(true);
+    expect(stopSpy).toHaveBeenCalled();
+    expect(overflow.classList.contains("is-open")).toBe(true);
+  });
+
+  it("menu row click closes the menu", () => {
+    const w = new ThreadWidget(makeThread(), 0, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    const overflow = dom.querySelector(".cm-thread-overflow")! as HTMLElement;
+    overflow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(overflow.classList.contains("is-open")).toBe(true);
+
+    const row = dom.querySelector(".cm-thread-overflow-row")! as HTMLElement;
+    row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(overflow.classList.contains("is-open")).toBe(false);
+  });
+
+  it("container mouseleave skips handleAnnotationLeave when menu is open", () => {
+    const view = makeEditorView("x".repeat(50));
+    const w = new ThreadWidget(makeThread(), 0, false, 0);
+    const dom = w.toDOM(view);
+    const overflow = dom.querySelector(".cm-thread-overflow")! as HTMLElement;
+
+    overflow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    mockHandleLeave.mockClear();
+    dom.dispatchEvent(new Event("mouseleave"));
+    expect(mockHandleLeave).not.toHaveBeenCalled();
+
+    // After closing the menu, mouseleave should work again.
+    overflow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    dom.dispatchEvent(new Event("mouseleave"));
+    expect(mockHandleLeave).toHaveBeenCalledOnce();
+    view.destroy();
+  });
+
   it("ignoreEvent returns true for mousedown; true for keydown only from follow-up textarea", () => {
     const w = new ThreadWidget(makeThread(), 0, false, 0);
     expect(w.ignoreEvent(new MouseEvent("mousedown"))).toBe(true);

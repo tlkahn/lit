@@ -525,8 +525,26 @@ export class ThreadWidget extends WidgetType {
     if (cert) container.classList.add(cert);
     container.dataset.annotationType = "thread";
 
+    const closeMenu = () => {
+      overflow.classList.remove(CLS.IS_OPEN);
+      document.removeEventListener("mousedown", onOutsideClick, true);
+      document.removeEventListener("keydown", onMenuKeydown, true);
+    };
+
+    const onOutsideClick = (e: MouseEvent) => {
+      if (!overflow.contains(e.target as Node)) closeMenu();
+    };
+
+    const onMenuKeydown = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === "Escape") closeMenu();
+    };
+
     container.onmouseenter = (e) => handleAnnotationHover(view, ann, { altKey: e.altKey });
-    container.onmouseleave = () => handleAnnotationLeave(view);
+    container.onmouseleave = () => {
+      if (!overflow.classList.contains(CLS.IS_OPEN)) handleAnnotationLeave(view);
+    };
 
     // --- Header ---
     const header = document.createElement("div");
@@ -608,7 +626,7 @@ export class ThreadWidget extends WidgetType {
       row.onmousedown = (e) => {
         e.preventDefault();
         e.stopPropagation();
-        overflow.classList.remove(CLS.IS_OPEN);
+        closeMenu();
         handler();
       };
       menu.appendChild(row);
@@ -651,11 +669,16 @@ export class ThreadWidget extends WidgetType {
 
     overflow.appendChild(menu);
     overflow.onmousedown = (e) => {
-      // Only toggle when clicking the ⋮ glyph itself, not a menu row.
       if ((e.target as HTMLElement).closest(`.${CLS.THREAD_OVERFLOW_MENU}`)) return;
       e.preventDefault();
       e.stopPropagation();
-      overflow.classList.toggle(CLS.IS_OPEN);
+      if (overflow.classList.contains(CLS.IS_OPEN)) {
+        closeMenu();
+      } else {
+        overflow.classList.add(CLS.IS_OPEN);
+        document.addEventListener("mousedown", onOutsideClick, true);
+        document.addEventListener("keydown", onMenuKeydown, true);
+      }
     };
     header.appendChild(overflow);
 
