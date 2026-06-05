@@ -804,7 +804,7 @@ describe("App", () => {
     expect(screen.getByTestId("bottom-panel")).toBeInTheDocument();
   });
 
-  it("create-mode annotation insert replaces the original selected range", async () => {
+  it("create-mode annotation insert is placed after the original selected range", async () => {
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
 
     const dispatch = vi.fn();
@@ -833,7 +833,7 @@ describe("App", () => {
 
     expect(dispatch).toHaveBeenCalled();
     const changes = dispatch.mock.calls[0]![0].changes;
-    expect(changes.from).toBe(10);
+    expect(changes.from).toBe(15);
     expect(changes.to).toBe(15);
   });
 });
