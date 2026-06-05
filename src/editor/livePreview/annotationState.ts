@@ -1,10 +1,11 @@
 import { type Extension, StateEffect, StateField } from "@codemirror/state";
-import { Decoration, EditorView, ViewPlugin, type ViewUpdate, keymap } from "@codemirror/view";
-import { syntaxTree, ensureSyntaxTree } from "@codemirror/language";
+import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, type PluginValue, keymap } from "@codemirror/view";
+import { syntaxTree } from "@codemirror/language";
 import { parseAnnotations, listAnnotations, type Annotation } from "../../lib/ipc";
 import { type AnnotationDisplayMode } from "../../stores/preferences";
 import { isCursorOnLine } from "./proximity";
-import { PillWidget, MarkerWidget, CalloutWidget, annotationFoldField, firingAnnotationsField, llmLockedField, setLlmLockedEffect } from "./annotationWidgets";
+import { PillWidget, MarkerWidget, CalloutWidget, annotationFoldField, firingAnnotationsField, llmLockedField, setLlmLockedEffect, setFiringAnnotation, clearFiringAnnotation, toggleAnnotationFoldEffect } from "./annotationWidgets";
+import { isPerfEnabled, perfMark, perfMeasure } from "./perf";
 import { useModalLockStore } from "../../stores/modalLock";
 import { useWorkspaceStore } from "../../stores/workspace";
 import { scopeHighlightExtension } from "./scopeHighlight";
@@ -148,60 +149,311 @@ function findAnnotationForRange(
   );
 }
 
-export const annotationDecorationProvider = EditorView.decorations.compute(
-  [annotationDataField, annotationFoldField, firingAnnotationsField, displayModeField, llmLockedField, "selection"],
-  (state) => {
-    const annotations = state.field(annotationDataField);
-    if (annotations.length === 0) return Decoration.none;
-    const mode = state.field(displayModeField);
-    const firingSet = state.field(firingAnnotationsField, false) ?? new Set<number>();
-    const llmLocked = state.field(llmLockedField, false) ?? false;
+export interface BuildAnnotationDecorationsResult {
+  decorations: DecorationSet;
+  cursorSensitiveLines: Set<number>;
+}
 
-    const docLen = state.doc.length;
-    const decos: { from: number; to: number; deco: Decoration }[] = [];
+const VISIBLE_RANGE_BUFFER = 5000;
 
-    const tree = ensureSyntaxTree(state, docLen, 200) ?? syntaxTree(state);
+/**
+ * Build annotation decorations bounded to the editor's visible ranges.
+ *
+ * Returns the decoration set plus the set of line numbers that an annotation
+ * node spans (cursor-sensitive). Sensitive lines are recorded even when the
+ * cursor currently sits on the annotation (so moving off it can trigger a
+ * rebuild) — hence line tracking runs before the `isCursorOnLine` guard.
+ */
+export function buildAnnotationDecorations(view: EditorView): BuildAnnotationDecorationsResult {
+  const { state } = view;
+  const annotations = state.field(annotationDataField);
+  const cursorSensitiveLines = new Set<number>();
+  if (annotations.length === 0) {
+    return { decorations: Decoration.none, cursorSensitiveLines };
+  }
+
+  const mode = state.field(displayModeField);
+  const firingSet = state.field(firingAnnotationsField, false) ?? new Set<number>();
+  const llmLocked = state.field(llmLockedField, false) ?? false;
+
+  const docLen = state.doc.length;
+  const decos: { from: number; to: number; deco: Decoration }[] = [];
+  const tree = syntaxTree(state);
+
+  // Buffered windows of adjacent visible ranges can overlap (e.g. around a code
+  // fold), so the same annotation node may be entered once per range. Dedupe by
+  // node start offset (unique per annotation node) so line tracking, the cursor
+  // guard, and the decoration push each run at most once per node.
+  const seen = new Set<number>();
+
+  for (const range of view.visibleRanges) {
+    const from = Math.max(0, range.from - VISIBLE_RANGE_BUFFER);
+    const to = Math.min(docLen, range.to + VISIBLE_RANGE_BUFFER);
     tree.iterate({
+      from,
+      to,
       enter: (node) => {
         if (node.name !== "InlineAnnotation" && node.name !== "BlockAnnotation") return;
 
-        const from = node.from;
-        const to = node.to;
-        if (from < 0 || to > docLen || from >= to) return;
-        if (isCursorOnLine(state, from, to)) return;
+        const nodeFrom = node.from;
+        const nodeTo = node.to;
+        if (nodeFrom < 0 || nodeTo > docLen || nodeFrom >= nodeTo) return;
 
-        const ann = findAnnotationForRange(annotations, from, to);
+        if (seen.has(nodeFrom)) return;
+        seen.add(nodeFrom);
+
+        // Track every line spanned by this annotation node (cursor-sensitive).
+        const startLine = state.doc.lineAt(nodeFrom).number;
+        const endLine = state.doc.lineAt(nodeTo).number;
+        for (let l = startLine; l <= endLine; l++) cursorSensitiveLines.add(l);
+
+        if (isCursorOnLine(state, nodeFrom, nodeTo)) return;
+
+        const ann = findAnnotationForRange(annotations, nodeFrom, nodeTo);
         if (!ann) return;
 
-        const text = state.doc.sliceString(from, to);
+        const text = state.doc.sliceString(nodeFrom, nodeTo);
         const isMultiLine = text.includes("\n");
-        const isFiring = firingSet.has(from);
 
-        if (node.name === "BlockAnnotation" && isMultiLine) {
-          const foldState = state.field(annotationFoldField, false);
-          const isCollapsed = foldState?.get(from) ?? false;
-          decos.push({
-            from,
-            to,
-            deco: Decoration.replace({
-              widget: new CalloutWidget(ann, isCollapsed, from, isFiring, llmLocked),
-            }),
-          });
-        } else {
-          const widget = mode === "footnote" ? new MarkerWidget(ann, isFiring, llmLocked) : new PillWidget(ann, isFiring, llmLocked);
-          decos.push({
-            from,
-            to,
-            deco: Decoration.replace({ widget }),
-          });
-        }
+        // A multiline block annotation's callout is a line-break-spanning
+        // replacement, which CodeMirror forbids from plugin sources;
+        // splitAnnotationDecorations would route it to the discarded "block"
+        // subset. annotationBlockDecorationField (a StateField) is the sole
+        // producer of that callout, so skip building it here — the line
+        // tracking above keeps these lines cursor-sensitive.
+        if (node.name === "BlockAnnotation" && isMultiLine) return;
+
+        const isFiring = firingSet.has(nodeFrom);
+        const widget = mode === "footnote" ? new MarkerWidget(ann, isFiring, llmLocked) : new PillWidget(ann, isFiring, llmLocked);
+        decos.push({
+          from: nodeFrom,
+          to: nodeTo,
+          deco: Decoration.replace({ widget }),
+        });
       },
     });
+  }
 
-    decos.sort((a, b) => a.from - b.from || a.to - b.to);
-    return Decoration.set(decos.map((d) => d.deco.range(d.from, d.to)));
-  },
+  decos.sort((a, b) => a.from - b.from || a.to - b.to);
+  return {
+    decorations: Decoration.set(decos.map((d) => d.deco.range(d.from, d.to))),
+    cursorSensitiveLines,
+  };
+}
+
+/**
+ * Split a built annotation decoration set into the line-safe subset (inline /
+ * single-line replacements) and the line-break-spanning subset (expanded
+ * multiline callouts).
+ *
+ * CodeMirror forbids line-break-spanning and block replacements from
+ * `ViewPlugin` sources (it throws "Decorations that replace line breaks may not
+ * be specified via plugins"). The plugin therefore renders only `inline`, while
+ * `block` is delivered through `annotationBlockDecorationField` (a StateField,
+ * which is permitted to replace line breaks).
+ */
+function splitAnnotationDecorations(
+  set: DecorationSet,
+  doc: EditorView["state"]["doc"],
+): { inline: DecorationSet; block: DecorationSet } {
+  const inline: { from: number; to: number; deco: Decoration }[] = [];
+  const block: { from: number; to: number; deco: Decoration }[] = [];
+  const iter = set.iter();
+  while (iter.value) {
+    const lineEnd = doc.lineAt(iter.from).to;
+    const target = iter.to > lineEnd ? block : inline;
+    target.push({ from: iter.from, to: iter.to, deco: iter.value });
+    iter.next();
+  }
+  return {
+    inline: Decoration.set(inline.map((d) => d.deco.range(d.from, d.to))),
+    block: Decoration.set(block.map((d) => d.deco.range(d.from, d.to))),
+  };
+}
+
+class AnnotationDecorationPluginValue implements PluginValue {
+  /**
+   * Unsafe full superset (inline + block) — exposed for inspection/tests only.
+   * Deliberately NOT named `decorations` to avoid shadowing CM6's reserved
+   * PluginValue.decorations convention: it contains line-break-spanning block
+   * replacements that CM6 forbids from plugins. The plugin renders
+   * `inlineDecorations` via the explicit accessor below; block ones go via field.
+   */
+  allDecorations: DecorationSet;
+  /** Line-safe subset actually rendered by the plugin (block ones go via field). */
+  inlineDecorations: DecorationSet;
+  cursorSensitiveLines: Set<number>;
+
+  constructor(view: EditorView) {
+    const result = buildAnnotationDecorations(view);
+    this.allDecorations = result.decorations;
+    this.inlineDecorations = splitAnnotationDecorations(result.decorations, view.state.doc).inline;
+    this.cursorSensitiveLines = result.cursorSensitiveLines;
+  }
+
+  private rebuild(view: EditorView, reason: string) {
+    if (isPerfEnabled()) perfMark("annotationDeco:rebuild:start");
+    const result = buildAnnotationDecorations(view);
+    this.allDecorations = result.decorations;
+    this.inlineDecorations = splitAnnotationDecorations(result.decorations, view.state.doc).inline;
+    this.cursorSensitiveLines = result.cursorSensitiveLines;
+    if (isPerfEnabled()) {
+      const m = perfMeasure("annotationDeco:rebuild", "annotationDeco:rebuild:start");
+      console.debug(`[annotationDeco] rebuild (${reason}) ${m ? m.duration.toFixed(1) + "ms" : ""}`);
+    }
+  }
+
+  update(update: ViewUpdate) {
+    perfMark("annotationDeco:update:start");
+    // The background parser advancing (Language.setState) carries no docChange,
+    // viewport change, effect, or selection; detect it via tree-identity change
+    // so late-frontier annotations on large docs become visible without
+    // interaction.
+    const treeChanged = syntaxTree(update.startState) !== syntaxTree(update.state);
+    if (update.docChanged || update.viewportChanged || treeChanged) {
+      this.rebuild(update.view, update.docChanged ? "docChanged" : update.viewportChanged ? "viewportChanged" : "syntaxTree");
+    } else if (update.transactions.some((tr) => hasAnnotationEffect(tr))) {
+      this.rebuild(update.view, "effect");
+    } else if (update.selectionSet) {
+      const oldLine = update.startState.doc.lineAt(update.startState.selection.main.head).number;
+      const newLine = update.state.doc.lineAt(update.state.selection.main.head).number;
+      if (this.cursorSensitiveLines.has(oldLine) || this.cursorSensitiveLines.has(newLine)) {
+        this.rebuild(update.view, `selection L${oldLine}→L${newLine} (sensitive)`);
+      } else if (isPerfEnabled()) {
+        console.debug(`[annotationDeco] skip: selection L${oldLine}→L${newLine} (plain)`);
+        perfMark("annotationDeco:skip:selection");
+      }
+    } else if (isPerfEnabled()) {
+      perfMark("annotationDeco:skip:no-trigger");
+    }
+    perfMeasure("annotationDeco:update", "annotationDeco:update:start");
+  }
+}
+
+export const annotationDecorationPlugin = ViewPlugin.fromClass(
+  AnnotationDecorationPluginValue,
+  { decorations: (v) => v.inlineDecorations },
 );
+
+/**
+ * Returns true when a transaction carries an annotation-relevant state effect
+ * (the same effects that trigger a plugin rebuild).
+ */
+export function hasAnnotationEffect(tr: { effects: readonly StateEffect<unknown>[] }): boolean {
+  return tr.effects.some((e) =>
+    e.is(setAnnotationData) ||
+    e.is(setDisplayMode) ||
+    e.is(toggleAnnotationFoldEffect) ||
+    e.is(setFiringAnnotation) ||
+    e.is(clearFiringAnnotation) ||
+    e.is(setLlmLockedEffect),
+  );
+}
+
+/**
+ * Builds ONLY the line-break-spanning annotation decorations (expanded multiline
+ * callouts) over the full document. These cannot be delivered via the
+ * `annotationDecorationPlugin` (CodeMirror forbids line-break-spanning
+ * replacements from plugins), so they live in this StateField instead.
+ *
+ * Mirrors `buildAnnotationDecorations` but is viewport-independent (block
+ * annotations are few and the field has no access to view geometry).
+ */
+interface BlockDecorationState {
+  decorations: DecorationSet;
+  /**
+   * Document line numbers spanned by multiline block annotations. Used by the
+   * field's selection guard to skip rebuilds when the cursor moves between
+   * lines that no block annotation touches.
+   */
+  blockSensitiveLines: Set<number>;
+}
+
+function buildAnnotationBlockDecorations(state: EditorView["state"]): BlockDecorationState {
+  const annotations = state.field(annotationDataField);
+  const blockSensitiveLines = new Set<number>();
+  if (annotations.length === 0) {
+    return { decorations: Decoration.none, blockSensitiveLines };
+  }
+
+  const firingSet = state.field(firingAnnotationsField, false) ?? new Set<number>();
+  const llmLocked = state.field(llmLockedField, false) ?? false;
+  const foldState = state.field(annotationFoldField, false);
+
+  const docLen = state.doc.length;
+  const decos: { from: number; to: number; deco: Decoration }[] = [];
+
+  syntaxTree(state).iterate({
+    enter: (node) => {
+      if (node.name !== "BlockAnnotation") return;
+      const from = node.from;
+      const to = node.to;
+      if (from < 0 || to > docLen || from >= to) return;
+      if (!state.doc.sliceString(from, to).includes("\n")) return;
+
+      // Track every line spanned by this multiline block annotation
+      // (cursor-sensitive) BEFORE the isCursorOnLine early-return, so moving the
+      // cursor OFF a block line still triggers a rebuild that restores the callout.
+      const startLine = state.doc.lineAt(from).number;
+      const endLine = state.doc.lineAt(to).number;
+      for (let l = startLine; l <= endLine; l++) blockSensitiveLines.add(l);
+
+      if (isCursorOnLine(state, from, to)) return;
+
+      const ann = findAnnotationForRange(annotations, from, to);
+      if (!ann) return;
+
+      const isCollapsed = foldState?.get(from) ?? false;
+      const isFiring = firingSet.has(from);
+      decos.push({
+        from,
+        to,
+        deco: Decoration.replace({
+          widget: new CalloutWidget(ann, isCollapsed, from, isFiring, llmLocked),
+        }),
+      });
+    },
+  });
+
+  decos.sort((a, b) => a.from - b.from || a.to - b.to);
+  return {
+    decorations: Decoration.set(decos.map((d) => d.deco.range(d.from, d.to))),
+    blockSensitiveLines,
+  };
+}
+
+/**
+ * Delivers line-break-spanning annotation callouts. A StateField (not the
+ * plugin) because CodeMirror only permits such replacements from field/facet
+ * sources. Recomputes on doc change and annotation effects. For selection-only
+ * transactions it applies a cursor-sensitivity guard analogous to the plugin's
+ * (see `AnnotationDecorationPluginValue.update`): the rebuild — an unbounded
+ * full-tree walk — is skipped unless the old or new cursor line spans a block
+ * annotation, so plain cursor moves between non-block lines cost nothing while
+ * moving onto/off a block line still updates the `isCursorOnLine` suppression.
+ */
+export const annotationBlockDecorationField = StateField.define<BlockDecorationState>({
+  create(state) {
+    return buildAnnotationBlockDecorations(state);
+  },
+  update(value, tr) {
+    // Rebuild on doc/effect changes and on parser progress (Language.setState
+    // advancing the tree carries none of those triggers, yet may reveal block
+    // annotations past the prior parse frontier).
+    if (tr.docChanged || hasAnnotationEffect(tr) || syntaxTree(tr.startState) !== syntaxTree(tr.state)) {
+      return buildAnnotationBlockDecorations(tr.state);
+    }
+    if (tr.selection) {
+      const oldLine = tr.startState.doc.lineAt(tr.startState.selection.main.head).number;
+      const newLine = tr.state.doc.lineAt(tr.state.selection.main.head).number;
+      if (value.blockSensitiveLines.has(oldLine) || value.blockSensitiveLines.has(newLine)) {
+        return buildAnnotationBlockDecorations(tr.state);
+      }
+    }
+    return value;
+  },
+  provide: (field) => EditorView.decorations.from(field, (v) => v.decorations),
+});
 
 export function findAnnotationAtCursor(
   annotations: Annotation[],
@@ -272,7 +524,8 @@ export function annotationExtension(): Extension {
     displayModeField,
     annotationDataField,
     annotationPlugin,
-    annotationDecorationProvider,
+    annotationDecorationPlugin,
+    annotationBlockDecorationField,
     annotationFoldField,
     firingAnnotationsField,
     llmLockedField,
