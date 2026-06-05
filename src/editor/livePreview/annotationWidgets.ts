@@ -525,11 +525,8 @@ export class ThreadWidget extends WidgetType {
     if (cert) container.classList.add(cert);
     container.dataset.annotationType = "thread";
 
-    let menuOpen = false;
-
     const closeMenu = () => {
       overflow.classList.remove(CLS.IS_OPEN);
-      menuOpen = false;
       document.removeEventListener("mousedown", onOutsideClick, true);
       document.removeEventListener("keydown", onMenuKeydown, true);
     };
@@ -546,7 +543,7 @@ export class ThreadWidget extends WidgetType {
 
     container.onmouseenter = (e) => handleAnnotationHover(view, ann, { altKey: e.altKey });
     container.onmouseleave = () => {
-      if (!menuOpen) handleAnnotationLeave(view);
+      if (!overflow.classList.contains(CLS.IS_OPEN)) handleAnnotationLeave(view);
     };
 
     // --- Header ---
@@ -675,10 +672,9 @@ export class ThreadWidget extends WidgetType {
       if ((e.target as HTMLElement).closest(`.${CLS.THREAD_OVERFLOW_MENU}`)) return;
       e.preventDefault();
       e.stopPropagation();
-      if (menuOpen) {
+      if (overflow.classList.contains(CLS.IS_OPEN)) {
         closeMenu();
       } else {
-        menuOpen = true;
         overflow.classList.add(CLS.IS_OPEN);
         document.addEventListener("mousedown", onOutsideClick, true);
         document.addEventListener("keydown", onMenuKeydown, true);
