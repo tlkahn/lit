@@ -30,6 +30,12 @@ describe("useStatusMessageStore", () => {
     expect(useStatusMessageStore.getState().variant).toBe("error");
   });
 
+  it("show() with progress variant sets variant to progress", () => {
+    useStatusMessageStore.getState().show("Exporting 3/10…", "progress", 8000);
+    expect(useStatusMessageStore.getState().variant).toBe("progress");
+    expect(useStatusMessageStore.getState().message).toBe("Exporting 3/10…");
+  });
+
   it("message auto-clears after default duration", () => {
     useStatusMessageStore.getState().show("temp");
     expect(useStatusMessageStore.getState().message).toBe("temp");

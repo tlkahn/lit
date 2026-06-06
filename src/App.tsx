@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Sidebar, SIDEBAR_WIDTH_PX } from "./components/Sidebar";
 import { ContentArea } from "./components/ContentArea";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -20,7 +20,6 @@ import { useLicenseStore } from "./stores/license";
 import { useSecretStoreStore } from "./stores/secretStore";
 import { getStartupContext, mergeDocuments, executeSplit, exportLkg, importLkg } from "./lib/ipc";
 import type { MergePlan, LkgExportSummary, LkgImportSummary } from "./lib/ipc";
-import { LkgExportDialog, LkgImportDialog } from "./components/LkgBundleDialog";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { usePaneStore, findLeaf } from "./stores/panes";
@@ -29,7 +28,6 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { HeadingQuickSwitcher } from "./components/HeadingQuickSwitcher";
 import { CommandPalette } from "./components/CommandPalette";
 import { AnnotationBuilderModal } from "./components/AnnotationBuilderModal";
-import { ExportDialog } from "./components/ExportDialog";
 import { SettingsModal } from "./components/SettingsModal";
 import { PassphraseModal } from "./components/PassphraseModal";
 import { useModalLock } from "./hooks/useModalLock";
@@ -228,16 +226,11 @@ function App() {
           filters: [{ name: "Lit Knowledge Graph", extensions: ["lkg"] }],
         });
         if (!dest) return;
-        setLkgExportVisible(true);
-        setLkgExportResult(null);
-        setLkgExportProgress(null);
+        statusShow("Exporting…", "progress", 30000);
         try {
           await exportLkg(dest);
         } catch (err) {
-          setLkgExportVisible(false);
-          setLkgExportResult(null);
-          setLkgExportProgress(null);
-          useStatusMessageStore.getState().show(
+          statusShow(
             err instanceof Error ? err.message : String(err),
             "error",
           );
@@ -255,14 +248,15 @@ function App() {
         if (!src) return;
         const dest = await open({ directory: true });
         if (!dest) return;
-        setLkgImportVisible(true);
-        setLkgImportResult(null);
-        setLkgImportImporting(true);
+        statusShow("Importing…", "progress", 30000);
         try {
           const summary = await importLkg(src as string, dest as string);
-          setLkgImportResult(summary);
-        } finally {
-          setLkgImportImporting(false);
+          statusShow(`Imported ${summary.node_count} nodes, ${summary.edge_count} edges, ${summary.annotation_count} annotations, ${summary.file_count} files`, "success");
+        } catch (err) {
+          statusShow(
+            err instanceof Error ? err.message : String(err),
+            "error",
+          );
         }
       });
       if (cancelled) { unImportLkg(); return; }
@@ -284,76 +278,50 @@ function App() {
     };
   }, []);
 
-  const [exportVisible, setExportVisible] = useState(false);
-  const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
-  const [exportResult, setExportResult] = useState<ExportSummary | null>(null);
-  const exportTimerRef = useRef<ReturnType<typeof setTimeout>>();
-
-  const [lkgExportVisible, setLkgExportVisible] = useState(false);
-  const [lkgExportProgress, setLkgExportProgress] = useState<ExportProgress | null>(null);
-  const [lkgExportResult, setLkgExportResult] = useState<LkgExportSummary | null>(null);
-  const lkgExportTimerRef = useRef<ReturnType<typeof setTimeout>>();
-
-  const [lkgImportVisible, setLkgImportVisible] = useState(false);
-  const [lkgImportImporting, setLkgImportImporting] = useState(false);
-  const [lkgImportResult, setLkgImportResult] = useState<LkgImportSummary | null>(null);
-  const lkgImportTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const statusShow = useStatusMessageStore((s) => s.show);
 
   useEffect(() => {
     let unlistenProgress: (() => void) | undefined;
     let unlistenComplete: (() => void) | undefined;
     listen<ExportProgress>("lit:export-progress", (event) => {
-      setExportVisible(true);
-      setExportResult(null);
-      setExportProgress(event.payload);
+      const { current, total } = event.payload;
+      statusShow(`Exporting ${current}/${total}…`, "progress", 8000);
     }).then((fn) => { unlistenProgress = fn; });
     listen<ExportSummary>("lit:export-complete", (event) => {
-      setExportResult(event.payload);
-      clearTimeout(exportTimerRef.current);
-      exportTimerRef.current = setTimeout(() => setExportVisible(false), 2000);
+      statusShow(`Exported ${event.payload.exported_count} files`, "success");
     }).then((fn) => { unlistenComplete = fn; });
     return () => {
       unlistenProgress?.();
       unlistenComplete?.();
-      clearTimeout(exportTimerRef.current);
     };
-  }, []);
+  }, [statusShow]);
 
   useEffect(() => {
     let unlistenProgress: (() => void) | undefined;
     let unlistenComplete: (() => void) | undefined;
     listen<ExportProgress>("lit:lkg-export-progress", (event) => {
-      setLkgExportVisible(true);
-      setLkgExportResult(null);
-      setLkgExportProgress(event.payload);
+      const { current, total } = event.payload;
+      statusShow(`Exporting ${current}/${total}…`, "progress", 8000);
     }).then((fn) => { unlistenProgress = fn; });
     listen<LkgExportSummary>("lit:lkg-export-complete", (event) => {
-      setLkgExportVisible(true);
-      setLkgExportResult(event.payload);
-      clearTimeout(lkgExportTimerRef.current);
-      lkgExportTimerRef.current = setTimeout(() => setLkgExportVisible(false), 2000);
+      statusShow(`Exported ${event.payload.exported_count} files`, "success");
     }).then((fn) => { unlistenComplete = fn; });
     return () => {
       unlistenProgress?.();
       unlistenComplete?.();
-      clearTimeout(lkgExportTimerRef.current);
     };
-  }, []);
+  }, [statusShow]);
 
   useEffect(() => {
     let unlistenComplete: (() => void) | undefined;
     listen<LkgImportSummary>("lit:lkg-import-complete", (event) => {
-      setLkgImportVisible(true);
-      setLkgImportResult(event.payload);
-      setLkgImportImporting(false);
-      clearTimeout(lkgImportTimerRef.current);
-      lkgImportTimerRef.current = setTimeout(() => setLkgImportVisible(false), 2000);
+      const { node_count, edge_count, annotation_count, file_count } = event.payload;
+      statusShow(`Imported ${node_count} nodes, ${edge_count} edges, ${annotation_count} annotations, ${file_count} files`, "success");
     }).then((fn) => { unlistenComplete = fn; });
     return () => {
       unlistenComplete?.();
-      clearTimeout(lkgImportTimerRef.current);
     };
-  }, []);
+  }, [statusShow]);
 
   useEffect(() => {
     let cancelled = false;
@@ -586,9 +554,6 @@ function App() {
           open={commandPaletteOpen}
           onClose={() => setCommandPaletteOpen(false)}
         />
-        <ExportDialog visible={exportVisible} progress={exportProgress} result={exportResult} />
-        <LkgExportDialog visible={lkgExportVisible} progress={lkgExportProgress} result={lkgExportResult} />
-        <LkgImportDialog visible={lkgImportVisible} importing={lkgImportImporting} result={lkgImportResult} />
         {annotationBuilderOpen && (
           <AnnotationBuilderModal
             onClose={() => setAnnotationBuilderOpen(false)}

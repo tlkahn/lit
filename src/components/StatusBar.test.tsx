@@ -537,5 +537,22 @@ describe("StatusBar", () => {
       const el = screen.getByTestId("status-bar-message");
       expect(el.className).toContain("text-text-muted");
     });
+
+    it("shows progress variant with animate-pulse", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      useStatusMessageStore.setState({ message: "Exporting 3/10…", variant: "progress" });
+      render(<StatusBar />);
+      const el = screen.getByTestId("status-bar-message");
+      expect(el.className).toContain("animate-pulse");
+      expect(el.className).toContain("text-text-muted");
+    });
+
+    it("does not show animate-pulse for success variant", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      useStatusMessageStore.setState({ message: "Done", variant: "success" });
+      render(<StatusBar />);
+      const el = screen.getByTestId("status-bar-message");
+      expect(el.className).not.toContain("animate-pulse");
+    });
   });
 });

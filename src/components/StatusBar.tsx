@@ -176,7 +176,7 @@ export function StatusBar() {
         {statusMessage && (
           <span
             data-testid="status-bar-message"
-            className={`mr-2 max-w-[40%] truncate ${statusVariant === "error" ? "text-text-error" : "text-text-muted"}`}
+            className={`mr-2 max-w-[40%] truncate ${statusVariant === "error" ? "text-text-error" : "text-text-muted"}${statusVariant === "progress" ? " animate-pulse" : ""}`}
           >
             {statusMessage}
           </span>

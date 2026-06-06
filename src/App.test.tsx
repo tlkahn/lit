@@ -1002,7 +1002,7 @@ describe("App", () => {
       expect(invokedCmds).not.toContain("export_lkg");
     });
 
-    it("lit:lkg-export-progress event shows LkgExportDialog with progress", async () => {
+    it("lit:lkg-export-progress event shows progress in status bar", async () => {
       lkgMockInvoke();
       await act(async () => {
         render(<App />);
@@ -1013,16 +1013,11 @@ describe("App", () => {
       });
 
       await waitFor(() => {
-        expect(screen.getByTestId("lkg-export-dialog")).toBeInTheDocument();
+        expect(screen.getByTestId("status-bar-message")).toHaveTextContent("Exporting 2/5…");
       });
-      expect(screen.getByText("2 / 5")).toBeInTheDocument();
-      const progress = screen.getByTestId("lkg-export-dialog").querySelector("progress")!;
-      expect(progress).toBeInTheDocument();
-      expect(progress.getAttribute("value")).toBe("2");
-      expect(progress.getAttribute("max")).toBe("5");
     });
 
-    it("lit:lkg-export-complete event shows export summary with content hash", async () => {
+    it("lit:lkg-export-complete event shows export summary in status bar", async () => {
       lkgMockInvoke();
       await act(async () => {
         render(<App />);
@@ -1037,12 +1032,11 @@ describe("App", () => {
       });
 
       await waitFor(() => {
-        expect(screen.getByText(/Exported 3 files to \/out\/graph\.lkg/)).toBeInTheDocument();
+        expect(screen.getByTestId("status-bar-message")).toHaveTextContent("Exported 3 files");
       });
-      expect(screen.getByText(HASH)).toBeInTheDocument();
     });
 
-    it("export_lkg rejection closes the export dialog instead of leaving it stuck on Preparing export", async () => {
+    it("export_lkg rejection shows error in status bar", async () => {
       mockInvoke((cmd) => {
         if (cmd === "export_lkg") return Promise.reject(new Error("disk full"));
         return defaultLkgInvoke(cmd);
@@ -1056,11 +1050,6 @@ describe("App", () => {
       await act(async () => {
         emitMockEvent("menu://export-lkg", {});
       });
-
-      await waitFor(() => {
-        expect(screen.queryByTestId("lkg-export-dialog")).not.toBeInTheDocument();
-      });
-      expect(screen.queryByText("Preparing export…")).not.toBeInTheDocument();
 
       await waitFor(() => {
         expect(screen.getByTestId("status-bar-message")).toHaveTextContent(/disk full/i);
@@ -1137,7 +1126,7 @@ describe("App", () => {
       expect(invokedCmds).not.toContain("import_lkg");
     });
 
-    it("import shows LkgImportDialog with summary after menu flow", async () => {
+    it("import shows summary in status bar after menu flow", async () => {
       lkgMockInvoke();
       mockedOpen.mockResolvedValueOnce("/in/graph.lkg").mockResolvedValueOnce("/dest/folder");
 
@@ -1150,14 +1139,14 @@ describe("App", () => {
       });
 
       await waitFor(() => {
-        expect(screen.getByTestId("lkg-import-dialog")).toBeInTheDocument();
+        expect(screen.getByTestId("status-bar-message")).toBeInTheDocument();
       });
       expect(
         screen.getByText(/Imported 2 nodes, 1 edges, 0 annotations, 3 files/),
       ).toBeInTheDocument();
     });
 
-    it("lit:lkg-import-complete event shows import summary", async () => {
+    it("lit:lkg-import-complete event shows import summary in status bar", async () => {
       lkgMockInvoke();
       await act(async () => {
         render(<App />);
@@ -1173,9 +1162,9 @@ describe("App", () => {
       });
 
       await waitFor(() => {
-        expect(
-          screen.getByText(/Imported 2 nodes, 1 edges, 0 annotations, 3 files/),
-        ).toBeInTheDocument();
+        expect(screen.getByTestId("status-bar-message")).toHaveTextContent(
+          /Imported 2 nodes, 1 edges, 0 annotations, 3 files/,
+        );
       });
     });
   });
