@@ -18,8 +18,10 @@ describe("LicenseGate", () => {
   beforeEach(() => {
     useLicenseStore.setState({
       state: "unknown",
-      daysRemaining: null,
       licensedTo: null,
+      source: null,
+      expiresAt: null,
+      expiryDate: null,
       loading: true,
       error: null,
       fetchStatus: vi.fn(),
@@ -36,14 +38,6 @@ describe("LicenseGate", () => {
     expect(queryByTestId("license-loading")).toBeTruthy();
   });
 
-  it("renders children when state is 'trial'", () => {
-    useLicenseStore.setState({ state: "trial", daysRemaining: 10, loading: false });
-    const { queryByTestId } = render(
-      <LicenseGate><div data-testid="child" /></LicenseGate>,
-    );
-    expect(queryByTestId("child")).toBeTruthy();
-  });
-
   it("renders children when state is 'licensed'", () => {
     useLicenseStore.setState({ state: "licensed", loading: false });
     const { queryByTestId } = render(
@@ -52,49 +46,63 @@ describe("LicenseGate", () => {
     expect(queryByTestId("child")).toBeTruthy();
   });
 
-  it("renders children when state is 'expiring_soon'", () => {
-    useLicenseStore.setState({ state: "expiring_soon", daysRemaining: 2, loading: false });
-    const { queryByTestId } = render(
-      <LicenseGate><div data-testid="child" /></LicenseGate>,
-    );
-    expect(queryByTestId("child")).toBeTruthy();
-  });
-
-  it("shows expired overlay when state is 'expired'", () => {
-    useLicenseStore.setState({ state: "expired", daysRemaining: 0, loading: false });
+  it("shows splash and hides children when state is 'unlicensed'", () => {
+    useLicenseStore.setState({ state: "unlicensed", loading: false });
     const { queryByTestId } = render(
       <LicenseGate><div data-testid="child" /></LicenseGate>,
     );
     expect(queryByTestId("child")).toBeNull();
-    const overlay = queryByTestId("license-expired-overlay");
-    expect(overlay).toBeTruthy();
-    expect(overlay!.textContent).toContain("Your 14-day trial has ended");
+    const splash = queryByTestId("license-splash");
+    expect(splash).toBeTruthy();
+    expect(queryByTestId("splash-buy-license")).toBeTruthy();
+    expect(queryByTestId("splash-enter-key")).toBeTruthy();
+    expect(queryByTestId("splash-export-data")).toBeTruthy();
   });
 
-  it("expired overlay Buy License button calls openUrl", () => {
-    useLicenseStore.setState({ state: "expired", daysRemaining: 0, loading: false });
-    const { container } = render(
-      <LicenseGate><div data-testid="child" /></LicenseGate>,
-    );
-    fireEvent.click(container.querySelector("[data-testid='expired-buy-license']")!);
-    expect(openUrl).toHaveBeenCalledWith("https://lit.solar/buy");
-  });
-
-  it("expired overlay Enter License Key button opens LicenseEntryDialog", () => {
-    useLicenseStore.setState({ state: "expired", daysRemaining: 0, loading: false });
-    const { container, queryByTestId } = render(
-      <LicenseGate><div data-testid="child" /></LicenseGate>,
-    );
-    fireEvent.click(container.querySelector("[data-testid='expired-enter-key']")!);
-    expect(queryByTestId("license-entry-dialog")).toBeTruthy();
-  });
-
-  it("expired overlay Export My Data button is present", () => {
-    useLicenseStore.setState({ state: "expired", daysRemaining: 0, loading: false });
+  it("shows splash and hides children when state is 'license_expired'", () => {
+    useLicenseStore.setState({ state: "license_expired", licensedTo: "Alice", expiryDate: "2024-12-31", loading: false });
     const { queryByTestId } = render(
       <LicenseGate><div data-testid="child" /></LicenseGate>,
     );
-    expect(queryByTestId("expired-export-data")).toBeTruthy();
+    expect(queryByTestId("child")).toBeNull();
+    const splash = queryByTestId("license-splash");
+    expect(splash).toBeTruthy();
+    expect(splash!.textContent).toContain("expired");
+    expect(splash!.textContent).toContain("2024-12-31");
+  });
+
+  it("license_expired splash greets the licensee by name", () => {
+    useLicenseStore.setState({ state: "license_expired", licensedTo: "Alice", expiryDate: "2024-12-31", loading: false });
+    const { queryByTestId } = render(
+      <LicenseGate><div data-testid="child" /></LicenseGate>,
+    );
+    expect(queryByTestId("license-splash")!.textContent).toContain("Alice");
+  });
+
+  it("splash Buy License button calls openUrl", () => {
+    useLicenseStore.setState({ state: "unlicensed", loading: false });
+    const { container } = render(
+      <LicenseGate><div data-testid="child" /></LicenseGate>,
+    );
+    fireEvent.click(container.querySelector("[data-testid='splash-buy-license']")!);
+    expect(openUrl).toHaveBeenCalledWith("https://lit.solar/buy");
+  });
+
+  it("splash Enter License Key button opens LicenseEntryDialog", () => {
+    useLicenseStore.setState({ state: "unlicensed", loading: false });
+    const { container, queryByTestId } = render(
+      <LicenseGate><div data-testid="child" /></LicenseGate>,
+    );
+    fireEvent.click(container.querySelector("[data-testid='splash-enter-key']")!);
+    expect(queryByTestId("license-entry-dialog")).toBeTruthy();
+  });
+
+  it("splash Export My Data button is present", () => {
+    useLicenseStore.setState({ state: "license_expired", loading: false });
+    const { queryByTestId } = render(
+      <LicenseGate><div data-testid="child" /></LicenseGate>,
+    );
+    expect(queryByTestId("splash-export-data")).toBeTruthy();
   });
 
   it("calls fetchStatus on mount", () => {
@@ -102,15 +110,6 @@ describe("LicenseGate", () => {
     useLicenseStore.setState({ fetchStatus });
     render(<LicenseGate><div /></LicenseGate>);
     expect(fetchStatus).toHaveBeenCalledTimes(1);
-  });
-
-  it("shows TrialBanner alongside children when expiring_soon", () => {
-    useLicenseStore.setState({ state: "expiring_soon", daysRemaining: 2, loading: false });
-    const { queryByTestId } = render(
-      <LicenseGate><div data-testid="child" /></LicenseGate>,
-    );
-    expect(queryByTestId("child")).toBeTruthy();
-    expect(queryByTestId("trial-banner")).toBeTruthy();
   });
 
   it("loading screen shows a spinner", () => {
@@ -122,15 +121,5 @@ describe("LicenseGate", () => {
     const svg = loading.querySelector("svg");
     expect(svg).toBeTruthy();
     expect(svg!.classList.contains("animate-spin")).toBe(true);
-  });
-
-  it("expired overlay shows price", () => {
-    useLicenseStore.setState({ state: "expired", daysRemaining: 0, loading: false });
-    const { queryByTestId } = render(
-      <LicenseGate><div data-testid="child" /></LicenseGate>,
-    );
-    const overlay = queryByTestId("license-expired-overlay")!;
-    expect(overlay).toBeTruthy();
-    expect(overlay.textContent).toContain("$29");
   });
 });

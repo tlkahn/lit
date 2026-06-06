@@ -391,9 +391,9 @@ describe("ipc", () => {
         case "export_subgraph":
           return { exported_count: 7, destination: (args as Record<string, unknown>)?.destination ?? "" };
         case "get_license_status":
-          return { state: "trial", days_remaining: 12 };
+          return { state: "licensed", licensed_to: "Test User", source: "direct", expires_at: 1735603200, expiry_date: "2024-12-31" };
         case "activate_license":
-          return { state: "licensed", licensed_to: "Test User" };
+          return { state: "licensed", licensed_to: "Test User", source: "direct" };
         case "check_online_validation":
           return { action: "skipped", reason: "not_due" };
         case "sync_license_menu":
@@ -1286,8 +1286,8 @@ describe("ipc", () => {
 
   it("getLicenseStatus calls get_license_status", async () => {
     const status = await getLicenseStatus();
-    expect(status.state).toBe("trial");
-    expect(status.days_remaining).toBe(12);
+    expect(status.state).toBe("licensed");
+    expect(status.licensed_to).toBe("Test User");
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("get_license_status");
   });
@@ -1309,9 +1309,9 @@ describe("ipc", () => {
   });
 
   it("syncLicenseMenu calls sync_license_menu with licenseState", async () => {
-    await syncLicenseMenu("trial");
+    await syncLicenseMenu("unlicensed");
     const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("sync_license_menu", { licenseState: "trial" });
+    expect(invoke).toHaveBeenCalledWith("sync_license_menu", { licenseState: "unlicensed" });
   });
 
   it("setApiKey invokes set_api_key with provider and key", async () => {

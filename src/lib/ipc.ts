@@ -701,9 +701,11 @@ export async function exportSubgraph(
 // License
 
 export interface LicenseStatusResponse {
-  state: "trial" | "expiring_soon" | "expired" | "licensed";
-  days_remaining?: number;
+  state: "unlicensed" | "licensed" | "license_expired";
   licensed_to?: string;
+  source?: "direct" | "app_store";
+  expires_at?: number;
+  expiry_date?: string;
 }
 
 export async function getLicenseStatus(): Promise<LicenseStatusResponse> {

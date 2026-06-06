@@ -2,28 +2,20 @@ pub mod error;
 pub mod key;
 pub mod keygen;
 pub mod online;
+#[cfg(feature = "app-store")]
+pub mod receipt;
 pub mod storage;
-pub mod trial;
 
-use ed25519_dalek::{SigningKey, VerifyingKey};
+use ed25519_dalek::VerifyingKey;
 use serde::Serialize;
 use std::path::Path;
 
 use error::LicenseError;
 use key::LicensePayload;
-use trial::TrialState;
-
-#[cfg(debug_assertions)]
-pub const TRIAL_SIGNING_KEY_BYTES: &[u8; 32] =
-    include_bytes!("../../keys/dev_trial_signing.bin");
 
 #[cfg(debug_assertions)]
 pub const LICENSE_VERIFYING_KEY_BYTES: &[u8; 32] =
     include_bytes!("../../keys/dev_license_verifying.bin");
-
-#[cfg(not(debug_assertions))]
-pub const TRIAL_SIGNING_KEY_BYTES: &[u8; 32] =
-    include_bytes!(concat!(env!("OUT_DIR"), "/prod_trial_signing.bin"));
 
 #[cfg(not(debug_assertions))]
 pub const LICENSE_VERIFYING_KEY_BYTES: &[u8; 32] =
@@ -32,66 +24,62 @@ pub const LICENSE_VERIFYING_KEY_BYTES: &[u8; 32] =
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind")]
 pub enum LicenseStatus {
-    Trial(TrialState),
+    Unlicensed,
     Licensed(LicensePayload),
-    Expired,
+    LicenseExpired {
+        payload: LicensePayload,
+        expired_at: u64,
+    },
 }
 
 pub fn get_status(
     dir: &Path,
-    trial_signing_key: &SigningKey,
     license_verifying_key: &VerifyingKey,
     now: u64,
 ) -> LicenseStatus {
-    if let Ok(Some(pem)) = storage::read_license_key(dir) {
-        if let Ok(payload) = key::verify_license_key(&pem, license_verifying_key) {
+    #[cfg(feature = "app-store")]
+    {
+        if let Some(payload) = receipt::validate_app_store_receipt() {
+            if let Some(exp) = payload.expires_at {
+                if now >= exp {
+                    return LicenseStatus::LicenseExpired {
+                        payload,
+                        expired_at: exp,
+                    };
+                }
+            }
             return LicenseStatus::Licensed(payload);
         }
     }
-
-    match storage::read_trial(dir) {
-        Ok(Some(data)) => {
-            let state = trial::evaluate_trial(
-                &data,
-                &trial_signing_key.verifying_key(),
-                now,
-                trial::TRIAL_DURATION_SECS,
-            );
-            match state {
-                TrialState::Expired => LicenseStatus::Expired,
-                other => LicenseStatus::Trial(other),
+    if let Ok(Some(pem)) = storage::read_license_key(dir) {
+        if let Ok(payload) = key::verify_license_key(&pem, license_verifying_key) {
+            if let Some(exp) = payload.expires_at {
+                if now >= exp {
+                    return LicenseStatus::LicenseExpired {
+                        payload,
+                        expired_at: exp,
+                    };
+                }
             }
+            return LicenseStatus::Licensed(payload);
         }
-        Ok(None) => {
-            let data = trial::create_trial_data(trial_signing_key);
-            let _ = storage::write_trial(dir, &data);
-            let state = trial::evaluate_trial(
-                &data,
-                &trial_signing_key.verifying_key(),
-                now,
-                trial::TRIAL_DURATION_SECS,
-            );
-            LicenseStatus::Trial(state)
-        }
-        Err(_) => LicenseStatus::Expired,
     }
+    LicenseStatus::Unlicensed
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DevOverride {
-    Trial,
-    TrialShort,
-    TrialExpired,
+    Unlicensed,
     Licensed,
+    LicenseExpired,
 }
 
 #[cfg(debug_assertions)]
 pub fn dev_mode_override() -> Option<DevOverride> {
     match std::env::var("LIT_LICENSE_DEV").ok()?.as_str() {
-        "trial" => Some(DevOverride::Trial),
-        "trial_short" => Some(DevOverride::TrialShort),
-        "trial_expired" => Some(DevOverride::TrialExpired),
+        "unlicensed" => Some(DevOverride::Unlicensed),
         "licensed" => Some(DevOverride::Licensed),
+        "license_expired" => Some(DevOverride::LicenseExpired),
         _ => None,
     }
 }
@@ -155,21 +143,23 @@ mod tests {
         )
     }
 
-    // --- embedded keys ---
-
-    #[test]
-    fn embedded_trial_key_is_32_bytes() {
-        assert_eq!(TRIAL_SIGNING_KEY_BYTES.len(), 32);
+    fn sample_payload(expires_at: Option<u64>) -> LicensePayload {
+        LicensePayload {
+            license_id: "lic-1".into(),
+            name: "User".into(),
+            email: "u@example.com".into(),
+            issued_at: 100,
+            license_type: "personal".into(),
+            expires_at,
+            source: key::LicenseSource::Direct,
+        }
     }
+
+    // --- embedded keys ---
 
     #[test]
     fn embedded_license_key_is_32_bytes() {
         assert_eq!(LICENSE_VERIFYING_KEY_BYTES.len(), 32);
-    }
-
-    #[test]
-    fn can_construct_signing_key_from_embedded() {
-        let _sk = SigningKey::from_bytes(TRIAL_SIGNING_KEY_BYTES);
     }
 
     #[test]
@@ -180,133 +170,167 @@ mod tests {
     // --- LicenseStatus serialization ---
 
     #[test]
-    fn license_status_trial_serializes() {
-        let status = LicenseStatus::Trial(TrialState::Active { days_left: 10 });
+    fn license_status_unlicensed_serializes() {
+        let status = LicenseStatus::Unlicensed;
         let json = serde_json::to_string(&status).unwrap();
-        assert!(json.contains("\"kind\":\"Trial\""));
-        assert!(json.contains("\"days_left\":10"));
+        assert!(json.contains("\"kind\":\"Unlicensed\""));
     }
 
     #[test]
     fn license_status_licensed_serializes() {
-        let payload = LicensePayload {
-            license_id: "lic-1".into(),
-            name: "User".into(),
-            email: "u@example.com".into(),
-            issued_at: 100,
-            license_type: "personal".into(),
-        };
-        let status = LicenseStatus::Licensed(payload);
+        let status = LicenseStatus::Licensed(sample_payload(None));
         let json = serde_json::to_string(&status).unwrap();
         assert!(json.contains("\"kind\":\"Licensed\""));
         assert!(json.contains("\"name\":\"User\""));
     }
 
     #[test]
-    fn license_status_expired_serializes() {
-        let status = LicenseStatus::Expired;
+    fn license_status_license_expired_serializes() {
+        let status = LicenseStatus::LicenseExpired {
+            payload: sample_payload(Some(150)),
+            expired_at: 150,
+        };
         let json = serde_json::to_string(&status).unwrap();
-        assert!(json.contains("\"kind\":\"Expired\""));
+        assert!(json.contains("\"kind\":\"LicenseExpired\""));
+        assert!(json.contains("\"expired_at\":150"));
+        assert!(json.contains("\"name\":\"User\""));
     }
 
     // --- get_status ---
 
     #[test]
+    fn get_status_no_license_returns_unlicensed() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_, lic_vk) = test_keys();
+        match get_status(dir.path(), &lic_vk, 200) {
+            LicenseStatus::Unlicensed => {}
+            other => panic!("expected Unlicensed, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn get_status_invalid_license_returns_unlicensed() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_, lic_vk) = test_keys();
+        storage::write_license_key(dir.path(), "garbage").unwrap();
+        match get_status(dir.path(), &lic_vk, 200) {
+            LicenseStatus::Unlicensed => {}
+            other => panic!("expected Unlicensed, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn get_status_valid_license_returns_licensed() {
         let dir = tempfile::tempdir().unwrap();
-        let (trial_sk, _) = test_keys();
         let lic_sk = SigningKey::generate(&mut OsRng);
         let lic_vk = lic_sk.verifying_key();
-        let payload = LicensePayload {
-            license_id: "lic-1".into(),
-            name: "User".into(),
-            email: "u@example.com".into(),
-            issued_at: 100,
-            license_type: "personal".into(),
-        };
+        let payload = sample_payload(None);
         let pem = build_test_pem(&payload, &lic_sk);
         storage::write_license_key(dir.path(), &pem).unwrap();
-        let now = 200;
-        match get_status(dir.path(), &trial_sk, &lic_vk, now) {
+        match get_status(dir.path(), &lic_vk, 200) {
             LicenseStatus::Licensed(p) => assert_eq!(p.license_id, "lic-1"),
             other => panic!("expected Licensed, got {:?}", other),
         }
     }
 
     #[test]
-    fn get_status_invalid_license_falls_through_to_trial() {
+    fn get_status_perpetual_returns_licensed() {
         let dir = tempfile::tempdir().unwrap();
-        let (trial_sk, _) = test_keys();
         let lic_sk = SigningKey::generate(&mut OsRng);
         let lic_vk = lic_sk.verifying_key();
-        // Write an invalid license key
-        storage::write_license_key(dir.path(), "garbage").unwrap();
-        // Write a valid trial
-        let data = trial::create_trial_data(&trial_sk);
-        storage::write_trial(dir.path(), &data).unwrap();
-        let now = data.trial_start_ts + 86400;
-        match get_status(dir.path(), &trial_sk, &lic_vk, now) {
-            LicenseStatus::Trial(TrialState::Active { .. }) => {}
-            other => panic!("expected Trial(Active), got {:?}", other),
+        let payload = sample_payload(None);
+        let pem = build_test_pem(&payload, &lic_sk);
+        storage::write_license_key(dir.path(), &pem).unwrap();
+        match get_status(dir.path(), &lic_vk, u64::MAX) {
+            LicenseStatus::Licensed(_) => {}
+            other => panic!("expected Licensed, got {:?}", other),
         }
     }
 
     #[test]
-    fn get_status_active_trial() {
+    fn get_status_unexpired_returns_licensed() {
         let dir = tempfile::tempdir().unwrap();
-        let (trial_sk, _) = test_keys();
-        let (_, lic_vk) = test_keys();
-        let data = trial::create_trial_data(&trial_sk);
-        storage::write_trial(dir.path(), &data).unwrap();
-        let now = data.trial_start_ts + 86400;
-        match get_status(dir.path(), &trial_sk, &lic_vk, now) {
-            LicenseStatus::Trial(TrialState::Active { .. }) => {}
-            other => panic!("expected Trial(Active), got {:?}", other),
+        let lic_sk = SigningKey::generate(&mut OsRng);
+        let lic_vk = lic_sk.verifying_key();
+        let payload = sample_payload(Some(1000));
+        let pem = build_test_pem(&payload, &lic_sk);
+        storage::write_license_key(dir.path(), &pem).unwrap();
+        match get_status(dir.path(), &lic_vk, 999) {
+            LicenseStatus::Licensed(_) => {}
+            other => panic!("expected Licensed, got {:?}", other),
         }
     }
 
     #[test]
-    fn get_status_expired_trial() {
+    fn get_status_expired_returns_license_expired() {
         let dir = tempfile::tempdir().unwrap();
-        let (trial_sk, _) = test_keys();
-        let (_, lic_vk) = test_keys();
-        let data = trial::create_trial_data(&trial_sk);
-        storage::write_trial(dir.path(), &data).unwrap();
-        let now = data.trial_start_ts + trial::TRIAL_DURATION_SECS + 1;
-        match get_status(dir.path(), &trial_sk, &lic_vk, now) {
-            LicenseStatus::Expired => {}
-            other => panic!("expected Expired, got {:?}", other),
+        let lic_sk = SigningKey::generate(&mut OsRng);
+        let lic_vk = lic_sk.verifying_key();
+        let payload = sample_payload(Some(1000));
+        let pem = build_test_pem(&payload, &lic_sk);
+        storage::write_license_key(dir.path(), &pem).unwrap();
+        match get_status(dir.path(), &lic_vk, 1000) {
+            LicenseStatus::LicenseExpired { expired_at, payload } => {
+                assert_eq!(expired_at, 1000);
+                assert_eq!(payload.license_id, "lic-1");
+            }
+            other => panic!("expected LicenseExpired, got {:?}", other),
         }
     }
 
     #[test]
-    fn get_status_no_trial_creates_one() {
+    fn get_status_early_adopter_license_returns_licensed() {
         let dir = tempfile::tempdir().unwrap();
-        let (trial_sk, _) = test_keys();
-        let (_, lic_vk) = test_keys();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        match get_status(dir.path(), &trial_sk, &lic_vk, now) {
-            LicenseStatus::Trial(TrialState::Active { .. }) => {}
-            other => panic!("expected Trial(Active), got {:?}", other),
+        let lic_sk = SigningKey::generate(&mut OsRng);
+        let lic_vk = lic_sk.verifying_key();
+        let payload = LicensePayload {
+            license_id: "lic-ea-001".into(),
+            name: "Customer".into(),
+            email: "early@example.com".into(),
+            issued_at: 100,
+            license_type: "early_adopter".into(),
+            expires_at: None,
+            source: key::LicenseSource::Direct,
+        };
+        let pem = build_test_pem(&payload, &lic_sk);
+        storage::write_license_key(dir.path(), &pem).unwrap();
+        match get_status(dir.path(), &lic_vk, 200) {
+            LicenseStatus::Licensed(p) => {
+                assert_eq!(p.license_id, "lic-ea-001");
+                assert_eq!(p.license_type, "early_adopter");
+            }
+            other => panic!("expected Licensed, got {:?}", other),
         }
-        assert!(storage::read_trial(dir.path()).unwrap().is_some());
     }
 
+    // --- app-store receipt wiring (stub) ---
+
+    #[cfg(feature = "app-store")]
     #[test]
-    fn get_status_tampered_trial_returns_expired() {
+    fn get_status_app_store_stub_falls_through_to_local() {
+        // The App Store receipt stub returns None, so get_status must fall
+        // through to the existing local-key path and report Licensed.
         let dir = tempfile::tempdir().unwrap();
-        let (trial_sk, _) = test_keys();
+        let lic_sk = SigningKey::generate(&mut OsRng);
+        let lic_vk = lic_sk.verifying_key();
+        let payload = sample_payload(None);
+        let pem = build_test_pem(&payload, &lic_sk);
+        storage::write_license_key(dir.path(), &pem).unwrap();
+        match get_status(dir.path(), &lic_vk, 200) {
+            LicenseStatus::Licensed(p) => assert_eq!(p.license_id, "lic-1"),
+            other => panic!("expected Licensed, got {:?}", other),
+        }
+    }
+
+    #[cfg(feature = "app-store")]
+    #[test]
+    fn get_status_app_store_stub_no_local_returns_unlicensed() {
+        // With no local key and the stub returning None, status is Unlicensed.
+        let dir = tempfile::tempdir().unwrap();
         let (_, lic_vk) = test_keys();
-        let mut data = trial::create_trial_data(&trial_sk);
-        data.signature[0] ^= 0xff;
-        storage::write_trial(dir.path(), &data).unwrap();
-        let now = data.trial_start_ts + 100;
-        match get_status(dir.path(), &trial_sk, &lic_vk, now) {
-            LicenseStatus::Expired => {}
-            other => panic!("expected Expired, got {:?}", other),
+        match get_status(dir.path(), &lic_vk, 200) {
+            LicenseStatus::Unlicensed => {}
+            other => panic!("expected Unlicensed, got {:?}", other),
         }
     }
 
@@ -322,26 +346,10 @@ mod tests {
     }
 
     #[test]
-    fn dev_override_trial() {
+    fn dev_override_unlicensed() {
         let _lock = ENV_MUTEX.lock().unwrap();
-        std::env::set_var("LIT_LICENSE_DEV", "trial");
-        assert_eq!(dev_mode_override(), Some(DevOverride::Trial));
-        std::env::remove_var("LIT_LICENSE_DEV");
-    }
-
-    #[test]
-    fn dev_override_trial_short() {
-        let _lock = ENV_MUTEX.lock().unwrap();
-        std::env::set_var("LIT_LICENSE_DEV", "trial_short");
-        assert_eq!(dev_mode_override(), Some(DevOverride::TrialShort));
-        std::env::remove_var("LIT_LICENSE_DEV");
-    }
-
-    #[test]
-    fn dev_override_trial_expired() {
-        let _lock = ENV_MUTEX.lock().unwrap();
-        std::env::set_var("LIT_LICENSE_DEV", "trial_expired");
-        assert_eq!(dev_mode_override(), Some(DevOverride::TrialExpired));
+        std::env::set_var("LIT_LICENSE_DEV", "unlicensed");
+        assert_eq!(dev_mode_override(), Some(DevOverride::Unlicensed));
         std::env::remove_var("LIT_LICENSE_DEV");
     }
 
@@ -354,36 +362,19 @@ mod tests {
     }
 
     #[test]
+    fn dev_override_license_expired() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+        std::env::set_var("LIT_LICENSE_DEV", "license_expired");
+        assert_eq!(dev_mode_override(), Some(DevOverride::LicenseExpired));
+        std::env::remove_var("LIT_LICENSE_DEV");
+    }
+
+    #[test]
     fn dev_override_unknown_returns_none() {
         let _lock = ENV_MUTEX.lock().unwrap();
         std::env::set_var("LIT_LICENSE_DEV", "garbage");
         assert_eq!(dev_mode_override(), None);
         std::env::remove_var("LIT_LICENSE_DEV");
-    }
-
-    #[test]
-    fn get_status_early_adopter_license_returns_licensed() {
-        let dir = tempfile::tempdir().unwrap();
-        let (trial_sk, _) = test_keys();
-        let lic_sk = SigningKey::generate(&mut OsRng);
-        let lic_vk = lic_sk.verifying_key();
-        let payload = LicensePayload {
-            license_id: "lic-ea-001".into(),
-            name: "Customer".into(),
-            email: "early@example.com".into(),
-            issued_at: 100,
-            license_type: "early_adopter".into(),
-        };
-        let pem = build_test_pem(&payload, &lic_sk);
-        storage::write_license_key(dir.path(), &pem).unwrap();
-        let now = 200;
-        match get_status(dir.path(), &trial_sk, &lic_vk, now) {
-            LicenseStatus::Licensed(p) => {
-                assert_eq!(p.license_id, "lic-ea-001");
-                assert_eq!(p.license_type, "early_adopter");
-            }
-            other => panic!("expected Licensed, got {:?}", other),
-        }
     }
 
     // --- parse_activate_url ---

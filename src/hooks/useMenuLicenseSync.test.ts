@@ -17,8 +17,10 @@ describe("useMenuLicenseSync", () => {
     vi.clearAllMocks();
     useLicenseStore.setState({
       state: "unknown",
-      daysRemaining: null,
       licensedTo: null,
+      source: null,
+      expiresAt: null,
+      expiryDate: null,
       loading: true,
       error: null,
     });
@@ -31,11 +33,11 @@ describe("useMenuLicenseSync", () => {
     });
   });
 
-  it("calls syncLicenseMenu with 'trial' when state is trial", async () => {
-    useLicenseStore.setState({ state: "trial", loading: false });
+  it("calls syncLicenseMenu with 'unlicensed' when state is unlicensed", async () => {
+    useLicenseStore.setState({ state: "unlicensed", loading: false });
     renderHook(() => useMenuLicenseSync());
     await waitFor(() => {
-      expect(syncLicenseMenu).toHaveBeenCalledWith("trial");
+      expect(syncLicenseMenu).toHaveBeenCalledWith("unlicensed");
     });
   });
 
@@ -44,6 +46,14 @@ describe("useMenuLicenseSync", () => {
     renderHook(() => useMenuLicenseSync());
     await waitFor(() => {
       expect(syncLicenseMenu).toHaveBeenCalledWith("licensed");
+    });
+  });
+
+  it("calls syncLicenseMenu with 'license_expired' when state is license_expired", async () => {
+    useLicenseStore.setState({ state: "license_expired", loading: false });
+    renderHook(() => useMenuLicenseSync());
+    await waitFor(() => {
+      expect(syncLicenseMenu).toHaveBeenCalledWith("license_expired");
     });
   });
 });

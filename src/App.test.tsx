@@ -52,8 +52,11 @@ describe("App", () => {
     });
 
     useLicenseStore.setState({
-      state: "trial",
-      daysRemaining: 12,
+      state: "licensed",
+      licensedTo: null,
+      source: null,
+      expiresAt: null,
+      expiryDate: null,
       loading: false,
       error: null,
     });
@@ -87,7 +90,7 @@ describe("App", () => {
         case "ensure_graph_ready":
           return null;
         case "get_license_status":
-          return { state: "trial", days_remaining: 12 };
+          return { state: "licensed", licensed_to: "Test User", source: "direct" };
         case "has_api_key":
           return false;
         case "cancel_title_suggestion":
@@ -137,7 +140,7 @@ describe("App", () => {
         case "ensure_graph_ready":
           return null;
         case "get_license_status":
-          return { state: "trial", days_remaining: 12 };
+          return { state: "licensed", licensed_to: "Test User", source: "direct" };
         case "cancel_title_suggestion":
           return undefined;
         default:
@@ -266,7 +269,7 @@ describe("App", () => {
         case "ensure_graph_ready":
           return null;
         case "get_license_status":
-          return { state: "trial", days_remaining: 12 };
+          return { state: "licensed", licensed_to: "Test User", source: "direct" };
         case "cancel_title_suggestion":
           return undefined;
         default:
@@ -302,7 +305,7 @@ describe("App", () => {
         case "ensure_graph_ready":
           return null;
         case "get_license_status":
-          return { state: "trial", days_remaining: 12 };
+          return { state: "licensed", licensed_to: "Test User", source: "direct" };
         case "cancel_title_suggestion":
           return undefined;
         default:
@@ -344,7 +347,7 @@ describe("App", () => {
         case "ensure_graph_ready":
           return null;
         case "get_license_status":
-          return { state: "trial", days_remaining: 12 };
+          return { state: "licensed", licensed_to: "Test User", source: "direct" };
         case "cancel_title_suggestion":
           return undefined;
         default:
@@ -438,7 +441,7 @@ describe("App", () => {
         case "ensure_graph_ready":
           return null;
         case "get_license_status":
-          return { state: "trial", days_remaining: 12 };
+          return { state: "licensed", licensed_to: "Test User", source: "direct" };
         case "cancel_title_suggestion":
           return undefined;
         default:
@@ -483,7 +486,7 @@ describe("App", () => {
         case "ensure_graph_ready":
           return null;
         case "get_license_status":
-          return { state: "trial", days_remaining: 12 };
+          return { state: "licensed", licensed_to: "Test User", source: "direct" };
         case "cancel_title_suggestion":
           return undefined;
         default:
@@ -526,7 +529,7 @@ describe("App", () => {
         case "ensure_graph_ready":
           return null;
         case "get_license_status":
-          return { state: "trial", days_remaining: 12 };
+          return { state: "licensed", licensed_to: "Test User", source: "direct" };
         case "cancel_title_suggestion":
           return undefined;
         default:
@@ -571,7 +574,7 @@ describe("App", () => {
         case "ensure_graph_ready":
           return null;
         case "get_license_status":
-          return { state: "trial", days_remaining: 12 };
+          return { state: "licensed", licensed_to: "Test User", source: "direct" };
         case "cancel_title_suggestion":
           return undefined;
         default:
@@ -591,7 +594,7 @@ describe("App", () => {
   });
 
   it("App wraps content in LicenseGate and calls fetchStatus", async () => {
-    useLicenseStore.setState({ state: "trial", daysRemaining: 12, loading: false });
+    useLicenseStore.setState({ state: "licensed", loading: false });
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
     const fetchStatus = vi.fn();
     useLicenseStore.setState({ fetchStatus });
@@ -608,7 +611,7 @@ describe("App", () => {
   it("menu://enter-license-key event opens LicenseEntryDialog", async () => {
     mockListen();
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
-    useLicenseStore.setState({ state: "trial", daysRemaining: 12, loading: false });
+    useLicenseStore.setState({ state: "licensed", loading: false });
 
     await act(async () => {
       render(<App />);
@@ -626,7 +629,7 @@ describe("App", () => {
   it("menu://buy-license event calls openUrl", async () => {
     mockListen();
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
-    useLicenseStore.setState({ state: "trial", daysRemaining: 12, loading: false });
+    useLicenseStore.setState({ state: "licensed", loading: false });
 
     await act(async () => {
       render(<App />);
@@ -646,7 +649,7 @@ describe("App", () => {
   it("license://activate-key event triggers activation", async () => {
     mockListen();
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
-    useLicenseStore.setState({ state: "trial", daysRemaining: 12, loading: false });
+    useLicenseStore.setState({ state: "licensed", loading: false });
 
     const activate = vi.fn().mockResolvedValue(true);
     useLicenseStore.setState({ activate });
@@ -694,7 +697,7 @@ describe("App", () => {
   it("menu://open-preferences event opens SettingsModal", async () => {
     mockListen();
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
-    useLicenseStore.setState({ state: "trial", daysRemaining: 12, loading: false });
+    useLicenseStore.setState({ state: "licensed", loading: false });
 
     await act(async () => {
       render(<App />);
@@ -712,7 +715,7 @@ describe("App", () => {
   it("license://activate-key shows entry dialog on failure", async () => {
     mockListen();
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
-    useLicenseStore.setState({ state: "trial", daysRemaining: 12, loading: false });
+    useLicenseStore.setState({ state: "licensed", loading: false });
 
     const activate = vi.fn().mockResolvedValue(false);
     useLicenseStore.setState({ activate });

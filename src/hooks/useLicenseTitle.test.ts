@@ -14,39 +14,25 @@ describe("useLicenseTitle", () => {
     } as unknown as ReturnType<typeof getCurrentWindow>);
     useLicenseStore.setState({
       state: "unknown",
-      daysRemaining: null,
       licensedTo: null,
+      source: null,
+      expiresAt: null,
+      expiryDate: null,
       loading: true,
       error: null,
     });
   });
 
-  it("sets 'Lit (N days left in trial)' when trial", async () => {
-    useLicenseStore.setState({ state: "trial", daysRemaining: 10, loading: false });
-    renderHook(() => useLicenseTitle());
-    await waitFor(() => {
-      expect(mockSetTitle).toHaveBeenCalledWith("Lit (10 days left in trial)");
-    });
-  });
-
-  it("singular 'day' when daysRemaining is 1", async () => {
-    useLicenseStore.setState({ state: "trial", daysRemaining: 1, loading: false });
-    renderHook(() => useLicenseTitle());
-    await waitFor(() => {
-      expect(mockSetTitle).toHaveBeenCalledWith("Lit (1 day left in trial)");
-    });
-  });
-
-  it("sets 'Lit (N days left in trial)' when expiring_soon", async () => {
-    useLicenseStore.setState({ state: "expiring_soon", daysRemaining: 2, loading: false });
-    renderHook(() => useLicenseTitle());
-    await waitFor(() => {
-      expect(mockSetTitle).toHaveBeenCalledWith("Lit (2 days left in trial)");
-    });
-  });
-
   it("sets 'Lit' when licensed", async () => {
     useLicenseStore.setState({ state: "licensed", loading: false });
+    renderHook(() => useLicenseTitle());
+    await waitFor(() => {
+      expect(mockSetTitle).toHaveBeenCalledWith("Lit");
+    });
+  });
+
+  it("sets 'Lit' when unlicensed", async () => {
+    useLicenseStore.setState({ state: "unlicensed", loading: false });
     renderHook(() => useLicenseTitle());
     await waitFor(() => {
       expect(mockSetTitle).toHaveBeenCalledWith("Lit");

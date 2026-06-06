@@ -7,6 +7,17 @@ use super::error::LicenseError;
 const BEGIN_MARKER: &str = "-----BEGIN LICENSE KEY-----";
 const END_MARKER: &str = "-----END LICENSE KEY-----";
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LicenseSource {
+    Direct,
+    AppStore,
+}
+
+fn default_source() -> LicenseSource {
+    LicenseSource::Direct
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LicensePayload {
     pub license_id: String,
@@ -15,6 +26,16 @@ pub struct LicensePayload {
     pub issued_at: u64,
     #[serde(rename = "type")]
     pub license_type: String,
+    #[serde(default)]
+    pub expires_at: Option<u64>,
+    #[serde(default = "default_source")]
+    pub source: LicenseSource,
+}
+
+impl LicensePayload {
+    pub fn is_expired(&self, now: u64) -> bool {
+        matches!(self.expires_at, Some(exp) if now >= exp)
+    }
 }
 
 pub fn parse_pem(input: &str) -> Result<(String, String), LicenseError> {
@@ -70,6 +91,8 @@ mod tests {
             email: "test@example.com".into(),
             issued_at: 1700000000,
             license_type: "personal".into(),
+            expires_at: None,
+            source: LicenseSource::Direct,
         }
     }
 
@@ -238,9 +261,56 @@ mod tests {
             email: "early@example.com".into(),
             issued_at: 1700000000,
             license_type: "early_adopter".into(),
+            expires_at: None,
+            source: LicenseSource::Direct,
         };
         let pem = build_test_pem(&payload, &sk);
         let result = verify_license_key(&pem, &vk).unwrap();
         assert_eq!(result.license_type, "early_adopter");
+    }
+
+    // --- LicenseSource serde ---
+
+    #[test]
+    fn license_source_serializes_snake_case() {
+        let direct = serde_json::to_string(&LicenseSource::Direct).unwrap();
+        let app_store = serde_json::to_string(&LicenseSource::AppStore).unwrap();
+        assert_eq!(direct, "\"direct\"");
+        assert_eq!(app_store, "\"app_store\"");
+    }
+
+    // --- is_expired ---
+
+    #[test]
+    fn is_expired_returns_false_when_none() {
+        let mut payload = test_payload();
+        payload.expires_at = None;
+        assert!(!payload.is_expired(u64::MAX));
+    }
+
+    #[test]
+    fn is_expired_true_when_now_at_or_past_expires_at() {
+        let mut payload = test_payload();
+        payload.expires_at = Some(1000);
+        assert!(payload.is_expired(1000));
+        assert!(payload.is_expired(1001));
+    }
+
+    #[test]
+    fn is_expired_false_when_now_before_expires_at() {
+        let mut payload = test_payload();
+        payload.expires_at = Some(1000);
+        assert!(!payload.is_expired(999));
+    }
+
+    // --- backward compat: legacy JSON without expires_at/source ---
+
+    #[test]
+    fn decode_payload_backward_compat_defaults_none_and_direct() {
+        let json = r#"{"license_id":"lic-1","name":"User","email":"u@example.com","issued_at":100,"type":"personal"}"#;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(json.as_bytes());
+        let decoded = decode_payload(&b64).unwrap();
+        assert_eq!(decoded.expires_at, None);
+        assert_eq!(decoded.source, LicenseSource::Direct);
     }
 }

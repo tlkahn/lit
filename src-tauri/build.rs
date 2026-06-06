@@ -4,12 +4,10 @@ fn main() {
     ensure_placeholders();
     tauri_build::build();
 
-    println!("cargo:rerun-if-env-changed=LIT_TRIAL_SIGNING_KEY_B64");
     println!("cargo:rerun-if-env-changed=LIT_LICENSE_VERIFYING_KEY_B64");
 
     let profile = env::var("PROFILE").unwrap();
     if profile != "debug" {
-        embed_prod_key("LIT_TRIAL_SIGNING_KEY_B64", "prod_trial_signing.bin");
         embed_prod_key(
             "LIT_LICENSE_VERIFYING_KEY_B64",
             "prod_license_verifying.bin",

@@ -153,7 +153,6 @@ function App() {
   const [licenseInfoOpen, setLicenseInfoOpen] = useState(false);
   const licenseState = useLicenseStore((s) => s.state);
   const licensedTo = useLicenseStore((s) => s.licensedTo);
-  const daysRemaining = useLicenseStore((s) => s.daysRemaining);
 
   const [academicExportOpen, setAcademicExportOpen] = useState(false);
   const [academicExportFormat, setAcademicExportFormat] = useState<"latex" | "pdf" | "html" | "docx">("latex");
@@ -512,7 +511,7 @@ function App() {
         <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} initialCategory={settingsInitialCategory} />
         <PassphraseModal />
         <LicenseEntryDialog open={licenseEntryOpen} onClose={() => setLicenseEntryOpen(false)} />
-        <LicenseInfoDialog open={licenseInfoOpen} licenseState={licenseState} licensedTo={licensedTo} daysRemaining={daysRemaining} onClose={() => setLicenseInfoOpen(false)} />
+        <LicenseInfoDialog open={licenseInfoOpen} licenseState={licenseState} licensedTo={licensedTo} onClose={() => setLicenseInfoOpen(false)} />
         <SubgraphExportPicker
           open={exportFlow.pickerOpen}
           onExport={exportFlow.handlePickerExport}

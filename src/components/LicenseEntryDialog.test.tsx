@@ -7,8 +7,10 @@ describe("LicenseEntryDialog", () => {
   beforeEach(() => {
     useLicenseStore.setState({
       state: "unknown",
-      daysRemaining: null,
       licensedTo: null,
+      source: null,
+      expiresAt: null,
+      expiryDate: null,
       loading: false,
       error: null,
     });

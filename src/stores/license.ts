@@ -1,12 +1,14 @@
 import { create } from "zustand";
 import { getLicenseStatus, activateLicense, checkOnlineValidation } from "../lib/ipc";
 
-export type LicenseState = "unknown" | "trial" | "expiring_soon" | "expired" | "licensed";
+export type LicenseState = "unknown" | "unlicensed" | "licensed" | "license_expired";
 
 interface LicenseStore {
   state: LicenseState;
-  daysRemaining: number | null;
   licensedTo: string | null;
+  source: string | null;
+  expiresAt: number | null;
+  expiryDate: string | null;
   loading: boolean;
   error: string | null;
   fetchStatus: () => Promise<void>;
@@ -16,8 +18,10 @@ interface LicenseStore {
 
 export const useLicenseStore = create<LicenseStore>((set) => ({
   state: "unknown",
-  daysRemaining: null,
   licensedTo: null,
+  source: null,
+  expiresAt: null,
+  expiryDate: null,
   loading: true,
   error: null,
 
@@ -25,8 +29,10 @@ export const useLicenseStore = create<LicenseStore>((set) => ({
     const res = await getLicenseStatus();
     set({
       state: res.state,
-      daysRemaining: res.days_remaining ?? null,
       licensedTo: res.licensed_to ?? null,
+      source: res.source ?? null,
+      expiresAt: res.expires_at ?? null,
+      expiryDate: res.expiry_date ?? null,
       loading: false,
     });
 
@@ -36,8 +42,10 @@ export const useLicenseStore = create<LicenseStore>((set) => ({
           const updated = await getLicenseStatus();
           set({
             state: updated.state,
-            daysRemaining: updated.days_remaining ?? null,
             licensedTo: updated.licensed_to ?? null,
+            source: updated.source ?? null,
+            expiresAt: updated.expires_at ?? null,
+            expiryDate: updated.expiry_date ?? null,
           });
         }
       })
@@ -49,8 +57,10 @@ export const useLicenseStore = create<LicenseStore>((set) => ({
       const res = await activateLicense(key);
       set({
         state: res.state,
-        daysRemaining: res.days_remaining ?? null,
         licensedTo: res.licensed_to ?? null,
+        source: res.source ?? null,
+        expiresAt: res.expires_at ?? null,
+        expiryDate: res.expiry_date ?? null,
         error: null,
       });
       return true;

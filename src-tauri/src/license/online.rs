@@ -471,6 +471,8 @@ mod tests {
             email: "t@e.com".into(),
             issued_at: 100,
             license_type: "personal".into(),
+            expires_at: None,
+            source: key::LicenseSource::Direct,
         };
         let pem = build_test_pem(&payload, &lic_sk);
         storage::write_license_key(dir.path(), &pem).unwrap();
@@ -504,6 +506,8 @@ mod tests {
             email: "t@e.com".into(),
             issued_at: 100,
             license_type: "personal".into(),
+            expires_at: None,
+            source: key::LicenseSource::Direct,
         };
         let pem = build_test_pem(&payload, &sk);
         storage::write_license_key(dir.path(), &pem).unwrap();

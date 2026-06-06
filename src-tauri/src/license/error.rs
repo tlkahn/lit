@@ -5,9 +5,6 @@ pub enum LicenseError {
     #[error("invalid signature")]
     InvalidSignature,
 
-    #[error("trial has expired")]
-    ExpiredTrial,
-
     #[error("invalid key format: {0}")]
     InvalidKeyFormat(String),
 
@@ -50,12 +47,6 @@ mod tests {
     fn invalid_signature_display() {
         let err = LicenseError::InvalidSignature;
         assert_eq!(err.to_string(), "invalid signature");
-    }
-
-    #[test]
-    fn expired_trial_display() {
-        let err = LicenseError::ExpiredTrial;
-        assert_eq!(err.to_string(), "trial has expired");
     }
 
     #[test]
