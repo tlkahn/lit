@@ -31,11 +31,15 @@ fn set_git_version() {
         return;
     }
 
-    // Dev fallback: the version is the unpatched placeholder, so derive a
-    // descriptive version from git tags, defaulting back to the package
-    // version if git is unavailable.
+    // Dev fallback: the version is the unpatched placeholder, so derive the
+    // nearest tag from git, defaulting back to the package version if git is
+    // unavailable. Use --abbrev=0 (nearest tag only, no `-N-gSHA` suffix) to
+    // match build-release.yml's "Sync version from git tag" step, which uses
+    // `git describe --tags --abbrev=0` on non-release runs. Keeping the flags
+    // identical guarantees the About dialog and bundle metadata never show
+    // differing strings for the same off-tag build.
     let version = Command::new("git")
-        .args(["describe", "--tags", "--always"])
+        .args(["describe", "--tags", "--abbrev=0"])
         .output()
         .ok()
         .filter(|o| o.status.success())

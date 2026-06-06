@@ -282,6 +282,36 @@ TOML
   grep -q '^version = "0.13.0"$' "$TEST_TEMP_DIR/src-tauri/Cargo.toml"
 }
 
+# ── Cycle 6d: git describe flag agreement ──────────────────────────────────
+# build-release.yml's "Sync version from git tag" step derives the version on
+# non-release runs via `git describe --tags --abbrev=0` (nearest tag, no commit
+# suffix). build.rs's dev fallback must use the SAME flag so that a binary's
+# About dialog (LIT_GIT_VERSION) never shows a `-N-gSHA` suffix that the bundle
+# metadata lacks. Guard both: the nearest-tag describe yields a clean tag, and
+# build.rs uses --abbrev=0 (not --always).
+
+@test "git describe --tags --abbrev=0 yields a clean tag with no commit-sha suffix" {
+  REPO_ROOT="$TEST_TEMP_DIR"
+  cd "$TEST_TEMP_DIR"
+  git init -q
+  git config user.email "t@example.com"
+  git config user.name "Test"
+  git commit -q --allow-empty -m "first"
+  git tag v0.12.0
+  git commit -q --allow-empty -m "second"
+  git commit -q --allow-empty -m "third"
+
+  # --always would append "-N-gSHA"; --abbrev=0 must not.
+  desc="$(git describe --tags --abbrev=0)"
+  [ "$desc" = "v0.12.0" ]
+  [[ "$desc" != *-g* ]]
+}
+
+@test "build.rs derives the dev fallback version with --abbrev=0, not --always" {
+  grep -q -- '--abbrev=0' "$SCRIPT_DIR/../src-tauri/build.rs"
+  ! grep -q -- '"--always"' "$SCRIPT_DIR/../src-tauri/build.rs"
+}
+
 # ── Cycle 7: Build helper functions ─────────────────────────────────────────
 
 @test "release_install_deps: calls bun install --frozen-lockfile" {

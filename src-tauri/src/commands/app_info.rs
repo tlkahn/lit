@@ -50,6 +50,19 @@ mod tests {
         assert_eq!(info.name, "Lit");
         assert!(!info.version.is_empty());
 
+        // The displayed version must never carry a `git describe` commit-sha
+        // suffix (e.g. "0.12.0-5-gabcdef"). On release/CI builds it mirrors the
+        // patched CARGO_PKG_VERSION; on dev builds build.rs uses
+        // `git describe --tags --abbrev=0` (nearest tag, no suffix) to match the
+        // CI "Sync version from git tag" step. Either way, an off-tag commit
+        // hash here would mean the About dialog drifted from the bundle/DMG
+        // version for the same binary.
+        assert!(
+            !info.version.contains("-g"),
+            "version {:?} unexpectedly contains a git commit-sha suffix",
+            info.version
+        );
+
         // On release/CI builds, scripts/set-version.sh has patched the real
         // semver into Cargo.toml (so CARGO_PKG_VERSION != the 0.0.0
         // placeholder). In that case build.rs makes LIT_GIT_VERSION mirror
