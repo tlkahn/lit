@@ -72,7 +72,7 @@ function applyBottomPanelPosition(val: unknown): BottomPanelPosition {
 
 function applyDefaultViewMode(val: unknown): ViewMode {
   if (val === "editor" || val === "mindmap" || val === "graph") return val;
-  return "mindmap";
+  return "editor";
 }
 
 function applyDarkMode(val: unknown): DarkModePref {
@@ -126,7 +126,7 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   colorTheme: null,
   sidebarVisible: true,
   sidebarLocation: "left",
-  defaultViewMode: "mindmap",
+  defaultViewMode: "editor",
   bottomPanelPosition: "bottom",
   foldingEnabled: true,
   foldingShowControls: "mouseover",

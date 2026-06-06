@@ -46,6 +46,7 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
   const saveMindmapFoldState = useWorkspaceStore((s) => s.saveMindmapFoldState);
 
   const defaultViewMode = usePreferencesStore((s) => s.defaultViewMode);
+  const loaded = usePreferencesStore((s) => s.loaded);
   const [viewMode, setViewMode] = useState<ViewMode>(defaultViewMode);
 
   const titleSel = useMemo(() => (e: PaneContentEntry | null) => e?.title ?? "", []);
@@ -75,6 +76,10 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cancelledRef = useRef(false);
   const pendingScrollLineRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (loaded) setViewMode(defaultViewMode);
+  }, [loaded]);
 
   useEffect(() => {
     setEditingTitle(title);
@@ -111,7 +116,7 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
 
   useEffect(() => {
     const previousPath = currentPathRef.current;
-    if (previousPath) {
+    if (previousPath && viewMode === "editor") {
       const view = getCurrentEditorView();
       if (view) {
         saveViewState(previousPath, view.scrollDOM.scrollTop, view.state.selection.main.head);
@@ -129,7 +134,10 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
     setEditingYaml(false);
     setYamlDraft("");
     setYamlError(null);
-  }, [currentPanePage, saveViewState]);
+    if (previousPath !== currentPanePage) {
+      setViewMode(defaultViewMode);
+    }
+  }, [currentPanePage, saveViewState, viewMode, defaultViewMode]);
 
   useEffect(() => {
     if (pendingTitleFocus && title) {

@@ -27,7 +27,7 @@ fn default_dark_mode() -> String {
 }
 
 fn default_view_mode() -> String {
-    "mindmap".to_string()
+    "editor".to_string()
 }
 
 fn deserialize_dark_mode<'de, D>(deserializer: D) -> Result<String, D::Error>
@@ -99,7 +99,7 @@ impl Default for Preferences {
             sidebar_location: "left".to_string(),
             folding_enabled: true,
             folding_show_controls: "mouseover".to_string(),
-            default_view_mode: "mindmap".to_string(),
+            default_view_mode: "editor".to_string(),
             extra: HashMap::new(),
         }
     }
@@ -391,7 +391,7 @@ mod tests {
         assert_eq!(prefs.sidebar_location, "left");
         assert!(prefs.folding_enabled);
         assert_eq!(prefs.folding_show_controls, "mouseover");
-        assert_eq!(prefs.default_view_mode, "mindmap");
+        assert_eq!(prefs.default_view_mode, "editor");
         assert!(prefs.extra.is_empty());
     }
 
@@ -403,7 +403,7 @@ mod tests {
         assert_eq!(prefs.sidebar_location, "left");
         assert!(prefs.folding_enabled);
         assert_eq!(prefs.folding_show_controls, "mouseover");
-        assert_eq!(prefs.default_view_mode, "mindmap");
+        assert_eq!(prefs.default_view_mode, "editor");
     }
 
     #[test]
