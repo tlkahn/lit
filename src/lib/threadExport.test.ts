@@ -6,6 +6,8 @@ import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
 import type { Annotation } from "./ipc";
 import { useStatusMessageStore } from "../stores/statusMessage";
 import { firingAnnotationsField, threadTurnField } from "../editor/livePreview/annotationWidgets";
+import { scopeHighlightField, setScopeHighlight } from "../editor/livePreview/scopeHighlight";
+import { Decoration } from "@codemirror/view";
 import { Annotation as AnnotationGrammar } from "../editor/markdown/annotation";
 import { Comment as CommentGrammar } from "../editor/markdown/comment";
 import {
@@ -257,6 +259,22 @@ describe("deleteThread", () => {
     deleteThread(view, makeThreadAnnotation());
     expect(warnSpy).not.toHaveBeenCalled();
     warnSpy.mockRestore();
+    view.destroy();
+  });
+
+  it("clears the scope highlight when deleting a thread", () => {
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: DOC,
+        extensions: [scopeHighlightField],
+      }),
+      parent: document.createElement("div"),
+    });
+    view.dispatch({ effects: setScopeHighlight.of({ from: 0, to: 5 }) });
+    expect(view.state.field(scopeHighlightField)).not.toBe(Decoration.none);
+
+    deleteThread(view, makeThreadAnnotation());
+    expect(view.state.field(scopeHighlightField)).toBe(Decoration.none);
     view.destroy();
   });
 });

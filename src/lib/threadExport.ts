@@ -17,6 +17,7 @@ import type { Annotation } from "./ipc";
 import type { EditorView } from "@codemirror/view";
 import { parseThreadBody, type ThreadTurn } from "./threadBody";
 import { useStatusMessageStore } from "../stores/statusMessage";
+import { setScopeHighlight } from "../editor/livePreview/scopeHighlight";
 
 /** Format a single parsed turn as markdown: callout + response, or bare response. */
 function formatTurn(turn: ThreadTurn): string {
@@ -89,7 +90,7 @@ export function deleteThread(
       console.warn(`deleteThread: bounds-check failed (from=${from}, to=${to}, docLength=${view.state.doc.length})`);
       return;
     }
-    view.dispatch({ changes: { from, to, insert: "" } });
+    view.dispatch({ changes: { from, to, insert: "" }, effects: setScopeHighlight.of(null) });
   } catch {
     /* view destroyed */
   }
