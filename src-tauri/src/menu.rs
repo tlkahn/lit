@@ -92,13 +92,7 @@ impl MenuAction {
     }
 }
 
-/// Choose the label of the focused window among candidates.
-///
-/// Returns the first label whose focus flag is true, or `None` when no
-/// candidate reports focus. Deterministic: never falls back to an arbitrary
-/// window (avoids misrouting events on a non-deterministic HashMap iteration
-/// order). The selection logic is isolated here so it can be unit-tested
-/// without a live `AppHandle`.
+/// Return the label of the first focused candidate, or `None`.
 fn pick_focused_label(candidates: &[(String, bool)]) -> Option<String> {
     candidates
         .iter()
@@ -106,12 +100,8 @@ fn pick_focused_label(candidates: &[(String, bool)]) -> Option<String> {
         .map(|(label, _)| label.clone())
 }
 
-/// Find the currently focused window, or `None` if no window reports focus.
-///
-/// When no window is focused (e.g. on macOS while the menu bar momentarily
-/// holds OS focus during a menu selection) this returns `None` and the menu
-/// event is dropped cleanly by the caller — by design, we never fall back to
-/// an arbitrary window, which could misroute the event to the wrong workspace.
+/// Find the focused window, or `None`. On macOS the menu bar can steal focus
+/// briefly during selection, so callers must handle `None`.
 fn find_focused_window(app: &AppHandle<Wry>) -> Option<tauri::WebviewWindow<Wry>> {
     let windows = app.webview_windows();
     let candidates: Vec<(String, bool)> = windows

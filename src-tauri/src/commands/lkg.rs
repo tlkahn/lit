@@ -18,10 +18,7 @@ impl LkgExportState {
         }
     }
 
-    /// Acquire the export lock for `path`, returning an RAII guard that releases
-    /// it on drop. This ensures the workspace is freed from the active set on
-    /// ANY exit path from the caller (early `?` return, error, or panic),
-    /// preventing a permanent "export in progress" leak.
+    /// Acquire the export lock, returning a guard that auto-releases on drop.
     pub fn try_acquire(&self, path: &PathBuf) -> Result<LkgExportGuard<'_>, String> {
         let mut active = self.active.lock().unwrap();
         if active.contains(path) {
@@ -49,9 +46,6 @@ impl LkgExportState {
     }
 }
 
-/// RAII guard for an acquired export lock. Releasing on `Drop` guarantees the
-/// active-set entry is cleared on every exit path from `export_lkg`, including
-/// early error returns and panics.
 pub struct LkgExportGuard<'a> {
     state: &'a LkgExportState,
     path: PathBuf,
@@ -80,9 +74,6 @@ pub async fn export_lkg(
     export_state: State<'_, LkgExportState>,
 ) -> Result<LkgExportSummary, String> {
     let root_path = get_workspace_root(&state, window.label())?;
-    // The guard releases the export lock on any exit path (early `?` return,
-    // error, or panic), so the workspace can never be left permanently marked
-    // "export in progress".
     let _guard = export_state.try_acquire(&root_path)?;
 
     let gi = {
