@@ -51,6 +51,69 @@ fn set_git_version() {
         .unwrap_or(pkg_version);
 
     println!("cargo:rustc-env=LIT_GIT_VERSION={version}");
+
+    emit_git_rerun_directives();
+}
+
+/// Tell Cargo to re-run this build script when the checked-out commit or any
+/// tag changes. Without these, the `cargo:rerun-if-env-changed=...` directive
+/// in `main` switches Cargo into explicit-input mode, so it would never notice
+/// new commits/tags and `LIT_GIT_VERSION` would stay stale until `cargo clean`.
+///
+/// Resolves paths via `git rev-parse` so it is worktree-aware: in a linked
+/// worktree `HEAD` lives in the per-worktree git dir while tags and
+/// `packed-refs` live in the shared common dir. When git is absent (packaged
+/// source tarball) nothing is emitted and we don't panic.
+fn emit_git_rerun_directives() {
+    for path in git_rerun_paths(resolve_git_path, |p| Path::new(p).exists()) {
+        println!("cargo:rerun-if-changed={path}");
+    }
+}
+
+/// Resolve a git-relative path (e.g. "HEAD", "refs/tags", "packed-refs") to an
+/// absolute filesystem path, returning `None` if git is unavailable or the
+/// command fails. `HEAD` is resolved against the per-worktree git dir; the
+/// others against the shared common dir so they work from linked worktrees.
+fn resolve_git_path(rel: &str) -> Option<String> {
+    let arg = if rel == "HEAD" {
+        "--git-path"
+    } else {
+        "--git-common-dir"
+    };
+    let mut args = vec!["rev-parse", "--path-format=absolute", arg];
+    if rel == "HEAD" {
+        args.push(rel);
+    }
+    let out = Command::new("git").args(&args).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let base = String::from_utf8(out.stdout).ok()?.trim().to_string();
+    if base.is_empty() {
+        return None;
+    }
+    if rel == "HEAD" {
+        Some(base)
+    } else {
+        Some(Path::new(&base).join(rel).to_string_lossy().into_owned())
+    }
+}
+
+/// Pure helper: given a resolver for git-relative paths and an existence
+/// predicate, return the absolute paths that should be emitted as
+/// `cargo:rerun-if-changed` directives. Only existing paths are returned —
+/// emitting a directive for a missing path would force Cargo to re-run on every
+/// build. Returns an empty list when git can't be resolved at all.
+fn git_rerun_paths<R, E>(resolve: R, exists: E) -> Vec<String>
+where
+    R: Fn(&str) -> Option<String>,
+    E: Fn(&str) -> bool,
+{
+    ["HEAD", "refs/tags", "packed-refs"]
+        .iter()
+        .filter_map(|rel| resolve(rel))
+        .filter(|p| exists(p))
+        .collect()
 }
 
 fn ensure_placeholders() {
