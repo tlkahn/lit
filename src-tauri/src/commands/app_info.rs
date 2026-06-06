@@ -10,7 +10,7 @@ pub struct AppInfo {
 pub fn get_app_info() -> AppInfo {
     AppInfo {
         name: "Lit".to_string(),
-        version: "0.1.0".to_string(),
+        version: env!("LIT_GIT_VERSION").to_string(),
     }
 }
 
@@ -48,11 +48,11 @@ mod tests {
     fn test_get_app_info() {
         let info = get_app_info();
         assert_eq!(info.name, "Lit");
-        assert_eq!(info.version, "0.1.0");
+        assert!(!info.version.is_empty());
 
         let json = serde_json::to_value(&info).unwrap();
         assert_eq!(json["name"], "Lit");
-        assert_eq!(json["version"], "0.1.0");
+        assert!(json["version"].as_str().map_or(false, |v| !v.is_empty()));
     }
 
     #[cfg(not(feature = "app-store"))]

@@ -67,7 +67,7 @@ describe("App", () => {
     mockInvoke((cmd) => {
       switch (cmd) {
         case "get_app_info":
-          return { name: "Lit", version: "0.1.0" };
+          return { name: "Lit", version: "0.0.0" };
         case "open_workspace":
           return samplePages;
         case "list_pages":
@@ -898,7 +898,7 @@ describe("App", () => {
     function defaultLkgInvoke(cmd: string): unknown {
       switch (cmd) {
         case "get_app_info":
-          return { name: "Lit", version: "0.1.0" };
+          return { name: "Lit", version: "0.0.0" };
         case "open_workspace":
         case "list_pages":
           return samplePages;

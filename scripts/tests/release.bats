@@ -235,6 +235,23 @@ load test_helper
   [ "$status" -eq 1 ]
 }
 
+# ── Cycle 6b: Version sync ─────────────────────────────────────────────────
+
+@test "release_sync_version: strips v prefix and calls set-version.sh" {
+  source_lib
+  REPO_ROOT="$TEST_TEMP_DIR"
+  mkdir -p "$TEST_TEMP_DIR/scripts"
+  cat > "$TEST_TEMP_DIR/scripts/set-version.sh" <<'SV_EOF'
+#!/usr/bin/env bash
+echo "$1" > "$REPO_ROOT/synced_version"
+SV_EOF
+  chmod +x "$TEST_TEMP_DIR/scripts/set-version.sh"
+  export REPO_ROOT
+  release_sync_version v0.13.0
+  [ -f "$TEST_TEMP_DIR/synced_version" ]
+  [ "$(cat "$TEST_TEMP_DIR/synced_version")" = "0.13.0" ]
+}
+
 # ── Cycle 7: Build helper functions ─────────────────────────────────────────
 
 @test "release_install_deps: calls bun install --frozen-lockfile" {
@@ -420,12 +437,23 @@ EOF
   touch "$TEST_TEMP_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Lit_0.1.0_aarch64.dmg"
   cp "$SCRIPT_DIR/release-lib.sh" "$TEST_TEMP_DIR/scripts/"
   cp "$SCRIPT_DIR/release.sh" "$TEST_TEMP_DIR/scripts/"
+  cp "$SCRIPT_DIR/set-version.sh" "$TEST_TEMP_DIR/scripts/"
   touch "$TEST_TEMP_DIR/scripts/fetch-pdfium.sh"
   touch "$TEST_TEMP_DIR/scripts/deploy-website.sh"
+
+  # set-version.sh needs these files to exist
+  echo '{"version":"0.0.0"}' > "$TEST_TEMP_DIR/package.json"
+  echo '{"version":"0.0.0"}' > "$TEST_TEMP_DIR/src-tauri/tauri.conf.json"
+  cat > "$TEST_TEMP_DIR/src-tauri/Cargo.toml" <<'TOML'
+[package]
+name = "lit"
+version = "0.0.0"
+TOML
 
   run bash "$TEST_TEMP_DIR/scripts/release.sh" --dry-run v0.9.2
   [ "$status" -eq 0 ]
   [[ "$output" == *"DRY RUN"* ]] || [[ "$output" == *"dry"* ]] || [[ "$output" == *"Dry"* ]]
+  [[ "$output" == *"Syncing version"* ]]
   assert_mock_called_with "bun install --frozen-lockfile"
   assert_mock_called_with "cargo build --release --bin lit-cli --target aarch64-apple-darwin"
   assert_mock_called_with "bun tauri build"

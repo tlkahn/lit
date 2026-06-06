@@ -133,6 +133,13 @@ release_get_s3_bucket() {
   export S3_BUCKET
 }
 
+release_sync_version() {
+  local tag="$1"
+  local version="${tag#v}"
+  echo "── Syncing version $version from tag $tag..."
+  bash "$REPO_ROOT/scripts/set-version.sh" "$version"
+}
+
 release_install_deps() {
   echo "── Installing dependencies..."
   bun install --frozen-lockfile

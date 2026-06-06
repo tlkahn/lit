@@ -1,6 +1,7 @@
-use std::{env, fs, path::Path};
+use std::{env, fs, path::Path, process::Command};
 
 fn main() {
+    set_git_version();
     ensure_placeholders();
     tauri_build::build();
 
@@ -13,6 +14,22 @@ fn main() {
             "prod_license_verifying.bin",
         );
     }
+}
+
+fn set_git_version() {
+    let version = Command::new("git")
+        .args(["describe", "--tags", "--always"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| {
+            let s = String::from_utf8(o.stdout).ok()?;
+            let s = s.trim().strip_prefix('v').unwrap_or(s.trim());
+            Some(s.to_string())
+        })
+        .unwrap_or_else(|| env::var("CARGO_PKG_VERSION").unwrap());
+
+    println!("cargo:rustc-env=LIT_GIT_VERSION={version}");
 }
 
 fn ensure_placeholders() {
