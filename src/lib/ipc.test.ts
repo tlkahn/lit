@@ -618,6 +618,20 @@ describe("ipc", () => {
       expect(buildInfoCalls).toHaveLength(1);
     });
 
+    it("retries after a failed call", async () => {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const mockedInvoke = invoke as unknown as ReturnType<typeof vi.fn>;
+      const original = mockedInvoke.getMockImplementation()!;
+      mockedInvoke.mockImplementationOnce((cmd: string, args?: Record<string, unknown>) => {
+        if (cmd === "get_build_info") return Promise.reject(new Error("ipc not ready"));
+        return original(cmd, args);
+      });
+      await expect(getCachedBuildInfo()).rejects.toThrow("ipc not ready");
+      mockedInvoke.mockImplementation(original);
+      const info = await getCachedBuildInfo();
+      expect(info).toEqual({ source: "direct" });
+    });
+
     it("returns fresh value after reset", async () => {
       await getCachedBuildInfo();
       _resetBuildInfoCacheForTesting();

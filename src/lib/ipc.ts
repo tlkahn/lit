@@ -40,7 +40,10 @@ let _buildInfoPromise: Promise<BuildInfo> | null = null;
 
 export function getCachedBuildInfo(): Promise<BuildInfo> {
   if (!_buildInfoPromise) {
-    _buildInfoPromise = getBuildInfo();
+    _buildInfoPromise = getBuildInfo().catch((e) => {
+      _buildInfoPromise = null;
+      throw e;
+    });
   }
   return _buildInfoPromise;
 }
