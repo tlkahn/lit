@@ -92,14 +92,34 @@ impl MenuAction {
     }
 }
 
+/// Choose the label of the focused window among candidates.
+///
+/// Returns the first label whose focus flag is true, or `None` when no
+/// candidate reports focus. Deterministic: never falls back to an arbitrary
+/// window (avoids misrouting events on a non-deterministic HashMap iteration
+/// order). The selection logic is isolated here so it can be unit-tested
+/// without a live `AppHandle`.
+fn pick_focused_label(candidates: &[(String, bool)]) -> Option<String> {
+    candidates
+        .iter()
+        .find(|(_, focused)| *focused)
+        .map(|(label, _)| label.clone())
+}
+
+/// Find the currently focused window, or `None` if no window reports focus.
+///
+/// When no window is focused (e.g. on macOS while the menu bar momentarily
+/// holds OS focus during a menu selection) this returns `None` and the menu
+/// event is dropped cleanly by the caller — by design, we never fall back to
+/// an arbitrary window, which could misroute the event to the wrong workspace.
 fn find_focused_window(app: &AppHandle<Wry>) -> Option<tauri::WebviewWindow<Wry>> {
     let windows = app.webview_windows();
-    for window in windows.values() {
-        if window.is_focused().unwrap_or(false) {
-            return Some(window.clone());
-        }
-    }
-    windows.values().next().cloned()
+    let candidates: Vec<(String, bool)> = windows
+        .iter()
+        .map(|(label, window)| (label.clone(), window.is_focused().unwrap_or(false)))
+        .collect();
+    let label = pick_focused_label(&candidates)?;
+    windows.get(&label).cloned()
 }
 
 pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
@@ -472,6 +492,34 @@ mod tests {
     #[test]
     fn find_focused_window_exists() {
         let _: fn(&AppHandle<Wry>) -> Option<tauri::WebviewWindow<Wry>> = find_focused_window;
+    }
+
+    #[test]
+    fn pick_focused_label_returns_focused() {
+        let candidates = vec![
+            ("a".to_string(), false),
+            ("b".to_string(), true),
+            ("c".to_string(), false),
+        ];
+        assert_eq!(pick_focused_label(&candidates), Some("b".to_string()));
+    }
+
+    #[test]
+    fn pick_focused_label_returns_first_focused() {
+        let candidates = vec![("a".to_string(), true), ("b".to_string(), true)];
+        assert_eq!(pick_focused_label(&candidates), Some("a".to_string()));
+    }
+
+    #[test]
+    fn pick_focused_label_none_when_no_focus() {
+        let candidates = vec![("a".to_string(), false), ("b".to_string(), false)];
+        assert_eq!(pick_focused_label(&candidates), None);
+    }
+
+    #[test]
+    fn pick_focused_label_empty_is_none() {
+        let candidates: Vec<(String, bool)> = vec![];
+        assert_eq!(pick_focused_label(&candidates), None);
     }
 
     #[test]

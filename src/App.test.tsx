@@ -11,6 +11,7 @@ import { useBottomPanelStore } from "./stores/bottomPanel";
 import { useStatusMessageStore } from "./stores/statusMessage";
 import { _resetForTesting as resetRegistry } from "./lib/paneContentRegistry";
 import { _resetForTesting as resetEditorViewRef, setCurrentEditorView } from "./lib/editorViewRef";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { SIDEBAR_WIDTH_PX } from "./components/Sidebar";
 import type { AnnotationBuilderEventDetail } from "./lib/annotationDsl";
 import type { EditorView } from "@codemirror/view";
@@ -891,6 +892,51 @@ describe("App", () => {
     expect(changes.to).toBe(15);
   });
 
+  describe("window listener cleanup", () => {
+    it("unlistens a window listener that resolves after unmount", async () => {
+      // Inject a deferred listen() promise for ONE of the buggy effects'
+      // events so we can unmount BEFORE it resolves, exercising the
+      // fast-unmount race. The shared mockWindowListen resolves synchronously
+      // and cannot reproduce this. We target "lit:export-progress" specifically
+      // (one of the three effects under test) and leave the already-guarded
+      // cli-navigate effect on a resolved no-op so it cannot mask the leak.
+      let resolveListen!: (fn: () => void) => void;
+      const listenPromise = new Promise<() => void>((r) => {
+        resolveListen = r;
+      });
+      const unlistenSpy = vi.fn();
+
+      vi.mocked(getCurrentWebviewWindow).mockReturnValue({
+        listen: vi.fn((event: string) =>
+          event === "lit:export-progress"
+            ? listenPromise
+            : Promise.resolve(vi.fn()),
+        ),
+      } as unknown as ReturnType<typeof getCurrentWebviewWindow>);
+
+      useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+
+      let unmount!: () => void;
+      await act(async () => {
+        ({ unmount } = render(<App />));
+      });
+
+      // Unmount while the listen() promise is still pending.
+      act(() => {
+        unmount();
+      });
+
+      // Now resolve the listen() promise. The effect cleanup already ran, so the
+      // cancelled guard must immediately tear down the late-arriving listener.
+      await act(async () => {
+        resolveListen(unlistenSpy);
+        await Promise.resolve();
+      });
+
+      expect(unlistenSpy).toHaveBeenCalled();
+    });
+  });
+
   describe("LKG bundle wiring", () => {
     const mockedSave = save as unknown as ReturnType<typeof vi.fn>;
     const mockedOpen = open as unknown as ReturnType<typeof vi.fn>;
@@ -1143,31 +1189,12 @@ describe("App", () => {
       await waitFor(() => {
         expect(screen.getByTestId("status-bar-message")).toBeInTheDocument();
       });
+      // A single successful import must produce exactly ONE success toast. The
+      // success summary is reported only through the direct importLkg() return
+      // value; there is no redundant lit:lkg-import-complete event path.
       expect(
-        screen.getByText(/Imported 2 nodes, 1 edges, 0 annotations, 3 files/),
-      ).toBeInTheDocument();
-    });
-
-    it("lit:lkg-import-complete event shows import summary in status bar", async () => {
-      lkgMockInvoke();
-      await act(async () => {
-        render(<App />);
-      });
-
-      act(() => {
-        emitWindowEvent("lit:lkg-import-complete", {
-          node_count: 2,
-          edge_count: 1,
-          annotation_count: 0,
-          file_count: 3,
-        });
-      });
-
-      await waitFor(() => {
-        expect(screen.getByTestId("status-bar-message")).toHaveTextContent(
-          /Imported 2 nodes, 1 edges, 0 annotations, 3 files/,
-        );
-      });
+        screen.getAllByText(/Imported 2 nodes, 1 edges, 0 annotations, 3 files/),
+      ).toHaveLength(1);
     });
 
     // === Scope isolation ===

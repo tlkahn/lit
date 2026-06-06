@@ -19,7 +19,7 @@ import { useFocusModeStore } from "./stores/focusMode";
 import { useLicenseStore } from "./stores/license";
 import { useSecretStoreStore } from "./stores/secretStore";
 import { getStartupContext, mergeDocuments, executeSplit, exportLkg, importLkg } from "./lib/ipc";
-import type { MergePlan, LkgExportSummary, LkgImportSummary } from "./lib/ipc";
+import type { MergePlan, LkgExportSummary } from "./lib/ipc";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { usePaneStore, findLeaf } from "./stores/panes";
@@ -284,16 +284,18 @@ function App() {
 
   useEffect(() => {
     const win = getCurrentWebviewWindow();
+    let cancelled = false;
     let unlistenProgress: (() => void) | undefined;
     let unlistenComplete: (() => void) | undefined;
     win.listen<ExportProgress>("lit:export-progress", (event) => {
       const { current, total } = event.payload;
       statusShow(`Exporting ${current}/${total}…`, "progress", 8000);
-    }).then((fn) => { unlistenProgress = fn; });
+    }).then((fn) => { if (cancelled) fn(); else unlistenProgress = fn; });
     win.listen<ExportSummary>("lit:export-complete", (event) => {
       statusShow(`Exported ${event.payload.exported_count} files`, "success");
-    }).then((fn) => { unlistenComplete = fn; });
+    }).then((fn) => { if (cancelled) fn(); else unlistenComplete = fn; });
     return () => {
+      cancelled = true;
       unlistenProgress?.();
       unlistenComplete?.();
     };
@@ -301,29 +303,19 @@ function App() {
 
   useEffect(() => {
     const win = getCurrentWebviewWindow();
+    let cancelled = false;
     let unlistenProgress: (() => void) | undefined;
     let unlistenComplete: (() => void) | undefined;
     win.listen<ExportProgress>("lit:lkg-export-progress", (event) => {
       const { current, total } = event.payload;
       statusShow(`Exporting ${current}/${total}…`, "progress", 8000);
-    }).then((fn) => { unlistenProgress = fn; });
+    }).then((fn) => { if (cancelled) fn(); else unlistenProgress = fn; });
     win.listen<LkgExportSummary>("lit:lkg-export-complete", (event) => {
       statusShow(`Exported ${event.payload.exported_count} files`, "success");
-    }).then((fn) => { unlistenComplete = fn; });
+    }).then((fn) => { if (cancelled) fn(); else unlistenComplete = fn; });
     return () => {
+      cancelled = true;
       unlistenProgress?.();
-      unlistenComplete?.();
-    };
-  }, [statusShow]);
-
-  useEffect(() => {
-    const win = getCurrentWebviewWindow();
-    let unlistenComplete: (() => void) | undefined;
-    win.listen<LkgImportSummary>("lit:lkg-import-complete", (event) => {
-      const { node_count, edge_count, annotation_count, file_count } = event.payload;
-      statusShow(`Imported ${node_count} nodes, ${edge_count} edges, ${annotation_count} annotations, ${file_count} files`, "success");
-    }).then((fn) => { unlistenComplete = fn; });
-    return () => {
       unlistenComplete?.();
     };
   }, [statusShow]);
