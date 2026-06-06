@@ -50,6 +50,17 @@ mod tests {
         assert_eq!(info.name, "Lit");
         assert!(!info.version.is_empty());
 
+        // On release/CI builds, scripts/set-version.sh has patched the real
+        // semver into Cargo.toml (so CARGO_PKG_VERSION != the 0.0.0
+        // placeholder). In that case build.rs makes LIT_GIT_VERSION mirror
+        // CARGO_PKG_VERSION, so the runtime version must equal the bundle
+        // version — guarding against divergence between the About dialog and
+        // the DMG/bundle metadata. In an unpatched local checkout (0.0.0) this
+        // is a no-op, since LIT_GIT_VERSION falls back to `git describe`.
+        if env!("CARGO_PKG_VERSION") != "0.0.0" {
+            assert_eq!(info.version, env!("CARGO_PKG_VERSION"));
+        }
+
         let json = serde_json::to_value(&info).unwrap();
         assert_eq!(json["name"], "Lit");
         assert!(json["version"].as_str().map_or(false, |v| !v.is_empty()));

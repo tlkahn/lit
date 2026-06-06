@@ -17,6 +17,23 @@ fn main() {
 }
 
 fn set_git_version() {
+    // Single source of truth: on release/CI builds, scripts/set-version.sh
+    // patches the package version into Cargo.toml, tauri.conf.json, and
+    // package.json in lockstep (asserted by scripts/tests/release.bats). When
+    // that has happened, CARGO_PKG_VERSION is the real semver, so we mirror it
+    // into LIT_GIT_VERSION — this guarantees the runtime-displayed version
+    // (About dialog / get_app_info) equals the bundle metadata
+    // (CFBundleShortVersionString / DMG filename) by construction, with no
+    // possibility of silent divergence.
+    let pkg_version = env::var("CARGO_PKG_VERSION").unwrap();
+    if pkg_version != "0.0.0" {
+        println!("cargo:rustc-env=LIT_GIT_VERSION={pkg_version}");
+        return;
+    }
+
+    // Dev fallback: the version is the unpatched placeholder, so derive a
+    // descriptive version from git tags, defaulting back to the package
+    // version if git is unavailable.
     let version = Command::new("git")
         .args(["describe", "--tags", "--always"])
         .output()
@@ -27,7 +44,7 @@ fn set_git_version() {
             let s = s.trim().strip_prefix('v').unwrap_or(s.trim());
             Some(s.to_string())
         })
-        .unwrap_or_else(|| env::var("CARGO_PKG_VERSION").unwrap());
+        .unwrap_or(pkg_version);
 
     println!("cargo:rustc-env=LIT_GIT_VERSION={version}");
 }

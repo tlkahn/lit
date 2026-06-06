@@ -252,6 +252,36 @@ SV_EOF
   [ "$(cat "$TEST_TEMP_DIR/synced_version")" = "0.13.0" ]
 }
 
+# ── Cycle 6c: Version lockstep invariant ───────────────────────────────────
+# Guards the single-source-of-truth contract that build.rs relies on: after
+# set-version.sh patches the three files, the version in package.json,
+# tauri.conf.json, and src-tauri/Cargo.toml must all be identical. build.rs
+# makes LIT_GIT_VERSION mirror CARGO_PKG_VERSION on release builds, so any
+# divergence here would let the About dialog drift from the bundle/DMG version.
+
+@test "set-version.sh: patches package.json, tauri.conf.json, and Cargo.toml in lockstep" {
+  REPO_ROOT="$TEST_TEMP_DIR"
+  mkdir -p "$TEST_TEMP_DIR/src-tauri"
+  echo '{"version":"0.0.0"}' > "$TEST_TEMP_DIR/package.json"
+  echo '{"version":"0.0.0"}' > "$TEST_TEMP_DIR/src-tauri/tauri.conf.json"
+  cat > "$TEST_TEMP_DIR/src-tauri/Cargo.toml" <<'TOML'
+[package]
+name = "lit"
+version = "0.0.0"
+
+[dependencies]
+foo = "0.0.0"
+TOML
+
+  export REPO_ROOT
+  run bash "$SCRIPT_DIR/set-version.sh" 0.13.0
+  [ "$status" -eq 0 ]
+
+  [ "$(jq -r '.version' "$TEST_TEMP_DIR/package.json")" = "0.13.0" ]
+  [ "$(jq -r '.version' "$TEST_TEMP_DIR/src-tauri/tauri.conf.json")" = "0.13.0" ]
+  grep -q '^version = "0.13.0"$' "$TEST_TEMP_DIR/src-tauri/Cargo.toml"
+}
+
 # ── Cycle 7: Build helper functions ─────────────────────────────────────────
 
 @test "release_install_deps: calls bun install --frozen-lockfile" {
