@@ -3,9 +3,10 @@ import { EditorView } from "@codemirror/view";
 import { EditorSelection } from "@codemirror/state";
 import { listen } from "@tauri-apps/api/event";
 import { useWorkspaceStore } from "../stores/workspace";
+import { usePreferencesStore } from "../stores/preferences";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import { usePaneField, updatePaneContent, type PaneContentEntry } from "../lib/paneContentRegistry";
-import { writePage, parseRawYaml } from "../lib/ipc";
+import { writePage, parseRawYaml, type ViewMode } from "../lib/ipc";
 import { executeCommand } from "../lib/commandRegistry";
 import { getCurrentEditorView } from "../lib/editorViewRef";
 import { extractHeadings } from "../lib/headings";
@@ -44,7 +45,8 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
   const saveViewState = useWorkspaceStore((s) => s.saveViewState);
   const saveMindmapFoldState = useWorkspaceStore((s) => s.saveMindmapFoldState);
 
-  const [viewMode, setViewMode] = useState<"editor" | "mindmap" | "graph">("editor");
+  const defaultViewMode = usePreferencesStore((s) => s.defaultViewMode);
+  const [viewMode, setViewMode] = useState<ViewMode>(defaultViewMode);
 
   const titleSel = useMemo(() => (e: PaneContentEntry | null) => e?.title ?? "", []);
   const title = usePaneField(focusedPaneId, titleSel);

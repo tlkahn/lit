@@ -207,12 +207,15 @@ export async function getMenuShortcuts(): Promise<KeyBinding[]> {
 
 export type DarkModePref = "light" | "dark" | "auto";
 
+export type ViewMode = "editor" | "mindmap" | "graph";
+
 export interface Preferences {
   "workbench.colorTheme": string | null;
   "workbench.darkMode": DarkModePref;
   "workbench.sideBar.location": string;
   "editor.folding.enabled": boolean;
   "editor.folding.showFoldingControls": string;
+  "workbench.defaultViewMode": ViewMode;
   [key: string]: unknown;
 }
 

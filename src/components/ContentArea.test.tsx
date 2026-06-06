@@ -5,6 +5,7 @@ import { ContentArea, parseYamlErrorLocation } from "./ContentArea";
 import { mockInvoke, mockListen, emitMockEvent, resetListenMock } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePaneStore } from "../stores/panes";
+import { usePreferencesStore } from "../stores/preferences";
 import { _resetForTesting as resetRegistry } from "../lib/paneContentRegistry";
 import { _resetForTesting as resetEditorViewRef } from "../lib/editorViewRef";
 import * as commandRegistryModule from "../lib/commandRegistry";
@@ -70,6 +71,7 @@ beforeEach(() => {
     root: { type: "leaf", id: "test-pane", pagePath: null },
     focusedPaneId: "test-pane",
   });
+  usePreferencesStore.setState({ defaultViewMode: "editor" });
   resetRegistry();
   resetEditorViewRef();
 
