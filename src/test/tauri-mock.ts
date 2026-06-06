@@ -2,6 +2,7 @@ import { vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 type InvokeHandler = (cmd: string, args?: Record<string, unknown>) => unknown;
 
@@ -51,4 +52,38 @@ export function resetListenMock() {
 
 export function mockDialogOpen(result: string | null) {
   mockedDialogOpen.mockResolvedValue(result);
+}
+
+const windowListenCallbacks = new Map<string, ListenCallback[]>();
+
+export function mockWindowListen() {
+  const mockedGetCurrentWebviewWindow = getCurrentWebviewWindow as unknown as ReturnType<typeof vi.fn>;
+  mockedGetCurrentWebviewWindow.mockImplementation(() => ({
+    listen: vi.fn((event: string, callback: ListenCallback) => {
+      const callbacks = windowListenCallbacks.get(event) || [];
+      callbacks.push(callback);
+      windowListenCallbacks.set(event, callbacks);
+      return Promise.resolve(() => {
+        const cbs = windowListenCallbacks.get(event) || [];
+        const idx = cbs.indexOf(callback);
+        if (idx >= 0) cbs.splice(idx, 1);
+      });
+    }),
+  }));
+}
+
+export function emitWindowEvent(event: string, payload: unknown) {
+  const callbacks = windowListenCallbacks.get(event) || [];
+  for (const cb of callbacks) {
+    cb({ payload });
+  }
+}
+
+export function resetWindowListenMock() {
+  windowListenCallbacks.clear();
+  const mockedGetCurrentWebviewWindow = getCurrentWebviewWindow as unknown as ReturnType<typeof vi.fn>;
+  mockedGetCurrentWebviewWindow.mockReset();
+  mockedGetCurrentWebviewWindow.mockImplementation(() => ({
+    listen: vi.fn(() => Promise.resolve(vi.fn())),
+  }));
 }

@@ -191,35 +191,37 @@ function App() {
       if (cancelled) { unPrefs(); return; }
       unlisteners.push(unPrefs);
 
-      const unExportLatex = await listen("menu://export-latex", () => {
+      const win = getCurrentWebviewWindow();
+
+      const unExportLatex = await win.listen("menu://export-latex", () => {
         setAcademicExportFormat("latex");
         setAcademicExportOpen(true);
       });
       if (cancelled) { unExportLatex(); return; }
       unlisteners.push(unExportLatex);
 
-      const unExportPdf = await listen("menu://export-pdf", () => {
+      const unExportPdf = await win.listen("menu://export-pdf", () => {
         setAcademicExportFormat("pdf");
         setAcademicExportOpen(true);
       });
       if (cancelled) { unExportPdf(); return; }
       unlisteners.push(unExportPdf);
 
-      const unExportHtml = await listen("menu://export-html", () => {
+      const unExportHtml = await win.listen("menu://export-html", () => {
         setAcademicExportFormat("html");
         setAcademicExportOpen(true);
       });
       if (cancelled) { unExportHtml(); return; }
       unlisteners.push(unExportHtml);
 
-      const unExportDocx = await listen("menu://export-docx", () => {
+      const unExportDocx = await win.listen("menu://export-docx", () => {
         setAcademicExportFormat("docx");
         setAcademicExportOpen(true);
       });
       if (cancelled) { unExportDocx(); return; }
       unlisteners.push(unExportDocx);
 
-      const unExportLkg = await listen("menu://export-lkg", async () => {
+      const unExportLkg = await win.listen("menu://export-lkg", async () => {
         const { save } = await import("@tauri-apps/plugin-dialog");
         const dest = await save({
           defaultPath: "export.lkg",
@@ -239,7 +241,7 @@ function App() {
       if (cancelled) { unExportLkg(); return; }
       unlisteners.push(unExportLkg);
 
-      const unImportLkg = await listen("menu://import-lkg", async () => {
+      const unImportLkg = await win.listen("menu://import-lkg", async () => {
         const { open } = await import("@tauri-apps/plugin-dialog");
         const src = await open({
           multiple: false,
@@ -281,13 +283,14 @@ function App() {
   const statusShow = useStatusMessageStore((s) => s.show);
 
   useEffect(() => {
+    const win = getCurrentWebviewWindow();
     let unlistenProgress: (() => void) | undefined;
     let unlistenComplete: (() => void) | undefined;
-    listen<ExportProgress>("lit:export-progress", (event) => {
+    win.listen<ExportProgress>("lit:export-progress", (event) => {
       const { current, total } = event.payload;
       statusShow(`Exporting ${current}/${total}…`, "progress", 8000);
     }).then((fn) => { unlistenProgress = fn; });
-    listen<ExportSummary>("lit:export-complete", (event) => {
+    win.listen<ExportSummary>("lit:export-complete", (event) => {
       statusShow(`Exported ${event.payload.exported_count} files`, "success");
     }).then((fn) => { unlistenComplete = fn; });
     return () => {
@@ -297,13 +300,14 @@ function App() {
   }, [statusShow]);
 
   useEffect(() => {
+    const win = getCurrentWebviewWindow();
     let unlistenProgress: (() => void) | undefined;
     let unlistenComplete: (() => void) | undefined;
-    listen<ExportProgress>("lit:lkg-export-progress", (event) => {
+    win.listen<ExportProgress>("lit:lkg-export-progress", (event) => {
       const { current, total } = event.payload;
       statusShow(`Exporting ${current}/${total}…`, "progress", 8000);
     }).then((fn) => { unlistenProgress = fn; });
-    listen<LkgExportSummary>("lit:lkg-export-complete", (event) => {
+    win.listen<LkgExportSummary>("lit:lkg-export-complete", (event) => {
       statusShow(`Exported ${event.payload.exported_count} files`, "success");
     }).then((fn) => { unlistenComplete = fn; });
     return () => {
@@ -313,8 +317,9 @@ function App() {
   }, [statusShow]);
 
   useEffect(() => {
+    const win = getCurrentWebviewWindow();
     let unlistenComplete: (() => void) | undefined;
-    listen<LkgImportSummary>("lit:lkg-import-complete", (event) => {
+    win.listen<LkgImportSummary>("lit:lkg-import-complete", (event) => {
       const { node_count, edge_count, annotation_count, file_count } = event.payload;
       statusShow(`Imported ${node_count} nodes, ${edge_count} edges, ${annotation_count} annotations, ${file_count} files`, "success");
     }).then((fn) => { unlistenComplete = fn; });

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 import App from "./App";
-import { mockInvoke, mockListen, emitMockEvent } from "./test/tauri-mock";
+import { mockInvoke, mockListen, emitMockEvent, mockWindowListen, emitWindowEvent } from "./test/tauri-mock";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { useWorkspaceStore } from "./stores/workspace";
 import { usePreferencesStore } from "./stores/preferences";
@@ -945,6 +945,7 @@ describe("App", () => {
     beforeEach(() => {
       vi.clearAllMocks();
       mockListen();
+      mockWindowListen();
       useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
       useStatusMessageStore.setState({ message: null, variant: "success" });
     });
@@ -967,7 +968,7 @@ describe("App", () => {
       });
 
       await act(async () => {
-        emitMockEvent("menu://export-lkg", {});
+        emitWindowEvent("menu://export-lkg", {});
       });
 
       await waitFor(() => {
@@ -993,7 +994,7 @@ describe("App", () => {
       });
 
       await act(async () => {
-        emitMockEvent("menu://export-lkg", {});
+        emitWindowEvent("menu://export-lkg", {});
       });
 
       await waitFor(() => {
@@ -1009,7 +1010,7 @@ describe("App", () => {
       });
 
       act(() => {
-        emitMockEvent("lit:lkg-export-progress", { current: 2, total: 5 });
+        emitWindowEvent("lit:lkg-export-progress", { current: 2, total: 5 });
       });
 
       await waitFor(() => {
@@ -1024,7 +1025,7 @@ describe("App", () => {
       });
 
       act(() => {
-        emitMockEvent("lit:lkg-export-complete", {
+        emitWindowEvent("lit:lkg-export-complete", {
           exported_count: 3,
           destination: "/out/graph.lkg",
           graph_hash: HASH,
@@ -1048,7 +1049,7 @@ describe("App", () => {
       });
 
       await act(async () => {
-        emitMockEvent("menu://export-lkg", {});
+        emitWindowEvent("menu://export-lkg", {});
       });
 
       await waitFor(() => {
@@ -1074,7 +1075,7 @@ describe("App", () => {
       });
 
       await act(async () => {
-        emitMockEvent("menu://import-lkg", {});
+        emitWindowEvent("menu://import-lkg", {});
       });
 
       await waitFor(() => {
@@ -1098,7 +1099,7 @@ describe("App", () => {
       });
 
       await act(async () => {
-        emitMockEvent("menu://import-lkg", {});
+        emitWindowEvent("menu://import-lkg", {});
       });
 
       await waitFor(() => {
@@ -1117,7 +1118,7 @@ describe("App", () => {
       });
 
       await act(async () => {
-        emitMockEvent("menu://import-lkg", {});
+        emitWindowEvent("menu://import-lkg", {});
       });
 
       await waitFor(() => {
@@ -1135,7 +1136,7 @@ describe("App", () => {
       });
 
       await act(async () => {
-        emitMockEvent("menu://import-lkg", {});
+        emitWindowEvent("menu://import-lkg", {});
       });
 
       await waitFor(() => {
@@ -1153,7 +1154,7 @@ describe("App", () => {
       });
 
       act(() => {
-        emitMockEvent("lit:lkg-import-complete", {
+        emitWindowEvent("lit:lkg-import-complete", {
           node_count: 2,
           edge_count: 1,
           annotation_count: 0,
@@ -1166,6 +1167,50 @@ describe("App", () => {
           /Imported 2 nodes, 1 edges, 0 annotations, 3 files/,
         );
       });
+    });
+
+    // === Scope verification — global listen must NOT trigger window-scoped handlers ===
+
+    it("menu://export-lkg does not fire on global listen", async () => {
+      lkgMockInvoke();
+      mockedSave.mockResolvedValue("/out/graph.lkg");
+
+      await act(async () => {
+        render(<App />);
+      });
+
+      await act(async () => {
+        emitMockEvent("menu://export-lkg", {});
+      });
+
+      expect(mockedSave).not.toHaveBeenCalled();
+    });
+
+    it("menu://export-latex does not fire on global listen", async () => {
+      lkgMockInvoke();
+
+      await act(async () => {
+        render(<App />);
+      });
+
+      act(() => {
+        emitMockEvent("menu://export-latex", {});
+      });
+
+      expect(screen.queryByTestId("academic-export-dialog")).not.toBeInTheDocument();
+    });
+
+    it("lit:lkg-export-progress does not fire on global listen", async () => {
+      lkgMockInvoke();
+      await act(async () => {
+        render(<App />);
+      });
+
+      act(() => {
+        emitMockEvent("lit:lkg-export-progress", { current: 2, total: 5 });
+      });
+
+      expect(useStatusMessageStore.getState().message).toBeNull();
     });
   });
 });
