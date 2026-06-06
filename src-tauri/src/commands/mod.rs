@@ -8,6 +8,7 @@ pub mod external_editor;
 pub mod graph;
 pub mod keymap;
 pub mod license;
+pub mod lkg;
 pub mod page;
 pub mod preferences;
 pub mod theme;

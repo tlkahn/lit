@@ -1098,6 +1098,13 @@ impl GraphIndex {
         self.positions.lock().unwrap().clone()
     }
 
+    /// Returns a guard over the in-memory `Store`, allowing other modules (e.g.
+    /// `lkg::export`) to read indexed graph data directly. Callers outside the
+    /// indexer module cannot reach the private `store` field otherwise.
+    pub fn store(&self) -> std::sync::MutexGuard<'_, crate::graph::store::Store> {
+        self.store.lock().unwrap()
+    }
+
     pub fn clear_positions(&self) -> Result<(), GraphError> {
         self.positions.lock().unwrap().clear();
         self.store.lock().map_err(|e| {

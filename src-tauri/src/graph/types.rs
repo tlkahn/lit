@@ -99,6 +99,21 @@ pub struct AnnotationSearchResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FullAnnotationRecord {
+    pub uuid: String,
+    pub node_id: String,
+    pub annotation_type: String,
+    pub certainty: String,
+    pub body: Option<String>,
+    pub date: Option<String>,
+    pub source_line: u32,
+    pub char_start: usize,
+    pub char_end: usize,
+    pub scope_kind: String,
+    pub scope_value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TagSearchResult {
     pub tag: String,
     pub count: i64,
@@ -352,5 +367,25 @@ mod tests {
         let json_str = serde_json::to_string(&asr).expect("serialize");
         let back: AnnotationSearchResult = serde_json::from_str(&json_str).expect("deserialize");
         assert_eq!(back, asr);
+    }
+
+    #[test]
+    fn full_annotation_record_round_trips() {
+        let rec = FullAnnotationRecord {
+            uuid: "550e8400-e29b-41d4-a716-446655440000".into(),
+            node_id: "a.md".into(),
+            annotation_type: "note".into(),
+            certainty: "neutral".into(),
+            body: Some("Silk Road".into()),
+            date: Some("2026-06-06".into()),
+            source_line: 3,
+            char_start: 10,
+            char_end: 30,
+            scope_kind: "words".into(),
+            scope_value: "2".into(),
+        };
+        let json_str = serde_json::to_string(&rec).expect("serialize");
+        let back: FullAnnotationRecord = serde_json::from_str(&json_str).expect("deserialize");
+        assert_eq!(back, rec);
     }
 }

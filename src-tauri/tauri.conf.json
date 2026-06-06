@@ -26,7 +26,14 @@
       "libs/libpdfium.dylib": "libpdfium.dylib",
       "resources/academic/*": "academic/",
       "resources/academic/csl/*": "academic/csl/"
-    }
+    },
+    "fileAssociations": [
+      {
+        "ext": ["lkg"],
+        "mimeType": "application/x-lit-knowledge-graph",
+        "description": "Lit Knowledge Graph Bundle"
+      }
+    ]
   },
   "app": {
     "windows": [],

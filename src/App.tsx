@@ -18,8 +18,9 @@ import { useMarkConfigStore } from "./stores/markConfig";
 import { useFocusModeStore } from "./stores/focusMode";
 import { useLicenseStore } from "./stores/license";
 import { useSecretStoreStore } from "./stores/secretStore";
-import { getStartupContext, mergeDocuments, executeSplit } from "./lib/ipc";
-import type { MergePlan } from "./lib/ipc";
+import { getStartupContext, mergeDocuments, executeSplit, exportLkg, importLkg } from "./lib/ipc";
+import type { MergePlan, LkgExportSummary, LkgImportSummary } from "./lib/ipc";
+import { LkgExportDialog, LkgImportDialog } from "./components/LkgBundleDialog";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { usePaneStore, findLeaf } from "./stores/panes";
@@ -220,6 +221,43 @@ function App() {
       if (cancelled) { unExportDocx(); return; }
       unlisteners.push(unExportDocx);
 
+      const unExportLkg = await listen("menu://export-lkg", async () => {
+        const { save } = await import("@tauri-apps/plugin-dialog");
+        const dest = await save({
+          defaultPath: "export.lkg",
+          filters: [{ name: "Lit Knowledge Graph", extensions: ["lkg"] }],
+        });
+        if (!dest) return;
+        setLkgExportVisible(true);
+        setLkgExportResult(null);
+        setLkgExportProgress(null);
+        await exportLkg(dest);
+      });
+      if (cancelled) { unExportLkg(); return; }
+      unlisteners.push(unExportLkg);
+
+      const unImportLkg = await listen("menu://import-lkg", async () => {
+        const { open } = await import("@tauri-apps/plugin-dialog");
+        const src = await open({
+          multiple: false,
+          filters: [{ name: "Lit Knowledge Graph", extensions: ["lkg"] }],
+        });
+        if (!src) return;
+        const dest = await open({ directory: true });
+        if (!dest) return;
+        setLkgImportVisible(true);
+        setLkgImportResult(null);
+        setLkgImportImporting(true);
+        try {
+          const summary = await importLkg(src as string, dest as string);
+          setLkgImportResult(summary);
+        } finally {
+          setLkgImportImporting(false);
+        }
+      });
+      if (cancelled) { unImportLkg(); return; }
+      unlisteners.push(unImportLkg);
+
       const unDeepLink = await listen<string>("license://activate-key", async (event) => {
         const ok = await useLicenseStore.getState().activate(event.payload);
         if (!ok) setLicenseEntryOpen(true);
@@ -241,6 +279,16 @@ function App() {
   const [exportResult, setExportResult] = useState<ExportSummary | null>(null);
   const exportTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
+  const [lkgExportVisible, setLkgExportVisible] = useState(false);
+  const [lkgExportProgress, setLkgExportProgress] = useState<ExportProgress | null>(null);
+  const [lkgExportResult, setLkgExportResult] = useState<LkgExportSummary | null>(null);
+  const lkgExportTimerRef = useRef<ReturnType<typeof setTimeout>>();
+
+  const [lkgImportVisible, setLkgImportVisible] = useState(false);
+  const [lkgImportImporting, setLkgImportImporting] = useState(false);
+  const [lkgImportResult, setLkgImportResult] = useState<LkgImportSummary | null>(null);
+  const lkgImportTimerRef = useRef<ReturnType<typeof setTimeout>>();
+
   useEffect(() => {
     let unlistenProgress: (() => void) | undefined;
     let unlistenComplete: (() => void) | undefined;
@@ -258,6 +306,42 @@ function App() {
       unlistenProgress?.();
       unlistenComplete?.();
       clearTimeout(exportTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    let unlistenProgress: (() => void) | undefined;
+    let unlistenComplete: (() => void) | undefined;
+    listen<ExportProgress>("lit:lkg-export-progress", (event) => {
+      setLkgExportVisible(true);
+      setLkgExportResult(null);
+      setLkgExportProgress(event.payload);
+    }).then((fn) => { unlistenProgress = fn; });
+    listen<LkgExportSummary>("lit:lkg-export-complete", (event) => {
+      setLkgExportVisible(true);
+      setLkgExportResult(event.payload);
+      clearTimeout(lkgExportTimerRef.current);
+      lkgExportTimerRef.current = setTimeout(() => setLkgExportVisible(false), 2000);
+    }).then((fn) => { unlistenComplete = fn; });
+    return () => {
+      unlistenProgress?.();
+      unlistenComplete?.();
+      clearTimeout(lkgExportTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    let unlistenComplete: (() => void) | undefined;
+    listen<LkgImportSummary>("lit:lkg-import-complete", (event) => {
+      setLkgImportVisible(true);
+      setLkgImportResult(event.payload);
+      setLkgImportImporting(false);
+      clearTimeout(lkgImportTimerRef.current);
+      lkgImportTimerRef.current = setTimeout(() => setLkgImportVisible(false), 2000);
+    }).then((fn) => { unlistenComplete = fn; });
+    return () => {
+      unlistenComplete?.();
+      clearTimeout(lkgImportTimerRef.current);
     };
   }, []);
 
@@ -493,6 +577,8 @@ function App() {
           onClose={() => setCommandPaletteOpen(false)}
         />
         <ExportDialog visible={exportVisible} progress={exportProgress} result={exportResult} />
+        <LkgExportDialog visible={lkgExportVisible} progress={lkgExportProgress} result={lkgExportResult} />
+        <LkgImportDialog visible={lkgImportVisible} importing={lkgImportImporting} result={lkgImportResult} />
         {annotationBuilderOpen && (
           <AnnotationBuilderModal
             onClose={() => setAnnotationBuilderOpen(false)}

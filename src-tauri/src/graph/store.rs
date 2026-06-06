@@ -5,7 +5,7 @@ use rusqlite::{Connection, OptionalExtension};
 use tracing::{debug, info};
 
 use super::error::GraphError;
-use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, IndexableAnnotation, LinkEntry, ParsedNode, Stats, TagPageResult, TagSearchResult};
+use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, FullAnnotationRecord, IndexableAnnotation, LinkEntry, ParsedNode, Stats, TagPageResult, TagSearchResult};
 
 pub const CURRENT_SCHEMA_VERSION: i64 = 14;
 
@@ -697,6 +697,25 @@ impl Store {
         Ok(map)
     }
 
+    pub fn node_frontmatter_map(&self) -> Result<HashMap<String, serde_json::Value>, GraphError> {
+        let mut stmt = self.conn.prepare("SELECT id, frontmatter FROM nodes")?;
+        let rows = stmt
+            .query_map([], |row| {
+                let id: String = row.get(0)?;
+                let fm_str: Option<String> = row.get(1)?;
+                Ok((id, fm_str))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut map = HashMap::new();
+        for (id, fm_str) in rows {
+            let value = fm_str
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
+            map.insert(id, value);
+        }
+        Ok(map)
+    }
+
     pub fn title_and_aliases(&self, page_id: &str) -> Result<(String, Vec<String>), GraphError> {
         let title: String = self.conn.query_row(
             "SELECT title FROM nodes WHERE id = ?1",
@@ -1104,6 +1123,32 @@ impl Store {
             };
             Ok(results)
         }
+    }
+
+    pub fn all_annotations_full(&self) -> Result<Vec<FullAnnotationRecord>, GraphError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT uuid, node_id, annotation_type, certainty, body, date, source_line, char_start, char_end, scope_kind, scope_value
+             FROM annotations
+             ORDER BY node_id, char_start",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(FullAnnotationRecord {
+                    uuid: row.get(0)?,
+                    node_id: row.get(1)?,
+                    annotation_type: row.get(2)?,
+                    certainty: row.get(3)?,
+                    body: row.get(4)?,
+                    date: row.get(5)?,
+                    source_line: row.get(6)?,
+                    char_start: row.get(7)?,
+                    char_end: row.get(8)?,
+                    scope_kind: row.get(9)?,
+                    scope_value: row.get(10)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     pub fn list_annotations(&self, node_id: Option<&str>, type_filter: Option<&str>, limit: i64) -> Result<Vec<AnnotationSearchResult>, GraphError> {
@@ -1839,6 +1884,33 @@ mod tests {
         assert_eq!(titles.len(), 2);
         assert_eq!(titles["a.md"], "Alpha");
         assert_eq!(titles["Ghost"], "");
+    }
+
+    #[test]
+    fn node_frontmatter_map_returns_frontmatter() {
+        let store = Store::open_memory().unwrap();
+        store
+            .upsert_node(&make_node("a.md", "Alpha", &["tag1"], json!({"title":"Alpha","custom":42})), 1)
+            .unwrap();
+
+        let map = store.node_frontmatter_map().unwrap();
+        assert_eq!(map.len(), 1);
+        assert_eq!(map["a.md"], json!({"title":"Alpha","custom":42}));
+    }
+
+    #[test]
+    fn node_frontmatter_map_stub_is_empty_object() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_stub("stub.md").unwrap();
+
+        let map = store.node_frontmatter_map().unwrap();
+        assert_eq!(map["stub.md"], json!({}));
+    }
+
+    #[test]
+    fn node_frontmatter_map_empty_store() {
+        let store = Store::open_memory().unwrap();
+        assert!(store.node_frontmatter_map().unwrap().is_empty());
     }
 
     // --- Phase 8: Stats & Fingerprint ---
@@ -3268,6 +3340,54 @@ mod tests {
         assert!(results.iter().all(|r| r.annotation_type == "note"));
         assert_eq!(results[0].node_id, "a.md");
         assert_eq!(results[1].node_id, "b.md");
+    }
+
+    #[test]
+    fn all_annotations_full_returns_scope_fields() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("a.md", "Alpha", &[], json!({})), 1).unwrap();
+
+        let mut ann = make_annotation("note", Some("hello"));
+        ann.scope_kind = "words".into();
+        ann.scope_value = "3".into();
+        store.upsert_annotations("a.md", &[ann]).unwrap();
+
+        let recs = store.all_annotations_full().unwrap();
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[0].node_id, "a.md");
+        assert_eq!(recs[0].annotation_type, "note");
+        assert_eq!(recs[0].scope_kind, "words");
+        assert_eq!(recs[0].scope_value, "3");
+        assert_eq!(recs[0].body, Some("hello".into()));
+        assert!(!recs[0].uuid.is_empty());
+    }
+
+    #[test]
+    fn all_annotations_full_empty_store() {
+        let store = Store::open_memory().unwrap();
+        assert!(store.all_annotations_full().unwrap().is_empty());
+    }
+
+    #[test]
+    fn all_annotations_full_orders_by_node_then_charstart() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("b.md", "Beta", &[], json!({})), 1).unwrap();
+        store.upsert_node(&make_node("a.md", "Alpha", &[], json!({})), 1).unwrap();
+
+        let ann_a1 = super::IndexableAnnotation { char_start: 30, ..make_annotation("note", Some("x")) };
+        let ann_a2 = super::IndexableAnnotation { char_start: 10, ..make_annotation("question", Some("y")) };
+        store.upsert_annotations("a.md", &[ann_a1, ann_a2]).unwrap();
+
+        let ann_b = make_annotation("note", Some("z"));
+        store.upsert_annotations("b.md", &[ann_b]).unwrap();
+
+        let recs = store.all_annotations_full().unwrap();
+        assert_eq!(recs.len(), 3);
+        assert_eq!(recs[0].node_id, "a.md");
+        assert_eq!(recs[0].char_start, 10);
+        assert_eq!(recs[1].node_id, "a.md");
+        assert_eq!(recs[1].char_start, 30);
+        assert_eq!(recs[2].node_id, "b.md");
     }
 
     // --- Multilingual (trigram) annotation search ---

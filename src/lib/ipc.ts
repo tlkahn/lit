@@ -722,6 +722,38 @@ export async function exportSubgraph(
   return invoke<ExportSummary>("export_subgraph", { nodeId, depth, destination });
 }
 
+export interface LkgExportSummary {
+  exported_count: number;
+  destination: string;
+  content_hash: string;
+}
+
+export async function exportLkg(
+  destination: string,
+  title?: string,
+  description?: string,
+): Promise<LkgExportSummary> {
+  return invoke<LkgExportSummary>("export_lkg", {
+    destination,
+    title: title ?? null,
+    description: description ?? null,
+  });
+}
+
+export interface LkgImportSummary {
+  node_count: number;
+  edge_count: number;
+  annotation_count: number;
+  file_count: number;
+}
+
+export async function importLkg(
+  source: string,
+  destination: string,
+): Promise<LkgImportSummary> {
+  return invoke<LkgImportSummary>("import_lkg", { source, destination });
+}
+
 // License
 
 export interface LicenseStatusResponse {
