@@ -1,3 +1,6 @@
+[workspace]
+members = [".", "crates/turboref-core", "crates/keygen"]
+
 [package]
 name = "lit"
 version = "0.1.0"
