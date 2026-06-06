@@ -9,9 +9,9 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::process::Command;
 
-// --- mirrors of build.rs (keep in sync) ------------------------------------
+// --- mirrors of build.rs (keep in sync, enforced by release.bats) ----------
 
-/// Mirror of `build.rs::resolve_git_path`.
+// SYNC:begin:resolve_git_path
 fn resolve_git_path(rel: &str) -> Option<String> {
     let arg = if rel == "HEAD" {
         "--git-path"
@@ -36,8 +36,9 @@ fn resolve_git_path(rel: &str) -> Option<String> {
         Some(Path::new(&base).join(rel).to_string_lossy().into_owned())
     }
 }
+// SYNC:end:resolve_git_path
 
-/// Mirror of `build.rs::git_rerun_paths`.
+// SYNC:begin:git_rerun_paths
 fn git_rerun_paths<R, E>(resolve: R, exists: E) -> Vec<String>
 where
     R: Fn(&str) -> Option<String>,
@@ -49,6 +50,7 @@ where
         .filter(|p| exists(p))
         .collect()
 }
+// SYNC:end:git_rerun_paths
 
 // --- tests ------------------------------------------------------------------
 

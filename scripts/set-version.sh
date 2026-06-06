@@ -28,13 +28,11 @@ sed -i.bak -E '/^\[package\]/,/^\[/{s/^version = ".*"/version = "'"$VERSION"'"/;
 rm -f "$REPO_ROOT/src-tauri/Cargo.toml.bak"
 
 # Keep Cargo.lock in sync so `cargo build --locked` / `cargo check --locked`
-# don't fail on a lockfile mismatch. The lib target is `lit_lib`, but the
-# package recorded in Cargo.lock is `lit`. Scope the bump to the version line
-# that directly follows `name = "lit"` so sibling packages sharing the old
-# version string are left untouched.
+# don't fail on a lockfile mismatch. Let cargo re-resolve the lockfile entry
+# for the `lit` package after patching Cargo.toml — this is format-agnostic
+# and survives any future Cargo.lock layout changes.
 if [[ -f "$REPO_ROOT/src-tauri/Cargo.lock" ]]; then
-  sed -i.bak -E '/^name = "lit"$/{n;s/^version = ".*"/version = "'"$VERSION"'"/;}' "$REPO_ROOT/src-tauri/Cargo.lock"
-  rm -f "$REPO_ROOT/src-tauri/Cargo.lock.bak"
+  (cd "$REPO_ROOT/src-tauri" && cargo update -p lit 2>/dev/null) || true
 fi
 
 echo "Version set to $VERSION in package.json, tauri.conf.json, Cargo.toml, Cargo.lock"

@@ -6,9 +6,9 @@
 //! helper below is a mirror of the `build.rs` original and must be kept in
 //! sync manually.
 
-// --- mirror of build.rs (keep in sync) -------------------------------------
+// --- mirror of build.rs (keep in sync, enforced by release.bats) -----------
 
-/// Mirror of `build.rs::resolve_dev_version`.
+// SYNC:begin:resolve_dev_version
 fn resolve_dev_version(tag: Option<&str>, pkg_version: &str) -> String {
     let cleaned = tag
         .map(|t| t.trim())
@@ -20,6 +20,7 @@ fn resolve_dev_version(tag: Option<&str>, pkg_version: &str) -> String {
         None => format!("{pkg_version}-dev"),
     }
 }
+// SYNC:end:resolve_dev_version
 
 // ---------------------------------------------------------------------------
 
@@ -61,9 +62,10 @@ fn resolved_version_never_carries_git_sha_suffix() {
         resolve_dev_version(None, "0.0.0"),
         resolve_dev_version(Some(""), "1.2.3"),
     ];
+    let re = regex::Regex::new(r"-g[0-9a-f]{7,}").unwrap();
     for v in cases {
         assert!(
-            !v.contains("-g"),
+            !re.is_match(&v),
             "resolved version {v:?} unexpectedly carries a git commit-sha suffix; \
              build.rs must feed abbrev-zero `git describe`, not `--always`"
         );

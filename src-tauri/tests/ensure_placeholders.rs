@@ -1,8 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-/// Mirror of `build.rs::ensure_placeholders_in` — kept in sync manually
-/// because build scripts are a separate compilation unit.
+// SYNC:begin:ensure_placeholders_in
 fn ensure_placeholders_in(base: &Path, triple: &str) {
     let academic = base.join("resources").join("academic");
     let csl_dir = academic.join("csl");
@@ -32,6 +31,7 @@ fn ensure_placeholders_in(base: &Path, triple: &str) {
         }
     }
 }
+// SYNC:end:ensure_placeholders_in
 
 #[test]
 fn creates_missing_placeholders() {

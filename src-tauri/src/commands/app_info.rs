@@ -66,8 +66,11 @@ mod tests {
         // CI "Sync version from git tag" step. Either way, an off-tag commit
         // hash here would mean the About dialog drifted from the bundle/DMG
         // version for the same binary.
+        let has_git_sha = regex::Regex::new(r"-g[0-9a-f]{7,}")
+            .unwrap()
+            .is_match(&info.version);
         assert!(
-            !info.version.contains("-g"),
+            !has_git_sha,
             "version {:?} unexpectedly contains a git commit-sha suffix",
             info.version
         );

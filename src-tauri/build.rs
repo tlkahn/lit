@@ -28,6 +28,7 @@ fn set_git_version() {
     let pkg_version = env::var("CARGO_PKG_VERSION").unwrap();
     if pkg_version != "0.0.0" {
         println!("cargo:rustc-env=LIT_GIT_VERSION={pkg_version}");
+        // No rerun directives needed: the version is fixed by set-version.sh, not derived from git.
         return;
     }
 
@@ -46,6 +47,10 @@ fn set_git_version() {
         .and_then(|o| String::from_utf8(o.stdout).ok());
 
     let version = resolve_dev_version(tag.as_deref(), &pkg_version);
+
+    if tag.is_none() {
+        println!("cargo:warning=no git tags found, using version {version}");
+    }
 
     println!("cargo:rustc-env=LIT_GIT_VERSION={version}");
 
@@ -72,6 +77,7 @@ fn set_git_version() {
 /// suffix. The value is currently display/IPC only (menu.rs, get_app_info), but
 /// a future consumer may semver-parse it, so this invariant is pinned by
 /// `tests/resolve_dev_version.rs::resolved_version_never_carries_git_sha_suffix`.
+// SYNC:begin:resolve_dev_version
 fn resolve_dev_version(tag: Option<&str>, pkg_version: &str) -> String {
     let cleaned = tag
         .map(|t| t.trim())
@@ -83,6 +89,7 @@ fn resolve_dev_version(tag: Option<&str>, pkg_version: &str) -> String {
         None => format!("{pkg_version}-dev"),
     }
 }
+// SYNC:end:resolve_dev_version
 
 /// Tell Cargo to re-run this build script when the checked-out commit or any
 /// tag changes. Without these, the `cargo:rerun-if-env-changed=...` directive
@@ -103,6 +110,7 @@ fn emit_git_rerun_directives() {
 /// absolute filesystem path, returning `None` if git is unavailable or the
 /// command fails. `HEAD` is resolved against the per-worktree git dir; the
 /// others against the shared common dir so they work from linked worktrees.
+// SYNC:begin:resolve_git_path
 fn resolve_git_path(rel: &str) -> Option<String> {
     let arg = if rel == "HEAD" {
         "--git-path"
@@ -127,12 +135,14 @@ fn resolve_git_path(rel: &str) -> Option<String> {
         Some(Path::new(&base).join(rel).to_string_lossy().into_owned())
     }
 }
+// SYNC:end:resolve_git_path
 
 /// Pure helper: given a resolver for git-relative paths and an existence
 /// predicate, return the absolute paths that should be emitted as
 /// `cargo:rerun-if-changed` directives. Only existing paths are returned —
 /// emitting a directive for a missing path would force Cargo to re-run on every
 /// build. Returns an empty list when git can't be resolved at all.
+// SYNC:begin:git_rerun_paths
 fn git_rerun_paths<R, E>(resolve: R, exists: E) -> Vec<String>
 where
     R: Fn(&str) -> Option<String>,
@@ -144,6 +154,7 @@ where
         .filter(|p| exists(p))
         .collect()
 }
+// SYNC:end:git_rerun_paths
 
 fn ensure_placeholders() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -160,6 +171,7 @@ fn ensure_placeholders() {
 /// Create placeholder files for externalBin and resources so that
 /// `tauri_build::build()` doesn't fail in worktrees or fresh checkouts
 /// where gitignored artifacts haven't been fetched yet.
+// SYNC:begin:ensure_placeholders_in
 fn ensure_placeholders_in(base: &Path, triple: &str) {
     let academic = base.join("resources").join("academic");
     let csl_dir = academic.join("csl");
@@ -189,6 +201,7 @@ fn ensure_placeholders_in(base: &Path, triple: &str) {
         }
     }
 }
+// SYNC:end:ensure_placeholders_in
 
 fn embed_prod_key(env_var: &str, filename: &str) {
     let b64 = env::var(env_var)
