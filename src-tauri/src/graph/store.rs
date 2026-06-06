@@ -496,8 +496,7 @@ impl Store {
     }
 
     pub fn delete_node(&self, id: &str) -> Result<(), GraphError> {
-        self.conn.execute_batch("SAVEPOINT delete_node")?;
-        let result = (|| -> Result<(), GraphError> {
+        self.with_savepoint("delete_node", || {
             self.conn.execute("DELETE FROM annotations_fts WHERE node_id = ?1", [id])?;
             self.conn.execute("DELETE FROM annotations WHERE node_id = ?1", [id])?;
             self.conn.execute("DELETE FROM nodes WHERE id = ?1", [id])?;
@@ -507,18 +506,7 @@ impl Store {
             self.conn.execute("DELETE FROM sync WHERE path = ?1", [id])?;
             self.conn.execute("DELETE FROM node_positions WHERE node_id = ?1", [id])?;
             Ok(())
-        })();
-        match result {
-            Ok(()) => {
-                self.conn.execute_batch("RELEASE delete_node")?;
-                Ok(())
-            }
-            Err(e) => {
-                self.conn.execute_batch("ROLLBACK TO delete_node")?;
-                self.conn.execute_batch("RELEASE delete_node")?;
-                Err(e)
-            }
-        }
+        })
     }
 
     // --- Positions ---
@@ -1308,6 +1296,28 @@ impl Store {
 
     // --- Transactions ---
 
+    pub(crate) fn with_savepoint<F, T>(&self, name: &str, f: F) -> Result<T, GraphError>
+    where
+        F: FnOnce() -> Result<T, GraphError>,
+    {
+        self.conn
+            .execute_batch(&format!("SAVEPOINT {name}"))?;
+        match f() {
+            Ok(val) => {
+                self.conn
+                    .execute_batch(&format!("RELEASE {name}"))?;
+                Ok(val)
+            }
+            Err(e) => {
+                self.conn
+                    .execute_batch(&format!("ROLLBACK TO {name}"))?;
+                self.conn
+                    .execute_batch(&format!("RELEASE {name}"))?;
+                Err(e)
+            }
+        }
+    }
+
     pub fn begin_transaction(&self) -> Result<(), GraphError> {
         self.conn.execute_batch("BEGIN")?;
         Ok(())
@@ -1356,6 +1366,46 @@ mod tests {
         assert!(tables.contains(&"edges".to_string()));
         assert!(tables.contains(&"sync".to_string()));
         assert!(tables.contains(&"meta".to_string()));
+    }
+
+    // --- with_savepoint ---
+
+    #[test]
+    fn with_savepoint_commits_on_success() {
+        let store = Store::open_memory().unwrap();
+        store
+            .with_savepoint("sp", || {
+                let node = make_node("a.md", "A", &[], json!({}));
+                store.upsert_node(&node, 1)?;
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(store.node_titles().unwrap().get("a.md"), Some(&"A".to_string()));
+    }
+
+    #[test]
+    fn with_savepoint_rolls_back_on_error() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let result: Result<(), _> = store.with_savepoint("sp", || {
+            let node_b = make_node("b.md", "B", &[], json!({}));
+            store.upsert_node(&node_b, 1)?;
+            Err(GraphError::Other("forced failure".into()))
+        });
+        assert!(result.is_err());
+
+        let titles = store.node_titles().unwrap();
+        assert_eq!(titles.get("a.md"), Some(&"A".to_string()));
+        assert_eq!(titles.get("b.md"), None);
+    }
+
+    #[test]
+    fn with_savepoint_returns_closure_value() {
+        let store = Store::open_memory().unwrap();
+        let val = store.with_savepoint("sp", || Ok(42u64)).unwrap();
+        assert_eq!(val, 42);
     }
 
     #[test]

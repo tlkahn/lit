@@ -211,8 +211,7 @@ pub fn import_graph_data(
     positions: &HashMap<String, Position>,
     annotations: &[BundleAnnotation],
 ) -> Result<(), GraphError> {
-    store.conn.execute_batch("SAVEPOINT lkg_import")?;
-    let result = (|| -> Result<(), GraphError> {
+    store.with_savepoint("lkg_import", || {
         for n in nodes {
             if n.is_stub {
                 store.upsert_stub(&n.id)?;
@@ -242,11 +241,8 @@ pub fn import_graph_data(
             .collect();
         store.replace_all_edges_no_tx(&edge_refs)?;
 
-        // Inline (non-nested) positions write: a nested `BEGIN` inside the
-        // SAVEPOINT would be rejected by SQLite.
         store.write_positions_no_tx(positions)?;
 
-        // Group annotations by node_id, then upsert per node.
         let mut by_node: HashMap<&str, Vec<IndexableAnnotation>> = HashMap::new();
         for a in annotations {
             by_node
@@ -259,19 +255,7 @@ pub fn import_graph_data(
         }
 
         Ok(())
-    })();
-
-    match result {
-        Ok(()) => {
-            store.conn.execute_batch("RELEASE lkg_import")?;
-            Ok(())
-        }
-        Err(e) => {
-            store.conn.execute_batch("ROLLBACK TO lkg_import")?;
-            store.conn.execute_batch("RELEASE lkg_import")?;
-            Err(e)
-        }
-    }
+    })
 }
 
 /// Returns `true` when `destination` is already an initialized Lit workspace,
@@ -307,21 +291,30 @@ pub fn import_lkg(source: &Path, destination: &Path) -> Result<LkgImportSummary,
     // the destination.
     let mut archive = open_archive(source)?;
 
-    validate_lkg_from_archive(&mut archive)?;
+    let manifest = validate_lkg_from_archive(&mut archive)?;
 
-    // Atomic import: stage everything in a temp dir on the SAME filesystem as the
-    // destination (so the final move is a cheap, atomic intra-FS rename), then
-    // move it into place only after the graph DB is fully built. If any step
-    // fails, `TempDir`'s Drop removes the staging tree, so the destination is
-    // never touched and no orphaned `.md` files or half-initialized `.lit` dir
-    // can be left behind.
-    std::fs::create_dir_all(destination)
-        .map_err(|e| format!("cannot create {}: {e}", destination.display()))?;
-    let staging = tempfile::TempDir::new_in(destination)
+    // Staging as a sibling of the destination (same parent dir) so the final
+    // rename is an atomic intra-filesystem move. The destination itself is NOT
+    // created until the rename succeeds — a failed import leaves no empty dir.
+    let parent = destination
+        .parent()
+        .ok_or_else(|| format!("destination has no parent: {}", destination.display()))?;
+    std::fs::create_dir_all(parent)
+        .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+    let staging = tempfile::TempDir::new_in(parent)
         .map_err(|e| format!("cannot create staging dir: {e}"))?;
 
     let file_count = extract_lkg_content_from_archive(&mut archive, staging.path())?;
     let (nodes, edges, positions, annotations) = load_lkg_graph_data_from_archive(&mut archive)?;
+
+    let expected_hash = &manifest.graph_hash;
+    let actual_hash =
+        crate::lkg::hash::compute_graph_hash(&nodes, &edges, &annotations);
+    if actual_hash != *expected_hash {
+        return Err(format!(
+            "graph hash mismatch: manifest says {expected_hash}, computed {actual_hash}"
+        ));
+    }
 
     let staging_lit = staging.path().join(".lit");
     std::fs::create_dir_all(&staging_lit)
@@ -331,16 +324,19 @@ pub fn import_lkg(source: &Path, destination: &Path) -> Result<LkgImportSummary,
     import_graph_data(&store, &nodes, &edges, &positions, &annotations)
         .map_err(|e| e.to_string())?;
 
-    // Close the connection before moving so rusqlite checkpoints and flushes the
-    // WAL into graph.db (otherwise we could move a db with an unmerged WAL).
     drop(store);
 
-    // Everything is built and consistent; promote staging into the destination.
-    // `keep()` disarms TempDir's Drop so it won't try to remove the dir we're
-    // about to empty; we remove the now-empty dir ourselves afterwards.
+    // Atomic promotion: single rename of the staging dir to the destination.
+    // `into_path()` disarms TempDir's Drop so it won't remove the dir we're
+    // about to rename.
     let staging_path = staging.keep();
-    move_staging_to_destination(&staging_path, destination)?;
-    let _ = std::fs::remove_dir(&staging_path);
+    std::fs::rename(&staging_path, destination).map_err(|e| {
+        let _ = std::fs::remove_dir_all(&staging_path);
+        format!(
+            "cannot move staging to {}: {e}",
+            destination.display()
+        )
+    })?;
 
     Ok(LkgImportSummary {
         node_count: nodes.len() as u64,
@@ -348,25 +344,6 @@ pub fn import_lkg(source: &Path, destination: &Path) -> Result<LkgImportSummary,
         annotation_count: annotations.len() as u64,
         file_count,
     })
-}
-
-/// Moves every top-level entry in `staging` into `destination` via
-/// `std::fs::rename`. Because the caller created `staging` on the same
-/// filesystem as `destination` (`TempDir::new_in(destination)`), each rename is
-/// an atomic intra-filesystem move rather than a copy.
-fn move_staging_to_destination(staging: &Path, destination: &Path) -> Result<(), String> {
-    for entry in std::fs::read_dir(staging).map_err(|e| format!("cannot read staging dir: {e}"))? {
-        let entry = entry.map_err(|e| format!("cannot read staging entry: {e}"))?;
-        let target = destination.join(entry.file_name());
-        std::fs::rename(entry.path(), &target).map_err(|e| {
-            format!(
-                "cannot move {} to {}: {e}",
-                entry.path().display(),
-                target.display()
-            )
-        })?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -889,6 +866,102 @@ mod tests {
             walk_files(dest.path()).is_empty(),
             "destination should be empty after a failed import, found: {:?}",
             walk_files(dest.path())
+        );
+    }
+
+    fn manifest_with_hash(hash: &str) -> Vec<u8> {
+        let m = LkgManifest {
+            format_version: 1,
+            generator: "lit".into(),
+            created_at: "2026-06-06T00:00:00Z".into(),
+            bundle_type: "full".into(),
+            title: "T".into(),
+            description: None,
+            stats: LkgStats {
+                node_count: 0,
+                edge_count: 0,
+                annotation_count: 0,
+                asset_count: 0,
+                total_size_bytes: 0,
+            },
+            graph_hash: hash.into(),
+        };
+        serde_json::to_vec(&m).unwrap()
+    }
+
+    // --- graph_hash validation ---
+
+    #[test]
+    fn import_lkg_rejects_graph_hash_mismatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = manifest_with_hash("sha256:0000000000000000000000000000000000000000000000000000000000000000");
+        let crafted = crafted_zip(
+            dir.path(),
+            &[
+                ("manifest.json", &manifest),
+                ("graph/nodes.json", b"[]"),
+                ("graph/edges.json", b"[]"),
+                ("graph/positions.json", b"{}"),
+                ("annotations/annotations.json", b"[]"),
+            ],
+        );
+
+        let dest = dir.path().join("imported");
+        let err = import_lkg(&crafted, &dest).unwrap_err();
+        assert!(
+            err.to_lowercase().contains("hash"),
+            "expected error mentioning hash, got: {err}"
+        );
+    }
+
+    #[test]
+    fn import_lkg_hash_mismatch_leaves_no_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = manifest_with_hash("sha256:0000000000000000000000000000000000000000000000000000000000000000");
+        let crafted = crafted_zip(
+            dir.path(),
+            &[
+                ("manifest.json", &manifest),
+                ("content/hello.md", b"# Hello"),
+                ("graph/nodes.json", b"[]"),
+                ("graph/edges.json", b"[]"),
+                ("graph/positions.json", b"{}"),
+                ("annotations/annotations.json", b"[]"),
+            ],
+        );
+
+        let dest = dir.path().join("imported");
+        let result = import_lkg(&crafted, &dest);
+        assert!(result.is_err());
+        assert!(
+            !dest.exists(),
+            "destination should not exist after hash mismatch"
+        );
+    }
+
+    // --- atomic single-rename: destination not created on failure ---
+
+    #[test]
+    fn import_lkg_failed_import_does_not_create_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let crafted = crafted_zip(
+            dir.path(),
+            &[
+                ("manifest.json", &manifest_with_version(1)),
+                ("content/hello.md", b"# Hello"),
+                ("graph/nodes.json", b"{ bad"),
+                ("graph/edges.json", b"[]"),
+                ("graph/positions.json", b"{}"),
+                ("annotations/annotations.json", b"[]"),
+            ],
+        );
+
+        let dest = dir.path().join("nonexistent_subdir");
+        let result = import_lkg(&crafted, &dest);
+        assert!(result.is_err());
+        assert!(
+            !dest.exists(),
+            "destination should not exist after a failed import"
         );
     }
 
