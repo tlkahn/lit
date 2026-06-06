@@ -76,9 +76,17 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cancelledRef = useRef(false);
   const pendingScrollLineRef = useRef<number | null>(null);
+  const viewModeRef = useRef(viewMode);
+  viewModeRef.current = viewMode;
+  const defaultViewModeRef = useRef(defaultViewMode);
+  defaultViewModeRef.current = defaultViewMode;
+  const initialSyncDone = useRef(false);
 
   useEffect(() => {
-    if (loaded) setViewMode(defaultViewMode);
+    if (loaded && !initialSyncDone.current) {
+      initialSyncDone.current = true;
+      setViewMode(defaultViewModeRef.current);
+    }
   }, [loaded]);
 
   useEffect(() => {
@@ -116,7 +124,7 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
 
   useEffect(() => {
     const previousPath = currentPathRef.current;
-    if (previousPath && viewMode === "editor") {
+    if (previousPath && viewModeRef.current === "editor") {
       const view = getCurrentEditorView();
       if (view) {
         saveViewState(previousPath, view.scrollDOM.scrollTop, view.state.selection.main.head);
@@ -135,9 +143,9 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
     setYamlDraft("");
     setYamlError(null);
     if (previousPath !== currentPanePage) {
-      setViewMode(defaultViewMode);
+      setViewMode(defaultViewModeRef.current);
     }
-  }, [currentPanePage, saveViewState, viewMode, defaultViewMode]);
+  }, [currentPanePage, saveViewState]);
 
   useEffect(() => {
     if (pendingTitleFocus && title) {
