@@ -29,6 +29,17 @@ jobs:
           key: aarch64-apple-darwin
       - name: Configure git for private deps
         run: git config --global url."https://${{ secrets.PUBLIC_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+      - name: Sync version from git tag
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            VERSION="${{ github.event.release.tag_name }}"
+          else
+            # --abbrev=0 (nearest tag, no -N-gSHA suffix) MUST match the dev
+            # fallback flag in src-tauri/build.rs so the About dialog and bundle
+            # metadata agree for the same binary. See scripts/tests/release.bats.
+            VERSION="$(git describe --tags --abbrev=0 2>/dev/null || echo v0.0.0)"
+          fi
+          bash scripts/set-version.sh "${VERSION#v}"
       - run: bun install --frozen-lockfile
       - name: Fetch libpdfium
         run: bash scripts/fetch-pdfium.sh

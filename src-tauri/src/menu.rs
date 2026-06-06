@@ -176,7 +176,7 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
                 use tauri_plugin_dialog::DialogExt;
                 handle
                     .dialog()
-                    .message(format!("Lit v{}", env!("CARGO_PKG_VERSION")))
+                    .message(format!("Lit v{}", env!("LIT_GIT_VERSION")))
                     .title("About Lit")
                     .blocking_show();
             });

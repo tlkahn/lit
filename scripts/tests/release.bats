@@ -235,6 +235,189 @@ load test_helper
   [ "$status" -eq 1 ]
 }
 
+# ── Cycle 6b: Version sync ─────────────────────────────────────────────────
+
+@test "release_sync_version: strips v prefix and calls set-version.sh" {
+  source_lib
+  REPO_ROOT="$TEST_TEMP_DIR"
+  mkdir -p "$TEST_TEMP_DIR/scripts"
+  cat > "$TEST_TEMP_DIR/scripts/set-version.sh" <<'SV_EOF'
+#!/usr/bin/env bash
+echo "$1" > "$REPO_ROOT/synced_version"
+SV_EOF
+  chmod +x "$TEST_TEMP_DIR/scripts/set-version.sh"
+  export REPO_ROOT
+  release_sync_version v0.13.0
+  [ -f "$TEST_TEMP_DIR/synced_version" ]
+  [ "$(cat "$TEST_TEMP_DIR/synced_version")" = "0.13.0" ]
+}
+
+# ── Cycle 6c: Version lockstep invariant ───────────────────────────────────
+# Guards the single-source-of-truth contract that build.rs relies on: after
+# set-version.sh patches the three files, the version in package.json,
+# tauri.conf.json, and src-tauri/Cargo.toml must all be identical. build.rs
+# makes LIT_GIT_VERSION mirror CARGO_PKG_VERSION on release builds, so any
+# divergence here would let the About dialog drift from the bundle/DMG version.
+
+@test "set-version.sh: patches package.json, tauri.conf.json, and Cargo.toml in lockstep" {
+  REPO_ROOT="$TEST_TEMP_DIR"
+  mkdir -p "$TEST_TEMP_DIR/src-tauri"
+  echo '{"version":"0.0.0"}' > "$TEST_TEMP_DIR/package.json"
+  echo '{"version":"0.0.0"}' > "$TEST_TEMP_DIR/src-tauri/tauri.conf.json"
+  cat > "$TEST_TEMP_DIR/src-tauri/Cargo.toml" <<'TOML'
+[package]
+name = "lit"
+version = "0.0.0"
+
+[dependencies]
+foo = "0.0.0"
+TOML
+
+  export REPO_ROOT
+  run bash "$SCRIPT_DIR/set-version.sh" 0.13.0
+  [ "$status" -eq 0 ]
+
+  [ "$(jq -r '.version' "$TEST_TEMP_DIR/package.json")" = "0.13.0" ]
+  [ "$(jq -r '.version' "$TEST_TEMP_DIR/src-tauri/tauri.conf.json")" = "0.13.0" ]
+  grep -q '^version = "0.13.0"$' "$TEST_TEMP_DIR/src-tauri/Cargo.toml"
+}
+
+# Guards that set-version.sh also patches src-tauri/Cargo.lock so the lockfile
+# stays in sync with Cargo.toml. Otherwise `cargo build --locked` /
+# `cargo check --locked` would fail on a lockfile mismatch after a release bump.
+# Scoping is handled natively by `cargo update -p lit`.
+
+@test "set-version.sh: bumps the lit package version in Cargo.lock" {
+  REPO_ROOT="$TEST_TEMP_DIR"
+  mkdir -p "$TEST_TEMP_DIR/src-tauri/src"
+  echo '{"version":"0.0.0"}' > "$TEST_TEMP_DIR/package.json"
+  echo '{"version":"0.0.0"}' > "$TEST_TEMP_DIR/src-tauri/tauri.conf.json"
+  cat > "$TEST_TEMP_DIR/src-tauri/Cargo.toml" <<'TOML'
+[package]
+name = "lit"
+version = "0.0.0"
+edition = "2021"
+TOML
+  echo '' > "$TEST_TEMP_DIR/src-tauri/src/lib.rs"
+
+  # Generate initial lockfile so set-version.sh has something to update.
+  (cd "$TEST_TEMP_DIR/src-tauri" && cargo generate-lockfile 2>/dev/null)
+
+  export REPO_ROOT
+  run bash "$SCRIPT_DIR/set-version.sh" 0.13.0
+  [ "$status" -eq 0 ]
+
+  # The lit package version is bumped in the lockfile.
+  run awk '/^name = "lit"$/{getline; print; exit}' "$TEST_TEMP_DIR/src-tauri/Cargo.lock"
+  [ "$output" = 'version = "0.13.0"' ]
+}
+
+@test "set-version.sh: tolerates a missing Cargo.lock" {
+  REPO_ROOT="$TEST_TEMP_DIR"
+  mkdir -p "$TEST_TEMP_DIR/src-tauri"
+  echo '{"version":"0.0.0"}' > "$TEST_TEMP_DIR/package.json"
+  echo '{"version":"0.0.0"}' > "$TEST_TEMP_DIR/src-tauri/tauri.conf.json"
+  cat > "$TEST_TEMP_DIR/src-tauri/Cargo.toml" <<'TOML'
+[package]
+name = "lit"
+version = "0.0.0"
+TOML
+
+  export REPO_ROOT
+  run bash "$SCRIPT_DIR/set-version.sh" 0.13.0
+  [ "$status" -eq 0 ]
+  [ ! -f "$TEST_TEMP_DIR/src-tauri/Cargo.lock" ]
+}
+
+# ── Cycle 6d: git describe flag agreement ──────────────────────────────────
+# build-release.yml's "Sync version from git tag" step derives the version on
+# non-release runs via `git describe --tags --abbrev=0` (nearest tag, no commit
+# suffix). build.rs's dev fallback must use the SAME flag so that a binary's
+# About dialog (LIT_GIT_VERSION) never shows a `-N-gSHA` suffix that the bundle
+# metadata lacks. Guard both: the nearest-tag describe yields a clean tag, and
+# build.rs uses --abbrev=0 (not --always).
+
+@test "git describe --tags --abbrev=0 yields a clean tag with no commit-sha suffix" {
+  REPO_ROOT="$TEST_TEMP_DIR"
+  cd "$TEST_TEMP_DIR"
+  git init -q
+  git config user.email "t@example.com"
+  git config user.name "Test"
+  git commit -q --allow-empty -m "first"
+  git tag v0.12.0
+  git commit -q --allow-empty -m "second"
+  git commit -q --allow-empty -m "third"
+
+  # --always would append "-N-gSHA"; --abbrev=0 must not.
+  desc="$(git describe --tags --abbrev=0)"
+  [ "$desc" = "v0.12.0" ]
+  [[ "$desc" != *-g* ]]
+}
+
+@test "build.rs derives the dev fallback version with --abbrev=0, not --always" {
+  grep -q -- '--abbrev=0' "$SCRIPT_DIR/../src-tauri/build.rs"
+  ! grep -q -- '"--always"' "$SCRIPT_DIR/../src-tauri/build.rs"
+}
+
+# ── Cycle 6e: install.sh syncs version before build ────────────────────────
+# The local install path (bash scripts/install.sh) must derive the app version
+# from git the SAME way CI does — `git describe --tags --abbrev=0` (nearest tag,
+# no -N-gSHA suffix), falling back to v0.0.0 — strip the leading `v`, and call
+# scripts/set-version.sh BEFORE `bun tauri build`. Otherwise the built .app
+# bundle carries CFBundleShortVersionString = 0.0.0 while the About dialog shows
+# the correct git-derived LIT_GIT_VERSION, so Finder Get Info and update checks
+# disagree.
+
+@test "install.sh: derives version via git describe --tags --abbrev=0 with v0.0.0 fallback" {
+  grep -q -- 'git describe --tags --abbrev=0' "$SCRIPT_DIR/install.sh"
+  grep -q 'v0.0.0' "$SCRIPT_DIR/install.sh"
+}
+
+@test "install.sh: calls set-version.sh before bun tauri build" {
+  local set_version_line build_line
+  set_version_line="$(grep -n 'set-version.sh' "$SCRIPT_DIR/install.sh" | head -1 | cut -d: -f1)"
+  build_line="$(grep -n 'bun tauri build' "$SCRIPT_DIR/install.sh" | head -1 | cut -d: -f1)"
+  [ -n "$set_version_line" ]
+  [ -n "$build_line" ]
+  [ "$set_version_line" -lt "$build_line" ]
+}
+
+# ── Cycle 6f: SYNC marker enforcement ─────────────────────────────────────
+# Three test files mirror pure functions from build.rs with SYNC markers.
+# This test enforces byte-for-byte equality of the function bodies between
+# build.rs and their test-file mirrors.
+
+@test "mirrored function bodies match build.rs (SYNC markers)" {
+  local build_rs="$SCRIPT_DIR/../src-tauri/build.rs"
+  local tests_dir="$SCRIPT_DIR/../src-tauri/tests"
+
+  local -a names=("resolve_dev_version" "resolve_git_path" "git_rerun_paths" "ensure_placeholders_in")
+  local -a files=(
+    "$tests_dir/resolve_dev_version.rs"
+    "$tests_dir/git_rerun_paths.rs"
+    "$tests_dir/git_rerun_paths.rs"
+    "$tests_dir/ensure_placeholders.rs"
+  )
+
+  for i in "${!names[@]}"; do
+    local name="${names[$i]}"
+    local test_file="${files[$i]}"
+
+    local build_body test_body
+    build_body="$(sed -n "/^\/\/ SYNC:begin:${name}$/,/^\/\/ SYNC:end:${name}$/{ /^\/\/ SYNC:/d; p; }" "$build_rs")"
+    test_body="$(sed -n "/^\/\/ SYNC:begin:${name}$/,/^\/\/ SYNC:end:${name}$/{ /^\/\/ SYNC:/d; p; }" "$test_file")"
+
+    [ -n "$build_body" ] || { echo "SYNC:begin:${name} not found in build.rs"; return 1; }
+    [ -n "$test_body" ] || { echo "SYNC:begin:${name} not found in ${test_file##*/}"; return 1; }
+
+    if [ "$build_body" != "$test_body" ]; then
+      echo "SYNC mismatch for ${name}:"
+      diff <(echo "$build_body") <(echo "$test_body") || true
+      return 1
+    fi
+  done
+}
+
 # ── Cycle 7: Build helper functions ─────────────────────────────────────────
 
 @test "release_install_deps: calls bun install --frozen-lockfile" {
@@ -420,12 +603,23 @@ EOF
   touch "$TEST_TEMP_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Lit_0.1.0_aarch64.dmg"
   cp "$SCRIPT_DIR/release-lib.sh" "$TEST_TEMP_DIR/scripts/"
   cp "$SCRIPT_DIR/release.sh" "$TEST_TEMP_DIR/scripts/"
+  cp "$SCRIPT_DIR/set-version.sh" "$TEST_TEMP_DIR/scripts/"
   touch "$TEST_TEMP_DIR/scripts/fetch-pdfium.sh"
   touch "$TEST_TEMP_DIR/scripts/deploy-website.sh"
+
+  # set-version.sh needs these files to exist
+  echo '{"version":"0.0.0"}' > "$TEST_TEMP_DIR/package.json"
+  echo '{"version":"0.0.0"}' > "$TEST_TEMP_DIR/src-tauri/tauri.conf.json"
+  cat > "$TEST_TEMP_DIR/src-tauri/Cargo.toml" <<'TOML'
+[package]
+name = "lit"
+version = "0.0.0"
+TOML
 
   run bash "$TEST_TEMP_DIR/scripts/release.sh" --dry-run v0.9.2
   [ "$status" -eq 0 ]
   [[ "$output" == *"DRY RUN"* ]] || [[ "$output" == *"dry"* ]] || [[ "$output" == *"Dry"* ]]
+  [[ "$output" == *"Syncing version"* ]]
   assert_mock_called_with "bun install --frozen-lockfile"
   assert_mock_called_with "cargo build --release --bin lit-cli --target aarch64-apple-darwin"
   assert_mock_called_with "bun tauri build"

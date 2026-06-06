@@ -45,6 +45,7 @@ release_checkout_tag "$TAG"
 release_check_tools
 release_check_env "$DRY_RUN" "$SKIP_WEBSITE"
 release_detect_signing_id
+release_sync_version "$TAG"
 
 if [[ "$DRY_RUN" -eq 0 ]]; then
   release_get_s3_bucket
