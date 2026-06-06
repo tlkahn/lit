@@ -377,6 +377,29 @@ TOML
   ! grep -q -- '"--always"' "$SCRIPT_DIR/../src-tauri/build.rs"
 }
 
+# ── Cycle 6e: install.sh syncs version before build ────────────────────────
+# The local install path (bash scripts/install.sh) must derive the app version
+# from git the SAME way CI does — `git describe --tags --abbrev=0` (nearest tag,
+# no -N-gSHA suffix), falling back to v0.0.0 — strip the leading `v`, and call
+# scripts/set-version.sh BEFORE `bun tauri build`. Otherwise the built .app
+# bundle carries CFBundleShortVersionString = 0.0.0 while the About dialog shows
+# the correct git-derived LIT_GIT_VERSION, so Finder Get Info and update checks
+# disagree.
+
+@test "install.sh: derives version via git describe --tags --abbrev=0 with v0.0.0 fallback" {
+  grep -q -- 'git describe --tags --abbrev=0' "$SCRIPT_DIR/install.sh"
+  grep -q 'v0.0.0' "$SCRIPT_DIR/install.sh"
+}
+
+@test "install.sh: calls set-version.sh before bun tauri build" {
+  local set_version_line build_line
+  set_version_line="$(grep -n 'set-version.sh' "$SCRIPT_DIR/install.sh" | head -1 | cut -d: -f1)"
+  build_line="$(grep -n 'bun tauri build' "$SCRIPT_DIR/install.sh" | head -1 | cut -d: -f1)"
+  [ -n "$set_version_line" ]
+  [ -n "$build_line" ]
+  [ "$set_version_line" -lt "$build_line" ]
+}
+
 # ── Cycle 7: Build helper functions ─────────────────────────────────────────
 
 @test "release_install_deps: calls bun install --frozen-lockfile" {
