@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
-import type { DarkModePref, Preferences } from "../lib/ipc";
+import type { DarkModePref, ViewMode, Preferences } from "../lib/ipc";
 import { getPreferences } from "../lib/ipc";
 import type { AnnotationBuilderDefaults } from "../lib/annotationBuilderDefaults";
 import { isValidBuilderDefaults } from "../lib/annotationBuilderDefaults";
@@ -45,6 +45,7 @@ export interface PreferencesState {
   academicDefaultCsl: string;
   academicDefaultTemplate: string;
   academicDefaultReferenceDoc: string;
+  defaultViewMode: ViewMode;
   annotationPrefillLastUsed: boolean;
   annotationBuilderDefaults: AnnotationBuilderDefaults | null;
   loaded: boolean;
@@ -69,6 +70,11 @@ function applyBottomPanelPosition(val: unknown): BottomPanelPosition {
   return val === "side" ? "side" : "bottom";
 }
 
+function applyDefaultViewMode(val: unknown): ViewMode {
+  if (val === "editor" || val === "mindmap" || val === "graph") return val;
+  return "editor";
+}
+
 function applyDarkMode(val: unknown): DarkModePref {
   if (val === "light" || val === "dark" || val === "auto") return val;
   if (val === true) return "dark";
@@ -82,6 +88,7 @@ function mapPreferences(prefs: Preferences) {
     colorTheme: prefs["workbench.colorTheme"] ?? null,
     sidebarVisible: (prefs["workbench.sideBar.visible"] as boolean) ?? true,
     sidebarLocation: applySidebarLocation(prefs["workbench.sideBar.location"] ?? "left"),
+    defaultViewMode: applyDefaultViewMode(prefs["workbench.defaultViewMode"]),
     bottomPanelPosition: applyBottomPanelPosition(prefs["workbench.bottomPanel.position"]),
     foldingEnabled: prefs["editor.folding.enabled"] ?? true,
     foldingShowControls: applyFoldingShowControls(prefs["editor.folding.showFoldingControls"] ?? "mouseover"),
@@ -119,6 +126,7 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   colorTheme: null,
   sidebarVisible: true,
   sidebarLocation: "left",
+  defaultViewMode: "editor",
   bottomPanelPosition: "bottom",
   foldingEnabled: true,
   foldingShowControls: "mouseover",

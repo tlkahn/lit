@@ -3,9 +3,10 @@ import { EditorView } from "@codemirror/view";
 import { EditorSelection } from "@codemirror/state";
 import { listen } from "@tauri-apps/api/event";
 import { useWorkspaceStore } from "../stores/workspace";
+import { usePreferencesStore } from "../stores/preferences";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import { usePaneField, updatePaneContent, type PaneContentEntry } from "../lib/paneContentRegistry";
-import { writePage, parseRawYaml } from "../lib/ipc";
+import { writePage, parseRawYaml, type ViewMode } from "../lib/ipc";
 import { executeCommand } from "../lib/commandRegistry";
 import { getCurrentEditorView } from "../lib/editorViewRef";
 import { extractHeadings } from "../lib/headings";
@@ -44,7 +45,9 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
   const saveViewState = useWorkspaceStore((s) => s.saveViewState);
   const saveMindmapFoldState = useWorkspaceStore((s) => s.saveMindmapFoldState);
 
-  const [viewMode, setViewMode] = useState<"editor" | "mindmap" | "graph">("editor");
+  const defaultViewMode = usePreferencesStore((s) => s.defaultViewMode);
+  const loaded = usePreferencesStore((s) => s.loaded);
+  const [viewMode, setViewMode] = useState<ViewMode>(defaultViewMode);
 
   const titleSel = useMemo(() => (e: PaneContentEntry | null) => e?.title ?? "", []);
   const title = usePaneField(focusedPaneId, titleSel);
@@ -73,6 +76,18 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cancelledRef = useRef(false);
   const pendingScrollLineRef = useRef<number | null>(null);
+  const viewModeRef = useRef(viewMode);
+  viewModeRef.current = viewMode;
+  const defaultViewModeRef = useRef(defaultViewMode);
+  defaultViewModeRef.current = defaultViewMode;
+  const initialSyncDone = useRef(false);
+
+  useEffect(() => {
+    if (loaded && !initialSyncDone.current) {
+      initialSyncDone.current = true;
+      setViewMode(defaultViewModeRef.current);
+    }
+  }, [loaded]);
 
   useEffect(() => {
     setEditingTitle(title);
@@ -109,7 +124,7 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
 
   useEffect(() => {
     const previousPath = currentPathRef.current;
-    if (previousPath) {
+    if (previousPath && viewModeRef.current === "editor") {
       const view = getCurrentEditorView();
       if (view) {
         saveViewState(previousPath, view.scrollDOM.scrollTop, view.state.selection.main.head);
@@ -127,6 +142,9 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
     setEditingYaml(false);
     setYamlDraft("");
     setYamlError(null);
+    if (previousPath !== currentPanePage) {
+      setViewMode(defaultViewModeRef.current);
+    }
   }, [currentPanePage, saveViewState]);
 
   useEffect(() => {

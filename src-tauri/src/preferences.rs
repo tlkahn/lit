@@ -26,6 +26,10 @@ fn default_dark_mode() -> String {
     "auto".to_string()
 }
 
+fn default_view_mode() -> String {
+    "editor".to_string()
+}
+
 fn deserialize_dark_mode<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -78,6 +82,11 @@ pub struct Preferences {
         default = "default_folding_show_controls"
     )]
     pub folding_show_controls: String,
+    #[serde(
+        rename = "workbench.defaultViewMode",
+        default = "default_view_mode"
+    )]
+    pub default_view_mode: String,
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
 }
@@ -90,6 +99,7 @@ impl Default for Preferences {
             sidebar_location: "left".to_string(),
             folding_enabled: true,
             folding_show_controls: "mouseover".to_string(),
+            default_view_mode: "editor".to_string(),
             extra: HashMap::new(),
         }
     }
@@ -381,6 +391,7 @@ mod tests {
         assert_eq!(prefs.sidebar_location, "left");
         assert!(prefs.folding_enabled);
         assert_eq!(prefs.folding_show_controls, "mouseover");
+        assert_eq!(prefs.default_view_mode, "editor");
         assert!(prefs.extra.is_empty());
     }
 
@@ -392,6 +403,7 @@ mod tests {
         assert_eq!(prefs.sidebar_location, "left");
         assert!(prefs.folding_enabled);
         assert_eq!(prefs.folding_show_controls, "mouseover");
+        assert_eq!(prefs.default_view_mode, "editor");
     }
 
     #[test]
@@ -554,6 +566,7 @@ mod tests {
         assert!(json.contains("workbench.sideBar.location"));
         assert!(json.contains("editor.folding.enabled"));
         assert!(json.contains("editor.folding.showFoldingControls"));
+        assert!(json.contains("workbench.defaultViewMode"));
     }
 
     #[test]

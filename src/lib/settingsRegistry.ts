@@ -82,6 +82,19 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Appearance",
+    label: "Default View Mode",
+    storeField: "defaultViewMode",
+    jsonKey: "workbench.defaultViewMode",
+    controlType: "segmented",
+    testId: "settings-defaultViewMode",
+    options: [
+      { value: "editor", label: "Editor" },
+      { value: "mindmap", label: "Mindmap" },
+      { value: "graph", label: "Graph" },
+    ],
+  },
+  {
+    category: "Appearance",
     label: "Bottom Panel Position",
     storeField: "bottomPanelPosition",
     jsonKey: "workbench.bottomPanel.position",
