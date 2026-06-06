@@ -127,6 +127,7 @@ pub fn run() {
         .manage(MarkConfigCache::new())
         .manage(commands::llm::LlmState::new())
         .manage(commands::merge_split::TitleSuggestState::new())
+        .manage(commands::lkg::LkgExportState::new())
         .manage(context_menu::PendingContextMenu::default())
         .setup(move |app| {
             let data_dir = app

@@ -19,7 +19,7 @@ import { useFocusModeStore } from "./stores/focusMode";
 import { useLicenseStore } from "./stores/license";
 import { useSecretStoreStore } from "./stores/secretStore";
 import { getStartupContext, mergeDocuments, executeSplit, exportLkg, importLkg } from "./lib/ipc";
-import type { MergePlan, LkgExportSummary, LkgImportSummary } from "./lib/ipc";
+import type { MergePlan, LkgExportSummary } from "./lib/ipc";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { usePaneStore, findLeaf } from "./stores/panes";
@@ -166,6 +166,8 @@ function App() {
     const unlisteners: (() => void)[] = [];
 
     const setup = async () => {
+      const win = getCurrentWebviewWindow();
+
       const unBuy = await listen("menu://buy-license", () => {
         openUrl("https://lit.solar/buy");
       });
@@ -184,42 +186,42 @@ function App() {
       if (cancelled) { unInfo(); return; }
       unlisteners.push(unInfo);
 
-      const unPrefs = await listen("menu://open-preferences", () => {
+      const unPrefs = await win.listen("menu://open-preferences", () => {
         setSettingsInitialCategory(undefined);
         setSettingsOpen(true);
       });
       if (cancelled) { unPrefs(); return; }
       unlisteners.push(unPrefs);
 
-      const unExportLatex = await listen("menu://export-latex", () => {
+      const unExportLatex = await win.listen("menu://export-latex", () => {
         setAcademicExportFormat("latex");
         setAcademicExportOpen(true);
       });
       if (cancelled) { unExportLatex(); return; }
       unlisteners.push(unExportLatex);
 
-      const unExportPdf = await listen("menu://export-pdf", () => {
+      const unExportPdf = await win.listen("menu://export-pdf", () => {
         setAcademicExportFormat("pdf");
         setAcademicExportOpen(true);
       });
       if (cancelled) { unExportPdf(); return; }
       unlisteners.push(unExportPdf);
 
-      const unExportHtml = await listen("menu://export-html", () => {
+      const unExportHtml = await win.listen("menu://export-html", () => {
         setAcademicExportFormat("html");
         setAcademicExportOpen(true);
       });
       if (cancelled) { unExportHtml(); return; }
       unlisteners.push(unExportHtml);
 
-      const unExportDocx = await listen("menu://export-docx", () => {
+      const unExportDocx = await win.listen("menu://export-docx", () => {
         setAcademicExportFormat("docx");
         setAcademicExportOpen(true);
       });
       if (cancelled) { unExportDocx(); return; }
       unlisteners.push(unExportDocx);
 
-      const unExportLkg = await listen("menu://export-lkg", async () => {
+      const unExportLkg = await win.listen("menu://export-lkg", async () => {
         const { save } = await import("@tauri-apps/plugin-dialog");
         const dest = await save({
           defaultPath: "export.lkg",
@@ -239,7 +241,7 @@ function App() {
       if (cancelled) { unExportLkg(); return; }
       unlisteners.push(unExportLkg);
 
-      const unImportLkg = await listen("menu://import-lkg", async () => {
+      const unImportLkg = await win.listen("menu://import-lkg", async () => {
         const { open } = await import("@tauri-apps/plugin-dialog");
         const src = await open({
           multiple: false,
@@ -281,44 +283,39 @@ function App() {
   const statusShow = useStatusMessageStore((s) => s.show);
 
   useEffect(() => {
+    const win = getCurrentWebviewWindow();
+    let cancelled = false;
     let unlistenProgress: (() => void) | undefined;
     let unlistenComplete: (() => void) | undefined;
-    listen<ExportProgress>("lit:export-progress", (event) => {
+    win.listen<ExportProgress>("lit:export-progress", (event) => {
       const { current, total } = event.payload;
       statusShow(`Exporting ${current}/${total}…`, "progress", 8000);
-    }).then((fn) => { unlistenProgress = fn; });
-    listen<ExportSummary>("lit:export-complete", (event) => {
+    }).then((fn) => { if (cancelled) fn(); else unlistenProgress = fn; });
+    win.listen<ExportSummary>("lit:export-complete", (event) => {
       statusShow(`Exported ${event.payload.exported_count} files`, "success");
-    }).then((fn) => { unlistenComplete = fn; });
+    }).then((fn) => { if (cancelled) fn(); else unlistenComplete = fn; });
     return () => {
+      cancelled = true;
       unlistenProgress?.();
       unlistenComplete?.();
     };
   }, [statusShow]);
 
   useEffect(() => {
+    const win = getCurrentWebviewWindow();
+    let cancelled = false;
     let unlistenProgress: (() => void) | undefined;
     let unlistenComplete: (() => void) | undefined;
-    listen<ExportProgress>("lit:lkg-export-progress", (event) => {
+    win.listen<ExportProgress>("lit:lkg-export-progress", (event) => {
       const { current, total } = event.payload;
       statusShow(`Exporting ${current}/${total}…`, "progress", 8000);
-    }).then((fn) => { unlistenProgress = fn; });
-    listen<LkgExportSummary>("lit:lkg-export-complete", (event) => {
+    }).then((fn) => { if (cancelled) fn(); else unlistenProgress = fn; });
+    win.listen<LkgExportSummary>("lit:lkg-export-complete", (event) => {
       statusShow(`Exported ${event.payload.exported_count} files`, "success");
-    }).then((fn) => { unlistenComplete = fn; });
+    }).then((fn) => { if (cancelled) fn(); else unlistenComplete = fn; });
     return () => {
+      cancelled = true;
       unlistenProgress?.();
-      unlistenComplete?.();
-    };
-  }, [statusShow]);
-
-  useEffect(() => {
-    let unlistenComplete: (() => void) | undefined;
-    listen<LkgImportSummary>("lit:lkg-import-complete", (event) => {
-      const { node_count, edge_count, annotation_count, file_count } = event.payload;
-      statusShow(`Imported ${node_count} nodes, ${edge_count} edges, ${annotation_count} annotations, ${file_count} files`, "success");
-    }).then((fn) => { unlistenComplete = fn; });
-    return () => {
       unlistenComplete?.();
     };
   }, [statusShow]);

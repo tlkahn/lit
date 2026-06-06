@@ -16,13 +16,13 @@ pub async fn export_data(
 
     let summary = tokio::task::spawn_blocking(move || {
         run_export(&root_path, &dest, |current, total| {
-            let _ = win.emit("lit:export-progress", ExportProgress { current, total });
+            let _ = win.emit_to(win.label(), "lit:export-progress", ExportProgress { current, total });
         })
     })
     .await
     .map_err(|e| e.to_string())??;
 
-    let _ = window.emit("lit:export-complete", &summary);
+    let _ = window.emit_to(window.label(), "lit:export-complete", &summary);
     Ok(summary)
 }
 
@@ -49,12 +49,12 @@ pub async fn export_subgraph(
 
     let summary = tokio::task::spawn_blocking(move || {
         run_subgraph_export(&root_path, &gi, &node_id, depth, &dest, |current, total| {
-            let _ = win.emit("lit:export-progress", ExportProgress { current, total });
+            let _ = win.emit_to(win.label(), "lit:export-progress", ExportProgress { current, total });
         })
     })
     .await
     .map_err(|e| e.to_string())??;
 
-    let _ = window.emit("lit:export-complete", &summary);
+    let _ = window.emit_to(window.label(), "lit:export-complete", &summary);
     Ok(summary)
 }

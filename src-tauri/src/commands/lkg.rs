@@ -2,9 +2,60 @@ use crate::commands::graph::GraphRegistry;
 use crate::commands::workspace::{get_workspace_root, WorkspaceRegistry};
 use crate::lkg::export::export_lkg as run_export_lkg;
 use crate::lkg::types::{LkgExportSummary, LkgImportSummary};
+use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tauri::{Emitter, State};
+
+pub struct LkgExportState {
+    active: Mutex<HashSet<PathBuf>>,
+}
+
+impl LkgExportState {
+    pub fn new() -> Self {
+        Self {
+            active: Mutex::new(HashSet::new()),
+        }
+    }
+
+    /// Acquire the export lock, returning a guard that auto-releases on drop.
+    pub fn try_acquire(&self, path: &PathBuf) -> Result<LkgExportGuard<'_>, String> {
+        let mut active = self.active.lock().unwrap();
+        if active.contains(path) {
+            return Err(format!(
+                "An export is already in progress for {}",
+                path.display()
+            ));
+        }
+        active.insert(path.clone());
+        Ok(LkgExportGuard {
+            state: self,
+            path: path.clone(),
+        })
+    }
+
+    fn release(&self, path: &PathBuf) {
+        let mut active = self.active.lock().unwrap();
+        active.remove(path);
+    }
+
+    #[cfg(test)]
+    pub fn is_active(&self, path: &PathBuf) -> bool {
+        let active = self.active.lock().unwrap();
+        active.contains(path)
+    }
+}
+
+pub struct LkgExportGuard<'a> {
+    state: &'a LkgExportState,
+    path: PathBuf,
+}
+
+impl Drop for LkgExportGuard<'_> {
+    fn drop(&mut self) {
+        self.state.release(&self.path);
+    }
+}
 
 #[derive(Clone, serde::Serialize)]
 struct LkgExportProgress {
@@ -20,8 +71,11 @@ pub async fn export_lkg(
     window: tauri::Window,
     state: State<'_, WorkspaceRegistry>,
     graph_state: State<'_, Arc<GraphRegistry>>,
+    export_state: State<'_, LkgExportState>,
 ) -> Result<LkgExportSummary, String> {
     let root_path = get_workspace_root(&state, window.label())?;
+    let _guard = export_state.try_acquire(&root_path)?;
+
     let gi = {
         let indices = graph_state.indices.lock().unwrap();
         Arc::clone(
@@ -34,7 +88,7 @@ pub async fn export_lkg(
     let title = title.unwrap_or_else(|| "Knowledge Graph".to_string());
     let win = window.clone();
 
-    let summary = tokio::task::spawn_blocking(move || {
+    let result = tokio::task::spawn_blocking(move || {
         run_export_lkg(
             &root_path,
             &gi,
@@ -42,14 +96,16 @@ pub async fn export_lkg(
             description.as_deref(),
             &dest,
             |current, total| {
-                let _ = win.emit("lit:lkg-export-progress", LkgExportProgress { current, total });
+                let _ = win.emit_to(win.label(), "lit:lkg-export-progress", LkgExportProgress { current, total });
             },
         )
     })
     .await
-    .map_err(|e| e.to_string())??;
+    .map_err(|e| e.to_string());
 
-    let _ = window.emit("lit:lkg-export-complete", &summary);
+    let summary = result??;
+
+    let _ = window.emit_to(window.label(), "lit:lkg-export-complete", &summary);
     Ok(summary)
 }
 
@@ -57,7 +113,6 @@ pub async fn export_lkg(
 pub async fn import_lkg(
     source: String,
     destination: String,
-    window: tauri::Window,
 ) -> Result<LkgImportSummary, String> {
     let src = PathBuf::from(&source);
     let dst = PathBuf::from(&destination);
@@ -66,7 +121,10 @@ pub async fn import_lkg(
         .await
         .map_err(|e| e.to_string())??;
 
-    let _ = window.emit("lit:lkg-import-complete", &summary);
+    // Success is reported via this return value (consumed by the
+    // menu://import-lkg handler in src/App.tsx). No completion event is emitted:
+    // a redundant `lit:lkg-import-complete` event previously caused a duplicate
+    // success toast for a single import.
     Ok(summary)
 }
 
@@ -78,7 +136,146 @@ mod tests {
     //! underlying flow the commands delegate to — `lkg::export::export_lkg`
     //! followed by `lkg::import::import_lkg` — to guard the integration contract.
 
+    use super::LkgExportState;
     use crate::graph::indexer::GraphIndex;
+    use std::path::PathBuf;
+
+    #[test]
+    fn new_export_state_has_no_active_workspace() {
+        let state = LkgExportState::new();
+        assert!(!state.is_active(&PathBuf::from("/workspace")));
+    }
+
+    #[test]
+    fn try_acquire_marks_workspace_as_active() {
+        let state = LkgExportState::new();
+        let path = PathBuf::from("/workspace");
+        let _g = state.try_acquire(&path).unwrap();
+        assert!(state.is_active(&path));
+    }
+
+    #[test]
+    fn try_acquire_returns_err_when_already_active() {
+        let state = LkgExportState::new();
+        let path = PathBuf::from("/workspace");
+        let _g = state.try_acquire(&path).unwrap();
+        assert!(state.try_acquire(&path).is_err());
+    }
+
+    #[test]
+    fn release_allows_re_acquisition() {
+        let state = LkgExportState::new();
+        let path = PathBuf::from("/workspace");
+        drop(state.try_acquire(&path).unwrap());
+        assert!(!state.is_active(&path));
+        let _g = state.try_acquire(&path).unwrap();
+        assert!(state.is_active(&path));
+    }
+
+    #[test]
+    fn different_workspaces_can_export_concurrently() {
+        let state = LkgExportState::new();
+        let a = PathBuf::from("/workspace-a");
+        let b = PathBuf::from("/workspace-b");
+        let _ga = state.try_acquire(&a).unwrap();
+        let _gb = state.try_acquire(&b).unwrap();
+        assert!(state.is_active(&a));
+        assert!(state.is_active(&b));
+    }
+
+    #[test]
+    fn release_is_idempotent() {
+        let state = LkgExportState::new();
+        let path = PathBuf::from("/workspace");
+        // Leak the guard so the entry stays inserted and Drop does not also
+        // release; we want to exercise an explicit double `release`.
+        std::mem::forget(state.try_acquire(&path).unwrap());
+        assert!(state.is_active(&path));
+        state.release(&path);
+        state.release(&path);
+        assert!(!state.is_active(&path));
+    }
+
+    #[test]
+    fn concurrent_acquire_exactly_one_succeeds() {
+        use std::sync::{Arc, Barrier};
+        let state = Arc::new(LkgExportState::new());
+        let barrier = Arc::new(Barrier::new(2));
+        let path = PathBuf::from("/workspace");
+
+        let s1 = Arc::clone(&state);
+        let b1 = Arc::clone(&barrier);
+        let p1 = path.clone();
+        let t1 = std::thread::spawn(move || {
+            b1.wait();
+            // Forget the guard on success so the entry persists in the active
+            // set and the racing thread observes contention (the guard borrows
+            // the thread-local Arc, so it cannot be returned across the join).
+            match s1.try_acquire(&p1) {
+                Ok(g) => {
+                    std::mem::forget(g);
+                    true
+                }
+                Err(_) => false,
+            }
+        });
+
+        let s2 = Arc::clone(&state);
+        let b2 = Arc::clone(&barrier);
+        let p2 = path.clone();
+        let t2 = std::thread::spawn(move || {
+            b2.wait();
+            match s2.try_acquire(&p2) {
+                Ok(g) => {
+                    std::mem::forget(g);
+                    true
+                }
+                Err(_) => false,
+            }
+        });
+
+        let r1 = t1.join().unwrap();
+        let r2 = t2.join().unwrap();
+
+        let successes = [r1, r2].iter().filter(|&&v| v).count();
+        assert_eq!(successes, 1, "exactly one thread should acquire the lock");
+    }
+
+    #[test]
+    fn guard_drop_releases_on_scope_exit() {
+        let state = LkgExportState::new();
+        let path = PathBuf::from("/workspace");
+        {
+            let _g = state.try_acquire(&path).unwrap();
+            assert!(state.is_active(&path));
+        }
+        assert!(!state.is_active(&path), "guard drop must release the lock");
+        // Re-acquisition succeeds after the guard dropped.
+        assert!(state.try_acquire(&path).is_ok());
+    }
+
+    #[test]
+    fn guard_drop_releases_on_early_return() {
+        // Simulates the real bug path: a fallible operation acquires the guard,
+        // then returns Err early (mimicking the graph-index `ok_or_else`).
+        let state = LkgExportState::new();
+        let path = PathBuf::from("/workspace");
+
+        let attempt = || -> Result<(), String> {
+            let _guard = state.try_acquire(&path)?;
+            // Early return before any explicit release would run.
+            Err("No graph index for this workspace".to_string())
+        };
+
+        assert!(attempt().is_err());
+        assert!(
+            !state.is_active(&path),
+            "guard must release the lock on an early Err return"
+        );
+        // The leak is gone: a subsequent export can acquire again.
+        let _g = state.try_acquire(&path).unwrap();
+        assert!(state.is_active(&path));
+    }
 
     #[test]
     fn export_then_import_roundtrip_preserves_counts() {

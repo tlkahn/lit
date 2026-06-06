@@ -92,14 +92,24 @@ impl MenuAction {
     }
 }
 
+/// Return the label of the first focused candidate, or `None`.
+fn pick_focused_label(candidates: &[(String, bool)]) -> Option<String> {
+    candidates
+        .iter()
+        .find(|(_, focused)| *focused)
+        .map(|(label, _)| label.clone())
+}
+
+/// Find the focused window, or `None`. On macOS the menu bar can steal focus
+/// briefly during selection, so callers must handle `None`.
 fn find_focused_window(app: &AppHandle<Wry>) -> Option<tauri::WebviewWindow<Wry>> {
     let windows = app.webview_windows();
-    for window in windows.values() {
-        if window.is_focused().unwrap_or(false) {
-            return Some(window.clone());
-        }
-    }
-    windows.values().next().cloned()
+    let candidates: Vec<(String, bool)> = windows
+        .iter()
+        .map(|(label, window)| (label.clone(), window.is_focused().unwrap_or(false)))
+        .collect();
+    let label = pick_focused_label(&candidates)?;
+    windows.get(&label).cloned()
 }
 
 pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
@@ -147,17 +157,17 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
         }
         MenuAction::OpenPreferences => {
             if let Some(window) = find_focused_window(app) {
-                let _ = window.emit(EVENT_OPEN_PREFERENCES, ());
+                let _ = window.emit_to(window.label(), EVENT_OPEN_PREFERENCES, ());
             }
         }
         MenuAction::OpenInExternalEditor => {
             if let Some(window) = find_focused_window(app) {
-                let _ = window.emit(EVENT_OPEN_IN_EXTERNAL_EDITOR, ());
+                let _ = window.emit_to(window.label(), EVENT_OPEN_IN_EXTERNAL_EDITOR, ());
             }
         }
         MenuAction::ClosePane => {
             if let Some(window) = find_focused_window(app) {
-                let _ = window.emit(EVENT_CLOSE_PANE, ());
+                let _ = window.emit_to(window.label(), EVENT_CLOSE_PANE, ());
             }
         }
         MenuAction::ShowAbout => {
@@ -172,19 +182,18 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
             });
         }
         MenuAction::ExportMarkdown => {
-            let handle = app.clone();
-            let target_window = find_focused_window(app);
-            tauri::async_runtime::spawn(async move {
-                use tauri_plugin_dialog::DialogExt;
-                let dialog = handle.dialog().clone();
-                dialog
-                    .file()
-                    .set_file_name("export.zip")
-                    .add_filter("ZIP Archive", &["zip"])
-                    .save_file(move |path| {
-                        if let Some(dest) = path {
-                            let dest_str = dest.to_string();
-                            if let Some(window) = target_window.clone() {
+            if let Some(window) = find_focused_window(app) {
+                let handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    use tauri_plugin_dialog::DialogExt;
+                    let dialog = handle.dialog().clone();
+                    dialog
+                        .file()
+                        .set_file_name("export.zip")
+                        .add_filter("ZIP Archive", &["zip"])
+                        .save_file(move |path| {
+                            if let Some(dest) = path {
+                                let dest_str = dest.to_string();
                                 let state: tauri::State<crate::commands::workspace::WorkspaceRegistry> = handle.state();
                                 let root = match crate::commands::workspace::get_workspace_root(&state, window.label()) {
                                     Ok(r) => r,
@@ -197,10 +206,10 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
                                 let dialog_handle = handle.clone();
                                 std::thread::spawn(move || {
                                     match crate::export::run_export(&root, &dest_path, |current, total| {
-                                        let _ = window.emit("lit:export-progress", crate::export::ExportProgress { current, total });
+                                        let _ = window.emit_to(window.label(), "lit:export-progress", crate::export::ExportProgress { current, total });
                                     }) {
                                         Ok(summary) => {
-                                            let _ = window.emit("lit:export-complete", summary);
+                                            let _ = window.emit_to(window.label(), "lit:export-complete", summary);
                                         }
                                         Err(e) => {
                                             dialog_handle.dialog().message(format!("Export failed: {e}")).title("Export Error").blocking_show();
@@ -208,38 +217,38 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
                                     }
                                 });
                             }
-                        }
-                    });
-            });
+                        });
+                });
+            }
         }
         MenuAction::ExportLatex => {
             if let Some(window) = find_focused_window(app) {
-                let _ = window.emit(EVENT_EXPORT_LATEX, ());
+                let _ = window.emit_to(window.label(), EVENT_EXPORT_LATEX, ());
             }
         }
         MenuAction::ExportPdf => {
             if let Some(window) = find_focused_window(app) {
-                let _ = window.emit(EVENT_EXPORT_PDF, ());
+                let _ = window.emit_to(window.label(), EVENT_EXPORT_PDF, ());
             }
         }
         MenuAction::ExportHtml => {
             if let Some(window) = find_focused_window(app) {
-                let _ = window.emit(EVENT_EXPORT_HTML, ());
+                let _ = window.emit_to(window.label(), EVENT_EXPORT_HTML, ());
             }
         }
         MenuAction::ExportDocx => {
             if let Some(window) = find_focused_window(app) {
-                let _ = window.emit(EVENT_EXPORT_DOCX, ());
+                let _ = window.emit_to(window.label(), EVENT_EXPORT_DOCX, ());
             }
         }
         MenuAction::ExportLkg => {
             if let Some(window) = find_focused_window(app) {
-                let _ = window.emit(EVENT_EXPORT_LKG, ());
+                let _ = window.emit_to(window.label(), EVENT_EXPORT_LKG, ());
             }
         }
         MenuAction::ImportLkg => {
             if let Some(window) = find_focused_window(app) {
-                let _ = window.emit(EVENT_IMPORT_LKG, ());
+                let _ = window.emit_to(window.label(), EVENT_IMPORT_LKG, ());
             }
         }
         MenuAction::BuyLicense => {
@@ -472,6 +481,34 @@ mod tests {
     #[test]
     fn find_focused_window_exists() {
         let _: fn(&AppHandle<Wry>) -> Option<tauri::WebviewWindow<Wry>> = find_focused_window;
+    }
+
+    #[test]
+    fn pick_focused_label_returns_focused() {
+        let candidates = vec![
+            ("a".to_string(), false),
+            ("b".to_string(), true),
+            ("c".to_string(), false),
+        ];
+        assert_eq!(pick_focused_label(&candidates), Some("b".to_string()));
+    }
+
+    #[test]
+    fn pick_focused_label_returns_first_focused() {
+        let candidates = vec![("a".to_string(), true), ("b".to_string(), true)];
+        assert_eq!(pick_focused_label(&candidates), Some("a".to_string()));
+    }
+
+    #[test]
+    fn pick_focused_label_none_when_no_focus() {
+        let candidates = vec![("a".to_string(), false), ("b".to_string(), false)];
+        assert_eq!(pick_focused_label(&candidates), None);
+    }
+
+    #[test]
+    fn pick_focused_label_empty_is_none() {
+        let candidates: Vec<(String, bool)> = vec![];
+        assert_eq!(pick_focused_label(&candidates), None);
     }
 
     #[test]

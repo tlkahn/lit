@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 import App from "./App";
-import { mockInvoke, mockListen, emitMockEvent } from "./test/tauri-mock";
+import { mockInvoke, mockListen, emitMockEvent, mockWindowListen, emitWindowEvent } from "./test/tauri-mock";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { useWorkspaceStore } from "./stores/workspace";
 import { usePreferencesStore } from "./stores/preferences";
@@ -11,6 +11,7 @@ import { useBottomPanelStore } from "./stores/bottomPanel";
 import { useStatusMessageStore } from "./stores/statusMessage";
 import { _resetForTesting as resetRegistry } from "./lib/paneContentRegistry";
 import { _resetForTesting as resetEditorViewRef, setCurrentEditorView } from "./lib/editorViewRef";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { SIDEBAR_WIDTH_PX } from "./components/Sidebar";
 import type { AnnotationBuilderEventDetail } from "./lib/annotationDsl";
 import type { EditorView } from "@codemirror/view";
@@ -746,6 +747,7 @@ describe("App", () => {
 
   it("menu://open-preferences event opens SettingsModal", async () => {
     mockListen();
+    mockWindowListen();
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
     useLicenseStore.setState({ state: "licensed", loading: false });
 
@@ -754,7 +756,7 @@ describe("App", () => {
     });
 
     act(() => {
-      emitMockEvent("menu://open-preferences", {});
+      emitWindowEvent("menu://open-preferences", {});
     });
 
     await waitFor(() => {
@@ -890,6 +892,51 @@ describe("App", () => {
     expect(changes.to).toBe(15);
   });
 
+  describe("window listener cleanup", () => {
+    it("unlistens a window listener that resolves after unmount", async () => {
+      // Inject a deferred listen() promise for ONE of the buggy effects'
+      // events so we can unmount BEFORE it resolves, exercising the
+      // fast-unmount race. The shared mockWindowListen resolves synchronously
+      // and cannot reproduce this. We target "lit:export-progress" specifically
+      // (one of the three effects under test) and leave the already-guarded
+      // cli-navigate effect on a resolved no-op so it cannot mask the leak.
+      let resolveListen!: (fn: () => void) => void;
+      const listenPromise = new Promise<() => void>((r) => {
+        resolveListen = r;
+      });
+      const unlistenSpy = vi.fn();
+
+      vi.mocked(getCurrentWebviewWindow).mockReturnValue({
+        listen: vi.fn((event: string) =>
+          event === "lit:export-progress"
+            ? listenPromise
+            : Promise.resolve(vi.fn()),
+        ),
+      } as unknown as ReturnType<typeof getCurrentWebviewWindow>);
+
+      useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+
+      let unmount!: () => void;
+      await act(async () => {
+        ({ unmount } = render(<App />));
+      });
+
+      // Unmount while the listen() promise is still pending.
+      act(() => {
+        unmount();
+      });
+
+      // Now resolve the listen() promise. The effect cleanup already ran, so the
+      // cancelled guard must immediately tear down the late-arriving listener.
+      await act(async () => {
+        resolveListen(unlistenSpy);
+        await Promise.resolve();
+      });
+
+      expect(unlistenSpy).toHaveBeenCalled();
+    });
+  });
+
   describe("LKG bundle wiring", () => {
     const mockedSave = save as unknown as ReturnType<typeof vi.fn>;
     const mockedOpen = open as unknown as ReturnType<typeof vi.fn>;
@@ -945,6 +992,7 @@ describe("App", () => {
     beforeEach(() => {
       vi.clearAllMocks();
       mockListen();
+      mockWindowListen();
       useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
       useStatusMessageStore.setState({ message: null, variant: "success" });
     });
@@ -967,7 +1015,7 @@ describe("App", () => {
       });
 
       await act(async () => {
-        emitMockEvent("menu://export-lkg", {});
+        emitWindowEvent("menu://export-lkg", {});
       });
 
       await waitFor(() => {
@@ -993,7 +1041,7 @@ describe("App", () => {
       });
 
       await act(async () => {
-        emitMockEvent("menu://export-lkg", {});
+        emitWindowEvent("menu://export-lkg", {});
       });
 
       await waitFor(() => {
@@ -1009,7 +1057,7 @@ describe("App", () => {
       });
 
       act(() => {
-        emitMockEvent("lit:lkg-export-progress", { current: 2, total: 5 });
+        emitWindowEvent("lit:lkg-export-progress", { current: 2, total: 5 });
       });
 
       await waitFor(() => {
@@ -1024,7 +1072,7 @@ describe("App", () => {
       });
 
       act(() => {
-        emitMockEvent("lit:lkg-export-complete", {
+        emitWindowEvent("lit:lkg-export-complete", {
           exported_count: 3,
           destination: "/out/graph.lkg",
           graph_hash: HASH,
@@ -1048,7 +1096,7 @@ describe("App", () => {
       });
 
       await act(async () => {
-        emitMockEvent("menu://export-lkg", {});
+        emitWindowEvent("menu://export-lkg", {});
       });
 
       await waitFor(() => {
@@ -1074,7 +1122,7 @@ describe("App", () => {
       });
 
       await act(async () => {
-        emitMockEvent("menu://import-lkg", {});
+        emitWindowEvent("menu://import-lkg", {});
       });
 
       await waitFor(() => {
@@ -1098,7 +1146,7 @@ describe("App", () => {
       });
 
       await act(async () => {
-        emitMockEvent("menu://import-lkg", {});
+        emitWindowEvent("menu://import-lkg", {});
       });
 
       await waitFor(() => {
@@ -1117,7 +1165,7 @@ describe("App", () => {
       });
 
       await act(async () => {
-        emitMockEvent("menu://import-lkg", {});
+        emitWindowEvent("menu://import-lkg", {});
       });
 
       await waitFor(() => {
@@ -1135,37 +1183,49 @@ describe("App", () => {
       });
 
       await act(async () => {
-        emitMockEvent("menu://import-lkg", {});
+        emitWindowEvent("menu://import-lkg", {});
       });
 
       await waitFor(() => {
         expect(screen.getByTestId("status-bar-message")).toBeInTheDocument();
       });
+      // A single successful import must produce exactly ONE success toast. The
+      // success summary is reported only through the direct importLkg() return
+      // value; there is no redundant lit:lkg-import-complete event path.
       expect(
-        screen.getByText(/Imported 2 nodes, 1 edges, 0 annotations, 3 files/),
-      ).toBeInTheDocument();
+        screen.getAllByText(/Imported 2 nodes, 1 edges, 0 annotations, 3 files/),
+      ).toHaveLength(1);
     });
 
-    it("lit:lkg-import-complete event shows import summary in status bar", async () => {
+    // === Scope isolation ===
+
+    it("global emit of menu://export-lkg does NOT trigger window-scoped handler", async () => {
+      lkgMockInvoke();
+      mockedSave.mockResolvedValue("/out/graph.lkg");
+
+      await act(async () => {
+        render(<App />);
+      });
+
+      await act(async () => {
+        emitMockEvent("menu://export-lkg", {});
+      });
+
+      // Global emit should not reach window-scoped listener, so save() should NOT be called
+      expect(mockedSave).not.toHaveBeenCalled();
+    });
+
+    it("global emit of lit:lkg-export-progress does NOT trigger window-scoped handler", async () => {
       lkgMockInvoke();
       await act(async () => {
         render(<App />);
       });
 
       act(() => {
-        emitMockEvent("lit:lkg-import-complete", {
-          node_count: 2,
-          edge_count: 1,
-          annotation_count: 0,
-          file_count: 3,
-        });
+        emitMockEvent("lit:lkg-export-progress", { current: 2, total: 5 });
       });
 
-      await waitFor(() => {
-        expect(screen.getByTestId("status-bar-message")).toHaveTextContent(
-          /Imported 2 nodes, 1 edges, 0 annotations, 3 files/,
-        );
-      });
+      expect(screen.queryByTestId("status-bar-message")).not.toBeInTheDocument();
     });
   });
 });

@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { vi } from "vitest";
-import { resetInvokeMock, resetListenMock } from "./tauri-mock";
+import { resetInvokeMock, resetListenMock, resetWindowListenMock } from "./tauri-mock";
 
 globalThis.ResizeObserver = class {
   private cb: ResizeObserverCallback;
@@ -101,5 +101,6 @@ vi.mock("@tauri-apps/api/webviewWindow", () => ({
 beforeEach(() => {
   resetInvokeMock();
   resetListenMock();
+  resetWindowListenMock();
   localStorage.clear();
 });
