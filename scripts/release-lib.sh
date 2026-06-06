@@ -47,7 +47,7 @@ release_checkout_tag() {
   export RELEASE_ORIGINAL_REF
   echo "── Checking out tag $tag (was on $RELEASE_ORIGINAL_REF)..."
   git checkout "$tag" --detach
-  trap 'echo "── Restoring $RELEASE_ORIGINAL_REF..."; git checkout "$RELEASE_ORIGINAL_REF" --' EXIT
+  trap 'echo "── Restoring $RELEASE_ORIGINAL_REF..."; git checkout "$RELEASE_ORIGINAL_REF" -- && bash "$REPO_ROOT/scripts/set-version.sh" 0.0.0 >/dev/null 2>&1 || true' EXIT
 }
 
 release_check_tools() {
