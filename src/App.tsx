@@ -6,10 +6,8 @@ import { ContentErrorFallback } from "./components/ContentErrorFallback";
 import { WorkspaceChooser } from "./components/WorkspaceChooser";
 import { StatusBar } from "./components/StatusBar";
 import { LicenseGate } from "./components/LicenseGate";
-import { LicenseEntryDialog } from "./components/LicenseEntryDialog";
 import { LicenseInfoDialog } from "./components/LicenseInfoDialog";
 import { useTheme } from "./hooks/useTheme";
-import { useLicenseTitle } from "./hooks/useLicenseTitle";
 import { useSidebarPosition } from "./hooks/useSidebarPosition";
 import { useFileWatcher } from "./hooks/useFileWatcher";
 import { useMenuLicenseSync } from "./hooks/useMenuLicenseSync";
@@ -63,7 +61,6 @@ declare global {
 
 function App() {
   useTheme();
-  useLicenseTitle();
   useBottomPanelEvents();
   const { position } = useSidebarPosition();
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
@@ -153,7 +150,6 @@ function App() {
   const [licenseInfoOpen, setLicenseInfoOpen] = useState(false);
   const licenseState = useLicenseStore((s) => s.state);
   const licensedTo = useLicenseStore((s) => s.licensedTo);
-  const daysRemaining = useLicenseStore((s) => s.daysRemaining);
 
   const [academicExportOpen, setAcademicExportOpen] = useState(false);
   const [academicExportFormat, setAcademicExportFormat] = useState<"latex" | "pdf" | "html" | "docx">("latex");
@@ -463,7 +459,7 @@ function App() {
   }
 
   return (
-    <LicenseGate>
+    <LicenseGate entryOpen={licenseEntryOpen} onEntryOpenChange={setLicenseEntryOpen}>
       <div className={`flex h-screen flex-col bg-bg-primary${focusModeActive ? " focus-mode-zen" : ""}`}>
         <div className={`flex min-h-0 flex-1 ${position === "right" ? "flex-row-reverse" : "flex-row"}`}>
           <div
@@ -511,8 +507,7 @@ function App() {
         <AcademicExportDialog open={academicExportOpen} onClose={() => setAcademicExportOpen(false)} initialFormat={academicExportFormat} />
         <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} initialCategory={settingsInitialCategory} />
         <PassphraseModal />
-        <LicenseEntryDialog open={licenseEntryOpen} onClose={() => setLicenseEntryOpen(false)} />
-        <LicenseInfoDialog open={licenseInfoOpen} licenseState={licenseState} licensedTo={licensedTo} daysRemaining={daysRemaining} onClose={() => setLicenseInfoOpen(false)} />
+        <LicenseInfoDialog open={licenseInfoOpen} licenseState={licenseState} licensedTo={licensedTo} onClose={() => setLicenseInfoOpen(false)} />
         <SubgraphExportPicker
           open={exportFlow.pickerOpen}
           onExport={exportFlow.handlePickerExport}

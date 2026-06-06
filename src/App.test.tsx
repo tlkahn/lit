@@ -11,6 +11,7 @@ import { _resetForTesting as resetRegistry } from "./lib/paneContentRegistry";
 import { _resetForTesting as resetEditorViewRef, setCurrentEditorView } from "./lib/editorViewRef";
 import { SIDEBAR_WIDTH_PX } from "./components/Sidebar";
 import type { AnnotationBuilderEventDetail } from "./lib/annotationDsl";
+import type { EditorView } from "@codemirror/view";
 
 const samplePages = [
   {
@@ -52,8 +53,11 @@ describe("App", () => {
     });
 
     useLicenseStore.setState({
-      state: "trial",
-      daysRemaining: 12,
+      state: "licensed",
+      licensedTo: null,
+      source: null,
+      expiresAt: null,
+      expiryDate: null,
       loading: false,
       error: null,
     });
@@ -87,7 +91,9 @@ describe("App", () => {
         case "ensure_graph_ready":
           return null;
         case "get_license_status":
-          return { state: "trial", days_remaining: 12 };
+          return { state: "licensed", licensed_to: "Test User", source: "direct" };
+        case "get_build_info":
+          return { source: "direct" };
         case "has_api_key":
           return false;
         case "cancel_title_suggestion":
@@ -137,7 +143,7 @@ describe("App", () => {
         case "ensure_graph_ready":
           return null;
         case "get_license_status":
-          return { state: "trial", days_remaining: 12 };
+          return { state: "licensed", licensed_to: "Test User", source: "direct" };
         case "cancel_title_suggestion":
           return undefined;
         default:
@@ -266,7 +272,7 @@ describe("App", () => {
         case "ensure_graph_ready":
           return null;
         case "get_license_status":
-          return { state: "trial", days_remaining: 12 };
+          return { state: "licensed", licensed_to: "Test User", source: "direct" };
         case "cancel_title_suggestion":
           return undefined;
         default:
@@ -302,7 +308,7 @@ describe("App", () => {
         case "ensure_graph_ready":
           return null;
         case "get_license_status":
-          return { state: "trial", days_remaining: 12 };
+          return { state: "licensed", licensed_to: "Test User", source: "direct" };
         case "cancel_title_suggestion":
           return undefined;
         default:
@@ -344,7 +350,7 @@ describe("App", () => {
         case "ensure_graph_ready":
           return null;
         case "get_license_status":
-          return { state: "trial", days_remaining: 12 };
+          return { state: "licensed", licensed_to: "Test User", source: "direct" };
         case "cancel_title_suggestion":
           return undefined;
         default:
@@ -438,7 +444,7 @@ describe("App", () => {
         case "ensure_graph_ready":
           return null;
         case "get_license_status":
-          return { state: "trial", days_remaining: 12 };
+          return { state: "licensed", licensed_to: "Test User", source: "direct" };
         case "cancel_title_suggestion":
           return undefined;
         default:
@@ -483,7 +489,7 @@ describe("App", () => {
         case "ensure_graph_ready":
           return null;
         case "get_license_status":
-          return { state: "trial", days_remaining: 12 };
+          return { state: "licensed", licensed_to: "Test User", source: "direct" };
         case "cancel_title_suggestion":
           return undefined;
         default:
@@ -526,7 +532,7 @@ describe("App", () => {
         case "ensure_graph_ready":
           return null;
         case "get_license_status":
-          return { state: "trial", days_remaining: 12 };
+          return { state: "licensed", licensed_to: "Test User", source: "direct" };
         case "cancel_title_suggestion":
           return undefined;
         default:
@@ -571,7 +577,7 @@ describe("App", () => {
         case "ensure_graph_ready":
           return null;
         case "get_license_status":
-          return { state: "trial", days_remaining: 12 };
+          return { state: "licensed", licensed_to: "Test User", source: "direct" };
         case "cancel_title_suggestion":
           return undefined;
         default:
@@ -591,7 +597,7 @@ describe("App", () => {
   });
 
   it("App wraps content in LicenseGate and calls fetchStatus", async () => {
-    useLicenseStore.setState({ state: "trial", daysRemaining: 12, loading: false });
+    useLicenseStore.setState({ state: "licensed", loading: false });
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
     const fetchStatus = vi.fn();
     useLicenseStore.setState({ fetchStatus });
@@ -608,7 +614,7 @@ describe("App", () => {
   it("menu://enter-license-key event opens LicenseEntryDialog", async () => {
     mockListen();
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
-    useLicenseStore.setState({ state: "trial", daysRemaining: 12, loading: false });
+    useLicenseStore.setState({ state: "licensed", loading: false });
 
     await act(async () => {
       render(<App />);
@@ -623,10 +629,55 @@ describe("App", () => {
     });
   });
 
+  it("menu://enter-license-key opens LicenseEntryDialog during the splash (unlicensed)", async () => {
+    mockListen();
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+    useLicenseStore.setState({ state: "unlicensed", loading: false });
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    // While unlicensed the splash gates away the app, so the dialog must be
+    // rendered by LicenseGate itself rather than inside the gated children.
+    expect(screen.queryByTestId("license-entry-dialog")).not.toBeInTheDocument();
+
+    act(() => {
+      emitMockEvent("menu://enter-license-key", {});
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("license-entry-dialog")).toBeInTheDocument();
+    });
+  });
+
+  it("splash inline Enter License Key button and menu open the SAME single dialog", async () => {
+    mockListen();
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+    useLicenseStore.setState({ state: "unlicensed", loading: false });
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    expect(screen.queryByTestId("license-entry-dialog")).not.toBeInTheDocument();
+
+    act(() => {
+      fireEvent.click(screen.getByTestId("splash-enter-key"));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("license-entry-dialog")).toBeInTheDocument();
+    });
+    // Exactly one dialog in the tree — guards against the gate and App each
+    // rendering their own LicenseEntryDialog after the refactor.
+    expect(screen.getAllByTestId("license-entry-dialog")).toHaveLength(1);
+  });
+
   it("menu://buy-license event calls openUrl", async () => {
     mockListen();
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
-    useLicenseStore.setState({ state: "trial", daysRemaining: 12, loading: false });
+    useLicenseStore.setState({ state: "licensed", loading: false });
 
     await act(async () => {
       render(<App />);
@@ -646,7 +697,7 @@ describe("App", () => {
   it("license://activate-key event triggers activation", async () => {
     mockListen();
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
-    useLicenseStore.setState({ state: "trial", daysRemaining: 12, loading: false });
+    useLicenseStore.setState({ state: "licensed", loading: false });
 
     const activate = vi.fn().mockResolvedValue(true);
     useLicenseStore.setState({ activate });
@@ -694,7 +745,7 @@ describe("App", () => {
   it("menu://open-preferences event opens SettingsModal", async () => {
     mockListen();
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
-    useLicenseStore.setState({ state: "trial", daysRemaining: 12, loading: false });
+    useLicenseStore.setState({ state: "licensed", loading: false });
 
     await act(async () => {
       render(<App />);
@@ -712,7 +763,7 @@ describe("App", () => {
   it("license://activate-key shows entry dialog on failure", async () => {
     mockListen();
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
-    useLicenseStore.setState({ state: "trial", daysRemaining: 12, loading: false });
+    useLicenseStore.setState({ state: "licensed", loading: false });
 
     const activate = vi.fn().mockResolvedValue(false);
     useLicenseStore.setState({ activate });
@@ -813,7 +864,7 @@ describe("App", () => {
       state: { selection: { main: { head: 99 } } },
       focus: vi.fn(),
     };
-    setCurrentEditorView(mockView as any);
+    setCurrentEditorView(mockView as unknown as EditorView);
 
     render(<App />);
 

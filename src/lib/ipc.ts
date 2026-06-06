@@ -5,6 +5,10 @@ export interface AppInfo {
   version: string;
 }
 
+export interface BuildInfo {
+  source: "direct" | "app_store";
+}
+
 export interface PageMeta {
   title: string;
   relative_path: string;
@@ -26,6 +30,26 @@ export interface FileEvent {
 
 export async function getAppInfo(): Promise<AppInfo> {
   return invoke<AppInfo>("get_app_info");
+}
+
+export async function getBuildInfo(): Promise<BuildInfo> {
+  return invoke<BuildInfo>("get_build_info");
+}
+
+let _buildInfoPromise: Promise<BuildInfo> | null = null;
+
+export function getCachedBuildInfo(): Promise<BuildInfo> {
+  if (!_buildInfoPromise) {
+    _buildInfoPromise = getBuildInfo().catch((e) => {
+      _buildInfoPromise = null;
+      throw e;
+    });
+  }
+  return _buildInfoPromise;
+}
+
+export function _resetBuildInfoCacheForTesting(): void {
+  _buildInfoPromise = null;
 }
 
 export async function openWorkspace(path: string): Promise<PageMeta[]> {
@@ -701,9 +725,12 @@ export async function exportSubgraph(
 // License
 
 export interface LicenseStatusResponse {
-  state: "trial" | "expiring_soon" | "expired" | "licensed";
-  days_remaining?: number;
+  state: "unlicensed" | "licensed" | "license_expired" | "revoked";
   licensed_to?: string;
+  source?: "direct" | "app_store";
+  expires_at?: number;
+  expiry_date?: string;
+  reason?: string;
 }
 
 export async function getLicenseStatus(): Promise<LicenseStatusResponse> {

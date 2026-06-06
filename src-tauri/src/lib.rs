@@ -22,7 +22,7 @@ use commands::graph::GraphRegistry;
 use commands::license::LicenseManager;
 use commands::oplog::OpLogRegistry;
 use commands::workspace::{PendingCols, PendingFiles, PendingLines, PendingWorkspaces, WorkspaceRegistry};
-use ed25519_dalek::{SigningKey, VerifyingKey};
+use ed25519_dalek::VerifyingKey;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, WebviewWindowBuilder};
@@ -135,14 +135,11 @@ pub fn run() {
             let enc_store = std::sync::Arc::new(EncryptedFileStore::new(data_dir.clone()));
             app.manage(enc_store.clone() as Arc<dyn CredentialStore>);
             app.manage(enc_store);
-            let trial_signing_key =
-                SigningKey::from_bytes(license::TRIAL_SIGNING_KEY_BYTES);
             let license_verifying_key =
                 VerifyingKey::from_bytes(license::LICENSE_VERIFYING_KEY_BYTES)
                     .expect("invalid embedded license verifying key");
             app.manage(LicenseManager {
                 data_dir,
-                trial_signing_key,
                 license_verifying_key,
             });
 
@@ -277,6 +274,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::app_info::get_app_info,
+            commands::app_info::get_build_info,
             commands::workspace::open_workspace,
             commands::workspace::list_pages,
             commands::workspace::get_workspace_path,

@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { mockInvoke } from "../test/tauri-mock";
 import {
   getAppInfo,
+  getBuildInfo,
   openWorkspace,
   listPages,
   getWorkspacePath,
@@ -68,10 +69,14 @@ import {
   listAnnotations,
   exportData,
   exportSubgraph,
+  getCachedBuildInfo,
+  _resetBuildInfoCacheForTesting,
   getLicenseStatus,
   activateLicense,
   checkOnlineValidation,
   syncLicenseMenu,
+  type LicenseStatusResponse,
+  type OnlineValidationResult,
   setApiKey,
   getApiKey,
   hasApiKey,
@@ -116,6 +121,8 @@ describe("ipc", () => {
       switch (cmd) {
         case "get_app_info":
           return { name: "Lit", version: "0.1.0" };
+        case "get_build_info":
+          return { source: "direct" };
         case "open_workspace":
           return [sampleMeta];
         case "list_pages":
@@ -391,9 +398,9 @@ describe("ipc", () => {
         case "export_subgraph":
           return { exported_count: 7, destination: (args as Record<string, unknown>)?.destination ?? "" };
         case "get_license_status":
-          return { state: "trial", days_remaining: 12 };
+          return { state: "licensed", licensed_to: "Test User", source: "direct", expires_at: 1735603200, expiry_date: "2024-12-31" };
         case "activate_license":
-          return { state: "licensed", licensed_to: "Test User" };
+          return { state: "licensed", licensed_to: "Test User", source: "direct" };
         case "check_online_validation":
           return { action: "skipped", reason: "not_due" };
         case "sync_license_menu":
@@ -594,6 +601,54 @@ describe("ipc", () => {
   it("getAppInfo returns name and version", async () => {
     const info = await getAppInfo();
     expect(info).toEqual({ name: "Lit", version: "0.1.0" });
+  });
+
+  describe("getCachedBuildInfo", () => {
+    beforeEach(() => {
+      _resetBuildInfoCacheForTesting();
+    });
+
+    it("calls invoke only once for multiple calls", async () => {
+      await getCachedBuildInfo();
+      await getCachedBuildInfo();
+      const { invoke } = await import("@tauri-apps/api/core");
+      const buildInfoCalls = (invoke as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (c: unknown[]) => c[0] === "get_build_info",
+      );
+      expect(buildInfoCalls).toHaveLength(1);
+    });
+
+    it("retries after a failed call", async () => {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const mockedInvoke = invoke as unknown as ReturnType<typeof vi.fn>;
+      const original = mockedInvoke.getMockImplementation()!;
+      mockedInvoke.mockImplementationOnce((cmd: string, args?: Record<string, unknown>) => {
+        if (cmd === "get_build_info") return Promise.reject(new Error("ipc not ready"));
+        return original(cmd, args);
+      });
+      await expect(getCachedBuildInfo()).rejects.toThrow("ipc not ready");
+      mockedInvoke.mockImplementation(original);
+      const info = await getCachedBuildInfo();
+      expect(info).toEqual({ source: "direct" });
+    });
+
+    it("returns fresh value after reset", async () => {
+      await getCachedBuildInfo();
+      _resetBuildInfoCacheForTesting();
+      await getCachedBuildInfo();
+      const { invoke } = await import("@tauri-apps/api/core");
+      const buildInfoCalls = (invoke as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (c: unknown[]) => c[0] === "get_build_info",
+      );
+      expect(buildInfoCalls).toHaveLength(2);
+    });
+  });
+
+  it("getBuildInfo calls get_build_info", async () => {
+    const info = await getBuildInfo();
+    expect(info).toEqual({ source: "direct" });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("get_build_info");
   });
 
   it("openWorkspace calls with path", async () => {
@@ -1286,8 +1341,8 @@ describe("ipc", () => {
 
   it("getLicenseStatus calls get_license_status", async () => {
     const status = await getLicenseStatus();
-    expect(status.state).toBe("trial");
-    expect(status.days_remaining).toBe(12);
+    expect(status.state).toBe("licensed");
+    expect(status.licensed_to).toBe("Test User");
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("get_license_status");
   });
@@ -1308,10 +1363,21 @@ describe("ipc", () => {
     expect(invoke).toHaveBeenCalledWith("check_online_validation");
   });
 
+  it("LicenseStatusResponse state union accepts 'revoked'", () => {
+    // Compile-level: the union must include "revoked" or this assignment fails tsc.
+    const revoked: LicenseStatusResponse = { state: "revoked" };
+    expect(revoked.state).toBe("revoked");
+  });
+
+  it("checkOnlineValidation action union accepts 'revoked'", () => {
+    const result: OnlineValidationResult = { action: "revoked", reason: "refund" };
+    expect(result.action).toBe("revoked");
+  });
+
   it("syncLicenseMenu calls sync_license_menu with licenseState", async () => {
-    await syncLicenseMenu("trial");
+    await syncLicenseMenu("unlicensed");
     const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("sync_license_menu", { licenseState: "trial" });
+    expect(invoke).toHaveBeenCalledWith("sync_license_menu", { licenseState: "unlicensed" });
   });
 
   it("setApiKey invokes set_api_key with provider and key", async () => {

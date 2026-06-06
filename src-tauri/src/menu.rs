@@ -309,18 +309,18 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         ],
     )?;
 
-    let help_menu = Submenu::with_items(
-        app,
-        "Help",
-        true,
-        &[
-            &MenuItem::with_id(app, MENU_ID_BUY_LICENSE, "Buy License", true, None::<&str>)?,
-            &MenuItem::with_id(app, MENU_ID_ENTER_LICENSE_KEY, "Enter License Key\u{2026}", true, None::<&str>)?,
-            &MenuItem::with_id(app, MENU_ID_LICENSE_INFO, "License\u{2026}", true, None::<&str>)?,
-            &PredefinedMenuItem::separator(app)?,
-            &MenuItem::with_id(app, MENU_ID_ABOUT, "About Lit\u{2026}", true, None::<&str>)?,
-        ],
-    )?;
+    // Build the Help menu via append() so the purchase-related items can be
+    // cfg-gated out for App Store builds (where the App Store handles purchase
+    // and license restoration).
+    let help_menu = Submenu::new(app, "Help", true)?;
+    #[cfg(not(feature = "app-store"))]
+    {
+        help_menu.append(&MenuItem::with_id(app, MENU_ID_BUY_LICENSE, "Buy License", true, None::<&str>)?)?;
+        help_menu.append(&MenuItem::with_id(app, MENU_ID_ENTER_LICENSE_KEY, "Enter License Key\u{2026}", true, None::<&str>)?)?;
+    }
+    help_menu.append(&MenuItem::with_id(app, MENU_ID_LICENSE_INFO, "License\u{2026}", true, None::<&str>)?)?;
+    help_menu.append(&PredefinedMenuItem::separator(app)?)?;
+    help_menu.append(&MenuItem::with_id(app, MENU_ID_ABOUT, "About Lit\u{2026}", true, None::<&str>)?)?;
 
     Menu::with_items(app, &[&app_menu, &file_menu, &edit_menu, &window_menu, &help_menu])
 }

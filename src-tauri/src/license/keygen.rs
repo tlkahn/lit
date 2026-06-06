@@ -21,9 +21,6 @@ mod tests {
     fn write_dev_keys(dir: &Path) {
         std::fs::create_dir_all(dir).unwrap();
 
-        let trial = generate_keypair();
-        std::fs::write(dir.join("dev_trial_signing.bin"), trial.signing_seed).unwrap();
-
         let license = generate_keypair();
         std::fs::write(dir.join("dev_license_signing.bin"), license.signing_seed).unwrap();
         std::fs::write(dir.join("dev_license_verifying.bin"), license.verifying_bytes).unwrap();
@@ -55,14 +52,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         write_dev_keys(dir.path());
 
-        let trial = std::fs::read(dir.path().join("dev_trial_signing.bin")).unwrap();
-        assert_eq!(trial.len(), 32);
-
         let lic_sign = std::fs::read(dir.path().join("dev_license_signing.bin")).unwrap();
         assert_eq!(lic_sign.len(), 32);
 
         let lic_ver = std::fs::read(dir.path().join("dev_license_verifying.bin")).unwrap();
         assert_eq!(lic_ver.len(), 32);
+
+        assert!(
+            !dir.path().join("dev_trial_signing.bin").exists(),
+            "write_dev_keys must not create the removed trial signing key"
+        );
     }
 
     #[test]

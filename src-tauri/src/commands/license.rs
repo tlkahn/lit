@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use ed25519_dalek::{SigningKey, VerifyingKey};
+use ed25519_dalek::VerifyingKey;
 use serde::Serialize;
 use tauri::menu::MenuItemKind;
 use tauri::{AppHandle, State, Wry};
@@ -10,73 +10,118 @@ use crate::menu::{MENU_ID_BUY_LICENSE, MENU_ID_ENTER_LICENSE_KEY, MENU_ID_LICENS
 
 pub struct LicenseManager {
     pub data_dir: PathBuf,
-    pub trial_signing_key: SigningKey,
     pub license_verifying_key: VerifyingKey,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct LicenseStatusResponse {
     pub state: String,
-    pub days_remaining: Option<u64>,
     pub licensed_to: Option<String>,
+    pub source: Option<String>,
+    pub expires_at: Option<u64>,
+    pub expiry_date: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+fn source_to_string(source: &license::key::LicenseSource) -> String {
+    match source {
+        license::key::LicenseSource::Direct => "direct".into(),
+        license::key::LicenseSource::AppStore => "app_store".into(),
+    }
+}
+
+/// Format a Unix epoch timestamp (seconds) as a UTC `YYYY-MM-DD` date string.
+///
+/// Pure-Rust implementation of Howard Hinnant's civil-from-days algorithm,
+/// avoiding a `chrono`/`time` direct dependency.
+fn format_expiry_date(secs: u64) -> String {
+    let days = (secs / 86_400) as i64;
+    // Shift epoch from 1970-01-01 to 0000-03-01 (era-based algorithm).
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    let year = if m <= 2 { y + 1 } else { y };
+    format!("{:04}-{:02}-{:02}", year, m, d)
 }
 
 impl LicenseStatusResponse {
     fn from_dev_override(ov: license::DevOverride) -> Self {
         match ov {
-            license::DevOverride::Trial => Self {
-                state: "trial".into(),
-                days_remaining: Some(license::trial::TRIAL_DURATION_SECS.div_ceil(86400)),
+            license::DevOverride::Unlicensed => Self {
+                state: "unlicensed".into(),
                 licensed_to: None,
-            },
-            license::DevOverride::TrialShort => Self {
-                state: "trial".into(),
-                days_remaining: Some(0),
-                licensed_to: None,
-            },
-            license::DevOverride::TrialExpired => Self {
-                state: "expired".into(),
-                days_remaining: Some(0),
-                licensed_to: None,
+                source: None,
+                expires_at: None,
+                expiry_date: None,
+                reason: None,
             },
             license::DevOverride::Licensed => Self {
                 state: "licensed".into(),
-                days_remaining: None,
                 licensed_to: Some("Dev Mode".into()),
+                source: Some("direct".into()),
+                expires_at: None,
+                expiry_date: None,
+                reason: None,
+            },
+            license::DevOverride::LicenseExpired => Self {
+                state: "license_expired".into(),
+                licensed_to: Some("Dev User".into()),
+                source: Some("direct".into()),
+                expires_at: Some(1735603200),
+                expiry_date: Some(format_expiry_date(1735603200)),
+                reason: None,
+            },
+            license::DevOverride::Revoked => Self {
+                state: "revoked".into(),
+                licensed_to: None,
+                source: None,
+                expires_at: None,
+                expiry_date: None,
+                reason: Some("dev_revoked".into()),
             },
         }
     }
 
     fn from_status(status: &license::LicenseStatus) -> Self {
         match status {
-            license::LicenseStatus::Trial(license::trial::TrialState::Active { days_left }) => {
-                Self {
-                    state: "trial".into(),
-                    days_remaining: Some(*days_left),
-                    licensed_to: None,
-                }
-            }
-            license::LicenseStatus::Trial(license::trial::TrialState::ExpiringSoon {
-                days_left,
-            }) => Self {
-                state: "expiring_soon".into(),
-                days_remaining: Some(*days_left),
+            license::LicenseStatus::Unlicensed => Self {
+                state: "unlicensed".into(),
                 licensed_to: None,
-            },
-            license::LicenseStatus::Trial(license::trial::TrialState::Expired) => Self {
-                state: "expired".into(),
-                days_remaining: Some(0),
-                licensed_to: None,
+                source: None,
+                expires_at: None,
+                expiry_date: None,
+                reason: None,
             },
             license::LicenseStatus::Licensed(payload) => Self {
                 state: "licensed".into(),
-                days_remaining: None,
                 licensed_to: Some(payload.name.clone()),
+                source: Some(source_to_string(&payload.source)),
+                expires_at: payload.expires_at,
+                expiry_date: payload.expires_at.map(format_expiry_date),
+                reason: None,
             },
-            license::LicenseStatus::Expired => Self {
-                state: "expired".into(),
-                days_remaining: Some(0),
+            license::LicenseStatus::LicenseExpired { payload, expired_at } => Self {
+                state: "license_expired".into(),
+                licensed_to: Some(payload.name.clone()),
+                source: Some(source_to_string(&payload.source)),
+                expires_at: Some(*expired_at),
+                expiry_date: Some(format_expiry_date(*expired_at)),
+                reason: None,
+            },
+            license::LicenseStatus::Revoked { reason } => Self {
+                state: "revoked".into(),
                 licensed_to: None,
+                source: None,
+                expires_at: None,
+                expiry_date: None,
+                reason: reason.clone(),
             },
         }
     }
@@ -100,7 +145,6 @@ pub fn get_license_status(
 
     let status = license::get_status(
         &state.data_dir,
-        &state.trial_signing_key,
         &state.license_verifying_key,
         now_secs(),
     );
@@ -112,22 +156,40 @@ pub fn activate_license(
     key: String,
     state: State<'_, LicenseManager>,
 ) -> Result<LicenseStatusResponse, String> {
-    license::key::verify_license_key(&key, &state.license_verifying_key)
-        .map_err(|e| e.to_string())?;
-    license::storage::write_license_key(&state.data_dir, &key).map_err(|e| e.to_string())?;
-    let status = license::get_status(
+    let status = license::activate_key(
         &state.data_dir,
-        &state.trial_signing_key,
+        &key,
         &state.license_verifying_key,
         now_secs(),
-    );
+    )
+    .map_err(|e| e.to_string())?;
     Ok(LicenseStatusResponse::from_status(&status))
+}
+
+/// When built for the App Store, online validation is handled by the platform
+/// receipt and should be skipped. Returns `Some(skipped)` under the `app-store`
+/// feature and `None` otherwise (so direct builds validate normally).
+fn app_store_skip() -> Option<OnlineValidationResult> {
+    #[cfg(feature = "app-store")]
+    {
+        Some(OnlineValidationResult {
+            action: "skipped".into(),
+            reason: Some("app_store".into()),
+        })
+    }
+    #[cfg(not(feature = "app-store"))]
+    {
+        None
+    }
 }
 
 #[tauri::command]
 pub async fn check_online_validation(
     state: State<'_, LicenseManager>,
 ) -> Result<OnlineValidationResult, String> {
+    if let Some(skip) = app_store_skip() {
+        return Ok(skip);
+    }
     let now = now_secs();
     if !online::should_check_today(&state.data_dir, now) {
         return Ok(OnlineValidationResult {
@@ -168,11 +230,16 @@ fn set_item_enabled(menu: &tauri::menu::Menu<Wry>, id: &str, enabled: bool) -> R
     Ok(())
 }
 
+/// Whether the "Buy License" menu item should be enabled for the given state.
+fn buy_enabled_for(license_state: &str) -> bool {
+    matches!(license_state, "unlicensed" | "license_expired" | "revoked")
+}
+
 #[tauri::command]
 pub fn sync_license_menu(app: AppHandle, license_state: String) -> Result<(), String> {
     let menu = app.menu().ok_or("no app menu")?;
 
-    let buy_enabled = matches!(license_state.as_str(), "trial" | "expiring_soon" | "expired");
+    let buy_enabled = buy_enabled_for(license_state.as_str());
     let enter_enabled = license_state != "licensed";
     let info_enabled = license_state == "licensed";
 
@@ -188,39 +255,128 @@ mod tests {
     use super::*;
 
     #[test]
-    fn license_status_response_trial_json() {
-        let resp = LicenseStatusResponse {
-            state: "trial".into(),
-            days_remaining: Some(10),
-            licensed_to: None,
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("\"state\":\"trial\""));
-        assert!(json.contains("\"days_remaining\":10"));
-        assert!(json.contains("\"licensed_to\":null"));
-    }
-
-    #[test]
-    fn license_status_response_licensed_json() {
+    fn license_status_response_licensed_json_has_new_fields() {
         let resp = LicenseStatusResponse {
             state: "licensed".into(),
-            days_remaining: None,
             licensed_to: Some("User".into()),
+            source: Some("app_store".into()),
+            expires_at: Some(1735603200),
+            expiry_date: Some("2024-12-31".into()),
+            reason: None,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"state\":\"licensed\""));
         assert!(json.contains("\"licensed_to\":\"User\""));
+        assert!(json.contains("\"source\":\"app_store\""));
+        assert!(json.contains("\"expires_at\":1735603200"));
+        assert!(json.contains("\"expiry_date\":\"2024-12-31\""));
+        assert!(!json.contains("days_remaining"));
     }
 
     #[test]
-    fn license_status_response_expired_json() {
+    fn license_status_response_unlicensed_json() {
         let resp = LicenseStatusResponse {
-            state: "expired".into(),
-            days_remaining: Some(0),
+            state: "unlicensed".into(),
             licensed_to: None,
+            source: None,
+            expires_at: None,
+            expiry_date: None,
+            reason: None,
         };
         let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("\"state\":\"expired\""));
+        assert!(json.contains("\"state\":\"unlicensed\""));
+        assert!(json.contains("\"licensed_to\":null"));
+        assert!(json.contains("\"source\":null"));
+        assert!(json.contains("\"expires_at\":null"));
+        assert!(json.contains("\"expiry_date\":null"));
+        assert!(!json.contains("days_remaining"));
+    }
+
+    #[test]
+    fn license_status_response_license_expired_json() {
+        let resp = LicenseStatusResponse {
+            state: "license_expired".into(),
+            licensed_to: Some("User".into()),
+            source: Some("direct".into()),
+            expires_at: Some(1735603200),
+            expiry_date: Some("2024-12-31".into()),
+            reason: None,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"state\":\"license_expired\""));
+        assert!(json.contains("\"expiry_date\":\"2024-12-31\""));
+        assert!(!json.contains("days_remaining"));
+    }
+
+    #[test]
+    fn format_expiry_date_known_timestamp() {
+        assert_eq!(format_expiry_date(1735603200), "2024-12-31");
+    }
+
+    #[test]
+    fn format_expiry_date_epoch_zero() {
+        assert_eq!(format_expiry_date(0), "1970-01-01");
+    }
+
+    #[test]
+    fn buy_enabled_for_states() {
+        assert!(buy_enabled_for("unlicensed"));
+        assert!(buy_enabled_for("license_expired"));
+        assert!(buy_enabled_for("revoked"));
+        assert!(!buy_enabled_for("licensed"));
+    }
+
+    #[test]
+    fn from_status_revoked_includes_reason() {
+        let status = license::LicenseStatus::Revoked {
+            reason: Some("refund".into()),
+        };
+        let resp = LicenseStatusResponse::from_status(&status);
+        assert_eq!(resp.state, "revoked");
+        assert_eq!(resp.licensed_to, None);
+        assert_eq!(resp.source, None);
+        assert_eq!(resp.expires_at, None);
+        assert_eq!(resp.expiry_date, None);
+        assert_eq!(resp.reason, Some("refund".into()));
+    }
+
+    #[test]
+    fn from_status_revoked_none_reason() {
+        let status = license::LicenseStatus::Revoked { reason: None };
+        let resp = LicenseStatusResponse::from_status(&status);
+        assert_eq!(resp.state, "revoked");
+        assert_eq!(resp.reason, None);
+    }
+
+    #[test]
+    fn from_status_revoked_json_includes_reason() {
+        let status = license::LicenseStatus::Revoked {
+            reason: Some("refund".into()),
+        };
+        let resp = LicenseStatusResponse::from_status(&status);
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"reason\":\"refund\""));
+    }
+
+    #[test]
+    fn from_status_unlicensed_json_omits_reason() {
+        let resp = LicenseStatusResponse::from_status(&license::LicenseStatus::Unlicensed);
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(!json.contains("reason"));
+    }
+
+    #[cfg(feature = "app-store")]
+    #[test]
+    fn app_store_skip_returns_skipped_under_feature() {
+        let skip = app_store_skip().expect("app_store_skip should be Some under app-store feature");
+        assert_eq!(skip.action, "skipped");
+        assert_eq!(skip.reason, Some("app_store".into()));
+    }
+
+    #[cfg(not(feature = "app-store"))]
+    #[test]
+    fn app_store_skip_returns_none_by_default() {
+        assert!(app_store_skip().is_none());
     }
 
     #[test]
@@ -236,82 +392,119 @@ mod tests {
 
     #[test]
     fn license_manager_construction() {
-        let sk = SigningKey::from_bytes(license::TRIAL_SIGNING_KEY_BYTES);
         let vk = VerifyingKey::from_bytes(license::LICENSE_VERIFYING_KEY_BYTES).unwrap();
         let mgr = LicenseManager {
             data_dir: PathBuf::from("/tmp"),
-            trial_signing_key: sk,
             license_verifying_key: vk,
         };
-        assert_eq!(
-            mgr.trial_signing_key.verifying_key().to_bytes().len(),
-            32
-        );
+        assert_eq!(mgr.license_verifying_key.to_bytes().len(), 32);
     }
 
     #[test]
-    fn dev_override_trial_response() {
-        let resp = LicenseStatusResponse::from_dev_override(license::DevOverride::Trial);
-        assert_eq!(resp.state, "trial");
-        assert_eq!(resp.days_remaining, Some(14));
+    fn dev_override_unlicensed_response() {
+        let resp = LicenseStatusResponse::from_dev_override(license::DevOverride::Unlicensed);
+        assert_eq!(resp.state, "unlicensed");
         assert_eq!(resp.licensed_to, None);
+        assert_eq!(resp.source, None);
+        assert_eq!(resp.expires_at, None);
+        assert_eq!(resp.expiry_date, None);
     }
 
     #[test]
-    fn dev_override_trial_short_response() {
-        let resp = LicenseStatusResponse::from_dev_override(license::DevOverride::TrialShort);
-        assert_eq!(resp.state, "trial");
-        assert_eq!(resp.days_remaining, Some(0));
-        assert_eq!(resp.licensed_to, None);
-    }
-
-    #[test]
-    fn dev_override_trial_expired_response() {
-        let resp = LicenseStatusResponse::from_dev_override(license::DevOverride::TrialExpired);
-        assert_eq!(resp.state, "expired");
-        assert_eq!(resp.days_remaining, Some(0));
-        assert_eq!(resp.licensed_to, None);
+    fn dev_override_license_expired_response() {
+        let resp = LicenseStatusResponse::from_dev_override(license::DevOverride::LicenseExpired);
+        assert_eq!(resp.state, "license_expired");
+        assert_eq!(resp.licensed_to, Some("Dev User".into()));
+        assert_eq!(resp.source, Some("direct".into()));
+        assert_eq!(resp.expires_at, Some(1735603200));
+        assert_eq!(resp.expiry_date, Some("2024-12-31".into()));
     }
 
     #[test]
     fn dev_override_licensed_response() {
         let resp = LicenseStatusResponse::from_dev_override(license::DevOverride::Licensed);
         assert_eq!(resp.state, "licensed");
-        assert_eq!(resp.days_remaining, None);
         assert_eq!(resp.licensed_to, Some("Dev Mode".into()));
+        assert_eq!(resp.source, Some("direct".into()));
+        assert_eq!(resp.expires_at, None);
+        assert_eq!(resp.expiry_date, None);
     }
 
     #[test]
-    fn from_status_active_trial() {
-        let status =
-            license::LicenseStatus::Trial(license::trial::TrialState::Active { days_left: 7 });
-        let resp = LicenseStatusResponse::from_status(&status);
-        assert_eq!(resp.state, "trial");
-        assert_eq!(resp.days_remaining, Some(7));
+    fn dev_override_revoked_response() {
+        let resp = LicenseStatusResponse::from_dev_override(license::DevOverride::Revoked);
+        assert_eq!(resp.state, "revoked");
+        assert_eq!(resp.licensed_to, None);
+        assert_eq!(resp.source, None);
+        assert_eq!(resp.expires_at, None);
+        assert_eq!(resp.expiry_date, None);
+        assert_eq!(resp.reason, Some("dev_revoked".into()));
     }
 
-    #[test]
-    fn from_status_expiring_soon() {
-        let status = license::LicenseStatus::Trial(license::trial::TrialState::ExpiringSoon {
-            days_left: 2,
-        });
-        let resp = LicenseStatusResponse::from_status(&status);
-        assert_eq!(resp.state, "expiring_soon");
-        assert_eq!(resp.days_remaining, Some(2));
+    fn sample_payload(expires_at: Option<u64>) -> license::key::LicensePayload {
+        sample_payload_with_source(expires_at, license::key::LicenseSource::Direct)
     }
 
-    #[test]
-    fn from_status_licensed() {
-        let payload = license::key::LicensePayload {
+    fn sample_payload_with_source(
+        expires_at: Option<u64>,
+        source: license::key::LicenseSource,
+    ) -> license::key::LicensePayload {
+        license::key::LicensePayload {
             license_id: "lic-1".into(),
             name: "User".into(),
             email: "u@e.com".into(),
             issued_at: 100,
             license_type: "personal".into(),
-        };
-        let status = license::LicenseStatus::Licensed(payload);
+            expires_at,
+            source,
+        }
+    }
+
+    #[test]
+    fn from_status_unlicensed() {
+        let resp = LicenseStatusResponse::from_status(&license::LicenseStatus::Unlicensed);
+        assert_eq!(resp.state, "unlicensed");
+        assert_eq!(resp.licensed_to, None);
+        assert_eq!(resp.source, None);
+        assert_eq!(resp.expires_at, None);
+        assert_eq!(resp.expiry_date, None);
+    }
+
+    #[test]
+    fn from_status_licensed() {
+        let status = license::LicenseStatus::Licensed(sample_payload(None));
         let resp = LicenseStatusResponse::from_status(&status);
         assert_eq!(resp.state, "licensed");
         assert_eq!(resp.licensed_to, Some("User".into()));
+        assert_eq!(resp.source, Some("direct".into()));
+        assert_eq!(resp.expires_at, None);
+        assert_eq!(resp.expiry_date, None);
+    }
+
+    #[test]
+    fn from_status_licensed_with_expiry() {
+        let status = license::LicenseStatus::Licensed(sample_payload_with_source(
+            Some(1735603200),
+            license::key::LicenseSource::AppStore,
+        ));
+        let resp = LicenseStatusResponse::from_status(&status);
+        assert_eq!(resp.state, "licensed");
+        assert_eq!(resp.source, Some("app_store".into()));
+        assert_eq!(resp.expires_at, Some(1735603200));
+        assert_eq!(resp.expiry_date, Some("2024-12-31".into()));
+    }
+
+    #[test]
+    fn from_status_license_expired() {
+        let status = license::LicenseStatus::LicenseExpired {
+            payload: sample_payload(Some(1735603200)),
+            expired_at: 1735603200,
+        };
+        let resp = LicenseStatusResponse::from_status(&status);
+        assert_eq!(resp.state, "license_expired");
+        assert_eq!(resp.licensed_to, Some("User".into()));
+        assert_eq!(resp.source, Some("direct".into()));
+        assert_eq!(resp.expires_at, Some(1735603200));
+        assert_eq!(resp.expiry_date, Some("2024-12-31".into()));
     }
 }

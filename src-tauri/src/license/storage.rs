@@ -1,29 +1,53 @@
 use std::path::Path;
 
+use serde::{Deserialize, Serialize};
+
 use super::error::LicenseError;
-use super::trial::TrialData;
 
-const TRIAL_FILE: &str = "trial.json";
 const LICENSE_FILE: &str = "license.key";
+const REVOCATION_FILE: &str = "revocation.json";
 
-pub fn write_trial(dir: &Path, data: &TrialData) -> Result<(), LicenseError> {
+/// Local marker persisted when the server reports a license as revoked.
+///
+/// The key file is deleted on revocation (enforcement), but this marker lets
+/// `get_status` report a revocation-specific state so the UI can explain what
+/// happened instead of showing the generic "requires a license" splash.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RevocationMarker {
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+/// Persist a revocation marker carrying the server-provided reason (if any).
+pub fn write_revocation_marker(dir: &Path, reason: Option<&str>) -> Result<(), LicenseError> {
     std::fs::create_dir_all(dir)?;
-    let path = dir.join(TRIAL_FILE);
-    let json = serde_json::to_string_pretty(data)?;
+    let marker = RevocationMarker {
+        reason: reason.map(|s| s.to_string()),
+    };
+    let json = serde_json::to_string_pretty(&marker)
+        .map_err(|e| LicenseError::InvalidKeyFormat(e.to_string()))?;
+    let path = dir.join(REVOCATION_FILE);
     std::fs::write(&path, json).map_err(|e| LicenseError::Io {
         source: e,
         path: path.clone(),
     })
 }
 
-pub fn read_trial(dir: &Path) -> Result<Option<TrialData>, LicenseError> {
-    let path = dir.join(TRIAL_FILE);
-    match std::fs::read_to_string(&path) {
-        Ok(contents) => {
-            let data: TrialData = serde_json::from_str(&contents)?;
-            Ok(Some(data))
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+/// Read the revocation marker. Returns `None` if missing or corrupt
+/// (mirrors `online::read_last_checked`).
+pub fn read_revocation_marker(dir: &Path) -> Option<RevocationMarker> {
+    let path = dir.join(REVOCATION_FILE);
+    let contents = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&contents).ok()
+}
+
+/// Remove the revocation marker. `Ok` if it was already absent
+/// (mirrors `remove_license_key`).
+pub fn clear_revocation_marker(dir: &Path) -> Result<(), LicenseError> {
+    let path = dir.join(REVOCATION_FILE);
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(LicenseError::Io {
             source: e,
             path: path.clone(),
@@ -67,52 +91,6 @@ pub fn remove_license_key(dir: &Path) -> Result<(), LicenseError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::trial::{sign_trial_start, TrialData};
-    use ed25519_dalek::SigningKey;
-    use rand::rngs::OsRng;
-
-    fn sample_trial_data() -> TrialData {
-        let sk = SigningKey::generate(&mut OsRng);
-        let ts = 1700000000u64;
-        TrialData {
-            trial_start_ts: ts,
-            signature: sign_trial_start(ts, &sk),
-        }
-    }
-
-    // --- write_trial / read_trial ---
-
-    #[test]
-    fn trial_write_read_round_trip() {
-        let dir = tempfile::tempdir().unwrap();
-        let data = sample_trial_data();
-        write_trial(dir.path(), &data).unwrap();
-        let read = read_trial(dir.path()).unwrap().unwrap();
-        assert_eq!(read.trial_start_ts, data.trial_start_ts);
-        assert_eq!(read.signature, data.signature);
-    }
-
-    #[test]
-    fn trial_missing_file_returns_none() {
-        let dir = tempfile::tempdir().unwrap();
-        assert!(read_trial(dir.path()).unwrap().is_none());
-    }
-
-    #[test]
-    fn trial_corrupt_json_returns_error() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("trial.json"), "not json").unwrap();
-        assert!(read_trial(dir.path()).is_err());
-    }
-
-    #[test]
-    fn trial_auto_creates_parent_dir() {
-        let dir = tempfile::tempdir().unwrap();
-        let nested = dir.path().join("deep").join("nested");
-        let data = sample_trial_data();
-        write_trial(&nested, &data).unwrap();
-        assert!(read_trial(&nested).unwrap().is_some());
-    }
 
     // --- write_license_key / read_license_key ---
 
@@ -153,5 +131,58 @@ mod tests {
     fn remove_nonexistent_license_key_ok() {
         let dir = tempfile::tempdir().unwrap();
         assert!(remove_license_key(dir.path()).is_ok());
+    }
+
+    // --- revocation marker ---
+
+    #[test]
+    fn revocation_marker_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        write_revocation_marker(dir.path(), Some("refund")).unwrap();
+        let marker = read_revocation_marker(dir.path()).unwrap();
+        assert_eq!(marker.reason, Some("refund".to_string()));
+    }
+
+    #[test]
+    fn revocation_marker_none_reason_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        write_revocation_marker(dir.path(), None).unwrap();
+        let marker = read_revocation_marker(dir.path()).unwrap();
+        assert_eq!(marker.reason, None);
+    }
+
+    #[test]
+    fn revocation_marker_missing_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(read_revocation_marker(dir.path()).is_none());
+    }
+
+    #[test]
+    fn revocation_marker_corrupt_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(REVOCATION_FILE), "not json").unwrap();
+        assert!(read_revocation_marker(dir.path()).is_none());
+    }
+
+    #[test]
+    fn revocation_marker_auto_creates_parent_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("deep").join("nested");
+        write_revocation_marker(&nested, Some("refund")).unwrap();
+        assert!(read_revocation_marker(&nested).is_some());
+    }
+
+    #[test]
+    fn clear_revocation_marker_removes_it() {
+        let dir = tempfile::tempdir().unwrap();
+        write_revocation_marker(dir.path(), Some("refund")).unwrap();
+        clear_revocation_marker(dir.path()).unwrap();
+        assert!(read_revocation_marker(dir.path()).is_none());
+    }
+
+    #[test]
+    fn clear_revocation_marker_missing_ok() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(clear_revocation_marker(dir.path()).is_ok());
     }
 }

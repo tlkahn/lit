@@ -5,25 +5,20 @@ interface LicenseInfoDialogProps {
   open: boolean;
   licenseState: LicenseState;
   licensedTo: string | null;
-  daysRemaining: number | null;
   onClose: () => void;
 }
 
-function formatLicenseText(licenseState: LicenseState, licensedTo: string | null, daysRemaining: number | null): string {
+function formatLicenseText(licenseState: LicenseState, licensedTo: string | null): string {
   if (licenseState === "licensed") {
     return licensedTo ? `Licensed to ${licensedTo}` : "Licensed";
   }
-  if (licenseState === "trial" || licenseState === "expiring_soon") {
-    const days = daysRemaining ?? 0;
-    return `Trial — ${days} day${days === 1 ? "" : "s"} remaining`;
+  if (licenseState === "license_expired") {
+    return "License expired";
   }
-  if (licenseState === "expired") {
-    return "Trial expired";
-  }
-  return "Unknown license status";
+  return "No license";
 }
 
-export function LicenseInfoDialog({ open, licenseState, licensedTo, daysRemaining, onClose }: LicenseInfoDialogProps) {
+export function LicenseInfoDialog({ open, licenseState, licensedTo, onClose }: LicenseInfoDialogProps) {
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -46,7 +41,7 @@ export function LicenseInfoDialog({ open, licenseState, licensedTo, daysRemainin
     >
       <div className="w-80 rounded-lg bg-bg-primary p-5 shadow-lg" data-testid="license-info-dialog">
         <p className="mb-4 text-sm text-text-normal">
-          {formatLicenseText(licenseState, licensedTo, daysRemaining)}
+          {formatLicenseText(licenseState, licensedTo)}
         </p>
         <div className="flex justify-end">
           <button
