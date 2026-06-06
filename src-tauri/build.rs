@@ -38,21 +38,41 @@ fn set_git_version() {
     // `git describe --tags --abbrev=0` on non-release runs. Keeping the flags
     // identical guarantees the About dialog and bundle metadata never show
     // differing strings for the same off-tag build.
-    let version = Command::new("git")
+    let tag = Command::new("git")
         .args(["describe", "--tags", "--abbrev=0"])
         .output()
         .ok()
         .filter(|o| o.status.success())
-        .and_then(|o| {
-            let s = String::from_utf8(o.stdout).ok()?;
-            let s = s.trim().strip_prefix('v').unwrap_or(s.trim());
-            Some(s.to_string())
-        })
-        .unwrap_or(pkg_version);
+        .and_then(|o| String::from_utf8(o.stdout).ok());
+
+    let version = resolve_dev_version(tag.as_deref(), &pkg_version);
 
     println!("cargo:rustc-env=LIT_GIT_VERSION={version}");
 
     emit_git_rerun_directives();
+}
+
+/// Pure helper for the dev-fallback version string. Given the raw stdout of
+/// `git describe --tags --abbrev=0` (if it ran) and the package version, return
+/// the version to surface as `LIT_GIT_VERSION`.
+///
+/// When a tag is present it is cleaned (trimmed, leading `v` stripped) and used
+/// verbatim. When no usable tag exists (git absent, shallow clone with no tags,
+/// empty output) we must NOT silently surface the bare `pkg_version`: in dev
+/// builds that is the unpatched `0.0.0` placeholder, which would render as a
+/// fake "Lit v0.0.0" release in the About dialog. Instead we append a `-dev`
+/// suffix so the fallback is clearly labelled (e.g. `0.0.0-dev`) and can never
+/// be mistaken for a real release.
+fn resolve_dev_version(tag: Option<&str>, pkg_version: &str) -> String {
+    let cleaned = tag
+        .map(|t| t.trim())
+        .map(|t| t.strip_prefix('v').unwrap_or(t))
+        .filter(|t| !t.is_empty());
+
+    match cleaned {
+        Some(t) => t.to_string(),
+        None => format!("{pkg_version}-dev"),
+    }
 }
 
 /// Tell Cargo to re-run this build script when the checked-out commit or any

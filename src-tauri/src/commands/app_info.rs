@@ -50,6 +50,15 @@ mod tests {
         assert_eq!(info.name, "Lit");
         assert!(!info.version.is_empty());
 
+        // The bare `0.0.0` placeholder must never reach the UI: a git-absent
+        // dev build (Docker, sandbox, shallow clone without tags) falls back in
+        // build.rs to a clearly-labelled `0.0.0-dev`, not a fake "Lit v0.0.0"
+        // release. See build.rs::resolve_dev_version.
+        assert_ne!(
+            info.version, "0.0.0",
+            "bare 0.0.0 placeholder leaked into the UI version"
+        );
+
         // The displayed version must never carry a `git describe` commit-sha
         // suffix (e.g. "0.12.0-5-gabcdef"). On release/CI builds it mirrors the
         // patched CARGO_PKG_VERSION; on dev builds build.rs uses
