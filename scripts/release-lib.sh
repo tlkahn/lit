@@ -169,6 +169,8 @@ release_codesign_pdfium() {
 }
 
 release_tauri_build() {
+  echo "── Cleaning stale DMGs..."
+  find "$REPO_ROOT/src-tauri/target/aarch64-apple-darwin" -name '*.dmg' -type f -delete 2>/dev/null || true
   echo "── Building Tauri app..."
   bun tauri build --target aarch64-apple-darwin \
     --config '{"build":{"beforeBuildCommand":"bun run build"}}'
@@ -177,10 +179,11 @@ release_tauri_build() {
 release_copy_dmg() {
   local tag="$1"
   echo "── Copying DMG..."
+  local dmg_dir="$REPO_ROOT/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg"
   local dmg
-  dmg="$(find "$REPO_ROOT/src-tauri/target/aarch64-apple-darwin" -name '*.dmg' -type f 2>/dev/null | head -1)"
+  dmg="$(find "$dmg_dir" -name '*.dmg' -type f 2>/dev/null | head -1)"
   if [[ -z "$dmg" ]]; then
-    echo "Error: No DMG found in src-tauri/target/aarch64-apple-darwin/" >&2
+    echo "Error: No DMG found in $dmg_dir" >&2
     return 1
   fi
   cp "$dmg" "$REPO_ROOT/Lit_${tag}_aarch64.dmg"
