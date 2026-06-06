@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Patch version in package.json, tauri.conf.json, and Cargo.toml.
+# Patch version in package.json, tauri.conf.json, Cargo.toml, and Cargo.lock.
 # Usage: bash scripts/set-version.sh 0.13.0
 
 set -euo pipefail
@@ -27,4 +27,14 @@ jq --arg v "$VERSION" '.version = $v' "$REPO_ROOT/src-tauri/tauri.conf.json" > "
 sed -i.bak -E '/^\[package\]/,/^\[/{s/^version = ".*"/version = "'"$VERSION"'"/;}' "$REPO_ROOT/src-tauri/Cargo.toml"
 rm -f "$REPO_ROOT/src-tauri/Cargo.toml.bak"
 
-echo "Version set to $VERSION in package.json, tauri.conf.json, Cargo.toml"
+# Keep Cargo.lock in sync so `cargo build --locked` / `cargo check --locked`
+# don't fail on a lockfile mismatch. The lib target is `lit_lib`, but the
+# package recorded in Cargo.lock is `lit`. Scope the bump to the version line
+# that directly follows `name = "lit"` so sibling packages sharing the old
+# version string are left untouched.
+if [[ -f "$REPO_ROOT/src-tauri/Cargo.lock" ]]; then
+  sed -i.bak -E '/^name = "lit"$/{n;s/^version = ".*"/version = "'"$VERSION"'"/;}' "$REPO_ROOT/src-tauri/Cargo.lock"
+  rm -f "$REPO_ROOT/src-tauri/Cargo.lock.bak"
+fi
+
+echo "Version set to $VERSION in package.json, tauri.conf.json, Cargo.toml, Cargo.lock"
