@@ -5,14 +5,17 @@ import type { PandocInfo } from "../lib/ipc";
 export function AcademicExportSettings() {
   const [status, setStatus] = useState<"idle" | "detecting" | "success" | "error">("idle");
   const [info, setInfo] = useState<PandocInfo | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   async function handleDetect() {
     setStatus("detecting");
+    setErrorMessage(null);
     try {
       const result = await detectPandoc();
       setInfo(result);
       setStatus("success");
-    } catch {
+    } catch (e) {
+      setErrorMessage(e instanceof Error ? e.message : String(e));
       setStatus("error");
     }
   }
@@ -61,6 +64,11 @@ export function AcademicExportSettings() {
             <span className="text-text-error">&#x2717;</span>
             <span>Pandoc: Not found</span>
           </div>
+          {errorMessage && (
+            <div data-testid="academic-pandoc-error-detail" className="mt-1 whitespace-pre-line text-text-muted">
+              {errorMessage}
+            </div>
+          )}
         </div>
       )}
     </div>

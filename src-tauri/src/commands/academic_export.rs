@@ -374,6 +374,50 @@ pub fn resolve_reference_doc(
         .filter(|p| is_valid_docx(p))
 }
 
+fn pandoc_not_found_error(operation: &str) -> String {
+    format!(
+        "pandoc is required for {operation} but was not found on your system.\n\
+         \n\
+         To install pandoc:\n  \
+         - macOS: brew install pandoc\n  \
+         - Download: https://pandoc.org/installing.html\n\
+         \n\
+         To use a custom pandoc location, set the path in Settings \u{2192} Academic Export \u{2192} Pandoc Path."
+    )
+}
+
+fn pandoc_invalid_path_error(path: &str) -> String {
+    format!(
+        "The configured pandoc path does not exist or is not a file: {path}\n\
+         \n\
+         This path is set in Settings \u{2192} Academic Export \u{2192} Pandoc Path.\n\
+         Either correct the path or clear it to auto-detect pandoc from PATH."
+    )
+}
+
+/// Validate that pandoc is available, returning its path on success.
+///
+/// Unlike `resolve_binary`, this does NOT silently fall through from an invalid
+/// configured path to PATH lookup. If the user explicitly set a path, they get
+/// told it's broken.
+pub fn validate_pandoc(
+    operation: &str,
+    prefs: &preferences::Preferences,
+) -> Result<PathBuf, String> {
+    if let Some(val) = prefs.extra.get("academic.pandocPath") {
+        if let Some(s) = val.as_str() {
+            if !s.is_empty() {
+                let p = PathBuf::from(s);
+                if p.is_file() {
+                    return Ok(p);
+                }
+                return Err(pandoc_invalid_path_error(s));
+            }
+        }
+    }
+    find_in_path("pandoc").ok_or_else(|| pandoc_not_found_error(operation))
+}
+
 /// Build the argument list for a pandoc invocation.
 pub fn build_pandoc_args(
     input_path: &Path,
@@ -455,8 +499,7 @@ pub fn detect_pandoc(
 ) -> Result<PandocInfo, String> {
     let prefs = preferences::read_preferences(&app_handle);
 
-    let pandoc_path = resolve_binary("academic.pandocPath", "pandoc", &prefs)
-        .ok_or_else(|| "pandoc not found in PATH or preferences".to_string())?;
+    let pandoc_path = validate_pandoc("detection", &prefs)?;
 
     let pandoc_version = get_version(&pandoc_path)?;
 
@@ -504,8 +547,7 @@ pub async fn export_document(
     let resource_path = input_path.parent().unwrap_or(&workspace_root).to_path_buf();
 
     let prefs = preferences::read_preferences(&app_handle);
-    let pandoc_path = resolve_binary("academic.pandocPath", "pandoc", &prefs)
-        .ok_or_else(|| "pandoc not found".to_string())?;
+    let pandoc_path = validate_pandoc(&format!("{format} export"), &prefs)?;
     let crossref_path = resolve_binary("academic.crossrefFilterPath", "pandoc-crossref", &prefs);
 
     // Extract frontmatter overrides from the document
@@ -1558,5 +1600,82 @@ mod tests {
         let result = resolve_reference_doc(&prefs, Some(&tmp_dir));
         assert_eq!(result, Some(academic_dir.join("lit-reference.docx")));
         std::fs::remove_dir_all(&tmp_dir).unwrap();
+    }
+
+    // --- validate_pandoc tests ---
+
+    #[test]
+    fn test_pandoc_not_found_error_format() {
+        let msg = pandoc_not_found_error("PDF export");
+        assert!(msg.contains("PDF export"), "should mention the operation");
+        assert!(msg.contains("brew install pandoc"), "should include brew install hint");
+        assert!(msg.contains("pandoc.org"), "should include download link");
+        assert!(msg.contains("Settings"), "should mention Settings");
+    }
+
+    #[test]
+    fn test_pandoc_invalid_path_error_format() {
+        let msg = pandoc_invalid_path_error("/bad/path");
+        assert!(msg.contains("/bad/path"), "should include the configured path");
+        assert!(msg.contains("does not exist"), "should explain the problem");
+        assert!(msg.contains("Settings"), "should mention Settings");
+    }
+
+    #[test]
+    fn test_validate_pandoc_ok_with_valid_pref() {
+        let tmp = std::env::temp_dir().join("test_validate_pandoc_ok");
+        std::fs::write(&tmp, "fake").unwrap();
+        let mut prefs = preferences::Preferences::default();
+        prefs.extra.insert(
+            "academic.pandocPath".to_string(),
+            serde_json::Value::String(tmp.to_string_lossy().to_string()),
+        );
+        let result = validate_pandoc("export", &prefs);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), tmp);
+        std::fs::remove_file(&tmp).unwrap();
+    }
+
+    #[test]
+    fn test_validate_pandoc_err_invalid_pref() {
+        let mut prefs = preferences::Preferences::default();
+        prefs.extra.insert(
+            "academic.pandocPath".to_string(),
+            serde_json::Value::String("/nonexistent/path/to/pandoc".to_string()),
+        );
+        let result = validate_pandoc("export", &prefs);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("/nonexistent/path/to/pandoc"), "should include the bad path");
+        assert!(err.contains("does not exist"), "should explain the problem");
+    }
+
+    #[test]
+    fn test_validate_pandoc_err_not_found() {
+        let prefs = preferences::Preferences::default();
+        // With default prefs and pandoc unlikely named "pandoc" at a findable location
+        // in CI, we test the error message shape by checking what happens with no pref
+        // and no PATH hit. On systems with pandoc installed this would succeed,
+        // so we just verify the function doesn't panic.
+        let result = validate_pandoc("PDF export", &prefs);
+        if let Err(err) = result {
+            assert!(err.contains("brew install pandoc"), "should include install instructions");
+            assert!(err.contains("PDF export"), "should mention the operation");
+        }
+        // If Ok, pandoc is installed — that's fine too
+    }
+
+    #[test]
+    fn test_validate_pandoc_empty_pref_not_invalid() {
+        let mut prefs = preferences::Preferences::default();
+        prefs.extra.insert(
+            "academic.pandocPath".to_string(),
+            serde_json::Value::String("".to_string()),
+        );
+        let result = validate_pandoc("export", &prefs);
+        // Empty pref should NOT produce the "configured path" error
+        if let Err(err) = result {
+            assert!(!err.contains("configured pandoc path"), "empty pref should fall through to PATH lookup, not report as invalid path");
+        }
     }
 }

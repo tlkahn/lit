@@ -111,4 +111,21 @@ describe("AcademicExportSettings", () => {
     expect(engines!.textContent).toContain("lualatex");
     expect(engines!.textContent).toContain("pdflatex");
   });
+
+  it("shows actual error detail message on detect failure", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "detect_pandoc") throw new Error("pandoc is required for detection but was not found on your system.\n\nTo install pandoc:\n  - macOS: brew install pandoc");
+      return undefined;
+    });
+    const { container } = render(<AcademicExportSettings />);
+    const btn = container.querySelector("[data-testid='academic-detect-btn']")!;
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    const detail = container.querySelector("[data-testid='academic-pandoc-error-detail']");
+    expect(detail).toBeTruthy();
+    expect(detail!.textContent).toContain("pandoc is required");
+    expect(detail!.textContent).toContain("brew install pandoc");
+    expect(detail!.className).toContain("whitespace-pre-line");
+  });
 });
