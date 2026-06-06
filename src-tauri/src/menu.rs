@@ -147,17 +147,17 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
         }
         MenuAction::OpenPreferences => {
             if let Some(window) = find_focused_window(app) {
-                let _ = window.emit(EVENT_OPEN_PREFERENCES, ());
+                let _ = window.emit_to(window.label(), EVENT_OPEN_PREFERENCES, ());
             }
         }
         MenuAction::OpenInExternalEditor => {
             if let Some(window) = find_focused_window(app) {
-                let _ = window.emit(EVENT_OPEN_IN_EXTERNAL_EDITOR, ());
+                let _ = window.emit_to(window.label(), EVENT_OPEN_IN_EXTERNAL_EDITOR, ());
             }
         }
         MenuAction::ClosePane => {
             if let Some(window) = find_focused_window(app) {
-                let _ = window.emit(EVENT_CLOSE_PANE, ());
+                let _ = window.emit_to(window.label(), EVENT_CLOSE_PANE, ());
             }
         }
         MenuAction::ShowAbout => {
@@ -197,10 +197,10 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
                                 let dialog_handle = handle.clone();
                                 std::thread::spawn(move || {
                                     match crate::export::run_export(&root, &dest_path, |current, total| {
-                                        let _ = window.emit("lit:export-progress", crate::export::ExportProgress { current, total });
+                                        let _ = window.emit_to(window.label(), "lit:export-progress", crate::export::ExportProgress { current, total });
                                     }) {
                                         Ok(summary) => {
-                                            let _ = window.emit("lit:export-complete", summary);
+                                            let _ = window.emit_to(window.label(), "lit:export-complete", summary);
                                         }
                                         Err(e) => {
                                             dialog_handle.dialog().message(format!("Export failed: {e}")).title("Export Error").blocking_show();
@@ -214,32 +214,32 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
         }
         MenuAction::ExportLatex => {
             if let Some(window) = find_focused_window(app) {
-                let _ = window.emit(EVENT_EXPORT_LATEX, ());
+                let _ = window.emit_to(window.label(), EVENT_EXPORT_LATEX, ());
             }
         }
         MenuAction::ExportPdf => {
             if let Some(window) = find_focused_window(app) {
-                let _ = window.emit(EVENT_EXPORT_PDF, ());
+                let _ = window.emit_to(window.label(), EVENT_EXPORT_PDF, ());
             }
         }
         MenuAction::ExportHtml => {
             if let Some(window) = find_focused_window(app) {
-                let _ = window.emit(EVENT_EXPORT_HTML, ());
+                let _ = window.emit_to(window.label(), EVENT_EXPORT_HTML, ());
             }
         }
         MenuAction::ExportDocx => {
             if let Some(window) = find_focused_window(app) {
-                let _ = window.emit(EVENT_EXPORT_DOCX, ());
+                let _ = window.emit_to(window.label(), EVENT_EXPORT_DOCX, ());
             }
         }
         MenuAction::ExportLkg => {
             if let Some(window) = find_focused_window(app) {
-                let _ = window.emit(EVENT_EXPORT_LKG, ());
+                let _ = window.emit_to(window.label(), EVENT_EXPORT_LKG, ());
             }
         }
         MenuAction::ImportLkg => {
             if let Some(window) = find_focused_window(app) {
-                let _ = window.emit(EVENT_IMPORT_LKG, ());
+                let _ = window.emit_to(window.label(), EVENT_IMPORT_LKG, ());
             }
         }
         MenuAction::BuyLicense => {
