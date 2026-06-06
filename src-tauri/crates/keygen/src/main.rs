@@ -15,7 +15,7 @@ fn main() {
         .expect("system clock before epoch")
         .as_secs();
     match keygen::generate_key(&args, now) {
-        Ok(pem) => print!("{pem}"),
+        Ok(pem) => println!("{pem}"),
         Err(e) => {
             eprintln!("Error: {e}");
             std::process::exit(1);

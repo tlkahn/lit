@@ -1,5 +1,6 @@
 [workspace]
 members = [".", "crates/turboref-core", "crates/keygen"]
+resolver = "2"
 
 [package]
 name = "lit"

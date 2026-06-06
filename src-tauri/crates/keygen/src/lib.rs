@@ -50,13 +50,10 @@ pub fn verify_license_key(
     verifying_key: &VerifyingKey,
 ) -> Result<LicensePayload, String> {
     let trimmed = pem.trim();
-    if !trimmed.starts_with(BEGIN_MARKER) {
-        return Err("missing BEGIN marker".into());
-    }
-    if !trimmed.ends_with(END_MARKER) {
-        return Err("missing END marker".into());
-    }
-    let inner = &trimmed[BEGIN_MARKER.len()..trimmed.len() - END_MARKER.len()];
+    let inner = trimmed
+        .strip_prefix(BEGIN_MARKER)
+        .and_then(|s| s.strip_suffix(END_MARKER))
+        .ok_or("invalid license key envelope")?;
     let body: String = inner.lines().map(str::trim).collect();
     let (payload_b64, sig_b64) = body
         .split_once('.')
@@ -81,18 +78,20 @@ pub fn verify_license_key(
 }
 
 pub fn parse_duration(s: &str) -> Result<u64, String> {
-    if s.len() < 2 {
+    let (num_str, multiplier) = if let Some(n) = s.strip_suffix('d') {
+        (n, 86400)
+    } else if let Some(n) = s.strip_suffix('h') {
+        (n, 3600)
+    } else {
+        return Err(format!("unknown duration suffix in {s:?}"));
+    };
+    if num_str.is_empty() {
         return Err(format!("invalid duration: {s:?}"));
     }
-    let (num_str, suffix) = s.split_at(s.len() - 1);
-    let n: u64 = num_str
+    let val: u64 = num_str
         .parse()
         .map_err(|_| format!("invalid duration number: {num_str:?}"))?;
-    match suffix {
-        "d" => Ok(n * 86400),
-        "h" => Ok(n * 3600),
-        _ => Err(format!("unknown duration suffix: {suffix:?}")),
-    }
+    Ok(val * multiplier)
 }
 
 pub fn parse_expires(input: Option<&str>, now: u64) -> Result<Option<u64>, String> {
