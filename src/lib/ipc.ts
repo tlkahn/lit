@@ -36,6 +36,19 @@ export async function getBuildInfo(): Promise<BuildInfo> {
   return invoke<BuildInfo>("get_build_info");
 }
 
+let _buildInfoPromise: Promise<BuildInfo> | null = null;
+
+export function getCachedBuildInfo(): Promise<BuildInfo> {
+  if (!_buildInfoPromise) {
+    _buildInfoPromise = getBuildInfo();
+  }
+  return _buildInfoPromise;
+}
+
+export function _resetBuildInfoCacheForTesting(): void {
+  _buildInfoPromise = null;
+}
+
 export async function openWorkspace(path: string): Promise<PageMeta[]> {
   return invoke<PageMeta[]>("open_workspace", { path });
 }
@@ -714,6 +727,7 @@ export interface LicenseStatusResponse {
   source?: "direct" | "app_store";
   expires_at?: number;
   expiry_date?: string;
+  reason?: string;
 }
 
 export async function getLicenseStatus(): Promise<LicenseStatusResponse> {

@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useLicenseStore } from "../stores/license";
 import { LicenseEntryDialog } from "./LicenseEntryDialog";
 import { SpinnerSvg } from "./SpinnerSvg";
-import { getBuildInfo } from "../lib/ipc";
+import { getCachedBuildInfo } from "../lib/ipc";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 interface LicenseGateProps {
@@ -21,6 +21,7 @@ export function LicenseGate({ children, entryOpen, onEntryOpenChange }: LicenseG
   const state = useLicenseStore((s) => s.state);
   const licensedTo = useLicenseStore((s) => s.licensedTo);
   const expiryDate = useLicenseStore((s) => s.expiryDate);
+  const reason = useLicenseStore((s) => s.reason);
   const fetchStatus = useLicenseStore((s) => s.fetchStatus);
   const [internalEntryOpen, setInternalEntryOpen] = useState(false);
   // App controls the dialog when props are passed (so the menu can reach it
@@ -37,7 +38,7 @@ export function LicenseGate({ children, entryOpen, onEntryOpenChange }: LicenseG
   }, [fetchStatus]);
 
   useEffect(() => {
-    getBuildInfo()
+    getCachedBuildInfo()
       .then((info) => setBuildSource(info.source))
       .catch(() => {});
   }, []);
@@ -81,7 +82,9 @@ export function LicenseGate({ children, entryOpen, onEntryOpenChange }: LicenseG
         : `${greeting} license has expired.`
       : "Lit requires a license to continue.";
   const subline = revoked
-    ? "If you believe this is a mistake, contact support@lit.solar. You can buy a new license or enter a different key to continue."
+    ? (reason
+        ? `Reason: ${reason}. If you believe this is a mistake, contact support@lit.solar. You can buy a new license or enter a different key to continue.`
+        : "If you believe this is a mistake, contact support@lit.solar. You can buy a new license or enter a different key to continue.")
     : "Lit is a one-time purchase. Buy a license or enter your existing key to continue.";
 
   return (

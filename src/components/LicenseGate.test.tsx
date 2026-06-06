@@ -4,6 +4,7 @@ import { mockInvoke } from "../test/tauri-mock";
 import { LicenseGate } from "./LicenseGate";
 import { useLicenseStore } from "../stores/license";
 import type { LicenseState } from "../stores/license";
+import { _resetBuildInfoCacheForTesting } from "../lib/ipc";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(() => Promise.resolve()),
@@ -18,6 +19,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 
 describe("LicenseGate", () => {
   beforeEach(() => {
+    _resetBuildInfoCacheForTesting();
     // Default build-info mock so the async getBuildInfo() effect resolves to a
     // direct build (Buy button visible). Individual app_store tests override it.
     mockInvoke((cmd) => {
@@ -30,6 +32,7 @@ describe("LicenseGate", () => {
       source: null,
       expiresAt: null,
       expiryDate: null,
+      reason: null,
       loading: true,
       error: null,
       fetchStatus: vi.fn(),
@@ -190,6 +193,27 @@ describe("LicenseGate", () => {
     useLicenseStore.setState({ fetchStatus });
     render(<LicenseGate><div /></LicenseGate>);
     expect(fetchStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it("revoked splash displays reason when available", () => {
+    useLicenseStore.setState({ state: "revoked", reason: "refund", loading: false });
+    const { queryByTestId } = render(
+      <LicenseGate><div data-testid="child" /></LicenseGate>,
+    );
+    const splash = queryByTestId("license-splash");
+    expect(splash).toBeTruthy();
+    expect(splash!.textContent).toContain("refund");
+  });
+
+  it("revoked splash shows generic message when reason is null", () => {
+    useLicenseStore.setState({ state: "revoked", reason: null, loading: false });
+    const { queryByTestId } = render(
+      <LicenseGate><div data-testid="child" /></LicenseGate>,
+    );
+    const splash = queryByTestId("license-splash");
+    expect(splash).toBeTruthy();
+    expect(splash!.textContent).toMatch(/revoked/i);
+    expect(splash!.textContent).not.toContain("refund");
   });
 
   it("loading screen shows a spinner", () => {

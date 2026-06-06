@@ -9,6 +9,7 @@ interface LicenseStore {
   source: string | null;
   expiresAt: number | null;
   expiryDate: string | null;
+  reason: string | null;
   loading: boolean;
   error: string | null;
   fetchStatus: () => Promise<void>;
@@ -22,6 +23,7 @@ export const useLicenseStore = create<LicenseStore>((set) => ({
   source: null,
   expiresAt: null,
   expiryDate: null,
+  reason: null,
   loading: true,
   error: null,
 
@@ -34,6 +36,7 @@ export const useLicenseStore = create<LicenseStore>((set) => ({
         source: res.source ?? null,
         expiresAt: res.expires_at ?? null,
         expiryDate: res.expiry_date ?? null,
+        reason: res.reason ?? null,
         loading: false,
       });
 
@@ -47,6 +50,7 @@ export const useLicenseStore = create<LicenseStore>((set) => ({
               source: updated.source ?? null,
               expiresAt: updated.expires_at ?? null,
               expiryDate: updated.expiry_date ?? null,
+              reason: updated.reason ?? null,
             });
           }
         })
@@ -73,6 +77,7 @@ export const useLicenseStore = create<LicenseStore>((set) => ({
         source: res.source ?? null,
         expiresAt: res.expires_at ?? null,
         expiryDate: res.expiry_date ?? null,
+        reason: res.reason ?? null,
         error,
       });
       return ok;

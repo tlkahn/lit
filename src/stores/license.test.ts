@@ -22,6 +22,7 @@ describe("license store", () => {
       source: null,
       expiresAt: null,
       expiryDate: null,
+      reason: null,
       loading: true,
       error: null,
     });
@@ -131,6 +132,15 @@ describe("license store", () => {
     useLicenseStore.setState({ error: "some error" });
     useLicenseStore.getState().clearError();
     expect(useLicenseStore.getState().error).toBeNull();
+  });
+
+  it("fetchStatus revoked stores reason from IPC response", async () => {
+    mockedGetLicenseStatus.mockResolvedValue({ state: "revoked", reason: "refund" });
+    mockedCheckOnlineValidation.mockResolvedValue({ action: "skipped", reason: "no_license" });
+    await useLicenseStore.getState().fetchStatus();
+    const s = useLicenseStore.getState();
+    expect(s.state).toBe("revoked");
+    expect(s.reason).toBe("refund");
   });
 
   it("fetchStatus revoked triggers re-fetch and sets revoked", async () => {

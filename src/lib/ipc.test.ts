@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { mockInvoke } from "../test/tauri-mock";
 import {
   getAppInfo,
@@ -69,6 +69,8 @@ import {
   listAnnotations,
   exportData,
   exportSubgraph,
+  getCachedBuildInfo,
+  _resetBuildInfoCacheForTesting,
   getLicenseStatus,
   activateLicense,
   checkOnlineValidation,
@@ -599,6 +601,33 @@ describe("ipc", () => {
   it("getAppInfo returns name and version", async () => {
     const info = await getAppInfo();
     expect(info).toEqual({ name: "Lit", version: "0.1.0" });
+  });
+
+  describe("getCachedBuildInfo", () => {
+    beforeEach(() => {
+      _resetBuildInfoCacheForTesting();
+    });
+
+    it("calls invoke only once for multiple calls", async () => {
+      await getCachedBuildInfo();
+      await getCachedBuildInfo();
+      const { invoke } = await import("@tauri-apps/api/core");
+      const buildInfoCalls = (invoke as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (c: unknown[]) => c[0] === "get_build_info",
+      );
+      expect(buildInfoCalls).toHaveLength(1);
+    });
+
+    it("returns fresh value after reset", async () => {
+      await getCachedBuildInfo();
+      _resetBuildInfoCacheForTesting();
+      await getCachedBuildInfo();
+      const { invoke } = await import("@tauri-apps/api/core");
+      const buildInfoCalls = (invoke as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (c: unknown[]) => c[0] === "get_build_info",
+      );
+      expect(buildInfoCalls).toHaveLength(2);
+    });
   });
 
   it("getBuildInfo calls get_build_info", async () => {

@@ -88,6 +88,7 @@ pub enum DevOverride {
     Unlicensed,
     Licensed,
     LicenseExpired,
+    Revoked,
 }
 
 #[cfg(debug_assertions)]
@@ -96,6 +97,7 @@ pub fn dev_mode_override() -> Option<DevOverride> {
         "unlicensed" => Some(DevOverride::Unlicensed),
         "licensed" => Some(DevOverride::Licensed),
         "license_expired" => Some(DevOverride::LicenseExpired),
+        "revoked" => Some(DevOverride::Revoked),
         _ => None,
     }
 }
@@ -103,6 +105,18 @@ pub fn dev_mode_override() -> Option<DevOverride> {
 #[cfg(not(debug_assertions))]
 pub fn dev_mode_override() -> Option<DevOverride> {
     None
+}
+
+pub fn activate_key(
+    dir: &Path,
+    pem: &str,
+    vk: &VerifyingKey,
+    now: u64,
+) -> Result<LicenseStatus, LicenseError> {
+    let payload = key::verify_license_key(pem, vk)?;
+    storage::write_license_key(dir, pem)?;
+    let _ = storage::clear_revocation_marker(dir);
+    Ok(check_expiry(payload, now))
 }
 
 pub fn process_deep_link_url(url: &str) -> Option<String> {
@@ -417,6 +431,38 @@ mod tests {
         }
     }
 
+    // --- activate_key ---
+
+    #[test]
+    fn activate_key_clears_revocation_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let (sk, vk) = test_keys();
+        let payload = sample_payload(None);
+        let pem = build_test_pem(&payload, &sk);
+        storage::write_revocation_marker(dir.path(), Some("refund")).unwrap();
+        let status = activate_key(dir.path(), &pem, &vk, 200).unwrap();
+        assert!(matches!(status, LicenseStatus::Licensed(_)));
+        assert!(storage::read_revocation_marker(dir.path()).is_none());
+    }
+
+    #[test]
+    fn activate_key_invalid_key_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_, vk) = test_keys();
+        assert!(activate_key(dir.path(), "garbage", &vk, 200).is_err());
+    }
+
+    #[test]
+    fn activate_key_persists_license_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let (sk, vk) = test_keys();
+        let payload = sample_payload(None);
+        let pem = build_test_pem(&payload, &sk);
+        activate_key(dir.path(), &pem, &vk, 200).unwrap();
+        let stored = storage::read_license_key(dir.path()).unwrap();
+        assert_eq!(stored, Some(pem));
+    }
+
     // --- dev_mode_override ---
 
     static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -449,6 +495,14 @@ mod tests {
         let _lock = ENV_MUTEX.lock().unwrap();
         std::env::set_var("LIT_LICENSE_DEV", "license_expired");
         assert_eq!(dev_mode_override(), Some(DevOverride::LicenseExpired));
+        std::env::remove_var("LIT_LICENSE_DEV");
+    }
+
+    #[test]
+    fn dev_override_revoked() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+        std::env::set_var("LIT_LICENSE_DEV", "revoked");
+        assert_eq!(dev_mode_override(), Some(DevOverride::Revoked));
         std::env::remove_var("LIT_LICENSE_DEV");
     }
 

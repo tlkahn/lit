@@ -20,6 +20,8 @@ pub struct LicenseStatusResponse {
     pub source: Option<String>,
     pub expires_at: Option<u64>,
     pub expiry_date: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 fn source_to_string(source: &license::key::LicenseSource) -> String {
@@ -58,6 +60,7 @@ impl LicenseStatusResponse {
                 source: None,
                 expires_at: None,
                 expiry_date: None,
+                reason: None,
             },
             license::DevOverride::Licensed => Self {
                 state: "licensed".into(),
@@ -65,6 +68,7 @@ impl LicenseStatusResponse {
                 source: Some("direct".into()),
                 expires_at: None,
                 expiry_date: None,
+                reason: None,
             },
             license::DevOverride::LicenseExpired => Self {
                 state: "license_expired".into(),
@@ -72,6 +76,15 @@ impl LicenseStatusResponse {
                 source: Some("direct".into()),
                 expires_at: Some(1735603200),
                 expiry_date: Some(format_expiry_date(1735603200)),
+                reason: None,
+            },
+            license::DevOverride::Revoked => Self {
+                state: "revoked".into(),
+                licensed_to: None,
+                source: None,
+                expires_at: None,
+                expiry_date: None,
+                reason: Some("dev_revoked".into()),
             },
         }
     }
@@ -84,6 +97,7 @@ impl LicenseStatusResponse {
                 source: None,
                 expires_at: None,
                 expiry_date: None,
+                reason: None,
             },
             license::LicenseStatus::Licensed(payload) => Self {
                 state: "licensed".into(),
@@ -91,6 +105,7 @@ impl LicenseStatusResponse {
                 source: Some(source_to_string(&payload.source)),
                 expires_at: payload.expires_at,
                 expiry_date: payload.expires_at.map(format_expiry_date),
+                reason: None,
             },
             license::LicenseStatus::LicenseExpired { payload, expired_at } => Self {
                 state: "license_expired".into(),
@@ -98,13 +113,15 @@ impl LicenseStatusResponse {
                 source: Some(source_to_string(&payload.source)),
                 expires_at: Some(*expired_at),
                 expiry_date: Some(format_expiry_date(*expired_at)),
+                reason: None,
             },
-            license::LicenseStatus::Revoked { .. } => Self {
+            license::LicenseStatus::Revoked { reason } => Self {
                 state: "revoked".into(),
                 licensed_to: None,
                 source: None,
                 expires_at: None,
                 expiry_date: None,
+                reason: reason.clone(),
             },
         }
     }
@@ -139,17 +156,13 @@ pub fn activate_license(
     key: String,
     state: State<'_, LicenseManager>,
 ) -> Result<LicenseStatusResponse, String> {
-    license::key::verify_license_key(&key, &state.license_verifying_key)
-        .map_err(|e| e.to_string())?;
-    license::storage::write_license_key(&state.data_dir, &key).map_err(|e| e.to_string())?;
-    // A successful (re-)activation clears any prior revocation marker so the
-    // user is no longer shown the revoked splash.
-    let _ = license::storage::clear_revocation_marker(&state.data_dir);
-    let status = license::get_status(
+    let status = license::activate_key(
         &state.data_dir,
+        &key,
         &state.license_verifying_key,
         now_secs(),
-    );
+    )
+    .map_err(|e| e.to_string())?;
     Ok(LicenseStatusResponse::from_status(&status))
 }
 
@@ -249,6 +262,7 @@ mod tests {
             source: Some("app_store".into()),
             expires_at: Some(1735603200),
             expiry_date: Some("2024-12-31".into()),
+            reason: None,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"state\":\"licensed\""));
@@ -267,6 +281,7 @@ mod tests {
             source: None,
             expires_at: None,
             expiry_date: None,
+            reason: None,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"state\":\"unlicensed\""));
@@ -285,6 +300,7 @@ mod tests {
             source: Some("direct".into()),
             expires_at: Some(1735603200),
             expiry_date: Some("2024-12-31".into()),
+            reason: None,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"state\":\"license_expired\""));
@@ -311,7 +327,7 @@ mod tests {
     }
 
     #[test]
-    fn from_status_revoked() {
+    fn from_status_revoked_includes_reason() {
         let status = license::LicenseStatus::Revoked {
             reason: Some("refund".into()),
         };
@@ -321,17 +337,32 @@ mod tests {
         assert_eq!(resp.source, None);
         assert_eq!(resp.expires_at, None);
         assert_eq!(resp.expiry_date, None);
+        assert_eq!(resp.reason, Some("refund".into()));
     }
 
     #[test]
-    fn activate_clears_revocation_marker() {
-        // Re-activating a valid key must clear a prior revocation marker, so a
-        // re-purchasing user isn't stuck on the revoked splash.
-        let dir = tempfile::tempdir().unwrap();
-        license::storage::write_revocation_marker(dir.path(), Some("refund")).unwrap();
-        // Simulate the activate path's marker-clearing step.
-        license::storage::clear_revocation_marker(dir.path()).unwrap();
-        assert!(license::storage::read_revocation_marker(dir.path()).is_none());
+    fn from_status_revoked_none_reason() {
+        let status = license::LicenseStatus::Revoked { reason: None };
+        let resp = LicenseStatusResponse::from_status(&status);
+        assert_eq!(resp.state, "revoked");
+        assert_eq!(resp.reason, None);
+    }
+
+    #[test]
+    fn from_status_revoked_json_includes_reason() {
+        let status = license::LicenseStatus::Revoked {
+            reason: Some("refund".into()),
+        };
+        let resp = LicenseStatusResponse::from_status(&status);
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"reason\":\"refund\""));
+    }
+
+    #[test]
+    fn from_status_unlicensed_json_omits_reason() {
+        let resp = LicenseStatusResponse::from_status(&license::LicenseStatus::Unlicensed);
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(!json.contains("reason"));
     }
 
     #[cfg(feature = "app-store")]
@@ -397,6 +428,17 @@ mod tests {
         assert_eq!(resp.source, Some("direct".into()));
         assert_eq!(resp.expires_at, None);
         assert_eq!(resp.expiry_date, None);
+    }
+
+    #[test]
+    fn dev_override_revoked_response() {
+        let resp = LicenseStatusResponse::from_dev_override(license::DevOverride::Revoked);
+        assert_eq!(resp.state, "revoked");
+        assert_eq!(resp.licensed_to, None);
+        assert_eq!(resp.source, None);
+        assert_eq!(resp.expires_at, None);
+        assert_eq!(resp.expiry_date, None);
+        assert_eq!(resp.reason, Some("dev_revoked".into()));
     }
 
     fn sample_payload(expires_at: Option<u64>) -> license::key::LicensePayload {
