@@ -182,19 +182,18 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
             });
         }
         MenuAction::ExportMarkdown => {
-            let handle = app.clone();
-            let target_window = find_focused_window(app);
-            tauri::async_runtime::spawn(async move {
-                use tauri_plugin_dialog::DialogExt;
-                let dialog = handle.dialog().clone();
-                dialog
-                    .file()
-                    .set_file_name("export.zip")
-                    .add_filter("ZIP Archive", &["zip"])
-                    .save_file(move |path| {
-                        if let Some(dest) = path {
-                            let dest_str = dest.to_string();
-                            if let Some(window) = target_window.clone() {
+            if let Some(window) = find_focused_window(app) {
+                let handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    use tauri_plugin_dialog::DialogExt;
+                    let dialog = handle.dialog().clone();
+                    dialog
+                        .file()
+                        .set_file_name("export.zip")
+                        .add_filter("ZIP Archive", &["zip"])
+                        .save_file(move |path| {
+                            if let Some(dest) = path {
+                                let dest_str = dest.to_string();
                                 let state: tauri::State<crate::commands::workspace::WorkspaceRegistry> = handle.state();
                                 let root = match crate::commands::workspace::get_workspace_root(&state, window.label()) {
                                     Ok(r) => r,
@@ -218,9 +217,9 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
                                     }
                                 });
                             }
-                        }
-                    });
-            });
+                        });
+                });
+            }
         }
         MenuAction::ExportLatex => {
             if let Some(window) = find_focused_window(app) {
