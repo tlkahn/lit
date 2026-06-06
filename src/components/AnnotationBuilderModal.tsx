@@ -162,7 +162,7 @@ export function AnnotationBuilderModal({
       data-testid="annotation-builder-backdrop"
     >
       <div
-        className="w-[28rem] rounded-lg bg-bg-primary p-5 shadow-lg"
+        className="w-[28rem] max-h-[90vh] flex flex-col rounded-lg bg-bg-primary p-5 shadow-lg"
         data-testid="annotation-builder-panel"
       >
         <div className="mb-4 grid grid-cols-2 gap-3">
@@ -337,10 +337,10 @@ export function AnnotationBuilderModal({
           />
         </label>
 
-        <div className="mb-4 rounded border border-border-primary bg-bg-secondary p-2">
+        <div className="mb-4 overflow-y-auto min-h-0 rounded border border-border-primary bg-bg-secondary p-2">
           <span className="mb-1 block text-xs text-text-muted">Preview</span>
           <code
-            className="whitespace-pre-wrap text-xs text-text-normal block"
+            className="whitespace-pre-wrap text-xs text-text-normal block max-h-32 overflow-y-auto"
             data-testid="annotation-preview"
           >
             {preview}
