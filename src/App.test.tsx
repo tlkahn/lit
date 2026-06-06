@@ -884,12 +884,17 @@ describe("App", () => {
       expect(screen.getByTestId("annotation-builder-backdrop")).toBeInTheDocument();
     });
 
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => { cb(0); return 0; });
+
     fireEvent.click(screen.getByTestId("annotation-insert-btn"));
 
     expect(dispatch).toHaveBeenCalled();
-    const changes = dispatch.mock.calls[0]![0].changes;
-    expect(changes.from).toBe(15);
-    expect(changes.to).toBe(15);
+    const arg = dispatch.mock.calls[0]![0];
+    expect(arg.changes.from).toBe(15);
+    expect(arg.changes.to).toBe(15);
+    expect(arg.selection.anchor).toBe(15);
+    expect(arg.selection.head).toBe(15 + arg.changes.insert.length);
+    expect(mockView.focus).toHaveBeenCalled();
   });
 
   describe("window listener cleanup", () => {
