@@ -37,7 +37,7 @@ impl LkgExportState {
         })
     }
 
-    pub fn release(&self, path: &PathBuf) {
+    fn release(&self, path: &PathBuf) {
         let mut active = self.active.lock().unwrap();
         active.remove(path);
     }
