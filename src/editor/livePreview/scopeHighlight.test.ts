@@ -42,17 +42,28 @@ describe("scopeHighlightField", () => {
     expect(tr2.state.field(scopeHighlightField)).toBe(Decoration.none);
   });
 
-  it("highlight positions remap on doc change", () => {
+  it("doc change clears highlight instead of remapping", () => {
     const state = EditorState.create({
       doc: "hello world",
       extensions: [scopeHighlightField],
     });
     const tr1 = state.update({ effects: setScopeHighlight.of({ from: 6, to: 11 }) });
     const tr2 = tr1.state.update({ changes: { from: 0, insert: "xx" } });
-    const decos = tr2.state.field(scopeHighlightField);
-    const iter = decos.iter();
-    expect(iter.from).toBe(8);
-    expect(iter.to).toBe(13);
+    expect(tr2.state.field(scopeHighlightField)).toBe(Decoration.none);
+  });
+
+  it("highlight clears when annotation text is edited", () => {
+    const state = EditorState.create({
+      doc: "before [!note] annotation content after",
+      extensions: [scopeHighlightField],
+    });
+    const tr1 = state.update({ effects: setScopeHighlight.of({ from: 7, to: 33 }) });
+    const decos1 = tr1.state.field(scopeHighlightField);
+    expect(decos1.iter().value).not.toBeNull();
+    const tr2 = tr1.state.update({
+      changes: { from: 7, to: 15, insert: "" },
+    });
+    expect(tr2.state.field(scopeHighlightField)).toBe(Decoration.none);
   });
 
   it("dispatchScopeHighlight dispatches the effect", () => {
