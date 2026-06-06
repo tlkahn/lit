@@ -186,23 +186,6 @@ fn load_lkg_graph_data_from_archive(
     Ok((nodes, edges, positions, annotations))
 }
 
-/// Maps a [`BundleAnnotation`] into the store's [`IndexableAnnotation`],
-/// preserving the original uuid so imported annotations keep stable identities.
-fn to_indexable(b: &BundleAnnotation) -> IndexableAnnotation {
-    IndexableAnnotation {
-        annotation_type: b.annotation_type.clone(),
-        certainty: b.certainty.clone(),
-        body: b.body.clone(),
-        date: b.date.clone(),
-        source_line: b.source_line,
-        char_start: b.char_start,
-        char_end: b.char_end,
-        scope_kind: b.scope_kind.clone(),
-        scope_value: b.scope_value.clone(),
-        uuid: Some(b.uuid.clone()),
-    }
-}
-
 /// Inserts the decoded bundle graph into a (fresh) `store`.
 ///
 /// Order: nodes, then edges, positions, and annotations. The whole sequence
@@ -257,7 +240,7 @@ pub fn import_graph_data(
                 )
             })
             .collect();
-        store.replace_all_edges(&edge_refs)?;
+        store.replace_all_edges_no_tx(&edge_refs)?;
 
         // Inline (non-nested) positions write: a nested `BEGIN` inside the
         // SAVEPOINT would be rejected by SQLite.
@@ -269,7 +252,7 @@ pub fn import_graph_data(
             by_node
                 .entry(a.node_id.as_str())
                 .or_default()
-                .push(to_indexable(a));
+                .push(a.clone().into());
         }
         for (node_id, anns) in by_node {
             store.upsert_annotations(node_id, &anns)?;
@@ -326,16 +309,38 @@ pub fn import_lkg(source: &Path, destination: &Path) -> Result<LkgImportSummary,
 
     validate_lkg_from_archive(&mut archive)?;
 
-    let file_count = extract_lkg_content_from_archive(&mut archive, destination)?;
+    // Atomic import: stage everything in a temp dir on the SAME filesystem as the
+    // destination (so the final move is a cheap, atomic intra-FS rename), then
+    // move it into place only after the graph DB is fully built. If any step
+    // fails, `TempDir`'s Drop removes the staging tree, so the destination is
+    // never touched and no orphaned `.md` files or half-initialized `.lit` dir
+    // can be left behind.
+    std::fs::create_dir_all(destination)
+        .map_err(|e| format!("cannot create {}: {e}", destination.display()))?;
+    let staging = tempfile::TempDir::new_in(destination)
+        .map_err(|e| format!("cannot create staging dir: {e}"))?;
+
+    let file_count = extract_lkg_content_from_archive(&mut archive, staging.path())?;
     let (nodes, edges, positions, annotations) = load_lkg_graph_data_from_archive(&mut archive)?;
 
-    let lit_dir = destination.join(".lit");
-    std::fs::create_dir_all(&lit_dir)
-        .map_err(|e| format!("cannot create {}: {e}", lit_dir.display()))?;
-    let store = Store::open(&db_path).map_err(|e| e.to_string())?;
+    let staging_lit = staging.path().join(".lit");
+    std::fs::create_dir_all(&staging_lit)
+        .map_err(|e| format!("cannot create {}: {e}", staging_lit.display()))?;
+    let store = Store::open(&staging_lit.join("graph.db")).map_err(|e| e.to_string())?;
 
     import_graph_data(&store, &nodes, &edges, &positions, &annotations)
         .map_err(|e| e.to_string())?;
+
+    // Close the connection before moving so rusqlite checkpoints and flushes the
+    // WAL into graph.db (otherwise we could move a db with an unmerged WAL).
+    drop(store);
+
+    // Everything is built and consistent; promote staging into the destination.
+    // `keep()` disarms TempDir's Drop so it won't try to remove the dir we're
+    // about to empty; we remove the now-empty dir ourselves afterwards.
+    let staging_path = staging.keep();
+    move_staging_to_destination(&staging_path, destination)?;
+    let _ = std::fs::remove_dir(&staging_path);
 
     Ok(LkgImportSummary {
         node_count: nodes.len() as u64,
@@ -343,6 +348,25 @@ pub fn import_lkg(source: &Path, destination: &Path) -> Result<LkgImportSummary,
         annotation_count: annotations.len() as u64,
         file_count,
     })
+}
+
+/// Moves every top-level entry in `staging` into `destination` via
+/// `std::fs::rename`. Because the caller created `staging` on the same
+/// filesystem as `destination` (`TempDir::new_in(destination)`), each rename is
+/// an atomic intra-filesystem move rather than a copy.
+fn move_staging_to_destination(staging: &Path, destination: &Path) -> Result<(), String> {
+    for entry in std::fs::read_dir(staging).map_err(|e| format!("cannot read staging dir: {e}"))? {
+        let entry = entry.map_err(|e| format!("cannot read staging entry: {e}"))?;
+        let target = destination.join(entry.file_name());
+        std::fs::rename(entry.path(), &target).map_err(|e| {
+            format!(
+                "cannot move {} to {}: {e}",
+                entry.path().display(),
+                target.display()
+            )
+        })?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -826,6 +850,46 @@ mod tests {
         std::fs::create_dir_all(dir.path().join(".lit")).unwrap();
         let _ = Store::open(&dir.path().join(".lit").join("graph.db")).unwrap();
         assert!(destination_has_workspace(&dir.path()));
+    }
+
+    // --- Cycle 5.1: import_lkg cleans up staging on graph-data failure ---
+
+    #[test]
+    fn import_lkg_cleans_up_on_graph_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        // A valid manifest and content file, but malformed graph/nodes.json so the
+        // graph-data load fails AFTER content has been staged. With atomic import,
+        // a failure must leave the destination untouched (no orphaned .md, no
+        // half-initialized .lit).
+        let crafted = crafted_zip(
+            dir.path(),
+            &[
+                ("manifest.json", &manifest_with_version(1)),
+                ("content/hello.md", b"# Hello"),
+                ("graph/nodes.json", b"{ bad"),
+                ("graph/edges.json", b"[]"),
+                ("graph/positions.json", b"{}"),
+                ("annotations/annotations.json", b"[]"),
+            ],
+        );
+
+        let dest = tempfile::tempdir().unwrap();
+        let result = import_lkg(&crafted, dest.path());
+        assert!(result.is_err(), "expected import to fail, got {result:?}");
+
+        assert!(
+            !dest.path().join("hello.md").exists(),
+            "orphaned content file left behind after failed import"
+        );
+        assert!(
+            !dest.path().join(".lit").exists(),
+            "half-initialized .lit left behind after failed import"
+        );
+        assert!(
+            walk_files(dest.path()).is_empty(),
+            "destination should be empty after a failed import, found: {:?}",
+            walk_files(dest.path())
+        );
     }
 
     /// Recursively collects every regular file path under `dir`.

@@ -233,10 +233,14 @@ function App() {
         setLkgExportProgress(null);
         try {
           await exportLkg(dest);
-        } catch {
+        } catch (err) {
           setLkgExportVisible(false);
           setLkgExportResult(null);
           setLkgExportProgress(null);
+          useStatusMessageStore.getState().show(
+            err instanceof Error ? err.message : String(err),
+            "error",
+          );
         }
       });
       if (cancelled) { unExportLkg(); return; }

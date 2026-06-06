@@ -535,6 +535,12 @@ impl Store {
     /// preserve atomicity — `save_positions` does so directly, while the `.lkg`
     /// importer calls this inside its own SAVEPOINT (a nested `BEGIN` would
     /// otherwise raise "cannot start a transaction within a transaction").
+    ///
+    /// # Single-connection invariant
+    ///
+    /// `Store` holds a single `rusqlite::Connection` (no pooling). This method
+    /// operates on `self.conn` directly and relies on the caller's transaction
+    /// living on the same connection.
     pub(crate) fn write_positions_no_tx(&self, positions: &HashMap<String, super::types::Position>) -> Result<(), GraphError> {
         self.conn.execute_batch("DELETE FROM node_positions")?;
         let mut stmt = self.conn.prepare(
@@ -581,6 +587,24 @@ impl Store {
     }
 
     pub fn replace_all_edges(&self, edges: &[(&str, &str, &str, &str, u32)]) -> Result<(), GraphError> {
+        let tx = self.conn.unchecked_transaction()?;
+        self.replace_all_edges_no_tx(edges)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Replaces all rows in `edges` without opening its own transaction. Callers
+    /// must wrap this in a transaction (or SAVEPOINT) to preserve atomicity —
+    /// `replace_all_edges` does so directly, while the `.lkg` importer calls this
+    /// inside its own SAVEPOINT (a nested `BEGIN` would otherwise raise "cannot
+    /// start a transaction within a transaction").
+    ///
+    /// # Single-connection invariant
+    ///
+    /// `Store` holds a single `rusqlite::Connection` (no pooling). This method
+    /// operates on `self.conn` directly and relies on the caller's transaction
+    /// living on the same connection.
+    pub(crate) fn replace_all_edges_no_tx(&self, edges: &[(&str, &str, &str, &str, u32)]) -> Result<(), GraphError> {
         self.conn.execute("DELETE FROM edges", [])?;
         for &(source, target, context, raw_target, source_line) in edges {
             self.conn.execute(
@@ -1839,6 +1863,80 @@ mod tests {
             )
             .unwrap();
         assert_eq!(target, "b.md");
+    }
+
+    #[test]
+    fn replace_all_edges_no_tx_clears_and_inserts() {
+        let store = Store::open_memory().unwrap();
+        store.insert_edge("old.md", "old_target.md", "", "", 0).unwrap();
+
+        let edges = vec![
+            ("a.md", "b.md", "link to B", "B", 0),
+            ("a.md", "c.md", "link to C", "C", 0),
+        ];
+        store.replace_all_edges_no_tx(&edges).unwrap();
+
+        let count: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM edges", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 2);
+
+        let target: String = store
+            .conn
+            .query_row(
+                "SELECT target FROM edges WHERE source = 'a.md' AND context = 'link to B'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(target, "b.md");
+    }
+
+    #[test]
+    fn replace_all_edges_is_atomic() {
+        let store = Store::open_memory().unwrap();
+        store.insert_edge("keep.md", "keep_target.md", "orig", "kt", 0).unwrap();
+
+        // Trigger aborts the second inserted edge, after DELETE has already run
+        // and the first INSERT succeeded — the wrapper must roll everything back.
+        store
+            .conn
+            .execute_batch(
+                "CREATE TRIGGER block_edge BEFORE INSERT ON edges \
+                 WHEN NEW.source = 'boom.md' \
+                 BEGIN SELECT RAISE(ABORT, 'blocked by test trigger'); END;",
+            )
+            .unwrap();
+
+        let edges = vec![
+            ("ok.md", "x.md", "", "", 0),
+            ("boom.md", "y.md", "", "", 0),
+        ];
+        let result = store.replace_all_edges(&edges);
+        assert!(result.is_err());
+
+        let keep_count: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM edges WHERE source = 'keep.md'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(keep_count, 1, "original edge must survive rollback");
+
+        let partial_count: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM edges WHERE source = 'ok.md'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(partial_count, 0, "no partial new edges may remain");
+
+        store.conn.execute_batch("DROP TRIGGER block_edge").unwrap();
     }
 
     // --- Phase 7: Query methods ---

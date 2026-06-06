@@ -83,6 +83,23 @@ pub struct IndexableAnnotation {
     pub uuid: Option<String>,
 }
 
+impl From<FullAnnotationRecord> for IndexableAnnotation {
+    fn from(r: FullAnnotationRecord) -> Self {
+        IndexableAnnotation {
+            annotation_type: r.annotation_type,
+            certainty: r.certainty,
+            body: r.body,
+            date: r.date,
+            source_line: r.source_line,
+            char_start: r.char_start,
+            char_end: r.char_end,
+            scope_kind: r.scope_kind,
+            scope_value: r.scope_value,
+            uuid: Some(r.uuid),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AnnotationSearchResult {
     pub annotation_id: i64,
@@ -146,6 +163,34 @@ pub fn extract_aliases(fm: &serde_json::Value) -> Vec<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn full_annotation_record_converts_to_indexable() {
+        let rec = FullAnnotationRecord {
+            uuid: "u1".into(),
+            node_id: "a.md".into(),
+            annotation_type: "claim".into(),
+            certainty: "high".into(),
+            body: Some("text".into()),
+            date: Some("2026-06-06".into()),
+            source_line: 3,
+            char_start: 10,
+            char_end: 20,
+            scope_kind: "char".into(),
+            scope_value: "x".into(),
+        };
+        let ia: IndexableAnnotation = rec.clone().into();
+        assert_eq!(ia.annotation_type, rec.annotation_type);
+        assert_eq!(ia.certainty, rec.certainty);
+        assert_eq!(ia.body, rec.body);
+        assert_eq!(ia.date, rec.date);
+        assert_eq!(ia.source_line, rec.source_line);
+        assert_eq!(ia.char_start, rec.char_start);
+        assert_eq!(ia.char_end, rec.char_end);
+        assert_eq!(ia.scope_kind, rec.scope_kind);
+        assert_eq!(ia.scope_value, rec.scope_value);
+        assert_eq!(ia.uuid, Some("u1".to_string()));
+    }
 
     #[test]
     fn parsed_node_serializes_to_json() {

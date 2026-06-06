@@ -8,6 +8,7 @@ import { usePreferencesStore } from "./stores/preferences";
 import { useLicenseStore } from "./stores/license";
 import { usePaneStore } from "./stores/panes";
 import { useBottomPanelStore } from "./stores/bottomPanel";
+import { useStatusMessageStore } from "./stores/statusMessage";
 import { _resetForTesting as resetRegistry } from "./lib/paneContentRegistry";
 import { _resetForTesting as resetEditorViewRef, setCurrentEditorView } from "./lib/editorViewRef";
 import { SIDEBAR_WIDTH_PX } from "./components/Sidebar";
@@ -945,6 +946,7 @@ describe("App", () => {
       vi.clearAllMocks();
       mockListen();
       useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+      useStatusMessageStore.setState({ message: null, variant: "success" });
     });
 
     // === CYCLE J1 — export ===
@@ -1059,6 +1061,10 @@ describe("App", () => {
         expect(screen.queryByTestId("lkg-export-dialog")).not.toBeInTheDocument();
       });
       expect(screen.queryByText("Preparing export…")).not.toBeInTheDocument();
+
+      await waitFor(() => {
+        expect(screen.getByTestId("status-bar-message")).toHaveTextContent(/disk full/i);
+      });
     });
 
     // === CYCLE J2 — import ===

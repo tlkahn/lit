@@ -65,6 +65,8 @@ uuid = { version = "1", features = ["v4"] }
 argon2 = "0.5"
 aes-gcm = "0.10"
 rand = "0.8"
+# Used by the atomic .lkg import path (stage-then-rename); also used in tests.
+tempfile = "3"
 
 [[bin]]
 name = "lit-cli"
@@ -72,7 +74,6 @@ path = "src/bin/lit-cli.rs"
 
 [dev-dependencies]
 serde_json = "1"
-tempfile = "3"
 tracing-test = { version = "0.2", features = ["no-env-filter"] }
 wiremock = "0.6"
 tokio = { version = "1", features = ["full", "test-util"] }
