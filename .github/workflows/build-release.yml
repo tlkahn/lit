@@ -55,7 +55,6 @@ jobs:
       - name: Pre-build lit-cli
         working-directory: src-tauri
         env:
-          LIT_TRIAL_SIGNING_KEY_B64: ${{ secrets.LIT_TRIAL_SIGNING_KEY_B64 }}
           LIT_LICENSE_VERIFYING_KEY_B64: ${{ secrets.LIT_LICENSE_VERIFYING_KEY_B64 }}
         run: |
           mkdir -p binaries
@@ -89,7 +88,6 @@ jobs:
             src-tauri/libs/libpdfium.dylib
       - name: Build Tauri app
         env:
-          LIT_TRIAL_SIGNING_KEY_B64: ${{ secrets.LIT_TRIAL_SIGNING_KEY_B64 }}
           LIT_LICENSE_VERIFYING_KEY_B64: ${{ secrets.LIT_LICENSE_VERIFYING_KEY_B64 }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}

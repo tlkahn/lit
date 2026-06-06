@@ -69,7 +69,7 @@ release_check_env() {
   local skip_website="${2:-0}"
   local missing=()
 
-  for var in LIT_TRIAL_SIGNING_KEY_B64 LIT_LICENSE_VERIFYING_KEY_B64; do
+  for var in LIT_LICENSE_VERIFYING_KEY_B64; do
     if [[ -z "${!var:-}" ]]; then
       missing+=("$var")
     fi

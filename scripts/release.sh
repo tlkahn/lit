@@ -11,7 +11,6 @@
 #   Git: access to private tlkahn/llm-rs dependency (SSH key or HTTPS token).
 #
 # Required environment variables:
-#   LIT_TRIAL_SIGNING_KEY_B64    base64-encoded trial signing key
 #   LIT_LICENSE_VERIFYING_KEY_B64 base64-encoded license verifying key
 #   APPLE_ID                     Apple ID for notarization (skip in --dry-run)
 #   APPLE_PASSWORD               App-specific password    (skip in --dry-run)
