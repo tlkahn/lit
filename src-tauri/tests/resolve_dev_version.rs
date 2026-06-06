@@ -43,3 +43,29 @@ fn empty_or_whitespace_tag_falls_back_to_dev() {
     assert_eq!(resolve_dev_version(Some(""), "0.0.0"), "0.0.0-dev");
     assert_eq!(resolve_dev_version(Some("   \n"), "0.0.0"), "0.0.0-dev");
 }
+
+/// Future-proofing invariant (PR #336 review: F).
+///
+/// `git describe --tags --always` (the old flag set) yields `0.13.0-5-gabcdef`
+/// on an off-tag commit — NOT valid semver, and a `-g<sha>` suffix that any
+/// future semver consumer would choke on. build.rs now feeds this helper the
+/// output of `git describe --tags --abbrev=0` (nearest tag only), and the `None`
+/// branch yields a `X.Y.Z-dev` pre-release. Both forms are clean: neither can
+/// carry a `-g<sha>` commit suffix. Pin that contract so a regression to
+/// `--always` (or any helper change that lets a SHA suffix through) fails here.
+#[test]
+fn resolved_version_never_carries_git_sha_suffix() {
+    let cases = [
+        resolve_dev_version(Some("v0.13.0"), "0.0.0"),
+        resolve_dev_version(Some("0.13.0\n"), "0.0.0"),
+        resolve_dev_version(None, "0.0.0"),
+        resolve_dev_version(Some(""), "1.2.3"),
+    ];
+    for v in cases {
+        assert!(
+            !v.contains("-g"),
+            "resolved version {v:?} unexpectedly carries a git commit-sha suffix; \
+             build.rs must feed abbrev-zero `git describe`, not `--always`"
+        );
+    }
+}

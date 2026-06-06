@@ -63,6 +63,15 @@ fn set_git_version() {
 /// fake "Lit v0.0.0" release in the About dialog. Instead we append a `-dev`
 /// suffix so the fallback is clearly labelled (e.g. `0.0.0-dev`) and can never
 /// be mistaken for a real release.
+///
+/// Format contract (`LIT_GIT_VERSION`): both branches are semver-clean. The
+/// caller feeds `git describe --tags --abbrev=0` (nearest tag only) — NOT the
+/// `--always` / default form, which would yield a non-semver `X.Y.Z-N-g<sha>`
+/// off-tag string. So the tag branch is a plain `X.Y.Z` and the fallback branch
+/// is the `X.Y.Z-dev` pre-release; neither ever carries a `-g<sha>` commit
+/// suffix. The value is currently display/IPC only (menu.rs, get_app_info), but
+/// a future consumer may semver-parse it, so this invariant is pinned by
+/// `tests/resolve_dev_version.rs::resolved_version_never_carries_git_sha_suffix`.
 fn resolve_dev_version(tag: Option<&str>, pkg_version: &str) -> String {
     let cleaned = tag
         .map(|t| t.trim())
