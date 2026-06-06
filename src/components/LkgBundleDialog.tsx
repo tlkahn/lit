@@ -18,7 +18,7 @@ export function LkgExportDialog({ visible, progress, result }: LkgExportDialogPr
         {result ? (
           <>
             <p>Exported {result.exported_count} files to {result.destination}</p>
-            <p>{result.content_hash}</p>
+            <p>{result.graph_hash}</p>
           </>
         ) : progress ? (
           <>

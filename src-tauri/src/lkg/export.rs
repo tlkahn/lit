@@ -1,7 +1,7 @@
 use crate::graph::error::GraphError;
 use crate::graph::store::Store;
 use crate::graph::types::{extract_aliases, extract_tags, Position};
-use crate::lkg::hash::compute_content_hash;
+use crate::lkg::hash::compute_graph_hash;
 use crate::lkg::types::{
     BundleAnnotation, BundleEdge, BundleNode, LkgExportSummary, LkgManifest, LkgStats,
 };
@@ -16,27 +16,21 @@ use zip::write::SimpleFileOptions;
 /// query on `Store`); aliases come from the `aliases` table, falling back to
 /// frontmatter extraction when the table has no rows for a node.
 pub fn collect_bundle_nodes(store: &Store) -> Result<Vec<BundleNode>, GraphError> {
-    let metadata = store.all_nodes_metadata()?; // Vec<(id, is_stub)>, sorted by id.
-    let titles = store.node_titles()?;
-    let frontmatters = store.node_frontmatter_map()?;
-    let all_ids: Vec<String> = metadata.iter().map(|(id, _)| id.clone()).collect();
-    let first_paragraphs = store.get_first_paragraphs(&all_ids)?;
+    // Single id-sorted scan of the `nodes` table for all four columns the bundle
+    // needs; only aliases live in a separate table.
+    let rows = store.all_bundle_node_rows()?;
     let aliases_map = store.all_aliases()?;
 
-    let mut nodes = Vec::with_capacity(metadata.len());
-    for (id, is_stub) in metadata {
-        let frontmatter = frontmatters
-            .get(&id)
-            .cloned()
-            .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
+    let mut nodes = Vec::with_capacity(rows.len());
+    for (id, is_stub, title, frontmatter, first_paragraph) in rows {
         let tags = extract_tags(&frontmatter);
         let aliases = match aliases_map.get(&id) {
             Some(a) => a.clone(),
             None => extract_aliases(&frontmatter),
         };
         nodes.push(BundleNode {
-            title: titles.get(&id).cloned().unwrap_or_default(),
-            first_paragraph: first_paragraphs.get(&id).cloned().unwrap_or_default(),
+            title,
+            first_paragraph,
             frontmatter,
             is_stub,
             tags,
@@ -67,55 +61,15 @@ pub fn collect_bundle_edges(store: &Store) -> Result<Vec<BundleEdge>, GraphError
 /// Maps every annotation row in `store` into a [`BundleAnnotation`], preserving
 /// the store's ordering (sorted by node_id then char_start).
 pub fn collect_bundle_annotations(store: &Store) -> Result<Vec<BundleAnnotation>, GraphError> {
-    let anns = store
-        .all_annotations_full()?
-        .into_iter()
-        .map(|r| BundleAnnotation {
-            uuid: r.uuid,
-            node_id: r.node_id,
-            annotation_type: r.annotation_type,
-            certainty: r.certainty,
-            body: r.body,
-            date: r.date,
-            source_line: r.source_line,
-            char_start: r.char_start,
-            char_end: r.char_end,
-            scope_kind: r.scope_kind,
-            scope_value: r.scope_value,
-        })
-        .collect();
-    Ok(anns)
+    // `BundleAnnotation` is a type alias for `FullAnnotationRecord`, which is
+    // exactly what `all_annotations_full` returns, so no field mapping is needed.
+    store.all_annotations_full()
 }
 
 /// Formats the current wall-clock time as an RFC 3339 UTC timestamp
-/// (`YYYY-MM-DDTHH:MM:SSZ`). Implemented without a date crate by converting
-/// the UNIX epoch seconds via the civil-from-days algorithm.
+/// (`YYYY-MM-DDTHH:MM:SSZ`) at seconds precision, using chrono.
 fn now_rfc3339() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-
-    let days = secs.div_euclid(86_400);
-    let rem = secs.rem_euclid(86_400);
-    let (hour, min, sec) = (rem / 3600, (rem % 3600) / 60, rem % 60);
-
-    // Civil-from-days (Howard Hinnant's algorithm), epoch shifted to 0000-03-01.
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let year = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = if month <= 2 { year + 1 } else { year };
-
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        year, month, day, hour, min, sec
-    )
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
 /// Writes a single in-memory entry (JSON bytes) to the zip under `name`.
@@ -177,7 +131,7 @@ where
     let mut zip = zip::ZipWriter::new(file);
     let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
-    // Compute stats and content hash for the manifest.
+    // Compute stats and graph hash for the manifest.
     let asset_count = content_entries
         .iter()
         .filter(|e| !e.relative_path.ends_with(".md"))
@@ -187,7 +141,7 @@ where
         .filter_map(|e| std::fs::metadata(&e.absolute_path).ok())
         .map(|m| m.len())
         .sum();
-    let content_hash = compute_content_hash(nodes, edges, annotations);
+    let graph_hash = compute_graph_hash(nodes, edges, annotations);
 
     let manifest = LkgManifest {
         format_version: 1,
@@ -203,7 +157,7 @@ where
             asset_count,
             total_size_bytes,
         },
-        content_hash: content_hash.clone(),
+        graph_hash: graph_hash.clone(),
     };
 
     // (1) manifest.json — always first.
@@ -235,7 +189,7 @@ where
     Ok(LkgExportSummary {
         exported_count: content_entries.len(),
         destination: dest.to_string_lossy().to_string(),
-        content_hash,
+        graph_hash,
     })
 }
 
@@ -554,10 +508,10 @@ mod tests {
         assert_eq!(read.len(), 1);
     }
 
-    // --- D8: content_hash valid ---
+    // --- D8: graph_hash valid ---
 
     #[test]
-    fn write_lkg_zip_manifest_content_hash_valid() {
+    fn write_lkg_zip_manifest_graph_hash_valid() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("note.md"), "hello").unwrap();
         let dest = dir.path().join("out.lkg");
@@ -575,8 +529,8 @@ mod tests {
         .unwrap();
 
         let manifest: crate::lkg::types::LkgManifest = read_zip_json(&dest, "manifest.json");
-        assert!(manifest.content_hash.starts_with("sha256:"));
-        let hex = manifest.content_hash.strip_prefix("sha256:").unwrap();
+        assert!(manifest.graph_hash.starts_with("sha256:"));
+        let hex = manifest.graph_hash.strip_prefix("sha256:").unwrap();
         assert_eq!(hex.len(), 64);
         assert!(hex.chars().all(|c| c.is_ascii_hexdigit()));
     }
@@ -633,7 +587,7 @@ mod tests {
 
         let summary =
             export_lkg(dir.path(), &gi, "My Graph", Some("desc"), &dest, |_, _| {}).unwrap();
-        assert!(summary.content_hash.starts_with("sha256:"));
+        assert!(summary.graph_hash.starts_with("sha256:"));
 
         let names = zip_names(&dest);
         assert_eq!(names[0], "manifest.json");
@@ -654,5 +608,38 @@ mod tests {
         assert_eq!(manifest.stats.edge_count, read_edges.len() as u64);
         // a.md links to b (real edge).
         assert!(read_edges.iter().any(|e| e.source == "a.md"));
+    }
+
+    #[test]
+    fn now_rfc3339_has_rfc3339_seconds_format() {
+        let s = super::now_rfc3339();
+
+        // Shape: YYYY-MM-DDTHH:MM:SSZ — exactly 20 chars, Z-terminated.
+        assert_eq!(s.len(), 20, "unexpected length: {s}");
+        assert!(s.ends_with('Z'), "must end with Z: {s}");
+
+        // Separator positions.
+        assert_eq!(&s[4..5], "-", "{s}");
+        assert_eq!(&s[7..8], "-", "{s}");
+        assert_eq!(&s[10..11], "T", "{s}");
+        assert_eq!(&s[13..14], ":", "{s}");
+        assert_eq!(&s[16..17], ":", "{s}");
+
+        // Digit positions must all be ASCII digits.
+        for i in [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18] {
+            assert!(
+                s.as_bytes()[i].is_ascii_digit(),
+                "char at index {i} is not a digit: {s}"
+            );
+        }
+
+        // Must round-trip through chrono's RFC 3339 parser, and re-formatting at
+        // seconds precision with the Z suffix must reproduce the same string.
+        let dt = chrono::DateTime::parse_from_rfc3339(&s).expect("must parse as RFC 3339");
+        assert_eq!(
+            dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            s,
+            "seconds-precision Z formatting must be idempotent"
+        );
     }
 }

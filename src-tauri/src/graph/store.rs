@@ -525,15 +525,24 @@ impl Store {
 
     pub fn save_positions(&self, positions: &HashMap<String, super::types::Position>) -> Result<(), GraphError> {
         let tx = self.conn.unchecked_transaction()?;
-        tx.execute_batch("DELETE FROM node_positions")?;
-        let mut stmt = tx.prepare(
+        self.write_positions_no_tx(positions)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Replaces all rows in `node_positions` without opening its own
+    /// transaction. Callers must wrap this in a transaction (or SAVEPOINT) to
+    /// preserve atomicity — `save_positions` does so directly, while the `.lkg`
+    /// importer calls this inside its own SAVEPOINT (a nested `BEGIN` would
+    /// otherwise raise "cannot start a transaction within a transaction").
+    pub(crate) fn write_positions_no_tx(&self, positions: &HashMap<String, super::types::Position>) -> Result<(), GraphError> {
+        self.conn.execute_batch("DELETE FROM node_positions")?;
+        let mut stmt = self.conn.prepare(
             "INSERT INTO node_positions(node_id, x, y) VALUES (?1, ?2, ?3)"
         )?;
         for (id, pos) in positions {
             stmt.execute(rusqlite::params![id, pos.x, pos.y])?;
         }
-        drop(stmt);
-        tx.commit()?;
         Ok(())
     }
 
@@ -683,6 +692,48 @@ impl Store {
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(nodes)
+    }
+
+    /// Returns every node row's `(id, is_stub, title, frontmatter, first_paragraph)`
+    /// in a single id-sorted scan, collapsing what would otherwise be four separate
+    /// full-table queries ([`all_nodes_metadata`](Self::all_nodes_metadata),
+    /// [`node_titles`](Self::node_titles),
+    /// [`node_frontmatter_map`](Self::node_frontmatter_map), and
+    /// [`get_first_paragraphs`](Self::get_first_paragraphs)). Used by the `.lkg`
+    /// exporter. Frontmatter falls back to an empty object on NULL/parse-failure and
+    /// `first_paragraph` falls back to `""` on NULL, matching the per-column accessors.
+    pub fn all_bundle_node_rows(
+        &self,
+    ) -> Result<Vec<(String, bool, String, serde_json::Value, String)>, GraphError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, is_stub, title, frontmatter, first_paragraph FROM nodes ORDER BY id",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                let id: String = row.get(0)?;
+                let is_stub: i64 = row.get(1)?;
+                let title: String = row.get(2)?;
+                let fm_str: Option<String> = row.get(3)?;
+                let first_paragraph: Option<String> = row.get(4)?;
+                Ok((id, is_stub, title, fm_str, first_paragraph))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        let mapped = rows
+            .into_iter()
+            .map(|(id, is_stub, title, fm_str, first_paragraph)| {
+                let frontmatter = fm_str
+                    .and_then(|s| serde_json::from_str(&s).ok())
+                    .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
+                (
+                    id,
+                    is_stub != 0,
+                    title,
+                    frontmatter,
+                    first_paragraph.unwrap_or_default(),
+                )
+            })
+            .collect();
+        Ok(mapped)
     }
 
     pub fn node_titles(&self) -> Result<HashMap<String, String>, GraphError> {
@@ -1911,6 +1962,37 @@ mod tests {
     fn node_frontmatter_map_empty_store() {
         let store = Store::open_memory().unwrap();
         assert!(store.node_frontmatter_map().unwrap().is_empty());
+    }
+
+    #[test]
+    fn all_bundle_node_rows_returns_combined_columns() {
+        let store = Store::open_memory().unwrap();
+        store
+            .upsert_node(
+                &make_node("a.md", "Alpha", &["t1"], json!({"title":"Alpha","custom":42})),
+                1,
+            )
+            .unwrap();
+        store.upsert_stub("Ghost").unwrap();
+
+        let rows = store.all_bundle_node_rows().unwrap();
+        assert_eq!(rows.len(), 2);
+        // id-sorted: "Ghost" < "a.md"
+        assert_eq!(
+            rows[0],
+            ("Ghost".to_string(), true, String::new(), json!({}), String::new())
+        );
+        assert_eq!(rows[1].0, "a.md");
+        assert!(!rows[1].1);
+        assert_eq!(rows[1].2, "Alpha");
+        assert_eq!(rows[1].3, json!({"title":"Alpha","custom":42}));
+        assert_eq!(rows[1].4, "First paragraph of Alpha");
+    }
+
+    #[test]
+    fn all_bundle_node_rows_empty_store() {
+        let store = Store::open_memory().unwrap();
+        assert!(store.all_bundle_node_rows().unwrap().is_empty());
     }
 
     // --- Phase 8: Stats & Fingerprint ---

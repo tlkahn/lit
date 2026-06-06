@@ -405,7 +405,7 @@ describe("ipc", () => {
           return {
             exported_count: 12,
             destination: (args as Record<string, unknown>)?.destination ?? "",
-            content_hash: "sha256:" + "a".repeat(64),
+            graph_hash: "sha256:" + "a".repeat(64),
           };
         case "import_lkg":
           return { node_count: 5, edge_count: 3, annotation_count: 2, file_count: 4 };
@@ -1355,7 +1355,7 @@ describe("ipc", () => {
     const summary: LkgExportSummary = await exportLkg("/tmp/graph.lkg", "My Graph", "desc");
     expect(summary.exported_count).toBe(12);
     expect(summary.destination).toBe("/tmp/graph.lkg");
-    expect(summary.content_hash).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(summary.graph_hash).toMatch(/^sha256:[0-9a-f]{64}$/);
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("export_lkg", {
       destination: "/tmp/graph.lkg",

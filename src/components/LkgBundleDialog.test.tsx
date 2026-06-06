@@ -26,7 +26,7 @@ describe("LkgExportDialog", () => {
       <LkgExportDialog
         visible={true}
         progress={null}
-        result={{ exported_count: 7, destination: "/tmp/graph.lkg", content_hash: "sha256:abc" }}
+        result={{ exported_count: 7, destination: "/tmp/graph.lkg", graph_hash: "sha256:abc" }}
       />,
     );
     expect(container.textContent).toContain("Exported 7 files");

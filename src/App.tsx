@@ -231,7 +231,13 @@ function App() {
         setLkgExportVisible(true);
         setLkgExportResult(null);
         setLkgExportProgress(null);
-        await exportLkg(dest);
+        try {
+          await exportLkg(dest);
+        } catch {
+          setLkgExportVisible(false);
+          setLkgExportResult(null);
+          setLkgExportProgress(null);
+        }
       });
       if (cancelled) { unExportLkg(); return; }
       unlisteners.push(unExportLkg);

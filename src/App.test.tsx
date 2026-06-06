@@ -926,7 +926,7 @@ describe("App", () => {
         case "cancel_title_suggestion":
           return undefined;
         case "export_lkg":
-          return { exported_count: 3, destination: "/out/graph.lkg", content_hash: HASH };
+          return { exported_count: 3, destination: "/out/graph.lkg", graph_hash: HASH };
         case "import_lkg":
           return { node_count: 2, edge_count: 1, annotation_count: 0, file_count: 3 };
         default:
@@ -954,7 +954,7 @@ describe("App", () => {
       mockInvoke((cmd, args) => {
         if (cmd === "export_lkg") {
           invokeArgs.push(args);
-          return { exported_count: 3, destination: "/out/graph.lkg", content_hash: HASH };
+          return { exported_count: 3, destination: "/out/graph.lkg", graph_hash: HASH };
         }
         return defaultLkgInvoke(cmd);
       });
@@ -1030,7 +1030,7 @@ describe("App", () => {
         emitMockEvent("lit:lkg-export-complete", {
           exported_count: 3,
           destination: "/out/graph.lkg",
-          content_hash: HASH,
+          graph_hash: HASH,
         });
       });
 
@@ -1038,6 +1038,27 @@ describe("App", () => {
         expect(screen.getByText(/Exported 3 files to \/out\/graph\.lkg/)).toBeInTheDocument();
       });
       expect(screen.getByText(HASH)).toBeInTheDocument();
+    });
+
+    it("export_lkg rejection closes the export dialog instead of leaving it stuck on Preparing export", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "export_lkg") return Promise.reject(new Error("disk full"));
+        return defaultLkgInvoke(cmd);
+      });
+      mockedSave.mockResolvedValue("/out/graph.lkg");
+
+      await act(async () => {
+        render(<App />);
+      });
+
+      await act(async () => {
+        emitMockEvent("menu://export-lkg", {});
+      });
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("lkg-export-dialog")).not.toBeInTheDocument();
+      });
+      expect(screen.queryByText("Preparing export…")).not.toBeInTheDocument();
     });
 
     // === CYCLE J2 — import ===

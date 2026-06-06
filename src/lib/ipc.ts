@@ -725,7 +725,7 @@ export async function exportSubgraph(
 export interface LkgExportSummary {
   exported_count: number;
   destination: string;
-  content_hash: string;
+  graph_hash: string;
 }
 
 export async function exportLkg(

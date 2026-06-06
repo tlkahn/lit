@@ -9,7 +9,7 @@ pub struct LkgManifest {
     pub title: String,
     pub description: Option<String>,
     pub stats: LkgStats,
-    pub content_hash: String,
+    pub graph_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -41,26 +41,20 @@ pub struct BundleEdge {
     pub source_line: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct BundleAnnotation {
-    pub uuid: String,
-    pub node_id: String,
-    pub annotation_type: String,
-    pub certainty: String,
-    pub body: Option<String>,
-    pub date: Option<String>,
-    pub source_line: u32,
-    pub char_start: usize,
-    pub char_end: usize,
-    pub scope_kind: String,
-    pub scope_value: String,
-}
+/// An annotation row carried inside a `.lkg` bundle.
+///
+/// This is a type alias for [`crate::graph::types::FullAnnotationRecord`]: the
+/// two are structurally identical (same 11 fields, same plain serde derives), so
+/// the bundle format is intentionally coupled to the graph type as the single
+/// source of truth. Any future annotation schema change touches exactly one
+/// struct, and the on-disk JSON shape stays byte-compatible.
+pub type BundleAnnotation = crate::graph::types::FullAnnotationRecord;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LkgExportSummary {
     pub exported_count: usize,
     pub destination: String,
-    pub content_hash: String,
+    pub graph_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -92,7 +86,7 @@ mod tests {
                 asset_count: 1,
                 total_size_bytes: 123,
             },
-            content_hash: "sha256:abc".into(),
+            graph_hash: "sha256:abc".into(),
         };
         let s = serde_json::to_string(&m).expect("serialize");
         let back: LkgManifest = serde_json::from_str(&s).expect("deserialize");
@@ -136,7 +130,7 @@ mod tests {
                 asset_count: 1,
                 total_size_bytes: 123,
             },
-            content_hash: "sha256:abc".into(),
+            graph_hash: "sha256:abc".into(),
         };
         let s = serde_json::to_string(&m).expect("serialize");
         let back: LkgManifest = serde_json::from_str(&s).expect("deserialize");
@@ -197,6 +191,60 @@ mod tests {
     }
 
     #[test]
+    fn bundle_annotation_is_full_annotation_record() {
+        // BundleAnnotation must be the SAME type as graph::types::FullAnnotationRecord
+        // (a type alias), so a FullAnnotationRecord is assignable to a BundleAnnotation
+        // binding and the two compare equal across names.
+        let full = crate::graph::types::FullAnnotationRecord {
+            uuid: "uuid-1".into(),
+            node_id: "a.md".into(),
+            annotation_type: "claim".into(),
+            certainty: "high".into(),
+            body: Some("text".into()),
+            date: Some("2026-01-01".into()),
+            source_line: 3u32,
+            char_start: 10usize,
+            char_end: 20usize,
+            scope_kind: "char".into(),
+            scope_value: "x".into(),
+        };
+        let alias_view: BundleAnnotation = full.clone();
+        assert_eq!(alias_view, full);
+    }
+
+    #[test]
+    fn bundle_annotation_alias_serde_is_identical() {
+        // The on-disk .lkg JSON shape must stay byte-compatible: a FullAnnotationRecord
+        // serialized then deserialized as a BundleAnnotation round-trips all 11 fields.
+        let full = crate::graph::types::FullAnnotationRecord {
+            uuid: "uuid-9".into(),
+            node_id: "b.md".into(),
+            annotation_type: "note".into(),
+            certainty: "low".into(),
+            body: Some("body".into()),
+            date: Some("2026-02-02".into()),
+            source_line: 7u32,
+            char_start: 1usize,
+            char_end: 4usize,
+            scope_kind: "line".into(),
+            scope_value: "y".into(),
+        };
+        let s = serde_json::to_string(&full).expect("serialize full");
+        let back: BundleAnnotation = serde_json::from_str(&s).expect("deserialize as bundle");
+        assert_eq!(back.uuid, full.uuid);
+        assert_eq!(back.node_id, full.node_id);
+        assert_eq!(back.annotation_type, full.annotation_type);
+        assert_eq!(back.certainty, full.certainty);
+        assert_eq!(back.body, full.body);
+        assert_eq!(back.date, full.date);
+        assert_eq!(back.source_line, full.source_line);
+        assert_eq!(back.char_start, full.char_start);
+        assert_eq!(back.char_end, full.char_end);
+        assert_eq!(back.scope_kind, full.scope_kind);
+        assert_eq!(back.scope_value, full.scope_value);
+    }
+
+    #[test]
     fn bundle_annotation_round_trips() {
         let a = BundleAnnotation {
             uuid: "uuid-1".into(),
@@ -241,7 +289,7 @@ mod tests {
         let summary = LkgExportSummary {
             exported_count: 7usize,
             destination: "/tmp/out.lkg".into(),
-            content_hash: "sha256:abc".into(),
+            graph_hash: "sha256:abc".into(),
         };
         let s = serde_json::to_string(&summary).expect("serialize");
         let back: LkgExportSummary = serde_json::from_str(&s).expect("deserialize");

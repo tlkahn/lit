@@ -14,8 +14,20 @@ use zip::ZipArchive;
 /// hardcodes `format_version: 1`.
 const SUPPORTED_FORMAT_VERSION: u32 = 1;
 
+#[cfg(test)]
+thread_local! {
+    /// Test-only, per-thread counter of how many times [`open_archive`] has been
+    /// called. Used by `import_lkg_opens_archive_once` to assert an import opens
+    /// (and central-directory-parses) the bundle exactly once. Thread-local so
+    /// the assertion is unaffected by other tests opening archives on other
+    /// threads under cargo's parallel runner. Fully gated out of release builds.
+    static OPEN_ARCHIVE_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Opens the `.lkg` archive at `path` for reading.
 fn open_archive(path: &Path) -> Result<ZipArchive<File>, String> {
+    #[cfg(test)]
+    OPEN_ARCHIVE_COUNT.with(|c| c.set(c.get() + 1));
     let file = File::open(path).map_err(|e| format!("cannot open bundle: {e}"))?;
     ZipArchive::new(file).map_err(|e| format!("invalid bundle archive: {e}"))
 }
@@ -24,6 +36,14 @@ fn open_archive(path: &Path) -> Result<ZipArchive<File>, String> {
 /// returns the parsed [`LkgManifest`].
 pub fn validate_lkg(path: &Path) -> Result<LkgManifest, String> {
     let mut archive = open_archive(path)?;
+    validate_lkg_from_archive(&mut archive)
+}
+
+/// Reads and validates `manifest.json` from an already-open `archive`.
+///
+/// Factored out so `import_lkg` can validate, extract, and load graph data from
+/// a single [`ZipArchive`] handle without re-parsing the central directory.
+fn validate_lkg_from_archive(archive: &mut ZipArchive<File>) -> Result<LkgManifest, String> {
     let entry = archive
         .by_name("manifest.json")
         .map_err(|e| format!("missing manifest.json: {e}"))?;
@@ -78,6 +98,16 @@ fn write_entry(dest: &Path, bytes: &[u8]) -> Result<(), String> {
 /// Non-content entries (manifest, graph, annotations) are skipped.
 pub fn extract_lkg_content(path: &Path, target: &Path) -> Result<usize, String> {
     let mut archive = open_archive(path)?;
+    extract_lkg_content_from_archive(&mut archive, target)
+}
+
+/// Extracts every `content/<path>` entry of an already-open `archive` into
+/// `target`, stripping the `content/` prefix. Returns the number of files
+/// written. Factored out so `import_lkg` can reuse one [`ZipArchive`] handle.
+fn extract_lkg_content_from_archive(
+    archive: &mut ZipArchive<File>,
+    target: &Path,
+) -> Result<usize, String> {
     let mut written = 0usize;
     for i in 0..archive.len() {
         let mut entry = archive
@@ -130,12 +160,29 @@ pub fn load_lkg_graph_data(
     String,
 > {
     let mut archive = open_archive(path)?;
+    load_lkg_graph_data_from_archive(&mut archive)
+}
+
+/// Reads the bundle's graph sections from an already-open `archive`. Factored
+/// out so `import_lkg` can reuse one [`ZipArchive`] handle across validate,
+/// extract, and load steps.
+#[allow(clippy::type_complexity)]
+fn load_lkg_graph_data_from_archive(
+    archive: &mut ZipArchive<File>,
+) -> Result<
+    (
+        Vec<BundleNode>,
+        Vec<BundleEdge>,
+        HashMap<String, Position>,
+        Vec<BundleAnnotation>,
+    ),
+    String,
+> {
     // `by_name` borrows the archive mutably, so read each section in sequence.
-    let nodes: Vec<BundleNode> = read_json(&mut archive, "graph/nodes.json")?;
-    let edges: Vec<BundleEdge> = read_json(&mut archive, "graph/edges.json")?;
-    let positions: HashMap<String, Position> = read_json(&mut archive, "graph/positions.json")?;
-    let annotations: Vec<BundleAnnotation> =
-        read_json(&mut archive, "annotations/annotations.json")?;
+    let nodes: Vec<BundleNode> = read_json(archive, "graph/nodes.json")?;
+    let edges: Vec<BundleEdge> = read_json(archive, "graph/edges.json")?;
+    let positions: HashMap<String, Position> = read_json(archive, "graph/positions.json")?;
+    let annotations: Vec<BundleAnnotation> = read_json(archive, "annotations/annotations.json")?;
     Ok((nodes, edges, positions, annotations))
 }
 
@@ -158,11 +205,17 @@ fn to_indexable(b: &BundleAnnotation) -> IndexableAnnotation {
 
 /// Inserts the decoded bundle graph into a (fresh) `store`.
 ///
-/// Order: nodes, then edges, positions, and annotations. Each underlying
-/// `Store` call autocommits independently — `&Store` exposes no public
-/// transaction handle, so this is a sequence of writes rather than a single
-/// atomic transaction. That is acceptable for import into a freshly created,
-/// empty destination database.
+/// Order: nodes, then edges, positions, and annotations. The whole sequence
+/// runs inside a single SQLite `SAVEPOINT` (`lkg_import`): it is released on
+/// success and rolled back on any error, so a mid-import failure (e.g. disk
+/// full while writing annotations) leaves the destination database unchanged
+/// rather than half-populated. Wrapping all writes in one savepoint also
+/// collapses the per-node WAL flushes into a single commit, making large
+/// imports orders of magnitude faster.
+///
+/// Note: positions are written via `Store::write_positions_no_tx` rather than
+/// `save_positions`, because the latter opens its own inner transaction
+/// (`BEGIN DEFERRED`), and SQLite forbids `BEGIN` inside an active SAVEPOINT.
 ///
 /// Note: `BundleNode.aliases` is not persisted separately — `upsert_node`
 /// re-derives aliases from the node's frontmatter. Round-trips hold because the
@@ -175,66 +228,110 @@ pub fn import_graph_data(
     positions: &HashMap<String, Position>,
     annotations: &[BundleAnnotation],
 ) -> Result<(), GraphError> {
-    for n in nodes {
-        if n.is_stub {
-            store.upsert_stub(&n.id)?;
-        } else {
-            let parsed = ParsedNode {
-                id: n.id.clone(),
-                title: n.title.clone(),
-                tags: n.tags.clone(),
-                frontmatter: n.frontmatter.clone(),
-                first_paragraph: n.first_paragraph.clone(),
-            };
-            store.upsert_node(&parsed, 0)?;
+    store.conn.execute_batch("SAVEPOINT lkg_import")?;
+    let result = (|| -> Result<(), GraphError> {
+        for n in nodes {
+            if n.is_stub {
+                store.upsert_stub(&n.id)?;
+            } else {
+                let parsed = ParsedNode {
+                    id: n.id.clone(),
+                    title: n.title.clone(),
+                    tags: n.tags.clone(),
+                    frontmatter: n.frontmatter.clone(),
+                    first_paragraph: n.first_paragraph.clone(),
+                };
+                store.upsert_node(&parsed, 0)?;
+            }
+        }
+
+        let edge_refs: Vec<(&str, &str, &str, &str, u32)> = edges
+            .iter()
+            .map(|e| {
+                (
+                    e.source.as_str(),
+                    e.target.as_str(),
+                    e.context.as_str(),
+                    e.raw_target.as_str(),
+                    e.source_line,
+                )
+            })
+            .collect();
+        store.replace_all_edges(&edge_refs)?;
+
+        // Inline (non-nested) positions write: a nested `BEGIN` inside the
+        // SAVEPOINT would be rejected by SQLite.
+        store.write_positions_no_tx(positions)?;
+
+        // Group annotations by node_id, then upsert per node.
+        let mut by_node: HashMap<&str, Vec<IndexableAnnotation>> = HashMap::new();
+        for a in annotations {
+            by_node
+                .entry(a.node_id.as_str())
+                .or_default()
+                .push(to_indexable(a));
+        }
+        for (node_id, anns) in by_node {
+            store.upsert_annotations(node_id, &anns)?;
+        }
+
+        Ok(())
+    })();
+
+    match result {
+        Ok(()) => {
+            store.conn.execute_batch("RELEASE lkg_import")?;
+            Ok(())
+        }
+        Err(e) => {
+            store.conn.execute_batch("ROLLBACK TO lkg_import")?;
+            store.conn.execute_batch("RELEASE lkg_import")?;
+            Err(e)
         }
     }
+}
 
-    let edge_refs: Vec<(&str, &str, &str, &str, u32)> = edges
-        .iter()
-        .map(|e| {
-            (
-                e.source.as_str(),
-                e.target.as_str(),
-                e.context.as_str(),
-                e.raw_target.as_str(),
-                e.source_line,
-            )
-        })
-        .collect();
-    store.replace_all_edges(&edge_refs)?;
-
-    store.save_positions(positions)?;
-
-    // Group annotations by node_id, then upsert per node.
-    let mut by_node: HashMap<&str, Vec<IndexableAnnotation>> = HashMap::new();
-    for a in annotations {
-        by_node
-            .entry(a.node_id.as_str())
-            .or_default()
-            .push(to_indexable(a));
-    }
-    for (node_id, anns) in by_node {
-        store.upsert_annotations(node_id, &anns)?;
-    }
-
-    Ok(())
+/// Returns `true` when `destination` is already an initialized Lit workspace,
+/// detected by the presence of `<destination>/.lit/graph.db`.
+fn destination_has_workspace(destination: &Path) -> bool {
+    destination.join(".lit").join("graph.db").exists()
 }
 
 /// Imports the `.lkg` bundle at `source` into the workspace at `destination`.
 ///
 /// Validates the manifest, extracts all `content/` files, then loads the graph
 /// data into a freshly created store at `destination/.lit/graph.db`.
+///
+/// Refuses to import into a destination that is already an initialized
+/// workspace (i.e. `<destination>/.lit/graph.db` exists), to avoid silently
+/// overwriting `.md` files and destroying existing graph data if the user
+/// mistakenly picks their active workspace as the import target.
 pub fn import_lkg(source: &Path, destination: &Path) -> Result<LkgImportSummary, String> {
-    validate_lkg(source)?;
+    // Data-safety guard first, before any destructive operation.
+    let db_path = destination.join(".lit").join("graph.db");
+    if destination_has_workspace(destination) {
+        return Err(format!(
+            "destination already contains a workspace: {} (refusing to overwrite)",
+            db_path.display()
+        ));
+    }
 
-    let file_count = extract_lkg_content(source, destination)?;
-    let (nodes, edges, positions, annotations) = load_lkg_graph_data(source)?;
+    // Open (and central-directory-parse) the bundle exactly once, then thread
+    // the single handle through validate/extract/load. Each step finishes its
+    // entry borrows before the next, so sequential `&mut` reuse is valid (the
+    // same pattern `load_lkg_graph_data_from_archive` uses internally). Opening
+    // happens AFTER the workspace guard above so a guarded import never touches
+    // the destination.
+    let mut archive = open_archive(source)?;
+
+    validate_lkg_from_archive(&mut archive)?;
+
+    let file_count = extract_lkg_content_from_archive(&mut archive, destination)?;
+    let (nodes, edges, positions, annotations) = load_lkg_graph_data_from_archive(&mut archive)?;
 
     let lit_dir = destination.join(".lit");
     std::fs::create_dir_all(&lit_dir)
         .map_err(|e| format!("cannot create {}: {e}", lit_dir.display()))?;
-    let db_path = lit_dir.join("graph.db");
     let store = Store::open(&db_path).map_err(|e| e.to_string())?;
 
     import_graph_data(&store, &nodes, &edges, &positions, &annotations)
@@ -307,7 +404,7 @@ mod tests {
                 asset_count: 0,
                 total_size_bytes: 0,
             },
-            content_hash: "sha256:abc".into(),
+            graph_hash: "sha256:abc".into(),
         };
         serde_json::to_vec(&m).unwrap()
     }
@@ -560,6 +657,76 @@ mod tests {
         assert_eq!(r.uuid, "u1");
     }
 
+    // --- E12b: import_graph_data is atomic — a mid-import failure rolls back ---
+
+    #[test]
+    fn import_graph_data_is_atomic_on_failure() {
+        let store = mem_store();
+
+        // Block annotation inserts to force a mid-import failure AFTER nodes,
+        // edges, and positions have been written.
+        store
+            .conn
+            .execute_batch(
+                "CREATE TRIGGER block_ann BEFORE INSERT ON annotations
+                 BEGIN
+                     SELECT RAISE(ABORT, 'blocked by test trigger');
+                 END;",
+            )
+            .unwrap();
+
+        let nodes = vec![BundleNode {
+            id: "a.md".into(),
+            title: "A".into(),
+            first_paragraph: "Intro".into(),
+            frontmatter: json!({}),
+            is_stub: false,
+            tags: vec![],
+            aliases: vec![],
+        }];
+        let edges = vec![BundleEdge {
+            source: "a.md".into(),
+            target: "b.md".into(),
+            context: "see [[b]]".into(),
+            raw_target: "b".into(),
+            source_line: 1,
+        }];
+        let mut positions = HashMap::new();
+        positions.insert("a.md".to_string(), Position { x: 1.0, y: 2.0 });
+        let annotations = vec![BundleAnnotation {
+            uuid: "u1".into(),
+            node_id: "a.md".into(),
+            annotation_type: "claim".into(),
+            certainty: "high".into(),
+            body: Some("text".into()),
+            date: None,
+            source_line: 3,
+            char_start: 10,
+            char_end: 20,
+            scope_kind: "char".into(),
+            scope_value: "x".into(),
+        }];
+
+        let result = import_graph_data(&store, &nodes, &edges, &positions, &annotations);
+        assert!(result.is_err(), "import should fail when annotation insert is blocked");
+
+        // Nothing must survive the failed import — the whole sequence rolls back.
+        assert!(
+            store.all_nodes_metadata().unwrap().is_empty(),
+            "nodes must roll back on import failure"
+        );
+        assert!(
+            store.all_edges_full().unwrap().is_empty(),
+            "edges must roll back on import failure"
+        );
+        assert!(
+            store.load_positions().unwrap().is_empty(),
+            "positions must roll back on import failure"
+        );
+
+        store.conn.execute_batch("DROP TRIGGER block_ann;").unwrap();
+    }
+
     // --- E13: import_lkg end-to-end ---
 
     #[test]
@@ -584,6 +751,81 @@ mod tests {
         let store = Store::open(&db_path).unwrap();
         assert_eq!(store.all_nodes_metadata().unwrap().len(), 2);
         assert_eq!(store.all_edges_full().unwrap().len(), 1);
+    }
+
+    // --- E13b: import_lkg opens (and central-directory-parses) the archive once ---
+
+    #[test]
+    fn import_lkg_opens_archive_once() {
+        let dir1 = tempfile::tempdir().unwrap();
+        let lkg = export_fixture(&dir1.path());
+
+        let dir2 = tempfile::tempdir().unwrap();
+
+        // Reset immediately before the import so only opens caused by import_lkg
+        // (not by export_fixture's indexing/export) are counted. The counter is
+        // thread-local, so a parallel test opening archives on another thread
+        // cannot perturb this assertion.
+        OPEN_ARCHIVE_COUNT.with(|c| c.set(0));
+        import_lkg(&lkg, &dir2.path()).unwrap();
+        let opens = OPEN_ARCHIVE_COUNT.with(|c| c.get());
+
+        assert_eq!(
+            opens, 1,
+            "import_lkg should open the bundle archive exactly once, opened {opens} times"
+        );
+    }
+
+    // --- E14: import_lkg refuses a destination that already has a workspace ---
+
+    #[test]
+    fn import_lkg_refuses_existing_workspace() {
+        let dir1 = tempfile::tempdir().unwrap();
+        let lkg = export_fixture(&dir1.path());
+
+        let dest = tempfile::tempdir().unwrap();
+        // Simulate an already-initialized workspace at the destination.
+        std::fs::create_dir_all(dest.path().join(".lit")).unwrap();
+        let _ = Store::open(&dest.path().join(".lit").join("graph.db")).unwrap();
+
+        let err = import_lkg(&lkg, &dest.path()).unwrap_err();
+        assert!(
+            err.to_lowercase().contains("workspace"),
+            "expected error mentioning workspace, got: {err}"
+        );
+    }
+
+    // --- E15: import_lkg does not overwrite existing files when guarded ---
+
+    #[test]
+    fn import_lkg_does_not_overwrite_existing_files() {
+        let dir1 = tempfile::tempdir().unwrap();
+        let lkg = export_fixture(&dir1.path());
+
+        let dest = tempfile::tempdir().unwrap();
+        // The destination already has user content and an initialized workspace.
+        std::fs::write(dest.path().join("a.md"), "ORIGINAL USER CONTENT").unwrap();
+        std::fs::create_dir_all(dest.path().join(".lit")).unwrap();
+        let _ = Store::open(&dest.path().join(".lit").join("graph.db")).unwrap();
+
+        let result = import_lkg(&lkg, &dest.path());
+        assert!(result.is_err(), "expected import to be refused, got {result:?}");
+
+        // The guard must fire BEFORE extract_lkg_content, so a.md is untouched.
+        let a = std::fs::read_to_string(dest.path().join("a.md")).unwrap();
+        assert_eq!(a, "ORIGINAL USER CONTENT");
+    }
+
+    // --- E16: destination_has_workspace detects an initialized .lit/graph.db ---
+
+    #[test]
+    fn destination_has_workspace_detects_graph_db() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!destination_has_workspace(&dir.path()));
+
+        std::fs::create_dir_all(dir.path().join(".lit")).unwrap();
+        let _ = Store::open(&dir.path().join(".lit").join("graph.db")).unwrap();
+        assert!(destination_has_workspace(&dir.path()));
     }
 
     /// Recursively collects every regular file path under `dir`.

@@ -19,14 +19,19 @@ where
     hasher.update(serde_json::to_vec(&items).expect("bundle slice serialize is infallible"));
 }
 
-/// Computes a deterministic, order-independent content hash over the bundle's
-/// nodes, edges, and annotations.
+/// Computes a deterministic, order-independent hash over the bundle's graph
+/// metadata: nodes, edges, and annotations.
+///
+/// This hashes graph metadata ONLY — it does NOT hash the file bytes under
+/// `content/`, so two bundles with identical graph metadata but different file
+/// contents produce the same hash. The result is surfaced as `graph_hash` in
+/// the manifest and is not used for bundle-level integrity verification.
 ///
 /// The slices are cloned and sorted by stable keys (nodes by `id`, edges by
 /// `(source, target)`, annotations by `(node_id, char_start)`), then each
 /// sorted collection is serialized to JSON and fed into a single SHA-256 hasher
 /// in a fixed order. The result is returned as `sha256:<lowercase-hex>`.
-pub fn compute_content_hash(
+pub fn compute_graph_hash(
     nodes: &[BundleNode],
     edges: &[BundleEdge],
     annotations: &[BundleAnnotation],
@@ -88,13 +93,13 @@ mod tests {
     }
 
     #[test]
-    fn compute_content_hash_is_64_hex_and_deterministic() {
+    fn compute_graph_hash_is_64_hex_and_deterministic() {
         let nodes = vec![node("a.md", "A"), node("b.md", "B")];
         let edges = vec![edge("a.md", "b.md")];
         let anns = vec![ann("a.md", 0)];
 
-        let result = compute_content_hash(&nodes, &edges, &anns);
-        let again = compute_content_hash(&nodes, &edges, &anns);
+        let result = compute_graph_hash(&nodes, &edges, &anns);
+        let again = compute_graph_hash(&nodes, &edges, &anns);
 
         assert!(result.starts_with("sha256:"));
         let hex = result.strip_prefix("sha256:").unwrap();
@@ -111,25 +116,25 @@ mod tests {
         let nodes = vec![node("a.md", "A"), node("b.md", "B")];
         let edges = vec![edge("a.md", "b.md")];
         let anns = vec![ann("a.md", 0)];
-        let base = compute_content_hash(&nodes, &edges, &anns);
+        let base = compute_graph_hash(&nodes, &edges, &anns);
 
         // Change a node title alone.
         let nodes2 = vec![node("a.md", "A"), node("b.md", "B-changed")];
-        assert_ne!(base, compute_content_hash(&nodes2, &edges, &anns));
+        assert_ne!(base, compute_graph_hash(&nodes2, &edges, &anns));
 
         // Add a third node.
         let nodes3 = vec![node("a.md", "A"), node("b.md", "B"), node("c.md", "C")];
-        assert_ne!(base, compute_content_hash(&nodes3, &edges, &anns));
+        assert_ne!(base, compute_graph_hash(&nodes3, &edges, &anns));
 
         // Change an edge target alone.
         let edges2 = vec![edge("a.md", "c.md")];
-        assert_ne!(base, compute_content_hash(&nodes, &edges2, &anns));
+        assert_ne!(base, compute_graph_hash(&nodes, &edges2, &anns));
 
         // Change an annotation char_end alone.
         let mut ann2 = ann("a.md", 0);
         ann2.char_end = 99;
         let anns2 = vec![ann2];
-        assert_ne!(base, compute_content_hash(&nodes, &edges, &anns2));
+        assert_ne!(base, compute_graph_hash(&nodes, &edges, &anns2));
     }
 
     #[test]
@@ -144,8 +149,8 @@ mod tests {
         let anns2 = vec![ann("a.md", 5), ann("a.md", 0)];
 
         assert_eq!(
-            compute_content_hash(&nodes1, &edges1, &anns1),
-            compute_content_hash(&nodes2, &edges2, &anns2),
+            compute_graph_hash(&nodes1, &edges1, &anns1),
+            compute_graph_hash(&nodes2, &edges2, &anns2),
         );
     }
 
@@ -160,8 +165,8 @@ mod tests {
         let anns_order2 = vec![ann("a.md", 9), ann("a.md", 2)];
 
         assert_eq!(
-            compute_content_hash(&nodes, &edges, &anns_order1),
-            compute_content_hash(&nodes, &edges, &anns_order2),
+            compute_graph_hash(&nodes, &edges, &anns_order1),
+            compute_graph_hash(&nodes, &edges, &anns_order2),
         );
     }
 }
