@@ -8,6 +8,7 @@ pub mod llm_context;
 pub mod export;
 pub mod external_editor;
 pub mod graph;
+pub mod lkg;
 pub mod oplog;
 pub mod license;
 pub mod context_menu;
@@ -349,6 +350,8 @@ pub fn run() {
             commands::annotation::get_mark_config,
             commands::export::export_data,
             commands::export::export_subgraph,
+            commands::lkg::export_lkg,
+            commands::lkg::import_lkg,
             commands::license::get_license_status,
             commands::license::activate_license,
             commands::license::check_online_validation,

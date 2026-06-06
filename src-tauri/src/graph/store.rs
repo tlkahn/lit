@@ -5,7 +5,7 @@ use rusqlite::{Connection, OptionalExtension};
 use tracing::{debug, info};
 
 use super::error::GraphError;
-use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, IndexableAnnotation, LinkEntry, ParsedNode, Stats, TagPageResult, TagSearchResult};
+use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, FullAnnotationRecord, IndexableAnnotation, LinkEntry, ParsedNode, Stats, TagPageResult, TagSearchResult};
 
 pub const CURRENT_SCHEMA_VERSION: i64 = 14;
 
@@ -496,8 +496,7 @@ impl Store {
     }
 
     pub fn delete_node(&self, id: &str) -> Result<(), GraphError> {
-        self.conn.execute_batch("SAVEPOINT delete_node")?;
-        let result = (|| -> Result<(), GraphError> {
+        self.with_savepoint("delete_node", || {
             self.conn.execute("DELETE FROM annotations_fts WHERE node_id = ?1", [id])?;
             self.conn.execute("DELETE FROM annotations WHERE node_id = ?1", [id])?;
             self.conn.execute("DELETE FROM nodes WHERE id = ?1", [id])?;
@@ -507,33 +506,37 @@ impl Store {
             self.conn.execute("DELETE FROM sync WHERE path = ?1", [id])?;
             self.conn.execute("DELETE FROM node_positions WHERE node_id = ?1", [id])?;
             Ok(())
-        })();
-        match result {
-            Ok(()) => {
-                self.conn.execute_batch("RELEASE delete_node")?;
-                Ok(())
-            }
-            Err(e) => {
-                self.conn.execute_batch("ROLLBACK TO delete_node")?;
-                self.conn.execute_batch("RELEASE delete_node")?;
-                Err(e)
-            }
-        }
+        })
     }
 
     // --- Positions ---
 
     pub fn save_positions(&self, positions: &HashMap<String, super::types::Position>) -> Result<(), GraphError> {
         let tx = self.conn.unchecked_transaction()?;
-        tx.execute_batch("DELETE FROM node_positions")?;
-        let mut stmt = tx.prepare(
+        self.write_positions_no_tx(positions)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Replaces all rows in `node_positions` without opening its own
+    /// transaction. Callers must wrap this in a transaction (or SAVEPOINT) to
+    /// preserve atomicity — `save_positions` does so directly, while the `.lkg`
+    /// importer calls this inside its own SAVEPOINT (a nested `BEGIN` would
+    /// otherwise raise "cannot start a transaction within a transaction").
+    ///
+    /// # Single-connection invariant
+    ///
+    /// `Store` holds a single `rusqlite::Connection` (no pooling). This method
+    /// operates on `self.conn` directly and relies on the caller's transaction
+    /// living on the same connection.
+    pub(crate) fn write_positions_no_tx(&self, positions: &HashMap<String, super::types::Position>) -> Result<(), GraphError> {
+        self.conn.execute_batch("DELETE FROM node_positions")?;
+        let mut stmt = self.conn.prepare(
             "INSERT INTO node_positions(node_id, x, y) VALUES (?1, ?2, ?3)"
         )?;
         for (id, pos) in positions {
             stmt.execute(rusqlite::params![id, pos.x, pos.y])?;
         }
-        drop(stmt);
-        tx.commit()?;
         Ok(())
     }
 
@@ -572,6 +575,24 @@ impl Store {
     }
 
     pub fn replace_all_edges(&self, edges: &[(&str, &str, &str, &str, u32)]) -> Result<(), GraphError> {
+        let tx = self.conn.unchecked_transaction()?;
+        self.replace_all_edges_no_tx(edges)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Replaces all rows in `edges` without opening its own transaction. Callers
+    /// must wrap this in a transaction (or SAVEPOINT) to preserve atomicity —
+    /// `replace_all_edges` does so directly, while the `.lkg` importer calls this
+    /// inside its own SAVEPOINT (a nested `BEGIN` would otherwise raise "cannot
+    /// start a transaction within a transaction").
+    ///
+    /// # Single-connection invariant
+    ///
+    /// `Store` holds a single `rusqlite::Connection` (no pooling). This method
+    /// operates on `self.conn` directly and relies on the caller's transaction
+    /// living on the same connection.
+    pub(crate) fn replace_all_edges_no_tx(&self, edges: &[(&str, &str, &str, &str, u32)]) -> Result<(), GraphError> {
         self.conn.execute("DELETE FROM edges", [])?;
         for &(source, target, context, raw_target, source_line) in edges {
             self.conn.execute(
@@ -685,6 +706,48 @@ impl Store {
         Ok(nodes)
     }
 
+    /// Returns every node row's `(id, is_stub, title, frontmatter, first_paragraph)`
+    /// in a single id-sorted scan, collapsing what would otherwise be four separate
+    /// full-table queries ([`all_nodes_metadata`](Self::all_nodes_metadata),
+    /// [`node_titles`](Self::node_titles),
+    /// [`node_frontmatter_map`](Self::node_frontmatter_map), and
+    /// [`get_first_paragraphs`](Self::get_first_paragraphs)). Used by the `.lkg`
+    /// exporter. Frontmatter falls back to an empty object on NULL/parse-failure and
+    /// `first_paragraph` falls back to `""` on NULL, matching the per-column accessors.
+    pub fn all_bundle_node_rows(
+        &self,
+    ) -> Result<Vec<(String, bool, String, serde_json::Value, String)>, GraphError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, is_stub, title, frontmatter, first_paragraph FROM nodes ORDER BY id",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                let id: String = row.get(0)?;
+                let is_stub: i64 = row.get(1)?;
+                let title: String = row.get(2)?;
+                let fm_str: Option<String> = row.get(3)?;
+                let first_paragraph: Option<String> = row.get(4)?;
+                Ok((id, is_stub, title, fm_str, first_paragraph))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        let mapped = rows
+            .into_iter()
+            .map(|(id, is_stub, title, fm_str, first_paragraph)| {
+                let frontmatter = fm_str
+                    .and_then(|s| serde_json::from_str(&s).ok())
+                    .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
+                (
+                    id,
+                    is_stub != 0,
+                    title,
+                    frontmatter,
+                    first_paragraph.unwrap_or_default(),
+                )
+            })
+            .collect();
+        Ok(mapped)
+    }
+
     pub fn node_titles(&self) -> Result<HashMap<String, String>, GraphError> {
         let mut stmt = self.conn.prepare("SELECT id, title FROM nodes")?;
         let map = stmt
@@ -694,6 +757,25 @@ impl Store {
                 Ok((id, title))
             })?
             .collect::<Result<HashMap<String, String>, _>>()?;
+        Ok(map)
+    }
+
+    pub fn node_frontmatter_map(&self) -> Result<HashMap<String, serde_json::Value>, GraphError> {
+        let mut stmt = self.conn.prepare("SELECT id, frontmatter FROM nodes")?;
+        let rows = stmt
+            .query_map([], |row| {
+                let id: String = row.get(0)?;
+                let fm_str: Option<String> = row.get(1)?;
+                Ok((id, fm_str))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut map = HashMap::new();
+        for (id, fm_str) in rows {
+            let value = fm_str
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
+            map.insert(id, value);
+        }
         Ok(map)
     }
 
@@ -1106,6 +1188,32 @@ impl Store {
         }
     }
 
+    pub fn all_annotations_full(&self) -> Result<Vec<FullAnnotationRecord>, GraphError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT uuid, node_id, annotation_type, certainty, body, date, source_line, char_start, char_end, scope_kind, scope_value
+             FROM annotations
+             ORDER BY node_id, char_start",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(FullAnnotationRecord {
+                    uuid: row.get(0)?,
+                    node_id: row.get(1)?,
+                    annotation_type: row.get(2)?,
+                    certainty: row.get(3)?,
+                    body: row.get(4)?,
+                    date: row.get(5)?,
+                    source_line: row.get(6)?,
+                    char_start: row.get(7)?,
+                    char_end: row.get(8)?,
+                    scope_kind: row.get(9)?,
+                    scope_value: row.get(10)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     pub fn list_annotations(&self, node_id: Option<&str>, type_filter: Option<&str>, limit: i64) -> Result<Vec<AnnotationSearchResult>, GraphError> {
         match (node_id, type_filter) {
             (Some(nid), Some(tf)) => {
@@ -1188,6 +1296,28 @@ impl Store {
 
     // --- Transactions ---
 
+    pub(crate) fn with_savepoint<F, T>(&self, name: &str, f: F) -> Result<T, GraphError>
+    where
+        F: FnOnce() -> Result<T, GraphError>,
+    {
+        self.conn
+            .execute_batch(&format!("SAVEPOINT {name}"))?;
+        match f() {
+            Ok(val) => {
+                self.conn
+                    .execute_batch(&format!("RELEASE {name}"))?;
+                Ok(val)
+            }
+            Err(e) => {
+                self.conn
+                    .execute_batch(&format!("ROLLBACK TO {name}"))?;
+                self.conn
+                    .execute_batch(&format!("RELEASE {name}"))?;
+                Err(e)
+            }
+        }
+    }
+
     pub fn begin_transaction(&self) -> Result<(), GraphError> {
         self.conn.execute_batch("BEGIN")?;
         Ok(())
@@ -1236,6 +1366,46 @@ mod tests {
         assert!(tables.contains(&"edges".to_string()));
         assert!(tables.contains(&"sync".to_string()));
         assert!(tables.contains(&"meta".to_string()));
+    }
+
+    // --- with_savepoint ---
+
+    #[test]
+    fn with_savepoint_commits_on_success() {
+        let store = Store::open_memory().unwrap();
+        store
+            .with_savepoint("sp", || {
+                let node = make_node("a.md", "A", &[], json!({}));
+                store.upsert_node(&node, 1)?;
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(store.node_titles().unwrap().get("a.md"), Some(&"A".to_string()));
+    }
+
+    #[test]
+    fn with_savepoint_rolls_back_on_error() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let result: Result<(), _> = store.with_savepoint("sp", || {
+            let node_b = make_node("b.md", "B", &[], json!({}));
+            store.upsert_node(&node_b, 1)?;
+            Err(GraphError::Other("forced failure".into()))
+        });
+        assert!(result.is_err());
+
+        let titles = store.node_titles().unwrap();
+        assert_eq!(titles.get("a.md"), Some(&"A".to_string()));
+        assert_eq!(titles.get("b.md"), None);
+    }
+
+    #[test]
+    fn with_savepoint_returns_closure_value() {
+        let store = Store::open_memory().unwrap();
+        let val = store.with_savepoint("sp", || Ok(42u64)).unwrap();
+        assert_eq!(val, 42);
     }
 
     #[test]
@@ -1745,6 +1915,80 @@ mod tests {
         assert_eq!(target, "b.md");
     }
 
+    #[test]
+    fn replace_all_edges_no_tx_clears_and_inserts() {
+        let store = Store::open_memory().unwrap();
+        store.insert_edge("old.md", "old_target.md", "", "", 0).unwrap();
+
+        let edges = vec![
+            ("a.md", "b.md", "link to B", "B", 0),
+            ("a.md", "c.md", "link to C", "C", 0),
+        ];
+        store.replace_all_edges_no_tx(&edges).unwrap();
+
+        let count: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM edges", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 2);
+
+        let target: String = store
+            .conn
+            .query_row(
+                "SELECT target FROM edges WHERE source = 'a.md' AND context = 'link to B'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(target, "b.md");
+    }
+
+    #[test]
+    fn replace_all_edges_is_atomic() {
+        let store = Store::open_memory().unwrap();
+        store.insert_edge("keep.md", "keep_target.md", "orig", "kt", 0).unwrap();
+
+        // Trigger aborts the second inserted edge, after DELETE has already run
+        // and the first INSERT succeeded — the wrapper must roll everything back.
+        store
+            .conn
+            .execute_batch(
+                "CREATE TRIGGER block_edge BEFORE INSERT ON edges \
+                 WHEN NEW.source = 'boom.md' \
+                 BEGIN SELECT RAISE(ABORT, 'blocked by test trigger'); END;",
+            )
+            .unwrap();
+
+        let edges = vec![
+            ("ok.md", "x.md", "", "", 0),
+            ("boom.md", "y.md", "", "", 0),
+        ];
+        let result = store.replace_all_edges(&edges);
+        assert!(result.is_err());
+
+        let keep_count: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM edges WHERE source = 'keep.md'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(keep_count, 1, "original edge must survive rollback");
+
+        let partial_count: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM edges WHERE source = 'ok.md'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(partial_count, 0, "no partial new edges may remain");
+
+        store.conn.execute_batch("DROP TRIGGER block_edge").unwrap();
+    }
+
     // --- Phase 7: Query methods ---
 
     #[test]
@@ -1839,6 +2083,64 @@ mod tests {
         assert_eq!(titles.len(), 2);
         assert_eq!(titles["a.md"], "Alpha");
         assert_eq!(titles["Ghost"], "");
+    }
+
+    #[test]
+    fn node_frontmatter_map_returns_frontmatter() {
+        let store = Store::open_memory().unwrap();
+        store
+            .upsert_node(&make_node("a.md", "Alpha", &["tag1"], json!({"title":"Alpha","custom":42})), 1)
+            .unwrap();
+
+        let map = store.node_frontmatter_map().unwrap();
+        assert_eq!(map.len(), 1);
+        assert_eq!(map["a.md"], json!({"title":"Alpha","custom":42}));
+    }
+
+    #[test]
+    fn node_frontmatter_map_stub_is_empty_object() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_stub("stub.md").unwrap();
+
+        let map = store.node_frontmatter_map().unwrap();
+        assert_eq!(map["stub.md"], json!({}));
+    }
+
+    #[test]
+    fn node_frontmatter_map_empty_store() {
+        let store = Store::open_memory().unwrap();
+        assert!(store.node_frontmatter_map().unwrap().is_empty());
+    }
+
+    #[test]
+    fn all_bundle_node_rows_returns_combined_columns() {
+        let store = Store::open_memory().unwrap();
+        store
+            .upsert_node(
+                &make_node("a.md", "Alpha", &["t1"], json!({"title":"Alpha","custom":42})),
+                1,
+            )
+            .unwrap();
+        store.upsert_stub("Ghost").unwrap();
+
+        let rows = store.all_bundle_node_rows().unwrap();
+        assert_eq!(rows.len(), 2);
+        // id-sorted: "Ghost" < "a.md"
+        assert_eq!(
+            rows[0],
+            ("Ghost".to_string(), true, String::new(), json!({}), String::new())
+        );
+        assert_eq!(rows[1].0, "a.md");
+        assert!(!rows[1].1);
+        assert_eq!(rows[1].2, "Alpha");
+        assert_eq!(rows[1].3, json!({"title":"Alpha","custom":42}));
+        assert_eq!(rows[1].4, "First paragraph of Alpha");
+    }
+
+    #[test]
+    fn all_bundle_node_rows_empty_store() {
+        let store = Store::open_memory().unwrap();
+        assert!(store.all_bundle_node_rows().unwrap().is_empty());
     }
 
     // --- Phase 8: Stats & Fingerprint ---
@@ -3268,6 +3570,54 @@ mod tests {
         assert!(results.iter().all(|r| r.annotation_type == "note"));
         assert_eq!(results[0].node_id, "a.md");
         assert_eq!(results[1].node_id, "b.md");
+    }
+
+    #[test]
+    fn all_annotations_full_returns_scope_fields() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("a.md", "Alpha", &[], json!({})), 1).unwrap();
+
+        let mut ann = make_annotation("note", Some("hello"));
+        ann.scope_kind = "words".into();
+        ann.scope_value = "3".into();
+        store.upsert_annotations("a.md", &[ann]).unwrap();
+
+        let recs = store.all_annotations_full().unwrap();
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[0].node_id, "a.md");
+        assert_eq!(recs[0].annotation_type, "note");
+        assert_eq!(recs[0].scope_kind, "words");
+        assert_eq!(recs[0].scope_value, "3");
+        assert_eq!(recs[0].body, Some("hello".into()));
+        assert!(!recs[0].uuid.is_empty());
+    }
+
+    #[test]
+    fn all_annotations_full_empty_store() {
+        let store = Store::open_memory().unwrap();
+        assert!(store.all_annotations_full().unwrap().is_empty());
+    }
+
+    #[test]
+    fn all_annotations_full_orders_by_node_then_charstart() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("b.md", "Beta", &[], json!({})), 1).unwrap();
+        store.upsert_node(&make_node("a.md", "Alpha", &[], json!({})), 1).unwrap();
+
+        let ann_a1 = super::IndexableAnnotation { char_start: 30, ..make_annotation("note", Some("x")) };
+        let ann_a2 = super::IndexableAnnotation { char_start: 10, ..make_annotation("question", Some("y")) };
+        store.upsert_annotations("a.md", &[ann_a1, ann_a2]).unwrap();
+
+        let ann_b = make_annotation("note", Some("z"));
+        store.upsert_annotations("b.md", &[ann_b]).unwrap();
+
+        let recs = store.all_annotations_full().unwrap();
+        assert_eq!(recs.len(), 3);
+        assert_eq!(recs[0].node_id, "a.md");
+        assert_eq!(recs[0].char_start, 10);
+        assert_eq!(recs[1].node_id, "a.md");
+        assert_eq!(recs[1].char_start, 30);
+        assert_eq!(recs[2].node_id, "b.md");
     }
 
     // --- Multilingual (trigram) annotation search ---

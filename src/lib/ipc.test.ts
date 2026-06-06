@@ -71,6 +71,10 @@ import {
   exportSubgraph,
   getCachedBuildInfo,
   _resetBuildInfoCacheForTesting,
+  exportLkg,
+  importLkg,
+  type LkgExportSummary,
+  type LkgImportSummary,
   getLicenseStatus,
   activateLicense,
   checkOnlineValidation,
@@ -397,6 +401,14 @@ describe("ipc", () => {
           return { exported_count: 42, destination: (args as Record<string, unknown>)?.destination ?? "" };
         case "export_subgraph":
           return { exported_count: 7, destination: (args as Record<string, unknown>)?.destination ?? "" };
+        case "export_lkg":
+          return {
+            exported_count: 12,
+            destination: (args as Record<string, unknown>)?.destination ?? "",
+            graph_hash: "sha256:" + "a".repeat(64),
+          };
+        case "import_lkg":
+          return { node_count: 5, edge_count: 3, annotation_count: 2, file_count: 4 };
         case "get_license_status":
           return { state: "licensed", licensed_to: "Test User", source: "direct", expires_at: 1735603200, expiry_date: "2024-12-31" };
         case "activate_license":
@@ -1336,6 +1348,42 @@ describe("ipc", () => {
       nodeId: "concepts/ai.md",
       depth: 2,
       destination: "/tmp/subgraph.zip",
+    });
+  });
+
+  it("exportLkg calls export_lkg with destination, title, description", async () => {
+    const summary: LkgExportSummary = await exportLkg("/tmp/graph.lkg", "My Graph", "desc");
+    expect(summary.exported_count).toBe(12);
+    expect(summary.destination).toBe("/tmp/graph.lkg");
+    expect(summary.graph_hash).toMatch(/^sha256:[0-9a-f]{64}$/);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("export_lkg", {
+      destination: "/tmp/graph.lkg",
+      title: "My Graph",
+      description: "desc",
+    });
+  });
+
+  it("exportLkg sends null title and description when omitted", async () => {
+    await exportLkg("/tmp/graph.lkg");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("export_lkg", {
+      destination: "/tmp/graph.lkg",
+      title: null,
+      description: null,
+    });
+  });
+
+  it("importLkg calls import_lkg with source and destination", async () => {
+    const summary: LkgImportSummary = await importLkg("/tmp/graph.lkg", "/dest/vault");
+    expect(summary.node_count).toBe(5);
+    expect(summary.edge_count).toBe(3);
+    expect(summary.annotation_count).toBe(2);
+    expect(summary.file_count).toBe(4);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("import_lkg", {
+      source: "/tmp/graph.lkg",
+      destination: "/dest/vault",
     });
   });
 

@@ -2,11 +2,13 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 import App from "./App";
 import { mockInvoke, mockListen, emitMockEvent } from "./test/tauri-mock";
+import { save, open } from "@tauri-apps/plugin-dialog";
 import { useWorkspaceStore } from "./stores/workspace";
 import { usePreferencesStore } from "./stores/preferences";
 import { useLicenseStore } from "./stores/license";
 import { usePaneStore } from "./stores/panes";
 import { useBottomPanelStore } from "./stores/bottomPanel";
+import { useStatusMessageStore } from "./stores/statusMessage";
 import { _resetForTesting as resetRegistry } from "./lib/paneContentRegistry";
 import { _resetForTesting as resetEditorViewRef, setCurrentEditorView } from "./lib/editorViewRef";
 import { SIDEBAR_WIDTH_PX } from "./components/Sidebar";
@@ -886,5 +888,295 @@ describe("App", () => {
     const changes = dispatch.mock.calls[0]![0].changes;
     expect(changes.from).toBe(15);
     expect(changes.to).toBe(15);
+  });
+
+  describe("LKG bundle wiring", () => {
+    const mockedSave = save as unknown as ReturnType<typeof vi.fn>;
+    const mockedOpen = open as unknown as ReturnType<typeof vi.fn>;
+    const HASH = "sha256:" + "a".repeat(64);
+
+    function defaultLkgInvoke(cmd: string): unknown {
+      switch (cmd) {
+        case "get_app_info":
+          return { name: "Lit", version: "0.1.0" };
+        case "open_workspace":
+        case "list_pages":
+          return samplePages;
+        case "get_startup_context":
+          return { workspace: null, file: null, line: null, col: null };
+        case "list_themes":
+          return [];
+        case "get_preferences":
+          return {
+            "workbench.colorTheme": null,
+            "workbench.darkMode": "light",
+            "workbench.sideBar.location": "left",
+          };
+        case "get_keymaps":
+          return [];
+        case "get_backlinks":
+          return [];
+        case "parse_raw_yaml":
+          return {};
+        case "ensure_graph_ready":
+          return null;
+        case "get_license_status":
+          return { state: "trial", days_remaining: 12 };
+        case "has_api_key":
+          return false;
+        case "cancel_title_suggestion":
+          return undefined;
+        case "export_lkg":
+          return { exported_count: 3, destination: "/out/graph.lkg", graph_hash: HASH };
+        case "import_lkg":
+          return { node_count: 2, edge_count: 1, annotation_count: 0, file_count: 3 };
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    }
+
+    function lkgMockInvoke(invokedCmds?: string[]) {
+      mockInvoke((cmd) => {
+        if (invokedCmds) invokedCmds.push(cmd);
+        return defaultLkgInvoke(cmd);
+      });
+    }
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      mockListen();
+      useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+      useStatusMessageStore.setState({ message: null, variant: "success" });
+    });
+
+    // === CYCLE J1 — export ===
+
+    it("menu://export-lkg event opens .lkg save dialog and calls exportLkg", async () => {
+      const invokeArgs: Array<Record<string, unknown> | undefined> = [];
+      mockInvoke((cmd, args) => {
+        if (cmd === "export_lkg") {
+          invokeArgs.push(args);
+          return { exported_count: 3, destination: "/out/graph.lkg", graph_hash: HASH };
+        }
+        return defaultLkgInvoke(cmd);
+      });
+      mockedSave.mockResolvedValue("/out/graph.lkg");
+
+      await act(async () => {
+        render(<App />);
+      });
+
+      await act(async () => {
+        emitMockEvent("menu://export-lkg", {});
+      });
+
+      await waitFor(() => {
+        expect(mockedSave).toHaveBeenCalledWith({
+          defaultPath: "export.lkg",
+          filters: [{ name: "Lit Knowledge Graph", extensions: ["lkg"] }],
+        });
+      });
+
+      await waitFor(() => {
+        expect(invokeArgs.length).toBe(1);
+      });
+      expect(invokeArgs[0]).toEqual({ destination: "/out/graph.lkg", title: null, description: null });
+    });
+
+    it("save dialog returning null does not call export_lkg", async () => {
+      const invokedCmds: string[] = [];
+      lkgMockInvoke(invokedCmds);
+      mockedSave.mockResolvedValue(null);
+
+      await act(async () => {
+        render(<App />);
+      });
+
+      await act(async () => {
+        emitMockEvent("menu://export-lkg", {});
+      });
+
+      await waitFor(() => {
+        expect(mockedSave).toHaveBeenCalled();
+      });
+      expect(invokedCmds).not.toContain("export_lkg");
+    });
+
+    it("lit:lkg-export-progress event shows LkgExportDialog with progress", async () => {
+      lkgMockInvoke();
+      await act(async () => {
+        render(<App />);
+      });
+
+      act(() => {
+        emitMockEvent("lit:lkg-export-progress", { current: 2, total: 5 });
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("lkg-export-dialog")).toBeInTheDocument();
+      });
+      expect(screen.getByText("2 / 5")).toBeInTheDocument();
+      const progress = screen.getByTestId("lkg-export-dialog").querySelector("progress")!;
+      expect(progress).toBeInTheDocument();
+      expect(progress.getAttribute("value")).toBe("2");
+      expect(progress.getAttribute("max")).toBe("5");
+    });
+
+    it("lit:lkg-export-complete event shows export summary with content hash", async () => {
+      lkgMockInvoke();
+      await act(async () => {
+        render(<App />);
+      });
+
+      act(() => {
+        emitMockEvent("lit:lkg-export-complete", {
+          exported_count: 3,
+          destination: "/out/graph.lkg",
+          graph_hash: HASH,
+        });
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText(/Exported 3 files to \/out\/graph\.lkg/)).toBeInTheDocument();
+      });
+      expect(screen.getByText(HASH)).toBeInTheDocument();
+    });
+
+    it("export_lkg rejection closes the export dialog instead of leaving it stuck on Preparing export", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "export_lkg") return Promise.reject(new Error("disk full"));
+        return defaultLkgInvoke(cmd);
+      });
+      mockedSave.mockResolvedValue("/out/graph.lkg");
+
+      await act(async () => {
+        render(<App />);
+      });
+
+      await act(async () => {
+        emitMockEvent("menu://export-lkg", {});
+      });
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("lkg-export-dialog")).not.toBeInTheDocument();
+      });
+      expect(screen.queryByText("Preparing export…")).not.toBeInTheDocument();
+
+      await waitFor(() => {
+        expect(screen.getByTestId("status-bar-message")).toHaveTextContent(/disk full/i);
+      });
+    });
+
+    // === CYCLE J2 — import ===
+
+    it("menu://import-lkg event picks source file then destination folder and calls importLkg", async () => {
+      const invokeArgs: Array<Record<string, unknown> | undefined> = [];
+      mockInvoke((cmd, args) => {
+        if (cmd === "import_lkg") {
+          invokeArgs.push(args);
+          return { node_count: 2, edge_count: 1, annotation_count: 0, file_count: 3 };
+        }
+        return defaultLkgInvoke(cmd);
+      });
+      mockedOpen.mockResolvedValueOnce("/in/graph.lkg").mockResolvedValueOnce("/dest/folder");
+
+      await act(async () => {
+        render(<App />);
+      });
+
+      await act(async () => {
+        emitMockEvent("menu://import-lkg", {});
+      });
+
+      await waitFor(() => {
+        expect(invokeArgs.length).toBe(1);
+      });
+      expect(mockedOpen).toHaveBeenNthCalledWith(1, {
+        multiple: false,
+        filters: [{ name: "Lit Knowledge Graph", extensions: ["lkg"] }],
+      });
+      expect(mockedOpen).toHaveBeenNthCalledWith(2, { directory: true });
+      expect(invokeArgs[0]).toEqual({ source: "/in/graph.lkg", destination: "/dest/folder" });
+    });
+
+    it("cancelling source file picker does not open folder picker or call import_lkg", async () => {
+      const invokedCmds: string[] = [];
+      lkgMockInvoke(invokedCmds);
+      mockedOpen.mockResolvedValueOnce(null);
+
+      await act(async () => {
+        render(<App />);
+      });
+
+      await act(async () => {
+        emitMockEvent("menu://import-lkg", {});
+      });
+
+      await waitFor(() => {
+        expect(mockedOpen).toHaveBeenCalledTimes(1);
+      });
+      expect(invokedCmds).not.toContain("import_lkg");
+    });
+
+    it("cancelling destination folder picker does not call import_lkg", async () => {
+      const invokedCmds: string[] = [];
+      lkgMockInvoke(invokedCmds);
+      mockedOpen.mockResolvedValueOnce("/in/graph.lkg").mockResolvedValueOnce(null);
+
+      await act(async () => {
+        render(<App />);
+      });
+
+      await act(async () => {
+        emitMockEvent("menu://import-lkg", {});
+      });
+
+      await waitFor(() => {
+        expect(mockedOpen).toHaveBeenCalledTimes(2);
+      });
+      expect(invokedCmds).not.toContain("import_lkg");
+    });
+
+    it("import shows LkgImportDialog with summary after menu flow", async () => {
+      lkgMockInvoke();
+      mockedOpen.mockResolvedValueOnce("/in/graph.lkg").mockResolvedValueOnce("/dest/folder");
+
+      await act(async () => {
+        render(<App />);
+      });
+
+      await act(async () => {
+        emitMockEvent("menu://import-lkg", {});
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("lkg-import-dialog")).toBeInTheDocument();
+      });
+      expect(
+        screen.getByText(/Imported 2 nodes, 1 edges, 0 annotations, 3 files/),
+      ).toBeInTheDocument();
+    });
+
+    it("lit:lkg-import-complete event shows import summary", async () => {
+      lkgMockInvoke();
+      await act(async () => {
+        render(<App />);
+      });
+
+      act(() => {
+        emitMockEvent("lit:lkg-import-complete", {
+          node_count: 2,
+          edge_count: 1,
+          annotation_count: 0,
+          file_count: 3,
+        });
+      });
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(/Imported 2 nodes, 1 edges, 0 annotations, 3 files/),
+        ).toBeInTheDocument();
+      });
+    });
   });
 });

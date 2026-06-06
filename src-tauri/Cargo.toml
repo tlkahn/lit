@@ -22,6 +22,9 @@ tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# RFC 3339 timestamp formatting for .lkg manifests; `clock` enables Utc::now().
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+sha2 = "0.10"
 serde_yaml = "0.9"
 toml = "0.8"
 notify-debouncer-mini = "0.5"
@@ -62,6 +65,8 @@ uuid = { version = "1", features = ["v4"] }
 argon2 = "0.5"
 aes-gcm = "0.10"
 rand = "0.8"
+# Used by the atomic .lkg import path (stage-then-rename); also used in tests.
+tempfile = "3"
 
 [[bin]]
 name = "lit-cli"
@@ -69,7 +74,6 @@ path = "src/bin/lit-cli.rs"
 
 [dev-dependencies]
 serde_json = "1"
-tempfile = "3"
 tracing-test = { version = "0.2", features = ["no-env-filter"] }
 wiremock = "0.6"
 tokio = { version = "1", features = ["full", "test-util"] }

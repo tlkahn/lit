@@ -14,6 +14,8 @@ pub const MENU_ID_EXPORT_LATEX: &str = "export_latex";
 pub const MENU_ID_EXPORT_PDF: &str = "export_pdf";
 pub const MENU_ID_EXPORT_HTML: &str = "export_html";
 pub const MENU_ID_EXPORT_DOCX: &str = "export_docx";
+pub const MENU_ID_EXPORT_LKG: &str = "export_lkg";
+pub const MENU_ID_IMPORT_LKG: &str = "import_lkg";
 pub const MENU_ID_CLOSE: &str = "close-pane";
 pub const MENU_ID_ABOUT: &str = "show_about";
 
@@ -43,6 +45,8 @@ pub const EVENT_EXPORT_LATEX: &str = "menu://export-latex";
 pub const EVENT_EXPORT_PDF: &str = "menu://export-pdf";
 pub const EVENT_EXPORT_HTML: &str = "menu://export-html";
 pub const EVENT_EXPORT_DOCX: &str = "menu://export-docx";
+pub const EVENT_EXPORT_LKG: &str = "menu://export-lkg";
+pub const EVENT_IMPORT_LKG: &str = "menu://import-lkg";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MenuAction {
@@ -58,6 +62,8 @@ pub(crate) enum MenuAction {
     ExportPdf,
     ExportHtml,
     ExportDocx,
+    ExportLkg,
+    ImportLkg,
     LicenseInfo,
     ShowAbout,
 }
@@ -78,6 +84,8 @@ impl MenuAction {
             MENU_ID_EXPORT_PDF => Some(Self::ExportPdf),
             MENU_ID_EXPORT_HTML => Some(Self::ExportHtml),
             MENU_ID_EXPORT_DOCX => Some(Self::ExportDocx),
+            MENU_ID_EXPORT_LKG => Some(Self::ExportLkg),
+            MENU_ID_IMPORT_LKG => Some(Self::ImportLkg),
             MENU_ID_ABOUT => Some(Self::ShowAbout),
             _ => None,
         }
@@ -224,6 +232,16 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
                 let _ = window.emit(EVENT_EXPORT_DOCX, ());
             }
         }
+        MenuAction::ExportLkg => {
+            if let Some(window) = find_focused_window(app) {
+                let _ = window.emit(EVENT_EXPORT_LKG, ());
+            }
+        }
+        MenuAction::ImportLkg => {
+            if let Some(window) = find_focused_window(app) {
+                let _ = window.emit(EVENT_IMPORT_LKG, ());
+            }
+        }
         MenuAction::BuyLicense => {
             let _ = app.emit(EVENT_BUY_LICENSE, ());
         }
@@ -264,6 +282,8 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             &MenuItem::with_id(app, MENU_ID_EXPORT_PDF, "Export to PDF\u{2026}", true, None::<&str>)?,
             &MenuItem::with_id(app, MENU_ID_EXPORT_HTML, "Export to HTML\u{2026}", true, None::<&str>)?,
             &MenuItem::with_id(app, MENU_ID_EXPORT_DOCX, "Export to DOCX\u{2026}", true, None::<&str>)?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(app, MENU_ID_EXPORT_LKG, "Export as Knowledge Graph Bundle\u{2026}", true, None::<&str>)?,
         ],
     )?;
 
@@ -273,6 +293,7 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         true,
         &[
             &MenuItem::with_id(app, MENU_ID_OPEN_WORKSPACE, "Open Another Workspace", true, None::<&str>)?,
+            &MenuItem::with_id(app, MENU_ID_IMPORT_LKG, "Import Knowledge Graph Bundle\u{2026}", true, None::<&str>)?,
             &PredefinedMenuItem::separator(app)?,
             &export_submenu,
             &PredefinedMenuItem::separator(app)?,
@@ -370,6 +391,24 @@ mod tests {
     }
 
     #[test]
+    fn lkg_bundle_menu_ids_are_defined() {
+        assert_eq!(MENU_ID_EXPORT_LKG, "export_lkg");
+        assert_eq!(MENU_ID_IMPORT_LKG, "import_lkg");
+    }
+
+    #[test]
+    fn lkg_bundle_event_constants_defined() {
+        assert_eq!(EVENT_EXPORT_LKG, "menu://export-lkg");
+        assert_eq!(EVENT_IMPORT_LKG, "menu://import-lkg");
+    }
+
+    #[test]
+    fn lkg_bundle_from_id() {
+        assert_eq!(MenuAction::from_id(MENU_ID_EXPORT_LKG), Some(MenuAction::ExportLkg));
+        assert_eq!(MenuAction::from_id(MENU_ID_IMPORT_LKG), Some(MenuAction::ImportLkg));
+    }
+
+    #[test]
     fn all_menu_ids_are_unique() {
         let ids = [
             MENU_ID_OPEN_WORKSPACE,
@@ -382,6 +421,8 @@ mod tests {
             MENU_ID_EXPORT_PDF,
             MENU_ID_EXPORT_HTML,
             MENU_ID_EXPORT_DOCX,
+            MENU_ID_EXPORT_LKG,
+            MENU_ID_IMPORT_LKG,
             MENU_ID_BUY_LICENSE,
             MENU_ID_ENTER_LICENSE_KEY,
             MENU_ID_LICENSE_INFO,
@@ -405,6 +446,8 @@ mod tests {
         assert_eq!(MenuAction::from_id(MENU_ID_EXPORT_PDF), Some(MenuAction::ExportPdf));
         assert_eq!(MenuAction::from_id(MENU_ID_EXPORT_HTML), Some(MenuAction::ExportHtml));
         assert_eq!(MenuAction::from_id(MENU_ID_EXPORT_DOCX), Some(MenuAction::ExportDocx));
+        assert_eq!(MenuAction::from_id(MENU_ID_EXPORT_LKG), Some(MenuAction::ExportLkg));
+        assert_eq!(MenuAction::from_id(MENU_ID_IMPORT_LKG), Some(MenuAction::ImportLkg));
         assert_eq!(MenuAction::from_id(MENU_ID_BUY_LICENSE), Some(MenuAction::BuyLicense));
         assert_eq!(MenuAction::from_id(MENU_ID_ENTER_LICENSE_KEY), Some(MenuAction::EnterLicenseKey));
         assert_eq!(MenuAction::from_id(MENU_ID_LICENSE_INFO), Some(MenuAction::LicenseInfo));
