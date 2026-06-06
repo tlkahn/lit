@@ -52,7 +52,10 @@ describe("AcademicExportSettings", () => {
 
   it("shows error state on detect failure", async () => {
     mockInvoke((cmd) => {
-      if (cmd === "detect_pandoc") throw new Error("not found");
+      if (cmd === "detect_pandoc")
+        throw new Error(
+          "pandoc is required for detection but was not found on your system.\n\nTo install pandoc:\n  - macOS: brew install pandoc",
+        );
       return undefined;
     });
     const { container } = render(<AcademicExportSettings />);
@@ -63,6 +66,28 @@ describe("AcademicExportSettings", () => {
     const status = container.querySelector("[data-testid='academic-pandoc-status']");
     expect(status).toBeTruthy();
     expect(status!.textContent).toContain("Not found");
+  });
+
+  it("shows configuration-error header for stale configured path", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "detect_pandoc")
+        throw new Error(
+          "The configured pandoc path does not exist or is not a file: /old/pandoc\n\nThis path is set in Settings.",
+        );
+      return undefined;
+    });
+    const { container } = render(<AcademicExportSettings />);
+    const btn = container.querySelector("[data-testid='academic-detect-btn']")!;
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    const status = container.querySelector("[data-testid='academic-pandoc-status']");
+    expect(status).toBeTruthy();
+    expect(status!.textContent).toContain("Configuration error");
+    expect(status!.textContent).not.toContain("Not found");
+    const detail = container.querySelector("[data-testid='academic-pandoc-error-detail']");
+    expect(detail).toBeTruthy();
+    expect(detail!.textContent).toContain("configured pandoc path");
   });
 
   it("shows crossref status after detect", async () => {
@@ -110,5 +135,22 @@ describe("AcademicExportSettings", () => {
     expect(engines!.textContent).toContain("xelatex");
     expect(engines!.textContent).toContain("lualatex");
     expect(engines!.textContent).toContain("pdflatex");
+  });
+
+  it("shows actual error detail message on detect failure", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "detect_pandoc") throw new Error("pandoc is required for detection but was not found on your system.\n\nTo install pandoc:\n  - macOS: brew install pandoc");
+      return undefined;
+    });
+    const { container } = render(<AcademicExportSettings />);
+    const btn = container.querySelector("[data-testid='academic-detect-btn']")!;
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    const detail = container.querySelector("[data-testid='academic-pandoc-error-detail']");
+    expect(detail).toBeTruthy();
+    expect(detail!.textContent).toContain("pandoc is required");
+    expect(detail!.textContent).toContain("brew install pandoc");
+    expect(detail!.className).toContain("whitespace-pre-line");
   });
 });

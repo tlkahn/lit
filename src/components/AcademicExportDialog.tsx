@@ -273,7 +273,7 @@ export function AcademicExportDialog({ open, onClose, initialFormat }: AcademicE
 
           {result && !result.success && (
             <div data-testid="academic-export-error" className="rounded border border-border bg-bg-secondary p-3 text-sm text-text-error space-y-1">
-              <div>{result.stderr}</div>
+              <div className="whitespace-pre-line">{result.stderr}</div>
               {result.latex_errors.length > 0 && (
                 <ul className="list-disc pl-4">
                   {result.latex_errors.map((err: LatexError, i: number) => (

@@ -261,4 +261,41 @@ describe("AcademicExportDialog", () => {
     expect(errorMsg).toBeTruthy();
     expect(errorMsg!.textContent).toContain("pandoc: command not found");
   });
+
+  it("preserves newlines in multi-line error text", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "export_document") {
+        return {
+          output_path: "/tmp/output.pdf",
+          success: false,
+          stderr: "pandoc is required for PDF export\n\nTo install pandoc:\n  - macOS: brew install pandoc",
+          latex_errors: [],
+        };
+      }
+      return undefined;
+    });
+
+    const { container } = render(
+      <AcademicExportDialog open={true} onClose={vi.fn()} initialFormat="pdf" />,
+    );
+
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    (save as ReturnType<typeof vi.fn>).mockResolvedValueOnce("/tmp/output.pdf");
+
+    const browseBtn = container.querySelector("[data-testid='academic-export-browse-btn']")!;
+    await act(async () => {
+      fireEvent.click(browseBtn);
+    });
+
+    const exportBtn = container.querySelector("[data-testid='academic-export-btn']") as HTMLButtonElement;
+    await act(async () => {
+      fireEvent.click(exportBtn);
+    });
+
+    const errorDiv = container.querySelector("[data-testid='academic-export-error']");
+    expect(errorDiv).toBeTruthy();
+    const stderrDiv = errorDiv!.querySelector(".whitespace-pre-line");
+    expect(stderrDiv).toBeTruthy();
+    expect(stderrDiv!.textContent).toContain("brew install pandoc");
+  });
 });
