@@ -103,24 +103,46 @@ describe("license store", () => {
     expect(useLicenseStore.getState().error).toBeNull();
   });
 
+  it("activate returns false and sets expired error when res.state is license_expired", async () => {
+    mockedActivateLicense.mockResolvedValue({
+      state: "license_expired",
+      licensed_to: "Bob",
+      expiry_date: "2024-12-31",
+    });
+    const ok = await useLicenseStore.getState().activate("EXPIRED-KEY");
+    expect(ok).toBe(false);
+    const s = useLicenseStore.getState();
+    expect(s.state).toBe("license_expired");
+    expect(s.expiryDate).toBe("2024-12-31");
+    expect(s.error).toMatch(/expired/i);
+  });
+
+  it("activate returns false and sets error when res.state is unlicensed", async () => {
+    mockedActivateLicense.mockResolvedValue({ state: "unlicensed" });
+    const ok = await useLicenseStore.getState().activate("WEIRD-KEY");
+    expect(ok).toBe(false);
+    const s = useLicenseStore.getState();
+    expect(s.state).toBe("unlicensed");
+    expect(s.error).toBeTruthy();
+    expect(typeof s.error).toBe("string");
+  });
+
   it("clearError clears the error field", () => {
     useLicenseStore.setState({ error: "some error" });
     useLicenseStore.getState().clearError();
     expect(useLicenseStore.getState().error).toBeNull();
   });
 
-  it("fetchStatus revoked triggers re-fetch and sets license_expired", async () => {
+  it("fetchStatus revoked triggers re-fetch and sets revoked", async () => {
     mockedGetLicenseStatus
       .mockResolvedValueOnce({ state: "licensed", licensed_to: "Bob" })
-      .mockResolvedValueOnce({ state: "license_expired", licensed_to: "Bob", expiry_date: "2024-12-31" });
+      .mockResolvedValueOnce({ state: "revoked" });
     mockedCheckOnlineValidation.mockResolvedValue({ action: "revoked", reason: "refund" });
     await useLicenseStore.getState().fetchStatus();
     expect(useLicenseStore.getState().state).toBe("licensed");
     await vi.waitFor(() => {
-      expect(useLicenseStore.getState().state).toBe("license_expired");
+      expect(useLicenseStore.getState().state).toBe("revoked");
     });
-    const s = useLicenseStore.getState();
-    expect(s.expiryDate).toBe("2024-12-31");
     expect(mockedGetLicenseStatus).toHaveBeenCalledTimes(2);
   });
 
@@ -155,5 +177,20 @@ describe("license store", () => {
       expect(s.state).toBe("licensed");
       expect(s.loading).toBe(false);
     });
+  });
+
+  it("fetchStatus IPC rejection clears loading and sets unlicensed with error", async () => {
+    mockedGetLicenseStatus.mockRejectedValue(new Error("command not registered"));
+    await useLicenseStore.getState().fetchStatus();
+    const s = useLicenseStore.getState();
+    expect(s.state).toBe("unlicensed");
+    expect(s.loading).toBe(false);
+    expect(s.error).toContain("command not registered");
+  });
+
+  it("fetchStatus never leaves loading true on initial fetch failure", async () => {
+    mockedGetLicenseStatus.mockRejectedValue(new Error("backend panic"));
+    await expect(useLicenseStore.getState().fetchStatus()).resolves.toBeUndefined();
+    expect(useLicenseStore.getState().loading).toBe(false);
   });
 });

@@ -30,6 +30,29 @@ pub enum LicenseStatus {
         payload: LicensePayload,
         expired_at: u64,
     },
+    /// The server revoked this license. The key file has been deleted, but a
+    /// local marker records the reason so the UI can explain the revocation
+    /// instead of falling back to the generic `Unlicensed` splash.
+    Revoked {
+        reason: Option<String>,
+    },
+}
+
+/// Classify a verified payload as `Licensed` or `LicenseExpired` at `now`.
+///
+/// Expiry is inclusive (`now >= expires_at`); perpetual licenses
+/// (`expires_at: None`) are always `Licensed`. When expired, the original
+/// `expires_at` value is carried through as `expired_at`.
+fn check_expiry(payload: LicensePayload, now: u64) -> LicenseStatus {
+    if let Some(exp) = payload.expires_at {
+        if payload.is_expired(now) {
+            return LicenseStatus::LicenseExpired {
+                payload,
+                expired_at: exp,
+            };
+        }
+    }
+    LicenseStatus::Licensed(payload)
 }
 
 pub fn get_status(
@@ -40,29 +63,22 @@ pub fn get_status(
     #[cfg(feature = "app-store")]
     {
         if let Some(payload) = receipt::validate_app_store_receipt() {
-            if let Some(exp) = payload.expires_at {
-                if now >= exp {
-                    return LicenseStatus::LicenseExpired {
-                        payload,
-                        expired_at: exp,
-                    };
-                }
-            }
-            return LicenseStatus::Licensed(payload);
+            return check_expiry(payload, now);
         }
     }
     if let Ok(Some(pem)) = storage::read_license_key(dir) {
         if let Ok(payload) = key::verify_license_key(&pem, license_verifying_key) {
-            if let Some(exp) = payload.expires_at {
-                if now >= exp {
-                    return LicenseStatus::LicenseExpired {
-                        payload,
-                        expired_at: exp,
-                    };
-                }
-            }
-            return LicenseStatus::Licensed(payload);
+            // A valid local key wins over any stale revocation marker, so a
+            // freshly re-activated license is never blocked by an old marker.
+            return check_expiry(payload, now);
         }
+    }
+    // No valid key. If the server revoked the license (key already deleted),
+    // surface a revocation-specific state rather than the generic Unlicensed.
+    if let Some(marker) = storage::read_revocation_marker(dir) {
+        return LicenseStatus::Revoked {
+            reason: marker.reason,
+        };
     }
     LicenseStatus::Unlicensed
 }
@@ -185,6 +201,44 @@ mod tests {
     }
 
     #[test]
+    fn license_status_revoked_serializes() {
+        let status = LicenseStatus::Revoked {
+            reason: Some("refund".into()),
+        };
+        let json = serde_json::to_string(&status).unwrap();
+        assert!(json.contains("\"kind\":\"Revoked\""));
+        assert!(json.contains("\"reason\":\"refund\""));
+    }
+
+    #[test]
+    fn get_status_revoked_marker_returns_revoked() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_, lic_vk) = test_keys();
+        // No license key on disk, but a revocation marker is present.
+        storage::write_revocation_marker(dir.path(), Some("refund")).unwrap();
+        match get_status(dir.path(), &lic_vk, 200) {
+            LicenseStatus::Revoked { reason } => assert_eq!(reason, Some("refund".into())),
+            other => panic!("expected Revoked, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn get_status_valid_key_ignores_stale_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let lic_sk = SigningKey::generate(&mut OsRng);
+        let lic_vk = lic_sk.verifying_key();
+        let payload = sample_payload(None);
+        let pem = build_test_pem(&payload, &lic_sk);
+        storage::write_license_key(dir.path(), &pem).unwrap();
+        // A stale marker is present, but a valid key wins (re-activation case).
+        storage::write_revocation_marker(dir.path(), Some("refund")).unwrap();
+        match get_status(dir.path(), &lic_vk, 200) {
+            LicenseStatus::Licensed(p) => assert_eq!(p.license_id, "lic-1"),
+            other => panic!("expected Licensed, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn license_status_license_expired_serializes() {
         let status = LicenseStatus::LicenseExpired {
             payload: sample_payload(Some(150)),
@@ -299,6 +353,35 @@ mod tests {
                 assert_eq!(p.license_id, "lic-ea-001");
                 assert_eq!(p.license_type, "early_adopter");
             }
+            other => panic!("expected Licensed, got {:?}", other),
+        }
+    }
+
+    // --- check_expiry helper ---
+
+    #[test]
+    fn check_expiry_expired_returns_license_expired() {
+        match check_expiry(sample_payload(Some(1000)), 1000) {
+            LicenseStatus::LicenseExpired { expired_at, payload } => {
+                assert_eq!(expired_at, 1000);
+                assert_eq!(payload.license_id, "lic-1");
+            }
+            other => panic!("expected LicenseExpired, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn check_expiry_unexpired_returns_licensed() {
+        match check_expiry(sample_payload(Some(1000)), 999) {
+            LicenseStatus::Licensed(p) => assert_eq!(p.expires_at, Some(1000)),
+            other => panic!("expected Licensed, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn check_expiry_perpetual_returns_licensed() {
+        match check_expiry(sample_payload(None), u64::MAX) {
+            LicenseStatus::Licensed(_) => {}
             other => panic!("expected Licensed, got {:?}", other),
         }
     }

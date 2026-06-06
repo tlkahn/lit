@@ -89,6 +89,9 @@ pub async fn perform_online_validation(
         Ok(resp) if resp.status == "revoked" => {
             tracing::info!(license_id, reason = ?resp.reason, "license revoked by server");
             let _ = storage::remove_license_key(dir);
+            // Persist a marker so get_status reports Revoked (with the reason)
+            // instead of Unlicensed now that the key file is gone.
+            let _ = storage::write_revocation_marker(dir, resp.reason.as_deref());
             let _ = write_last_checked(dir, now);
             OnlineValidationResult {
                 action: "revoked".into(),
@@ -398,6 +401,10 @@ mod tests {
         assert_eq!(result.action, "revoked");
         assert_eq!(result.reason, Some("refund".into()));
         assert!(storage::read_license_key(dir.path()).unwrap().is_none());
+        // The reason is persisted in a marker so get_status can report Revoked
+        // (the key was deleted, so without this it would fall back to Unlicensed).
+        let marker = storage::read_revocation_marker(dir.path()).expect("marker written");
+        assert_eq!(marker.reason, Some("refund".into()));
         assert_eq!(read_last_checked(dir.path()), Some(now));
         assert!(logs_contain("license revoked"));
     }

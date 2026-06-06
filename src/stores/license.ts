@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { getLicenseStatus, activateLicense, checkOnlineValidation } from "../lib/ipc";
 
-export type LicenseState = "unknown" | "unlicensed" | "licensed" | "license_expired";
+export type LicenseState = "unknown" | "unlicensed" | "licensed" | "license_expired" | "revoked";
 
 interface LicenseStore {
   state: LicenseState;
@@ -26,44 +26,56 @@ export const useLicenseStore = create<LicenseStore>((set) => ({
   error: null,
 
   fetchStatus: async () => {
-    const res = await getLicenseStatus();
-    set({
-      state: res.state,
-      licensedTo: res.licensed_to ?? null,
-      source: res.source ?? null,
-      expiresAt: res.expires_at ?? null,
-      expiryDate: res.expiry_date ?? null,
-      loading: false,
-    });
-
-    checkOnlineValidation()
-      .then(async (online) => {
-        if (online.action === "revoked") {
-          const updated = await getLicenseStatus();
-          set({
-            state: updated.state,
-            licensedTo: updated.licensed_to ?? null,
-            source: updated.source ?? null,
-            expiresAt: updated.expires_at ?? null,
-            expiryDate: updated.expiry_date ?? null,
-          });
-        }
-      })
-      .catch(() => {});
-  },
-
-  activate: async (key: string) => {
     try {
-      const res = await activateLicense(key);
+      const res = await getLicenseStatus();
       set({
         state: res.state,
         licensedTo: res.licensed_to ?? null,
         source: res.source ?? null,
         expiresAt: res.expires_at ?? null,
         expiryDate: res.expiry_date ?? null,
-        error: null,
+        loading: false,
       });
-      return true;
+
+      checkOnlineValidation()
+        .then(async (online) => {
+          if (online.action === "revoked") {
+            const updated = await getLicenseStatus();
+            set({
+              state: updated.state,
+              licensedTo: updated.licensed_to ?? null,
+              source: updated.source ?? null,
+              expiresAt: updated.expires_at ?? null,
+              expiryDate: updated.expiry_date ?? null,
+            });
+          }
+        })
+        .catch(() => {});
+    } catch (e) {
+      set({ state: "unlicensed", loading: false, error: String(e) });
+    }
+  },
+
+  activate: async (key: string) => {
+    try {
+      const res = await activateLicense(key);
+      const ok = res.state === "licensed";
+      const error = ok
+        ? null
+        : res.state === "license_expired"
+          ? "This license key has expired"
+          : res.state === "revoked"
+            ? "This license key has been revoked"
+            : "This license key is not valid";
+      set({
+        state: res.state,
+        licensedTo: res.licensed_to ?? null,
+        source: res.source ?? null,
+        expiresAt: res.expires_at ?? null,
+        expiryDate: res.expiry_date ?? null,
+        error,
+      });
+      return ok;
     } catch (e) {
       set({ error: e instanceof Error ? e.message : String(e) });
       return false;

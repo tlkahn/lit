@@ -68,10 +68,10 @@ impl LicenseStatusResponse {
             },
             license::DevOverride::LicenseExpired => Self {
                 state: "license_expired".into(),
-                licensed_to: None,
+                licensed_to: Some("Dev User".into()),
                 source: Some("direct".into()),
-                expires_at: None,
-                expiry_date: None,
+                expires_at: Some(1735603200),
+                expiry_date: Some(format_expiry_date(1735603200)),
             },
         }
     }
@@ -98,6 +98,13 @@ impl LicenseStatusResponse {
                 source: Some(source_to_string(&payload.source)),
                 expires_at: Some(*expired_at),
                 expiry_date: Some(format_expiry_date(*expired_at)),
+            },
+            license::LicenseStatus::Revoked { .. } => Self {
+                state: "revoked".into(),
+                licensed_to: None,
+                source: None,
+                expires_at: None,
+                expiry_date: None,
             },
         }
     }
@@ -135,6 +142,9 @@ pub fn activate_license(
     license::key::verify_license_key(&key, &state.license_verifying_key)
         .map_err(|e| e.to_string())?;
     license::storage::write_license_key(&state.data_dir, &key).map_err(|e| e.to_string())?;
+    // A successful (re-)activation clears any prior revocation marker so the
+    // user is no longer shown the revoked splash.
+    let _ = license::storage::clear_revocation_marker(&state.data_dir);
     let status = license::get_status(
         &state.data_dir,
         &state.license_verifying_key,
@@ -209,7 +219,7 @@ fn set_item_enabled(menu: &tauri::menu::Menu<Wry>, id: &str, enabled: bool) -> R
 
 /// Whether the "Buy License" menu item should be enabled for the given state.
 fn buy_enabled_for(license_state: &str) -> bool {
-    matches!(license_state, "unlicensed" | "license_expired")
+    matches!(license_state, "unlicensed" | "license_expired" | "revoked")
 }
 
 #[tauri::command]
@@ -296,7 +306,32 @@ mod tests {
     fn buy_enabled_for_states() {
         assert!(buy_enabled_for("unlicensed"));
         assert!(buy_enabled_for("license_expired"));
+        assert!(buy_enabled_for("revoked"));
         assert!(!buy_enabled_for("licensed"));
+    }
+
+    #[test]
+    fn from_status_revoked() {
+        let status = license::LicenseStatus::Revoked {
+            reason: Some("refund".into()),
+        };
+        let resp = LicenseStatusResponse::from_status(&status);
+        assert_eq!(resp.state, "revoked");
+        assert_eq!(resp.licensed_to, None);
+        assert_eq!(resp.source, None);
+        assert_eq!(resp.expires_at, None);
+        assert_eq!(resp.expiry_date, None);
+    }
+
+    #[test]
+    fn activate_clears_revocation_marker() {
+        // Re-activating a valid key must clear a prior revocation marker, so a
+        // re-purchasing user isn't stuck on the revoked splash.
+        let dir = tempfile::tempdir().unwrap();
+        license::storage::write_revocation_marker(dir.path(), Some("refund")).unwrap();
+        // Simulate the activate path's marker-clearing step.
+        license::storage::clear_revocation_marker(dir.path()).unwrap();
+        assert!(license::storage::read_revocation_marker(dir.path()).is_none());
     }
 
     #[cfg(feature = "app-store")]
@@ -348,10 +383,10 @@ mod tests {
     fn dev_override_license_expired_response() {
         let resp = LicenseStatusResponse::from_dev_override(license::DevOverride::LicenseExpired);
         assert_eq!(resp.state, "license_expired");
-        assert_eq!(resp.licensed_to, None);
+        assert_eq!(resp.licensed_to, Some("Dev User".into()));
         assert_eq!(resp.source, Some("direct".into()));
-        assert_eq!(resp.expires_at, None);
-        assert_eq!(resp.expiry_date, None);
+        assert_eq!(resp.expires_at, Some(1735603200));
+        assert_eq!(resp.expiry_date, Some("2024-12-31".into()));
     }
 
     #[test]

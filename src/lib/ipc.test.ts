@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { mockInvoke } from "../test/tauri-mock";
 import {
   getAppInfo,
+  getBuildInfo,
   openWorkspace,
   listPages,
   getWorkspacePath,
@@ -72,6 +73,8 @@ import {
   activateLicense,
   checkOnlineValidation,
   syncLicenseMenu,
+  type LicenseStatusResponse,
+  type OnlineValidationResult,
   setApiKey,
   getApiKey,
   hasApiKey,
@@ -116,6 +119,8 @@ describe("ipc", () => {
       switch (cmd) {
         case "get_app_info":
           return { name: "Lit", version: "0.1.0" };
+        case "get_build_info":
+          return { source: "direct" };
         case "open_workspace":
           return [sampleMeta];
         case "list_pages":
@@ -594,6 +599,13 @@ describe("ipc", () => {
   it("getAppInfo returns name and version", async () => {
     const info = await getAppInfo();
     expect(info).toEqual({ name: "Lit", version: "0.1.0" });
+  });
+
+  it("getBuildInfo calls get_build_info", async () => {
+    const info = await getBuildInfo();
+    expect(info).toEqual({ source: "direct" });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("get_build_info");
   });
 
   it("openWorkspace calls with path", async () => {
@@ -1306,6 +1318,17 @@ describe("ipc", () => {
     expect(result.reason).toBe("not_due");
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("check_online_validation");
+  });
+
+  it("LicenseStatusResponse state union accepts 'revoked'", () => {
+    // Compile-level: the union must include "revoked" or this assignment fails tsc.
+    const revoked: LicenseStatusResponse = { state: "revoked" };
+    expect(revoked.state).toBe("revoked");
+  });
+
+  it("checkOnlineValidation action union accepts 'revoked'", () => {
+    const result: OnlineValidationResult = { action: "revoked", reason: "refund" };
+    expect(result.action).toBe("revoked");
   });
 
   it("syncLicenseMenu calls sync_license_menu with licenseState", async () => {
