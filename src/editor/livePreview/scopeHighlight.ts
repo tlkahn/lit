@@ -15,7 +15,7 @@ export const scopeHighlightField = StateField.define<DecorationSet>({
         return Decoration.set([highlightMark.range(from, to)]);
       }
     }
-    if (tr.docChanged) return value.map(tr.changes);
+    if (tr.docChanged) return Decoration.none;
     return value;
   },
   provide: (f) => EditorView.decorations.from(f),
