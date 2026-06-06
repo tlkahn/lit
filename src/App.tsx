@@ -471,13 +471,17 @@ function App() {
   const handleAnnotationInsert = useCallback((dsl: string) => {
     const view = getCurrentEditorView();
     if (view) {
+      let insertFrom: number;
       if (editingRange) {
-        const from = annotationBuilderMode === "create" ? editingRange.to : editingRange.from;
-        view.dispatch({ changes: { from, to: editingRange.to, insert: dsl } });
+        insertFrom = annotationBuilderMode === "create" ? editingRange.to : editingRange.from;
+        view.dispatch({ changes: { from: insertFrom, to: editingRange.to, insert: dsl } });
       } else {
-        const pos = view.state.selection.main.head;
-        view.dispatch({ changes: { from: pos, insert: dsl } });
+        insertFrom = view.state.selection.main.head;
+        view.dispatch({ changes: { from: insertFrom, insert: dsl } });
       }
+      const cursorPos = insertFrom + getEditCursorOffset(dsl);
+      view.dispatch({ selection: { anchor: cursorPos } });
+      view.focus();
     }
     setAnnotationBuilderOpen(false);
   }, [editingRange, annotationBuilderMode]);
