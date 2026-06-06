@@ -146,10 +146,14 @@ pub fn find_in_path(binary_name: &str) -> Option<PathBuf> {
             return Some(candidate);
         }
     }
-    for dir in extra_dirs {
-        let candidate = Path::new(dir).join(binary_name);
-        if candidate.is_file() {
-            return Some(candidate);
+    // Test escape hatch: when set, skip the hardcoded extra_dirs scan so tests can
+    // deterministically force a not-found result. Inert in normal operation.
+    if std::env::var("LIT_DISABLE_PATH_EXTRA_DIRS").is_err() {
+        for dir in extra_dirs {
+            let candidate = Path::new(dir).join(binary_name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
         }
     }
     None
@@ -374,12 +378,26 @@ pub fn resolve_reference_doc(
         .filter(|p| is_valid_docx(p))
 }
 
+/// Returns the platform-appropriate package-manager hint for installing pandoc.
+fn pandoc_install_hint() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "macOS: brew install pandoc"
+    } else if cfg!(target_os = "windows") {
+        "Windows: winget install --id JohnMacFarlane.Pandoc (or choco install pandoc)"
+    } else if cfg!(target_os = "linux") {
+        "Linux: install via your package manager (e.g. sudo apt install pandoc or sudo dnf install pandoc)"
+    } else {
+        "Use the download link below"
+    }
+}
+
 fn pandoc_not_found_error(operation: &str) -> String {
+    let hint = pandoc_install_hint();
     format!(
         "pandoc is required for {operation} but was not found on your system.\n\
          \n\
          To install pandoc:\n  \
-         - macOS: brew install pandoc\n  \
+         - {hint}\n  \
          - Download: https://pandoc.org/installing.html\n\
          \n\
          To use a custom pandoc location, set the path in Settings \u{2192} Academic Export \u{2192} Pandoc Path."
@@ -388,34 +406,69 @@ fn pandoc_not_found_error(operation: &str) -> String {
 
 fn pandoc_invalid_path_error(path: &str) -> String {
     format!(
-        "The configured pandoc path does not exist or is not a file: {path}\n\
+        "The configured pandoc path does not exist, is not a file, or is not executable: {path}\n\
          \n\
          This path is set in Settings \u{2192} Academic Export \u{2192} Pandoc Path.\n\
          Either correct the path or clear it to auto-detect pandoc from PATH."
     )
 }
 
-/// Validate that pandoc is available, returning its path on success.
+/// Validate that a binary is available, returning its path on success.
 ///
 /// Unlike `resolve_binary`, this does NOT silently fall through from an invalid
 /// configured path to PATH lookup. If the user explicitly set a path, they get
-/// told it's broken.
-pub fn validate_pandoc(
+/// told it's broken. The two error messages are injected so this helper carries
+/// no binary-specific wording.
+pub fn validate_binary(
+    pref_key: &str,
+    fallback_name: &str,
     operation: &str,
     prefs: &preferences::Preferences,
+    not_found_error: impl Fn(&str) -> String,
+    invalid_path_error: impl Fn(&str) -> String,
 ) -> Result<PathBuf, String> {
-    if let Some(val) = prefs.extra.get("academic.pandocPath") {
+    if let Some(val) = prefs.extra.get(pref_key) {
         if let Some(s) = val.as_str() {
             if !s.is_empty() {
                 let p = PathBuf::from(s);
                 if p.is_file() {
+                    // On Unix, a configured path that lacks any execute bit will
+                    // fail cryptically at spawn time; reject it up front.
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let executable = std::fs::metadata(&p)
+                            .map(|m| m.permissions().mode() & 0o111 != 0)
+                            .unwrap_or(false);
+                        if !executable {
+                            return Err(invalid_path_error(s));
+                        }
+                    }
                     return Ok(p);
                 }
-                return Err(pandoc_invalid_path_error(s));
+                return Err(invalid_path_error(s));
             }
         }
     }
-    find_in_path("pandoc").ok_or_else(|| pandoc_not_found_error(operation))
+    find_in_path(fallback_name).ok_or_else(|| not_found_error(operation))
+}
+
+/// Validate that pandoc is available, returning its path on success.
+///
+/// Thin wrapper over [`validate_binary`] supplying the pandoc pref key, PATH
+/// fallback name, and pandoc-specific error messages.
+pub fn validate_pandoc(
+    operation: &str,
+    prefs: &preferences::Preferences,
+) -> Result<PathBuf, String> {
+    validate_binary(
+        "academic.pandocPath",
+        "pandoc",
+        operation,
+        prefs,
+        pandoc_not_found_error,
+        pandoc_invalid_path_error,
+    )
 }
 
 /// Build the argument list for a pandoc invocation.
@@ -720,6 +773,10 @@ pub async fn export_document(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Serializes env-mutating tests in this module (PATH, LIT_DISABLE_PATH_EXTRA_DIRS)
+    /// since `std::env::set_var`/`remove_var` are process-global.
+    static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn test_build_pandoc_args_basic() {
@@ -1608,7 +1665,27 @@ mod tests {
     fn test_pandoc_not_found_error_format() {
         let msg = pandoc_not_found_error("PDF export");
         assert!(msg.contains("PDF export"), "should mention the operation");
-        assert!(msg.contains("brew install pandoc"), "should include brew install hint");
+        if cfg!(target_os = "macos") {
+            assert!(msg.contains("brew install pandoc"), "should include brew install hint on macOS");
+        } else if cfg!(target_os = "windows") {
+            assert!(
+                msg.contains("winget") || msg.contains("choco"),
+                "should include winget/choco install hint on Windows"
+            );
+            assert!(
+                !msg.contains("brew install pandoc"),
+                "should not present brew as the hint off macOS"
+            );
+        } else if cfg!(target_os = "linux") {
+            assert!(
+                msg.contains("apt") || msg.contains("dnf"),
+                "should include apt/dnf install hint on Linux"
+            );
+            assert!(
+                !msg.contains("brew install pandoc"),
+                "should not present brew as the hint off macOS"
+            );
+        }
         assert!(msg.contains("pandoc.org"), "should include download link");
         assert!(msg.contains("Settings"), "should mention Settings");
     }
@@ -1617,14 +1694,65 @@ mod tests {
     fn test_pandoc_invalid_path_error_format() {
         let msg = pandoc_invalid_path_error("/bad/path");
         assert!(msg.contains("/bad/path"), "should include the configured path");
-        assert!(msg.contains("does not exist"), "should explain the problem");
+        assert!(msg.contains("configured pandoc path"), "frontend classifies by this phrase");
+        assert!(msg.contains("does not exist"), "should explain the missing-file case");
+        assert!(msg.contains("not executable"), "should explain the non-executable case");
         assert!(msg.contains("Settings"), "should mention Settings");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_validate_binary_err_non_executable() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = std::env::temp_dir().join("test_validate_binary_non_exec");
+        std::fs::write(&tmp, "fake").unwrap();
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let mut prefs = preferences::Preferences::default();
+        prefs.extra.insert(
+            "custom.binPath".to_string(),
+            serde_json::Value::String(tmp.to_string_lossy().to_string()),
+        );
+        let result = validate_binary(
+            "custom.binPath",
+            "custom-bin",
+            "filtering",
+            &prefs,
+            |op| format!("nf {op}"),
+            |p| format!("bad {p}"),
+        );
+        std::fs::remove_file(&tmp).ok();
+        let err = result.expect_err("a non-executable configured path should fail loudly");
+        assert_eq!(err, format!("bad {}", tmp.to_string_lossy()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_validate_pandoc_err_non_executable() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = std::env::temp_dir().join("test_validate_pandoc_non_exec");
+        std::fs::write(&tmp, "fake").unwrap();
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let mut prefs = preferences::Preferences::default();
+        prefs.extra.insert(
+            "academic.pandocPath".to_string(),
+            serde_json::Value::String(tmp.to_string_lossy().to_string()),
+        );
+        let result = validate_pandoc("export", &prefs);
+        std::fs::remove_file(&tmp).ok();
+        let err = result.expect_err("a non-executable pandoc path should fail loudly");
+        assert!(err.contains(&*tmp.to_string_lossy()), "should include the bad path");
+        assert!(err.contains("not executable"), "should explain it is not executable");
     }
 
     #[test]
     fn test_validate_pandoc_ok_with_valid_pref() {
         let tmp = std::env::temp_dir().join("test_validate_pandoc_ok");
         std::fs::write(&tmp, "fake").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
         let mut prefs = preferences::Preferences::default();
         prefs.extra.insert(
             "academic.pandocPath".to_string(),
@@ -1652,17 +1780,30 @@ mod tests {
 
     #[test]
     fn test_validate_pandoc_err_not_found() {
-        let prefs = preferences::Preferences::default();
-        // With default prefs and pandoc unlikely named "pandoc" at a findable location
-        // in CI, we test the error message shape by checking what happens with no pref
-        // and no PATH hit. On systems with pandoc installed this would succeed,
-        // so we just verify the function doesn't panic.
-        let result = validate_pandoc("PDF export", &prefs);
-        if let Err(err) = result {
-            assert!(err.contains("brew install pandoc"), "should include install instructions");
-            assert!(err.contains("PDF export"), "should mention the operation");
+        let _lock = ENV_MUTEX.lock().unwrap();
+        // Deterministically force the not-found branch: point PATH at an empty temp
+        // dir and disable the hardcoded macOS extra_dirs scan. This guarantees the
+        // error-message assertions always run, even when pandoc is installed.
+        let empty_dir = std::env::temp_dir().join("test_validate_pandoc_empty_path");
+        std::fs::create_dir_all(&empty_dir).unwrap();
+        let saved_path = std::env::var("PATH").ok();
+        std::env::set_var("PATH", &empty_dir);
+        std::env::set_var("LIT_DISABLE_PATH_EXTRA_DIRS", "1");
+
+        let result = validate_pandoc("PDF export", &preferences::Preferences::default());
+
+        // Restore env BEFORE asserting so a failed assert can't leak env state.
+        match saved_path {
+            Some(p) => std::env::set_var("PATH", p),
+            None => std::env::remove_var("PATH"),
         }
-        // If Ok, pandoc is installed — that's fine too
+        std::env::remove_var("LIT_DISABLE_PATH_EXTRA_DIRS");
+        std::fs::remove_dir_all(&empty_dir).ok();
+
+        let err = result.expect_err("pandoc should be reported as not found");
+        assert!(err.contains("PDF export"), "should mention the operation");
+        assert!(err.contains("pandoc.org"), "should include install instructions");
+        assert!(err.contains("Settings"), "should mention Settings");
     }
 
     #[test]
@@ -1676,6 +1817,106 @@ mod tests {
         // Empty pref should NOT produce the "configured path" error
         if let Err(err) = result {
             assert!(!err.contains("configured pandoc path"), "empty pref should fall through to PATH lookup, not report as invalid path");
+        }
+    }
+
+    // --- validate_binary tests (parameterized helper) ---
+
+    #[test]
+    fn test_validate_binary_ok_with_valid_pref() {
+        let tmp = std::env::temp_dir().join("test_validate_binary_ok");
+        std::fs::write(&tmp, "fake").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let mut prefs = preferences::Preferences::default();
+        prefs.extra.insert(
+            "custom.binPath".to_string(),
+            serde_json::Value::String(tmp.to_string_lossy().to_string()),
+        );
+        let result = validate_binary(
+            "custom.binPath",
+            "custom-bin",
+            "filtering",
+            &prefs,
+            |op| format!("nf {op}"),
+            |p| format!("bad {p}"),
+        );
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), tmp);
+        std::fs::remove_file(&tmp).unwrap();
+    }
+
+    #[test]
+    fn test_validate_binary_err_invalid_pref() {
+        let mut prefs = preferences::Preferences::default();
+        prefs.extra.insert(
+            "custom.binPath".to_string(),
+            serde_json::Value::String("/nonexistent/path/to/bin".to_string()),
+        );
+        let result = validate_binary(
+            "custom.binPath",
+            "custom-bin",
+            "filtering",
+            &prefs,
+            |op| format!("nf {op}"),
+            |p| format!("bad {p}"),
+        );
+        let err = result.expect_err("invalid configured path should fail loudly");
+        assert_eq!(err, "bad /nonexistent/path/to/bin");
+    }
+
+    #[test]
+    fn test_validate_binary_err_not_found() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+        let empty_dir = std::env::temp_dir().join("test_validate_binary_empty_path");
+        std::fs::create_dir_all(&empty_dir).unwrap();
+        let saved_path = std::env::var("PATH").ok();
+        std::env::set_var("PATH", &empty_dir);
+        std::env::set_var("LIT_DISABLE_PATH_EXTRA_DIRS", "1");
+
+        let result = validate_binary(
+            "custom.binPath",
+            "definitely-not-a-real-binary-xyz",
+            "filtering",
+            &preferences::Preferences::default(),
+            |op| format!("nf {op}"),
+            |p| format!("bad {p}"),
+        );
+
+        // Restore env BEFORE asserting so a failed assert can't leak env state.
+        match saved_path {
+            Some(p) => std::env::set_var("PATH", p),
+            None => std::env::remove_var("PATH"),
+        }
+        std::env::remove_var("LIT_DISABLE_PATH_EXTRA_DIRS");
+        std::fs::remove_dir_all(&empty_dir).ok();
+
+        let err = result.expect_err("binary should be reported as not found");
+        assert_eq!(err, "nf filtering");
+    }
+
+    #[test]
+    fn test_validate_binary_empty_pref_falls_through() {
+        let mut prefs = preferences::Preferences::default();
+        prefs.extra.insert(
+            "custom.binPath".to_string(),
+            serde_json::Value::String("".to_string()),
+        );
+        let result = validate_binary(
+            "custom.binPath",
+            "custom-bin",
+            "filtering",
+            &prefs,
+            |op| format!("nf {op}"),
+            |p| format!("bad {p}"),
+        );
+        // Empty pref must NOT take the invalid-path branch.
+        if let Err(err) = result {
+            assert_ne!(err, "bad ", "empty pref should fall through to PATH lookup");
+            assert!(!err.starts_with("bad"), "empty pref should not report invalid path");
         }
     }
 }

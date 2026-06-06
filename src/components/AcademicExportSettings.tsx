@@ -62,7 +62,14 @@ export function AcademicExportSettings() {
         <div className="text-sm">
           <div data-testid="academic-pandoc-status" className="flex items-center gap-1.5">
             <span className="text-text-error">&#x2717;</span>
-            <span>Pandoc: Not found</span>
+            {/* "configured pandoc path" is the stable discriminant from
+                pandoc_invalid_path_error (absent from pandoc_not_found_error);
+                keep in sync if the backend message wording changes. */}
+            <span>
+              {errorMessage?.includes("configured pandoc path")
+                ? "Pandoc: Configuration error"
+                : "Pandoc: Not found"}
+            </span>
           </div>
           {errorMessage && (
             <div data-testid="academic-pandoc-error-detail" className="mt-1 whitespace-pre-line text-text-muted">
