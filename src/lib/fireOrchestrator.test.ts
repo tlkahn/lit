@@ -10,7 +10,8 @@ import { firingAnnotationsField, firingRangeField } from "../editor/livePreview/
 
 vi.mock("./ipc", () => ({
   resolveAnnotationScopeWithMode: vi.fn(async () => null),
-  secretStoreStatus: vi.fn(async () => ({ exists: true, unlocked: false })),
+  secretStoreStatus: vi.fn(async () => ({ exists: true, unlocked: false, needsMigration: true })),
+  autoUnlockSecretStore: vi.fn(async () => false),
 }));
 
 vi.mock("./llmClient", () => ({
@@ -61,7 +62,7 @@ beforeEach(() => {
   useModalLockStore.setState({ llmLocked: false, openCount: 0, locked: false });
   useStatusMessageStore.setState({ message: null, variant: "success" });
   useSecretStoreStore.getState()._resetSettler();
-  useSecretStoreStore.setState({ exists: true, unlocked: true, loading: false, promptOpen: false });
+  useSecretStoreStore.setState({ exists: true, unlocked: true, loading: false, migrationPromptOpen: false });
 });
 
 afterEach(() => {
@@ -622,10 +623,10 @@ describe("fireAnnotation", () => {
   });
 
   it("cancel during setup (before stream starts) releases the lock and clears the spinner", async () => {
-    // Force the function to park on ensureUnlocked: locked store whose unlock
-    // promise never settles (replicates the passphrase-modal window).
+    // Force the function to park on ensureUnlocked: locked store whose
+    // auto-unlock returns false, so the migration prompt opens.
     useSecretStoreStore.getState()._resetSettler();
-    useSecretStoreStore.setState({ exists: true, unlocked: false, promptOpen: false });
+    useSecretStoreStore.setState({ exists: true, unlocked: false, migrationPromptOpen: false });
     // Safety net: if the stream were ever started, it must not resolve.
     mockStream.mockImplementation(() => new Promise(() => {}));
     const view = makeView("hello world", true);
@@ -661,13 +662,13 @@ describe("fireAnnotation", () => {
 
     await flush();
 
-    // ensureUnlocked should have opened the passphrase prompt
-    expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+    // ensureUnlocked should have opened the migration prompt
+    expect(useSecretStoreStore.getState().migrationPromptOpen).toBe(true);
     // startLlmStream should NOT have been called yet
     expect(mockStream).not.toHaveBeenCalled();
 
-    // Simulate user entering passphrase
-    useSecretStoreStore.getState().settleUnlock(true);
+    // Simulate user completing migration
+    useSecretStoreStore.getState().settleMigration(true);
     await firePromise;
 
     // Now startLlmStream should have been called
@@ -687,10 +688,10 @@ describe("fireAnnotation", () => {
     await flush();
 
     // Prompt should be open
-    expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+    expect(useSecretStoreStore.getState().migrationPromptOpen).toBe(true);
 
     // User cancels
-    useSecretStoreStore.getState().settleUnlock(false);
+    useSecretStoreStore.getState().settleMigration(false);
     await firePromise;
 
     // startLlmStream should NOT have been called
@@ -711,7 +712,7 @@ describe("fireAnnotation", () => {
     await fireAnnotation({ view, annotation: ann });
 
     // No prompt should have been opened
-    expect(useSecretStoreStore.getState().promptOpen).toBe(false);
+    expect(useSecretStoreStore.getState().migrationPromptOpen).toBe(false);
     // Stream should have been called
     expect(mockStream).toHaveBeenCalledOnce();
     view.destroy();

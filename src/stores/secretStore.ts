@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { secretStoreStatus } from "../lib/ipc";
+import { secretStoreStatus, autoUnlockSecretStore, migrateSecretStore } from "../lib/ipc";
 
 interface Settler {
   resolve: () => void;
@@ -9,15 +9,17 @@ interface Settler {
 export interface SecretStoreState {
   exists: boolean;
   unlocked: boolean;
+  needsMigration: boolean;
   loading: boolean;
-  promptOpen: boolean;
-  /** @internal settler for the pending unlock promise */
+  migrationPromptOpen: boolean;
+  /** @internal settler for the pending migration promise */
   _settler: Settler | null;
-  /** @internal the pending unlock promise */
+  /** @internal the pending promise */
   _pendingPromise: Promise<void> | null;
   refresh: () => Promise<void>;
   ensureUnlocked: () => Promise<void>;
-  settleUnlock: (success: boolean) => void;
+  migrate: (oldPassphrase: string) => Promise<void>;
+  settleMigration: (success: boolean) => void;
   /** @internal test-only: clears pending settler without resolving/rejecting */
   _resetSettler: () => void;
 }
@@ -25,8 +27,9 @@ export interface SecretStoreState {
 export const useSecretStoreStore = create<SecretStoreState>((set, get) => ({
   exists: false,
   unlocked: false,
+  needsMigration: false,
   loading: false,
-  promptOpen: false,
+  migrationPromptOpen: false,
   _settler: null,
   _pendingPromise: null,
 
@@ -34,7 +37,12 @@ export const useSecretStoreStore = create<SecretStoreState>((set, get) => ({
     set({ loading: true });
     try {
       const status = await secretStoreStatus();
-      set({ exists: status.exists, unlocked: status.unlocked, loading: false });
+      set({
+        exists: status.exists,
+        unlocked: status.unlocked,
+        needsMigration: status.needsMigration,
+        loading: false,
+      });
     } catch {
       set({ loading: false });
     }
@@ -57,32 +65,54 @@ export const useSecretStoreStore = create<SecretStoreState>((set, get) => ({
 
     set({ _settler: settler!, _pendingPromise: pendingPromise });
 
-    get().refresh().then(() => {
-      if (get().unlocked) {
-        const s = get()._settler;
-        if (s) {
-          set({ _settler: null, _pendingPromise: null });
-          s.resolve();
-        }
+    autoUnlockSecretStore().then((ok) => {
+      if (ok) {
+        get().refresh().then(() => {
+          const s = get()._settler;
+          if (s) {
+            set({ _settler: null, _pendingPromise: null });
+            s.resolve();
+          }
+        });
         return;
       }
-      set({ promptOpen: true });
+      get().refresh().then(() => {
+        set({ migrationPromptOpen: true });
+      });
+    }).catch(() => {
+      get().refresh().then(() => {
+        if (get().unlocked) {
+          const s = get()._settler;
+          if (s) {
+            set({ _settler: null, _pendingPromise: null });
+            s.resolve();
+          }
+          return;
+        }
+        set({ migrationPromptOpen: true });
+      });
     });
 
     return pendingPromise;
   },
 
-  settleUnlock: (success: boolean) => {
+  migrate: async (oldPassphrase: string) => {
+    await migrateSecretStore(oldPassphrase);
+    await get().refresh();
+    get().settleMigration(true);
+  },
+
+  settleMigration: (success: boolean) => {
     const { _settler } = get();
     if (!_settler) return;
 
     const settler = _settler;
-    set({ _settler: null, _pendingPromise: null, promptOpen: false });
+    set({ _settler: null, _pendingPromise: null, migrationPromptOpen: false });
 
     if (success) {
       settler.resolve();
     } else {
-      settler.reject(new Error("Passphrase entry cancelled"));
+      settler.reject(new Error("Migration cancelled"));
     }
   },
 

@@ -56,7 +56,7 @@ beforeEach(() => {
   });
   usePreferencesStore.setState(defaults);
   useSecretStoreStore.getState()._resetSettler();
-  useSecretStoreStore.setState({ exists: false, unlocked: false, loading: false, promptOpen: false });
+  useSecretStoreStore.setState({ exists: false, unlocked: false, loading: false, migrationPromptOpen: false });
   useThemeStore.setState({
     availableThemes: [
       { name: "Dracula", version: "1.0", author: "Dracula Team", directory_name: "dracula" },
@@ -1945,28 +1945,8 @@ describe("SettingsModal", () => {
         exists: false,
         unlocked: false,
         loading: false,
-        promptOpen: false,
+        migrationPromptOpen: false,
       });
-    });
-
-    it("skips hasApiKey check when store is locked (exists but not unlocked)", async () => {
-
-      useSecretStoreStore.setState({ exists: true, unlocked: false });
-
-      const localCalls: { cmd: string; args: Record<string, unknown> }[] = [];
-      mockInvoke((cmd, args) => {
-        localCalls.push({ cmd, args: args ?? {} });
-        if (cmd === "has_api_key") return false;
-        if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
-        return undefined;
-      });
-
-      await act(async () => {
-        render(<SettingsModal open={true} onClose={vi.fn()} />);
-      });
-
-      const hasApiKeyCalls = localCalls.filter((c) => c.cmd === "has_api_key");
-      expect(hasApiKeyCalls).toHaveLength(0);
     });
 
     it("calls hasApiKey when store is unlocked", async () => {
@@ -2007,67 +1987,6 @@ describe("SettingsModal", () => {
 
       const hasApiKeyCalls = localCalls.filter((c) => c.cmd === "has_api_key");
       expect(hasApiKeyCalls).toHaveLength(2);
-    });
-
-    it("Lock button visible when secret store exists", () => {
-
-      useSecretStoreStore.setState({ exists: true, unlocked: true });
-
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const lockBtn = container.querySelector("[data-testid='secret-store-lock-btn']");
-      expect(lockBtn).toBeTruthy();
-    });
-
-    it("Lock button hidden when secret store does not exist", () => {
-
-      useSecretStoreStore.setState({ exists: false, unlocked: false });
-
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const lockBtn = container.querySelector("[data-testid='secret-store-lock-btn']");
-      expect(lockBtn).toBeNull();
-    });
-
-    it("Change Passphrase button visible when secret store exists", () => {
-
-      useSecretStoreStore.setState({ exists: true, unlocked: true });
-
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const changeBtn = container.querySelector("[data-testid='secret-store-change-passphrase-btn']");
-      expect(changeBtn).toBeTruthy();
-    });
-
-    it("Change Passphrase button hidden when secret store does not exist", () => {
-
-      useSecretStoreStore.setState({ exists: false, unlocked: false });
-
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const changeBtn = container.querySelector("[data-testid='secret-store-change-passphrase-btn']");
-      expect(changeBtn).toBeNull();
-    });
-
-    it("Lock button calls lockSecretStore IPC and refreshes state", async () => {
-
-      useSecretStoreStore.setState({ exists: true, unlocked: true });
-
-      const localCalls: { cmd: string; args: Record<string, unknown> }[] = [];
-      mockInvoke((cmd, args) => {
-        localCalls.push({ cmd, args: args ?? {} });
-        if (cmd === "lock_secret_store") return undefined;
-        if (cmd === "secret_store_status") return { exists: true, unlocked: false };
-        if (cmd === "has_api_key") return false;
-        if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
-        return undefined;
-      });
-
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const lockBtn = container.querySelector("[data-testid='secret-store-lock-btn']")!;
-      await act(async () => {
-        fireEvent.click(lockBtn);
-      });
-
-      await vi.waitFor(() => {
-        expect(localCalls).toContainEqual({ cmd: "lock_secret_store", args: {} });
-      });
     });
 
     it("password save calls ensureUnlocked before setApiKey", async () => {
@@ -2182,7 +2101,7 @@ describe("SettingsModal", () => {
 
       // Simulate user cancelling passphrase prompt
       await act(async () => {
-        useSecretStoreStore.getState().settleUnlock(false);
+        useSecretStoreStore.getState().settleMigration(false);
       });
 
       // delete_api_key should NOT have been called

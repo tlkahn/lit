@@ -2,7 +2,7 @@ import { useEffect, useCallback, useRef, useState, useMemo } from "react";
 import { flushSync } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
 import { usePreferencesStore, type PreferencesState } from "../stores/preferences";
-import { setPreference, getPreferencesRaw, setPreferencesRaw, setApiKey, deleteApiKey, hasApiKey, lockSecretStore, changeSecretStorePassphrase } from "../lib/ipc";
+import { setPreference, getPreferencesRaw, setPreferencesRaw, setApiKey, deleteApiKey, hasApiKey } from "../lib/ipc";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { SegmentedControl } from "./SegmentedControl";
 import { ToggleSwitch } from "./ToggleSwitch";
@@ -194,16 +194,10 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
     }
   }, [prefs, dynamicOptions]);
 
-  const secretStoreExists = useSecretStoreStore((s) => s.exists);
-  const secretStoreUnlocked = useSecretStoreStore((s) => s.unlocked);
   const ensureUnlocked = useSecretStoreStore((s) => s.ensureUnlocked);
-  const refreshSecretStore = useSecretStoreStore((s) => s.refresh);
 
   useEffect(() => {
     if (!open) return;
-    // If secret store file exists but is locked, skip hasApiKey checks
-    // (keys will show as "not saved" until the store is unlocked)
-    if (secretStoreExists && !secretStoreUnlocked) return;
     const passwordEntries = SETTINGS_REGISTRY.filter(
       (e): e is Extract<SettingEntry, { controlType: "password" }> => e.controlType === "password",
     );
@@ -212,7 +206,7 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
         usePreferencesStore.setState({ [entry.storeField]: has } as Partial<PreferencesState>);
       });
     }
-  }, [open, secretStoreExists, secretStoreUnlocked]);
+  }, [open]);
 
   const dialogRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -323,32 +317,6 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
       setJsonError(e instanceof Error ? e.message : String(e));
     }
   }, []);
-
-  const handleLockSecretStore = useCallback(async () => {
-    try {
-      await lockSecretStore();
-      await refreshSecretStore();
-    } catch {
-      // Lock failed — ignore silently
-    }
-  }, [refreshSecretStore]);
-
-  const [changePassphraseMode, setChangePassphraseMode] = useState(false);
-  const [oldPassphrase, setOldPassphrase] = useState("");
-  const [newPassphrase, setNewPassphrase] = useState("");
-  const [changePassphraseError, setChangePassphraseError] = useState<string | null>(null);
-
-  const handleChangePassphrase = useCallback(async () => {
-    try {
-      await changeSecretStorePassphrase(oldPassphrase, newPassphrase);
-      setChangePassphraseMode(false);
-      setOldPassphrase("");
-      setNewPassphrase("");
-      setChangePassphraseError(null);
-    } catch (e) {
-      setChangePassphraseError(e instanceof Error ? e.message : String(e));
-    }
-  }, [oldPassphrase, newPassphrase]);
 
   if (!open) return null;
 
@@ -499,63 +467,6 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
                           {cat === "LLM" && (
                             <div className="mt-3">
                               <TestConnectionButton model={prefs.llmModel as string} baseUrl={(prefs.llmModel as string).startsWith("claude-") ? (prefs.llmAnthropicBaseUrl as string) || undefined : (prefs.llmOpenaiBaseUrl as string) || undefined} />
-                            </div>
-                          )}
-                          {cat === "LLM" && secretStoreExists && (
-                            <div className="mt-3 flex flex-wrap items-center gap-2">
-                              <button
-                                data-testid="secret-store-lock-btn"
-                                className="rounded-md bg-bg-tertiary px-3 py-1.5 text-xs text-text-muted hover:bg-bg-secondary"
-                                onClick={handleLockSecretStore}
-                              >
-                                Lock Secret Store
-                              </button>
-                              {!changePassphraseMode ? (
-                                <button
-                                  data-testid="secret-store-change-passphrase-btn"
-                                  className="rounded-md bg-bg-tertiary px-3 py-1.5 text-xs text-text-muted hover:bg-bg-secondary"
-                                  onClick={() => setChangePassphraseMode(true)}
-                                >
-                                  Change Passphrase
-                                </button>
-                              ) : (
-                                <div className="flex flex-wrap items-center gap-2" data-testid="secret-store-change-passphrase-form">
-                                  <input
-                                    type="password"
-                                    placeholder="Old passphrase"
-                                    value={oldPassphrase}
-                                    onChange={(e) => { setOldPassphrase(e.target.value); setChangePassphraseError(null); }}
-                                    data-testid="secret-store-old-passphrase"
-                                    className="rounded-md bg-bg-tertiary px-2.5 py-1 text-sm text-text-normal outline-none focus:ring-1 focus:ring-accent"
-                                  />
-                                  <input
-                                    type="password"
-                                    placeholder="New passphrase"
-                                    value={newPassphrase}
-                                    onChange={(e) => { setNewPassphrase(e.target.value); setChangePassphraseError(null); }}
-                                    data-testid="secret-store-new-passphrase"
-                                    className="rounded-md bg-bg-tertiary px-2.5 py-1 text-sm text-text-normal outline-none focus:ring-1 focus:ring-accent"
-                                  />
-                                  <button
-                                    onClick={handleChangePassphrase}
-                                    disabled={oldPassphrase.length === 0 || newPassphrase.length === 0}
-                                    data-testid="secret-store-change-passphrase-submit"
-                                    className="rounded-md bg-blue-600 px-2.5 py-1 text-xs text-white hover:opacity-90 disabled:opacity-40"
-                                  >
-                                    Update
-                                  </button>
-                                  <button
-                                    onClick={() => { setChangePassphraseMode(false); setOldPassphrase(""); setNewPassphrase(""); setChangePassphraseError(null); }}
-                                    data-testid="secret-store-change-passphrase-cancel"
-                                    className="rounded-md bg-bg-tertiary px-2.5 py-1 text-xs text-text-muted hover:bg-bg-secondary"
-                                  >
-                                    Cancel
-                                  </button>
-                                  {changePassphraseError && (
-                                    <span className="text-xs text-red-500" data-testid="secret-store-change-passphrase-error">{changePassphraseError}</span>
-                                  )}
-                                </div>
-                              )}
                             </div>
                           )}
                           {cat === "Academic Export" && (
