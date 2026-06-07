@@ -5,6 +5,7 @@ pub mod cli;
 mod commands;
 pub mod llm;
 pub mod llm_context;
+pub mod provider_registry;
 pub mod export;
 pub mod external_editor;
 pub mod graph;

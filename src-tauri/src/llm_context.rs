@@ -20,9 +20,10 @@ pub fn build_context_layers(
     document_content: &str,
     document_title: &str,
     neighbors: &[Neighbor],
-    model: &str,
+    provider_id: &str,
+    _model: &str,
 ) -> BuiltContext {
-    let budget = (context_window(model) as f64 * 0.8) as usize;
+    let budget = (context_window(provider_id) as f64 * 0.8) as usize;
     let system_tokens = estimate_tokens(system_prompt);
     let remainder = budget.saturating_sub(system_tokens);
 
@@ -112,7 +113,7 @@ mod tests {
     // Cycle 1: Empty passthrough
     #[test]
     fn empty_system_no_doc_no_neighbors() {
-        let result = build_context_layers("", &[], "", "", &[], "gpt-4o");
+        let result = build_context_layers("", &[], "", "", &[], "openai", "gpt-4o");
         assert_eq!(result.system, "");
         assert!(result.messages.is_empty());
         assert!(result.truncation.is_none());
@@ -121,13 +122,13 @@ mod tests {
     // Cycle 2: Document section rendering
     #[test]
     fn document_section_present_when_nonempty() {
-        let result = build_context_layers("", &[], "Hello world", "My Note", &[], "gpt-4o");
+        let result = build_context_layers("", &[], "Hello world", "My Note", &[], "openai", "gpt-4o");
         assert!(result.system.contains("## Current document: My Note\nHello world"));
     }
 
     #[test]
     fn document_section_absent_when_empty() {
-        let result = build_context_layers("You are helpful.", &[], "", "", &[], "gpt-4o");
+        let result = build_context_layers("You are helpful.", &[], "", "", &[], "openai", "gpt-4o");
         assert!(!result.system.contains("## Current document"));
     }
 
@@ -139,13 +140,13 @@ mod tests {
             excerpt: "bar".into(),
             relation: "forward link".into(),
         }];
-        let result = build_context_layers("", &[], "", "", &neighbors, "gpt-4o");
+        let result = build_context_layers("", &[], "", "", &neighbors, "openai", "gpt-4o");
         assert!(result.system.contains("## Linked notes\n### Foo (forward link)\nbar"));
     }
 
     #[test]
     fn neighbor_section_absent_when_empty() {
-        let result = build_context_layers("You are helpful.", &[], "", "", &[], "gpt-4o");
+        let result = build_context_layers("You are helpful.", &[], "", "", &[], "openai", "gpt-4o");
         assert!(!result.system.contains("## Linked notes"));
     }
 
@@ -167,6 +168,7 @@ mod tests {
             "Some doc content",
             "Title",
             &neighbors,
+            "openai",
             "gpt-4o",
         );
         assert_eq!(result.messages, messages);
@@ -177,7 +179,7 @@ mod tests {
     #[test]
     fn system_prompt_never_trimmed() {
         let huge_prompt = "x".repeat(200_000);
-        let result = build_context_layers(&huge_prompt, &[], "", "", &[], "gpt-4o");
+        let result = build_context_layers(&huge_prompt, &[], "", "", &[], "openai", "gpt-4o");
         assert!(result.system.starts_with(&huge_prompt[..100]));
         assert!(result.system.ends_with(&huge_prompt[huge_prompt.len() - 100..]));
     }
@@ -200,6 +202,7 @@ mod tests {
             "doc",
             "Title",
             &neighbors,
+            "openai",
             "gpt-4o",
         );
         // History should be intact
@@ -229,6 +232,7 @@ mod tests {
             "",
             "",
             &[],
+            "openai",
             "gpt-4o",
         );
         assert!(result.messages.len() < messages.len(), "some messages should be trimmed");
@@ -249,6 +253,7 @@ mod tests {
             &huge_doc,
             "Big Doc",
             &[],
+            "openai",
             "gpt-4o",
         );
         assert!(result.truncation.is_some());
@@ -270,6 +275,7 @@ mod tests {
             &cjk_doc,
             "CJK Doc",
             &[],
+            "openai",
             "gpt-4o",
         );
         assert!(result.truncation.is_some());
@@ -283,9 +289,9 @@ mod tests {
             role: "user".into(),
             content: huge_content,
         }];
-        let result = build_context_layers("Be helpful.", &messages, "", "", &[], "gpt-4o");
+        let result = build_context_layers("Be helpful.", &messages, "", "", &[], "openai", "gpt-4o");
         let kept_tokens: usize = result.messages.iter().map(|m| estimate_tokens(&m.content)).sum();
-        let budget = (context_window("gpt-4o") as f64 * 0.8) as usize;
+        let budget = (context_window("openai") as f64 * 0.8) as usize;
         let system_tokens = estimate_tokens("Be helpful.");
         // With empty doc and no neighbors, history gets the full remainder
         let history_cap = budget - system_tokens;
@@ -304,7 +310,7 @@ mod tests {
             role: "user".into(),
             content: huge_content,
         }];
-        let result = build_context_layers("Be helpful.", &messages, "", "", &[], "gpt-4o");
+        let result = build_context_layers("Be helpful.", &messages, "", "", &[], "openai", "gpt-4o");
         assert_eq!(result.messages.len(), 1);
         assert!(
             result.messages[0].content.contains(&center_region),
@@ -333,6 +339,7 @@ mod tests {
             &"word ".repeat(50_000),
             "Big Doc",
             &[],
+            "openai",
             "gpt-4o",
         );
         // Without document content (global chat)
@@ -342,6 +349,7 @@ mod tests {
             "",
             "",
             &[],
+            "openai",
             "gpt-4o",
         );
         assert!(
@@ -366,6 +374,7 @@ mod tests {
             "Doc content",
             "My Doc",
             &neighbors,
+            "openai",
             "gpt-4o",
         );
         assert!(result.system.starts_with("System prompt."));

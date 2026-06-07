@@ -424,6 +424,10 @@ fn account_for_provider(provider: &str) -> Result<&'static str, String> {
     match provider {
         "openai" => Ok(ACCOUNT_OPENAI),
         "anthropic" => Ok(ACCOUNT_ANTHROPIC),
+        "openrouter" => Ok("openrouter-api-key"),
+        "ollama" => Ok("ollama-api-key"),
+        "groq" => Ok("groq-api-key"),
+        "deepseek" => Ok("deepseek-api-key"),
         _ => Err(format!("Unknown provider: {}", provider)),
     }
 }
@@ -610,6 +614,26 @@ mod tests {
         assert!(get_api_key_inner(&store, "invalid").is_err());
         assert!(has_api_key_inner(&store, "invalid").is_err());
         assert!(delete_api_key_inner(&store, "invalid").is_err());
+    }
+
+    #[test]
+    fn test_account_for_openrouter() {
+        assert_eq!(account_for_provider("openrouter"), Ok("openrouter-api-key"));
+    }
+
+    #[test]
+    fn test_account_for_groq() {
+        assert_eq!(account_for_provider("groq"), Ok("groq-api-key"));
+    }
+
+    #[test]
+    fn test_account_for_deepseek() {
+        assert_eq!(account_for_provider("deepseek"), Ok("deepseek-api-key"));
+    }
+
+    #[test]
+    fn test_account_for_ollama() {
+        assert_eq!(account_for_provider("ollama"), Ok("ollama-api-key"));
     }
 
     // --- EncryptedFileStore tests ---

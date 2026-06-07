@@ -104,6 +104,7 @@ fn strip_surrounding_quotes(s: &str) -> &str {
 }
 
 pub(crate) async fn suggest_title_inner(
+    provider_id: &str,
     model: &str,
     api_key: &str,
     base_url: Option<&str>,
@@ -115,7 +116,7 @@ pub(crate) async fn suggest_title_inner(
         return Err("source_titles must not be empty".to_string());
     }
 
-    let provider = llm::create_provider(model, base_url);
+    let provider = llm::create_provider(provider_id, base_url);
 
     let titles_text = source_titles.join(", ");
     let body_preview: String = merged_body.chars().take(2000).collect();
@@ -161,6 +162,18 @@ pub async fn suggest_merge_title(
         .unwrap_or("claude-sonnet-4-6")
         .to_string();
 
+    let provider_pref = prefs
+        .extra
+        .get("llm.provider")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let provider_id = if provider_pref.is_empty() {
+        llm::provider_id_for_model(&model).to_string()
+    } else {
+        provider_pref
+    };
+
     let temperature = prefs
         .extra
         .get("llm.temperature")
@@ -174,14 +187,14 @@ pub async fn suggest_merge_title(
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string());
 
-    let provider = llm::create_provider(&model, base_url.as_deref());
-    let api_key = llm::resolve_api_key(provider.id(), store.as_ref())
+    let api_key = llm::resolve_api_key(&provider_id, store.as_ref())
         .ok_or_else(|| "No API key found. Set one in Settings.".to_string())?;
 
     let (tx, rx) = oneshot::channel();
 
     let handle = tokio::spawn(async move {
         let result = suggest_title_inner(
+            &provider_id,
             &model,
             &api_key,
             base_url.as_deref(),
@@ -531,6 +544,7 @@ mod tests {
             .await;
 
         let result = suggest_title_inner(
+            "openai",
             "gpt-4o",
             "fake-key",
             Some(&server.uri()),
@@ -559,6 +573,7 @@ mod tests {
             .await;
 
         let result = suggest_title_inner(
+            "openai",
             "gpt-4o",
             "fake-key",
             Some(&server.uri()),
@@ -587,6 +602,7 @@ mod tests {
             .await;
 
         let result = suggest_title_inner(
+            "openai",
             "gpt-4o",
             "fake-key",
             Some(&server.uri()),
@@ -616,6 +632,7 @@ mod tests {
             .await;
 
         let result = suggest_title_inner(
+            "openai",
             "gpt-4o",
             "bad-key",
             Some(&server.uri()),
@@ -644,6 +661,7 @@ mod tests {
             .await;
 
         let _ = suggest_title_inner(
+            "openai",
             "gpt-4o",
             "fake-key",
             Some(&server.uri()),
@@ -690,6 +708,7 @@ mod tests {
             .await;
 
         let result = suggest_title_inner(
+            "anthropic",
             "claude-sonnet-4-6",
             "fake-key",
             Some(&server.uri()),
@@ -700,6 +719,65 @@ mod tests {
         .await;
 
         assert_eq!(result.unwrap(), "Claude Title");
+    }
+
+    #[tokio::test]
+    async fn suggest_title_inner_uses_explicit_provider_id() {
+        use wiremock::{MockServer, Mock, ResponseTemplate};
+        use wiremock::matchers::{method, path};
+
+        let server = MockServer::start().await;
+        // Anthropic provider_id -> Anthropic wire format -> /v1/messages,
+        // even though the model string is "gpt-4o".
+        let body = r#"{"id":"msg_1","type":"message","role":"assistant","model":"x","content":[{"type":"text","text":"Routed By Provider"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}"#;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(body))
+            .mount(&server)
+            .await;
+
+        let result = suggest_title_inner(
+            "anthropic",            // NEW first arg: provider_id
+            "gpt-4o",               // model name deliberately mismatched
+            "fake-key",
+            Some(&server.uri()),
+            &["A".into(), "B".into()],
+            "body",
+            0.7,
+        )
+        .await;
+
+        assert_eq!(result.unwrap(), "Routed By Provider");
+    }
+
+    #[test]
+    fn suggest_merge_title_resolves_provider_from_prefs() {
+        // Explicit llm.provider in prefs wins, regardless of model name.
+        let mut prefs = crate::preferences::Preferences::default();
+        prefs.extra.insert("llm.provider".into(), serde_json::json!("groq"));
+        prefs.extra.insert("llm.model".into(), serde_json::json!("claude-sonnet-4-6"));
+
+        let model = prefs.extra.get("llm.model").and_then(|v| v.as_str())
+            .unwrap_or("claude-sonnet-4-6").to_string();
+        let provider_pref = prefs.extra.get("llm.provider").and_then(|v| v.as_str())
+            .unwrap_or("").to_string();
+        let provider_id = if provider_pref.is_empty() {
+            llm::provider_id_for_model(&model).to_string()
+        } else {
+            provider_pref.clone()
+        };
+        assert_eq!(provider_id, "groq");
+
+        // Absent llm.provider falls back to model sniffing.
+        let prefs2 = crate::preferences::Preferences::default();
+        let model2 = prefs2.extra.get("llm.model").and_then(|v| v.as_str())
+            .unwrap_or("claude-sonnet-4-6").to_string();
+        let provider_pref2 = prefs2.extra.get("llm.provider").and_then(|v| v.as_str())
+            .unwrap_or("").to_string();
+        let provider_id2 = if provider_pref2.is_empty() {
+            llm::provider_id_for_model(&model2).to_string()
+        } else { provider_pref2 };
+        assert_eq!(provider_id2, "anthropic");
     }
 
     #[test]
@@ -720,13 +798,14 @@ mod tests {
             .unwrap_or(0.7);
         assert!((temperature - 0.7).abs() < f64::EPSILON);
 
-        let provider = crate::llm::create_provider(model, None);
+        let provider = crate::llm::create_provider(crate::llm::provider_id_for_model(model), None);
         assert_eq!(provider.id(), "anthropic");
     }
 
     #[tokio::test]
     async fn suggest_title_inner_empty_titles_returns_error() {
         let result = suggest_title_inner(
+            "openai",
             "gpt-4o",
             "fake-key",
             None,
