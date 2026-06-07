@@ -1434,6 +1434,54 @@ describe("ThreadWidget", () => {
     view.destroy();
   });
 
+  it("paste in follow-up textarea does not alter editor document", () => {
+    const docText = "some document content here";
+    const view = makeEditorView(docText);
+    const w = new ThreadWidget(makeThread(), 0, false, 0);
+    const dom = w.toDOM(view);
+
+    view.dom.appendChild(dom);
+    document.body.appendChild(view.dom);
+
+    const trigger = dom.querySelector(".cm-thread-followup-trigger")! as HTMLElement;
+    trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    const textarea = dom.querySelector(".cm-thread-followup-input")! as HTMLTextAreaElement;
+
+    textarea.dispatchEvent(new Event("paste", { bubbles: true }));
+    textarea.dispatchEvent(new Event("paste", { bubbles: true }));
+    textarea.dispatchEvent(new Event("paste", { bubbles: true }));
+
+    expect(view.state.doc.toString()).toBe(docText);
+
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("multiple rapid keystrokes and paste in follow-up textarea leave editor unchanged", () => {
+    const docText = "original document text";
+    const view = makeEditorView(docText);
+    const w = new ThreadWidget(makeThread(), 0, false, 0);
+    const dom = w.toDOM(view);
+
+    view.dom.appendChild(dom);
+    document.body.appendChild(view.dom);
+
+    const trigger = dom.querySelector(".cm-thread-followup-trigger")! as HTMLElement;
+    trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    const textarea = dom.querySelector(".cm-thread-followup-input")! as HTMLTextAreaElement;
+
+    textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
+    textarea.dispatchEvent(new Event("paste", { bubbles: true }));
+    textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true }));
+    textarea.dispatchEvent(new Event("paste", { bubbles: true }));
+    textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "v", bubbles: true, metaKey: true }));
+
+    expect(view.state.doc.toString()).toBe(docText);
+
+    view.dom.remove();
+    view.destroy();
+  });
+
   it("overflow menu 'Export thread' dispatches lit:thread-export with turn -1", () => {
     const ann = makeThread();
     const w = new ThreadWidget(ann, 0, false, 0);
