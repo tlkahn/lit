@@ -93,6 +93,8 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: >
           bun tauri build
           --target aarch64-apple-darwin
@@ -126,3 +128,16 @@ jobs:
           fi
           cp "$DMG" "Lit_${TAG}_aarch64.dmg"
           aws s3 cp "Lit_${TAG}_aarch64.dmg" "s3://${{ steps.bucket.outputs.name }}/releases/Lit_${TAG}_aarch64.dmg"
+
+      - name: Generate and upload update manifest
+        if: github.event_name == 'release'
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.release.tag_name }}"
+          # release_upload_update_artifacts() reads the bucket from $S3_BUCKET.
+          export S3_BUCKET="${{ steps.bucket.outputs.name }}"
+          # release-lib.sh derives REPO_ROOT from its own BASH_SOURCE, so the
+          # manifest schema and S3 key layout live in one place (the lib).
+          source scripts/release-lib.sh
+          release_generate_update_manifest "$TAG"
+          release_upload_update_artifacts "$TAG"

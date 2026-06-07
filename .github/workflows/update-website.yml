@@ -187,7 +187,7 @@ jobs:
 
       - name: Sync to S3
         if: steps.commit.outputs.changed == 'true'
-        run: aws s3 sync website/public/ s3://${{ steps.bucket.outputs.name }} --delete --exclude "releases/*.dmg"
+        run: aws s3 sync website/public/ s3://${{ steps.bucket.outputs.name }} --delete --exclude "releases/*"
 
       - name: Invalidate CloudFront
         if: steps.commit.outputs.changed == 'true'

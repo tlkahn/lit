@@ -11,6 +11,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "externalBin": [
       "binaries/lit-cli"
     ],
@@ -55,6 +56,12 @@
           "lit"
         ]
       }
+    },
+    "updater": {
+      "pubkey": "REPLACE_WITH_TAURI_UPDATER_PUBKEY",
+      "endpoints": [
+        "https://lit.solar/releases/latest.json"
+      ]
     }
   }
 }

@@ -3,7 +3,7 @@ use std::{env, fs, path::Path, process::Command};
 fn main() {
     set_git_version();
     ensure_placeholders();
-    tauri_build::build();
+    build_tauri();
 
     println!("cargo:rerun-if-env-changed=LIT_LICENSE_VERIFYING_KEY_B64");
 
@@ -14,6 +14,19 @@ fn main() {
             "prod_license_verifying.bin",
         );
     }
+}
+
+/// App-store builds exclude the updater capability because the plugin isn't registered.
+fn build_tauri() {
+    let capabilities_pattern = if env::var_os("CARGO_FEATURE_APP_STORE").is_some() {
+        "./capabilities/*"
+    } else {
+        "./capabilities/**/*"
+    };
+    println!("cargo:rerun-if-changed=capabilities");
+    let attributes =
+        tauri_build::Attributes::new().capabilities_path_pattern(capabilities_pattern);
+    tauri_build::try_build(attributes).expect("failed to run tauri-build");
 }
 
 fn set_git_version() {

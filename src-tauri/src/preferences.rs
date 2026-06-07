@@ -134,6 +134,14 @@ pub fn annotations_enabled(app_handle: &AppHandle) -> bool {
         .unwrap_or(true)
 }
 
+pub fn auto_update_enabled(app_handle: &AppHandle) -> bool {
+    read_preferences(app_handle)
+        .extra
+        .get("app.autoUpdate")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true)
+}
+
 pub fn set_preference_at_path(
     path: &std::path::Path,
     key: &str,
@@ -689,6 +697,34 @@ mod tests {
         let json = r#"{"annotations.enabled": true}"#;
         let prefs: Preferences = serde_json::from_str(json).unwrap();
         assert!(annotations_enabled_from_prefs(&prefs));
+    }
+
+    fn auto_update_enabled_from_prefs(prefs: &Preferences) -> bool {
+        prefs
+            .extra
+            .get("app.autoUpdate")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true)
+    }
+
+    #[test]
+    fn auto_update_enabled_defaults_to_true() {
+        let prefs = Preferences::default();
+        assert!(auto_update_enabled_from_prefs(&prefs));
+    }
+
+    #[test]
+    fn auto_update_enabled_respects_false() {
+        let json = r#"{"app.autoUpdate": false}"#;
+        let prefs: Preferences = serde_json::from_str(json).unwrap();
+        assert!(!auto_update_enabled_from_prefs(&prefs));
+    }
+
+    #[test]
+    fn auto_update_enabled_respects_true() {
+        let json = r#"{"app.autoUpdate": true}"#;
+        let prefs: Preferences = serde_json::from_str(json).unwrap();
+        assert!(auto_update_enabled_from_prefs(&prefs));
     }
 
     #[test]
