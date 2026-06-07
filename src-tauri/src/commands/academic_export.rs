@@ -378,6 +378,18 @@ pub fn resolve_reference_doc(
         .filter(|p| is_valid_docx(p))
 }
 
+/// Resolve the bundled LaTeX preamble (extra packages like dsfont, stmaryrd).
+/// Only applies to PDF and LaTeX output formats.
+pub fn resolve_preamble(format: &str, resource_dir: Option<&Path>) -> Option<PathBuf> {
+    if format == "pdf" || format == "latex" {
+        resource_dir
+            .map(|d| d.join("academic/preamble.tex"))
+            .filter(|p| p.is_file())
+    } else {
+        None
+    }
+}
+
 /// Returns the platform-appropriate package-manager hint for installing pandoc.
 fn pandoc_install_hint() -> &'static str {
     if cfg!(target_os = "macos") {
@@ -659,6 +671,9 @@ pub async fn export_document(
         None
     };
 
+    // Resolve bundled preamble for PDF/LaTeX (extra packages like dsfont)
+    let preamble = resolve_preamble(&format, resource_dir.as_deref());
+
     let win = window.clone();
     let fmt_for_event = format.clone();
 
@@ -682,6 +697,10 @@ pub async fn export_document(
 
         if let Some(ref font) = cjk_font {
             args.push(format!("--variable=CJKmainfont={font}"));
+        }
+
+        if let Some(ref p) = preamble {
+            args.push(format!("--include-in-header={}", p.to_string_lossy()));
         }
 
         let mut child = Command::new(&pandoc_path)
@@ -1918,5 +1937,53 @@ mod tests {
             assert_ne!(err, "bad ", "empty pref should fall through to PATH lookup");
             assert!(!err.starts_with("bad"), "empty pref should not report invalid path");
         }
+    }
+
+    #[test]
+    fn test_preamble_resolved_from_resource_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let preamble_dir = tmp.path().join("academic");
+        std::fs::create_dir_all(&preamble_dir).unwrap();
+        let preamble_path = preamble_dir.join("preamble.tex");
+        std::fs::write(&preamble_path, "% test preamble\n").unwrap();
+
+        let result = resolve_preamble("pdf", Some(tmp.path()));
+        assert_eq!(result, Some(preamble_path.clone()));
+
+        let result_latex = resolve_preamble("latex", Some(tmp.path()));
+        assert_eq!(result_latex, Some(preamble_path));
+    }
+
+    #[test]
+    fn test_preamble_not_resolved_when_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let result = resolve_preamble("pdf", Some(tmp.path()));
+        assert_eq!(result, None);
+
+        let result_none = resolve_preamble("pdf", None);
+        assert_eq!(result_none, None);
+    }
+
+    #[test]
+    fn test_preamble_not_resolved_for_html() {
+        let tmp = tempfile::tempdir().unwrap();
+        let preamble_dir = tmp.path().join("academic");
+        std::fs::create_dir_all(&preamble_dir).unwrap();
+        std::fs::write(preamble_dir.join("preamble.tex"), "% test\n").unwrap();
+
+        let result = resolve_preamble("html", Some(tmp.path()));
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_preamble_not_resolved_for_docx() {
+        let tmp = tempfile::tempdir().unwrap();
+        let preamble_dir = tmp.path().join("academic");
+        std::fs::create_dir_all(&preamble_dir).unwrap();
+        std::fs::write(preamble_dir.join("preamble.tex"), "% test\n").unwrap();
+
+        let result = resolve_preamble("docx", Some(tmp.path()));
+        assert_eq!(result, None);
     }
 }

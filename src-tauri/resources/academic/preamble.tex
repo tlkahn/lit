@@ -1,0 +1,33 @@
+% Supplementary packages for academic PDF export.
+%
+% Pandoc's default template loads only amsmath + amssymb.  Academic papers
+% imported from PDF frequently contain raw LaTeX commands that require
+% additional packages.  Each entry below loads conditionally so export
+% degrades gracefully when the package is absent from the TeX distribution.
+
+% bold math (\bm) — 877 occurrences in vault
+% `bm` package conflicts with `unicode-math` under xelatex/lualatex, so we
+% always fall back to \boldsymbol (already provided by amsmath).
+\providecommand{\bm}[1]{\boldsymbol{#1}}
+
+% double-struck fonts (\mathds) — e.g. indicator function 𝟙
+\IfFileExists{dsfont.sty}{\usepackage{dsfont}}{\providecommand{\mathds}[1]{\mathbb{#1}}}
+
+% blackboard-bold variant (\mathbbm)
+\IfFileExists{bbm.sty}{\usepackage{bbm}}{\providecommand{\mathbbm}[1]{\mathbb{#1}}}
+
+% semantic brackets (\llbracket, \rrbracket)
+\IfFileExists{stmaryrd.sty}{\usepackage{stmaryrd}}{%
+  \providecommand{\llbracket}{\lbrack\!\lbrack}%
+  \providecommand{\rrbracket}{\rbrack\!\rbrack}%
+}
+
+% Dirac notation (\bra, \ket, \braket)
+\IfFileExists{braket.sty}{\usepackage{braket}}{%
+  \providecommand{\bra}[1]{\langle #1 \rvert}%
+  \providecommand{\ket}[1]{\lvert #1 \rangle}%
+  \providecommand{\braket}[1]{\langle #1 \rangle}%
+}
+
+% multi-row table cells (\multirow)
+\IfFileExists{multirow.sty}{\usepackage{multirow}}{}
