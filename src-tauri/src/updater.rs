@@ -1,6 +1,38 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use tauri::AppHandle;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_updater::UpdaterExt;
+
+/// Process-global flag ensuring only one update check/install runs at a time.
+/// Both the launch-time silent check and the menu-driven interactive check
+/// acquire this guard, so they cannot show duplicate dialogs or race two
+/// concurrent `download_and_install` calls against the same app bundle.
+static UPDATE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
+/// RAII guard for `UPDATE_IN_PROGRESS`. `acquire` returns `Some` only when no
+/// other check is in flight; dropping it releases the flag, so every early
+/// return or `await` error path frees the lock automatically.
+struct UpdateGuard;
+
+impl UpdateGuard {
+    fn acquire() -> Option<UpdateGuard> {
+        if UPDATE_IN_PROGRESS
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+        {
+            Some(UpdateGuard)
+        } else {
+            None
+        }
+    }
+}
+
+impl Drop for UpdateGuard {
+    fn drop(&mut self) {
+        UPDATE_IN_PROGRESS.store(false, Ordering::Release);
+    }
+}
 
 /// Run the full install + restart flow for a found update.
 /// Shows a download-error dialog on failure; prompts to restart on success.
@@ -30,9 +62,39 @@ async fn install_update(app: &AppHandle, update: tauri_plugin_updater::Update) {
     }
 }
 
+/// Prompt the user about a found update and, if accepted, install it.
+async fn prompt_and_install(app: &AppHandle, update: tauri_plugin_updater::Update) {
+    let install = app
+        .dialog()
+        .message(format!(
+            "A new version of Lit is available.\n\nCurrent: {}\nLatest: {}",
+            update.current_version, update.version
+        ))
+        .title("Update Available")
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Install".to_string(),
+            "Later".to_string(),
+        ))
+        .blocking_show();
+    if install {
+        install_update(app, update).await;
+    }
+}
+
 /// Interactive update check for the "Check for Updates..." menu item.
 /// Shows a dialog in all cases: update available, up-to-date, or error.
 pub async fn check_for_updates_interactive(app: &AppHandle) {
+    let _guard = match UpdateGuard::acquire() {
+        Some(g) => g,
+        None => {
+            app.dialog()
+                .message("An update check is already in progress. Please wait for it to finish.")
+                .title("Update In Progress")
+                .blocking_show();
+            return;
+        }
+    };
+
     let updater = match app.updater() {
         Ok(u) => u,
         Err(e) => {
@@ -47,21 +109,7 @@ pub async fn check_for_updates_interactive(app: &AppHandle) {
 
     match updater.check().await {
         Ok(Some(update)) => {
-            let install = app
-                .dialog()
-                .message(format!(
-                    "A new version of Lit is available.\n\nCurrent: {}\nLatest: {}",
-                    update.current_version, update.version
-                ))
-                .title("Update Available")
-                .buttons(MessageDialogButtons::OkCancelCustom(
-                    "Install".to_string(),
-                    "Later".to_string(),
-                ))
-                .blocking_show();
-            if install {
-                install_update(app, update).await;
-            }
+            prompt_and_install(app, update).await;
         }
         Ok(None) => {
             app.dialog()
@@ -82,6 +130,14 @@ pub async fn check_for_updates_interactive(app: &AppHandle) {
 /// Silent update check for the launch-time auto-check.
 /// Only shows a dialog when an update is found; logs errors instead of showing them.
 pub async fn check_for_updates_silent(app: &AppHandle) {
+    let _guard = match UpdateGuard::acquire() {
+        Some(g) => g,
+        None => {
+            tracing::info!("update check already in progress; skipping silent check");
+            return;
+        }
+    };
+
     let updater = match app.updater() {
         Ok(u) => u,
         Err(e) => {
@@ -92,25 +148,45 @@ pub async fn check_for_updates_silent(app: &AppHandle) {
 
     match updater.check().await {
         Ok(Some(update)) => {
-            let install = app
-                .dialog()
-                .message(format!(
-                    "A new version of Lit is available.\n\nCurrent: {}\nLatest: {}",
-                    update.current_version, update.version
-                ))
-                .title("Update Available")
-                .buttons(MessageDialogButtons::OkCancelCustom(
-                    "Install".to_string(),
-                    "Later".to_string(),
-                ))
-                .blocking_show();
-            if install {
-                install_update(app, update).await;
-            }
+            prompt_and_install(app, update).await;
         }
         Ok(None) => {}
         Err(e) => {
             tracing::warn!("update check failed: {e}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Exercises the full guard lifecycle in a single sequential test, because
+    /// `UPDATE_IN_PROGRESS` is a process-global static and splitting these into
+    /// separate `#[test]` fns would let them run in parallel and corrupt each
+    /// other's expectations.
+    #[test]
+    fn update_guard_serializes_access() {
+        // First acquisition succeeds.
+        let g1 = UpdateGuard::acquire();
+        assert!(g1.is_some(), "first acquire should succeed");
+
+        // Second acquisition while the first is held fails.
+        assert!(
+            UpdateGuard::acquire().is_none(),
+            "second acquire should fail while guard is held"
+        );
+
+        // Dropping the first guard releases the lock.
+        drop(g1);
+
+        // After release, acquisition succeeds again.
+        let g2 = UpdateGuard::acquire();
+        assert!(g2.is_some(), "acquire should succeed after drop");
+
+        // Releasing via end-of-scope also frees the lock for the next caller.
+        drop(g2);
+        let g3 = UpdateGuard::acquire();
+        assert!(g3.is_some(), "acquire should succeed after scoped release");
     }
 }

@@ -205,6 +205,10 @@ release_generate_update_manifest() {
     echo "Error: No .app.tar.gz found next to signature ($tarball)" >&2
     return 1
   fi
+  # Share the resolved tarball with release_upload_update_artifacts so both
+  # operate on the same build artifact (the one whose signature is in latest.json).
+  RELEASE_UPDATE_TARBALL="$tarball"
+  export RELEASE_UPDATE_TARBALL
   local signature version pub_date notes url
   signature="$(cat "$sig_file")"
   version="${tag#v}"
@@ -225,10 +229,19 @@ release_generate_update_manifest() {
 release_upload_update_artifacts() {
   local tag="$1"
   local macos_dir="$REPO_ROOT/src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
-  local tarball
-  tarball="$(find "$macos_dir" -name '*.app.tar.gz' -type f 2>/dev/null | head -1)"
+  # Prefer the tarball resolved by release_generate_update_manifest so the uploaded
+  # artifact matches the signature written into latest.json. Fall back to an
+  # independent find so this function remains runnable standalone.
+  local tarball="${RELEASE_UPDATE_TARBALL:-}"
+  if [[ -z "$tarball" ]]; then
+    tarball="$(find "$macos_dir" -name '*.app.tar.gz' -type f 2>/dev/null | head -1)"
+  fi
   if [[ -z "$tarball" ]]; then
     echo "Error: No .app.tar.gz found in $macos_dir" >&2
+    return 1
+  fi
+  if [[ ! -f "$tarball" ]]; then
+    echo "Error: update tarball not found ($tarball)" >&2
     return 1
   fi
   if [[ "${DRY_RUN:-0}" -eq 1 ]]; then

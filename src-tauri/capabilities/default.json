@@ -15,7 +15,6 @@
       "identifier": "opener:allow-open-path",
       "allow": [{ "path": "$HOME/**" }]
     },
-    "deep-link:default",
-    "updater:default"
+    "deep-link:default"
   ]
 }

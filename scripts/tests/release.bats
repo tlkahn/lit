@@ -528,6 +528,87 @@ EOF
   [[ "$output" == *"DRY RUN"* ]]
 }
 
+# ── Cycle 12b: Update manifest + artifact upload ────────────────────────────
+
+@test "release_generate_update_manifest: exports RELEASE_UPDATE_TARBALL and writes latest.json" {
+  source_lib
+  REPO_ROOT="$TEST_TEMP_DIR"
+  local macos_dir="$TEST_TEMP_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
+  mkdir -p "$macos_dir"
+  touch "$macos_dir/signed.app.tar.gz"
+  echo "SIGDATA" > "$macos_dir/signed.app.tar.gz.sig"
+  release_generate_update_manifest v0.9.2
+  [ "$RELEASE_UPDATE_TARBALL" = "$macos_dir/signed.app.tar.gz" ]
+  [ -f "$TEST_TEMP_DIR/latest.json" ]
+  [ "$(jq -r '.version' "$TEST_TEMP_DIR/latest.json")" = "0.9.2" ]
+  [ "$(jq -r '.platforms."darwin-aarch64".signature' "$TEST_TEMP_DIR/latest.json")" = "SIGDATA" ]
+}
+
+@test "release_generate_update_manifest: fails when no signature is found" {
+  source_lib
+  REPO_ROOT="$TEST_TEMP_DIR"
+  mkdir -p "$TEST_TEMP_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
+  run release_generate_update_manifest v0.9.2
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"No .app.tar.gz.sig"* ]]
+}
+
+@test "release_upload_update_artifacts: uploads the tarball shared by the manifest step, not an independent find" {
+  # Regression: the upload must use the exact artifact whose signature is in
+  # latest.json (shared via RELEASE_UPDATE_TARBALL), never a separately-resolved
+  # find result that could point at a stale/unsigned tarball.
+  source_lib
+  mock_command aws
+  REPO_ROOT="$TEST_TEMP_DIR"
+  S3_BUCKET="my-bucket"
+  local macos_dir="$TEST_TEMP_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
+  mkdir -p "$macos_dir"
+  # A decoy in the find location that an independent `find | head -1` could pick.
+  touch "$macos_dir/decoy.app.tar.gz"
+  # The real, signed artifact lives elsewhere and is passed via the shared var.
+  mkdir -p "$TEST_TEMP_DIR/shared"
+  touch "$TEST_TEMP_DIR/shared/real.app.tar.gz"
+  export RELEASE_UPDATE_TARBALL="$TEST_TEMP_DIR/shared/real.app.tar.gz"
+  release_upload_update_artifacts v0.9.2
+  assert_mock_called_with "real.app.tar.gz"
+  ! grep -q "decoy.app.tar.gz" "$MOCK_LOG"
+}
+
+@test "release_upload_update_artifacts: falls back to find when RELEASE_UPDATE_TARBALL is unset" {
+  source_lib
+  mock_command aws
+  unset RELEASE_UPDATE_TARBALL
+  REPO_ROOT="$TEST_TEMP_DIR"
+  S3_BUCKET="my-bucket"
+  local macos_dir="$TEST_TEMP_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
+  mkdir -p "$macos_dir"
+  touch "$macos_dir/found.app.tar.gz"
+  release_upload_update_artifacts v0.9.2
+  assert_mock_called_with "found.app.tar.gz"
+}
+
+@test "release_upload_update_artifacts: fails when no tarball can be resolved" {
+  source_lib
+  unset RELEASE_UPDATE_TARBALL
+  REPO_ROOT="$TEST_TEMP_DIR"
+  mkdir -p "$TEST_TEMP_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
+  run release_upload_update_artifacts v0.9.2
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"No .app.tar.gz found"* ]]
+}
+
+@test "release_upload_update_artifacts: skipped when DRY_RUN=1" {
+  source_lib
+  export DRY_RUN=1
+  REPO_ROOT="$TEST_TEMP_DIR"
+  mkdir -p "$TEST_TEMP_DIR/shared"
+  touch "$TEST_TEMP_DIR/shared/real.app.tar.gz"
+  export RELEASE_UPDATE_TARBALL="$TEST_TEMP_DIR/shared/real.app.tar.gz"
+  run release_upload_update_artifacts v0.9.2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"DRY RUN"* ]]
+}
+
 # ── Cycle 13: Website deploy ────────────────────────────────────────────────
 
 @test "release_deploy_website: calls deploy-website.sh with tag" {
@@ -595,6 +676,7 @@ EOF
 
   export LIT_TRIAL_SIGNING_KEY_B64="test-key"
   export LIT_LICENSE_VERIFYING_KEY_B64="test-key"
+  export TAURI_SIGNING_PRIVATE_KEY="test-key"
 
   # Create directory structure the script expects
   export REPO_ROOT="$TEST_TEMP_DIR"

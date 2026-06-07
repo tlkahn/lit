@@ -3,7 +3,7 @@ use std::{env, fs, path::Path, process::Command};
 fn main() {
     set_git_version();
     ensure_placeholders();
-    tauri_build::build();
+    build_tauri();
 
     println!("cargo:rerun-if-env-changed=LIT_LICENSE_VERIFYING_KEY_B64");
 
@@ -14,6 +14,35 @@ fn main() {
             "prod_license_verifying.bin",
         );
     }
+}
+
+/// Run `tauri_build`, feature-gating which capability files are compiled in.
+///
+/// The `updater:default` permission lives in its own capability file
+/// (`capabilities/updater/updater.json`) rather than `capabilities/default.json`,
+/// because the updater plugin is only registered under
+/// `#[cfg(not(feature = "app-store"))]` (see `lib.rs`). In app-store builds we
+/// must therefore exclude the updater capability so it never references a plugin
+/// that isn't registered.
+///
+/// Capabilities are discovered by a glob pattern. The default is
+/// `./capabilities/**/*` (recursive — picks up the `updater/` subdir). For
+/// app-store builds we narrow it to `./capabilities/*` (top level only), which
+/// matches `default.json` but not the nested updater capability. A build script
+/// can't `#[cfg(feature = ...)]` on its own crate's features, so we read Cargo's
+/// `CARGO_FEATURE_APP_STORE` env var; both patterns are `&'static str` literals
+/// as `capabilities_path_pattern` requires. A custom pattern suppresses
+/// tauri-build's automatic `rerun-if-changed=capabilities`, so we emit it here.
+fn build_tauri() {
+    let capabilities_pattern = if env::var_os("CARGO_FEATURE_APP_STORE").is_some() {
+        "./capabilities/*"
+    } else {
+        "./capabilities/**/*"
+    };
+    println!("cargo:rerun-if-changed=capabilities");
+    let attributes =
+        tauri_build::Attributes::new().capabilities_path_pattern(capabilities_pattern);
+    tauri_build::try_build(attributes).expect("failed to run tauri-build");
 }
 
 fn set_git_version() {
