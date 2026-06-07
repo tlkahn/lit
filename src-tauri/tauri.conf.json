@@ -58,7 +58,7 @@
       }
     },
     "updater": {
-      "pubkey": "REPLACE_WITH_TAURI_UPDATER_PUBKEY",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ1Q0I3N0QzOENDQzhENzgKUldSNGpjeU0wM2ZMUmFwTzNCbHNrVTJob3FKbzU2MXBqVWNhV2VycHZqNm5nVWEwL1V0UWhFMVYK",
       "endpoints": [
         "https://lit.solar/releases/latest.json"
       ]
