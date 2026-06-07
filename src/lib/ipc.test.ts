@@ -1460,6 +1460,7 @@ describe("ipc", () => {
         messages: [],
         options: {},
         base_url: null,
+        provider: "",
       },
     });
   });
@@ -1482,6 +1483,27 @@ describe("ipc", () => {
         messages: [{ role: "user", content: "hi" }],
         options: { temperature: 0.5 },
         base_url: "https://api.example.com",
+        provider: "",
+      },
+    });
+  });
+
+  it("llmPromptStreaming sends provider field when specified", async () => {
+    await llmPromptStreaming({
+      model: "claude-sonnet-4-6",
+      text: "hello",
+      provider: "anthropic",
+    });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("llm_prompt_streaming", {
+      args: {
+        model: "claude-sonnet-4-6",
+        text: "hello",
+        system: null,
+        messages: [],
+        options: {},
+        base_url: null,
+        provider: "anthropic",
       },
     });
   });
@@ -1498,6 +1520,7 @@ describe("ipc", () => {
     expect(invoke).toHaveBeenCalledWith("llm_test_connection", {
       model: "gpt-4o",
       baseUrl: "https://api.example.com",
+      provider: null,
     });
   });
 
@@ -1507,6 +1530,17 @@ describe("ipc", () => {
     expect(invoke).toHaveBeenCalledWith("llm_test_connection", {
       model: "claude-sonnet-4-6",
       baseUrl: null,
+      provider: null,
+    });
+  });
+
+  it("testLlmConnection sends provider parameter", async () => {
+    await testLlmConnection("gpt-4o", "https://api.example.com", "openai");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("llm_test_connection", {
+      model: "gpt-4o",
+      baseUrl: "https://api.example.com",
+      provider: "openai",
     });
   });
 
@@ -1526,6 +1560,7 @@ describe("ipc", () => {
         neighbors_depth: 2,
         model: "claude-sonnet-4-6",
         messages: [{ role: "user", content: "hi" }],
+        provider: "",
       },
     });
   });
@@ -1545,6 +1580,28 @@ describe("ipc", () => {
         neighbors_depth: 0,
         model: "claude-sonnet-4-6",
         messages: [],
+        provider: "",
+      },
+    });
+  });
+
+  it("llmBuildContext sends provider field when specified", async () => {
+    await llmBuildContext({
+      nodeId: "notes/a.md",
+      neighborsDepth: 1,
+      model: "gpt-4o",
+      messages: [],
+      provider: "openai",
+    });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("llm_build_context", {
+      args: {
+        node_id: "notes/a.md",
+        system_prompt: "",
+        neighbors_depth: 1,
+        model: "gpt-4o",
+        messages: [],
+        provider: "openai",
       },
     });
   });
@@ -1556,6 +1613,7 @@ describe("ipc", () => {
       neighborsDepth: 1,
       model: "claude-sonnet-4-6",
       messages: [{ role: "user", content: "hello" }],
+      provider: "anthropic",
     });
     expect(result).toHaveProperty("system");
     expect(result).toHaveProperty("messages");

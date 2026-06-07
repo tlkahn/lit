@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { usePreferencesStore } from "./preferences";
+import { usePreferencesStore, migrateLlmProvider } from "./preferences";
+import type { Preferences } from "../lib/ipc";
 import { mockInvoke, mockListen, emitMockEvent } from "../test/tauri-mock";
 
 describe("PreferencesStore", () => {
@@ -1171,6 +1172,111 @@ describe("PreferencesStore", () => {
 
     await usePreferencesStore.getState().loadPreferences();
     expect(usePreferencesStore.getState().annotationBuilderDefaults).toEqual(defaults);
+  });
+
+  describe("migrateLlmProvider", () => {
+    const base: Preferences = {
+      "workbench.colorTheme": null,
+      "workbench.darkMode": "auto",
+      "workbench.sideBar.location": "left",
+      "editor.folding.enabled": true,
+      "editor.folding.showFoldingControls": "mouseover",
+      "workbench.defaultViewMode": "editor",
+    };
+
+    it("synthesizes anthropic provider from legacy claude model", () => {
+      const result = migrateLlmProvider({ ...base, "llm.model": "claude-sonnet-4-6" });
+      expect(result.providerId).toBe("anthropic");
+      expect(result.model).toBe("claude-sonnet-4-6");
+      expect(result.apiKeySet).toBe(false);
+    });
+
+    it("synthesizes openai provider from legacy gpt model", () => {
+      const result = migrateLlmProvider({ ...base, "llm.model": "gpt-4o" });
+      expect(result.providerId).toBe("openai");
+      expect(result.model).toBe("gpt-4o");
+    });
+
+    it("copies anthropic baseUrl for claude model", () => {
+      const result = migrateLlmProvider({
+        ...base,
+        "llm.model": "claude-sonnet-4-6",
+        "llm.anthropic.baseUrl": "https://custom.anthropic.com",
+      });
+      expect(result.baseUrl).toBe("https://custom.anthropic.com");
+    });
+
+    it("copies openai baseUrl for gpt model", () => {
+      const result = migrateLlmProvider({
+        ...base,
+        "llm.model": "gpt-4o",
+        "llm.openai.baseUrl": "https://custom.openai.com",
+      });
+      expect(result.baseUrl).toBe("https://custom.openai.com");
+    });
+
+    it("normalizes empty baseUrl to undefined", () => {
+      const result = migrateLlmProvider({
+        ...base,
+        "llm.model": "claude-sonnet-4-6",
+        "llm.anthropic.baseUrl": "",
+      });
+      expect(result.baseUrl).toBeUndefined();
+    });
+
+    it("normalizes whitespace-only baseUrl to undefined", () => {
+      const result = migrateLlmProvider({
+        ...base,
+        "llm.model": "gpt-4o",
+        "llm.openai.baseUrl": "  ",
+      });
+      expect(result.baseUrl).toBeUndefined();
+    });
+
+    it("uses post-migration llm.provider object directly", () => {
+      const result = migrateLlmProvider({
+        ...base,
+        "llm.provider": {
+          providerId: "openrouter",
+          model: "meta-llama/llama-3-70b",
+          baseUrl: "https://openrouter.ai/api/v1",
+          apiKeySet: true,
+        },
+      });
+      expect(result.providerId).toBe("openrouter");
+      expect(result.model).toBe("meta-llama/llama-3-70b");
+      expect(result.baseUrl).toBe("https://openrouter.ai/api/v1");
+      expect(result.apiKeySet).toBe(true);
+    });
+
+    it("defaults to claude-sonnet-4-6 when llm.model is missing", () => {
+      const result = migrateLlmProvider(base);
+      expect(result.model).toBe("claude-sonnet-4-6");
+      expect(result.providerId).toBe("anthropic");
+    });
+  });
+
+  it("loadPreferences integration: legacy gpt model migrates to openai provider", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "llm.model": "gpt-4o",
+          "llm.openai.baseUrl": "https://custom.openai.com",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    const state = usePreferencesStore.getState();
+    expect(state.llmProvider.providerId).toBe("openai");
+    expect(state.llmProvider.model).toBe("gpt-4o");
+    expect(state.llmProvider.baseUrl).toBe("https://custom.openai.com");
+    expect(state.llmProvider.apiKeySet).toBe(false);
   });
 
   it("maps invalid annotations.builderDefaults to null", async () => {

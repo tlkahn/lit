@@ -29,6 +29,7 @@ const defaults = {
   llmOpenaiBaseUrl: "",
   llmAnthropicApiKeySet: false,
   llmAnthropicBaseUrl: "",
+  llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", apiKeySet: false },
   llmSystemPrompt: "",
   llmTemperature: 0.7,
   neighborsDepth: 1,
@@ -1596,7 +1597,7 @@ describe("SettingsModal", () => {
       const calls = invokeCalls.filter((c) => c.cmd === "has_api_key");
       expect(calls).toContainEqual({ cmd: "has_api_key", args: { provider: "openai" } });
       expect(calls).toContainEqual({ cmd: "has_api_key", args: { provider: "anthropic" } });
-      expect(calls).toHaveLength(2);
+      expect(calls).toHaveLength(3);
     });
 
     it("updates store when provider reports key exists", async () => {
@@ -1687,9 +1688,7 @@ describe("SettingsModal", () => {
 
   it("Test Connection uses Anthropic base URL for claude model", async () => {
     usePreferencesStore.setState({
-      llmModel: "claude-sonnet-4-6",
-      llmAnthropicBaseUrl: "https://anthropic.example.com",
-      llmOpenaiBaseUrl: "https://openai.example.com",
+      llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", baseUrl: "https://anthropic.example.com", apiKeySet: false },
     });
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const btn = container.querySelector("[data-testid='test-connection-btn']")!;
@@ -1699,16 +1698,14 @@ describe("SettingsModal", () => {
     await vi.waitFor(() => {
       expect(invokeCalls).toContainEqual({
         cmd: "llm_test_connection",
-        args: { model: "claude-sonnet-4-6", baseUrl: "https://anthropic.example.com" },
+        args: { model: "claude-sonnet-4-6", baseUrl: "https://anthropic.example.com", provider: "anthropic" },
       });
     });
   });
 
   it("Test Connection uses OpenAI base URL for gpt model", async () => {
     usePreferencesStore.setState({
-      llmModel: "gpt-4o",
-      llmAnthropicBaseUrl: "https://anthropic.example.com",
-      llmOpenaiBaseUrl: "https://openai.example.com",
+      llmProvider: { providerId: "openai", model: "gpt-4o", baseUrl: "https://openai.example.com", apiKeySet: false },
     });
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const btn = container.querySelector("[data-testid='test-connection-btn']")!;
@@ -1718,16 +1715,14 @@ describe("SettingsModal", () => {
     await vi.waitFor(() => {
       expect(invokeCalls).toContainEqual({
         cmd: "llm_test_connection",
-        args: { model: "gpt-4o", baseUrl: "https://openai.example.com" },
+        args: { model: "gpt-4o", baseUrl: "https://openai.example.com", provider: "openai" },
       });
     });
   });
 
   it("Test Connection passes null when provider base URL is empty", async () => {
     usePreferencesStore.setState({
-      llmModel: "claude-sonnet-4-6",
-      llmAnthropicBaseUrl: "",
-      llmOpenaiBaseUrl: "https://openai.example.com",
+      llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", apiKeySet: false },
     });
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const btn = container.querySelector("[data-testid='test-connection-btn']")!;
@@ -1737,7 +1732,7 @@ describe("SettingsModal", () => {
     await vi.waitFor(() => {
       expect(invokeCalls).toContainEqual({
         cmd: "llm_test_connection",
-        args: { model: "claude-sonnet-4-6", baseUrl: null },
+        args: { model: "claude-sonnet-4-6", baseUrl: null, provider: "anthropic" },
       });
     });
   });
@@ -1966,7 +1961,7 @@ describe("SettingsModal", () => {
       });
 
       const hasApiKeyCalls = localCalls.filter((c) => c.cmd === "has_api_key");
-      expect(hasApiKeyCalls).toHaveLength(2);
+      expect(hasApiKeyCalls).toHaveLength(3);
     });
 
     it("calls hasApiKey when store does not exist yet", async () => {
@@ -1986,7 +1981,7 @@ describe("SettingsModal", () => {
       });
 
       const hasApiKeyCalls = localCalls.filter((c) => c.cmd === "has_api_key");
-      expect(hasApiKeyCalls).toHaveLength(2);
+      expect(hasApiKeyCalls).toHaveLength(3);
     });
 
     it("does not check hasApiKey when store exists but is locked (migration pending)", async () => {

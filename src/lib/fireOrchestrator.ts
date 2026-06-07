@@ -70,7 +70,13 @@ export async function fireAnnotation(args: FireAnnotationArgs): Promise<void> {
 
       const system = getTypePrompt(annotation.annotation_type);
       const text = buildFirePrompt(scopeText, annotation.body);
-      return { model: prefs.llmModel, text, system: system || undefined };
+      return {
+        provider: prefs.llmProvider.providerId,
+        model: prefs.llmProvider.model,
+        text,
+        system: system || undefined,
+        baseUrl: prefs.llmProvider.baseUrl,
+      };
     },
     onDone: ({ responseText, markFiringCleared, liveRange }) => {
       try {

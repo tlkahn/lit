@@ -177,6 +177,7 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
     for (const f of STORE_FIELDS) obj[f] = s[f];
     return obj;
   }));
+  const llmProvider = usePreferencesStore((s) => s.llmProvider);
 
   const availableThemes = useThemeStore((s) => s.availableThemes);
   const dynamicOptions: Record<string, { value: string; label: string }[]> = useMemo(() => ({
@@ -214,6 +215,12 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
         usePreferencesStore.setState({ [entry.storeField]: has } as Partial<PreferencesState>);
       });
     }
+    const currentProvider = usePreferencesStore.getState().llmProvider;
+    hasApiKey(currentProvider.providerId).then((has) => {
+      usePreferencesStore.setState((prev) => ({
+        llmProvider: { ...prev.llmProvider, apiKeySet: has },
+      }));
+    });
   }, [open, exists, unlocked]);
 
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -474,7 +481,11 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
                           </div>
                           {cat === "LLM" && (
                             <div className="mt-3">
-                              <TestConnectionButton model={prefs.llmModel as string} baseUrl={(prefs.llmModel as string).startsWith("claude-") ? (prefs.llmAnthropicBaseUrl as string) || undefined : (prefs.llmOpenaiBaseUrl as string) || undefined} />
+                              <TestConnectionButton
+                                model={llmProvider.model}
+                                baseUrl={llmProvider.baseUrl}
+                                provider={llmProvider.providerId}
+                              />
                             </div>
                           )}
                           {cat === "Academic Export" && (

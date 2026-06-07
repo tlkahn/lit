@@ -5,6 +5,7 @@ import { showGraphContextMenu, useGraphContextMenu } from "../lib/contextMenuIpc
 import { useGraphSelectionStore } from "../stores/graphSelection";
 import { useGraphViewState } from "../stores/graphViewState";
 import { usePreferencesStore } from "../stores/preferences";
+import { providerNeedsApiKey } from "../lib/providerRegistry";
 import { GraphToolbar } from "./GraphToolbar";
 import { GraphSearch } from "./GraphSearch";
 import { MergePreviewDialog } from "./MergePreviewDialog";
@@ -46,7 +47,9 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
   const depth = useGraphViewState((s) => s.depth);
   const setDepth = useGraphViewState((s) => s.setDepth);
   const selectionCount = useGraphSelectionStore((s) => s.selectedNodes.length);
-  const llmEnabled = usePreferencesStore((s) => s.llmOpenaiApiKeySet || s.llmAnthropicApiKeySet);
+  const llmEnabled = usePreferencesStore((s) =>
+    s.llmProvider.apiKeySet || !providerNeedsApiKey(s.llmProvider.providerId)
+  );
 
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
   const [mergeDialogDocs, setMergeDialogDocs] = useState<PageContent[]>([]);

@@ -49,14 +49,17 @@ export async function threadFollowup(args: ThreadFollowupArgs): Promise<void> {
 
   return withLlmStream(view, annotation, {
     buildArgs: async () => {
+      const prefs = usePreferencesStore.getState();
       const turns = parseThreadBody(annotation.body ?? "");
       const messages = [...turnsToMessages(turns), { role: "user", content: question }];
       const system = resolveThreadSystemPrompt(annotation);
       return {
-        model: usePreferencesStore.getState().llmModel,
+        provider: prefs.llmProvider.providerId,
+        model: prefs.llmProvider.model,
         text: "",
         system: system || undefined,
         messages,
+        baseUrl: prefs.llmProvider.baseUrl,
       };
     },
     onDone: ({ responseText, markFiringCleared, liveRange }) => {

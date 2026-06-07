@@ -4,12 +4,20 @@ import type { DarkModePref, ViewMode, Preferences } from "../lib/ipc";
 import { getPreferences } from "../lib/ipc";
 import type { AnnotationBuilderDefaults } from "../lib/annotationBuilderDefaults";
 import { isValidBuilderDefaults } from "../lib/annotationBuilderDefaults";
+import { providerIdForModel } from "../lib/providerRegistry";
 
 export type FoldingShowControls = "mouseover" | "always" | "never";
 
 export type AnnotationDisplayMode = "pill" | "footnote";
 
 export type BottomPanelPosition = "bottom" | "side";
+
+export interface LlmProviderConfig {
+  providerId: string;
+  model: string;
+  baseUrl?: string;
+  apiKeySet: boolean;
+}
 
 export interface PreferencesState {
   darkMode: DarkModePref;
@@ -30,6 +38,7 @@ export interface PreferencesState {
   llmModel: string;
   llmOpenaiBaseUrl: string;
   llmAnthropicBaseUrl: string;
+  llmProvider: LlmProviderConfig;
   llmSystemPrompt: string;
   llmTemperature: number;
   neighborsDepth: number;
@@ -82,6 +91,33 @@ function applyDarkMode(val: unknown): DarkModePref {
   return "auto";
 }
 
+export function migrateLlmProvider(prefs: Preferences): LlmProviderConfig {
+  const existing = prefs["llm.provider"];
+  if (
+    existing != null &&
+    typeof existing === "object" &&
+    typeof (existing as Record<string, unknown>).providerId === "string"
+  ) {
+    const obj = existing as Record<string, unknown>;
+    return {
+      providerId: obj.providerId as string,
+      model: (obj.model as string) ?? "claude-sonnet-4-6",
+      baseUrl: obj.baseUrl ? String(obj.baseUrl) : undefined,
+      apiKeySet: (obj.apiKeySet as boolean) ?? false,
+    };
+  }
+
+  const model = (prefs["llm.model"] as string) ?? "claude-sonnet-4-6";
+  const providerId = providerIdForModel(model);
+  const rawBaseUrl =
+    providerId === "anthropic"
+      ? (prefs["llm.anthropic.baseUrl"] as string)
+      : (prefs["llm.openai.baseUrl"] as string);
+  const baseUrl = rawBaseUrl && rawBaseUrl.trim() !== "" ? rawBaseUrl : undefined;
+
+  return { providerId, model, baseUrl, apiKeySet: false };
+}
+
 function mapPreferences(prefs: Preferences) {
   return {
     darkMode: applyDarkMode(prefs["workbench.darkMode"]),
@@ -104,6 +140,7 @@ function mapPreferences(prefs: Preferences) {
     llmModel: (prefs["llm.model"] as string) ?? "claude-sonnet-4-6",
     llmOpenaiBaseUrl: (prefs["llm.openai.baseUrl"] as string) ?? "",
     llmAnthropicBaseUrl: (prefs["llm.anthropic.baseUrl"] as string) ?? "",
+    llmProvider: migrateLlmProvider(prefs),
     llmSystemPrompt: (prefs["llm.systemPrompt"] as string) ?? "",
     llmTemperature: (prefs["llm.temperature"] as number) ?? 0.7,
     neighborsDepth: (prefs["llm.neighborsDepth"] as number) ?? 1,
@@ -142,6 +179,7 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   llmModel: "claude-sonnet-4-6",
   llmOpenaiBaseUrl: "",
   llmAnthropicBaseUrl: "",
+  llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", apiKeySet: false },
   llmSystemPrompt: "",
   llmTemperature: 0.7,
   neighborsDepth: 1,
