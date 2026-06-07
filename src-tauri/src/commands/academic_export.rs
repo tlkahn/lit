@@ -390,6 +390,18 @@ pub fn resolve_preamble(format: &str, resource_dir: Option<&Path>) -> Option<Pat
     }
 }
 
+/// Resolve the bundled Lua filter that escapes bare `&` in Math and RawInline nodes.
+/// Only applies to PDF and LaTeX output formats.
+pub fn resolve_ampersand_filter(format: &str, resource_dir: Option<&Path>) -> Option<PathBuf> {
+    if format == "pdf" || format == "latex" {
+        resource_dir
+            .map(|d| d.join("academic/escape-ampersand.lua"))
+            .filter(|p| p.is_file())
+    } else {
+        None
+    }
+}
+
 /// Returns the platform-appropriate package-manager hint for installing pandoc.
 fn pandoc_install_hint() -> &'static str {
     if cfg!(target_os = "macos") {
@@ -674,6 +686,9 @@ pub async fn export_document(
     // Resolve bundled preamble for PDF/LaTeX (extra packages like dsfont)
     let preamble = resolve_preamble(&format, resource_dir.as_deref());
 
+    // Resolve bundled Lua filter for escaping bare & in Math/RawInline nodes
+    let ampersand_filter = resolve_ampersand_filter(&format, resource_dir.as_deref());
+
     let win = window.clone();
     let fmt_for_event = format.clone();
 
@@ -701,6 +716,10 @@ pub async fn export_document(
 
         if let Some(ref p) = preamble {
             args.push(format!("--include-in-header={}", p.to_string_lossy()));
+        }
+
+        if let Some(ref f) = ampersand_filter {
+            args.push(format!("--lua-filter={}", f.to_string_lossy()));
         }
 
         let mut child = Command::new(&pandoc_path)
@@ -1985,5 +2004,60 @@ mod tests {
 
         let result = resolve_preamble("docx", Some(tmp.path()));
         assert_eq!(result, None);
+    }
+
+    // --- resolve_ampersand_filter tests ---
+
+    #[test]
+    fn test_ampersand_filter_not_resolved_for_html() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("academic");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("escape-ampersand.lua"), "-- stub\n").unwrap();
+
+        assert_eq!(resolve_ampersand_filter("html", Some(tmp.path())), None);
+    }
+
+    #[test]
+    fn test_ampersand_filter_not_resolved_for_docx() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("academic");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("escape-ampersand.lua"), "-- stub\n").unwrap();
+
+        assert_eq!(resolve_ampersand_filter("docx", Some(tmp.path())), None);
+    }
+
+    #[test]
+    fn test_ampersand_filter_not_resolved_when_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(resolve_ampersand_filter("pdf", Some(tmp.path())), None);
+    }
+
+    #[test]
+    fn test_ampersand_filter_not_resolved_without_resource_dir() {
+        assert_eq!(resolve_ampersand_filter("pdf", None), None);
+    }
+
+    #[test]
+    fn test_ampersand_filter_resolved_for_pdf() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("academic");
+        std::fs::create_dir_all(&dir).unwrap();
+        let lua_path = dir.join("escape-ampersand.lua");
+        std::fs::write(&lua_path, "-- filter\n").unwrap();
+
+        assert_eq!(resolve_ampersand_filter("pdf", Some(tmp.path())), Some(lua_path));
+    }
+
+    #[test]
+    fn test_ampersand_filter_resolved_for_latex() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("academic");
+        std::fs::create_dir_all(&dir).unwrap();
+        let lua_path = dir.join("escape-ampersand.lua");
+        std::fs::write(&lua_path, "-- filter\n").unwrap();
+
+        assert_eq!(resolve_ampersand_filter("latex", Some(tmp.path())), Some(lua_path));
     }
 }
