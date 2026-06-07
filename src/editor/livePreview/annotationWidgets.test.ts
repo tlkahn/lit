@@ -1411,6 +1411,29 @@ describe("ThreadWidget", () => {
     view.destroy();
   });
 
+  it("paste in follow-up textarea does not propagate to the editor", () => {
+    const view = makeEditorView("x".repeat(50));
+    const w = new ThreadWidget(makeThread(), 0, false, 0);
+    const dom = w.toDOM(view);
+
+    const wrapper = document.createElement("div");
+    wrapper.appendChild(dom);
+    document.body.appendChild(wrapper);
+
+    const trigger = dom.querySelector(".cm-thread-followup-trigger")! as HTMLElement;
+    trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    const textarea = dom.querySelector(".cm-thread-followup-input")! as HTMLTextAreaElement;
+
+    const parentSpy = vi.fn();
+    wrapper.addEventListener("paste", parentSpy);
+
+    textarea.dispatchEvent(new Event("paste", { bubbles: true }));
+    expect(parentSpy).not.toHaveBeenCalled();
+
+    wrapper.remove();
+    view.destroy();
+  });
+
   it("overflow menu 'Export thread' dispatches lit:thread-export with turn -1", () => {
     const ann = makeThread();
     const w = new ThreadWidget(ann, 0, false, 0);
@@ -1578,7 +1601,7 @@ describe("ThreadWidget", () => {
     view.destroy();
   });
 
-  it("ignoreEvent returns true for mousedown; true for keydown only from follow-up textarea", () => {
+  it("ignoreEvent returns true for mousedown; true for keydown/paste only from follow-up textarea", () => {
     const w = new ThreadWidget(makeThread(), 0, false, 0);
     expect(w.ignoreEvent(new MouseEvent("mousedown"))).toBe(true);
     expect(w.ignoreEvent(new MouseEvent("click"))).toBe(false);
@@ -1589,9 +1612,17 @@ describe("ThreadWidget", () => {
     Object.defineProperty(keyFromTextarea, "target", { value: textarea });
     expect(w.ignoreEvent(keyFromTextarea)).toBe(true);
 
+    const pasteFromTextarea = new Event("paste", { bubbles: true });
+    Object.defineProperty(pasteFromTextarea, "target", { value: textarea });
+    expect(w.ignoreEvent(pasteFromTextarea)).toBe(true);
+
     const span = document.createElement("span");
     const keyFromSpan = new KeyboardEvent("keydown", { bubbles: true });
     Object.defineProperty(keyFromSpan, "target", { value: span });
     expect(w.ignoreEvent(keyFromSpan)).toBe(false);
+
+    const pasteFromSpan = new Event("paste", { bubbles: true });
+    Object.defineProperty(pasteFromSpan, "target", { value: span });
+    expect(w.ignoreEvent(pasteFromSpan)).toBe(false);
   });
 });

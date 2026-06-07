@@ -733,6 +733,9 @@ export class ThreadWidget extends WidgetType {
           const textarea = document.createElement("textarea");
           textarea.className = CLS.THREAD_FOLLOWUP_INPUT;
           textarea.placeholder = "Ask a follow-up…";
+          textarea.onpaste = (pe) => {
+            pe.stopPropagation();
+          };
           textarea.onkeydown = (ke) => {
             ke.stopPropagation();
             if (ke.key === "Enter" && (ke.metaKey || ke.ctrlKey)) {
@@ -770,7 +773,7 @@ export class ThreadWidget extends WidgetType {
 
   ignoreEvent(event: Event): boolean {
     if (event.type === "mousedown") return true;
-    if (event.type === "keydown") {
+    if (event.type === "keydown" || event.type === "paste") {
       const t = event.target;
       return t instanceof HTMLTextAreaElement && t.classList.contains(CLS.THREAD_FOLLOWUP_INPUT);
     }
