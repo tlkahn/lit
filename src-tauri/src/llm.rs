@@ -215,11 +215,18 @@ pub fn create_provider(provider_id: &str, base_url: Option<&str>) -> Box<dyn Pro
                     base_url.unwrap_or(entry.default_base_url),
                 ),
             ),
-            provider_registry::WireFormat::OpenAi => Box::new(
-                llm_openai::provider::OpenAiProvider::new(
-                    base_url.unwrap_or(entry.default_base_url),
-                ),
-            ),
+            provider_registry::WireFormat::OpenAi => {
+                let url = base_url.unwrap_or(entry.default_base_url);
+                if entry.extra_headers.is_empty() {
+                    Box::new(llm_openai::provider::OpenAiProvider::new(url))
+                } else {
+                    let headers = entry.extra_headers
+                        .iter()
+                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                        .collect();
+                    Box::new(llm_openai::provider::OpenAiProvider::with_extra_headers(url, headers))
+                }
+            }
         },
         // Unknown id → fall back to OpenAI wire format on the OpenAI default URL.
         None => Box::new(llm_openai::provider::OpenAiProvider::new(
@@ -516,6 +523,40 @@ data: [DONE]\n\n";
 
         assert!(events.contains(&LlmEvent::Chunk { text: "Hello".into() }));
         assert!(events.contains(&LlmEvent::Chunk { text: " world".into() }));
+        assert!(events.contains(&LlmEvent::Done));
+    }
+
+    #[tokio::test]
+    async fn integration_openrouter_sends_extra_headers() {
+        use wiremock::{MockServer, Mock, ResponseTemplate};
+        use wiremock::matchers::{method, path, header};
+
+        let server = MockServer::start().await;
+        let sse_body = "\
+data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hi\"},\"finish_reason\":null}]}\n\n\
+data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n\
+data: [DONE]\n\n";
+
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .and(header("HTTP-Referer", "https://lit.app"))
+            .and(header("X-Title", "Lit"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(sse_body, "text/event-stream"),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let provider = create_provider("openrouter", Some(&server.uri()));
+        let prompt = Prompt::new("Say hi");
+        let stream = provider.execute("gpt-4o", &prompt, Some("fake-key"), true).await.unwrap();
+
+        let mut events = Vec::new();
+        process_stream(stream, |e| events.push(e)).await;
+
+        assert!(events.contains(&LlmEvent::Chunk { text: "Hi".into() }));
         assert!(events.contains(&LlmEvent::Done));
     }
 

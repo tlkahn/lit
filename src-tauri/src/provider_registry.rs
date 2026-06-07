@@ -11,6 +11,7 @@ pub struct ProviderEntry {
     pub wire_format: WireFormat,
     pub needs_api_key: bool,
     pub default_context_window: usize,
+    pub extra_headers: &'static [(&'static str, &'static str)],
 }
 
 static REGISTRY: &[ProviderEntry] = &[
@@ -20,6 +21,7 @@ static REGISTRY: &[ProviderEntry] = &[
         wire_format: WireFormat::OpenAi,
         needs_api_key: true,
         default_context_window: 128_000,
+        extra_headers: &[],
     },
     ProviderEntry {
         id: "anthropic",
@@ -27,6 +29,7 @@ static REGISTRY: &[ProviderEntry] = &[
         wire_format: WireFormat::Anthropic,
         needs_api_key: true,
         default_context_window: 200_000,
+        extra_headers: &[],
     },
     ProviderEntry {
         id: "openrouter",
@@ -34,6 +37,7 @@ static REGISTRY: &[ProviderEntry] = &[
         wire_format: WireFormat::OpenAi,
         needs_api_key: true,
         default_context_window: 128_000,
+        extra_headers: &[("HTTP-Referer", "https://lit.app"), ("X-Title", "Lit")],
     },
     ProviderEntry {
         id: "ollama",
@@ -41,6 +45,7 @@ static REGISTRY: &[ProviderEntry] = &[
         wire_format: WireFormat::OpenAi,
         needs_api_key: false,
         default_context_window: 128_000,
+        extra_headers: &[],
     },
     ProviderEntry {
         id: "groq",
@@ -48,6 +53,7 @@ static REGISTRY: &[ProviderEntry] = &[
         wire_format: WireFormat::OpenAi,
         needs_api_key: true,
         default_context_window: 128_000,
+        extra_headers: &[],
     },
     ProviderEntry {
         id: "deepseek",
@@ -55,6 +61,7 @@ static REGISTRY: &[ProviderEntry] = &[
         wire_format: WireFormat::OpenAi,
         needs_api_key: true,
         default_context_window: 128_000,
+        extra_headers: &[],
     },
 ];
 
@@ -119,5 +126,21 @@ mod tests {
         assert_eq!(e.default_base_url, "https://api.deepseek.com");
         assert_eq!(e.wire_format, WireFormat::OpenAi);
         assert!(e.needs_api_key);
+    }
+
+    #[test]
+    fn test_openrouter_has_extra_headers() {
+        let e = lookup("openrouter").expect("openrouter must be registered");
+        assert_eq!(e.extra_headers.len(), 2);
+        assert!(e.extra_headers.contains(&("HTTP-Referer", "https://lit.app")));
+        assert!(e.extra_headers.contains(&("X-Title", "Lit")));
+    }
+
+    #[test]
+    fn test_other_providers_no_extra_headers() {
+        for id in &["openai", "anthropic", "ollama", "groq", "deepseek"] {
+            let e = lookup(id).unwrap();
+            assert!(e.extra_headers.is_empty(), "{id} should have no extra headers");
+        }
     }
 }
