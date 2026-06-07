@@ -93,6 +93,8 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: >
           bun tauri build
           --target aarch64-apple-darwin
@@ -126,3 +128,29 @@ jobs:
           fi
           cp "$DMG" "Lit_${TAG}_aarch64.dmg"
           aws s3 cp "Lit_${TAG}_aarch64.dmg" "s3://${{ steps.bucket.outputs.name }}/releases/Lit_${TAG}_aarch64.dmg"
+
+      - name: Generate and upload update manifest
+        if: github.event_name == 'release'
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          MACOS_DIR="src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
+          SIG=$(find "$MACOS_DIR" -name '*.app.tar.gz.sig' -type f | head -1)
+          TARBALL="${SIG%.sig}"
+          if [ -z "$SIG" ] || [ ! -f "$TARBALL" ]; then
+            echo "::error::Updater artifacts (.app.tar.gz/.sig) not found in $MACOS_DIR"
+            exit 1
+          fi
+          SIGNATURE=$(cat "$SIG")
+          VERSION="${TAG#v}"
+          PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          URL="https://lit.solar/releases/Lit_${TAG}_aarch64.app.tar.gz"
+          jq -n \
+            --arg version "$VERSION" \
+            --arg notes "See the assets here for the version ${TAG} release." \
+            --arg pub_date "$PUB_DATE" \
+            --arg signature "$SIGNATURE" \
+            --arg url "$URL" \
+            '{version: $version, notes: $notes, pub_date: $pub_date, platforms: {"darwin-aarch64": {signature: $signature, url: $url}}}' \
+            > latest.json
+          aws s3 cp "$TARBALL" "s3://${{ steps.bucket.outputs.name }}/releases/Lit_${TAG}_aarch64.app.tar.gz"
+          aws s3 cp latest.json "s3://${{ steps.bucket.outputs.name }}/releases/latest.json" --cache-control "max-age=300"

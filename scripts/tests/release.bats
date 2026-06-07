@@ -128,6 +128,7 @@ load test_helper
   source_lib
   export LIT_TRIAL_SIGNING_KEY_B64="test-key"
   export LIT_LICENSE_VERIFYING_KEY_B64="test-key"
+  export TAURI_SIGNING_PRIVATE_KEY="test-key"
   run release_check_env 1 0
   [ "$status" -eq 0 ]
 }
@@ -148,6 +149,7 @@ load test_helper
   source_lib
   export LIT_TRIAL_SIGNING_KEY_B64="test-key"
   export LIT_LICENSE_VERIFYING_KEY_B64="test-key"
+  export TAURI_SIGNING_PRIVATE_KEY="test-key"
   export APPLE_ID="test@example.com"
   export APPLE_PASSWORD="test-password"
   export APPLE_TEAM_ID="TEAM123"
@@ -173,6 +175,7 @@ load test_helper
   source_lib
   export LIT_TRIAL_SIGNING_KEY_B64="test-key"
   export LIT_LICENSE_VERIFYING_KEY_B64="test-key"
+  export TAURI_SIGNING_PRIVATE_KEY="test-key"
   export APPLE_ID="test@example.com"
   export APPLE_PASSWORD="test-password"
   export APPLE_TEAM_ID="TEAM123"

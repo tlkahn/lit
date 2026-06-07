@@ -18,6 +18,7 @@ pub const MENU_ID_EXPORT_LKG: &str = "export_lkg";
 pub const MENU_ID_IMPORT_LKG: &str = "import_lkg";
 pub const MENU_ID_CLOSE: &str = "close-pane";
 pub const MENU_ID_ABOUT: &str = "show_about";
+pub const MENU_ID_CHECK_FOR_UPDATES: &str = "check_for_updates";
 
 pub struct MenuShortcutDef {
     #[allow(dead_code)]
@@ -66,6 +67,7 @@ pub(crate) enum MenuAction {
     ImportLkg,
     LicenseInfo,
     ShowAbout,
+    CheckForUpdates,
 }
 
 impl MenuAction {
@@ -87,6 +89,7 @@ impl MenuAction {
             MENU_ID_EXPORT_LKG => Some(Self::ExportLkg),
             MENU_ID_IMPORT_LKG => Some(Self::ImportLkg),
             MENU_ID_ABOUT => Some(Self::ShowAbout),
+            MENU_ID_CHECK_FOR_UPDATES => Some(Self::CheckForUpdates),
             _ => None,
         }
     }
@@ -260,12 +263,35 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
         MenuAction::LicenseInfo => {
             let _ = app.emit(EVENT_LICENSE_INFO, ());
         }
+        MenuAction::CheckForUpdates => {
+            #[cfg(not(feature = "app-store"))]
+            {
+                let handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    crate::updater::check_for_updates_interactive(&handle).await;
+                });
+            }
+            #[cfg(feature = "app-store")]
+            {
+                let _ = app;
+            }
+        }
     }
 }
 
 pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let app_menu = Submenu::new(app, "Lit", true)?;
     app_menu.append(&MenuItem::with_id(app, MENU_ID_INSTALL_CLI, "Install Command Line Tool\u{2026}", true, None::<&str>)?)?;
+    #[cfg(not(feature = "app-store"))]
+    {
+        app_menu.append(&MenuItem::with_id(
+            app,
+            MENU_ID_CHECK_FOR_UPDATES,
+            "Check for Updates\u{2026}",
+            true,
+            None::<&str>,
+        )?)?;
+    }
     app_menu.append(&PredefinedMenuItem::separator(app)?)?;
     app_menu.append(&MenuItem::with_id(app, MENU_ID_OPEN_PREFERENCES, "Settings\u{2026}", true, Some("cmdOrCtrl+,"))?)?;
     app_menu.append(&PredefinedMenuItem::separator(app)?)?;
@@ -436,6 +462,7 @@ mod tests {
             MENU_ID_ENTER_LICENSE_KEY,
             MENU_ID_LICENSE_INFO,
             MENU_ID_ABOUT,
+            MENU_ID_CHECK_FOR_UPDATES,
         ];
         let mut seen = std::collections::HashSet::new();
         for id in &ids {
@@ -461,6 +488,7 @@ mod tests {
         assert_eq!(MenuAction::from_id(MENU_ID_ENTER_LICENSE_KEY), Some(MenuAction::EnterLicenseKey));
         assert_eq!(MenuAction::from_id(MENU_ID_LICENSE_INFO), Some(MenuAction::LicenseInfo));
         assert_eq!(MenuAction::from_id(MENU_ID_ABOUT), Some(MenuAction::ShowAbout));
+        assert_eq!(MenuAction::from_id(MENU_ID_CHECK_FOR_UPDATES), Some(MenuAction::CheckForUpdates));
     }
 
     #[test]

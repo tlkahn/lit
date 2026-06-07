@@ -83,7 +83,7 @@ BUCKET=$(aws cloudformation describe-stacks \
   --query "Stacks[0].Outputs[?OutputKey=='WebsiteBucketName'].OutputValue" \
   --output text)
 echo "==> Syncing to s3://$BUCKET"
-aws s3 sync "$WEBSITE_DIR/public/" "s3://$BUCKET" --delete --exclude "releases/*.dmg" --region "$AWS_REGION"
+aws s3 sync "$WEBSITE_DIR/public/" "s3://$BUCKET" --delete --exclude "releases/*" --region "$AWS_REGION"
 
 DIST_ID=$(aws cloudfront list-distributions \
   --region "$AWS_REGION" \

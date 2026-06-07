@@ -17,6 +17,8 @@ pub mod preferences;
 pub mod seed;
 pub mod socket;
 pub mod workspace;
+#[cfg(not(feature = "app-store"))]
+mod updater;
 
 use commands::credential::{CredentialStore, EncryptedFileStore};
 use commands::graph::GraphRegistry;
@@ -68,7 +70,7 @@ pub fn run() {
     let setup_line = cli_line;
     let setup_col = cli_col;
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             match cli::process_instance_args(&args, &cwd) {
                 Some(cli::CliTarget::Directory(path)) => {
@@ -106,7 +108,12 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_deep_link::init());
+
+    #[cfg(not(feature = "app-store"))]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+
+    builder
         .manage(WorkspaceRegistry {
             workspaces: Mutex::new(HashMap::new()),
         })
@@ -176,6 +183,17 @@ pub fn run() {
 
             if let Ok(watcher) = preferences::PreferencesWatcher::new(app.handle().clone()) {
                 app.manage(watcher);
+            }
+
+            #[cfg(not(feature = "app-store"))]
+            {
+                let update_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                    if preferences::auto_update_enabled(&update_handle) {
+                        crate::updater::check_for_updates_silent(&update_handle).await;
+                    }
+                });
             }
 
             let early_workspace = setup_workspace.clone().or_else(|| {

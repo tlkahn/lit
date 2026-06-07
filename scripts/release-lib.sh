@@ -69,7 +69,7 @@ release_check_env() {
   local skip_website="${2:-0}"
   local missing=()
 
-  for var in LIT_LICENSE_VERIFYING_KEY_B64; do
+  for var in LIT_LICENSE_VERIFYING_KEY_B64 TAURI_SIGNING_PRIVATE_KEY; do
     if [[ -z "${!var:-}" ]]; then
       missing+=("$var")
     fi
@@ -188,6 +188,56 @@ release_copy_dmg() {
   fi
   cp "$dmg" "$REPO_ROOT/Lit_${tag}_aarch64.dmg"
   echo "DMG: $REPO_ROOT/Lit_${tag}_aarch64.dmg"
+}
+
+release_generate_update_manifest() {
+  local tag="$1"
+  echo "── Generating update manifest (latest.json)..."
+  local macos_dir="$REPO_ROOT/src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
+  local sig_file
+  sig_file="$(find "$macos_dir" -name '*.app.tar.gz.sig' -type f 2>/dev/null | head -1)"
+  if [[ -z "$sig_file" ]]; then
+    echo "Error: No .app.tar.gz.sig found in $macos_dir (is bundle.createUpdaterArtifacts enabled and TAURI_SIGNING_PRIVATE_KEY set?)" >&2
+    return 1
+  fi
+  local tarball="${sig_file%.sig}"
+  if [[ ! -f "$tarball" ]]; then
+    echo "Error: No .app.tar.gz found next to signature ($tarball)" >&2
+    return 1
+  fi
+  local signature version pub_date notes url
+  signature="$(cat "$sig_file")"
+  version="${tag#v}"
+  pub_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  notes="See the assets here for the version ${tag} release."
+  url="https://lit.solar/releases/Lit_${tag}_aarch64.app.tar.gz"
+  jq -n \
+    --arg version "$version" \
+    --arg notes "$notes" \
+    --arg pub_date "$pub_date" \
+    --arg signature "$signature" \
+    --arg url "$url" \
+    '{version: $version, notes: $notes, pub_date: $pub_date, platforms: {"darwin-aarch64": {signature: $signature, url: $url}}}' \
+    > "$REPO_ROOT/latest.json"
+  echo "Manifest: $REPO_ROOT/latest.json"
+}
+
+release_upload_update_artifacts() {
+  local tag="$1"
+  local macos_dir="$REPO_ROOT/src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
+  local tarball
+  tarball="$(find "$macos_dir" -name '*.app.tar.gz' -type f 2>/dev/null | head -1)"
+  if [[ -z "$tarball" ]]; then
+    echo "Error: No .app.tar.gz found in $macos_dir" >&2
+    return 1
+  fi
+  if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
+    echo "── [DRY RUN] Would upload Lit_${tag}_aarch64.app.tar.gz and latest.json to S3"
+    return 0
+  fi
+  echo "── Uploading update artifacts to S3..."
+  aws s3 cp "$tarball" "s3://${S3_BUCKET}/releases/Lit_${tag}_aarch64.app.tar.gz"
+  aws s3 cp "$REPO_ROOT/latest.json" "s3://${S3_BUCKET}/releases/latest.json" --cache-control "max-age=300"
 }
 
 release_upload_dmg() {
