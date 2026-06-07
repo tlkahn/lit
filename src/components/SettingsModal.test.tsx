@@ -1989,6 +1989,60 @@ describe("SettingsModal", () => {
       expect(hasApiKeyCalls).toHaveLength(2);
     });
 
+    it("does not check hasApiKey when store exists but is locked (migration pending)", async () => {
+      useSecretStoreStore.setState({ exists: true, unlocked: false });
+      // Simulate keys already known to be saved (e.g. from a prior session)
+      usePreferencesStore.setState({ llmOpenaiApiKeySet: true, llmAnthropicApiKeySet: true });
+
+      const localCalls: { cmd: string; args: Record<string, unknown> }[] = [];
+      mockInvoke((cmd, args) => {
+        localCalls.push({ cmd, args: args ?? {} });
+        if (cmd === "has_api_key") return false;
+        if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
+        return undefined;
+      });
+
+      await act(async () => {
+        render(<SettingsModal open={true} onClose={vi.fn()} />);
+      });
+
+      const hasApiKeyCalls = localCalls.filter((c) => c.cmd === "has_api_key");
+      expect(hasApiKeyCalls).toHaveLength(0);
+      // Saved flags must not be clobbered to false by a locked-store has() returning false
+      expect(usePreferencesStore.getState().llmOpenaiApiKeySet).toBe(true);
+      expect(usePreferencesStore.getState().llmAnthropicApiKeySet).toBe(true);
+    });
+
+    it("re-checks hasApiKey after store becomes unlocked", async () => {
+      useSecretStoreStore.setState({ exists: true, unlocked: false });
+
+      const localCalls: { cmd: string; args: Record<string, unknown> }[] = [];
+      mockInvoke((cmd, args) => {
+        localCalls.push({ cmd, args: args ?? {} });
+        if (cmd === "has_api_key" && args?.provider === "openai") return true;
+        if (cmd === "has_api_key") return false;
+        if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
+        return undefined;
+      });
+
+      let rerender!: ReturnType<typeof render>["rerender"];
+      await act(async () => {
+        ({ rerender } = render(<SettingsModal open={true} onClose={vi.fn()} />));
+      });
+
+      // While locked, no checks should have run
+      expect(localCalls.filter((c) => c.cmd === "has_api_key")).toHaveLength(0);
+
+      await act(async () => {
+        useSecretStoreStore.setState({ unlocked: true });
+        rerender(<SettingsModal open={true} onClose={vi.fn()} />);
+      });
+
+      await vi.waitFor(() => {
+        expect(usePreferencesStore.getState().llmOpenaiApiKeySet).toBe(true);
+      });
+    });
+
     it("password save calls ensureUnlocked before setApiKey", async () => {
 
       // Store is already unlocked so ensureUnlocked resolves immediately

@@ -9,9 +9,6 @@ export function PassphraseModal() {
   const [passphrase, setPassphrase] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [showTick, setShowTick] = useState(false);
-  const [dismissed, setDismissed] = useState(false);
-  const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const prevOpenRef = useRef(false);
   useEffect(() => {
@@ -19,17 +16,9 @@ export function PassphraseModal() {
       setPassphrase("");
       setError(null);
       setSubmitting(false);
-      setShowTick(false);
-      setDismissed(false);
     }
     prevOpenRef.current = migrationPromptOpen;
   }, [migrationPromptOpen]);
-
-  useEffect(() => {
-    return () => {
-      if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
-    };
-  }, []);
 
   const handleCancel = useCallback(() => {
     settleMigration(false);
@@ -41,24 +30,15 @@ export function PassphraseModal() {
   passphraseRef.current = passphrase;
   const canSubmitRef = useRef(canSubmit);
   canSubmitRef.current = canSubmit;
-  const dismissedRef = useRef(dismissed);
-  dismissedRef.current = dismissed;
 
   const handleSubmit = useCallback(async () => {
     setSubmitting(true);
-    setShowTick(true);
     setError(null);
     try {
-      dismissTimerRef.current = setTimeout(() => setDismissed(true), 400);
+      // On success, the store's settleMigration closes the prompt and unmounts us.
       await migrate(passphraseRef.current);
-      if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
-      dismissTimerRef.current = null;
     } catch (e) {
-      if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
-      dismissTimerRef.current = null;
-      setShowTick(false);
       setSubmitting(false);
-      setDismissed(false);
       const message = e instanceof Error ? e.message : String(e);
       setError(message);
     }
@@ -66,12 +46,12 @@ export function PassphraseModal() {
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !dismissedRef.current) {
+      if (e.key === "Escape") {
         e.stopPropagation();
         handleCancel();
         return;
       }
-      if (e.key === "Enter" && canSubmitRef.current && !dismissedRef.current) {
+      if (e.key === "Enter" && canSubmitRef.current) {
         e.stopPropagation();
         e.preventDefault();
         handleSubmit();
@@ -87,7 +67,6 @@ export function PassphraseModal() {
   }, [migrationPromptOpen, handleKeyDown]);
 
   if (!migrationPromptOpen) return null;
-  if (dismissed) return null;
 
   return (
     <div
@@ -136,11 +115,7 @@ export function PassphraseModal() {
             disabled={!canSubmit}
             data-testid="passphrase-modal-submit"
           >
-            {showTick ? (
-              <span data-testid="passphrase-modal-tick">{""}</span>
-            ) : (
-              "Migrate"
-            )}
+            {submitting ? "Migrating…" : "Migrate"}
           </button>
         </div>
       </div>

@@ -192,9 +192,46 @@ impl EncryptedFileStore {
     }
 
     /// Migrate an existing store from `old_passphrase` to the default passphrase.
+    ///
+    /// `unlock` already proves the old passphrase is correct (decryption
+    /// succeeds), so re-encryption uses the already-unlocked in-memory state
+    /// directly instead of re-deriving and re-verifying the old passphrase.
     pub fn migrate(&self, old_passphrase: &str) -> Result<(), String> {
         self.unlock(old_passphrase)?;
-        self.change_passphrase(old_passphrase, DEFAULT_PASSPHRASE)
+        self.re_encrypt_unlocked(DEFAULT_PASSPHRASE)
+    }
+
+    /// Re-encrypt the already-unlocked store under `new_passphrase`.
+    ///
+    /// Operates strictly on the in-memory unlocked state: it does not derive or
+    /// verify any old passphrase (the prior `unlock` already proved it). A fresh
+    /// random salt is generated and the new key is derived exactly once.
+    fn re_encrypt_unlocked(&self, new_passphrase: &str) -> Result<(), String> {
+        // Read entries from the in-memory state under a short-lived lock.
+        let entries = {
+            let guard = self.state.lock().map_err(|e| e.to_string())?;
+            match *guard {
+                Some(ref state) => state.entries.clone(),
+                None => return Err("Store is locked".to_string()),
+            }
+        };
+
+        // Re-encrypt with new passphrase and fresh salt.
+        let new_salt = Self::random_salt();
+        let new_key = self.derive_key(new_passphrase, &new_salt)?;
+        self.write_encrypted_file(&new_key, &new_salt, &entries, self.m_cost, self.t_cost, self.p_cost)?;
+
+        // Update in-memory state.
+        let mut guard = self.state.lock().map_err(|e| e.to_string())?;
+        *guard = Some(UnlockedState {
+            derived_key: new_key,
+            salt: new_salt,
+            m_cost: self.m_cost,
+            t_cost: self.t_cost,
+            p_cost: self.p_cost,
+            entries,
+        });
+        Ok(())
     }
 
     /// Change the passphrase. Requires the old passphrase for verification.
@@ -203,6 +240,10 @@ impl EncryptedFileStore {
     /// and entries directly, avoiding re-reading the file and an unnecessary
     /// decryption step. The old passphrase is still verified by deriving a key
     /// and comparing it to the cached one.
+    ///
+    /// Retained for its dedicated unit tests; `migrate` now re-encrypts via
+    /// `re_encrypt_unlocked`, so this is only exercised by the test build.
+    #[cfg_attr(not(test), allow(dead_code))]
     fn change_passphrase(&self, old_passphrase: &str, new_passphrase: &str) -> Result<(), String> {
         // Get the entries to re-encrypt, verifying the old passphrase in the process.
         // When already unlocked, use in-memory state to skip re-reading the file.
@@ -507,7 +548,6 @@ pub fn delete_api_key(
 pub struct SecretStoreStatus {
     pub exists: bool,
     pub unlocked: bool,
-    pub needs_migration: bool,
 }
 
 #[tauri::command]
@@ -531,12 +571,7 @@ pub fn secret_store_status(
 ) -> SecretStoreStatus {
     let exists = store.file_exists();
     let unlocked = store.is_unlocked();
-    let needs_migration = exists && !unlocked;
-    SecretStoreStatus {
-        exists,
-        unlocked,
-        needs_migration,
-    }
+    SecretStoreStatus { exists, unlocked }
 }
 
 #[cfg(test)]
@@ -1243,6 +1278,52 @@ mod tests {
     }
 
     #[test]
+    fn test_re_encrypt_unlocked_uses_in_memory_state() {
+        // re_encrypt_unlocked must operate purely on the already-unlocked
+        // in-memory state without re-deriving or re-verifying any old passphrase.
+        // We prove it works without the file by deleting it while unlocked.
+        let dir = tempfile::tempdir().unwrap();
+        let store = test_store(dir.path());
+        store.init("custom-old-pass").unwrap();
+        store.set("svc", "acct", "secret").unwrap();
+        assert!(store.is_unlocked());
+
+        // Delete the underlying file to prove we don't read it.
+        let file_path = dir.path().join("secrets.enc");
+        std::fs::remove_file(&file_path).unwrap();
+        assert!(!store.file_exists());
+
+        // Re-encrypt to the default passphrase using only in-memory state.
+        store
+            .re_encrypt_unlocked(DEFAULT_PASSPHRASE)
+            .expect("re_encrypt_unlocked should use in-memory state when unlocked");
+
+        // The file is re-created and data preserved.
+        assert!(store.file_exists());
+        assert!(store.is_unlocked());
+        assert_eq!(store.get("svc", "acct").unwrap(), "secret");
+
+        // After lock, DEFAULT_PASSPHRASE unlocks; old passphrase does not.
+        store.lock().unwrap();
+        store.unlock(DEFAULT_PASSPHRASE).unwrap();
+        assert_eq!(store.get("svc", "acct").unwrap(), "secret");
+        store.lock().unwrap();
+        assert!(store.unlock("custom-old-pass").is_err());
+    }
+
+    #[test]
+    fn test_re_encrypt_unlocked_errors_when_locked() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = test_store(dir.path());
+        store.init("pass").unwrap();
+        store.lock().unwrap();
+        assert!(!store.is_unlocked());
+
+        let result = store.re_encrypt_unlocked(DEFAULT_PASSPHRASE);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_concurrent_init_exactly_one_succeeds() {
         use std::sync::{Arc, Barrier};
 
@@ -1292,5 +1373,22 @@ mod tests {
             );
             assert!(store.is_unlocked());
         }
+    }
+
+    #[test]
+    fn test_secret_store_status_serializes_only_exists_and_unlocked() {
+        let status = SecretStoreStatus {
+            exists: true,
+            unlocked: false,
+        };
+        let value = serde_json::to_value(&status).unwrap();
+        let obj = value.as_object().expect("status serializes to an object");
+        assert!(obj.contains_key("exists"), "must contain exists");
+        assert!(obj.contains_key("unlocked"), "must contain unlocked");
+        assert!(
+            !obj.contains_key("needs_migration"),
+            "must not contain needs_migration"
+        );
+        assert_eq!(obj.len(), 2, "must have exactly exists and unlocked");
     }
 }

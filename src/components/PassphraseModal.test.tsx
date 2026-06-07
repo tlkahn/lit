@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { render, fireEvent, waitFor, act } from "@testing-library/react";
 import { PassphraseModal } from "./PassphraseModal";
 import { useSecretStoreStore } from "../stores/secretStore";
@@ -9,7 +9,6 @@ async function resetStore(overrides: Partial<Record<string, unknown>> = {}) {
   useSecretStoreStore.setState({
     exists: false,
     unlocked: false,
-    needsMigration: false,
     loading: false,
     migrationPromptOpen: false,
     ...overrides,
@@ -64,11 +63,11 @@ describe("PassphraseModal (migration)", () => {
   });
 
   it("calls migrate and settles on successful submit", async () => {
-    await resetStore({ migrationPromptOpen: true, needsMigration: true });
+    await resetStore({ migrationPromptOpen: true });
 
     mockInvoke((cmd) => {
       if (cmd === "migrate_secret_store") return undefined;
-      if (cmd === "secret_store_status") return { exists: true, unlocked: true, needs_migration: false };
+      if (cmd === "secret_store_status") return { exists: true, unlocked: true };
       throw new Error(`Unknown command: ${cmd}`);
     });
 
@@ -90,7 +89,7 @@ describe("PassphraseModal (migration)", () => {
   });
 
   it("shows error on wrong passphrase", async () => {
-    await resetStore({ migrationPromptOpen: true, needsMigration: true });
+    await resetStore({ migrationPromptOpen: true });
 
     mockInvoke((cmd) => {
       if (cmd === "migrate_secret_store") throw new Error("Wrong passphrase");
@@ -143,11 +142,11 @@ describe("PassphraseModal (migration)", () => {
 
   describe("keyboard confirm", () => {
     it("Enter submits with non-empty passphrase", async () => {
-      await resetStore({ migrationPromptOpen: true, needsMigration: true });
+      await resetStore({ migrationPromptOpen: true });
 
       mockInvoke((cmd) => {
         if (cmd === "migrate_secret_store") return undefined;
-        if (cmd === "secret_store_status") return { exists: true, unlocked: true, needs_migration: false };
+        if (cmd === "secret_store_status") return { exists: true, unlocked: true };
         throw new Error(`Unknown command: ${cmd}`);
       });
 
@@ -172,6 +171,59 @@ describe("PassphraseModal (migration)", () => {
       const { container } = render(<PassphraseModal />);
       fireEvent.keyDown(document, { key: "Enter" });
       expect(container.querySelector("[data-testid='passphrase-modal-dialog']")).toBeTruthy();
+    });
+  });
+
+  describe("no premature success / timer race", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("keeps modal open with no success tick while migrate is pending, then closes on resolve", async () => {
+      vi.useFakeTimers();
+      await resetStore({ migrationPromptOpen: true });
+
+      let resolveMigrate: () => void;
+      const migratePromise = new Promise<void>((resolve) => {
+        resolveMigrate = resolve;
+      });
+      mockInvoke((cmd) => {
+        if (cmd === "migrate_secret_store") return migratePromise;
+        if (cmd === "secret_store_status") return { exists: true, unlocked: true };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      let settler: { resolve: () => void; reject: (err: Error) => void };
+      const pendingPromise = new Promise<void>((resolve, reject) => {
+        settler = { resolve, reject };
+      });
+      useSecretStoreStore.setState({ _settler: settler!, _pendingPromise: pendingPromise });
+
+      const { container } = render(<PassphraseModal />);
+      const passInput = container.querySelector("[data-testid='passphrase-modal-passphrase']") as HTMLInputElement;
+      fireEvent.change(passInput, { target: { value: "old-pass" } });
+      fireEvent.click(container.querySelector("[data-testid='passphrase-modal-submit']")!);
+
+      // While migrate is still pending, advancing timers must not hide the modal
+      // nor show a premature success indicator.
+      await act(async () => {
+        vi.advanceTimersByTime(500);
+      });
+
+      expect(container.querySelector("[data-testid='passphrase-modal-dialog']")).toBeTruthy();
+      expect(container.querySelector("[data-testid='passphrase-modal-tick']")).toBeNull();
+      expect(useSecretStoreStore.getState().migrationPromptOpen).toBe(true);
+
+      // Now migrate resolves -> store settles and closes the prompt.
+      vi.useRealTimers();
+      await act(async () => {
+        resolveMigrate!();
+        await migratePromise;
+      });
+
+      await waitFor(() => {
+        expect(useSecretStoreStore.getState().migrationPromptOpen).toBe(false);
+      });
     });
   });
 

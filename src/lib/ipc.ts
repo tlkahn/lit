@@ -262,7 +262,6 @@ export async function deleteApiKey(provider: string): Promise<void> {
 export interface SecretStoreStatus {
   exists: boolean;
   unlocked: boolean;
-  needsMigration: boolean;
 }
 
 export async function autoUnlockSecretStore(): Promise<boolean> {

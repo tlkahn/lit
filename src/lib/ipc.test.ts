@@ -597,7 +597,7 @@ describe("ipc", () => {
         case "migrate_secret_store":
           return null;
         case "secret_store_status":
-          return { exists: true, unlocked: true, needsMigration: false };
+          return { exists: true, unlocked: true };
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -1814,11 +1814,12 @@ describe("ipc", () => {
     expect(invoke).toHaveBeenCalledWith("migrate_secret_store", { oldPassphrase: "old-pass" });
   });
 
-  it("secretStoreStatus returns SecretStoreStatus with needsMigration", async () => {
+  it("secretStoreStatus returns SecretStoreStatus with exists and unlocked", async () => {
     const status: SecretStoreStatus = await secretStoreStatus();
     expect(status.exists).toBe(true);
     expect(status.unlocked).toBe(true);
-    expect(status.needsMigration).toBe(false);
+    expect(Object.keys(status).sort()).toEqual(["exists", "unlocked"]);
+    expect("needsMigration" in status).toBe(false);
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("secret_store_status");
   });

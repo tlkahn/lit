@@ -11,7 +11,7 @@ import { parseThreadBody } from "./threadBody";
 
 vi.mock("./ipc", () => ({
   resolveAnnotationScopeWithMode: vi.fn(async () => null),
-  secretStoreStatus: vi.fn(async () => ({ exists: true, unlocked: false, needsMigration: true })),
+  secretStoreStatus: vi.fn(async () => ({ exists: true, unlocked: false })),
   autoUnlockSecretStore: vi.fn(async () => false),
 }));
 

@@ -9,7 +9,6 @@ interface Settler {
 export interface SecretStoreState {
   exists: boolean;
   unlocked: boolean;
-  needsMigration: boolean;
   loading: boolean;
   migrationPromptOpen: boolean;
   /** @internal settler for the pending migration promise */
@@ -27,7 +26,6 @@ export interface SecretStoreState {
 export const useSecretStoreStore = create<SecretStoreState>((set, get) => ({
   exists: false,
   unlocked: false,
-  needsMigration: false,
   loading: false,
   migrationPromptOpen: false,
   _settler: null,
@@ -40,7 +38,6 @@ export const useSecretStoreStore = create<SecretStoreState>((set, get) => ({
       set({
         exists: status.exists,
         unlocked: status.unlocked,
-        needsMigration: status.needsMigration,
         loading: false,
       });
     } catch {
@@ -97,9 +94,19 @@ export const useSecretStoreStore = create<SecretStoreState>((set, get) => ({
   },
 
   migrate: async (oldPassphrase: string) => {
+    // Backend migration is the source of truth for success: if it fails, let
+    // the error propagate so the modal stays open for retry (settle is skipped).
     await migrateSecretStore(oldPassphrase);
-    await get().refresh();
-    get().settleMigration(true);
+    try {
+      await get().refresh();
+    } catch {
+      // refresh is best-effort; the migration already committed on the backend.
+    } finally {
+      // Always resolve the pending unlock once migration has succeeded,
+      // even if the post-migration refresh threw — otherwise the settler
+      // stays set and every future ensureUnlocked() hangs on the dead promise.
+      get().settleMigration(true);
+    }
   },
 
   settleMigration: (success: boolean) => {

@@ -195,9 +195,17 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
   }, [prefs, dynamicOptions]);
 
   const ensureUnlocked = useSecretStoreStore((s) => s.ensureUnlocked);
+  const exists = useSecretStoreStore((s) => s.exists);
+  const unlocked = useSecretStoreStore((s) => s.unlocked);
 
   useEffect(() => {
     if (!open) return;
+    // A locked-but-existing store makes hasApiKey() return false for every
+    // provider, which would wrongly clobber the saved-key flags to "not saved".
+    // Skip the check until the store is unlocked (migration completed); the
+    // effect re-runs once `unlocked` flips. A non-existent store (exists=false)
+    // is a fresh user with no keys, so running the check is correct there.
+    if (exists && !unlocked) return;
     const passwordEntries = SETTINGS_REGISTRY.filter(
       (e): e is Extract<SettingEntry, { controlType: "password" }> => e.controlType === "password",
     );
@@ -206,7 +214,7 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
         usePreferencesStore.setState({ [entry.storeField]: has } as Partial<PreferencesState>);
       });
     }
-  }, [open]);
+  }, [open, exists, unlocked]);
 
   const dialogRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
