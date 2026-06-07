@@ -4,9 +4,10 @@ interface SettingsTextInputProps {
   testId: string;
   label?: React.ReactNode;
   onCommit?: () => void;
+  placeholder?: string;
 }
 
-export function SettingsTextInput({ value, onChange, testId, label, onCommit }: SettingsTextInputProps) {
+export function SettingsTextInput({ value, onChange, testId, label, onCommit, placeholder }: SettingsTextInputProps) {
   return (
     <div className="flex items-center justify-between gap-2 min-w-0 flex-wrap">
       {label && <span className="text-sm text-text-normal">{label}</span>}
@@ -18,6 +19,7 @@ export function SettingsTextInput({ value, onChange, testId, label, onCommit }: 
         onKeyDown={(e) => {
           if (e.key === "Enter") onCommit?.();
         }}
+        placeholder={placeholder}
         data-testid={testId}
         className="rounded-md bg-bg-tertiary px-2.5 py-1 text-sm text-text-normal outline-none focus:ring-1 focus:ring-accent"
       />

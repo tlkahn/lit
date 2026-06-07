@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
 import type { DarkModePref, ViewMode, Preferences } from "../lib/ipc";
-import { getPreferences } from "../lib/ipc";
+import { getPreferences, setPreference } from "../lib/ipc";
 import type { AnnotationBuilderDefaults } from "../lib/annotationBuilderDefaults";
 import { isValidBuilderDefaults } from "../lib/annotationBuilderDefaults";
 import { providerIdForModel } from "../lib/providerRegistry";
@@ -156,6 +156,15 @@ function mapPreferences(prefs: Preferences) {
     annotationPrefillLastUsed: (prefs["annotations.prefillLastUsed"] as boolean) ?? false,
     annotationBuilderDefaults: isValidBuilderDefaults(prefs["annotations.builderDefaults"]) ? prefs["annotations.builderDefaults"] : null,
   };
+}
+
+export function setLlmProvider(patch: Partial<LlmProviderConfig>) {
+  const prev = usePreferencesStore.getState().llmProvider;
+  const next = { ...prev, ...patch };
+  usePreferencesStore.setState({ llmProvider: next });
+  setPreference("llm.provider", next).catch(() => {
+    usePreferencesStore.setState({ llmProvider: prev });
+  });
 }
 
 export const usePreferencesStore = create<PreferencesState>((set) => ({

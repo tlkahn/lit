@@ -16,8 +16,8 @@ import { SettingsJsonEditor } from "./SettingsJsonEditor";
 import { CATEGORIES, SETTINGS_REGISTRY, STORE_FIELDS, filterSettings, type Category, type SettingEntry, type FilteredSetting, type PreferenceField } from "../lib/settingsRegistry";
 import { useThemeStore } from "../stores/theme";
 import { KeyboardShortcutsPanel } from "./KeyboardShortcutsPanel";
-import { TestConnectionButton } from "./TestConnectionButton";
 import { AcademicExportSettings } from "./AcademicExportSettings";
+import { LlmProviderSettings } from "./LlmProviderSettings";
 import { useSecretStoreStore } from "../stores/secretStore";
 
 interface SettingsModalProps {
@@ -177,8 +177,6 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
     for (const f of STORE_FIELDS) obj[f] = s[f];
     return obj;
   }));
-  const llmProvider = usePreferencesStore((s) => s.llmProvider);
-
   const availableThemes = useThemeStore((s) => s.availableThemes);
   const dynamicOptions: Record<string, { value: string; label: string }[]> = useMemo(() => ({
     colorTheme: availableThemes.map((t) => ({ value: t.directory_name, label: t.name })),
@@ -207,14 +205,6 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
     // effect re-runs once `unlocked` flips. A non-existent store (exists=false)
     // is a fresh user with no keys, so running the check is correct there.
     if (exists && !unlocked) return;
-    const passwordEntries = SETTINGS_REGISTRY.filter(
-      (e): e is Extract<SettingEntry, { controlType: "password" }> => e.controlType === "password",
-    );
-    for (const entry of passwordEntries) {
-      hasApiKey(entry.provider).then((has) => {
-        usePreferencesStore.setState({ [entry.storeField]: has } as Partial<PreferencesState>);
-      });
-    }
     const currentProvider = usePreferencesStore.getState().llmProvider;
     hasApiKey(currentProvider.providerId).then((has) => {
       usePreferencesStore.setState((prev) => ({
@@ -476,18 +466,14 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
                       return (
                         <section key={cat} id={`settings-section-${cat}`} className={i > 0 ? "mt-5" : undefined}>
                           <h3 className="text-sm font-medium text-text-muted mb-3">{cat}</h3>
+                          {cat === "LLM" && (
+                            <div className="mb-3">
+                              <LlmProviderSettings ensureUnlocked={ensureUnlocked} />
+                            </div>
+                          )}
                           <div className="space-y-3">
                             {ungrouped.map(({ entry, indices }) => renderControl({ entry, prefs, localTextValues, setLocalTextValues, matchIndices: indices, dynamicOptions, ensureUnlocked }))}
                           </div>
-                          {cat === "LLM" && (
-                            <div className="mt-3">
-                              <TestConnectionButton
-                                model={llmProvider.model}
-                                baseUrl={llmProvider.baseUrl}
-                                provider={llmProvider.providerId}
-                              />
-                            </div>
-                          )}
                           {cat === "Academic Export" && (
                             <div className="mt-3">
                               <AcademicExportSettings />

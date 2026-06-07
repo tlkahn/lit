@@ -7,8 +7,8 @@ import {
 } from "./settingsRegistry";
 
 describe("SETTINGS_REGISTRY", () => {
-  it("has 35 entries", () => {
-    expect(SETTINGS_REGISTRY).toHaveLength(35);
+  it("has 30 entries", () => {
+    expect(SETTINGS_REGISTRY).toHaveLength(30);
   });
 
   it("every entry has required fields defined", () => {
@@ -28,10 +28,9 @@ describe("SETTINGS_REGISTRY", () => {
     expect(entry!.controlType).toBe("dropdown");
   });
 
-  it("llmModel entry has controlType 'dropdown'", () => {
+  it("llmModel entry was removed (now in LlmProviderSettings)", () => {
     const entry = SETTINGS_REGISTRY.find((e) => e.storeField === "llmModel");
-    expect(entry).toBeDefined();
-    expect(entry!.controlType).toBe("dropdown");
+    expect(entry).toBeUndefined();
   });
 
   it("llmTemperature entry has controlType 'slider'", () => {
@@ -40,10 +39,9 @@ describe("SETTINGS_REGISTRY", () => {
     expect(entry!.controlType).toBe("slider");
   });
 
-  it("llmOpenaiApiKeySet entry has controlType 'password'", () => {
+  it("llmOpenaiApiKeySet entry was removed (now in LlmProviderSettings)", () => {
     const entry = SETTINGS_REGISTRY.find((e) => e.storeField === "llmOpenaiApiKeySet");
-    expect(entry).toBeDefined();
-    expect(entry!.controlType).toBe("password");
+    expect(entry).toBeUndefined();
   });
 
   it("llmSystemPrompt entry has controlType 'textarea'", () => {
@@ -101,7 +99,7 @@ describe("groupByCategory", () => {
     expect(grouped.get("Editor")).toHaveLength(3);
     expect(grouped.get("Cross-references")).toHaveLength(3);
     expect(grouped.get("Annotations")).toHaveLength(5);
-    expect(grouped.get("LLM")).toHaveLength(11);
+    expect(grouped.get("LLM")).toHaveLength(6);
     expect(grouped.get("Academic Export")).toHaveLength(6);
     expect(grouped.get("Experimental")).toHaveLength(1);
     expect(grouped.get("Keyboard Shortcuts")).toHaveLength(0);
@@ -126,7 +124,7 @@ describe("filterSettings", () => {
 
   it("returns all entries with empty indices for empty query", () => {
     const results = filterSettings(SETTINGS_REGISTRY, "");
-    expect(results).toHaveLength(35);
+    expect(results).toHaveLength(30);
     for (const r of results) {
       expect(r.indices).toEqual([]);
     }
