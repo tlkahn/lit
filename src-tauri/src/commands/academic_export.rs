@@ -390,7 +390,7 @@ pub fn resolve_preamble(format: &str, resource_dir: Option<&Path>) -> Option<Pat
     }
 }
 
-/// Resolve the bundled Lua filter that escapes bare `&` in Math and RawInline nodes.
+/// Resolve the bundled Lua filter that escapes bare `&` in Math, RawInline, and RawBlock nodes.
 /// Only applies to PDF and LaTeX output formats.
 pub fn resolve_ampersand_filter(format: &str, resource_dir: Option<&Path>) -> Option<PathBuf> {
     if format == "pdf" || format == "latex" {

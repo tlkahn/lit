@@ -18,7 +18,7 @@ if FORMAT:match 'latex' then
 
   local function has_align_env(s)
     for _, env in ipairs(ALIGN_ENVS) do
-      if s:find('\\begin{' .. env .. '}') or s:find('\\begin{' .. env .. '*}') then
+      if s:find('\\begin{' .. env .. '}', 1, true) or s:find('\\begin{' .. env .. '*}', 1, true) then
         return true
       end
     end
@@ -27,8 +27,19 @@ if FORMAT:match 'latex' then
 
   function RawInline(el)
     if el.format == 'tex' or el.format == 'latex' then
-      el.text = escape_bare_amp(el.text)
-      return el
+      if not has_align_env(el.text) then
+        el.text = escape_bare_amp(el.text)
+        return el
+      end
+    end
+  end
+
+  function RawBlock(el)
+    if el.format == 'tex' or el.format == 'latex' then
+      if not has_align_env(el.text) then
+        el.text = escape_bare_amp(el.text)
+        return el
+      end
     end
   end
 
