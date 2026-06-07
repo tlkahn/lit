@@ -1,5 +1,5 @@
 {
-  "$schema": "https://raw.githubusercontent.com/nicegram/nicegram-tauri/main/.schema/capabilities.json",
+  "$schema": "../gen/schemas/capabilities.json",
   "identifier": "default",
   "description": "Default capabilities for Lit",
   "windows": ["main", "workspace-*"],

@@ -1,5 +1,5 @@
 {
-  "$schema": "https://raw.githubusercontent.com/nicegram/nicegram-tauri/main/.schema/capabilities.json",
+  "$schema": "../../gen/schemas/capabilities.json",
   "identifier": "updater",
   "description": "In-app updater. Gated out of app-store builds via build.rs (the updater plugin is only registered under #[cfg(not(feature = \"app-store\"))]).",
   "windows": ["main", "workspace-*"],
