@@ -35,12 +35,12 @@ export function PassphraseModal() {
     setSubmitting(true);
     setError(null);
     try {
-      // On success, the store's settleMigration closes the prompt and unmounts us.
       await migrate(passphraseRef.current);
     } catch (e) {
-      setSubmitting(false);
       const message = e instanceof Error ? e.message : String(e);
       setError(message);
+    } finally {
+      setSubmitting(false);
     }
   }, [migrate]);
 

@@ -203,83 +203,20 @@ impl EncryptedFileStore {
 
     /// Re-encrypt the already-unlocked store under `new_passphrase`.
     ///
-    /// Operates strictly on the in-memory unlocked state: it does not derive or
-    /// verify any old passphrase (the prior `unlock` already proved it). A fresh
-    /// random salt is generated and the new key is derived exactly once.
+    /// Holds the mutex for the entire operation to prevent concurrent `set()`
+    /// or `delete()` calls from being silently lost.
     fn re_encrypt_unlocked(&self, new_passphrase: &str) -> Result<(), String> {
-        // Read entries from the in-memory state under a short-lived lock.
-        let entries = {
-            let guard = self.state.lock().map_err(|e| e.to_string())?;
-            match *guard {
-                Some(ref state) => state.entries.clone(),
-                None => return Err("Store is locked".to_string()),
-            }
-        };
+        let mut guard = self.state.lock().map_err(|e| e.to_string())?;
+        let entries = guard
+            .as_ref()
+            .ok_or_else(|| "Store is locked".to_string())?
+            .entries
+            .clone();
 
-        // Re-encrypt with new passphrase and fresh salt.
         let new_salt = Self::random_salt();
         let new_key = self.derive_key(new_passphrase, &new_salt)?;
         self.write_encrypted_file(&new_key, &new_salt, &entries, self.m_cost, self.t_cost, self.p_cost)?;
 
-        // Update in-memory state.
-        let mut guard = self.state.lock().map_err(|e| e.to_string())?;
-        *guard = Some(UnlockedState {
-            derived_key: new_key,
-            salt: new_salt,
-            m_cost: self.m_cost,
-            t_cost: self.t_cost,
-            p_cost: self.p_cost,
-            entries,
-        });
-        Ok(())
-    }
-
-    /// Change the passphrase. Requires the old passphrase for verification.
-    ///
-    /// When the store is already unlocked, this uses the in-memory derived key
-    /// and entries directly, avoiding re-reading the file and an unnecessary
-    /// decryption step. The old passphrase is still verified by deriving a key
-    /// and comparing it to the cached one.
-    ///
-    /// Retained for its dedicated unit tests; `migrate` now re-encrypts via
-    /// `re_encrypt_unlocked`, so this is only exercised by the test build.
-    #[cfg_attr(not(test), allow(dead_code))]
-    fn change_passphrase(&self, old_passphrase: &str, new_passphrase: &str) -> Result<(), String> {
-        // Get the entries to re-encrypt, verifying the old passphrase in the process.
-        // When already unlocked, use in-memory state to skip re-reading the file.
-        let entries = {
-            let guard = self.state.lock().map_err(|e| e.to_string())?;
-            if let Some(ref state) = *guard {
-                // Already unlocked: verify old passphrase against the cached derived key
-                let verification_key = Self::derive_key_with_params(
-                    old_passphrase, &state.salt, state.m_cost, state.t_cost, state.p_cost,
-                )?;
-                if verification_key != state.derived_key {
-                    return Err("Decryption failed \u{2014} wrong passphrase or corrupted file".to_string());
-                }
-                state.entries.clone()
-            } else {
-                drop(guard);
-                // Locked: read from file and decrypt (validates passphrase via decryption)
-                if !self.file_exists() {
-                    return Err("Secret store file does not exist".into());
-                }
-                let (old_salt, old_nonce, old_ciphertext, file_m_cost, file_t_cost, file_p_cost) =
-                    Self::read_encrypted_file(&self.file_path)?;
-                let old_key = Self::derive_key_with_params(
-                    old_passphrase, &old_salt, file_m_cost, file_t_cost, file_p_cost,
-                )?;
-                Self::decrypt_payload(&old_key, &old_nonce, &old_ciphertext)?
-            }
-        };
-
-        // Re-encrypt with new passphrase and fresh salt
-        let new_salt = Self::random_salt();
-        let new_key = self.derive_key(new_passphrase, &new_salt)?;
-        self.write_encrypted_file(&new_key, &new_salt, &entries, self.m_cost, self.t_cost, self.p_cost)?;
-
-        // Update in-memory state
-        let mut guard = self.state.lock().map_err(|e| e.to_string())?;
         *guard = Some(UnlockedState {
             derived_key: new_key,
             salt: new_salt,
@@ -1212,72 +1149,6 @@ mod tests {
     }
 
     #[test]
-    fn test_change_passphrase_when_unlocked_uses_in_memory_state() {
-        // When the store is already unlocked, change_passphrase should use the
-        // in-memory derived_key and entries instead of re-reading from the file.
-        // We prove this by deleting the file after unlock: the current (buggy) code
-        // fails because it always re-reads the file, while the fixed code succeeds
-        // because it uses the in-memory state.
-        let dir = tempfile::tempdir().unwrap();
-        let store = test_store(dir.path());
-        store.init("old-passphrase").unwrap();
-        store.set("svc", "acct", "my-secret").unwrap();
-
-        // Store is now unlocked with entries in memory.
-        assert!(store.is_unlocked());
-
-        // Delete the underlying file to prove we don't need it when unlocked.
-        let file_path = dir.path().join("secrets.enc");
-        std::fs::remove_file(&file_path).unwrap();
-        assert!(!store.file_exists());
-
-        // change_passphrase should succeed using in-memory state
-        store
-            .change_passphrase("old-passphrase", "new-passphrase")
-            .expect("change_passphrase should use in-memory state when unlocked");
-
-        // The file should be re-created with the new passphrase
-        assert!(store.file_exists());
-        assert!(store.is_unlocked());
-        assert_eq!(store.get("svc", "acct").unwrap(), "my-secret");
-
-        // Verify new passphrase works after lock/unlock
-        store.lock().unwrap();
-        store.unlock("new-passphrase").unwrap();
-        assert_eq!(store.get("svc", "acct").unwrap(), "my-secret");
-
-        // Old passphrase should fail
-        store.lock().unwrap();
-        assert!(store.unlock("old-passphrase").is_err());
-    }
-
-    #[test]
-    fn test_change_passphrase_when_unlocked_rejects_wrong_old_passphrase() {
-        // Even when the store is unlocked (optimization path), providing the
-        // wrong old passphrase must be rejected.
-        let dir = tempfile::tempdir().unwrap();
-        let store = test_store(dir.path());
-        store.init("correct-pass").unwrap();
-        assert!(store.is_unlocked());
-
-        let result = store.change_passphrase("wrong-pass!", "new-pass!!");
-        assert!(result.is_err());
-        let err_msg = result.unwrap_err();
-        assert!(
-            err_msg.contains("wrong passphrase")
-                || err_msg.contains("Decryption failed")
-                || err_msg.contains("does not match"),
-            "Should indicate wrong passphrase, got: {}",
-            err_msg
-        );
-
-        // Store should remain unlocked with original passphrase
-        assert!(store.is_unlocked());
-        store.lock().unwrap();
-        store.unlock("correct-pass").unwrap();
-    }
-
-    #[test]
     fn test_re_encrypt_unlocked_uses_in_memory_state() {
         // re_encrypt_unlocked must operate purely on the already-unlocked
         // in-memory state without re-deriving or re-verifying any old passphrase.
@@ -1321,6 +1192,52 @@ mod tests {
 
         let result = store.re_encrypt_unlocked(DEFAULT_PASSPHRASE);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_re_encrypt_unlocked_does_not_lose_concurrent_set() {
+        use std::sync::{Arc, Barrier};
+
+        for round in 0..50 {
+            let dir = tempfile::tempdir().unwrap();
+            let store = Arc::new(test_store(dir.path()));
+            store.init(DEFAULT_PASSPHRASE).unwrap();
+            store.set("svc", "existing", "val").unwrap();
+
+            let barrier = Arc::new(Barrier::new(2));
+
+            let store_a = Arc::clone(&store);
+            let barrier_a = Arc::clone(&barrier);
+            let store_b = Arc::clone(&store);
+            let barrier_b = Arc::clone(&barrier);
+
+            std::thread::scope(|s| {
+                s.spawn(move || {
+                    barrier_a.wait();
+                    store_a.re_encrypt_unlocked(DEFAULT_PASSPHRASE).unwrap();
+                });
+                s.spawn(move || {
+                    barrier_b.wait();
+                    std::thread::yield_now();
+                    store_b.set("svc", "concurrent", "from-set").unwrap();
+                });
+            });
+
+            assert!(
+                store.has("svc", "concurrent"),
+                "round {}: concurrent set() was lost by re_encrypt_unlocked",
+                round
+            );
+
+            // Verify persistence: lock, unlock, check again
+            store.lock().unwrap();
+            store.unlock(DEFAULT_PASSPHRASE).unwrap();
+            assert!(
+                store.has("svc", "concurrent"),
+                "round {}: concurrent set() lost on disk after re_encrypt_unlocked",
+                round
+            );
+        }
     }
 
     #[test]
