@@ -264,24 +264,16 @@ export interface SecretStoreStatus {
   unlocked: boolean;
 }
 
-export async function initSecretStore(passphrase: string): Promise<void> {
-  return invoke<void>("init_secret_store", { passphrase });
+export async function autoUnlockSecretStore(): Promise<boolean> {
+  return invoke<boolean>("auto_unlock_secret_store");
 }
 
-export async function unlockSecretStore(passphrase: string): Promise<void> {
-  return invoke<void>("unlock_secret_store", { passphrase });
-}
-
-export async function lockSecretStore(): Promise<void> {
-  return invoke<void>("lock_secret_store");
+export async function migrateSecretStore(oldPassphrase: string): Promise<void> {
+  return invoke<void>("migrate_secret_store", { oldPassphrase });
 }
 
 export async function secretStoreStatus(): Promise<SecretStoreStatus> {
   return invoke<SecretStoreStatus>("secret_store_status");
-}
-
-export async function changeSecretStorePassphrase(oldPassphrase: string, newPassphrase: string): Promise<void> {
-  return invoke<void>("change_secret_store_passphrase", { oldPassphrase, newPassphrase });
 }
 
 // LLM commands

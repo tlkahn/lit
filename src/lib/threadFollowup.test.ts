@@ -12,6 +12,7 @@ import { parseThreadBody } from "./threadBody";
 vi.mock("./ipc", () => ({
   resolveAnnotationScopeWithMode: vi.fn(async () => null),
   secretStoreStatus: vi.fn(async () => ({ exists: true, unlocked: false })),
+  autoUnlockSecretStore: vi.fn(async () => false),
 }));
 
 vi.mock("./llmClient", () => ({
@@ -75,7 +76,7 @@ beforeEach(() => {
   useModalLockStore.setState({ llmLocked: false, openCount: 0, locked: false });
   useStatusMessageStore.setState({ message: null, variant: "success" });
   useSecretStoreStore.getState()._resetSettler();
-  useSecretStoreStore.setState({ exists: true, unlocked: true, loading: false, promptOpen: false });
+  useSecretStoreStore.setState({ exists: true, unlocked: true, loading: false, migrationPromptOpen: false });
 });
 
 afterEach(() => {
@@ -260,12 +261,12 @@ describe("threadFollowup", () => {
   });
 
   it("cancel during setup (before stream starts) releases the lock and clears the spinner", async () => {
-    // Force the function to park on ensureUnlocked: locked store whose unlock
-    // promise never settles (replicates the passphrase-modal window). Refresh
-    // returns { unlocked: false } (mocked secretStoreStatus), so the prompt
-    // opens and the pending promise never resolves during the test.
+    // Force the function to park on ensureUnlocked: locked store whose
+    // auto-unlock returns false (mocked autoUnlockSecretStore), so the
+    // migration prompt opens and the pending promise never resolves during
+    // the test.
     useSecretStoreStore.getState()._resetSettler();
-    useSecretStoreStore.setState({ exists: true, unlocked: false, promptOpen: false });
+    useSecretStoreStore.setState({ exists: true, unlocked: false, migrationPromptOpen: false });
     // Safety net: if the stream were ever started, it must not resolve.
     mockStream.mockImplementation(() => new Promise(() => {}));
     const view = makeView(DOC);

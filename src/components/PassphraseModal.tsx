@@ -1,90 +1,57 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useSecretStoreStore } from "../stores/secretStore";
-import { initSecretStore, unlockSecretStore } from "../lib/ipc";
-
-const MIN_PASSPHRASE_LENGTH = 8;
 
 export function PassphraseModal() {
-  const promptOpen = useSecretStoreStore((s) => s.promptOpen);
-  const exists = useSecretStoreStore((s) => s.exists);
-  const settleUnlock = useSecretStoreStore((s) => s.settleUnlock);
-  const refresh = useSecretStoreStore((s) => s.refresh);
+  const migrationPromptOpen = useSecretStoreStore((s) => s.migrationPromptOpen);
+  const migrate = useSecretStoreStore((s) => s.migrate);
+  const settleMigration = useSecretStoreStore((s) => s.settleMigration);
 
   const [passphrase, setPassphrase] = useState("");
-  const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [showTick, setShowTick] = useState(false);
-  const [dismissed, setDismissed] = useState(false);
-  const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const isInitMode = !exists;
 
   const prevOpenRef = useRef(false);
   useEffect(() => {
-    if (promptOpen && !prevOpenRef.current) {
+    if (migrationPromptOpen && !prevOpenRef.current) {
       setPassphrase("");
-      setConfirm("");
       setError(null);
       setSubmitting(false);
-      setShowTick(false);
-      setDismissed(false);
     }
-    prevOpenRef.current = promptOpen;
-  }, [promptOpen]);
-
-  useEffect(() => {
-    return () => {
-      if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
-    };
-  }, []);
+    prevOpenRef.current = migrationPromptOpen;
+  }, [migrationPromptOpen]);
 
   const handleCancel = useCallback(() => {
-    settleUnlock(false);
-  }, [settleUnlock]);
+    settleMigration(false);
+  }, [settleMigration]);
 
-  const canSubmit = isInitMode
-    ? passphrase.length >= MIN_PASSPHRASE_LENGTH && passphrase === confirm && !submitting
-    : passphrase.length > 0 && !submitting;
+  const canSubmit = passphrase.length > 0 && !submitting;
 
   const passphraseRef = useRef(passphrase);
   passphraseRef.current = passphrase;
   const canSubmitRef = useRef(canSubmit);
   canSubmitRef.current = canSubmit;
-  const dismissedRef = useRef(dismissed);
-  dismissedRef.current = dismissed;
 
   const handleSubmit = useCallback(async () => {
     setSubmitting(true);
-    setShowTick(true);
     setError(null);
     try {
-      if (isInitMode) {
-        await initSecretStore(passphraseRef.current);
-      } else {
-        await unlockSecretStore(passphraseRef.current);
-      }
-      dismissTimerRef.current = setTimeout(() => setDismissed(true), 400);
-      await refresh();
-      if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
-      dismissTimerRef.current = null;
-      settleUnlock(true);
+      await migrate(passphraseRef.current);
     } catch (e) {
-      setShowTick(false);
-      setSubmitting(false);
       const message = e instanceof Error ? e.message : String(e);
       setError(message);
+    } finally {
+      setSubmitting(false);
     }
-  }, [isInitMode, refresh, settleUnlock]);
+  }, [migrate]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !dismissedRef.current) {
+      if (e.key === "Escape") {
         e.stopPropagation();
         handleCancel();
         return;
       }
-      if (e.key === "Enter" && canSubmitRef.current && !dismissedRef.current) {
+      if (e.key === "Enter" && canSubmitRef.current) {
         e.stopPropagation();
         e.preventDefault();
         handleSubmit();
@@ -94,13 +61,12 @@ export function PassphraseModal() {
   );
 
   useEffect(() => {
-    if (!promptOpen) return;
+    if (!migrationPromptOpen) return;
     document.addEventListener("keydown", handleKeyDown, true);
     return () => document.removeEventListener("keydown", handleKeyDown, true);
-  }, [promptOpen, handleKeyDown]);
+  }, [migrationPromptOpen, handleKeyDown]);
 
-  if (!promptOpen) return null;
-  if (dismissed) return null;
+  if (!migrationPromptOpen) return null;
 
   return (
     <div
@@ -113,13 +79,11 @@ export function PassphraseModal() {
         onClick={(e) => e.stopPropagation()}
       >
         <p className="mb-3 text-sm font-medium text-text-normal">
-          {isInitMode ? "Create Passphrase" : "Unlock Secret Store"}
+          Migrate Secret Store
         </p>
-        {isInitMode && (
-          <p className="mb-3 text-xs text-text-muted">
-            Choose a passphrase to encrypt your API keys. You will need it each time you restart the app.
-          </p>
-        )}
+        <p className="mb-3 text-xs text-text-muted">
+          Your API keys were encrypted with a custom passphrase. Enter it to migrate to automatic encryption.
+        </p>
         <input
           type="password"
           className="mb-3 w-full rounded border border-border bg-bg-secondary px-3 py-1.5 text-sm text-text-normal placeholder:text-text-muted outline-none focus:border-accent"
@@ -128,28 +92,10 @@ export function PassphraseModal() {
             setPassphrase(e.target.value);
             setError(null);
           }}
-          placeholder={isInitMode ? "Passphrase" : "Enter passphrase"}
+          placeholder="Enter old passphrase"
           data-testid="passphrase-modal-passphrase"
           autoFocus
         />
-        {isInitMode && (
-          <input
-            type="password"
-            className="mb-3 w-full rounded border border-border bg-bg-secondary px-3 py-1.5 text-sm text-text-normal placeholder:text-text-muted outline-none focus:border-accent"
-            value={confirm}
-            onChange={(e) => {
-              setConfirm(e.target.value);
-              setError(null);
-            }}
-            placeholder="Confirm passphrase"
-            data-testid="passphrase-modal-confirm"
-          />
-        )}
-        {isInitMode && passphrase.length > 0 && passphrase.length < MIN_PASSPHRASE_LENGTH && (
-          <p className="mb-3 text-xs text-text-muted" data-testid="passphrase-modal-hint">
-            Passphrase must be at least {MIN_PASSPHRASE_LENGTH} characters
-          </p>
-        )}
         {error && (
           <p className="mb-3 text-xs text-red-500" data-testid="passphrase-modal-error">
             {error}
@@ -169,11 +115,7 @@ export function PassphraseModal() {
             disabled={!canSubmit}
             data-testid="passphrase-modal-submit"
           >
-            {showTick ? (
-              <span data-testid="passphrase-modal-tick">{""}</span>
-            ) : (
-              isInitMode ? "Create" : "Unlock"
-            )}
+            {submitting ? "Migrating…" : "Migrate"}
           </button>
         </div>
       </div>
