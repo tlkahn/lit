@@ -4,15 +4,9 @@ use tauri::AppHandle;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_updater::UpdaterExt;
 
-/// Process-global flag ensuring only one update check/install runs at a time.
-/// Both the launch-time silent check and the menu-driven interactive check
-/// acquire this guard, so they cannot show duplicate dialogs or race two
-/// concurrent `download_and_install` calls against the same app bundle.
 static UPDATE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
-/// RAII guard for `UPDATE_IN_PROGRESS`. `acquire` returns `Some` only when no
-/// other check is in flight; dropping it releases the flag, so every early
-/// return or `await` error path frees the lock automatically.
+#[must_use = "update guard is released immediately when dropped"]
 struct UpdateGuard;
 
 impl UpdateGuard {
