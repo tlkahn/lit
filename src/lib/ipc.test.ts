@@ -103,11 +103,9 @@ import {
   detectPandoc,
   exportDocument,
   type SecretStoreStatus,
-  initSecretStore,
-  unlockSecretStore,
-  lockSecretStore,
+  autoUnlockSecretStore,
+  migrateSecretStore,
   secretStoreStatus,
-  changeSecretStorePassphrase,
 } from "./ipc";
 
 const sampleMeta = {
@@ -594,16 +592,12 @@ describe("ipc", () => {
             stderr: "",
             latex_errors: [],
           };
-        case "init_secret_store":
-          return null;
-        case "unlock_secret_store":
-          return null;
-        case "lock_secret_store":
+        case "auto_unlock_secret_store":
+          return true;
+        case "migrate_secret_store":
           return null;
         case "secret_store_status":
-          return { exists: true, unlocked: false };
-        case "change_secret_store_passphrase":
-          return null;
+          return { exists: true, unlocked: true };
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -1807,39 +1801,27 @@ describe("ipc", () => {
     });
   });
 
-  it("initSecretStore invokes init_secret_store with passphrase", async () => {
-    await initSecretStore("my-secret-passphrase");
+  it("autoUnlockSecretStore invokes auto_unlock_secret_store", async () => {
+    const result = await autoUnlockSecretStore();
+    expect(result).toBe(true);
     const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("init_secret_store", { passphrase: "my-secret-passphrase" });
+    expect(invoke).toHaveBeenCalledWith("auto_unlock_secret_store");
   });
 
-  it("unlockSecretStore invokes unlock_secret_store with passphrase", async () => {
-    await unlockSecretStore("my-secret-passphrase");
+  it("migrateSecretStore invokes migrate_secret_store with oldPassphrase", async () => {
+    await migrateSecretStore("old-pass");
     const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("unlock_secret_store", { passphrase: "my-secret-passphrase" });
+    expect(invoke).toHaveBeenCalledWith("migrate_secret_store", { oldPassphrase: "old-pass" });
   });
 
-  it("lockSecretStore invokes lock_secret_store", async () => {
-    await lockSecretStore();
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("lock_secret_store");
-  });
-
-  it("secretStoreStatus returns SecretStoreStatus", async () => {
+  it("secretStoreStatus returns SecretStoreStatus with exists and unlocked", async () => {
     const status: SecretStoreStatus = await secretStoreStatus();
     expect(status.exists).toBe(true);
-    expect(status.unlocked).toBe(false);
+    expect(status.unlocked).toBe(true);
+    expect(Object.keys(status).sort()).toEqual(["exists", "unlocked"]);
+    expect("needsMigration" in status).toBe(false);
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("secret_store_status");
-  });
-
-  it("changeSecretStorePassphrase invokes change_secret_store_passphrase", async () => {
-    await changeSecretStorePassphrase("old-pass", "new-pass");
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("change_secret_store_passphrase", {
-      oldPassphrase: "old-pass",
-      newPassphrase: "new-pass",
-    });
   });
 
 });

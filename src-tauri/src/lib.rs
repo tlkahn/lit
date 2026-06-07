@@ -135,6 +135,7 @@ pub fn run() {
                 .app_data_dir()
                 .expect("failed to resolve app data dir");
             let enc_store = std::sync::Arc::new(EncryptedFileStore::new(data_dir.clone()));
+            let _ = enc_store.auto_unlock();
             app.manage(enc_store.clone() as Arc<dyn CredentialStore>);
             app.manage(enc_store);
             let license_verifying_key =
@@ -361,11 +362,9 @@ pub fn run() {
             commands::credential::get_api_key,
             commands::credential::has_api_key,
             commands::credential::delete_api_key,
-            commands::credential::init_secret_store,
-            commands::credential::unlock_secret_store,
-            commands::credential::lock_secret_store,
+            commands::credential::auto_unlock_secret_store,
+            commands::credential::migrate_secret_store,
             commands::credential::secret_store_status,
-            commands::credential::change_secret_store_passphrase,
             commands::trash::trash_page,
             commands::trash::restore_page,
             commands::trash::purge_page,

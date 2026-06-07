@@ -3,12 +3,11 @@ import { useSecretStoreStore } from "./secretStore";
 import { mockInvoke } from "../test/tauri-mock";
 
 function resetStore() {
-  // Reset the store state including settler fields (now part of the store)
   useSecretStoreStore.setState({
     exists: false,
     unlocked: false,
     loading: false,
-    promptOpen: false,
+    migrationPromptOpen: false,
     _settler: null,
     _pendingPromise: null,
   });
@@ -32,8 +31,8 @@ describe("secretStore store", () => {
       expect(useSecretStoreStore.getState().loading).toBe(false);
     });
 
-    it("starts with promptOpen false", () => {
-      expect(useSecretStoreStore.getState().promptOpen).toBe(false);
+    it("starts with migrationPromptOpen false", () => {
+      expect(useSecretStoreStore.getState().migrationPromptOpen).toBe(false);
     });
   });
 
@@ -114,12 +113,27 @@ describe("secretStore store", () => {
       useSecretStoreStore.setState({ exists: true, unlocked: true });
 
       await useSecretStoreStore.getState().ensureUnlocked();
-      // Should not open prompt
-      expect(useSecretStoreStore.getState().promptOpen).toBe(false);
+      // Should not open migration prompt
+      expect(useSecretStoreStore.getState().migrationPromptOpen).toBe(false);
     });
 
-    it("sets promptOpen true when locked", async () => {
+    it("resolves without prompt when auto-unlock succeeds", async () => {
       mockInvoke((cmd) => {
+        if (cmd === "auto_unlock_secret_store") return true;
+        if (cmd === "secret_store_status") return { exists: true, unlocked: true };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      useSecretStoreStore.setState({ exists: true, unlocked: false });
+
+      await useSecretStoreStore.getState().ensureUnlocked();
+
+      expect(useSecretStoreStore.getState().migrationPromptOpen).toBe(false);
+      expect(useSecretStoreStore.getState().unlocked).toBe(true);
+    });
+
+    it("opens migration prompt when auto-unlock returns false", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "auto_unlock_secret_store") return false;
         if (cmd === "secret_store_status") return { exists: true, unlocked: false };
         throw new Error(`Unknown command: ${cmd}`);
       });
@@ -127,67 +141,47 @@ describe("secretStore store", () => {
 
       const promise = useSecretStoreStore.getState().ensureUnlocked();
       await vi.waitFor(() => {
-        expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+        expect(useSecretStoreStore.getState().migrationPromptOpen).toBe(true);
       });
 
-      useSecretStoreStore.getState().settleUnlock(false);
+      useSecretStoreStore.getState().settleMigration(false);
       promise.catch(() => {});
     });
 
-    it("opens prompt in init mode when store does not exist yet", async () => {
+    it("opens migration prompt when auto-unlock throws", async () => {
       mockInvoke((cmd) => {
-        if (cmd === "secret_store_status") return { exists: false, unlocked: false };
+        if (cmd === "auto_unlock_secret_store") throw new Error("auto-unlock failed");
+        if (cmd === "secret_store_status") return { exists: true, unlocked: false };
         throw new Error(`Unknown command: ${cmd}`);
       });
-      useSecretStoreStore.setState({ exists: false, unlocked: false });
+      useSecretStoreStore.setState({ exists: true, unlocked: false });
 
       const promise = useSecretStoreStore.getState().ensureUnlocked();
       await vi.waitFor(() => {
-        expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+        expect(useSecretStoreStore.getState().migrationPromptOpen).toBe(true);
       });
 
-      useSecretStoreStore.getState().settleUnlock(false);
+      useSecretStoreStore.getState().settleMigration(false);
       promise.catch(() => {});
     });
 
-    it("resolves when settleUnlock(true) is called in init mode (no store yet)", async () => {
+    it("resolves when auto-unlock throws but refresh reveals unlocked", async () => {
       mockInvoke((cmd) => {
-        if (cmd === "secret_store_status") return { exists: false, unlocked: false };
+        if (cmd === "auto_unlock_secret_store") throw new Error("auto-unlock failed");
+        if (cmd === "secret_store_status") return { exists: true, unlocked: true };
         throw new Error(`Unknown command: ${cmd}`);
       });
-      useSecretStoreStore.setState({ exists: false, unlocked: false });
+      useSecretStoreStore.setState({ exists: true, unlocked: false });
 
-      const promise = useSecretStoreStore.getState().ensureUnlocked();
-      await vi.waitFor(() => {
-        expect(useSecretStoreStore.getState().promptOpen).toBe(true);
-      });
+      await useSecretStoreStore.getState().ensureUnlocked();
 
-      useSecretStoreStore.getState().settleUnlock(true);
-
-      await expect(promise).resolves.toBeUndefined();
-      expect(useSecretStoreStore.getState().promptOpen).toBe(false);
+      expect(useSecretStoreStore.getState().migrationPromptOpen).toBe(false);
+      expect(useSecretStoreStore.getState().unlocked).toBe(true);
     });
 
-    it("rejects when settleUnlock(false) is called in init mode (no store yet)", async () => {
+    it("resolves when settleMigration(true) is called", async () => {
       mockInvoke((cmd) => {
-        if (cmd === "secret_store_status") return { exists: false, unlocked: false };
-        throw new Error(`Unknown command: ${cmd}`);
-      });
-      useSecretStoreStore.setState({ exists: false, unlocked: false });
-
-      const promise = useSecretStoreStore.getState().ensureUnlocked();
-      await vi.waitFor(() => {
-        expect(useSecretStoreStore.getState().promptOpen).toBe(true);
-      });
-
-      useSecretStoreStore.getState().settleUnlock(false);
-
-      await expect(promise).rejects.toThrow("Passphrase entry cancelled");
-      expect(useSecretStoreStore.getState().promptOpen).toBe(false);
-    });
-
-    it("resolves when settleUnlock(true) is called", async () => {
-      mockInvoke((cmd) => {
+        if (cmd === "auto_unlock_secret_store") return false;
         if (cmd === "secret_store_status") return { exists: true, unlocked: false };
         throw new Error(`Unknown command: ${cmd}`);
       });
@@ -195,17 +189,18 @@ describe("secretStore store", () => {
 
       const promise = useSecretStoreStore.getState().ensureUnlocked();
       await vi.waitFor(() => {
-        expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+        expect(useSecretStoreStore.getState().migrationPromptOpen).toBe(true);
       });
 
-      useSecretStoreStore.getState().settleUnlock(true);
+      useSecretStoreStore.getState().settleMigration(true);
 
       await expect(promise).resolves.toBeUndefined();
-      expect(useSecretStoreStore.getState().promptOpen).toBe(false);
+      expect(useSecretStoreStore.getState().migrationPromptOpen).toBe(false);
     });
 
-    it("rejects when settleUnlock(false) is called", async () => {
+    it("rejects when settleMigration(false) is called", async () => {
       mockInvoke((cmd) => {
+        if (cmd === "auto_unlock_secret_store") return false;
         if (cmd === "secret_store_status") return { exists: true, unlocked: false };
         throw new Error(`Unknown command: ${cmd}`);
       });
@@ -213,17 +208,18 @@ describe("secretStore store", () => {
 
       const promise = useSecretStoreStore.getState().ensureUnlocked();
       await vi.waitFor(() => {
-        expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+        expect(useSecretStoreStore.getState().migrationPromptOpen).toBe(true);
       });
 
-      useSecretStoreStore.getState().settleUnlock(false);
+      useSecretStoreStore.getState().settleMigration(false);
 
-      await expect(promise).rejects.toThrow("Passphrase entry cancelled");
-      expect(useSecretStoreStore.getState().promptOpen).toBe(false);
+      await expect(promise).rejects.toThrow("Migration cancelled");
+      expect(useSecretStoreStore.getState().migrationPromptOpen).toBe(false);
     });
 
     it("multiple ensureUnlocked calls return the same promise", () => {
       mockInvoke((cmd) => {
+        if (cmd === "auto_unlock_secret_store") return false;
         if (cmd === "secret_store_status") return { exists: true, unlocked: false };
         throw new Error(`Unknown command: ${cmd}`);
       });
@@ -235,49 +231,20 @@ describe("secretStore store", () => {
       expect(p1).toBe(p2);
 
       // Clean up
-      useSecretStoreStore.getState().settleUnlock(false);
+      useSecretStoreStore.getState().settleMigration(false);
       p1.catch(() => {});
       p2.catch(() => {});
     });
 
-    it("resolves without prompt when refresh reveals already unlocked", async () => {
-      mockInvoke((cmd) => {
-        if (cmd === "secret_store_status") return { exists: true, unlocked: true };
-        throw new Error(`Unknown command: ${cmd}`);
-      });
-      useSecretStoreStore.setState({ exists: false, unlocked: false });
-
-      const promise = useSecretStoreStore.getState().ensureUnlocked();
-      await expect(promise).resolves.toBeUndefined();
-      expect(useSecretStoreStore.getState().promptOpen).toBe(false);
-    });
-
-    it("refresh updates exists before opening prompt so modal shows correct mode", async () => {
-      mockInvoke((cmd) => {
-        if (cmd === "secret_store_status") return { exists: true, unlocked: false };
-        throw new Error(`Unknown command: ${cmd}`);
-      });
-      useSecretStoreStore.setState({ exists: false, unlocked: false });
-
-      const promise = useSecretStoreStore.getState().ensureUnlocked();
-      await vi.waitFor(() => {
-        expect(useSecretStoreStore.getState().promptOpen).toBe(true);
-      });
-
-      expect(useSecretStoreStore.getState().exists).toBe(true);
-
-      useSecretStoreStore.getState().settleUnlock(false);
-      promise.catch(() => {});
-    });
-
-    it("settleUnlock with no pending promise is a no-op", () => {
+    it("settleMigration with no pending promise is a no-op", () => {
       // Should not throw
-      useSecretStoreStore.getState().settleUnlock(true);
-      expect(useSecretStoreStore.getState().promptOpen).toBe(false);
+      useSecretStoreStore.getState().settleMigration(true);
+      expect(useSecretStoreStore.getState().migrationPromptOpen).toBe(false);
     });
 
     it("setState with _settler and _pendingPromise null clears pending unlock", async () => {
       mockInvoke((cmd) => {
+        if (cmd === "auto_unlock_secret_store") return false;
         if (cmd === "secret_store_status") return { exists: true, unlocked: false };
         throw new Error(`Unknown command: ${cmd}`);
       });
@@ -285,11 +252,11 @@ describe("secretStore store", () => {
 
       const p1 = useSecretStoreStore.getState().ensureUnlocked();
       await vi.waitFor(() => {
-        expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+        expect(useSecretStoreStore.getState().migrationPromptOpen).toBe(true);
       });
 
       useSecretStoreStore.setState({
-        promptOpen: false,
+        migrationPromptOpen: false,
         _settler: null,
         _pendingPromise: null,
       });
@@ -297,14 +264,13 @@ describe("secretStore store", () => {
       const p2 = useSecretStoreStore.getState().ensureUnlocked();
       expect(p2).not.toBe(p1);
 
-      useSecretStoreStore.getState().settleUnlock(false);
+      useSecretStoreStore.getState().settleMigration(false);
       p1.catch(() => {});
       p2.catch(() => {});
     });
 
     it("settler state is accessible via getState", () => {
       const state = useSecretStoreStore.getState();
-      // After the fix, these properties exist on the store state
       expect(state).toHaveProperty("_settler");
       expect(state).toHaveProperty("_pendingPromise");
       expect(state._settler).toBeNull();
@@ -313,6 +279,7 @@ describe("secretStore store", () => {
 
     it("after settling, a new ensureUnlocked creates a fresh promise", async () => {
       mockInvoke((cmd) => {
+        if (cmd === "auto_unlock_secret_store") return false;
         if (cmd === "secret_store_status") return { exists: true, unlocked: false };
         throw new Error(`Unknown command: ${cmd}`);
       });
@@ -320,19 +287,107 @@ describe("secretStore store", () => {
 
       const p1 = useSecretStoreStore.getState().ensureUnlocked();
       await vi.waitFor(() => {
-        expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+        expect(useSecretStoreStore.getState().migrationPromptOpen).toBe(true);
       });
-      useSecretStoreStore.getState().settleUnlock(false);
+      useSecretStoreStore.getState().settleMigration(false);
       await p1.catch(() => {});
 
       const p2 = useSecretStoreStore.getState().ensureUnlocked();
       expect(p2).not.toBe(p1);
 
       await vi.waitFor(() => {
-        expect(useSecretStoreStore.getState().promptOpen).toBe(true);
+        expect(useSecretStoreStore.getState().migrationPromptOpen).toBe(true);
       });
-      useSecretStoreStore.getState().settleUnlock(true);
+      useSecretStoreStore.getState().settleMigration(true);
       await expect(p2).resolves.toBeUndefined();
+    });
+  });
+
+  describe("migrate", () => {
+    it("settles the pending unlock on the happy path", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "auto_unlock_secret_store") return false;
+        if (cmd === "migrate_secret_store") return undefined;
+        if (cmd === "secret_store_status") return { exists: true, unlocked: true };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      useSecretStoreStore.setState({ exists: true, unlocked: false });
+
+      // Drive a real pending unlock so a settler exists.
+      const promise = useSecretStoreStore.getState().ensureUnlocked();
+      await vi.waitFor(() => {
+        expect(useSecretStoreStore.getState().migrationPromptOpen).toBe(true);
+      });
+
+      await useSecretStoreStore.getState().migrate("oldpass");
+
+      await expect(promise).resolves.toBeUndefined();
+      const state = useSecretStoreStore.getState();
+      expect(state.unlocked).toBe(true);
+      expect(state.migrationPromptOpen).toBe(false);
+      expect(state._settler).toBeNull();
+      expect(state._pendingPromise).toBeNull();
+    });
+
+    it("still settles the pending unlock when refresh rejects after a successful migration", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "auto_unlock_secret_store") return false;
+        if (cmd === "migrate_secret_store") return undefined;
+        if (cmd === "secret_store_status") return { exists: true, unlocked: false };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      useSecretStoreStore.setState({ exists: true, unlocked: false });
+
+      const promise = useSecretStoreStore.getState().ensureUnlocked();
+      await vi.waitFor(() => {
+        expect(useSecretStoreStore.getState().migrationPromptOpen).toBe(true);
+      });
+
+      // Force the post-migration refresh to reject; the backend migration
+      // already succeeded, so the pending unlock must still settle.
+      const origRefresh = useSecretStoreStore.getState().refresh;
+      useSecretStoreStore.setState({
+        refresh: () => Promise.reject(new Error("refresh boom")),
+      });
+      try {
+        await useSecretStoreStore.getState().migrate("oldpass");
+
+        await expect(promise).resolves.toBeUndefined();
+        const state = useSecretStoreStore.getState();
+        expect(state.migrationPromptOpen).toBe(false);
+        expect(state._settler).toBeNull();
+        expect(state._pendingPromise).toBeNull();
+      } finally {
+        useSecretStoreStore.setState({ refresh: origRefresh });
+      }
+    });
+
+    it("rejects and leaves the pending unlock open when the backend migration fails", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "auto_unlock_secret_store") return false;
+        if (cmd === "migrate_secret_store") throw new Error("bad passphrase");
+        if (cmd === "secret_store_status") return { exists: true, unlocked: false };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      useSecretStoreStore.setState({ exists: true, unlocked: false });
+
+      const promise = useSecretStoreStore.getState().ensureUnlocked();
+      await vi.waitFor(() => {
+        expect(useSecretStoreStore.getState().migrationPromptOpen).toBe(true);
+      });
+
+      await expect(useSecretStoreStore.getState().migrate("bad")).rejects.toThrow(
+        "bad passphrase",
+      );
+
+      // Backend migration failed: keep the modal open so the user can retry.
+      const state = useSecretStoreStore.getState();
+      expect(state._settler).not.toBeNull();
+      expect(state.migrationPromptOpen).toBe(true);
+
+      // Clean up the still-pending unlock.
+      useSecretStoreStore.getState().settleMigration(false);
+      promise.catch(() => {});
     });
   });
 });

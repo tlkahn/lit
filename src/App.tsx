@@ -378,8 +378,8 @@ function App() {
   useModalLock(mergePreviewOpen);
   useModalLock(splitPreviewOpen);
 
-  const passphrasePromptOpen = useSecretStoreStore((s) => s.promptOpen);
-  useModalLock(passphrasePromptOpen);
+  const migrationPromptOpen = useSecretStoreStore((s) => s.migrationPromptOpen);
+  useModalLock(migrationPromptOpen);
 
   useEffect(() => {
     const handler = () => setQuickSwitcherOpen((prev) => !prev);

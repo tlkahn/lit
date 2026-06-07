@@ -10,6 +10,7 @@ import { firingAnnotationsField, firingRangeField, clearFiringAnnotation } from 
 vi.mock("./ipc", () => ({
   resolveAnnotationScopeWithMode: vi.fn(async () => null),
   secretStoreStatus: vi.fn(async () => ({ exists: true, unlocked: false })),
+  autoUnlockSecretStore: vi.fn(async () => false),
 }));
 
 vi.mock("./llmClient", () => ({
@@ -59,7 +60,7 @@ beforeEach(() => {
   useModalLockStore.setState({ llmLocked: false, openCount: 0, locked: false });
   useStatusMessageStore.setState({ message: null, variant: "success" });
   useSecretStoreStore.getState()._resetSettler();
-  useSecretStoreStore.setState({ exists: true, unlocked: true, loading: false, promptOpen: false });
+  useSecretStoreStore.setState({ exists: true, unlocked: true, loading: false, migrationPromptOpen: false });
 });
 
 afterEach(() => {
@@ -323,8 +324,8 @@ describe("withLlmStream", () => {
     });
     await flush();
 
-    expect(useSecretStoreStore.getState().promptOpen).toBe(true);
-    useSecretStoreStore.getState().settleUnlock(false);
+    expect(useSecretStoreStore.getState().migrationPromptOpen).toBe(true);
+    useSecretStoreStore.getState().settleMigration(false);
     await promise;
 
     expect(mockStream).not.toHaveBeenCalled();
