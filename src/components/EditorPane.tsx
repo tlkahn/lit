@@ -70,13 +70,18 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
   const handleSelectionChange = useCallback((line: number, col: number) => {
     useCursorInfoStore.getState().setCursorInfo(line, col);
 
-    // Forward sync (md -> PDF): if this editor pane is linked to a PDF pane,
-    // jump the PDF to the page whose marker precedes the cursor. The real char
-    // offset is not available from (line, col) — read it from the live view.
     const linked = usePanePdfLinkStore.getState().getLinkedPane(paneId);
-    if (!linked) return;
+    if (!linked) {
+      // Only log once per second to avoid flooding
+      console.log("[sync:fwd:editor] no linked pane for %s", paneId);
+      return;
+    }
     const view = getPaneView(paneId);
-    if (!view) return;
+    if (!view) {
+      console.log("[sync:fwd:editor] no EditorView for %s", paneId);
+      return;
+    }
+    console.log("[sync:fwd:editor] selection changed L%d:C%d, linked=%s", line, col, linked);
     dispatchForwardSync({
       // The offset and markers are read inside this fire-time callback (not at
       // schedule time) so a document edit during the debounce window — one that
@@ -97,22 +102,19 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
       // (it consults the panePdfLink store), so reverse sync (PDF -> md) cannot
       // bounce back into forward sync. No guard wrapping needed here.
       goToPage: (pageIndex) => {
-        // Re-read the link at FIRE time, not the schedule-time `linked` capture:
-        // if the user unlinks during the debounce window, syncEnabled stays true
-        // and the echo guard passes, so without this re-check forward sync would
-        // navigate a PDF pane that is no longer linked. Mirrors the fire-time
-        // syncEnabled re-check in forwardSync.ts. Bail out before minting any
-        // token so no clearForwardSync timeout is scheduled.
         const linkedNow = usePanePdfLinkStore.getState().getLinkedPane(paneId);
-        if (!linkedNow) return;
+        if (!linkedNow) {
+          console.log("[sync:fwd:goToPage] BAIL — link gone at fire time");
+          return;
+        }
+        const goFn = getPdfGoToPage(linkedNow);
+        if (!goFn) {
+          console.log("[sync:fwd:goToPage] BAIL — no goToPage registered for pane %s", linkedNow);
+          return;
+        }
+        console.log("[sync:fwd:goToPage] driving PDF pane %s to page %d", linkedNow, pageIndex);
         const token = markForwardSync(linkedNow);
-        getPdfGoToPage(linkedNow)?.(pageIndex);
-        // Safety net: if goToPage's same-page guard returned early without
-        // firing onPageChange, the flag would linger. The cleanup is token-
-        // scoped, so it only clears this navigation's flag — and only if no
-        // newer navigation or (slow) onPageChange has already replaced/consumed
-        // it. This makes a late timeout a no-op instead of clobbering a slow
-        // real navigation's in-flight flag (which would cause a cursor bounce).
+        goFn(pageIndex);
         setTimeout(() => clearForwardSync(linkedNow, token), 500);
       },
     });
