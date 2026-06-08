@@ -78,7 +78,7 @@ export async function fireAnnotation(args: FireAnnotationArgs): Promise<void> {
         model: prefs.llmProvider.model,
         text,
         system: system || undefined,
-        baseUrl: prefs.llmProvider.baseUrl,
+        baseUrl: prefs.llmProvider.baseUrl ?? customDef?.baseUrl,
         contextWindow: customDef?.contextWindow,
       };
     },

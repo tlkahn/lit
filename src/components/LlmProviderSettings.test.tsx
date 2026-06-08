@@ -4,6 +4,7 @@ import { LlmProviderSettings } from "./LlmProviderSettings";
 import { mockInvoke } from "../test/tauri-mock";
 import { usePreferencesStore } from "../stores/preferences";
 import * as prefs from "../stores/preferences";
+import * as ipc from "../lib/ipc";
 import { PROVIDER_ORDER, getMergedProviderOrder } from "../lib/providerRegistry";
 import type { CustomProviderDef } from "../lib/providerRegistry";
 import { useSecretStoreStore } from "../stores/secretStore";
@@ -152,6 +153,33 @@ describe("LlmProviderSettings", () => {
     await vi.waitFor(() => {
       expect(invokeCalls).toContainEqual({ cmd: "has_api_key", args: { provider: "groq" } });
     });
+  });
+
+  it("rapid provider switches: last selection wins even if earlier has_api_key resolves later", async () => {
+    let resolveOpenai!: (v: boolean) => void;
+    let resolveGroq!: (v: boolean) => void;
+    const d1 = new Promise<boolean>((r) => { resolveOpenai = r; });
+    const d2 = new Promise<boolean>((r) => { resolveGroq = r; });
+    const spy = vi.spyOn(ipc, "hasApiKey").mockImplementation((provider: string) => {
+      if (provider === "openai") return d1;
+      if (provider === "groq") return d2;
+      return Promise.resolve(false);
+    });
+
+    const { container } = render(<LlmProviderSettings ensureUnlocked={ensureUnlocked} />);
+    const select = container.querySelector("[data-testid='settings-llmProvider']")!;
+
+    fireEvent.change(select, { target: { value: "openai" } });
+    fireEvent.change(select, { target: { value: "groq" } });
+
+    // Resolve the LATER request first, then the EARLIER one out of order.
+    await act(async () => { resolveGroq(false); await d2; });
+    await act(async () => { resolveOpenai(true); await d1; });
+
+    const provider = usePreferencesStore.getState().llmProvider;
+    expect(provider.providerId).toBe("groq");
+    expect(provider.model).toBe("llama-3.3-70b-versatile");
+    spy.mockRestore();
   });
 
   it("dropdown options follow merged provider order including custom providers", () => {

@@ -76,7 +76,8 @@ function App() {
   const syncFromPreferences = useThemeStore((s) => s.syncFromPreferences);
   const sidebarVisible = usePreferencesStore((s) => s.sidebarVisible);
   const llmEnabled = usePreferencesStore((s) =>
-    s.llmProvider.apiKeySet || !providerNeedsApiKey(s.llmProvider.providerId)
+    s.llmProvider.apiKeySet ||
+    !providerNeedsApiKey(s.llmProvider.providerId, s.llmCustomProviders)
   );
   const focusModeActive = useFocusModeStore((s) => s.active);
   const toggleFocusMode = useFocusModeStore((s) => s.toggleFocusMode);

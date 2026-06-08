@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
 import type { DarkModePref, ViewMode, Preferences } from "../lib/ipc";
-import { getPreferences, setPreference, deleteApiKey } from "../lib/ipc";
+import { getPreferences, setPreference, deleteApiKey, hasApiKey } from "../lib/ipc";
 import type { AnnotationBuilderDefaults } from "../lib/annotationBuilderDefaults";
 import { isValidBuilderDefaults } from "../lib/annotationBuilderDefaults";
 import { providerIdForModel } from "../lib/providerRegistry";
@@ -272,6 +272,27 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
     try {
       const prefs = await getPreferences();
       set({ ...mapPreferences(prefs), loaded: true });
+
+      // Reconcile apiKeySet against the real credential store. migrateLlmProvider
+      // hard-codes apiKeySet:false for legacy users, so upgraded users with a
+      // saved key would otherwise have LLM features disabled until they open
+      // Settings. Fire-and-forget so caller resolution timing is unchanged.
+      const checkedProviderId = usePreferencesStore.getState().llmProvider.providerId;
+      hasApiKey(checkedProviderId)
+        .then((has) => {
+          // Only upgrade to true — never clobber. A locked-but-existing secret
+          // store returns false for every provider; downgrading here would be a
+          // false negative (SettingsModal corrects it once unlocked).
+          if (!has) return;
+          // Skip if the provider changed during the async window (e.g. a
+          // preferences://changed event or user provider switch).
+          set((prev) =>
+            prev.llmProvider.providerId === checkedProviderId
+              ? { llmProvider: { ...prev.llmProvider, apiKeySet: true } }
+              : {},
+          );
+        })
+        .catch(() => {});
     } catch {
       set({ loaded: true });
     }

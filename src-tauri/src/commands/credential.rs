@@ -424,14 +424,14 @@ fn account_for_provider(provider: &str) -> Result<String, String> {
     match provider {
         "openai" => Ok(ACCOUNT_OPENAI.to_string()),
         "anthropic" => Ok(ACCOUNT_ANTHROPIC.to_string()),
-        "openrouter" => Ok("openrouter-api-key".to_string()),
-        "ollama" => Ok("ollama-api-key".to_string()),
-        "groq" => Ok("groq-api-key".to_string()),
-        "deepseek" => Ok("deepseek-api-key".to_string()),
-        "gemini" => Ok("gemini-api-key".to_string()),
-        "mistral" => Ok("mistral-api-key".to_string()),
-        "together" => Ok("together-api-key".to_string()),
-        _ if provider.starts_with("custom-") => Ok(format!("{}-api-key", provider)),
+        // Any registry-known provider or a custom-* slug derives its account from
+        // the id directly, so adding a provider to provider_registry::REGISTRY
+        // requires no second edit here.
+        _ if crate::provider_registry::lookup(provider).is_some()
+            || provider.starts_with("custom-") =>
+        {
+            Ok(format!("{}-api-key", provider))
+        }
         _ => Err(format!("Unknown provider: {}", provider)),
     }
 }
@@ -653,6 +653,33 @@ mod tests {
     #[test]
     fn test_account_for_together() {
         assert_eq!(account_for_provider("together"), Ok("together-api-key".to_string()));
+    }
+
+    #[test]
+    fn test_account_for_every_registry_provider() {
+        // The credential account mapping must be registry-driven: every provider
+        // the registry knows about resolves to an account, with openai/anthropic
+        // mapping to their distinct constants and all others to "{id}-api-key".
+        // This fails if a registry provider lacks coverage in account_for_provider,
+        // catching the silent "Unknown provider" regression when a new provider is
+        // added to REGISTRY without a corresponding match arm.
+        for id in crate::provider_registry::ids() {
+            let expected = match id {
+                "openai" => ACCOUNT_OPENAI.to_string(),
+                "anthropic" => ACCOUNT_ANTHROPIC.to_string(),
+                _ => format!("{}-api-key", id),
+            };
+            assert_eq!(
+                account_for_provider(id),
+                Ok(expected),
+                "provider {id} must resolve to a credential account"
+            );
+        }
+        assert_eq!(account_for_provider("openai"), Ok(ACCOUNT_OPENAI.to_string()));
+        assert_eq!(
+            account_for_provider("anthropic"),
+            Ok(ACCOUNT_ANTHROPIC.to_string())
+        );
     }
 
     #[test]

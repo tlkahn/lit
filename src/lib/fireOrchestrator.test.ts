@@ -720,6 +720,38 @@ describe("fireAnnotation", () => {
     view.destroy();
   });
 
+  it("uses custom provider def baseUrl when no manual override is set", async () => {
+    usePreferencesStore.setState({
+      llmProvider: { providerId: "custom-vllm", model: "m", apiKeySet: false },
+      llmCustomProviders: [
+        { id: "custom-vllm", name: "vLLM", baseUrl: "http://localhost:8000/v1", needsApiKey: false, modelId: "m", contextWindow: 8000 },
+      ],
+    });
+    const view = makeView();
+    const ann = makeAnnotation({ annotation_type: "llm" });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    expect(mockStream.mock.calls[0]![0].baseUrl).toBe("http://localhost:8000/v1");
+    view.destroy();
+  });
+
+  it("manual override baseUrl wins over custom provider def baseUrl", async () => {
+    usePreferencesStore.setState({
+      llmProvider: { providerId: "custom-vllm", model: "m", baseUrl: "http://override", apiKeySet: false },
+      llmCustomProviders: [
+        { id: "custom-vllm", name: "vLLM", baseUrl: "http://localhost:8000/v1", needsApiKey: false, modelId: "m", contextWindow: 8000 },
+      ],
+    });
+    const view = makeView();
+    const ann = makeAnnotation({ annotation_type: "llm" });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    expect(mockStream.mock.calls[0]![0].baseUrl).toBe("http://override");
+    view.destroy();
+  });
+
   it("does NOT set contextWindow for a built-in provider", async () => {
     usePreferencesStore.setState({
       llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", apiKeySet: false },

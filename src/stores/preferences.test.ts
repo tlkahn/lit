@@ -1287,6 +1287,57 @@ describe("PreferencesStore", () => {
     expect(state.llmProvider.apiKeySet).toBe(false);
   });
 
+  it("loadPreferences corrects apiKeySet via has_api_key for legacy users with a saved key", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "llm.model": "claude-sonnet-4-6",
+        };
+      }
+      if (cmd === "has_api_key") {
+        return true;
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    // Flush the fire-and-forget has_api_key check that runs after the set().
+    await new Promise((r) => setTimeout(r, 0));
+
+    const state = usePreferencesStore.getState();
+    expect(state.llmProvider.providerId).toBe("anthropic");
+    expect(state.llmProvider.apiKeySet).toBe(true);
+  });
+
+  it("loadPreferences leaves apiKeySet false when has_api_key returns false", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "llm.model": "claude-sonnet-4-6",
+        };
+      }
+      if (cmd === "has_api_key") {
+        return false;
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    await new Promise((r) => setTimeout(r, 0));
+
+    const state = usePreferencesStore.getState();
+    expect(state.llmProvider.providerId).toBe("anthropic");
+    expect(state.llmProvider.apiKeySet).toBe(false);
+  });
+
   it("maps invalid annotations.builderDefaults to null", async () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {

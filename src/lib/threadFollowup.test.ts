@@ -382,6 +382,36 @@ describe("threadFollowup", () => {
     view.destroy();
   });
 
+  it("uses custom provider def baseUrl when no manual override is set", async () => {
+    usePreferencesStore.setState({
+      llmProvider: { providerId: "custom-vllm", model: "m", apiKeySet: false },
+      llmCustomProviders: [
+        { id: "custom-vllm", name: "vLLM", baseUrl: "http://localhost:8000/v1", needsApiKey: false, modelId: "m", contextWindow: 8000 },
+      ],
+    });
+    const view = makeView(DOC);
+
+    await threadFollowup({ view, annotation: makeThreadAnnotation(), question: "C" });
+
+    expect(mockStream.mock.calls[0]![0].baseUrl).toBe("http://localhost:8000/v1");
+    view.destroy();
+  });
+
+  it("manual override baseUrl wins over custom provider def baseUrl", async () => {
+    usePreferencesStore.setState({
+      llmProvider: { providerId: "custom-vllm", model: "m", baseUrl: "http://override", apiKeySet: false },
+      llmCustomProviders: [
+        { id: "custom-vllm", name: "vLLM", baseUrl: "http://localhost:8000/v1", needsApiKey: false, modelId: "m", contextWindow: 8000 },
+      ],
+    });
+    const view = makeView(DOC);
+
+    await threadFollowup({ view, annotation: makeThreadAnnotation(), question: "C" });
+
+    expect(mockStream.mock.calls[0]![0].baseUrl).toBe("http://override");
+    view.destroy();
+  });
+
   it("the appended turn is parseable as a new last turn", async () => {
     mockStream.mockImplementation(async (_a: unknown, cb: { onChunk: (t: string) => void; onDone: () => void }) => {
       cb.onChunk("answer C");

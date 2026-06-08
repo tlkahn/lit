@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { usePreferencesStore, setLlmProvider, removeCustomProvider } from "../stores/preferences";
 import { PROVIDER_ORDER, getMergedRegistry, getMergedProviderOrder } from "../lib/providerRegistry";
 import { setApiKey, deleteApiKey, hasApiKey } from "../lib/ipc";
@@ -20,6 +20,7 @@ export function LlmProviderSettings({ ensureUnlocked }: LlmProviderSettingsProps
   const [localBaseUrl, setLocalBaseUrl] = useState(llmProvider.baseUrl ?? "");
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState(false);
+  const providerChangeReq = useRef(0);
 
   const registry = getMergedRegistry(customProviders);
   const order = getMergedProviderOrder(customProviders);
@@ -44,9 +45,12 @@ export function LlmProviderSettings({ ensureUnlocked }: LlmProviderSettingsProps
     setCustomModel(false);
     setLocalBaseUrl("");
     setBaseUrlExpanded(false);
+    const reqId = ++providerChangeReq.current;
     hasApiKey(newId).then((has) => {
+      if (reqId !== providerChangeReq.current) return;
       setLlmProvider({ providerId: newId, model, baseUrl: undefined, apiKeySet: has });
     }).catch(() => {
+      if (reqId !== providerChangeReq.current) return;
       setLlmProvider({ providerId: newId, model, baseUrl: undefined, apiKeySet: false });
     });
   }

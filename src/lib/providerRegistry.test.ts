@@ -61,6 +61,16 @@ describe("providerNeedsApiKey", () => {
   it("returns true for unknown providers", () => {
     expect(providerNeedsApiKey("unknown-provider")).toBe(true);
   });
+
+  it("returns false for a key-free custom provider via the merged registry", () => {
+    const def = makeDef({ id: "custom-local", needsApiKey: false });
+    expect(providerNeedsApiKey("custom-local", [def])).toBe(false);
+  });
+
+  it("returns true for a custom provider that needs a key", () => {
+    const def = makeDef({ id: "custom-gateway", needsApiKey: true });
+    expect(providerNeedsApiKey("custom-gateway", [def])).toBe(true);
+  });
 });
 
 describe("providerIdForModel", () => {

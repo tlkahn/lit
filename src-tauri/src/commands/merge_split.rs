@@ -145,29 +145,38 @@ pub(crate) async fn suggest_title_inner(
     Ok(title.to_string())
 }
 
-#[tauri::command]
-pub async fn suggest_merge_title(
-    source_titles: Vec<String>,
-    merged_body: String,
-    app_handle: tauri::AppHandle,
-    store: tauri::State<'_, std::sync::Arc<dyn CredentialStore>>,
-    state: tauri::State<'_, TitleSuggestState>,
-) -> Result<String, String> {
-    let prefs = crate::preferences::read_preferences(&app_handle);
+/// Resolve LLM settings from the persisted preferences.
+///
+/// The frontend (see `setLlmProvider` in src/stores/preferences.ts) writes the
+/// provider config as a single nested JSON object under `llm.provider`:
+/// `{ providerId, model, baseUrl, apiKeySet }`. This reads from that object,
+/// falling back to model-name sniffing when no `providerId` is set.
+///
+/// Returns `(provider_id, model, base_url, temperature)`.
+fn resolve_llm_settings(
+    prefs: &crate::preferences::Preferences,
+) -> (String, String, Option<String>, f64) {
+    let provider_obj = prefs.extra.get("llm.provider");
 
-    let model = prefs
-        .extra
-        .get("llm.model")
-        .and_then(|v| v.as_str())
-        .unwrap_or("claude-sonnet-4-6")
-        .to_string();
-
-    let provider_pref = prefs
-        .extra
-        .get("llm.provider")
+    let provider_pref = provider_obj
+        .and_then(|v| v.get("providerId"))
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+
+    let model = provider_obj
+        .and_then(|v| v.get("model"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("claude-sonnet-4-6")
+        .to_string();
+
+    let base_url = provider_obj
+        .and_then(|v| v.get("baseUrl"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
     let provider_id = if provider_pref.is_empty() {
         llm::provider_id_for_model(&model).to_string()
     } else {
@@ -180,12 +189,20 @@ pub async fn suggest_merge_title(
         .and_then(|v| v.as_f64())
         .unwrap_or(0.7);
 
-    let base_url = prefs
-        .extra
-        .get("llm.baseUrl")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string());
+    (provider_id, model, base_url, temperature)
+}
+
+#[tauri::command]
+pub async fn suggest_merge_title(
+    source_titles: Vec<String>,
+    merged_body: String,
+    app_handle: tauri::AppHandle,
+    store: tauri::State<'_, std::sync::Arc<dyn CredentialStore>>,
+    state: tauri::State<'_, TitleSuggestState>,
+) -> Result<String, String> {
+    let prefs = crate::preferences::read_preferences(&app_handle);
+
+    let (provider_id, model, base_url, temperature) = resolve_llm_settings(&prefs);
 
     let api_key = llm::resolve_api_key(&provider_id, store.as_ref())
         .ok_or_else(|| "No API key found. Set one in Settings.".to_string())?;
@@ -751,55 +768,55 @@ mod tests {
     }
 
     #[test]
-    fn suggest_merge_title_resolves_provider_from_prefs() {
-        // Explicit llm.provider in prefs wins, regardless of model name.
+    fn resolve_llm_settings_reads_nested_provider_object() {
+        // Frontend persists the provider config as a nested object under llm.provider.
         let mut prefs = crate::preferences::Preferences::default();
-        prefs.extra.insert("llm.provider".into(), serde_json::json!("groq"));
-        prefs.extra.insert("llm.model".into(), serde_json::json!("claude-sonnet-4-6"));
+        prefs.extra.insert(
+            "llm.provider".into(),
+            serde_json::json!({
+                "providerId": "groq",
+                "model": "llama-3.3-70b",
+                "baseUrl": "https://api.groq.com",
+                "apiKeySet": true
+            }),
+        );
 
-        let model = prefs.extra.get("llm.model").and_then(|v| v.as_str())
-            .unwrap_or("claude-sonnet-4-6").to_string();
-        let provider_pref = prefs.extra.get("llm.provider").and_then(|v| v.as_str())
-            .unwrap_or("").to_string();
-        let provider_id = if provider_pref.is_empty() {
-            llm::provider_id_for_model(&model).to_string()
-        } else {
-            provider_pref.clone()
-        };
+        let (provider_id, model, base_url, _temp) = resolve_llm_settings(&prefs);
         assert_eq!(provider_id, "groq");
+        assert_eq!(model, "llama-3.3-70b");
+        assert_eq!(base_url.as_deref(), Some("https://api.groq.com"));
+    }
 
-        // Absent llm.provider falls back to model sniffing.
-        let prefs2 = crate::preferences::Preferences::default();
-        let model2 = prefs2.extra.get("llm.model").and_then(|v| v.as_str())
-            .unwrap_or("claude-sonnet-4-6").to_string();
-        let provider_pref2 = prefs2.extra.get("llm.provider").and_then(|v| v.as_str())
-            .unwrap_or("").to_string();
-        let provider_id2 = if provider_pref2.is_empty() {
-            llm::provider_id_for_model(&model2).to_string()
-        } else { provider_pref2 };
-        assert_eq!(provider_id2, "anthropic");
+    #[test]
+    fn resolve_llm_settings_falls_back_to_model_sniffing() {
+        // No providerId set: provider is sniffed from the model name.
+        let mut prefs = crate::preferences::Preferences::default();
+        prefs.extra.insert(
+            "llm.provider".into(),
+            serde_json::json!({
+                "providerId": "",
+                "model": "gpt-4o",
+                "baseUrl": "",
+                "apiKeySet": true
+            }),
+        );
+
+        let (provider_id, model, base_url, _temp) = resolve_llm_settings(&prefs);
+        assert_eq!(provider_id, llm::provider_id_for_model("gpt-4o"));
+        assert_eq!(model, "gpt-4o");
+        assert_eq!(base_url, None);
     }
 
     #[test]
     fn resolve_llm_settings_defaults() {
+        // Empty prefs: anthropic default model, no base_url, default temperature.
         let prefs = crate::preferences::Preferences::default();
 
-        let model = prefs
-            .extra
-            .get("llm.model")
-            .and_then(|v| v.as_str())
-            .unwrap_or("claude-sonnet-4-6");
+        let (provider_id, model, base_url, temperature) = resolve_llm_settings(&prefs);
+        assert_eq!(provider_id, "anthropic");
         assert_eq!(model, "claude-sonnet-4-6");
-
-        let temperature = prefs
-            .extra
-            .get("llm.temperature")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.7);
+        assert_eq!(base_url, None);
         assert!((temperature - 0.7).abs() < f64::EPSILON);
-
-        let provider = crate::llm::create_provider(crate::llm::provider_id_for_model(model), None);
-        assert_eq!(provider.id(), "anthropic");
     }
 
     #[tokio::test]

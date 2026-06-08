@@ -62,7 +62,7 @@ export async function threadFollowup(args: ThreadFollowupArgs): Promise<void> {
         text: "",
         system: system || undefined,
         messages,
-        baseUrl: prefs.llmProvider.baseUrl,
+        baseUrl: prefs.llmProvider.baseUrl ?? customDef?.baseUrl,
         contextWindow: customDef?.contextWindow,
       };
     },

@@ -129,8 +129,11 @@ export function defaultModelForProvider(providerId: string): string {
   return PROVIDER_REGISTRY[providerId]?.models[0]?.id ?? "";
 }
 
-export function providerNeedsApiKey(providerId: string): boolean {
-  return PROVIDER_REGISTRY[providerId]?.needsApiKey ?? true;
+export function providerNeedsApiKey(
+  providerId: string,
+  customProviders: CustomProviderDef[] = [],
+): boolean {
+  return getMergedRegistry(customProviders)[providerId]?.needsApiKey ?? true;
 }
 
 export function providerIdForModel(model: string): string {

@@ -130,6 +130,27 @@ describe("CustomProviderForm", () => {
     expect(onSaved).toHaveBeenCalledWith(def.id);
   });
 
+  it.each(["-5", "0"])(
+    "falls back to default 128000 for non-positive contextWindow input %j",
+    (value) => {
+      const onSaved = vi.fn();
+      const addSpy = vi.spyOn(prefs, "addCustomProvider").mockImplementation(() => {});
+      const { container } = render(
+        <CustomProviderForm onCancel={vi.fn()} onSaved={onSaved} />,
+      );
+      setInput(container, "custom-provider-name", "Cool Provider");
+      setInput(container, "custom-provider-baseUrl", "https://cool.example/v1");
+      setInput(container, "custom-provider-modelId", "cool-1");
+      setInput(container, "custom-provider-contextWindow", value);
+      const save = container.querySelector("[data-testid='custom-provider-save']") as HTMLButtonElement;
+      fireEvent.click(save);
+      expect(addSpy).toHaveBeenCalledTimes(1);
+      const def = addSpy.mock.calls[0]![0] as CustomProviderDef;
+      expect(def.contextWindow).toBe(128000);
+      expect(typeof def.contextWindow).toBe("number");
+    },
+  );
+
   it("Cancel calls onCancel and does not add/update", () => {
     const onCancel = vi.fn();
     const addSpy = vi.spyOn(prefs, "addCustomProvider");

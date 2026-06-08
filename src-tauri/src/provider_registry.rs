@@ -93,6 +93,11 @@ pub fn lookup(id: &str) -> Option<&'static ProviderEntry> {
     REGISTRY.iter().find(|e| e.id == id)
 }
 
+/// All provider ids known to the registry, in declaration order.
+pub fn ids() -> impl Iterator<Item = &'static str> {
+    REGISTRY.iter().map(|e| e.id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

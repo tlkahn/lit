@@ -56,7 +56,7 @@ export function CustomProviderForm({ initial, onCancel, onSaved }: CustomProvide
       baseUrl: trimmedBaseUrl,
       needsApiKey,
       modelId: trimmedModelId,
-      contextWindow: Number.isFinite(parsed) ? parsed : 128000,
+      contextWindow: Number.isFinite(parsed) && parsed > 0 ? parsed : 128000,
     };
 
     if (editing) {

@@ -48,7 +48,8 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
   const setDepth = useGraphViewState((s) => s.setDepth);
   const selectionCount = useGraphSelectionStore((s) => s.selectedNodes.length);
   const llmEnabled = usePreferencesStore((s) =>
-    s.llmProvider.apiKeySet || !providerNeedsApiKey(s.llmProvider.providerId)
+    s.llmProvider.apiKeySet ||
+    !providerNeedsApiKey(s.llmProvider.providerId, s.llmCustomProviders)
   );
 
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
