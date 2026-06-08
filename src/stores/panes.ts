@@ -22,7 +22,7 @@ export const MAX_PANES = 6;
 export interface PaneStore {
   root: PaneNode;
   focusedPaneId: string;
-  splitPane(paneId: string, direction: "horizontal" | "vertical"): void;
+  splitPane(paneId: string, direction: "horizontal" | "vertical"): string | null;
   closePane(paneId: string): void;
   focusPane(paneId: string): void;
   focusNext(): void;
@@ -235,8 +235,8 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
   splitPane: (paneId, direction) => {
     const { root } = get();
     const leaf = findLeaf(root, paneId);
-    if (!leaf) return;
-    if (collectLeaves(root).length >= MAX_PANES) return;
+    if (!leaf) return null;
+    if (collectLeaves(root).length >= MAX_PANES) return null;
     const newLeaf: PaneLeaf = { type: "leaf", id: generatePaneId(), pagePath: null };
     const split: PaneSplit = {
       type: "split",
@@ -247,6 +247,7 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
     };
     const newRoot = replaceLeaf(root, paneId, split);
     set({ root: newRoot, focusedPaneId: newLeaf.id });
+    return newLeaf.id;
   },
 
   closePane: (paneId) => {

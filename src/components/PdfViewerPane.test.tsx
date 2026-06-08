@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, fireEvent, cleanup } from "@testing-library/react";
 import { useEffect } from "react";
 import type { EditorView } from "@codemirror/view";
+import { Text } from "@codemirror/state";
 import { usePaneStore } from "../stores/panes";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePanePdfLinkStore } from "../stores/panePdfLink";
@@ -10,6 +11,7 @@ import {
   registerPaneView,
   _resetForTesting as resetEditorViewRef,
 } from "../lib/editorViewRef";
+import { _resetMarkerCacheForTesting as resetMarkerCache } from "../lib/pageMarkers";
 
 vi.mock("./PdfViewer", () => ({
   PdfViewer: ({
@@ -38,14 +40,11 @@ vi.mock("./PdfViewer", () => ({
 
 import { PdfViewerPane } from "./PdfViewerPane";
 
-/** Fake EditorView with a real doc string so parsePageMarkers can scan it. */
+/** Fake EditorView with a real Text object so getCachedPageMarkers can scan it. */
 function makeFakeEditorView(doc: string): EditorView {
   return {
     state: {
-      doc: {
-        length: doc.length,
-        toString: () => doc,
-      },
+      doc: Text.of(doc.split("\n")),
       selection: { main: { head: 0 } },
     },
     dispatch: vi.fn(),
@@ -61,6 +60,7 @@ beforeEach(() => {
   usePanePdfLinkStore.setState({ links: new Map(), lastSyncedPage: null });
   pdfPaneRef._resetForTesting();
   resetEditorViewRef();
+  resetMarkerCache();
   return cleanup;
 });
 
@@ -135,6 +135,41 @@ describe("PdfViewerPane", () => {
       fireEvent.click(getByTestId("fire-page-change"));
 
       expect(view.dispatch).not.toHaveBeenCalled();
+    });
+
+    it("skips reverse sync when page change was driven by forward sync", () => {
+      const doc = "<!-- Page 1 -->\nintro\n<!-- Page 2 -->\nbody\n<!-- Page 3 -->\nend";
+      const view = makeFakeEditorView(doc);
+      registerPaneView("ed1", view);
+      usePanePdfLinkStore.getState().linkPanes("p1", "ed1");
+
+      // Mark the PDF pane as being driven by forward sync BEFORE the page change.
+      pdfPaneRef.markForwardSync("p1");
+
+      const { getByTestId } = render(<PdfViewerPane paneId="p1" />);
+      fireEvent.click(getByTestId("fire-page-change"));
+
+      // Reverse sync should be suppressed -- view.dispatch NOT called.
+      expect(view.dispatch).not.toHaveBeenCalled();
+      // But currentPage should still be updated in the store.
+      expect(usePanePdfLinkStore.getState().currentPage.get("p1")).toBe(2);
+    });
+
+    it("performs reverse sync normally after forward-sync flag is consumed", () => {
+      const doc = "<!-- Page 1 -->\nintro\n<!-- Page 2 -->\nbody\n<!-- Page 3 -->\nend";
+      const view = makeFakeEditorView(doc);
+      registerPaneView("ed1", view);
+      usePanePdfLinkStore.getState().linkPanes("p1", "ed1");
+
+      // First click consumes the forward-sync flag.
+      pdfPaneRef.markForwardSync("p1");
+      const { getByTestId } = render(<PdfViewerPane paneId="p1" />);
+      fireEvent.click(getByTestId("fire-page-change"));
+      expect(view.dispatch).not.toHaveBeenCalled();
+
+      // Second click with no flag: reverse sync fires normally.
+      fireEvent.click(getByTestId("fire-page-change"));
+      expect(view.dispatch).toHaveBeenCalledTimes(1);
     });
   });
 });

@@ -5,6 +5,8 @@
 // Both forward sync (md -> PDF, Phase 3) and reverse sync (PDF -> md, Phase 4)
 // consume these markers, so the scanner is kept pure and dependency-free.
 
+import type { Text } from "@codemirror/state";
+
 export interface PageMarker {
   /** The page number declared in the comment (often 1-based as authored). */
   page: number;
@@ -51,4 +53,39 @@ export function pageForOffset(markers: PageMarker[], offset: number): number {
     }
   }
   return index;
+}
+
+// ---------------------------------------------------------------------------
+// Memoized marker cache keyed by CodeMirror Text identity.
+//
+// CodeMirror's Text is an immutable persistent rope: on edits a NEW Text object
+// is created, while cursor-only changes reuse the SAME reference. A single-entry
+// cache with strict identity (`===`) therefore avoids re-scanning on every cursor
+// move while correctly invalidating on every edit.
+//
+// NOTE: The returned array must not be mutated by callers — doing so would
+// corrupt the cache. All current consumers (pageForOffset, dispatchReverseSync)
+// only read the array.
+//
+// If multi-editor-pair linking is added later, upgrade to WeakMap<Text, PageMarker[]>.
+// ---------------------------------------------------------------------------
+
+let cachedDoc: Text | null = null;
+let cachedMarkers: PageMarker[] = [];
+
+/**
+ * Return page markers for a CodeMirror `Text` object, re-parsing only when the
+ * document identity changes (i.e. after an edit). Cursor-only changes are O(1).
+ */
+export function getCachedPageMarkers(doc: Text): PageMarker[] {
+  if (doc === cachedDoc) return cachedMarkers;
+  cachedDoc = doc;
+  cachedMarkers = parsePageMarkers(doc.toString());
+  return cachedMarkers;
+}
+
+/** Reset the marker cache. Test-only helper to prevent cross-test leakage. */
+export function _resetMarkerCacheForTesting(): void {
+  cachedDoc = null;
+  cachedMarkers = [];
 }

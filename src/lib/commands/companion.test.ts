@@ -10,9 +10,10 @@ const mockPaneState = vi.hoisted(() => {
       pagePath: "paper.md" as string | null,
     },
     focusedPaneId: "src-pane",
-    splitPane: vi.fn((_paneId: string, _direction: string) => {
-      // splitPane mutates focusedPaneId to the new leaf.
+    splitPane: vi.fn((_paneId: string, _direction: string): string | null => {
+      // splitPane returns the new leaf ID and mutates focusedPaneId.
       state.focusedPaneId = "new-pane";
+      return "new-pane";
     }),
     setPanePage: vi.fn(),
   };
@@ -154,6 +155,36 @@ describe("initCompanionCommands", () => {
         "success",
       );
     });
+  });
+
+  it("shows error and does not clobber when splitPane is a no-op (MAX_PANES)", async () => {
+    mockPaneState.splitPane.mockReturnValue(null);
+    initCompanionCommands();
+    executeCommand("companion.open");
+
+    await vi.waitFor(() => {
+      expect(mockStatusState.show).toHaveBeenCalledWith(
+        expect.stringContaining("maximum panes"),
+        "error",
+      );
+    });
+    expect(mockPaneState.setPanePage).not.toHaveBeenCalled();
+    expect(mockLinkState.linkPanes).not.toHaveBeenCalled();
+  });
+
+  it("shows error when source pane was closed during async lookup", async () => {
+    mockPaneState.splitPane.mockReturnValue(null);
+    initCompanionCommands();
+    executeCommand("companion.open");
+
+    await vi.waitFor(() => {
+      expect(mockPaneState.splitPane).toHaveBeenCalledWith("src-pane", "horizontal");
+      expect(mockStatusState.show).toHaveBeenCalledWith(
+        expect.stringContaining("source pane closed"),
+        "error",
+      );
+    });
+    expect(mockPaneState.setPanePage).not.toHaveBeenCalled();
   });
 
   it("registers companion.toggleSync", () => {

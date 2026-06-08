@@ -3,6 +3,9 @@ import {
   registerPdfGoToPage,
   getPdfGoToPage,
   unregisterPdfGoToPage,
+  markForwardSync,
+  consumeForwardSync,
+  clearForwardSync,
   _resetForTesting,
 } from "./pdfPaneRef";
 
@@ -30,5 +33,31 @@ describe("pdfPaneRef", () => {
     _resetForTesting();
     expect(getPdfGoToPage("p1")).toBeNull();
     expect(getPdfGoToPage("p2")).toBeNull();
+  });
+
+  describe("forward-sync flag", () => {
+    it("consumeForwardSync returns true after markForwardSync, false on second call", () => {
+      markForwardSync("p1");
+      expect(consumeForwardSync("p1")).toBe(true);
+      expect(consumeForwardSync("p1")).toBe(false);
+    });
+
+    it("consumeForwardSync returns false when nothing was marked", () => {
+      expect(consumeForwardSync("p1")).toBe(false);
+    });
+
+    it("clearForwardSync removes the mark silently", () => {
+      markForwardSync("p1");
+      clearForwardSync("p1");
+      expect(consumeForwardSync("p1")).toBe(false);
+    });
+
+    it("_resetForTesting clears forward-sync flags", () => {
+      markForwardSync("p1");
+      markForwardSync("p2");
+      _resetForTesting();
+      expect(consumeForwardSync("p1")).toBe(false);
+      expect(consumeForwardSync("p2")).toBe(false);
+    });
   });
 });

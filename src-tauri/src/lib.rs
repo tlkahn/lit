@@ -428,7 +428,7 @@ pub fn run() {
                     pending.0.lock().unwrap().remove(&label);
                 }
                 if let Some(pdf_state) = window.try_state::<commands::pdf_viewer::PdfViewerState>() {
-                    let _ = pdf_state.close_for_window(&label);
+                    pdf_state.close_all_for_window(&label);
                 }
                 if let Some(llm_state) = window.try_state::<commands::llm::LlmState>() {
                     llm_state.cancel();

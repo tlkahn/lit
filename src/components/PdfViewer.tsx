@@ -54,6 +54,7 @@ export function PdfViewer({ filePath, paneId, page, onPageChange, registerGoToPa
   const [error, setError] = useState<string | null>(null);
   const [pageLoading, setPageLoading] = useState(false);
   const filePathRef = useRef(filePath);
+  const currentPageRef = useRef(currentPage);
   const cacheRef = useRef(new Map<string, RenderedPage>());
 
   const prefetchAdjacent = useCallback((pageIndex: number, pageCount: number, dpi: number) => {
@@ -72,6 +73,7 @@ export function PdfViewer({ filePath, paneId, page, onPageChange, registerGoToPa
         if (cancelled) return;
         setPdfInfo(info);
         setCurrentPage(0);
+        currentPageRef.current = 0;
 
         const dpi = getEffectiveDpi();
         const page = await pdfRenderPage(0, dpi, paneId);
@@ -93,6 +95,7 @@ export function PdfViewer({ filePath, paneId, page, onPageChange, registerGoToPa
 
   const goToPage = useCallback(
     async (index: number) => {
+      if (index === currentPageRef.current) return;
       try {
         const dpi = getEffectiveDpi();
         const key = cacheKey(index, dpi);
@@ -100,6 +103,7 @@ export function PdfViewer({ filePath, paneId, page, onPageChange, registerGoToPa
         if (cached && filePathRef.current === filePath) {
           setRendered(cached);
           setCurrentPage(index);
+          currentPageRef.current = index;
           onPageChange?.(index);
           prefetchAdjacent(index, pdfInfo?.page_count ?? 0, dpi);
           return;
@@ -112,6 +116,7 @@ export function PdfViewer({ filePath, paneId, page, onPageChange, registerGoToPa
             cacheSet(cacheRef.current, key, rp);
             setRendered(rp);
             setCurrentPage(index);
+            currentPageRef.current = index;
             onPageChange?.(index);
             prefetchAdjacent(index, pdfInfo?.page_count ?? 0, dpi);
           }

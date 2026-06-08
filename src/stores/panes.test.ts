@@ -845,6 +845,18 @@ describe("Section C: Tree-Mutation Actions", () => {
         expect(root.id).not.toBe(second.id);
       });
 
+      it("returns the new leaf id on success", () => {
+        usePaneStore.setState({
+          root: { type: "leaf", id: "solo", pagePath: "note.md" },
+          focusedPaneId: "solo",
+        });
+        const newId = usePaneStore.getState().splitPane("solo", "horizontal");
+        expect(newId).not.toBeNull();
+        expect(typeof newId).toBe("string");
+        const root = usePaneStore.getState().root as PaneSplit;
+        expect((root.children[1] as PaneLeaf).id).toBe(newId);
+      });
+
       it("nested splits get distinct ids", () => {
         const root = usePaneStore.getState().root as PaneSplit;
         const newLeaf = root.children[1] as PaneLeaf;
@@ -911,11 +923,29 @@ describe("Section C: Tree-Mutation Actions", () => {
         usePaneStore.getState().splitPane("nonexistent", "horizontal");
         expect(usePaneStore.getState().root).toBe(root);
       });
+
+      it("returns null for non-existent pane", () => {
+        const root: PaneLeaf = { type: "leaf", id: "solo", pagePath: null };
+        usePaneStore.setState({ root, focusedPaneId: "solo" });
+        const result = usePaneStore.getState().splitPane("nonexistent", "horizontal");
+        expect(result).toBeNull();
+      });
     });
 
     describe("max-pane cap", () => {
       it("MAX_PANES is exported and equals 6", () => {
         expect(MAX_PANES).toBe(6);
+      });
+
+      it("returns null when already at MAX_PANES", () => {
+        const leaves = Array.from({ length: 6 }, (_, i): PaneLeaf => ({ type: "leaf", id: `l${i}`, pagePath: null }));
+        const root: PaneSplit = {
+          type: "split", id: "s1", direction: "horizontal",
+          children: leaves, sizes: leaves.map(() => 100 / 6),
+        };
+        usePaneStore.setState({ root, focusedPaneId: "l0" });
+        const result = usePaneStore.getState().splitPane("l0", "horizontal");
+        expect(result).toBeNull();
       });
 
       it("splitPane is a no-op when already at MAX_PANES leaves", () => {

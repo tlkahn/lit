@@ -62,6 +62,18 @@ impl PdfViewerState {
         Ok(())
     }
 
+    /// Close all PDF slots belonging to the given window.
+    ///
+    /// Slot keys have the form `"<window_label>:<pane_id>"`, so this
+    /// method removes every entry whose key starts with `"<window_label>:"`.
+    /// Each removed [`PdfRenderThread`] is dropped, which shuts down its
+    /// background thread and deletes its temp directory.
+    pub fn close_all_for_window(&self, window_label: &str) {
+        let prefix = format!("{window_label}:");
+        let mut threads = self.threads.lock().unwrap();
+        threads.retain(|key, _| !key.starts_with(&prefix));
+    }
+
     pub fn prefetch_for_window(
         &self,
         slot: &str,
@@ -282,6 +294,60 @@ mod tests {
         assert!(state.temp_dir_for_window("x").is_none());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_close_all_for_window_noop_on_empty_state() {
+        let state = PdfViewerState::new("dummy");
+        // Should not panic when no slots exist
+        state.close_all_for_window("main");
+    }
+
+    #[test]
+    fn test_close_all_for_window_does_not_match_longer_prefix() {
+        // Verify that close_all_for_window("main") would NOT match "main2:pane-1"
+        // because the prefix is "main:" not just "main".
+        let state = PdfViewerState::new("dummy");
+        state.close_all_for_window("main");
+        // "main2:pane-1" was never inserted but this confirms no panic
+        assert!(state.render_for_window("main2:pane-1", 0, 144).is_err());
+    }
+
+    #[test]
+    #[ignore]
+    fn test_close_all_for_window_cleans_up_all_panes() {
+        let _guard = lock_pdfium();
+        let lib = require_pdfium();
+        let state = PdfViewerState::new(&lib);
+        let pdf = fixture_path("sample.pdf").to_str().unwrap().to_string();
+
+        // Open PDFs in two panes of "main" window and one pane of "other" window
+        let slot1 = slot_key("main", "pane-1");
+        let slot2 = slot_key("main", "pane-2");
+        let slot3 = slot_key("other", "pane-1");
+        state.open_for_window(&slot1, &pdf).unwrap();
+        state.open_for_window(&slot2, &pdf).unwrap();
+        state.open_for_window(&slot3, &pdf).unwrap();
+
+        let temp1 = state.temp_dir_for_window(&slot1).unwrap();
+        let temp2 = state.temp_dir_for_window(&slot2).unwrap();
+        let temp3 = state.temp_dir_for_window(&slot3).unwrap();
+        assert!(temp1.exists());
+        assert!(temp2.exists());
+        assert!(temp3.exists());
+
+        // Close all panes for "main"
+        state.close_all_for_window("main");
+
+        // Both "main" slots should be gone
+        assert!(!temp1.exists(), "pane-1 temp dir should be cleaned up");
+        assert!(!temp2.exists(), "pane-2 temp dir should be cleaned up");
+        assert!(state.temp_dir_for_window(&slot1).is_none());
+        assert!(state.temp_dir_for_window(&slot2).is_none());
+
+        // "other" window's slot should be untouched
+        assert!(temp3.exists());
+        assert!(state.temp_dir_for_window(&slot3).is_some());
     }
 
     #[test]

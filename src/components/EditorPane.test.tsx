@@ -10,6 +10,8 @@ import * as editorViewRef from "../lib/editorViewRef";
 import * as pdfPaneRef from "../lib/pdfPaneRef";
 import { usePanePdfLinkStore } from "../stores/panePdfLink";
 import { _resetForTesting as resetForwardSync } from "../lib/forwardSync";
+import { _resetMarkerCacheForTesting as resetMarkerCache } from "../lib/pageMarkers";
+import { Text } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 
 const mockView = {} as EditorView;
@@ -80,6 +82,7 @@ beforeEach(() => {
   editorViewRef._resetForTesting();
   pdfPaneRef._resetForTesting();
   resetForwardSync();
+  resetMarkerCache();
   usePanePdfLinkStore.setState({ links: new Map() });
   useCursorInfoStore.setState({ line: 0, col: 0 });
 
@@ -420,7 +423,7 @@ describe("EditorPane", () => {
       return {
         state: {
           selection: { main: { head: offset } },
-          doc: { toString: () => doc },
+          doc: Text.of(doc.split("\n")),
         },
       } as unknown as EditorView;
     }
@@ -471,6 +474,34 @@ describe("EditorPane", () => {
       onSelectionChange(3, 0);
       vi.advanceTimersByTime(150);
       expect(goToPageSpy).not.toHaveBeenCalled();
+    });
+
+    it("marks forward sync on the linked PDF pane before calling goToPage", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      usePanePdfLinkStore.getState().linkPanes("pane-1", "pane-pdf");
+      const goToPageSpy = vi.fn();
+      pdfPaneRef.registerPdfGoToPage("pane-pdf", goToPageSpy);
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(
+        fakeViewAt(page2Offset, bodyWithMarkers),
+      );
+      const markSpy = vi.spyOn(pdfPaneRef, "markForwardSync");
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onSelectionChange).toBeDefined();
+      });
+      const onSelectionChange = capturedProps.onSelectionChange as (l: number, c: number) => void;
+      onSelectionChange(3, 0);
+      vi.advanceTimersByTime(150);
+
+      expect(markSpy).toHaveBeenCalledWith("pane-pdf");
+      // markForwardSync must be called BEFORE goToPage
+      const markOrder = markSpy.mock.invocationCallOrder[0];
+      const goOrder = goToPageSpy.mock.invocationCallOrder[0];
+      expect(markOrder).toBeLessThan(goOrder!);
     });
 
     it("still updates cursorInfo even when linked", async () => {

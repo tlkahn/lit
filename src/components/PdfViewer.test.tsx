@@ -512,6 +512,30 @@ describe("PdfViewer", () => {
     });
   });
 
+  it("goToPage does not fire onPageChange for same-page navigation", async () => {
+    const onPageChange = vi.fn();
+    let goToPage: ((i: number) => void) | null = null;
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        onPageChange={onPageChange}
+        registerGoToPage={(fn) => { goToPage = fn; }}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+    });
+    expect(goToPage).not.toBeNull();
+
+    onPageChange.mockClear();
+    goToPage!(0);
+
+    await waitFor(() => {
+      expect(onPageChange).not.toHaveBeenCalled();
+    });
+  });
+
   it("does not re-render when controlled page equals current page", async () => {
     const { rerender } = render(
       <PdfViewer filePath="/test/doc.pdf" paneId="pane-1" page={0} />,

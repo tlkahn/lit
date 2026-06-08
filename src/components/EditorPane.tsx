@@ -21,8 +21,8 @@ import {
   setFocusedPane,
 } from "../lib/editorViewRef";
 import { usePanePdfLinkStore } from "../stores/panePdfLink";
-import { getPdfGoToPage } from "../lib/pdfPaneRef";
-import { parsePageMarkers } from "../lib/pageMarkers";
+import { getPdfGoToPage, markForwardSync, clearForwardSync } from "../lib/pdfPaneRef";
+import { getCachedPageMarkers } from "../lib/pageMarkers";
 import { dispatchForwardSync } from "../lib/forwardSync";
 
 interface EditorPaneProps {
@@ -80,14 +80,21 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
     // CodeMirror's doc is the frontmatter-stripped body, so both the markers
     // and the offset live in the same coordinate space (no FM adjustment).
     const offset = view.state.selection.main.head;
-    const markers = parsePageMarkers(view.state.doc.toString());
+    const markers = getCachedPageMarkers(view.state.doc);
     dispatchForwardSync({
       offset,
       markers,
       // The lastSyncedPage echo guard lives in dispatchForwardSync's fire path
       // (it consults the panePdfLink store), so reverse sync (PDF -> md) cannot
       // bounce back into forward sync. No guard wrapping needed here.
-      goToPage: (pageIndex) => getPdfGoToPage(linked)?.(pageIndex),
+      goToPage: (pageIndex) => {
+        markForwardSync(linked);
+        getPdfGoToPage(linked)?.(pageIndex);
+        // Safety net: if goToPage's same-page guard returned early without
+        // firing onPageChange, the flag would linger. Clear it after a generous
+        // window that exceeds any async render path.
+        setTimeout(() => clearForwardSync(linked), 500);
+      },
     });
   }, [paneId]);
 

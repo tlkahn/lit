@@ -2,9 +2,9 @@ import React, { useCallback, useEffect } from "react";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePanePdfLinkStore } from "../stores/panePdfLink";
-import { registerPdfGoToPage, unregisterPdfGoToPage } from "../lib/pdfPaneRef";
+import { registerPdfGoToPage, unregisterPdfGoToPage, consumeForwardSync } from "../lib/pdfPaneRef";
 import { getPaneView } from "../lib/editorViewRef";
-import { parsePageMarkers } from "../lib/pageMarkers";
+import { getCachedPageMarkers } from "../lib/pageMarkers";
 import { dispatchReverseSync } from "../lib/reverseSync";
 import { PdfViewer } from "./PdfViewer";
 
@@ -29,18 +29,21 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
   // Reverse sync (PDF -> md): when this PDF pane changes page, scroll the LINKED
   // editor to the matching page marker. Symmetric to EditorPane forward sync,
   // which reads its OWN view+markers; here we read the linked editor's view and
-  // re-parse its markers per page change (cheap; avoids a stale-doc ref, matching
-  // the Phase 3 decision to skip marker caching). reverseSync records
-  // lastSyncedPage, which suppresses the forward-sync echo so this does not loop.
+  // use getCachedPageMarkers (shared single-entry cache keyed by Text identity).
+  // reverseSync records lastSyncedPage, which suppresses the forward-sync echo
+  // so this does not loop.
   const handlePageChange = useCallback(
     (pageIndex: number) => {
       // Best-effort: record the live page for the status-bar linked indicator.
       usePanePdfLinkStore.getState().setCurrentPage(paneId, pageIndex);
+      // Forward-sync-driven page change: skip reverse sync so the editor cursor
+      // is not yanked to the page marker line.
+      if (consumeForwardSync(paneId)) return;
       const linked = usePanePdfLinkStore.getState().getLinkedPane(paneId);
       if (!linked) return;
       const view = getPaneView(linked);
       if (!view) return;
-      const markers = parsePageMarkers(view.state.doc.toString());
+      const markers = getCachedPageMarkers(view.state.doc);
       dispatchReverseSync(pageIndex, linked, markers);
     },
     [paneId],

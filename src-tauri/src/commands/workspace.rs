@@ -117,10 +117,17 @@ pub fn find_companion(relative_path: &str, root: &Path) -> Option<String> {
     if !absolute.is_file() {
         return None;
     }
-    let candidate_rel = candidate
+    // On case-insensitive filesystems (macOS APFS), `is_file()` may match a
+    // file whose on-disk name has different case. Canonicalize both the root
+    // and the candidate to resolve symlinks and recover the real filename, then
+    // strip the root prefix to get the correctly-cased relative path.
+    let canon_root = root.canonicalize().ok()?;
+    let canon_abs = absolute.canonicalize().ok()?;
+    let real_rel = canon_abs.strip_prefix(&canon_root).ok()?;
+    let result = real_rel
         .to_string_lossy()
         .replace(std::path::MAIN_SEPARATOR, "/");
-    Some(candidate_rel)
+    Some(result)
 }
 
 pub fn get_workspace_root(registry: &WorkspaceRegistry, label: &str) -> Result<PathBuf, String> {
@@ -593,6 +600,21 @@ mod tests {
         std::fs::create_dir_all(root.join("notes")).unwrap();
         std::fs::write(root.join("notes/paper.md"), "x").unwrap();
         assert_eq!(find_companion("notes/paper.md", root), None);
+    }
+
+    #[test]
+    fn find_companion_returns_canonicalized_case() {
+        // Even when the input stem has different case from the on-disk file,
+        // the returned path should match the real on-disk filename.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("notes")).unwrap();
+        std::fs::write(root.join("notes/Paper.md"), "x").unwrap();
+        std::fs::write(root.join("notes/Paper.pdf"), "x").unwrap();
+        // Ask for the companion of Paper.md — the result should have the exact
+        // on-disk case (Paper.pdf), not a fabricated variant.
+        let result = find_companion("notes/Paper.md", root);
+        assert_eq!(result, Some("notes/Paper.pdf".to_string()));
     }
 
     #[test]

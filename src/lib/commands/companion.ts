@@ -32,8 +32,13 @@ export function initCompanionCommands(): void {
               return;
             }
             const store = usePaneStore.getState();
-            store.splitPane(sourceId, "horizontal");
-            const newId = usePaneStore.getState().focusedPaneId;
+            const newId = store.splitPane(sourceId, "horizontal");
+            if (newId == null) {
+              useStatusMessageStore
+                .getState()
+                .show("Cannot split: maximum panes reached or source pane closed", "error");
+              return;
+            }
             store.setPanePage(newId, companion);
             usePanePdfLinkStore.getState().linkPanes(sourceId, newId);
             useStatusMessageStore

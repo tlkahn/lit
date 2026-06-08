@@ -1,6 +1,12 @@
-import { describe, it, expect } from "vitest";
-import { parsePageMarkers, pageForOffset } from "./pageMarkers";
+import { describe, it, expect, beforeEach } from "vitest";
+import {
+  parsePageMarkers,
+  pageForOffset,
+  getCachedPageMarkers,
+  _resetMarkerCacheForTesting,
+} from "./pageMarkers";
 import type { PageMarker } from "./pageMarkers";
+import { Text } from "@codemirror/state";
 
 describe("parsePageMarkers", () => {
   it("extracts two markers with page numbers and starting char offsets", () => {
@@ -65,5 +71,67 @@ describe("pageForOffset", () => {
 
   it("returns 0 for an empty markers array", () => {
     expect(pageForOffset([], 999)).toBe(0);
+  });
+});
+
+describe("getCachedPageMarkers", () => {
+  beforeEach(() => {
+    _resetMarkerCacheForTesting();
+  });
+
+  it("returns correct markers matching parsePageMarkers output", () => {
+    const content = "<!-- Page 1 -->\nfoo\n<!-- Page 2 -->\nbar";
+    const doc = Text.of(content.split("\n"));
+    const result = getCachedPageMarkers(doc);
+    const expected = parsePageMarkers(doc.toString());
+    expect(result).toEqual(expected);
+  });
+
+  it("returns cached result for same Text reference (no re-parse)", () => {
+    const content = "<!-- Page 1 -->\nfoo\n<!-- Page 2 -->\nbar";
+    const doc = Text.of(content.split("\n"));
+
+    const first = getCachedPageMarkers(doc);
+    const second = getCachedPageMarkers(doc);
+
+    // Same reference means the cache was hit, not a fresh parse.
+    expect(second).toBe(first);
+  });
+
+  it("invalidates cache when Text reference changes", () => {
+    const doc1 = Text.of(["<!-- Page 1 -->\nfoo"]);
+    const doc2 = Text.of(["<!-- Page 1 -->\nfoo\n<!-- Page 2 -->\nbar"]);
+
+    const result1 = getCachedPageMarkers(doc1);
+    const result2 = getCachedPageMarkers(doc2);
+
+    expect(result1).not.toBe(result2);
+    expect(result1).toHaveLength(1);
+    expect(result2).toHaveLength(2);
+  });
+
+  it("invalidates cache when Text identity changes even with same length", () => {
+    const doc1 = Text.of(["<!-- Page 1 -->"]);
+    const doc2 = Text.of(["<!-- Page 2 -->"]);
+
+    const result1 = getCachedPageMarkers(doc1);
+    const result2 = getCachedPageMarkers(doc2);
+
+    expect(result1).not.toBe(result2);
+    expect(result1[0]!.page).toBe(1);
+    expect(result2[0]!.page).toBe(2);
+  });
+
+  it("re-parses after cache reset", () => {
+    const content = "<!-- Page 1 -->\nfoo";
+    const doc = Text.of(content.split("\n"));
+
+    const first = getCachedPageMarkers(doc);
+    _resetMarkerCacheForTesting();
+    const second = getCachedPageMarkers(doc);
+
+    // Same doc, but after reset the array is a fresh parse (different reference).
+    expect(second).not.toBe(first);
+    expect(second).toEqual(first);
   });
 });
