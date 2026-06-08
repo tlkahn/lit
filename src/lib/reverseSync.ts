@@ -26,29 +26,16 @@ export function dispatchReverseSync(
   linkedEditorPaneId: string,
   markers: PageMarker[],
 ): void {
-  if (!usePanePdfLinkStore.getState().syncEnabled) {
-    console.log("[sync:rev] BAIL — syncEnabled=false");
-    return;
-  }
+  if (!usePanePdfLinkStore.getState().syncEnabled) return;
 
   const marker = markers[pageIndex];
-  if (!marker) {
-    console.log("[sync:rev] BAIL — no marker for pageIndex=%d (markers.length=%d)", pageIndex, markers.length);
-    return;
-  }
+  if (!marker) return;
 
   const view = getPaneView(linkedEditorPaneId);
-  if (!view) {
-    console.log("[sync:rev] BAIL — no EditorView for pane %s", linkedEditorPaneId);
-    return;
-  }
+  if (!view) return;
 
-  if (view.hasFocus) {
-    console.log("[sync:rev] BAIL — editor has focus");
-    return;
-  }
+  if (view.hasFocus) return;
 
-  console.log("[sync:rev] page=%d → charOffset=%d (editor pane %s)", pageIndex, marker.charOffset, linkedEditorPaneId);
   usePanePdfLinkStore.getState().setLastSyncedPage(pageIndex);
 
   const pos = Math.min(marker.charOffset, view.state.doc.length);

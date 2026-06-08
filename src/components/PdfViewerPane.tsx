@@ -34,25 +34,21 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
   // so this does not loop.
   const handlePageChange = useCallback(
     (pageIndex: number) => {
-      console.log("[sync:rev:pdf] onPageChange page=%d pane=%s", pageIndex, paneId);
       usePanePdfLinkStore.getState().setCurrentPage(paneId, pageIndex);
-      if (consumeForwardSync(paneId)) {
-        console.log("[sync:rev:pdf] SKIP — forward-sync initiated this page change");
-        return;
-      }
+      if (consumeForwardSync(paneId)) return;
       const linked = usePanePdfLinkStore.getState().getLinkedPane(paneId);
-      if (!linked) {
-        console.log("[sync:rev:pdf] no linked editor pane for %s", paneId);
-        return;
-      }
+      if (!linked) return;
       const view = getPaneView(linked);
-      if (!view) {
-        console.log("[sync:rev:pdf] no EditorView for linked pane %s", linked);
-        return;
-      }
+      if (!view) return;
       const markers = getCachedPageMarkers(view.state.doc);
-      console.log("[sync:rev:pdf] dispatching reverse sync: page=%d, markers=%d, editor=%s", pageIndex, markers.length, linked);
       dispatchReverseSync(pageIndex, linked, markers);
+    },
+    [paneId],
+  );
+
+  const handlePageCount = useCallback(
+    (count: number) => {
+      usePanePdfLinkStore.getState().setPageCount(paneId, count);
     },
     [paneId],
   );
@@ -94,6 +90,7 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
         paneId={paneId}
         registerGoToPage={handleRegisterGoToPage}
         onPageChange={handlePageChange}
+        onPageCount={handlePageCount}
       />
     </div>
   );

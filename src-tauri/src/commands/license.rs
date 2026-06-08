@@ -27,6 +27,7 @@ pub struct LicenseStatusResponse {
 fn source_to_string(source: &license::key::LicenseSource) -> String {
     match source {
         license::key::LicenseSource::Direct => "direct".into(),
+        license::key::LicenseSource::Other => "other".into(),
     }
 }
 

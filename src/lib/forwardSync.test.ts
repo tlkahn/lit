@@ -118,6 +118,32 @@ describe("dispatchForwardSync", () => {
     });
   });
 
+  it("does not call console.log on any code path", () => {
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const goToPage = vi.fn();
+      // Path 1: normal fire
+      dispatchForwardSync({ read: () => ({ offset: 60, markers }), goToPage });
+      vi.advanceTimersByTime(DEBOUNCE_MS);
+      // Path 2: syncEnabled=false
+      usePanePdfLinkStore.setState({ syncEnabled: false });
+      dispatchForwardSync({ read: () => ({ offset: 60, markers }), goToPage });
+      vi.advanceTimersByTime(DEBOUNCE_MS);
+      // Path 3: read() returns null
+      usePanePdfLinkStore.setState({ syncEnabled: true });
+      dispatchForwardSync({ read: () => null, goToPage });
+      vi.advanceTimersByTime(DEBOUNCE_MS);
+      // Path 4: echo guard suppression
+      usePanePdfLinkStore.getState().setLastSyncedPage(1);
+      dispatchForwardSync({ read: () => ({ offset: 60, markers }), goToPage });
+      vi.advanceTimersByTime(DEBOUNCE_MS);
+
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   describe("echo guard", () => {
     it("ECHO_GUARD_MS comfortably exceeds DEBOUNCE_MS", () => {
       expect(ECHO_GUARD_MS).toBeGreaterThan(DEBOUNCE_MS);

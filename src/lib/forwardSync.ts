@@ -50,26 +50,14 @@ let timer: ReturnType<typeof setTimeout> | null = null;
  */
 export function dispatchForwardSync({ read, goToPage }: ForwardSyncArgs): void {
   if (timer !== null) clearTimeout(timer);
-  console.log("[sync:fwd] scheduled (debounce %dms)", DEBOUNCE_MS);
   timer = setTimeout(() => {
     timer = null;
-    if (!usePanePdfLinkStore.getState().syncEnabled) {
-      console.log("[sync:fwd] BAIL — syncEnabled=false");
-      return;
-    }
+    if (!usePanePdfLinkStore.getState().syncEnabled) return;
     const data = read();
-    if (!data) {
-      console.log("[sync:fwd] BAIL — read() returned null (view gone?)");
-      return;
-    }
-    console.log("[sync:fwd] fire: offset=%d, markers=%d", data.offset, data.markers.length);
+    if (!data) return;
     const resolved = pageForOffset(data.markers, data.offset);
     const last = usePanePdfLinkStore.getState().lastSyncedPage;
-    if (last !== null && last.page === resolved && Date.now() - last.at < ECHO_GUARD_MS) {
-      console.log("[sync:fwd] SUPPRESSED by echo guard (page=%d, age=%dms)", resolved, Date.now() - last.at);
-      return;
-    }
-    console.log("[sync:fwd] → goToPage(%d)", resolved);
+    if (last !== null && last.page === resolved && Date.now() - last.at < ECHO_GUARD_MS) return;
     goToPage(resolved);
   }, DEBOUNCE_MS);
 }

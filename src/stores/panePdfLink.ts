@@ -34,6 +34,10 @@ export interface PanePdfLinkStore {
   currentPage: Map<string, number>;
   /** Record `pageIndex` (0-based) as the current page for `paneId`. */
   setCurrentPage(paneId: string, pageIndex: number): void;
+  /** Best-effort, non-persisted map of paneId -> total page count for live PDF panes. */
+  pageCount: Map<string, number>;
+  /** Record `count` as the total page count for `paneId`. */
+  setPageCount(paneId: string, count: number): void;
 }
 
 export const usePanePdfLinkStore = create<PanePdfLinkStore>((set, get) => ({
@@ -53,6 +57,13 @@ export const usePanePdfLinkStore = create<PanePdfLinkStore>((set, get) => ({
     const currentPage = new Map(get().currentPage);
     currentPage.set(paneId, pageIndex);
     set({ currentPage });
+  },
+
+  pageCount: new Map(),
+  setPageCount: (paneId, count) => {
+    const pageCount = new Map(get().pageCount);
+    pageCount.set(paneId, count);
+    set({ pageCount });
   },
 
   linkPanes: (a, b) => {
@@ -124,22 +135,29 @@ export function initPanePdfLinkCleanup(): void {
     if (state.root === prevRoot) return;
     prevRoot = state.root;
     const live = new Set(collectLeaves(state.root).map((l) => l.id));
-    const { links, unlinkPane, currentPage } = usePanePdfLinkStore.getState();
+    const { links, unlinkPane, currentPage, pageCount } = usePanePdfLinkStore.getState();
     for (const [key, value] of links) {
       if (!live.has(key) || !live.has(value)) {
         unlinkPane(key);
       }
     }
-    // Drop current-page entries for panes that no longer exist.
+    // Drop current-page and page-count entries for panes that no longer exist.
     let changed = false;
     const nextCurrentPage = new Map(currentPage);
+    const nextPageCount = new Map(pageCount);
     for (const id of nextCurrentPage.keys()) {
       if (!live.has(id)) {
         nextCurrentPage.delete(id);
         changed = true;
       }
     }
-    if (changed) usePanePdfLinkStore.setState({ currentPage: nextCurrentPage });
+    for (const id of nextPageCount.keys()) {
+      if (!live.has(id)) {
+        nextPageCount.delete(id);
+        changed = true;
+      }
+    }
+    if (changed) usePanePdfLinkStore.setState({ currentPage: nextCurrentPage, pageCount: nextPageCount });
   });
 }
 

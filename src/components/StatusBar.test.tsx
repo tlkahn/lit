@@ -10,6 +10,7 @@ import { useBottomPanelStore, defaultTabMeta } from "../stores/bottomPanel";
 import { usePreferencesStore } from "../stores/preferences";
 import { useStatusMessageStore } from "../stores/statusMessage";
 import { usePanePdfLinkStore } from "../stores/panePdfLink";
+import * as pdfPaneRef from "../lib/pdfPaneRef";
 
 beforeEach(() => {
   useWorkspaceStore.setState({
@@ -33,7 +34,8 @@ beforeEach(() => {
     annotationEnabled: true,
   });
   useStatusMessageStore.setState({ message: null, variant: "success" });
-  usePanePdfLinkStore.setState({ links: new Map(), currentPage: new Map() });
+  usePanePdfLinkStore.setState({ links: new Map(), currentPage: new Map(), pageCount: new Map() });
+  pdfPaneRef._resetForTesting();
 });
 
 describe("StatusBar", () => {
@@ -507,142 +509,107 @@ describe("StatusBar", () => {
     });
   });
 
-  describe("PDF link indicator", () => {
-    it("renders the linked indicator when the focused pane has a linked partner", () => {
-      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+  describe("PDF page nav", () => {
+    it("renders ‹ N/M › when a PDF pane is focused and has currentPage + pageCount", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true, pages: [
+        { title: "doc", relative_path: "notes/hello.pdf", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "pdf" as const },
+      ] });
       usePaneStore.setState({
-        root: {
-          type: "split",
-          id: "s1",
-          direction: "horizontal",
-          children: [
-            { type: "leaf", id: "md", pagePath: "notes/hello.md" },
-            { type: "leaf", id: "pdf", pagePath: "notes/hello.pdf" },
-          ],
-          sizes: [50, 50],
-        },
-        focusedPaneId: "md",
+        root: { type: "leaf", id: "pdf", pagePath: "notes/hello.pdf" },
+        focusedPaneId: "pdf",
       });
       usePanePdfLinkStore.setState({
-        links: new Map([["md", "pdf"], ["pdf", "md"]]),
+        currentPage: new Map([["pdf", 4]]),
+        pageCount: new Map([["pdf", 10]]),
       });
       render(<StatusBar />);
-      expect(screen.getByTestId("status-bar-pdf-link")).toBeInTheDocument();
+      expect(screen.getByTestId("status-bar-pdf-nav")).toBeInTheDocument();
+      expect(screen.getByTestId("status-bar-pdf-page")).toHaveTextContent("5/10");
     });
 
-    it("renders nothing when the focused pane is not linked", () => {
-      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+    it("returns null when focused pane is not a PDF", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true, pages: [
+        { title: "hello", relative_path: "notes/hello.md", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "markdown" as const },
+      ] });
       usePaneStore.setState({
         root: { type: "leaf", id: "md", pagePath: "notes/hello.md" },
         focusedPaneId: "md",
       });
-      usePanePdfLinkStore.setState({ links: new Map() });
       render(<StatusBar />);
-      expect(screen.queryByTestId("status-bar-pdf-link")).toBeNull();
+      expect(screen.queryByTestId("status-bar-pdf-nav")).toBeNull();
     });
 
-    it("shows 'Page N' (1-based) when the linked PDF pane has a current page", () => {
-      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+    it("prev disabled on page 0, next disabled on last page", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true, pages: [
+        { title: "doc", relative_path: "notes/hello.pdf", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "pdf" as const },
+      ] });
       usePaneStore.setState({
-        root: {
-          type: "split",
-          id: "s1",
-          direction: "horizontal",
-          children: [
-            { type: "leaf", id: "md", pagePath: "notes/hello.md" },
-            { type: "leaf", id: "pdf", pagePath: "notes/hello.pdf" },
-          ],
-          sizes: [50, 50],
-        },
-        focusedPaneId: "md",
+        root: { type: "leaf", id: "pdf", pagePath: "notes/hello.pdf" },
+        focusedPaneId: "pdf",
       });
       usePanePdfLinkStore.setState({
-        links: new Map([["md", "pdf"], ["pdf", "md"]]),
-        currentPage: new Map([["pdf", 4]]),
+        currentPage: new Map([["pdf", 0]]),
+        pageCount: new Map([["pdf", 5]]),
       });
       render(<StatusBar />);
-      expect(screen.getByTestId("status-bar-pdf-link")).toHaveTextContent("Page 5");
-    });
-
-    it("omits 'Page N' when no current page is recorded", () => {
-      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
-      usePaneStore.setState({
-        root: {
-          type: "split",
-          id: "s1",
-          direction: "horizontal",
-          children: [
-            { type: "leaf", id: "md", pagePath: "notes/hello.md" },
-            { type: "leaf", id: "pdf", pagePath: "notes/hello.pdf" },
-          ],
-          sizes: [50, 50],
-        },
-        focusedPaneId: "md",
-      });
-      usePanePdfLinkStore.setState({
-        links: new Map([["md", "pdf"], ["pdf", "md"]]),
-        currentPage: new Map(),
-      });
-      render(<StatusBar />);
-      expect(screen.getByTestId("status-bar-pdf-link")).not.toHaveTextContent("Page");
-    });
-
-    it("updates the page when the linked partner pane's page changes", () => {
-      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
-      usePaneStore.setState({
-        root: {
-          type: "split",
-          id: "s1",
-          direction: "horizontal",
-          children: [
-            { type: "leaf", id: "md", pagePath: "notes/hello.md" },
-            { type: "leaf", id: "pdf", pagePath: "notes/hello.pdf" },
-          ],
-          sizes: [50, 50],
-        },
-        focusedPaneId: "md",
-      });
-      usePanePdfLinkStore.setState({
-        links: new Map([["md", "pdf"], ["pdf", "md"]]),
-        currentPage: new Map([["pdf", 4]]),
-      });
-      render(<StatusBar />);
-      expect(screen.getByTestId("status-bar-pdf-link")).toHaveTextContent("Page 5");
+      expect(screen.getByTestId("status-bar-pdf-prev")).toBeDisabled();
+      expect(screen.getByTestId("status-bar-pdf-next")).not.toBeDisabled();
 
       act(() => {
-        usePanePdfLinkStore.getState().setCurrentPage("pdf", 7);
+        usePanePdfLinkStore.getState().setCurrentPage("pdf", 4);
       });
-      expect(screen.getByTestId("status-bar-pdf-link")).toHaveTextContent("Page 8");
+      expect(screen.getByTestId("status-bar-pdf-prev")).not.toBeDisabled();
+      expect(screen.getByTestId("status-bar-pdf-next")).toBeDisabled();
     });
 
-    it("does not change output when an unrelated pane's page changes", () => {
-      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+    it("prev/next buttons call getPdfGoToPage with correct page index", async () => {
+      const goToPage = vi.fn();
+      pdfPaneRef.registerPdfGoToPage("pdf", goToPage);
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true, pages: [
+        { title: "doc", relative_path: "notes/hello.pdf", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "pdf" as const },
+      ] });
       usePaneStore.setState({
-        root: {
-          type: "split",
-          id: "s1",
-          direction: "horizontal",
-          children: [
-            { type: "leaf", id: "md", pagePath: "notes/hello.md" },
-            { type: "leaf", id: "pdf", pagePath: "notes/hello.pdf" },
-          ],
-          sizes: [50, 50],
-        },
-        focusedPaneId: "md",
+        root: { type: "leaf", id: "pdf", pagePath: "notes/hello.pdf" },
+        focusedPaneId: "pdf",
       });
       usePanePdfLinkStore.setState({
-        links: new Map([["md", "pdf"], ["pdf", "md"]]),
-        currentPage: new Map([["pdf", 4]]),
+        currentPage: new Map([["pdf", 3]]),
+        pageCount: new Map([["pdf", 10]]),
       });
       render(<StatusBar />);
-      expect(screen.getByTestId("status-bar-pdf-link")).toHaveTextContent("Page 5");
 
-      // A page change for a pane that is NOT the focused partner must not
-      // alter what the indicator displays.
-      act(() => {
-        usePanePdfLinkStore.getState().setCurrentPage("otherPane", 9);
+      await userEvent.click(screen.getByTestId("status-bar-pdf-next"));
+      expect(goToPage).toHaveBeenCalledWith(4);
+
+      await userEvent.click(screen.getByTestId("status-bar-pdf-prev"));
+      expect(goToPage).toHaveBeenCalledWith(2);
+    });
+
+    it("rapid double-click advances two pages", async () => {
+      const goToPage = vi.fn();
+      pdfPaneRef.registerPdfGoToPage("pdf", goToPage);
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true, pages: [
+        { title: "doc", relative_path: "notes/hello.pdf", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "pdf" as const },
+      ] });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pdf", pagePath: "notes/hello.pdf" },
+        focusedPaneId: "pdf",
       });
-      expect(screen.getByTestId("status-bar-pdf-link")).toHaveTextContent("Page 5");
+      usePanePdfLinkStore.setState({
+        currentPage: new Map([["pdf", 2]]),
+        pageCount: new Map([["pdf", 10]]),
+      });
+      render(<StatusBar />);
+
+      // First click: reads live state (page 2) → goToPage(3)
+      await userEvent.click(screen.getByTestId("status-bar-pdf-next"));
+      expect(goToPage).toHaveBeenCalledWith(3);
+      // Simulate the store update that would happen from PdfViewer's onPageChange
+      act(() => { usePanePdfLinkStore.getState().setCurrentPage("pdf", 3); });
+
+      // Second click: reads live state (page 3) → goToPage(4)
+      await userEvent.click(screen.getByTestId("status-bar-pdf-next"));
+      expect(goToPage).toHaveBeenCalledWith(4);
     });
   });
 

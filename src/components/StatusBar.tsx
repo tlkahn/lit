@@ -6,6 +6,8 @@ import { usePreferencesStore } from "../stores/preferences";
 import { useStatusMessageStore } from "../stores/statusMessage";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import { usePanePdfLinkStore } from "../stores/panePdfLink";
+import { useLeafFileType } from "../hooks/useLeafFileType";
+import { getPdfGoToPage } from "../lib/pdfPaneRef";
 import { getNextUntitledName } from "../lib/naming";
 import { BufferStack } from "./BufferStack";
 import type { TabId } from "../stores/bottomPanel";
@@ -80,25 +82,46 @@ function BottomPanelTabs() {
   );
 }
 
-function PdfLinkIndicator() {
+function PdfPageNav() {
   const focusedPaneId = usePaneStore((s) => s.focusedPaneId);
-  // Narrow selectors to primitives so a page change in an unrelated pane
-  // (which mints a new currentPage Map identity) does not re-render here.
-  const partner = usePanePdfLinkStore((s) => s.links.get(focusedPaneId) ?? null);
-  // The current page may live under either endpoint (whichever is the PDF pane).
-  const pageIdx = usePanePdfLinkStore((s) => {
-    const p = s.links.get(focusedPaneId);
-    return p ? (s.currentPage.get(p) ?? s.currentPage.get(focusedPaneId) ?? null) : null;
-  });
+  const fileType = useLeafFileType(focusedPaneId);
+  const currentPage = usePanePdfLinkStore((s) => s.currentPage.get(focusedPaneId) ?? null);
+  const pageCount = usePanePdfLinkStore((s) => s.pageCount.get(focusedPaneId) ?? null);
 
-  if (!partner) return null;
+  if (fileType !== "pdf" || currentPage == null || pageCount == null) return null;
 
-  const label =
-    pageIdx != null ? `PDF ↔ MD · Page ${pageIdx + 1}` : "PDF ↔ MD";
+  const handlePrev = () => {
+    const live = usePanePdfLinkStore.getState().currentPage.get(focusedPaneId) ?? 0;
+    if (live <= 0) return;
+    getPdfGoToPage(focusedPaneId)?.(live - 1);
+  };
+
+  const handleNext = () => {
+    const live = usePanePdfLinkStore.getState().currentPage.get(focusedPaneId) ?? 0;
+    const total = usePanePdfLinkStore.getState().pageCount.get(focusedPaneId) ?? 0;
+    if (live >= total - 1) return;
+    getPdfGoToPage(focusedPaneId)?.(live + 1);
+  };
 
   return (
-    <span data-testid="status-bar-pdf-link" className="ml-3 text-text-muted">
-      {label}
+    <span data-testid="status-bar-pdf-nav" className="ml-3 flex items-center gap-1 text-text-muted">
+      <button
+        data-testid="status-bar-pdf-prev"
+        disabled={currentPage <= 0}
+        onClick={handlePrev}
+        className="px-0.5 hover:text-text-normal disabled:opacity-30 disabled:cursor-not-allowed"
+      >
+        ‹
+      </button>
+      <span data-testid="status-bar-pdf-page">{currentPage + 1}/{pageCount}</span>
+      <button
+        data-testid="status-bar-pdf-next"
+        disabled={currentPage >= pageCount - 1}
+        onClick={handleNext}
+        className="px-0.5 hover:text-text-normal disabled:opacity-30 disabled:cursor-not-allowed"
+      >
+        ›
+      </button>
     </span>
   );
 }
@@ -206,7 +229,7 @@ export function StatusBar() {
           </span>
         )}
         <BottomPanelTabs />
-        <PdfLinkIndicator />
+        <PdfPageNav />
         {line > 0 && <span data-testid="status-bar-cursor" className="ml-3">Ln {line}, Col {col}</span>}
       </div>
     </div>
