@@ -19,10 +19,10 @@ bun install
 
 # Patch the version into package.json/tauri.conf.json/Cargo.toml so the built
 # .app bundle's CFBundleShortVersionString matches the About dialog's
-# git-derived LIT_GIT_VERSION. Use the SAME mechanism as CI's "Sync version
-# from git tag" step (build-release.yml): `git describe --tags --abbrev=0`
-# (nearest tag, no -N-gSHA suffix), falling back to v0.0.0, then strip the
-# leading `v` so set-version.sh receives strict semver X.Y.Z.
+# git-derived LIT_GIT_VERSION. Use the SAME mechanism as release-lib.sh's
+# release_sync_version: `git describe --tags --abbrev=0` (nearest tag, no
+# -N-gSHA suffix), falling back to v0.0.0, then strip the leading `v` so
+# set-version.sh receives strict semver X.Y.Z.
 echo "==> Syncing version from git tag"
 VERSION="$(git describe --tags --abbrev=0 2>/dev/null || echo v0.0.0)"
 bash scripts/set-version.sh "${VERSION#v}"
