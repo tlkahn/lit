@@ -676,6 +676,26 @@ EOF
   [[ "$output" == *"not found"* ]] || [[ "$output" == *"No DMG"* ]]
 }
 
+@test "release_compute_checksums: hashes each file exactly once" {
+  source_lib
+  REPO_ROOT="$TEST_TEMP_DIR"
+  local real_shasum
+  real_shasum="$(command -v shasum)"
+  cat > "$MOCK_BIN/shasum" <<MOCK_EOF
+#!/usr/bin/env bash
+echo "shasum \$@" >> "$MOCK_LOG"
+"$real_shasum" "\$@"
+MOCK_EOF
+  chmod +x "$MOCK_BIN/shasum"
+  echo "fake-dmg-content" > "$TEST_TEMP_DIR/Lit_v0.9.2_aarch64.dmg"
+  echo "fake-tarball-content" > "$TEST_TEMP_DIR/update.app.tar.gz"
+  export RELEASE_UPDATE_TARBALL="$TEST_TEMP_DIR/update.app.tar.gz"
+  release_compute_checksums v0.9.2
+  local count
+  count="$(grep -c '^shasum ' "$MOCK_LOG")"
+  [ "$count" -eq 2 ]
+}
+
 # ── Cycle 16: Tarball checksum ─────────────────────────────────────────────
 
 @test "release_compute_checksums: computes tarball SHA-256 when RELEASE_UPDATE_TARBALL is set" {
@@ -725,9 +745,16 @@ EOF
   [[ "$output" == *"DRY RUN"* ]]
 }
 
-# ── Cycle 18: deploy-website.sh checksum injection ─────────────────────────
+# ── Cycle 18: CI workflow checksum fetch ───────────────────────────────────
 
-@test "deploy-website.sh: injects RELEASE_DMG_SHA256 into _index.md and hugo.toml" {
+@test "update-website.yml: emits warning when checksum fetch fails" {
+  grep -q '::warning::' "$SCRIPT_DIR/../.github/workflows/update-website.yml"
+}
+
+# ── Cycle 19: release_inject_checksum ──────────────────────────────────────
+
+@test "release_inject_checksum: injects SHA256 into _index.md and hugo.toml" {
+  source_lib
   local INDEX="$TEST_TEMP_DIR/_index.md"
   local TOML="$TEST_TEMP_DIR/hugo.toml"
   cat > "$INDEX" <<'EOF'
@@ -740,17 +767,15 @@ EOF
   downloadSHA256 = ''
 EOF
 
-  RELEASE_DMG_SHA256="abc123def456"
-  if [[ -n "${RELEASE_DMG_SHA256:-}" ]]; then
-    sed "s|^download_sha256:.*|download_sha256: \"$RELEASE_DMG_SHA256\"|" "$INDEX" > "$INDEX.tmp" && mv "$INDEX.tmp" "$INDEX"
-    sed "s|^  downloadSHA256 = .*|  downloadSHA256 = '$RELEASE_DMG_SHA256'|" "$TOML" > "$TOML.tmp" && mv "$TOML.tmp" "$TOML"
-  fi
+  export RELEASE_DMG_SHA256="abc123def456"
+  release_inject_checksum "$INDEX" "$TOML"
 
   grep -q 'download_sha256: "abc123def456"' "$INDEX"
   grep -q "downloadSHA256 = 'abc123def456'" "$TOML"
 }
 
-@test "deploy-website.sh: checksum injection is no-op when RELEASE_DMG_SHA256 is empty" {
+@test "release_inject_checksum: no-op when RELEASE_DMG_SHA256 is empty" {
+  source_lib
   local INDEX="$TEST_TEMP_DIR/_index.md"
   local TOML="$TEST_TEMP_DIR/hugo.toml"
   cat > "$INDEX" <<'EOF'
@@ -763,14 +788,73 @@ EOF
   downloadSHA256 = ''
 EOF
 
-  RELEASE_DMG_SHA256=""
-  if [[ -n "${RELEASE_DMG_SHA256:-}" ]]; then
-    sed "s|^download_sha256:.*|download_sha256: \"$RELEASE_DMG_SHA256\"|" "$INDEX" > "$INDEX.tmp" && mv "$INDEX.tmp" "$INDEX"
-    sed "s|^  downloadSHA256 = .*|  downloadSHA256 = '$RELEASE_DMG_SHA256'|" "$TOML" > "$TOML.tmp" && mv "$TOML.tmp" "$TOML"
-  fi
+  unset RELEASE_DMG_SHA256
+  release_inject_checksum "$INDEX" "$TOML"
 
   grep -q 'download_sha256: ""' "$INDEX"
   grep -q "downloadSHA256 = ''" "$TOML"
+}
+
+# ── Cycle 20: release_inject_checksum warnings ────────────────────────────
+
+@test "release_inject_checksum: warns when download_sha256 line missing from _index.md" {
+  source_lib
+  local INDEX="$TEST_TEMP_DIR/_index.md"
+  local TOML="$TEST_TEMP_DIR/hugo.toml"
+  cat > "$INDEX" <<'EOF'
+---
+title: "Home"
+---
+EOF
+  cat > "$TOML" <<'EOF'
+[params]
+  downloadSHA256 = ''
+EOF
+
+  export RELEASE_DMG_SHA256="abc123def456"
+  run release_inject_checksum "$INDEX" "$TOML"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Warning: download_sha256 placeholder not found"* ]]
+}
+
+@test "release_inject_checksum: warns when downloadSHA256 line missing from hugo.toml" {
+  source_lib
+  local INDEX="$TEST_TEMP_DIR/_index.md"
+  local TOML="$TEST_TEMP_DIR/hugo.toml"
+  cat > "$INDEX" <<'EOF'
+---
+download_sha256: ""
+---
+EOF
+  cat > "$TOML" <<'EOF'
+[params]
+  version = '0.1.0'
+EOF
+
+  export RELEASE_DMG_SHA256="abc123def456"
+  run release_inject_checksum "$INDEX" "$TOML"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Warning: downloadSHA256 placeholder not found"* ]]
+}
+
+@test "release_inject_checksum: no warning when placeholders exist" {
+  source_lib
+  local INDEX="$TEST_TEMP_DIR/_index.md"
+  local TOML="$TEST_TEMP_DIR/hugo.toml"
+  cat > "$INDEX" <<'EOF'
+---
+download_sha256: ""
+---
+EOF
+  cat > "$TOML" <<'EOF'
+[params]
+  downloadSHA256 = ''
+EOF
+
+  export RELEASE_DMG_SHA256="abc123def456"
+  run release_inject_checksum "$INDEX" "$TOML"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Warning:"* ]]
 }
 
 # ── Cycle 14: Orchestrator integration ───────────────────────────────────────

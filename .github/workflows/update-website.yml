@@ -84,7 +84,17 @@ jobs:
           DOWNLOAD_URL="https://lit.solar/releases/Lit_${TAG}_aarch64.dmg"
           DOWNLOAD_LABEL="Download ${TAG} for Mac"
           SHA256_URL="https://lit.solar/releases/Lit_${TAG}_aarch64.dmg.sha256"
-          DMG_SHA256=$(curl -sf "$SHA256_URL" | awk '{print $1}') || DMG_SHA256=""
+          DMG_SHA256=""
+          for attempt in 1 2 3; do
+            if DMG_SHA256=$(curl -sf "$SHA256_URL" | awk '{print $1}') && [ -n "$DMG_SHA256" ]; then
+              break
+            fi
+            echo "::warning::Checksum fetch attempt $attempt failed for $SHA256_URL"
+            sleep 5
+          done
+          if [ -z "$DMG_SHA256" ]; then
+            echo "::warning::Could not fetch DMG checksum after 3 attempts — deploying without checksum"
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "download_url=$DOWNLOAD_URL" >> "$GITHUB_OUTPUT"
           echo "download_label=$DOWNLOAD_LABEL" >> "$GITHUB_OUTPUT"

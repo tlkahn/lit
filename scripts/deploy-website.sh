@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/release-lib.sh"
 cd "$SCRIPT_DIR/.."
 
 AWS_REGION="us-east-1"
@@ -51,11 +52,7 @@ if [ -n "$TAG" ]; then
   sed "s|^  downloadURL = .*|  downloadURL = '$URL'|" "$TOML" > "$TOML.tmp" && mv "$TOML.tmp" "$TOML"
   sed "s|^  version = .*|  version = '$VERSION'|" "$TOML" > "$TOML.tmp" && mv "$TOML.tmp" "$TOML"
 
-  if [[ -n "${RELEASE_DMG_SHA256:-}" ]]; then
-    echo "==> Injecting DMG checksum"
-    sed "s|^download_sha256:.*|download_sha256: \"$RELEASE_DMG_SHA256\"|" "$INDEX" > "$INDEX.tmp" && mv "$INDEX.tmp" "$INDEX"
-    sed "s|^  downloadSHA256 = .*|  downloadSHA256 = '$RELEASE_DMG_SHA256'|" "$TOML" > "$TOML.tmp" && mv "$TOML.tmp" "$TOML"
-  fi
+  release_inject_checksum "$INDEX" "$TOML"
 
   echo "==> Pushing content update to website repo"
   (cd "$WEBSITE_DIR" &&
