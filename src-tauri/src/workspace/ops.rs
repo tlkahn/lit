@@ -1,5 +1,7 @@
 use super::frontmatter::{parse_frontmatter, serialize_frontmatter};
-use super::normalize::{filename_to_page_name, normalize_to_nfc, page_name_to_filename, validate_page_name};
+use super::normalize::{
+    filename_to_page_name, normalize_to_nfc, page_name_to_filename, validate_page_name,
+};
 use super::page::{FileType, PageContent, PageMeta};
 use super::write_hash::WriteHashRegistry;
 use super::WorkspaceError;
@@ -8,7 +10,11 @@ use std::fs;
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
-pub fn read_page(root: &Path, relative_path: &str, registry: &WriteHashRegistry) -> Result<PageContent, WorkspaceError> {
+pub fn read_page(
+    root: &Path,
+    relative_path: &str,
+    registry: &WriteHashRegistry,
+) -> Result<PageContent, WorkspaceError> {
     let full_path = root.join(relative_path);
     if !full_path.exists() {
         return Err(WorkspaceError::PageNotFound(relative_path.to_string()));
@@ -42,6 +48,7 @@ pub fn read_page(root: &Path, relative_path: &str, registry: &WriteHashRegistry)
             frontmatter: parsed.map,
             created_at,
             modified_at,
+            trashed_at: None,
             file_type: FileType::Markdown,
         },
         body: parsed.body.to_string(),
@@ -107,6 +114,7 @@ pub fn create_page(
         frontmatter: IndexMap::new(),
         created_at,
         modified_at,
+        trashed_at: None,
         file_type: FileType::Markdown,
     })
 }
@@ -147,7 +155,11 @@ pub fn rename_page(
     Ok(normalize_to_nfc(&new_relative))
 }
 
-pub fn acknowledge_file_hash(root: &Path, relative_path: &str, registry: &WriteHashRegistry) -> Result<(), WorkspaceError> {
+pub fn acknowledge_file_hash(
+    root: &Path,
+    relative_path: &str,
+    registry: &WriteHashRegistry,
+) -> Result<(), WorkspaceError> {
     let full_path = root.join(relative_path);
     if !full_path.exists() {
         return Err(WorkspaceError::PageNotFound(relative_path.to_string()));
@@ -157,7 +169,11 @@ pub fn acknowledge_file_hash(root: &Path, relative_path: &str, registry: &WriteH
     Ok(())
 }
 
-pub fn delete_page(root: &Path, relative_path: &str, registry: &WriteHashRegistry) -> Result<(), WorkspaceError> {
+pub fn delete_page(
+    root: &Path,
+    relative_path: &str,
+    registry: &WriteHashRegistry,
+) -> Result<(), WorkspaceError> {
     let full_path = root.join(relative_path);
     if !full_path.exists() {
         return Err(WorkspaceError::PageNotFound(relative_path.to_string()));
@@ -243,7 +259,14 @@ mod tests {
     fn write_page_without_frontmatter() {
         let dir = TempDir::new().unwrap();
         let registry = WriteHashRegistry::new();
-        write_page(dir.path(), "plain.md", "# Body\n", &IndexMap::new(), &registry).unwrap();
+        write_page(
+            dir.path(),
+            "plain.md",
+            "# Body\n",
+            &IndexMap::new(),
+            &registry,
+        )
+        .unwrap();
 
         let content = fs::read_to_string(dir.path().join("plain.md")).unwrap();
         assert!(!content.contains("---"));

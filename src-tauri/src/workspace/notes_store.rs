@@ -192,6 +192,7 @@ impl NotesStore {
                 frontmatter,
                 created_at: created_at.map(|v| v as u64),
                 modified_at: modified_at.map(|v| v as u64),
+                trashed_at: None,
                 file_type: FileType::Markdown,
             },
             body,
@@ -218,7 +219,8 @@ impl NotesStore {
                 frontmatter_yaml = excluded.frontmatter_yaml,
                 content_hash = excluded.content_hash,
                 title = excluded.title,
-                modified_at = excluded.modified_at",
+                modified_at = excluded.modified_at,
+                trashed_at = NULL",
             params![relative_path, title, body, yaml, hash, now, now],
         )?;
         Ok(())
@@ -254,7 +256,8 @@ impl NotesStore {
                     content_hash = excluded.content_hash,
                     title = excluded.title,
                     created_at = excluded.created_at,
-                    modified_at = excluded.modified_at",
+                    modified_at = excluded.modified_at,
+                    trashed_at = NULL",
                 params![p.relative_path, title, p.body, yaml, hash, created, modified],
             )?;
         }
@@ -299,7 +302,7 @@ impl NotesStore {
         let exists: Option<i64> = self
             .conn
             .query_row(
-                "SELECT 1 FROM pages WHERE relative_path = ?1",
+                "SELECT 1 FROM pages WHERE relative_path = ?1 AND trashed_at IS NULL",
                 params![relative_path],
                 |r| r.get(0),
             )
@@ -312,7 +315,15 @@ impl NotesStore {
         let hash = Self::content_hash("", "");
         self.conn.execute(
             "INSERT INTO pages(relative_path, title, body, frontmatter_yaml, content_hash, created_at, modified_at, trashed_at)
-             VALUES (?1, ?2, '', '', ?3, ?4, ?4, NULL)",
+             VALUES (?1, ?2, '', '', ?3, ?4, ?4, NULL)
+             ON CONFLICT(relative_path) DO UPDATE SET
+                 title=excluded.title,
+                 body=excluded.body,
+                 frontmatter_yaml=excluded.frontmatter_yaml,
+                 content_hash=excluded.content_hash,
+                 created_at=excluded.created_at,
+                 modified_at=excluded.modified_at,
+                 trashed_at=NULL",
             params![relative_path, name, hash, now],
         )?;
 
@@ -322,21 +333,18 @@ impl NotesStore {
             frontmatter: IndexMap::new(),
             created_at: Some(now as u64),
             modified_at: Some(now as u64),
+            trashed_at: None,
             file_type: FileType::Markdown,
         })
     }
 
-    pub fn rename_page(
-        &self,
-        old_path: &str,
-        new_name: &str,
-    ) -> Result<String, WorkspaceError> {
+    pub fn rename_page(&self, old_path: &str, new_name: &str) -> Result<String, WorkspaceError> {
         validate_page_name(new_name)?;
 
         let exists: Option<i64> = self
             .conn
             .query_row(
-                "SELECT 1 FROM pages WHERE relative_path = ?1",
+                "SELECT 1 FROM pages WHERE relative_path = ?1 AND trashed_at IS NULL",
                 params![old_path],
                 |r| r.get(0),
             )
@@ -356,7 +364,7 @@ impl NotesStore {
         let dest_exists: Option<i64> = self
             .conn
             .query_row(
-                "SELECT 1 FROM pages WHERE relative_path = ?1",
+                "SELECT 1 FROM pages WHERE relative_path = ?1 AND trashed_at IS NULL",
                 params![new_relative],
                 |r| r.get(0),
             )
@@ -405,7 +413,9 @@ impl NotesStore {
             params![relative_path],
         )?;
         if rows == 0 {
-            return Err(WorkspaceError::TrashEntryNotFound(relative_path.to_string()));
+            return Err(WorkspaceError::TrashEntryNotFound(
+                relative_path.to_string(),
+            ));
         }
         Ok(())
     }
@@ -418,9 +428,39 @@ impl NotesStore {
         Ok(())
     }
 
+    /// Single-row primary-key lookup of a TRASHED page's metadata. Used to
+    /// return the metadata for a page that was just soft-deleted without
+    /// scanning the entire trash listing.
+    pub fn get_page_meta(&self, relative_path: &str) -> Result<PageMeta, WorkspaceError> {
+        self.conn
+            .query_row(
+                "SELECT relative_path, title, created_at, modified_at, trashed_at
+                 FROM pages WHERE relative_path = ?1 AND trashed_at IS NOT NULL",
+                params![relative_path],
+                |r| {
+                    let relative_path: String = r.get(0)?;
+                    let title: String = r.get(1)?;
+                    let created_at: Option<i64> = r.get(2)?;
+                    let modified_at: Option<i64> = r.get(3)?;
+                    let trashed_at: Option<i64> = r.get(4)?;
+                    Ok(PageMeta {
+                        title,
+                        relative_path,
+                        frontmatter: IndexMap::new(),
+                        created_at: created_at.map(|v| v as u64),
+                        modified_at: modified_at.map(|v| v as u64),
+                        trashed_at: trashed_at.map(|v| v as u64),
+                        file_type: FileType::Markdown,
+                    })
+                },
+            )
+            .optional()?
+            .ok_or_else(|| WorkspaceError::PageNotFound(relative_path.to_string()))
+    }
+
     pub fn list_trash(&self) -> Result<Vec<PageMeta>, WorkspaceError> {
         let mut stmt = self.conn.prepare(
-            "SELECT relative_path, title, created_at, modified_at
+            "SELECT relative_path, title, created_at, modified_at, trashed_at
              FROM pages WHERE trashed_at IS NOT NULL ORDER BY relative_path",
         )?;
         let rows = stmt
@@ -429,12 +469,14 @@ impl NotesStore {
                 let title: String = r.get(1)?;
                 let created_at: Option<i64> = r.get(2)?;
                 let modified_at: Option<i64> = r.get(3)?;
+                let trashed_at: Option<i64> = r.get(4)?;
                 Ok(PageMeta {
                     title,
                     relative_path,
                     frontmatter: IndexMap::new(),
                     created_at: created_at.map(|v| v as u64),
                     modified_at: modified_at.map(|v| v as u64),
+                    trashed_at: trashed_at.map(|v| v as u64),
                     file_type: FileType::Markdown,
                 })
             })?
@@ -468,6 +510,7 @@ impl NotesStore {
                     frontmatter: IndexMap::new(),
                     created_at: created_at.map(|v| v as u64),
                     modified_at: modified_at.map(|v| v as u64),
+                    trashed_at: None,
                     file_type: FileType::Markdown,
                 })
             })?
@@ -546,8 +589,10 @@ impl NotesStore {
             sql_params.push(rusqlite::types::Value::Integer(limit));
 
             let mut stmt = self.conn.prepare(&sql)?;
-            let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-                sql_params.iter().map(|v| v as &dyn rusqlite::types::ToSql).collect();
+            let param_refs: Vec<&dyn rusqlite::types::ToSql> = sql_params
+                .iter()
+                .map(|v| v as &dyn rusqlite::types::ToSql)
+                .collect();
             let rows = stmt
                 .query_map(param_refs.as_slice(), |r| {
                     let relative_path: String = r.get(0)?;
@@ -731,7 +776,9 @@ mod tests {
 
         // Force a measurable time gap.
         std::thread::sleep(std::time::Duration::from_millis(2));
-        store.write_page("N.md", "second", &IndexMap::new()).unwrap();
+        store
+            .write_page("N.md", "second", &IndexMap::new())
+            .unwrap();
 
         let (created_2, modified_2): (i64, i64) = store
             .conn
@@ -772,6 +819,20 @@ mod tests {
     }
 
     #[test]
+    fn create_page_over_trashed_path_succeeds() {
+        let store = NotesStore::open_memory().unwrap();
+        store.create_page("Recycled", None).unwrap();
+        store.trash_page("Recycled.md").unwrap();
+
+        let meta = store.create_page("Recycled", None).unwrap();
+        assert_eq!(meta.relative_path, "Recycled.md");
+        assert_eq!(meta.title, "Recycled");
+        assert!(store.read_page("Recycled.md").is_ok());
+        assert!(store.list_trash().unwrap().is_empty());
+        assert_eq!(store.list_pages().unwrap().len(), 1);
+    }
+
+    #[test]
     fn create_page_forbidden_chars_errors() {
         let store = NotesStore::open_memory().unwrap();
         let result = store.create_page("bad/name", None);
@@ -781,7 +842,9 @@ mod tests {
     #[test]
     fn rename_page_moves_content() {
         let store = NotesStore::open_memory().unwrap();
-        store.write_page("old.md", "content", &IndexMap::new()).unwrap();
+        store
+            .write_page("old.md", "content", &IndexMap::new())
+            .unwrap();
         let new_path = store.rename_page("old.md", "new").unwrap();
         assert_eq!(new_path, "new.md");
         assert!(matches!(
@@ -811,9 +874,39 @@ mod tests {
     }
 
     #[test]
+    fn rename_to_path_of_trashed_page_succeeds() {
+        let store = NotesStore::open_memory().unwrap();
+        store.write_page("keep.md", "k", &IndexMap::new()).unwrap();
+        store.write_page("taken.md", "t", &IndexMap::new()).unwrap();
+        store.trash_page("taken.md").unwrap();
+        // A trashed page at the destination must not block the rename with
+        // a spurious PageAlreadyExists error.
+        let result = store.rename_page("keep.md", "taken");
+        assert!(
+            !matches!(result, Err(WorkspaceError::PageAlreadyExists(_))),
+            "trashed destination row should not cause PageAlreadyExists, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn rename_of_trashed_page_errors() {
+        let store = NotesStore::open_memory().unwrap();
+        store.write_page("gone.md", "g", &IndexMap::new()).unwrap();
+        store.trash_page("gone.md").unwrap();
+        let result = store.rename_page("gone.md", "renamed");
+        assert!(matches!(result, Err(WorkspaceError::PageNotFound(_))));
+        // Trashed row must remain untouched under its original path.
+        let trash = store.list_trash().unwrap();
+        assert_eq!(trash.len(), 1);
+        assert_eq!(trash[0].relative_path, "gone.md");
+    }
+
+    #[test]
     fn delete_page_removes_row() {
         let store = NotesStore::open_memory().unwrap();
-        store.write_page("doomed.md", "bye", &IndexMap::new()).unwrap();
+        store
+            .write_page("doomed.md", "bye", &IndexMap::new())
+            .unwrap();
         store.delete_page("doomed.md").unwrap();
         assert!(matches!(
             store.read_page("doomed.md"),
@@ -847,6 +940,35 @@ mod tests {
     }
 
     #[test]
+    fn get_page_meta_returns_trashed_row_with_trashed_at() {
+        let store = NotesStore::open_memory().unwrap();
+        store.write_page("g.md", "x", &IndexMap::new()).unwrap();
+        store.trash_page("g.md").unwrap();
+
+        let meta = store.get_page_meta("g.md").unwrap();
+        assert_eq!(meta.relative_path, "g.md");
+        assert_eq!(meta.title, "g");
+        // trashed_at must be selected so synthesize_trash_entry preserves the
+        // deletion timestamp (F4 dependency).
+        assert!(meta.trashed_at.is_some());
+
+        // A non-trashed (active) page must NOT be returned.
+        store
+            .write_page("active.md", "y", &IndexMap::new())
+            .unwrap();
+        assert!(matches!(
+            store.get_page_meta("active.md"),
+            Err(WorkspaceError::PageNotFound(_))
+        ));
+
+        // A missing path errors with PageNotFound.
+        assert!(matches!(
+            store.get_page_meta("missing.md"),
+            Err(WorkspaceError::PageNotFound(_))
+        ));
+    }
+
+    #[test]
     fn restore_page_unhides() {
         let store = NotesStore::open_memory().unwrap();
         store.write_page("r.md", "x", &IndexMap::new()).unwrap();
@@ -856,6 +978,24 @@ mod tests {
         let pages = store.list_pages().unwrap();
         assert_eq!(pages.len(), 1);
         assert_eq!(pages[0].relative_path, "r.md");
+    }
+
+    #[test]
+    fn write_page_over_trashed_path_untrashes() {
+        let store = NotesStore::open_memory().unwrap();
+        store.write_page("t.md", "first", &IndexMap::new()).unwrap();
+        store.trash_page("t.md").unwrap();
+        assert!(matches!(
+            store.read_page("t.md"),
+            Err(WorkspaceError::PageNotFound(_))
+        ));
+
+        store
+            .write_page("t.md", "second", &IndexMap::new())
+            .unwrap();
+        assert_eq!(store.read_page("t.md").unwrap().body, "second");
+        assert!(store.list_trash().unwrap().is_empty());
+        assert_eq!(store.list_pages().unwrap().len(), 1);
     }
 
     #[test]
@@ -878,7 +1018,9 @@ mod tests {
     #[test]
     fn empty_trash_counts_and_keeps_active() {
         let store = NotesStore::open_memory().unwrap();
-        store.write_page("active.md", "x", &IndexMap::new()).unwrap();
+        store
+            .write_page("active.md", "x", &IndexMap::new())
+            .unwrap();
         store.write_page("t1.md", "x", &IndexMap::new()).unwrap();
         store.write_page("t2.md", "x", &IndexMap::new()).unwrap();
         store.trash_page("t1.md").unwrap();
@@ -1096,6 +1238,33 @@ mod tests {
             .unwrap();
         assert_eq!(created, 111);
         assert_eq!(modified, 222);
+    }
+
+    #[test]
+    fn import_all_resets_trashed_at_on_conflict() {
+        let mut store = NotesStore::open_memory().unwrap();
+        let pages = vec![PageImport {
+            relative_path: "trashed.md".to_string(),
+            body: "v1".to_string(),
+            frontmatter: IndexMap::new(),
+            created_at: None,
+            modified_at: None,
+        }];
+        store.import_all(&pages, &[]).unwrap();
+
+        store.trash_page("trashed.md").unwrap();
+        assert!(
+            store.list_pages().unwrap().is_empty(),
+            "page should be trashed after trash_page"
+        );
+
+        // Re-run the Files->DB migration. The upsert must resurrect the page.
+        store.import_all(&pages, &[]).unwrap();
+
+        let pages_after = store.list_pages().unwrap();
+        assert_eq!(pages_after.len(), 1);
+        assert_eq!(pages_after[0].relative_path, "trashed.md");
+        assert!(store.read_page("trashed.md").is_ok());
     }
 
     #[test]

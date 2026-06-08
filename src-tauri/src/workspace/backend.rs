@@ -46,7 +46,9 @@ pub enum StorageBackend {
 /// existing IPC contract (which keys restore/purge off `trash_name`) keeps
 /// working when those calls are routed back through the DB arm.
 fn synthesize_trash_entry(meta: &PageMeta) -> TrashEntry {
-    let deleted_at = meta.modified_at.unwrap_or_else(|| {
+    // `trashed_at` is stored in milliseconds (via `NotesStore::now_ms`), but
+    // `TrashEntry.deleted_at` is unix SECONDS everywhere else, so convert ms->s.
+    let deleted_at = meta.trashed_at.map(|ms| ms / 1000).unwrap_or_else(|| {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -138,12 +140,7 @@ impl StorageBackend {
             StorageBackend::Db(store) => {
                 let store = store.lock().unwrap();
                 store.trash_page(rel)?;
-                // Find the synthesized entry from the trash listing.
-                let trashed = store.list_trash()?;
-                let meta = trashed
-                    .into_iter()
-                    .find(|m| m.relative_path == rel)
-                    .ok_or_else(|| WorkspaceError::PageNotFound(rel.to_string()))?;
+                let meta = store.get_page_meta(rel)?;
                 Ok(synthesize_trash_entry(&meta))
             }
         }
@@ -175,6 +172,15 @@ impl StorageBackend {
                 Ok(metas.iter().map(synthesize_trash_entry).collect())
             }
         }
+    }
+
+    /// Whether this backend stores notes in the SQLite DB (as opposed to
+    /// markdown files on disk). Command handlers that are filesystem-only
+    /// (merge/split, ZIP export, Pandoc academic export) use this to refuse to
+    /// run in database storage mode rather than failing with a misleading
+    /// "file not found" or silently producing empty output.
+    pub fn is_db(&self) -> bool {
+        matches!(self, StorageBackend::Db(_))
     }
 
     pub fn empty_trash(&self, root: &Path) -> Result<(), WorkspaceError> {
@@ -213,7 +219,13 @@ mod tests {
         let backend = StorageBackend::Files;
 
         backend
-            .write_page(dir.path(), "Note.md", "# Body\n", &IndexMap::new(), &registry)
+            .write_page(
+                dir.path(),
+                "Note.md",
+                "# Body\n",
+                &IndexMap::new(),
+                &registry,
+            )
             .unwrap();
         let page = backend.read_page(dir.path(), "Note.md", &registry).unwrap();
         assert_eq!(page.body, "# Body\n");
@@ -227,7 +239,13 @@ mod tests {
         let root = Path::new("/ignored");
 
         backend
-            .write_page(root, "Note.md", "# Content\n", &fm_with_title("Hello"), &registry)
+            .write_page(
+                root,
+                "Note.md",
+                "# Content\n",
+                &fm_with_title("Hello"),
+                &registry,
+            )
             .unwrap();
         let page = backend.read_page(root, "Note.md", &registry).unwrap();
         assert_eq!(page.body, "# Content\n");
@@ -286,6 +304,44 @@ mod tests {
     }
 
     #[test]
+    fn db_arm_trash_deleted_at_is_seconds_from_trashed_at() {
+        let backend = db_backend();
+        let registry = WriteHashRegistry::new();
+        let root = Path::new("/ignored");
+
+        let before_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        backend
+            .write_page(root, "x.md", "body", &IndexMap::new(), &registry)
+            .unwrap();
+
+        let entry = backend.trash_page(root, "x.md").unwrap();
+
+        let after_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // deleted_at must be unix SECONDS (not milliseconds) and reflect the
+        // actual trash time, falling within [before, after].
+        assert!(
+            entry.deleted_at >= before_secs && entry.deleted_at <= after_secs + 1,
+            "deleted_at {} not within [{}, {}]",
+            entry.deleted_at,
+            before_secs,
+            after_secs + 1
+        );
+        assert!(
+            entry.deleted_at < 4_102_444_800,
+            "deleted_at must be unix SECONDS, got {}",
+            entry.deleted_at
+        );
+    }
+
+    #[test]
     fn db_arm_empty_trash_clears() {
         let backend = db_backend();
         let registry = WriteHashRegistry::new();
@@ -302,6 +358,12 @@ mod tests {
 
         backend.empty_trash(root).unwrap();
         assert!(backend.list_trash(root).unwrap().is_empty());
+    }
+
+    #[test]
+    fn is_db_distinguishes_modes() {
+        assert!(!StorageBackend::Files.is_db());
+        assert!(db_backend().is_db());
     }
 
     #[test]

@@ -37,7 +37,9 @@ pub fn scan_pages(root: &Path) -> Result<Vec<PageMeta>, WorkspaceError> {
             .unwrap_or_default();
         let title = filename_to_page_name(&file_name);
 
-        let metadata = entry.metadata().map_err(|e| WorkspaceError::IoError(e.to_string()))?;
+        let metadata = entry
+            .metadata()
+            .map_err(|e| WorkspaceError::IoError(e.to_string()))?;
         let created_at = metadata
             .created()
             .ok()
@@ -55,6 +57,7 @@ pub fn scan_pages(root: &Path) -> Result<Vec<PageMeta>, WorkspaceError> {
             frontmatter: IndexMap::new(),
             created_at,
             modified_at,
+            trashed_at: None,
             file_type,
         });
     }
@@ -146,7 +149,10 @@ mod tests {
 
         let pages = scan_pages(dir.path()).unwrap();
         assert_eq!(pages.len(), 2);
-        let pdf = pages.iter().find(|p| p.relative_path == "paper.pdf").unwrap();
+        let pdf = pages
+            .iter()
+            .find(|p| p.relative_path == "paper.pdf")
+            .unwrap();
         let md = pages.iter().find(|p| p.relative_path == "note.md").unwrap();
         assert_eq!(pdf.file_type, FileType::Pdf);
         assert_eq!(md.file_type, FileType::Markdown);

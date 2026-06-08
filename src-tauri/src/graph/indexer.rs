@@ -13,12 +13,15 @@ use walkdir::WalkDir;
 
 use super::error::GraphError;
 use super::extract::{extract_first_paragraph, extract_headings, extract_sentence_context};
-use super::types::HeadingInfo;
 use super::knowledge::{GraphNode, KnowledgeGraph, SubgraphBundle, SubgraphResult};
 use super::links::{extract_wikilinks, WikiLink};
 use super::resolve::StemLookup;
 use super::store::Store;
-use super::types::{extract_aliases, extract_tags, BacklinkEntry, LinkEntry, ParsedNode, SearchResult, Stats, UnlinkedMention};
+use super::types::HeadingInfo;
+use super::types::{
+    extract_aliases, extract_tags, BacklinkEntry, LinkEntry, ParsedNode, SearchResult, Stats,
+    UnlinkedMention,
+};
 use crate::workspace::frontmatter::parse_frontmatter;
 use crate::workspace::normalize::filename_to_page_name;
 
@@ -55,10 +58,7 @@ pub fn parse_page_from_db(
 }
 
 /// Shared parsing pipeline used by both the disk and DB read paths.
-fn parse_raw_into_node(
-    relative_path: &str,
-    raw: &str,
-) -> (ParsedNode, Vec<WikiLink>, String) {
+fn parse_raw_into_node(relative_path: &str, raw: &str) -> (ParsedNode, Vec<WikiLink>, String) {
     let parsed = parse_frontmatter(raw);
     let fm_json = yaml_map_to_json(&parsed.map);
 
@@ -225,7 +225,12 @@ pub fn index_workspace(
     root: &Path,
     annotations_enabled: bool,
 ) -> Result<(IndexResult, ReverseStemIndex), GraphError> {
-    index_workspace_with_progress(store, root, &super::progress::noop_callback(), annotations_enabled)
+    index_workspace_with_progress(
+        store,
+        root,
+        &super::progress::noop_callback(),
+        annotations_enabled,
+    )
 }
 
 pub fn index_workspace_with_progress(
@@ -254,8 +259,12 @@ pub fn index_workspace_with_progress_store(
         })?;
     }
 
-    let files = match notes_store {
-        Some(ns) => walk_pages_from_db(&ns.lock().unwrap())?,
+    // Hold the NotesStore lock once across the whole parse loop instead of
+    // re-acquiring it per page — this path is single-threaded and sequential.
+    let db_guard = notes_store.map(|ns| ns.lock().unwrap());
+
+    let files = match db_guard.as_deref() {
+        Some(store) => walk_pages_from_db(store)?,
         None => walk_md_files(root)?,
     };
     let file_count = files.len();
@@ -274,8 +283,8 @@ pub fn index_workspace_with_progress_store(
     let mut bodies: HashMap<String, String> = HashMap::new();
 
     for (i, (rel_path, mtime)) in files.iter().enumerate() {
-        let parsed = match notes_store {
-            Some(ns) => parse_page_from_db(&ns.lock().unwrap(), rel_path),
+        let parsed = match db_guard.as_deref() {
+            Some(store) => parse_page_from_db(store, rel_path),
             None => parse_md_file(root, rel_path),
         };
         match parsed {
@@ -332,7 +341,8 @@ pub fn index_workspace_with_progress_store(
         // Always call upsert even with empty vec so orphaned annotations get cleaned up.
         {
             let anns = if annotations_enabled {
-                bodies.get(&node.id)
+                bodies
+                    .get(&node.id)
                     .map(|b| super::extract::extract_annotations(b, &mark_codes))
                     .unwrap_or_default()
             } else {
@@ -350,10 +360,7 @@ pub fn index_workspace_with_progress_store(
             let body = bodies.get(&node.id).map(|s| s.as_str()).unwrap_or("");
             for link in links {
                 let resolved = stem_lookup.resolve(&link.target);
-                let (context, source_line) = extract_sentence_context(
-                    body,
-                    &link.target,
-                );
+                let (context, source_line) = extract_sentence_context(body, &link.target);
                 let target_id = match &resolved.node_id {
                     Some(id) => id.clone(),
                     None => {
@@ -453,7 +460,11 @@ impl DiffResult {
         changed.sort();
         deleted.sort();
 
-        DiffResult { new, changed, deleted }
+        DiffResult {
+            new,
+            changed,
+            deleted,
+        }
     }
 }
 
@@ -526,20 +537,20 @@ pub fn incremental_reindex_store(
     annotations_enabled: bool,
     notes_store: Option<&NotesStoreHandle>,
 ) -> Result<IndexResult, GraphError> {
+    // Hold the NotesStore lock once across the whole reindex instead of
+    // re-acquiring it per page — this path is single-threaded and sequential.
+    let db_guard = notes_store.map(|ns| ns.lock().unwrap());
+
     // Parse a page from the active backend (DB store or disk).
     let parse_page = |path: &str| -> Result<(ParsedNode, Vec<WikiLink>, String), GraphError> {
-        match notes_store {
-            Some(ns) => parse_page_from_db(&ns.lock().unwrap(), path),
+        match db_guard.as_deref() {
+            Some(store) => parse_page_from_db(store, path),
             None => parse_md_file(root, path),
         }
     };
     // Resolve mtime for a page from the active backend.
-    let db_mtimes: Option<HashMap<String, i64>> = match notes_store {
-        Some(ns) => Some(
-            walk_pages_from_db(&ns.lock().unwrap())?
-                .into_iter()
-                .collect(),
-        ),
+    let db_mtimes: Option<HashMap<String, i64>> = match db_guard.as_deref() {
+        Some(store) => Some(walk_pages_from_db(store)?.into_iter().collect()),
         None => None,
     };
     let mtime_for = |path: &str| -> i64 {
@@ -700,7 +711,13 @@ pub fn incremental_reindex_store(
                             link.target.clone()
                         }
                     };
-                    store.insert_edge(source_id, &target_id, &context, &link.target, source_line)?;
+                    store.insert_edge(
+                        source_id,
+                        &target_id,
+                        &context,
+                        &link.target,
+                        source_line,
+                    )?;
                     reverse_stems.add(source_id, &link.target);
                     edges_resolved += 1;
                 }
@@ -722,8 +739,8 @@ pub fn incremental_reindex_store(
 // GraphIndex
 // ---------------------------------------------------------------------------
 
-use std::sync::atomic::AtomicBool;
 use super::types::Position;
+use std::sync::atomic::AtomicBool;
 
 pub struct GraphIndex {
     store: Mutex<Store>,
@@ -738,7 +755,10 @@ pub struct GraphIndex {
 }
 
 impl GraphIndex {
-    pub fn load_from_store(workspace_root: std::path::PathBuf) -> Result<Option<Self>, GraphError> {
+    pub fn load_from_store(
+        workspace_root: std::path::PathBuf,
+        notes_store: Option<NotesStoreHandle>,
+    ) -> Result<Option<Self>, GraphError> {
         let db_path = workspace_root.join(".lit").join("graph.db");
         if !db_path.exists() {
             return Ok(None);
@@ -763,14 +783,8 @@ impl GraphIndex {
             workspace_root,
             positions: Mutex::new(positions),
             layout_in_progress: AtomicBool::new(false),
-            notes_store: None,
+            notes_store,
         }))
-    }
-
-    /// Attach a `NotesStore` handle to a warm-loaded index so subsequent reindex
-    /// operations read from the DB rather than disk.
-    pub fn set_notes_store(&mut self, notes_store: Option<NotesStoreHandle>) {
-        self.notes_store = notes_store;
     }
 
     pub fn sync_with_disk(&self, annotations_enabled: bool) -> Result<bool, GraphError> {
@@ -791,14 +805,27 @@ impl GraphIndex {
             "background sync: applying diff"
         );
         let mut reverse_stems = self.reverse_stems.lock().unwrap();
-        incremental_reindex(&store, &self.workspace_root, &mut reverse_stems, &diff, annotations_enabled)?;
+        incremental_reindex(
+            &store,
+            &self.workspace_root,
+            &mut reverse_stems,
+            &diff,
+            annotations_enabled,
+        )?;
         let mut knowledge = self.knowledge.lock().unwrap();
         *knowledge = KnowledgeGraph::from_store(&store)?;
         Ok(true)
     }
 
-    pub fn build(workspace_root: std::path::PathBuf, annotations_enabled: bool) -> Result<Self, GraphError> {
-        Self::build_with_progress(workspace_root, &super::progress::noop_callback(), annotations_enabled)
+    pub fn build(
+        workspace_root: std::path::PathBuf,
+        annotations_enabled: bool,
+    ) -> Result<Self, GraphError> {
+        Self::build_with_progress(
+            workspace_root,
+            &super::progress::noop_callback(),
+            annotations_enabled,
+        )
     }
 
     pub fn build_with_progress(
@@ -833,7 +860,11 @@ impl GraphIndex {
             let diff = compute_diff_store(&store, &workspace_root, notes_store.as_ref())?;
             if diff.is_empty() {
                 info!("warm start: no changes detected, loading from store");
-                on_progress(IndexProgress { phase: IndexPhase::Diffing, current: 0, total: 0 });
+                on_progress(IndexProgress {
+                    phase: IndexPhase::Diffing,
+                    current: 0,
+                    total: 0,
+                });
                 let edges: Vec<(String, String)> = store
                     .all_raw_edges()?
                     .into_iter()
@@ -847,7 +878,11 @@ impl GraphIndex {
                     deleted = diff.deleted.len(),
                     "warm start: applying diff"
                 );
-                on_progress(IndexProgress { phase: IndexPhase::Diffing, current: 0, total: 0 });
+                on_progress(IndexProgress {
+                    phase: IndexPhase::Diffing,
+                    current: 0,
+                    total: 0,
+                });
                 let edges: Vec<(String, String)> = store
                     .all_raw_edges()?
                     .into_iter()
@@ -876,7 +911,11 @@ impl GraphIndex {
             reverse_stems
         };
 
-        on_progress(IndexProgress { phase: IndexPhase::Building, current: 0, total: 0 });
+        on_progress(IndexProgress {
+            phase: IndexPhase::Building,
+            current: 0,
+            total: 0,
+        });
         let knowledge = KnowledgeGraph::from_store(&store)?;
         let positions = store.load_positions().unwrap_or_default();
         Ok(Self {
@@ -890,7 +929,11 @@ impl GraphIndex {
         })
     }
 
-    pub fn batch_reindex(&self, diff: &DiffResult, annotations_enabled: bool) -> Result<Vec<(String, String)>, GraphError> {
+    pub fn batch_reindex(
+        &self,
+        diff: &DiffResult,
+        annotations_enabled: bool,
+    ) -> Result<Vec<(String, String)>, GraphError> {
         if diff.is_empty() {
             return Ok(vec![]);
         }
@@ -909,17 +952,50 @@ impl GraphIndex {
         Ok(result.removed_annotation_uuids)
     }
 
-    pub fn reindex_file(&self, relative_path: &str, annotations_enabled: bool) -> Result<Vec<(String, String)>, GraphError> {
-        self.batch_reindex(&DiffResult { new: vec![], changed: vec![relative_path.to_string()], deleted: vec![] }, annotations_enabled)
+    pub fn reindex_file(
+        &self,
+        relative_path: &str,
+        annotations_enabled: bool,
+    ) -> Result<Vec<(String, String)>, GraphError> {
+        self.batch_reindex(
+            &DiffResult {
+                new: vec![],
+                changed: vec![relative_path.to_string()],
+                deleted: vec![],
+            },
+            annotations_enabled,
+        )
     }
 
     /// For newly created or restored files. Uses `new` semantics so stub promotion runs.
-    pub fn add_file(&self, relative_path: &str, annotations_enabled: bool) -> Result<Vec<(String, String)>, GraphError> {
-        self.batch_reindex(&DiffResult { new: vec![relative_path.to_string()], changed: vec![], deleted: vec![] }, annotations_enabled)
+    pub fn add_file(
+        &self,
+        relative_path: &str,
+        annotations_enabled: bool,
+    ) -> Result<Vec<(String, String)>, GraphError> {
+        self.batch_reindex(
+            &DiffResult {
+                new: vec![relative_path.to_string()],
+                changed: vec![],
+                deleted: vec![],
+            },
+            annotations_enabled,
+        )
     }
 
-    pub fn remove_file(&self, relative_path: &str, annotations_enabled: bool) -> Result<Vec<(String, String)>, GraphError> {
-        self.batch_reindex(&DiffResult { new: vec![], changed: vec![], deleted: vec![relative_path.to_string()] }, annotations_enabled)
+    pub fn remove_file(
+        &self,
+        relative_path: &str,
+        annotations_enabled: bool,
+    ) -> Result<Vec<(String, String)>, GraphError> {
+        self.batch_reindex(
+            &DiffResult {
+                new: vec![],
+                changed: vec![],
+                deleted: vec![relative_path.to_string()],
+            },
+            annotations_enabled,
+        )
     }
 
     pub fn full_rebuild(&self, annotations_enabled: bool) -> Result<IndexResult, GraphError> {
@@ -968,12 +1044,7 @@ impl GraphIndex {
         knowledge.paths(from, to, max_depth, directed)
     }
 
-    pub fn shared(
-        &self,
-        a: &str,
-        b: &str,
-        directed: bool,
-    ) -> Result<Vec<GraphNode>, GraphError> {
+    pub fn shared(&self, a: &str, b: &str, directed: bool) -> Result<Vec<GraphNode>, GraphError> {
         let knowledge = self.knowledge.lock().unwrap();
         knowledge.shared(a, b, directed)
     }
@@ -1009,7 +1080,10 @@ impl GraphIndex {
         })
     }
 
-    pub fn resolve_wikilink(&self, target: &str) -> Result<super::resolve::ResolvedLink, GraphError> {
+    pub fn resolve_wikilink(
+        &self,
+        target: &str,
+    ) -> Result<super::resolve::ResolvedLink, GraphError> {
         let store = self.store.lock().unwrap();
         let all_ids = store.all_node_ids()?;
         let aliases = store.all_aliases()?;
@@ -1046,15 +1120,20 @@ impl GraphIndex {
         }
     }
 
-    pub fn get_first_paragraphs(&self, ids: &[String]) -> Result<std::collections::HashMap<String, String>, GraphError> {
+    pub fn get_first_paragraphs(
+        &self,
+        ids: &[String],
+    ) -> Result<std::collections::HashMap<String, String>, GraphError> {
         let store = self.store.lock().unwrap();
         store.get_first_paragraphs(ids)
     }
 
     pub fn unlinked_mentions(&self, page_id: &str) -> Result<Vec<UnlinkedMention>, GraphError> {
+        use super::extract::{
+            extract_mention_context, find_plain_mentions, strip_for_mention_scan,
+        };
         use grep_regex::RegexMatcherBuilder;
         use rayon::prelude::*;
-        use super::extract::{extract_mention_context, find_plain_mentions, strip_for_mention_scan};
 
         let store = self.store.lock().unwrap();
         let (title, aliases) = store.title_and_aliases(page_id)?;
@@ -1063,15 +1142,17 @@ impl GraphIndex {
         drop(store);
 
         let knowledge = self.knowledge.lock().unwrap();
-        let already_linked = knowledge
-            .backlink_source_ids(page_id)
-            .unwrap_or_default();
+        let already_linked = knowledge.backlink_source_ids(page_id).unwrap_or_default();
         drop(knowledge);
 
         let mut names: Vec<String> = vec![title];
         names.extend(aliases);
 
-        let filtered: Vec<&str> = names.iter().map(|n| n.as_str()).filter(|n| !n.is_empty()).collect();
+        let filtered: Vec<&str> = names
+            .iter()
+            .map(|n| n.as_str())
+            .filter(|n| !n.is_empty())
+            .collect();
         let prefilter_matcher = if !filtered.is_empty() {
             let pattern = filtered
                 .iter()
@@ -1095,11 +1176,17 @@ impl GraphIndex {
                 source_id.as_str() != page_id_owned && !already_linked.contains(source_id.as_str())
             })
             .filter(|source_id| match &prefilter_matcher {
-                Some(m) => file_contains_any_name_with_matcher(&self.workspace_root.join(source_id), m),
+                Some(m) => {
+                    file_contains_any_name_with_matcher(&self.workspace_root.join(source_id), m)
+                }
                 None => false,
             })
             .flat_map_iter(|source_id| {
-                let page = match crate::workspace::ops::read_page(&self.workspace_root, source_id, &noop_registry) {
+                let page = match crate::workspace::ops::read_page(
+                    &self.workspace_root,
+                    source_id,
+                    &noop_registry,
+                ) {
                     Ok(p) => p,
                     Err(_) => return Vec::new(),
                 };
@@ -1128,7 +1215,11 @@ impl GraphIndex {
         Ok(results)
     }
 
-    pub fn search_by_title(&self, query: &str, limit: i64) -> Result<Vec<SearchResult>, GraphError> {
+    pub fn search_by_title(
+        &self,
+        query: &str,
+        limit: i64,
+    ) -> Result<Vec<SearchResult>, GraphError> {
         let store = self.store.lock().unwrap();
         let pairs = store.search_titles(query, limit)?;
         Ok(pairs
@@ -1213,27 +1304,51 @@ impl GraphIndex {
         Ok(scores)
     }
 
-    pub fn search_tags(&self, query: &str, limit: i64) -> Result<Vec<super::types::TagSearchResult>, GraphError> {
+    pub fn search_tags(
+        &self,
+        query: &str,
+        limit: i64,
+    ) -> Result<Vec<super::types::TagSearchResult>, GraphError> {
         let store = self.store.lock().unwrap();
         store.search_tags(query, limit)
     }
 
-    pub fn list_pages_by_tag(&self, tag: &str, limit: i64) -> Result<Vec<super::types::TagPageResult>, GraphError> {
+    pub fn list_pages_by_tag(
+        &self,
+        tag: &str,
+        limit: i64,
+    ) -> Result<Vec<super::types::TagPageResult>, GraphError> {
         let store = self.store.lock().unwrap();
         store.list_pages_by_tag(tag, limit)
     }
 
-    pub fn search_annotations(&self, query: &str, type_filter: Option<&str>, limit: i64) -> Result<Vec<super::types::AnnotationSearchResult>, GraphError> {
+    pub fn search_annotations(
+        &self,
+        query: &str,
+        type_filter: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<super::types::AnnotationSearchResult>, GraphError> {
         let store = self.store.lock().unwrap();
         store.search_annotations(query, type_filter, limit)
     }
 
-    pub fn list_annotations(&self, node_id: Option<&str>, type_filter: Option<&str>, limit: i64) -> Result<Vec<super::types::AnnotationSearchResult>, GraphError> {
+    pub fn list_annotations(
+        &self,
+        node_id: Option<&str>,
+        type_filter: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<super::types::AnnotationSearchResult>, GraphError> {
         let store = self.store.lock().unwrap();
         store.list_annotations(node_id, type_filter, limit)
     }
 
-    pub fn find_annotation_uuid(&self, node_id: &str, annotation_type: &str, body: Option<&str>, char_start_hint: usize) -> Result<Option<String>, GraphError> {
+    pub fn find_annotation_uuid(
+        &self,
+        node_id: &str,
+        annotation_type: &str,
+        body: Option<&str>,
+        char_start_hint: usize,
+    ) -> Result<Option<String>, GraphError> {
         let store = self.store.lock().unwrap();
         store.find_annotation_uuid(node_id, annotation_type, body, char_start_hint)
     }
@@ -1259,14 +1374,19 @@ impl GraphIndex {
 
     pub fn clear_positions(&self) -> Result<(), GraphError> {
         self.positions.lock().unwrap().clear();
-        self.store.lock().map_err(|e| {
-            GraphError::Other(e.to_string())
-        })?.clear_positions()
+        self.store
+            .lock()
+            .map_err(|e| GraphError::Other(e.to_string()))?
+            .clear_positions()
     }
 
     pub fn compute_layout_background(&self, settings: &super::layout::LayoutSettings) {
         use std::sync::atomic::Ordering;
-        if self.layout_in_progress.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+        if self
+            .layout_in_progress
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
             return;
         }
         let graph = self.knowledge.lock().unwrap().graph_clone();
@@ -1274,9 +1394,14 @@ impl GraphIndex {
             let p = self.positions.lock().unwrap();
             p.iter().map(|(k, v)| (k.clone(), (v.x, v.y))).collect()
         };
-        let existing_ref = if existing_tuples.is_empty() { None } else { Some(&existing_tuples) };
+        let existing_ref = if existing_tuples.is_empty() {
+            None
+        } else {
+            Some(&existing_tuples)
+        };
         let raw = super::layout::compute_layout(&graph, existing_ref, settings);
-        let result: HashMap<String, Position> = raw.into_iter()
+        let result: HashMap<String, Position> = raw
+            .into_iter()
             .map(|(k, (x, y))| (k, Position { x, y }))
             .collect();
         {
@@ -1340,9 +1465,11 @@ fn search_file_with_matcher(
     );
 
     match result {
-        Ok(()) if seen_terms.len() == terms.len() => {
-            Some((match_count, first_line.unwrap_or_default(), first_line_number))
-        }
+        Ok(()) if seen_terms.len() == terms.len() => Some((
+            match_count,
+            first_line.unwrap_or_default(),
+            first_line_number,
+        )),
         _ => None,
     }
 }
@@ -1449,7 +1576,9 @@ mod tests {
         {
             let store = handle.lock().unwrap();
             let parsed = crate::workspace::frontmatter::parse_frontmatter(raw);
-            store.write_page("note.md", parsed.body, &parsed.map).unwrap();
+            store
+                .write_page("note.md", parsed.body, &parsed.map)
+                .unwrap();
         }
         let (db_node, db_links, db_body) =
             parse_page_from_db(&handle.lock().unwrap(), "note.md").unwrap();
@@ -1471,8 +1600,12 @@ mod tests {
         let handle = db_handle();
         {
             let store = handle.lock().unwrap();
-            store.write_page("a.md", "Links to [[b]].", &indexmap::IndexMap::new()).unwrap();
-            store.write_page("b.md", "Target page.", &indexmap::IndexMap::new()).unwrap();
+            store
+                .write_page("a.md", "Links to [[b]].", &indexmap::IndexMap::new())
+                .unwrap();
+            store
+                .write_page("b.md", "Target page.", &indexmap::IndexMap::new())
+                .unwrap();
         }
         let dir = create_workspace();
         let gi = GraphIndex::build_with_store(
@@ -1492,12 +1625,81 @@ mod tests {
     }
 
     #[test]
+    fn cold_index_holds_notes_store_lock_across_parse_loop() {
+        use std::sync::mpsc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let handle = db_handle();
+        {
+            let store = handle.lock().unwrap();
+            for name in ["a.md", "b.md", "c.md", "d.md"] {
+                store
+                    .write_page(name, "Links to [[other]].", &indexmap::IndexMap::new())
+                    .unwrap();
+            }
+        }
+        let dir = create_workspace();
+
+        // Channel: build thread signals when it has hit the Parsing phase.
+        let (tx, rx) = mpsc::channel::<()>();
+        // Gate the build thread inside the parse callback until the main thread
+        // has finished probing the lock.
+        let release = Arc::new(AtomicBool::new(false));
+        let signalled = Arc::new(AtomicBool::new(false));
+
+        let build_handle = Arc::clone(&handle);
+        let release_cb = Arc::clone(&release);
+        let signalled_cb = Arc::clone(&signalled);
+        let root = dir.path().to_path_buf();
+
+        let join = std::thread::spawn(move || {
+            let on_progress = move |p: super::super::progress::IndexProgress| {
+                if matches!(p.phase, super::super::progress::IndexPhase::Parsing)
+                    && !signalled_cb.swap(true, Ordering::SeqCst)
+                {
+                    // First Parsing tick: tell the main thread, then block here
+                    // (still inside the parse loop) until released.
+                    let _ = tx.send(());
+                    while !release_cb.load(Ordering::SeqCst) {
+                        std::thread::yield_now();
+                    }
+                }
+            };
+            GraphIndex::build_with_store(root, &on_progress, false, Some(build_handle)).unwrap();
+        });
+
+        // Wait until the build thread is parked inside the parse loop.
+        rx.recv().unwrap();
+
+        // While the build thread sits inside the parse loop, the NotesStore
+        // lock must be held continuously. With per-page locking it is released
+        // between pages (and during the callback), so try_lock would succeed.
+        let probe = handle.try_lock();
+        let locked = probe.is_err();
+        drop(probe);
+
+        // Release the build thread and let it finish.
+        release.store(true, Ordering::SeqCst);
+        join.join().unwrap();
+
+        assert!(
+            locked,
+            "NotesStore lock must be held continuously across the DB parse loop, \
+             but try_lock succeeded mid-parse"
+        );
+    }
+
+    #[test]
     fn compute_diff_store_reads_db_mtimes() {
         let handle = db_handle();
         {
             let store = handle.lock().unwrap();
-            store.write_page("a.md", "x", &indexmap::IndexMap::new()).unwrap();
-            store.write_page("b.md", "x", &indexmap::IndexMap::new()).unwrap();
+            store
+                .write_page("a.md", "x", &indexmap::IndexMap::new())
+                .unwrap();
+            store
+                .write_page("b.md", "x", &indexmap::IndexMap::new())
+                .unwrap();
         }
         let dir = create_workspace();
         // Cold build from the DB to populate the graph store's sync entries.
@@ -1512,14 +1714,24 @@ mod tests {
         // Add a new page and trash an existing one in the DB.
         {
             let store = handle.lock().unwrap();
-            store.write_page("c.md", "new", &indexmap::IndexMap::new()).unwrap();
+            store
+                .write_page("c.md", "new", &indexmap::IndexMap::new())
+                .unwrap();
             store.trash_page("a.md").unwrap();
         }
 
         let store_guard = gi.store();
         let diff = compute_diff_store(&store_guard, dir.path(), Some(&handle)).unwrap();
-        assert!(diff.new.contains(&"c.md".to_string()), "new: {:?}", diff.new);
-        assert!(diff.deleted.contains(&"a.md".to_string()), "deleted: {:?}", diff.deleted);
+        assert!(
+            diff.new.contains(&"c.md".to_string()),
+            "new: {:?}",
+            diff.new
+        );
+        assert!(
+            diff.deleted.contains(&"a.md".to_string()),
+            "deleted: {:?}",
+            diff.deleted
+        );
     }
 
     #[test]
@@ -1527,7 +1739,9 @@ mod tests {
         let handle = db_handle();
         {
             let store = handle.lock().unwrap();
-            store.write_page("a.md", "x", &indexmap::IndexMap::new()).unwrap();
+            store
+                .write_page("a.md", "x", &indexmap::IndexMap::new())
+                .unwrap();
         }
         let dir = create_workspace();
         let gi = GraphIndex::build_with_store(
@@ -1690,7 +1904,11 @@ mod tests {
     #[test]
     fn parse_md_file_empty_frontmatter_title_falls_back_to_filename() {
         let dir = create_workspace();
-        write_md(dir.path(), "agentic-design.md", "---\ntitle: \"\"\n---\nBody.");
+        write_md(
+            dir.path(),
+            "agentic-design.md",
+            "---\ntitle: \"\"\n---\nBody.",
+        );
         let (node, _, _) = parse_md_file(dir.path(), "agentic-design.md").unwrap();
         assert_eq!(node.title, "agentic-design");
     }
@@ -1986,7 +2204,8 @@ mod tests {
             log_clone.lock().unwrap().push(p);
         };
 
-        let (result, _) = index_workspace_with_progress(&store, dir.path(), &callback, true).unwrap();
+        let (result, _) =
+            index_workspace_with_progress(&store, dir.path(), &callback, true).unwrap();
         assert_eq!(result.nodes_indexed, 3);
 
         let events = log.lock().unwrap();
@@ -1996,7 +2215,10 @@ mod tests {
         assert_eq!(events[0].total, 3);
 
         // Then 3 Parsing events
-        let parsing: Vec<_> = events.iter().filter(|e| e.phase == IndexPhase::Parsing).collect();
+        let parsing: Vec<_> = events
+            .iter()
+            .filter(|e| e.phase == IndexPhase::Parsing)
+            .collect();
         assert_eq!(parsing.len(), 3);
         assert_eq!(parsing[0].current, 1);
         assert_eq!(parsing[1].current, 2);
@@ -2004,7 +2226,10 @@ mod tests {
         assert!(parsing.iter().all(|e| e.total == 3));
 
         // Then 3 Resolving events
-        let resolving: Vec<_> = events.iter().filter(|e| e.phase == IndexPhase::Resolving).collect();
+        let resolving: Vec<_> = events
+            .iter()
+            .filter(|e| e.phase == IndexPhase::Resolving)
+            .collect();
         assert_eq!(resolving.len(), 3);
         assert_eq!(resolving[0].current, 1);
         assert_eq!(resolving[1].current, 2);
@@ -2034,7 +2259,14 @@ mod tests {
         index_workspace_with_progress(&store, dir.path(), &callback, true).unwrap();
 
         let phases = log.lock().unwrap();
-        assert_eq!(*phases, vec![IndexPhase::Scanning, IndexPhase::Parsing, IndexPhase::Resolving]);
+        assert_eq!(
+            *phases,
+            vec![
+                IndexPhase::Scanning,
+                IndexPhase::Parsing,
+                IndexPhase::Resolving
+            ]
+        );
     }
 
     #[test]
@@ -2373,9 +2605,15 @@ mod tests {
         incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
 
         let bl_a = store.backlinks("a.md").unwrap();
-        assert!(bl_a.iter().any(|bl| bl.source_id == "b.md"), "b.md should link to a.md");
+        assert!(
+            bl_a.iter().any(|bl| bl.source_id == "b.md"),
+            "b.md should link to a.md"
+        );
         let bl_b = store.backlinks("b.md").unwrap();
-        assert!(bl_b.iter().any(|bl| bl.source_id == "c.md"), "c.md should link to b.md");
+        assert!(
+            bl_b.iter().any(|bl| bl.source_id == "c.md"),
+            "c.md should link to b.md"
+        );
     }
 
     #[test]
@@ -2398,7 +2636,10 @@ mod tests {
         incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
 
         let bl = store.backlinks("a.md").unwrap();
-        assert!(bl.iter().any(|bl| bl.source_id == "b.md"), "b.md should link to a.md via alias");
+        assert!(
+            bl.iter().any(|bl| bl.source_id == "b.md"),
+            "b.md should link to a.md via alias"
+        );
     }
 
     // --- GraphIndex ---
@@ -2461,7 +2702,10 @@ mod tests {
 
         // b.md should now link to c.md, not a.md
         let backlinks_a = gi2.backlinks("a.md").unwrap();
-        assert!(backlinks_a.is_empty(), "a.md should have no backlinks after edit");
+        assert!(
+            backlinks_a.is_empty(),
+            "a.md should have no backlinks after edit"
+        );
         let backlinks_c = gi2.backlinks("c.md").unwrap();
         assert_eq!(backlinks_c.len(), 1);
         assert_eq!(backlinks_c[0].source_id, "b.md");
@@ -2501,8 +2745,11 @@ mod tests {
         let db_path = dir.path().join(".lit").join("graph.db");
         {
             let conn = rusqlite::Connection::open(&db_path).unwrap();
-            conn.execute("UPDATE meta SET value = '999' WHERE key = 'schema_version'", [])
-                .unwrap();
+            conn.execute(
+                "UPDATE meta SET value = '999' WHERE key = 'schema_version'",
+                [],
+            )
+            .unwrap();
         }
 
         // Build again — should detect future version, reset, and do cold start
@@ -2529,7 +2776,8 @@ mod tests {
             }
         };
 
-        let gi = GraphIndex::build_with_progress(dir.path().to_path_buf(), &callback, true).unwrap();
+        let gi =
+            GraphIndex::build_with_progress(dir.path().to_path_buf(), &callback, true).unwrap();
         assert_eq!(gi.stats().unwrap().nodes, 2);
 
         let phases = log.lock().unwrap();
@@ -2558,7 +2806,8 @@ mod tests {
             }
         };
 
-        let gi = GraphIndex::build_with_progress(dir.path().to_path_buf(), &callback, true).unwrap();
+        let gi =
+            GraphIndex::build_with_progress(dir.path().to_path_buf(), &callback, true).unwrap();
         assert_eq!(gi.stats().unwrap().nodes, 1);
 
         let phases = log.lock().unwrap();
@@ -2587,7 +2836,8 @@ mod tests {
             }
         };
 
-        let gi = GraphIndex::build_with_progress(dir.path().to_path_buf(), &callback, true).unwrap();
+        let gi =
+            GraphIndex::build_with_progress(dir.path().to_path_buf(), &callback, true).unwrap();
         assert_eq!(gi.stats().unwrap().nodes, 1);
 
         let phases = log.lock().unwrap();
@@ -2630,7 +2880,7 @@ mod tests {
 
         let stats = gi.stats().unwrap();
         assert_eq!(stats.nodes, 3); // a, b, d (c deleted)
-        // d->a edge exists, a->b edge removed
+                                    // d->a edge exists, a->b edge removed
         let sub = gi.full_subgraph();
         assert!(sub.edges.iter().any(|e| e.0 == "d.md" && e.1 == "a.md"));
         assert!(!sub.edges.iter().any(|e| e.0 == "a.md" && e.1 == "b.md"));
@@ -2672,7 +2922,8 @@ mod tests {
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
 
         fs::rename(dir.path().join("old.md"), dir.path().join("new.md")).unwrap();
-        gi.batch_reindex(&rename_reindex_diff("old.md", "new.md"), true).unwrap();
+        gi.batch_reindex(&rename_reindex_diff("old.md", "new.md"), true)
+            .unwrap();
 
         assert!(matches!(
             gi.subgraph(&["old.md"], 1, false),
@@ -2706,7 +2957,10 @@ mod tests {
 
         // b is a stub node — filtered from subgraph output
         let sub = gi.full_subgraph();
-        assert!(!sub.nodes.iter().any(|n| n.id == "b"), "stub 'b' should not appear in subgraph");
+        assert!(
+            !sub.nodes.iter().any(|n| n.id == "b"),
+            "stub 'b' should not appear in subgraph"
+        );
 
         // Create b.md and batch_reindex with new
         write_md(dir.path(), "b.md", "I exist now.");
@@ -2719,7 +2973,10 @@ mod tests {
 
         let sub = gi.full_subgraph();
         // Real node should now appear (stub was replaced)
-        assert!(!sub.nodes.iter().any(|n| n.id == "b"), "bare stub 'b' should be gone");
+        assert!(
+            !sub.nodes.iter().any(|n| n.id == "b"),
+            "bare stub 'b' should be gone"
+        );
         let b_real = sub.nodes.iter().find(|n| n.id == "b.md").unwrap();
         assert!(!b_real.is_stub);
         // Edge a.md -> b.md should exist
@@ -2736,7 +2993,10 @@ mod tests {
         gi.add_file("b.md", true).unwrap();
 
         let sub = gi.full_subgraph();
-        assert!(!sub.nodes.iter().any(|n| n.id == "b"), "stub 'b' should be gone");
+        assert!(
+            !sub.nodes.iter().any(|n| n.id == "b"),
+            "stub 'b' should be gone"
+        );
         let b_real = sub.nodes.iter().find(|n| n.id == "b.md").unwrap();
         assert!(!b_real.is_stub);
         assert!(sub.edges.iter().any(|e| e.0 == "a.md" && e.1 == "b.md"));
@@ -2755,8 +3015,14 @@ mod tests {
         // so the edge a.md -> b.md is NOT resolved (still points at stub "b",
         // which without_stubs filters out).
         let sub = gi.full_subgraph();
-        assert!(sub.nodes.iter().any(|n| n.id == "b.md"), "b.md exists as real node");
-        assert!(!sub.edges.iter().any(|e| e.0 == "a.md" && e.1 == "b.md"), "edge not resolved because stub persists");
+        assert!(
+            sub.nodes.iter().any(|n| n.id == "b.md"),
+            "b.md exists as real node"
+        );
+        assert!(
+            !sub.edges.iter().any(|e| e.0 == "a.md" && e.1 == "b.md"),
+            "edge not resolved because stub persists"
+        );
     }
 
     #[test]
@@ -2789,8 +3055,14 @@ mod tests {
         assert!(!sub.nodes.iter().any(|n| n.id == "a.md"));
         assert!(!sub.nodes.iter().any(|n| n.id == "b.md"));
         assert!(sub.nodes.iter().any(|n| n.id == "merged.md"));
-        assert!(sub.edges.iter().any(|e| e.0 == "c.md" && e.1 == "merged.md"));
-        assert!(sub.edges.iter().any(|e| e.0 == "d.md" && e.1 == "merged.md"));
+        assert!(sub
+            .edges
+            .iter()
+            .any(|e| e.0 == "c.md" && e.1 == "merged.md"));
+        assert!(sub
+            .edges
+            .iter()
+            .any(|e| e.0 == "d.md" && e.1 == "merged.md"));
     }
 
     #[test]
@@ -2820,7 +3092,10 @@ mod tests {
         assert!(!sub.nodes.iter().any(|n| n.id == "big.md"));
         assert!(sub.nodes.iter().any(|n| n.id == "part1.md"));
         assert!(sub.nodes.iter().any(|n| n.id == "part2.md"));
-        assert!(sub.edges.iter().any(|e| e.0 == "ref.md" && e.1 == "part1.md"));
+        assert!(sub
+            .edges
+            .iter()
+            .any(|e| e.0 == "ref.md" && e.1 == "part1.md"));
     }
 
     #[test]
@@ -2865,8 +3140,18 @@ mod tests {
         gi_batch.batch_reindex(&diff, true).unwrap();
 
         // Compare node IDs
-        let mut seq_nodes: Vec<String> = gi_seq.full_subgraph().nodes.iter().map(|n| n.id.clone()).collect();
-        let mut batch_nodes: Vec<String> = gi_batch.full_subgraph().nodes.iter().map(|n| n.id.clone()).collect();
+        let mut seq_nodes: Vec<String> = gi_seq
+            .full_subgraph()
+            .nodes
+            .iter()
+            .map(|n| n.id.clone())
+            .collect();
+        let mut batch_nodes: Vec<String> = gi_batch
+            .full_subgraph()
+            .nodes
+            .iter()
+            .map(|n| n.id.clone())
+            .collect();
         seq_nodes.sort();
         batch_nodes.sort();
         assert_eq!(seq_nodes, batch_nodes);
@@ -2884,7 +3169,11 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Hello.");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
-        let diff = DiffResult { new: vec![], changed: vec![], deleted: vec![] };
+        let diff = DiffResult {
+            new: vec![],
+            changed: vec![],
+            deleted: vec![],
+        };
         gi.batch_reindex(&diff, true).unwrap();
         assert_eq!(gi.stats().unwrap().nodes, 1);
     }
@@ -3057,7 +3346,11 @@ mod tests {
     #[test]
     fn graph_index_search() {
         let dir = create_workspace();
-        write_md(dir.path(), "a.md", "---\ntitle: Quantum Computing\n---\nBody.");
+        write_md(
+            dir.path(),
+            "a.md",
+            "---\ntitle: Quantum Computing\n---\nBody.",
+        );
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.search("Quantum", 20).unwrap();
         assert_eq!(results.len(), 1);
@@ -3286,7 +3579,11 @@ mod tests {
     #[test]
     fn unlinked_mentions_no_mentions() {
         let dir = create_workspace();
-        write_md(dir.path(), "target.md", "---\ntitle: Alice\n---\nI am Alice.");
+        write_md(
+            dir.path(),
+            "target.md",
+            "---\ntitle: Alice\n---\nI am Alice.",
+        );
         write_md(dir.path(), "other.md", "No mention of the name here.");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let mentions = gi.unlinked_mentions("target.md").unwrap();
@@ -3296,7 +3593,11 @@ mod tests {
     #[test]
     fn unlinked_mentions_finds_plain_text() {
         let dir = create_workspace();
-        write_md(dir.path(), "target.md", "---\ntitle: Alice\n---\nI am Alice.");
+        write_md(
+            dir.path(),
+            "target.md",
+            "---\ntitle: Alice\n---\nI am Alice.",
+        );
         write_md(dir.path(), "other.md", "I met Alice yesterday.");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let mentions = gi.unlinked_mentions("target.md").unwrap();
@@ -3309,7 +3610,11 @@ mod tests {
     #[test]
     fn unlinked_mentions_excludes_already_linked() {
         let dir = create_workspace();
-        write_md(dir.path(), "target.md", "---\ntitle: Alice\n---\nI am Alice.");
+        write_md(
+            dir.path(),
+            "target.md",
+            "---\ntitle: Alice\n---\nI am Alice.",
+        );
         write_md(dir.path(), "linked.md", "[[target]] and Alice is great.");
         write_md(dir.path(), "unlinked.md", "Alice is here.");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
@@ -3321,8 +3626,16 @@ mod tests {
     #[test]
     fn unlinked_mentions_excludes_code_and_wikilinks() {
         let dir = create_workspace();
-        write_md(dir.path(), "target.md", "---\ntitle: Alice\n---\nI am Alice.");
-        write_md(dir.path(), "other.md", "`Alice` and [[Bob]] and Alice plain.");
+        write_md(
+            dir.path(),
+            "target.md",
+            "---\ntitle: Alice\n---\nI am Alice.",
+        );
+        write_md(
+            dir.path(),
+            "other.md",
+            "`Alice` and [[Bob]] and Alice plain.",
+        );
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let mentions = gi.unlinked_mentions("target.md").unwrap();
         assert_eq!(mentions.len(), 1);
@@ -3332,7 +3645,11 @@ mod tests {
     #[test]
     fn unlinked_mentions_matches_aliases() {
         let dir = create_workspace();
-        write_md(dir.path(), "target.md", "---\ntitle: Alice\naliases:\n  - Ali\n---\nContent.");
+        write_md(
+            dir.path(),
+            "target.md",
+            "---\ntitle: Alice\naliases:\n  - Ali\n---\nContent.",
+        );
         write_md(dir.path(), "other.md", "I met Ali today.");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let mentions = gi.unlinked_mentions("target.md").unwrap();
@@ -3343,7 +3660,11 @@ mod tests {
     #[test]
     fn unlinked_mentions_skips_self() {
         let dir = create_workspace();
-        write_md(dir.path(), "target.md", "---\ntitle: Alice\n---\nAlice talks about Alice.");
+        write_md(
+            dir.path(),
+            "target.md",
+            "---\ntitle: Alice\n---\nAlice talks about Alice.",
+        );
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let mentions = gi.unlinked_mentions("target.md").unwrap();
         assert!(mentions.is_empty());
@@ -3369,7 +3690,11 @@ mod tests {
     #[test]
     fn unlinked_mentions_many_files_shared_matcher() {
         let dir = create_workspace();
-        write_md(dir.path(), "target.md", "---\ntitle: Alice\n---\nI am Alice.");
+        write_md(
+            dir.path(),
+            "target.md",
+            "---\ntitle: Alice\n---\nI am Alice.",
+        );
         for i in 0..20 {
             let content = if i % 2 == 0 {
                 format!("File {i} mentions Alice in passing.")
@@ -3380,7 +3705,11 @@ mod tests {
         }
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let mentions = gi.unlinked_mentions("target.md").unwrap();
-        assert_eq!(mentions.len(), 10, "every even file of 20 should mention Alice");
+        assert_eq!(
+            mentions.len(),
+            10,
+            "every even file of 20 should mention Alice"
+        );
         for m in &mentions {
             assert_eq!(m.matched_text, "Alice");
         }
@@ -3406,7 +3735,10 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "note.md", "Hello Alice, welcome.");
         let matcher = build_name_matcher(&["Alice"]);
-        assert!(file_contains_any_name_with_matcher(&dir.path().join("note.md"), &matcher));
+        assert!(file_contains_any_name_with_matcher(
+            &dir.path().join("note.md"),
+            &matcher
+        ));
     }
 
     #[test]
@@ -3414,14 +3746,20 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "note.md", "Hello world.");
         let matcher = build_name_matcher(&["Alice"]);
-        assert!(!file_contains_any_name_with_matcher(&dir.path().join("note.md"), &matcher));
+        assert!(!file_contains_any_name_with_matcher(
+            &dir.path().join("note.md"),
+            &matcher
+        ));
     }
 
     #[test]
     fn prefilter_with_matcher_missing_file_returns_true() {
         let dir = create_workspace();
         let matcher = build_name_matcher(&["Alice"]);
-        assert!(file_contains_any_name_with_matcher(&dir.path().join("nonexistent.md"), &matcher));
+        assert!(file_contains_any_name_with_matcher(
+            &dir.path().join("nonexistent.md"),
+            &matcher
+        ));
     }
 
     // ------- file_contains_any_name pre-filter tests -------
@@ -3430,28 +3768,40 @@ mod tests {
     fn prefilter_finds_name_in_file() {
         let dir = create_workspace();
         write_md(dir.path(), "note.md", "Hello Alice, welcome.");
-        assert!(file_contains_any_name(&dir.path().join("note.md"), &["Alice"]));
+        assert!(file_contains_any_name(
+            &dir.path().join("note.md"),
+            &["Alice"]
+        ));
     }
 
     #[test]
     fn prefilter_rejects_when_no_name_present() {
         let dir = create_workspace();
         write_md(dir.path(), "note.md", "Hello world.");
-        assert!(!file_contains_any_name(&dir.path().join("note.md"), &["Alice"]));
+        assert!(!file_contains_any_name(
+            &dir.path().join("note.md"),
+            &["Alice"]
+        ));
     }
 
     #[test]
     fn prefilter_case_insensitive() {
         let dir = create_workspace();
         write_md(dir.path(), "note.md", "I saw alice today.");
-        assert!(file_contains_any_name(&dir.path().join("note.md"), &["Alice"]));
+        assert!(file_contains_any_name(
+            &dir.path().join("note.md"),
+            &["Alice"]
+        ));
     }
 
     #[test]
     fn prefilter_matches_any_of_multiple_names() {
         let dir = create_workspace();
         write_md(dir.path(), "note.md", "Bob is here.");
-        assert!(file_contains_any_name(&dir.path().join("note.md"), &["Alice", "Bob"]));
+        assert!(file_contains_any_name(
+            &dir.path().join("note.md"),
+            &["Alice", "Bob"]
+        ));
     }
 
     #[test]
@@ -3465,27 +3815,39 @@ mod tests {
     fn prefilter_all_empty_names_returns_false() {
         let dir = create_workspace();
         write_md(dir.path(), "note.md", "Hello world.");
-        assert!(!file_contains_any_name(&dir.path().join("note.md"), &["", ""]));
+        assert!(!file_contains_any_name(
+            &dir.path().join("note.md"),
+            &["", ""]
+        ));
     }
 
     #[test]
     fn prefilter_missing_file_returns_true() {
         let dir = create_workspace();
-        assert!(file_contains_any_name(&dir.path().join("nonexistent.md"), &["Alice"]));
+        assert!(file_contains_any_name(
+            &dir.path().join("nonexistent.md"),
+            &["Alice"]
+        ));
     }
 
     #[test]
     fn prefilter_special_chars_in_name() {
         let dir = create_workspace();
         write_md(dir.path(), "note.md", "I love C++ programming.");
-        assert!(file_contains_any_name(&dir.path().join("note.md"), &["C++"]));
+        assert!(file_contains_any_name(
+            &dir.path().join("note.md"),
+            &["C++"]
+        ));
     }
 
     #[test]
     fn prefilter_special_chars_no_false_positive() {
         let dir = create_workspace();
         write_md(dir.path(), "note.md", "I love C programming.");
-        assert!(!file_contains_any_name(&dir.path().join("note.md"), &["C++"]));
+        assert!(!file_contains_any_name(
+            &dir.path().join("note.md"),
+            &["C++"]
+        ));
     }
 
     // --- parse_search_query ---
@@ -3497,7 +3859,10 @@ mod tests {
 
     #[test]
     fn parse_query_splits_words() {
-        assert_eq!(parse_search_query("quantum computing"), vec!["quantum", "computing"]);
+        assert_eq!(
+            parse_search_query("quantum computing"),
+            vec!["quantum", "computing"]
+        );
     }
 
     #[test]
@@ -3560,7 +3925,11 @@ mod tests {
     #[test]
     fn search_file_with_matcher_multi_term_all_present() {
         let dir = create_workspace();
-        write_md(dir.path(), "note.md", "Rust is great.\nSystems programming.");
+        write_md(
+            dir.path(),
+            "note.md",
+            "Rust is great.\nSystems programming.",
+        );
         let terms = vec!["rust".to_string(), "programming".to_string()];
         let matcher = build_matcher(&terms);
         let result = search_file_with_matcher(&dir.path().join("note.md"), &matcher, &terms);
@@ -3592,7 +3961,11 @@ mod tests {
     #[test]
     fn search_file_with_matcher_first_hit_line_number_multi_matches() {
         let dir = create_workspace();
-        write_md(dir.path(), "note.md", "no match\nno match\nfoo here\nfoo again");
+        write_md(
+            dir.path(),
+            "note.md",
+            "no match\nno match\nfoo here\nfoo again",
+        );
         let terms = vec!["foo".to_string()];
         let matcher = build_matcher(&terms);
         let result = search_file_with_matcher(&dir.path().join("note.md"), &matcher, &terms);
@@ -3607,10 +3980,7 @@ mod tests {
     fn search_file_single_term_found() {
         let dir = create_workspace();
         write_md(dir.path(), "note.md", "Hello world of rust programming.");
-        let result = search_file_for_terms(
-            &dir.path().join("note.md"),
-            &["rust".to_string()],
-        );
+        let result = search_file_for_terms(&dir.path().join("note.md"), &["rust".to_string()]);
         assert!(result.is_some());
         let (count, excerpt) = result.unwrap();
         assert_eq!(count, 1);
@@ -3621,17 +3991,18 @@ mod tests {
     fn search_file_single_term_not_found() {
         let dir = create_workspace();
         write_md(dir.path(), "note.md", "Hello world.");
-        let result = search_file_for_terms(
-            &dir.path().join("note.md"),
-            &["rust".to_string()],
-        );
+        let result = search_file_for_terms(&dir.path().join("note.md"), &["rust".to_string()]);
         assert!(result.is_none());
     }
 
     #[test]
     fn search_file_multiple_terms_all_present() {
         let dir = create_workspace();
-        write_md(dir.path(), "note.md", "Rust is great.\nSystems programming.");
+        write_md(
+            dir.path(),
+            "note.md",
+            "Rust is great.\nSystems programming.",
+        );
         let result = search_file_for_terms(
             &dir.path().join("note.md"),
             &["rust".to_string(), "programming".to_string()],
@@ -3654,21 +4025,19 @@ mod tests {
     fn search_file_case_insensitive() {
         let dir = create_workspace();
         write_md(dir.path(), "note.md", "RUST is great.");
-        let result = search_file_for_terms(
-            &dir.path().join("note.md"),
-            &["rust".to_string()],
-        );
+        let result = search_file_for_terms(&dir.path().join("note.md"), &["rust".to_string()]);
         assert!(result.is_some());
     }
 
     #[test]
     fn search_file_multiple_matching_lines() {
         let dir = create_workspace();
-        write_md(dir.path(), "note.md", "Rust line one.\nRust line two.\nRust line three.");
-        let result = search_file_for_terms(
-            &dir.path().join("note.md"),
-            &["rust".to_string()],
+        write_md(
+            dir.path(),
+            "note.md",
+            "Rust line one.\nRust line two.\nRust line three.",
         );
+        let result = search_file_for_terms(&dir.path().join("note.md"), &["rust".to_string()]);
         let (count, _) = result.unwrap();
         assert_eq!(count, 3);
     }
@@ -3677,21 +4046,19 @@ mod tests {
     fn search_file_special_regex_chars() {
         let dir = create_workspace();
         write_md(dir.path(), "note.md", "I love C++ programming.");
-        let result = search_file_for_terms(
-            &dir.path().join("note.md"),
-            &["C++".to_string()],
-        );
+        let result = search_file_for_terms(&dir.path().join("note.md"), &["C++".to_string()]);
         assert!(result.is_some());
     }
 
     #[test]
     fn search_file_excerpt_is_first_matching_line() {
         let dir = create_workspace();
-        write_md(dir.path(), "note.md", "No match here.\nFirst rust line.\nSecond rust line.");
-        let result = search_file_for_terms(
-            &dir.path().join("note.md"),
-            &["rust".to_string()],
+        write_md(
+            dir.path(),
+            "note.md",
+            "No match here.\nFirst rust line.\nSecond rust line.",
         );
+        let result = search_file_for_terms(&dir.path().join("note.md"), &["rust".to_string()]);
         let (_, excerpt) = result.unwrap();
         assert_eq!(excerpt, "First rust line.");
     }
@@ -3720,7 +4087,10 @@ mod tests {
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.search("rust", 20).unwrap();
         assert!(results.len() >= 2);
-        assert_eq!(results[0].id, "many.md", "file with more matches should rank first");
+        assert_eq!(
+            results[0].id, "many.md",
+            "file with more matches should rank first"
+        );
     }
 
     #[test]
@@ -3737,7 +4107,11 @@ mod tests {
     #[test]
     fn search_strips_trailing_star() {
         let dir = create_workspace();
-        write_md(dir.path(), "alpha.md", "---\ntitle: Alpha\n---\nAlpha content.");
+        write_md(
+            dir.path(),
+            "alpha.md",
+            "---\ntitle: Alpha\n---\nAlpha content.",
+        );
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.search("Alph*", 20).unwrap();
         assert_eq!(results.len(), 1);
@@ -3788,8 +4162,16 @@ mod tests {
     #[test]
     fn search_by_title_matches_title() {
         let dir = create_workspace();
-        write_md(dir.path(), "a.md", "---\ntitle: Quantum Computing\n---\nBody.");
-        write_md(dir.path(), "b.md", "---\ntitle: Classical Physics\n---\nBody.");
+        write_md(
+            dir.path(),
+            "a.md",
+            "---\ntitle: Quantum Computing\n---\nBody.",
+        );
+        write_md(
+            dir.path(),
+            "b.md",
+            "---\ntitle: Classical Physics\n---\nBody.",
+        );
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.search_by_title("Quantum", 10).unwrap();
         assert_eq!(results.len(), 1);
@@ -3800,7 +4182,11 @@ mod tests {
     #[test]
     fn search_by_title_matches_file_stem() {
         let dir = create_workspace();
-        write_md(dir.path(), "quantum-notes.md", "---\ntitle: My Notes\n---\nBody.");
+        write_md(
+            dir.path(),
+            "quantum-notes.md",
+            "---\ntitle: My Notes\n---\nBody.",
+        );
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.search_by_title("quantum", 10).unwrap();
         assert_eq!(results.len(), 1);
@@ -3810,7 +4196,11 @@ mod tests {
     #[test]
     fn search_by_title_matches_aliases() {
         let dir = create_workspace();
-        write_md(dir.path(), "a.md", "---\ntitle: Alice\naliases:\n  - Ali\n---\nBody.");
+        write_md(
+            dir.path(),
+            "a.md",
+            "---\ntitle: Alice\naliases:\n  - Ali\n---\nBody.",
+        );
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.search_by_title("Ali", 10).unwrap();
         assert!(results.iter().any(|r| r.id == "a.md"));
@@ -3853,7 +4243,11 @@ mod tests {
     #[test]
     fn search_by_title_file_with_empty_frontmatter_title_uses_filename() {
         let dir = create_workspace();
-        write_md(dir.path(), "agentic-workflows.md", "---\ntitle: \"\"\n---\nBody.");
+        write_md(
+            dir.path(),
+            "agentic-workflows.md",
+            "---\ntitle: \"\"\n---\nBody.",
+        );
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.search_by_title("agentic", 10).unwrap();
         assert_eq!(results.len(), 1);
@@ -3872,7 +4266,11 @@ mod tests {
     #[test]
     fn unlinked_mentions_parallel_correctness() {
         let dir = create_workspace();
-        write_md(dir.path(), "target.md", "---\ntitle: Alice\n---\nI am Alice.");
+        write_md(
+            dir.path(),
+            "target.md",
+            "---\ntitle: Alice\n---\nI am Alice.",
+        );
         for i in 0..30 {
             let content = if i % 2 == 0 {
                 format!("File {i} mentions Alice in passing.")
@@ -3883,7 +4281,11 @@ mod tests {
         }
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let mentions = gi.unlinked_mentions("target.md").unwrap();
-        assert_eq!(mentions.len(), 15, "every even file of 30 should mention Alice");
+        assert_eq!(
+            mentions.len(),
+            15,
+            "every even file of 30 should mention Alice"
+        );
         for m in &mentions {
             assert_eq!(m.matched_text, "Alice");
         }
@@ -3914,7 +4316,7 @@ mod tests {
     fn load_from_store_returns_none_when_no_db() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Content.");
-        let result = GraphIndex::load_from_store(dir.path().to_path_buf()).unwrap();
+        let result = GraphIndex::load_from_store(dir.path().to_path_buf(), None).unwrap();
         assert!(result.is_none());
     }
 
@@ -3924,8 +4326,42 @@ mod tests {
         let db_path = dir.path().join(".lit").join("graph.db");
         fs::create_dir_all(db_path.parent().unwrap()).unwrap();
         let _store = Store::open(&db_path).unwrap();
-        let result = GraphIndex::load_from_store(dir.path().to_path_buf()).unwrap();
+        let result = GraphIndex::load_from_store(dir.path().to_path_buf(), None).unwrap();
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn load_from_store_attaches_notes_store() {
+        let handle = db_handle();
+        {
+            let store = handle.lock().unwrap();
+            store
+                .write_page("a.md", "Links to [[b]].", &indexmap::IndexMap::new())
+                .unwrap();
+            store
+                .write_page("b.md", "Target.", &indexmap::IndexMap::new())
+                .unwrap();
+        }
+        let dir = create_workspace();
+        // Cold-build a populated graph.db from the DB store so a warm load works.
+        GraphIndex::build_with_store(
+            dir.path().to_path_buf(),
+            &super::super::progress::noop_callback(),
+            false,
+            Some(Arc::clone(&handle)),
+        )
+        .unwrap();
+
+        // Warm-load and attach the DB handle at construction time.
+        let gi = GraphIndex::load_from_store(dir.path().to_path_buf(), Some(Arc::clone(&handle)))
+            .unwrap()
+            .unwrap();
+
+        // DB-backed indices short-circuit sync_with_disk (notes_store.is_some()).
+        assert_eq!(gi.sync_with_disk(true).unwrap(), false);
+        // The warm-loaded index sees the DB-built graph data.
+        assert_eq!(gi.stats().unwrap().nodes, 2);
+        assert_eq!(gi.backlinks("b.md").unwrap().len(), 1);
     }
 
     #[test]
@@ -3937,7 +4373,7 @@ mod tests {
         let stats1 = gi1.stats().unwrap();
         drop(gi1);
 
-        let gi2 = GraphIndex::load_from_store(dir.path().to_path_buf()).unwrap();
+        let gi2 = GraphIndex::load_from_store(dir.path().to_path_buf(), None).unwrap();
         assert!(gi2.is_some());
         let gi2 = gi2.unwrap();
         let stats2 = gi2.stats().unwrap();
@@ -3953,7 +4389,9 @@ mod tests {
         write_md(dir.path(), "a.md", "Content.");
         GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
 
-        let gi = GraphIndex::load_from_store(dir.path().to_path_buf()).unwrap().unwrap();
+        let gi = GraphIndex::load_from_store(dir.path().to_path_buf(), None)
+            .unwrap()
+            .unwrap();
         assert_eq!(gi.sync_with_disk(true).unwrap(), false);
     }
 
@@ -3964,7 +4402,9 @@ mod tests {
         GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
 
         write_md(dir.path(), "b.md", "New file.");
-        let gi = GraphIndex::load_from_store(dir.path().to_path_buf()).unwrap().unwrap();
+        let gi = GraphIndex::load_from_store(dir.path().to_path_buf(), None)
+            .unwrap()
+            .unwrap();
         let before = gi.stats().unwrap().nodes;
         assert_eq!(gi.sync_with_disk(true).unwrap(), true);
         assert!(gi.stats().unwrap().nodes > before);
@@ -3979,7 +4419,9 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(50));
         write_md(dir.path(), "a.md", "Modified content with [[b]].");
         write_md(dir.path(), "b.md", "Target.");
-        let gi = GraphIndex::load_from_store(dir.path().to_path_buf()).unwrap().unwrap();
+        let gi = GraphIndex::load_from_store(dir.path().to_path_buf(), None)
+            .unwrap()
+            .unwrap();
         assert_eq!(gi.sync_with_disk(true).unwrap(), true);
         let backlinks = gi.backlinks("b.md").unwrap();
         assert_eq!(backlinks.len(), 1);
@@ -3993,7 +4435,9 @@ mod tests {
         GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
 
         fs::remove_file(dir.path().join("b.md")).unwrap();
-        let gi = GraphIndex::load_from_store(dir.path().to_path_buf()).unwrap().unwrap();
+        let gi = GraphIndex::load_from_store(dir.path().to_path_buf(), None)
+            .unwrap()
+            .unwrap();
         let before = gi.stats().unwrap().nodes;
         assert_eq!(gi.sync_with_disk(true).unwrap(), true);
         assert!(gi.stats().unwrap().nodes < before);
@@ -4004,12 +4448,20 @@ mod tests {
     #[test]
     fn full_index_stores_annotations() {
         let dir = create_workspace();
-        write_md(dir.path(), "a.md", "Some text <!--- n: _ | important discovery ---> more.");
+        write_md(
+            dir.path(),
+            "a.md",
+            "Some text <!--- n: _ | important discovery ---> more.",
+        );
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.search_annotations("important", None, 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].node_id, "a.md");
-        assert!(results[0].body.as_deref().unwrap().contains("important discovery"));
+        assert!(results[0]
+            .body
+            .as_deref()
+            .unwrap()
+            .contains("important discovery"));
     }
 
     // --- Cycle 11: incremental reindex updates annotations ---
@@ -4040,7 +4492,13 @@ mod tests {
         write_md(dir.path(), "a.md", "<!--- n: _ | note body --->");
         fs::create_dir_all(dir.path().join(".lit")).unwrap();
         let store = Store::open(&dir.path().join(".lit").join("graph.db")).unwrap();
-        index_workspace_with_progress(&store, dir.path(), &crate::graph::progress::noop_callback(), false).unwrap();
+        index_workspace_with_progress(
+            &store,
+            dir.path(),
+            &crate::graph::progress::noop_callback(),
+            false,
+        )
+        .unwrap();
 
         let count: i64 = store
             .conn
@@ -4174,7 +4632,9 @@ mod tests {
         let dir = create_workspace();
         let gi = build_graph_with_nodes(&dir);
         gi.compute_layout_background(&LayoutSettings::default());
-        let gi2 = GraphIndex::load_from_store(dir.path().to_path_buf()).unwrap().unwrap();
+        let gi2 = GraphIndex::load_from_store(dir.path().to_path_buf(), None)
+            .unwrap()
+            .unwrap();
         let reloaded = gi2.get_positions();
         assert_eq!(reloaded.len(), 3);
     }
@@ -4190,7 +4650,9 @@ mod tests {
         gi.clear_positions().unwrap();
         assert!(gi.get_positions().is_empty());
 
-        let gi2 = GraphIndex::load_from_store(dir.path().to_path_buf()).unwrap().unwrap();
+        let gi2 = GraphIndex::load_from_store(dir.path().to_path_buf(), None)
+            .unwrap()
+            .unwrap();
         assert!(gi2.get_positions().is_empty());
     }
 
@@ -4291,11 +4753,8 @@ mod tests {
                 .collect();
 
             let neighbors = gi.neighbors(target, 1, false).unwrap();
-            let neighbor_ids: HashSet<&str> = neighbors
-                .nodes
-                .iter()
-                .map(|n| n.id.as_str())
-                .collect();
+            let neighbor_ids: HashSet<&str> =
+                neighbors.nodes.iter().map(|n| n.id.as_str()).collect();
 
             for src in &bl_sources {
                 assert!(
@@ -4332,11 +4791,7 @@ mod tests {
         );
 
         let neighbors = gi2.neighbors("target.md", 1, false).unwrap();
-        let neighbor_ids: HashSet<&str> = neighbors
-            .nodes
-            .iter()
-            .map(|n| n.id.as_str())
-            .collect();
+        let neighbor_ids: HashSet<&str> = neighbors.nodes.iter().map(|n| n.id.as_str()).collect();
         assert!(
             neighbor_ids.contains("new-linker.md"),
             "warm-start graph neighbors should include new-linker.md, got: {:?}",
@@ -4381,11 +4836,7 @@ mod tests {
 
         // Graph neighbors should also include source.md
         let neighbors = gi.neighbors("target.md", 1, false).unwrap();
-        let neighbor_ids: HashSet<&str> = neighbors
-            .nodes
-            .iter()
-            .map(|n| n.id.as_str())
-            .collect();
+        let neighbor_ids: HashSet<&str> = neighbors.nodes.iter().map(|n| n.id.as_str()).collect();
         assert!(
             neighbor_ids.contains("source.md"),
             "graph neighbors should include source.md after stub resolution, got: {:?}",
@@ -4415,11 +4866,7 @@ mod tests {
         );
 
         let neighbors = gi.neighbors("target.md", 1, false).unwrap();
-        let neighbor_ids: HashSet<&str> = neighbors
-            .nodes
-            .iter()
-            .map(|n| n.id.as_str())
-            .collect();
+        let neighbor_ids: HashSet<&str> = neighbors.nodes.iter().map(|n| n.id.as_str()).collect();
         assert!(
             neighbor_ids.contains("linker-b.md"),
             "graph neighbors should include linker-b.md after sync, got: {:?}",
@@ -4482,18 +4929,18 @@ mod tests {
         assert_eq!(bl[0].source_id, "reference.md");
 
         let neighbors = gi.neighbors(target_name, 1, false).unwrap();
-        let neighbor_ids: HashSet<&str> = neighbors
-            .nodes
-            .iter()
-            .map(|n| n.id.as_str())
-            .collect();
+        let neighbor_ids: HashSet<&str> = neighbors.nodes.iter().map(|n| n.id.as_str()).collect();
         assert!(neighbor_ids.contains("reference.md"));
     }
 
     #[test]
     fn warm_start_new_file_backlinks_match_graph() {
         let dir = create_workspace();
-        write_md(dir.path(), "hub.md", "I am the hub. [[spoke-a]] [[spoke-b]]");
+        write_md(
+            dir.path(),
+            "hub.md",
+            "I am the hub. [[spoke-a]] [[spoke-b]]",
+        );
         write_md(dir.path(), "spoke-a.md", "Links back to [[hub]].");
         write_md(dir.path(), "spoke-b.md", "Links back to [[hub]].");
 
@@ -4522,11 +4969,7 @@ mod tests {
         );
 
         let neighbors = gi2.neighbors("hub.md", 1, false).unwrap();
-        let neighbor_ids: HashSet<&str> = neighbors
-            .nodes
-            .iter()
-            .map(|n| n.id.as_str())
-            .collect();
+        let neighbor_ids: HashSet<&str> = neighbors.nodes.iter().map(|n| n.id.as_str()).collect();
         assert!(
             neighbor_ids.contains("spoke-c.md"),
             "graph neighbors should also include spoke-c.md, got: {:?}",
@@ -4551,11 +4994,7 @@ mod tests {
         assert_eq!(bl[0].source_id, "source.md");
 
         let neighbors = gi.neighbors("target.md", 1, false).unwrap();
-        let neighbor_ids: HashSet<&str> = neighbors
-            .nodes
-            .iter()
-            .map(|n| n.id.as_str())
-            .collect();
+        let neighbor_ids: HashSet<&str> = neighbors.nodes.iter().map(|n| n.id.as_str()).collect();
         assert!(neighbor_ids.contains("source.md"));
     }
 
@@ -4593,11 +5032,7 @@ mod tests {
 
         // Graph neighbors of b.md (undirected, depth=1) should include a, c, d
         let neighbors_b = gi.neighbors("b.md", 1, false).unwrap();
-        let n_ids: HashSet<&str> = neighbors_b
-            .nodes
-            .iter()
-            .map(|n| n.id.as_str())
-            .collect();
+        let n_ids: HashSet<&str> = neighbors_b.nodes.iter().map(|n| n.id.as_str()).collect();
         for expected in &["a.md", "c.md", "d.md"] {
             assert!(
                 n_ids.contains(expected),
@@ -4628,7 +5063,11 @@ mod tests {
         // A file mentions [[target]] twice. Both store and KG multigraph
         // keep both edges; viz SubgraphResult deduplicates for display.
         let dir = create_workspace();
-        write_md(dir.path(), "source.md", "First [[target]]. Second [[target]].");
+        write_md(
+            dir.path(),
+            "source.md",
+            "First [[target]]. Second [[target]].",
+        );
         write_md(dir.path(), "target.md", "Target.");
         let store = Store::open_memory().unwrap();
         index_workspace(&store, dir.path(), true).unwrap();
@@ -4646,11 +5085,7 @@ mod tests {
 
         assert_eq!(store_bl.len(), 2, "store keeps both edge rows");
         assert_eq!(kg_bl.len(), 2, "KG multigraph keeps both edges");
-        assert_eq!(
-            store_bl.len(),
-            kg_bl.len(),
-            "store and KG backlinks agree"
-        );
+        assert_eq!(store_bl.len(), kg_bl.len(), "store and KG backlinks agree");
         assert_eq!(viz_edge_count, 1, "viz deduplicates to 1 edge per pair");
     }
 
@@ -4668,7 +5103,9 @@ mod tests {
         // Edge points to stub "target", not "target.md"
         let all_edges = store.all_edges().unwrap();
         assert!(
-            all_edges.iter().any(|(s, t)| s == "source.md" && t == "target"),
+            all_edges
+                .iter()
+                .any(|(s, t)| s == "source.md" && t == "target"),
             "edge should point to stub 'target', edges: {:?}",
             all_edges,
         );
@@ -4757,11 +5194,7 @@ mod tests {
 
         // Graph should now show source.md as a neighbor of target.md
         let neighbors = gi.neighbors("target.md", 1, false).unwrap();
-        let n_ids: HashSet<&str> = neighbors
-            .nodes
-            .iter()
-            .map(|n| n.id.as_str())
-            .collect();
+        let n_ids: HashSet<&str> = neighbors.nodes.iter().map(|n| n.id.as_str()).collect();
         let graph_sees_source = n_ids.contains("source.md");
 
         // Backlinks should also show source.md
@@ -4816,11 +5249,7 @@ mod tests {
         let bl_sources: HashSet<String> = bl.into_iter().map(|e| e.source_id).collect();
 
         let neighbors = gi2.neighbors("target.md", 1, false).unwrap();
-        let n_ids: HashSet<&str> = neighbors
-            .nodes
-            .iter()
-            .map(|n| n.id.as_str())
-            .collect();
+        let n_ids: HashSet<&str> = neighbors.nodes.iter().map(|n| n.id.as_str()).collect();
 
         // Both must agree
         assert!(
@@ -4928,7 +5357,9 @@ mod tests {
 
         // Edge exists: linker.md → stub "my-note"
         let edges = store.all_edges().unwrap();
-        assert!(edges.iter().any(|(s, t)| s == "linker.md" && t == "my-note"));
+        assert!(edges
+            .iter()
+            .any(|(s, t)| s == "linker.md" && t == "my-note"));
 
         // backlinks for stub ID works
         assert_eq!(store.backlinks("my-note").unwrap().len(), 1);
@@ -4957,16 +5388,16 @@ mod tests {
 
         // NOW both paths should work
         let bl = store.backlinks("my-note.md").unwrap();
-        assert_eq!(bl.len(), 1, "after re-resolution, backlinks should find linker.md");
+        assert_eq!(
+            bl.len(),
+            1,
+            "after re-resolution, backlinks should find linker.md"
+        );
         assert_eq!(bl[0].source_id, "linker.md");
 
         let knowledge = KnowledgeGraph::from_store(&store).unwrap();
         let neighbors = knowledge.neighbors("my-note.md", 1, false).unwrap();
-        let n_ids: HashSet<&str> = neighbors
-            .nodes
-            .iter()
-            .map(|n| n.id.as_str())
-            .collect();
+        let n_ids: HashSet<&str> = neighbors.nodes.iter().map(|n| n.id.as_str()).collect();
         assert!(
             n_ids.contains("linker.md"),
             "after re-resolution, graph also finds linker.md"
@@ -4997,7 +5428,9 @@ mod tests {
         // Raw edge still exists
         let all_edges = store.all_edges().unwrap();
         assert!(
-            all_edges.iter().any(|(s, t)| s == "source.md" && t == "target.md"),
+            all_edges
+                .iter()
+                .any(|(s, t)| s == "source.md" && t == "target.md"),
             "raw edge should still exist after node deletion"
         );
 
@@ -5022,19 +5455,31 @@ mod tests {
     #[test]
     fn batch_reindex_returns_removed_annotation_uuids() {
         let dir = create_workspace();
-        write_md(dir.path(), "a.md", "Text <!--- n: _ | keep ---> more <!--- q: _ | remove --->");
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!--- n: _ | keep ---> more <!--- q: _ | remove --->",
+        );
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
 
         let remove_uuid: String = {
             let store = gi.store.lock().unwrap();
-            store.conn.query_row(
-                "SELECT uuid FROM annotations WHERE node_id = 'a.md' AND body = 'remove'",
-                [], |r| r.get(0),
-            ).unwrap()
+            store
+                .conn
+                .query_row(
+                    "SELECT uuid FROM annotations WHERE node_id = 'a.md' AND body = 'remove'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap()
         };
 
         write_md(dir.path(), "a.md", "Text <!--- n: _ | keep ---> more");
-        let diff = DiffResult { new: vec![], changed: vec!["a.md".to_string()], deleted: vec![] };
+        let diff = DiffResult {
+            new: vec![],
+            changed: vec!["a.md".to_string()],
+            deleted: vec![],
+        };
         let removed = gi.batch_reindex(&diff, true).unwrap();
 
         assert_eq!(removed.len(), 1);
@@ -5048,7 +5493,11 @@ mod tests {
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
 
         write_md(dir.path(), "a.md", "Changed text <!--- n: _ | stay --->");
-        let diff = DiffResult { new: vec![], changed: vec!["a.md".to_string()], deleted: vec![] };
+        let diff = DiffResult {
+            new: vec![],
+            changed: vec!["a.md".to_string()],
+            deleted: vec![],
+        };
         let removed = gi.batch_reindex(&diff, true).unwrap();
 
         assert!(removed.is_empty());

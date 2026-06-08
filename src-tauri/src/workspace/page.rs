@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use indexmap::IndexMap;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -22,6 +22,8 @@ pub struct PageMeta {
     pub created_at: Option<u64>,
     pub modified_at: Option<u64>,
     #[serde(default)]
+    pub trashed_at: Option<u64>,
+    #[serde(default)]
     pub file_type: FileType,
 }
 
@@ -38,7 +40,10 @@ mod tests {
 
     #[test]
     fn file_type_serializes_to_lowercase() {
-        assert_eq!(serde_json::to_string(&FileType::Markdown).unwrap(), "\"markdown\"");
+        assert_eq!(
+            serde_json::to_string(&FileType::Markdown).unwrap(),
+            "\"markdown\""
+        );
         assert_eq!(serde_json::to_string(&FileType::Pdf).unwrap(), "\"pdf\"");
         let rt: FileType = serde_json::from_str("\"pdf\"").unwrap();
         assert_eq!(rt, FileType::Pdf);
@@ -59,6 +64,7 @@ mod tests {
             frontmatter: IndexMap::new(),
             created_at: None,
             modified_at: None,
+            trashed_at: None,
             file_type: FileType::Pdf,
         };
         let json = serde_json::to_string(&meta).unwrap();

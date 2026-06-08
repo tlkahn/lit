@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tauri::{Emitter, Manager};
 
+use super::workspace::{get_workspace_backend, WorkspaceRegistry};
 use crate::preferences;
-use super::workspace::{get_workspace_root, WorkspaceRegistry};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PandocInfo {
@@ -52,24 +52,26 @@ pub struct ExportFrontmatter {
 
 /// Returns true if `text` contains any CJK characters (Chinese, Japanese, Korean).
 pub fn contains_cjk(text: &str) -> bool {
-    text.chars().any(|c| matches!(c,
-        // CJK Symbols and Punctuation
-        '\u{3000}'..='\u{303F}' |
-        // Hiragana
-        '\u{3040}'..='\u{309F}' |
-        // Katakana
-        '\u{30A0}'..='\u{30FF}' |
-        // CJK Unified Ideographs Extension A
-        '\u{3400}'..='\u{4DBF}' |
-        // CJK Unified Ideographs
-        '\u{4E00}'..='\u{9FFF}' |
-        // Hangul Syllables
-        '\u{AC00}'..='\u{D7AF}' |
-        // Halfwidth and Fullwidth Forms
-        '\u{FF00}'..='\u{FFEF}' |
-        // CJK Unified Ideographs Extension B
-        '\u{20000}'..='\u{2A6DF}'
-    ))
+    text.chars().any(|c| {
+        matches!(c,
+            // CJK Symbols and Punctuation
+            '\u{3000}'..='\u{303F}' |
+            // Hiragana
+            '\u{3040}'..='\u{309F}' |
+            // Katakana
+            '\u{30A0}'..='\u{30FF}' |
+            // CJK Unified Ideographs Extension A
+            '\u{3400}'..='\u{4DBF}' |
+            // CJK Unified Ideographs
+            '\u{4E00}'..='\u{9FFF}' |
+            // Hangul Syllables
+            '\u{AC00}'..='\u{D7AF}' |
+            // Halfwidth and Fullwidth Forms
+            '\u{FF00}'..='\u{FFEF}' |
+            // CJK Unified Ideographs Extension B
+            '\u{20000}'..='\u{2A6DF}'
+        )
+    })
 }
 
 /// Returns the platform-appropriate default CJK font.
@@ -132,11 +134,7 @@ pub fn extract_export_frontmatter(file_path: &Path) -> ExportFrontmatter {
 pub fn find_in_path(binary_name: &str) -> Option<PathBuf> {
     let path_var = std::env::var("PATH").unwrap_or_default();
     let extra_dirs: &[&str] = if cfg!(target_os = "macos") {
-        &[
-            "/opt/homebrew/bin",
-            "/usr/local/bin",
-            "/Library/TeX/texbin",
-        ]
+        &["/opt/homebrew/bin", "/usr/local/bin", "/Library/TeX/texbin"]
     } else {
         &[]
     };
@@ -571,9 +569,7 @@ pub fn build_pandoc_args(
 }
 
 #[tauri::command]
-pub fn detect_pandoc(
-    app_handle: tauri::AppHandle,
-) -> Result<PandocInfo, String> {
+pub fn detect_pandoc(app_handle: tauri::AppHandle) -> Result<PandocInfo, String> {
     let prefs = preferences::read_preferences(&app_handle);
 
     let pandoc_path = validate_pandoc("detection", &prefs)?;
@@ -581,9 +577,7 @@ pub fn detect_pandoc(
     let pandoc_version = get_version(&pandoc_path)?;
 
     let crossref_path = resolve_binary("academic.crossrefFilterPath", "pandoc-crossref", &prefs);
-    let crossref_version = crossref_path
-        .as_ref()
-        .and_then(|p| get_version(p).ok());
+    let crossref_version = crossref_path.as_ref().and_then(|p| get_version(p).ok());
 
     let mut pdf_engines = Vec::new();
     for engine_name in &["xelatex", "lualatex", "pdflatex"] {
@@ -608,7 +602,12 @@ pub async fn export_document(
     state: tauri::State<'_, WorkspaceRegistry>,
     app_handle: tauri::AppHandle,
 ) -> Result<ExportResult, String> {
-    let workspace_root = get_workspace_root(&state, window.label())?;
+    let (workspace_root, backend) = get_workspace_backend(&state, window.label())?;
+    if backend.is_db() {
+        return Err(
+            "Academic export (Pandoc) is not yet supported in database storage mode.".to_string(),
+        );
+    }
     let input_path = workspace_root.join(&request.relative_path);
 
     if !input_path.is_file() {
@@ -632,7 +631,11 @@ pub async fn export_document(
 
     // Resolve pdf_engine: request -> frontmatter -> preference -> PATH lookup
     let pdf_engine = if format == "pdf" {
-        if let Some(ref engine) = request.pdf_engine.as_ref().or(frontmatter.pdf_engine.as_ref()) {
+        if let Some(ref engine) = request
+            .pdf_engine
+            .as_ref()
+            .or(frontmatter.pdf_engine.as_ref())
+        {
             let p = PathBuf::from(engine);
             if p.is_file() {
                 Some(p)
@@ -650,9 +653,17 @@ pub async fn export_document(
 
     // Resolve reference doc: request -> frontmatter -> preference -> bundled
     let reference_doc = if format == "docx" {
-        if let Some(ref rd) = request.reference_doc.as_ref().or(frontmatter.reference_doc.as_ref()) {
+        if let Some(ref rd) = request
+            .reference_doc
+            .as_ref()
+            .or(frontmatter.reference_doc.as_ref())
+        {
             let p = PathBuf::from(rd);
-            if p.is_file() && is_valid_docx(&p) { Some(p) } else { resolve_reference_doc(&prefs, resource_dir.as_deref()) }
+            if p.is_file() && is_valid_docx(&p) {
+                Some(p)
+            } else {
+                resolve_reference_doc(&prefs, resource_dir.as_deref())
+            }
         } else {
             resolve_reference_doc(&prefs, resource_dir.as_deref())
         }
@@ -693,10 +704,13 @@ pub async fn export_document(
     let fmt_for_event = format.clone();
 
     let result = tauri::async_runtime::spawn_blocking(move || {
-        let _ = win.emit("lit:academic-export-progress", AcademicExportProgress {
-            stage: "compiling".to_string(),
-            format: fmt_for_event.clone(),
-        });
+        let _ = win.emit(
+            "lit:academic-export-progress",
+            AcademicExportProgress {
+                stage: "compiling".to_string(),
+                format: fmt_for_event.clone(),
+            },
+        );
 
         let mut args = build_pandoc_args(
             &input_path,
@@ -774,7 +788,8 @@ pub async fn export_document(
             }
         }
 
-        let status = child.wait()
+        let status = child
+            .wait()
             .map_err(|e| format!("failed to collect pandoc exit status: {e}"))?;
         let stderr_bytes = stderr_thread.join().unwrap_or_default();
         let _ = stdout_thread.join();
@@ -790,10 +805,13 @@ pub async fn export_document(
             Vec::new()
         };
 
-        let _ = win.emit("lit:academic-export-progress", AcademicExportProgress {
-            stage: "done".to_string(),
-            format: fmt_for_event,
-        });
+        let _ = win.emit(
+            "lit:academic-export-progress",
+            AcademicExportProgress {
+                stage: "done".to_string(),
+                format: fmt_for_event,
+            },
+        );
 
         Ok::<ExportResult, String>(ExportResult {
             output_path: request.output_path.clone(),
@@ -876,7 +894,11 @@ mod tests {
             "academic.pandocPath".to_string(),
             serde_json::Value::String("".to_string()),
         );
-        let result = resolve_binary("academic.pandocPath", "nonexistent-binary-xyz-12345", &prefs);
+        let result = resolve_binary(
+            "academic.pandocPath",
+            "nonexistent-binary-xyz-12345",
+            &prefs,
+        );
         assert!(result.is_none());
     }
 
@@ -887,14 +909,22 @@ mod tests {
             "academic.pandocPath".to_string(),
             serde_json::Value::String("/nonexistent/path/to/pandoc".to_string()),
         );
-        let result = resolve_binary("academic.pandocPath", "nonexistent-binary-xyz-12345", &prefs);
+        let result = resolve_binary(
+            "academic.pandocPath",
+            "nonexistent-binary-xyz-12345",
+            &prefs,
+        );
         assert!(result.is_none());
     }
 
     #[test]
     fn test_resolve_binary_returns_none_when_not_found() {
         let prefs = preferences::Preferences::default();
-        let result = resolve_binary("academic.pandocPath", "nonexistent-binary-xyz-12345", &prefs);
+        let result = resolve_binary(
+            "academic.pandocPath",
+            "nonexistent-binary-xyz-12345",
+            &prefs,
+        );
         assert!(result.is_none());
     }
 
@@ -972,7 +1002,8 @@ mod tests {
 
     #[test]
     fn test_parse_latex_errors_missing_package() {
-        let stderr = "! LaTeX Error: File `fancyhdr.sty' not found.\n\nl.5 \\usepackage{fancyhdr}\n";
+        let stderr =
+            "! LaTeX Error: File `fancyhdr.sty' not found.\n\nl.5 \\usepackage{fancyhdr}\n";
         let errors = parse_latex_errors(stderr);
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].error_type, "missing_package");
@@ -999,7 +1030,8 @@ mod tests {
 
     #[test]
     fn test_parse_latex_errors_multiple_errors() {
-        let stderr = "! LaTeX Error: First error.\n\nl.10 ...\n! Undefined control sequence.\nl.20 ...\n";
+        let stderr =
+            "! LaTeX Error: First error.\n\nl.10 ...\n! Undefined control sequence.\nl.20 ...\n";
         let errors = parse_latex_errors(stderr);
         assert_eq!(errors.len(), 2);
     }
@@ -1007,8 +1039,15 @@ mod tests {
     #[test]
     fn test_build_pandoc_args_html_includes_mathjax() {
         let args = build_pandoc_args(
-            Path::new("/input.md"), Path::new("/output.html"), "html",
-            Path::new("/notes"), None, None, None, None, None,
+            Path::new("/input.md"),
+            Path::new("/output.html"),
+            "html",
+            Path::new("/notes"),
+            None,
+            None,
+            None,
+            None,
+            None,
         );
         assert!(args.contains(&"-t".to_string()));
         assert!(args.contains(&"html".to_string()));
@@ -1019,8 +1058,15 @@ mod tests {
     #[test]
     fn test_build_pandoc_args_docx_skips_standalone() {
         let args = build_pandoc_args(
-            Path::new("/input.md"), Path::new("/output.docx"), "docx",
-            Path::new("/notes"), None, None, None, None, None,
+            Path::new("/input.md"),
+            Path::new("/output.docx"),
+            "docx",
+            Path::new("/notes"),
+            None,
+            None,
+            None,
+            None,
+            None,
         );
         assert!(args.contains(&"-t".to_string()));
         assert!(args.contains(&"docx".to_string()));
@@ -1030,9 +1076,15 @@ mod tests {
     #[test]
     fn test_build_pandoc_args_docx_with_reference_doc() {
         let args = build_pandoc_args(
-            Path::new("/input.md"), Path::new("/output.docx"), "docx",
-            Path::new("/notes"), None, None, Some(Path::new("/resources/ref.docx")),
-            None, None,
+            Path::new("/input.md"),
+            Path::new("/output.docx"),
+            "docx",
+            Path::new("/notes"),
+            None,
+            None,
+            Some(Path::new("/resources/ref.docx")),
+            None,
+            None,
         );
         assert!(args.contains(&"--reference-doc=/resources/ref.docx".to_string()));
     }
@@ -1040,8 +1092,15 @@ mod tests {
     #[test]
     fn test_build_pandoc_args_docx_without_reference_doc() {
         let args = build_pandoc_args(
-            Path::new("/input.md"), Path::new("/output.docx"), "docx",
-            Path::new("/notes"), None, None, None, None, None,
+            Path::new("/input.md"),
+            Path::new("/output.docx"),
+            "docx",
+            Path::new("/notes"),
+            None,
+            None,
+            None,
+            None,
+            None,
         );
         assert!(!args.iter().any(|a| a.starts_with("--reference-doc")));
     }
@@ -1049,8 +1108,15 @@ mod tests {
     #[test]
     fn test_build_pandoc_args_latex_no_mathjax() {
         let args = build_pandoc_args(
-            Path::new("/input.md"), Path::new("/output.tex"), "latex",
-            Path::new("/notes"), None, None, None, None, None,
+            Path::new("/input.md"),
+            Path::new("/output.tex"),
+            "latex",
+            Path::new("/notes"),
+            None,
+            None,
+            None,
+            None,
+            None,
         );
         assert!(!args.contains(&"--mathjax".to_string()));
     }
@@ -1058,9 +1124,15 @@ mod tests {
     #[test]
     fn test_build_pandoc_args_pdf_no_mathjax() {
         let args = build_pandoc_args(
-            Path::new("/input.md"), Path::new("/output.pdf"), "pdf",
-            Path::new("/notes"), None, Some(Path::new("/usr/bin/xelatex")), None,
-            None, None,
+            Path::new("/input.md"),
+            Path::new("/output.pdf"),
+            "pdf",
+            Path::new("/notes"),
+            None,
+            Some(Path::new("/usr/bin/xelatex")),
+            None,
+            None,
+            None,
         );
         assert!(!args.contains(&"--mathjax".to_string()));
     }
@@ -1102,8 +1174,15 @@ mod tests {
     #[test]
     fn test_build_pandoc_args_with_csl() {
         let args = build_pandoc_args(
-            Path::new("/input.md"), Path::new("/output.tex"), "latex",
-            Path::new("/notes"), None, None, None, Some(Path::new("/styles/ieee.csl")), None,
+            Path::new("/input.md"),
+            Path::new("/output.tex"),
+            "latex",
+            Path::new("/notes"),
+            None,
+            None,
+            None,
+            Some(Path::new("/styles/ieee.csl")),
+            None,
         );
         assert!(args.contains(&"--citeproc".to_string()));
         assert!(args.contains(&"--csl=/styles/ieee.csl".to_string()));
@@ -1112,8 +1191,15 @@ mod tests {
     #[test]
     fn test_build_pandoc_args_with_template() {
         let args = build_pandoc_args(
-            Path::new("/input.md"), Path::new("/output.tex"), "latex",
-            Path::new("/notes"), None, None, None, None, Some(Path::new("/templates/my.tex")),
+            Path::new("/input.md"),
+            Path::new("/output.tex"),
+            "latex",
+            Path::new("/notes"),
+            None,
+            None,
+            None,
+            None,
+            Some(Path::new("/templates/my.tex")),
         );
         assert!(args.contains(&"--template=/templates/my.tex".to_string()));
     }
@@ -1121,9 +1207,15 @@ mod tests {
     #[test]
     fn test_build_pandoc_args_with_csl_and_template() {
         let args = build_pandoc_args(
-            Path::new("/input.md"), Path::new("/output.tex"), "latex",
-            Path::new("/notes"), None, None, None,
-            Some(Path::new("/s/apa.csl")), Some(Path::new("/t/my.tex")),
+            Path::new("/input.md"),
+            Path::new("/output.tex"),
+            "latex",
+            Path::new("/notes"),
+            None,
+            None,
+            None,
+            Some(Path::new("/s/apa.csl")),
+            Some(Path::new("/t/my.tex")),
         );
         assert!(args.contains(&"--citeproc".to_string()));
         assert!(args.contains(&"--csl=/s/apa.csl".to_string()));
@@ -1133,8 +1225,15 @@ mod tests {
     #[test]
     fn test_build_pandoc_args_without_csl_no_citeproc() {
         let args = build_pandoc_args(
-            Path::new("/input.md"), Path::new("/output.tex"), "latex",
-            Path::new("/notes"), None, None, None, None, None,
+            Path::new("/input.md"),
+            Path::new("/output.tex"),
+            "latex",
+            Path::new("/notes"),
+            None,
+            None,
+            None,
+            None,
+            None,
         );
         assert!(!args.contains(&"--citeproc".to_string()));
     }
@@ -1142,15 +1241,25 @@ mod tests {
     #[test]
     fn test_build_pandoc_args_crossref_before_citeproc() {
         let args = build_pandoc_args(
-            Path::new("/input.md"), Path::new("/output.tex"), "latex",
+            Path::new("/input.md"),
+            Path::new("/output.tex"),
+            "latex",
             Path::new("/notes"),
             Some(Path::new("/usr/local/bin/pandoc-crossref")),
-            None, None,
-            Some(Path::new("/s/apa.csl")), None,
+            None,
+            None,
+            Some(Path::new("/s/apa.csl")),
+            None,
         );
-        let crossref_pos = args.iter().position(|a| a.contains("pandoc-crossref")).unwrap();
+        let crossref_pos = args
+            .iter()
+            .position(|a| a.contains("pandoc-crossref"))
+            .unwrap();
         let citeproc_pos = args.iter().position(|a| a == "--citeproc").unwrap();
-        assert!(crossref_pos < citeproc_pos, "--filter pandoc-crossref must come before --citeproc");
+        assert!(
+            crossref_pos < citeproc_pos,
+            "--filter pandoc-crossref must come before --citeproc"
+        );
     }
 
     fn make_csl_dir(base: &std::path::Path, names: &[&str]) {
@@ -1169,12 +1278,7 @@ mod tests {
         let csl_file = tmp.join("custom.csl");
         std::fs::write(&csl_file, "fake").unwrap();
         let prefs = preferences::Preferences::default();
-        let result = resolve_csl(
-            Some(&csl_file.to_string_lossy()),
-            None,
-            &prefs,
-            None,
-        );
+        let result = resolve_csl(Some(&csl_file.to_string_lossy()), None, &prefs, None);
         assert_eq!(result, Some(csl_file));
         std::fs::remove_dir_all(&tmp).unwrap();
     }
@@ -1184,12 +1288,7 @@ mod tests {
         let tmp = std::env::temp_dir().join("test_csl_override_name");
         make_csl_dir(&tmp, &["ieee"]);
         let prefs = preferences::Preferences::default();
-        let result = resolve_csl(
-            Some("ieee"),
-            None,
-            &prefs,
-            Some(&tmp),
-        );
+        let result = resolve_csl(Some("ieee"), None, &prefs, Some(&tmp));
         assert_eq!(result, Some(tmp.join("academic/csl/ieee.csl")));
         std::fs::remove_dir_all(&tmp).unwrap();
     }
@@ -1203,12 +1302,7 @@ mod tests {
             "academic.defaultCsl".to_string(),
             serde_json::Value::String("apa".to_string()),
         );
-        let result = resolve_csl(
-            None,
-            Some("ieee"),
-            &prefs,
-            Some(&tmp),
-        );
+        let result = resolve_csl(None, Some("ieee"), &prefs, Some(&tmp));
         assert_eq!(result, Some(tmp.join("academic/csl/ieee.csl")));
         std::fs::remove_dir_all(&tmp).unwrap();
     }
@@ -1223,7 +1317,10 @@ mod tests {
             serde_json::Value::String("chicago-author-date".to_string()),
         );
         let result = resolve_csl(None, None, &prefs, Some(&tmp));
-        assert_eq!(result, Some(tmp.join("academic/csl/chicago-author-date.csl")));
+        assert_eq!(
+            result,
+            Some(tmp.join("academic/csl/chicago-author-date.csl"))
+        );
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 
@@ -1363,8 +1460,8 @@ mod tests {
 
     #[test]
     fn test_large_stderr_does_not_deadlock() {
-        use std::process::{Command, Stdio};
         use std::io::Read;
+        use std::process::{Command, Stdio};
 
         // Spawn a process that writes 200KB to stderr — enough to fill the OS pipe buffer
         let mut child = Command::new("python3")
@@ -1415,8 +1512,8 @@ mod tests {
 
     #[test]
     fn test_timeout_kills_subprocess_with_drain() {
-        use std::process::{Command, Stdio};
         use std::io::Read;
+        use std::process::{Command, Stdio};
 
         let mut child = Command::new("sleep")
             .arg("3600")
@@ -1473,24 +1570,59 @@ mod tests {
     fn test_build_pandoc_args_default_style_variables() {
         for fmt in &["pdf", "latex"] {
             let args = build_pandoc_args(
-                Path::new("/input.md"), Path::new("/output"), fmt,
-                Path::new("/notes"), None, None, None, None, None,
+                Path::new("/input.md"),
+                Path::new("/output"),
+                fmt,
+                Path::new("/notes"),
+                None,
+                None,
+                None,
+                None,
+                None,
             );
-            assert!(args.contains(&"--variable=geometry:margin=1in".to_string()), "{fmt}: missing geometry");
-            assert!(args.contains(&"--variable=fontsize=12pt".to_string()), "{fmt}: missing fontsize");
-            assert!(args.contains(&"--variable=colorlinks=true".to_string()), "{fmt}: missing colorlinks");
-            assert!(args.contains(&"--variable=linkcolor=blue".to_string()), "{fmt}: missing linkcolor");
-            assert!(args.contains(&"--variable=citecolor=blue".to_string()), "{fmt}: missing citecolor");
-            assert!(args.contains(&"--variable=urlcolor=blue".to_string()), "{fmt}: missing urlcolor");
-            assert!(args.contains(&"--variable=indent=true".to_string()), "{fmt}: missing indent");
+            assert!(
+                args.contains(&"--variable=geometry:margin=1in".to_string()),
+                "{fmt}: missing geometry"
+            );
+            assert!(
+                args.contains(&"--variable=fontsize=12pt".to_string()),
+                "{fmt}: missing fontsize"
+            );
+            assert!(
+                args.contains(&"--variable=colorlinks=true".to_string()),
+                "{fmt}: missing colorlinks"
+            );
+            assert!(
+                args.contains(&"--variable=linkcolor=blue".to_string()),
+                "{fmt}: missing linkcolor"
+            );
+            assert!(
+                args.contains(&"--variable=citecolor=blue".to_string()),
+                "{fmt}: missing citecolor"
+            );
+            assert!(
+                args.contains(&"--variable=urlcolor=blue".to_string()),
+                "{fmt}: missing urlcolor"
+            );
+            assert!(
+                args.contains(&"--variable=indent=true".to_string()),
+                "{fmt}: missing indent"
+            );
         }
     }
 
     #[test]
     fn test_build_pandoc_args_custom_template_still_has_variables() {
         let args = build_pandoc_args(
-            Path::new("/input.md"), Path::new("/output.pdf"), "pdf",
-            Path::new("/notes"), None, None, None, None, Some(Path::new("/t/custom.tex")),
+            Path::new("/input.md"),
+            Path::new("/output.pdf"),
+            "pdf",
+            Path::new("/notes"),
+            None,
+            None,
+            None,
+            None,
+            Some(Path::new("/t/custom.tex")),
         );
         assert!(args.contains(&"--template=/t/custom.tex".to_string()));
         assert!(args.contains(&"--variable=geometry:margin=1in".to_string()));
@@ -1499,8 +1631,15 @@ mod tests {
     #[test]
     fn test_build_pandoc_args_html_no_variables() {
         let args = build_pandoc_args(
-            Path::new("/input.md"), Path::new("/output.html"), "html",
-            Path::new("/notes"), None, None, None, None, None,
+            Path::new("/input.md"),
+            Path::new("/output.html"),
+            "html",
+            Path::new("/notes"),
+            None,
+            None,
+            None,
+            None,
+            None,
         );
         assert!(!args.iter().any(|a| a.starts_with("--variable=")));
     }
@@ -1573,7 +1712,11 @@ mod tests {
         let dir = std::env::temp_dir().join("test_fm_cjk");
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("note.md");
-        std::fs::write(&file, "---\nCJKmainfont: \"Noto Serif CJK SC\"\n---\nBody\n").unwrap();
+        std::fs::write(
+            &file,
+            "---\nCJKmainfont: \"Noto Serif CJK SC\"\n---\nBody\n",
+        )
+        .unwrap();
         let fm = extract_export_frontmatter(&file);
         assert_eq!(fm.cjk_mainfont.as_deref(), Some("Noto Serif CJK SC"));
         std::fs::remove_dir_all(&dir).unwrap();
@@ -1704,7 +1847,10 @@ mod tests {
         let msg = pandoc_not_found_error("PDF export");
         assert!(msg.contains("PDF export"), "should mention the operation");
         if cfg!(target_os = "macos") {
-            assert!(msg.contains("brew install pandoc"), "should include brew install hint on macOS");
+            assert!(
+                msg.contains("brew install pandoc"),
+                "should include brew install hint on macOS"
+            );
         } else if cfg!(target_os = "windows") {
             assert!(
                 msg.contains("winget") || msg.contains("choco"),
@@ -1731,10 +1877,22 @@ mod tests {
     #[test]
     fn test_pandoc_invalid_path_error_format() {
         let msg = pandoc_invalid_path_error("/bad/path");
-        assert!(msg.contains("/bad/path"), "should include the configured path");
-        assert!(msg.contains("configured pandoc path"), "frontend classifies by this phrase");
-        assert!(msg.contains("does not exist"), "should explain the missing-file case");
-        assert!(msg.contains("not executable"), "should explain the non-executable case");
+        assert!(
+            msg.contains("/bad/path"),
+            "should include the configured path"
+        );
+        assert!(
+            msg.contains("configured pandoc path"),
+            "frontend classifies by this phrase"
+        );
+        assert!(
+            msg.contains("does not exist"),
+            "should explain the missing-file case"
+        );
+        assert!(
+            msg.contains("not executable"),
+            "should explain the non-executable case"
+        );
         assert!(msg.contains("Settings"), "should mention Settings");
     }
 
@@ -1778,8 +1936,14 @@ mod tests {
         let result = validate_pandoc("export", &prefs);
         std::fs::remove_file(&tmp).ok();
         let err = result.expect_err("a non-executable pandoc path should fail loudly");
-        assert!(err.contains(&*tmp.to_string_lossy()), "should include the bad path");
-        assert!(err.contains("not executable"), "should explain it is not executable");
+        assert!(
+            err.contains(&*tmp.to_string_lossy()),
+            "should include the bad path"
+        );
+        assert!(
+            err.contains("not executable"),
+            "should explain it is not executable"
+        );
     }
 
     #[test]
@@ -1812,7 +1976,10 @@ mod tests {
         let result = validate_pandoc("export", &prefs);
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.contains("/nonexistent/path/to/pandoc"), "should include the bad path");
+        assert!(
+            err.contains("/nonexistent/path/to/pandoc"),
+            "should include the bad path"
+        );
         assert!(err.contains("does not exist"), "should explain the problem");
     }
 
@@ -1840,7 +2007,10 @@ mod tests {
 
         let err = result.expect_err("pandoc should be reported as not found");
         assert!(err.contains("PDF export"), "should mention the operation");
-        assert!(err.contains("pandoc.org"), "should include install instructions");
+        assert!(
+            err.contains("pandoc.org"),
+            "should include install instructions"
+        );
         assert!(err.contains("Settings"), "should mention Settings");
     }
 
@@ -1854,7 +2024,10 @@ mod tests {
         let result = validate_pandoc("export", &prefs);
         // Empty pref should NOT produce the "configured path" error
         if let Err(err) = result {
-            assert!(!err.contains("configured pandoc path"), "empty pref should fall through to PATH lookup, not report as invalid path");
+            assert!(
+                !err.contains("configured pandoc path"),
+                "empty pref should fall through to PATH lookup, not report as invalid path"
+            );
         }
     }
 
@@ -1954,7 +2127,10 @@ mod tests {
         // Empty pref must NOT take the invalid-path branch.
         if let Err(err) = result {
             assert_ne!(err, "bad ", "empty pref should fall through to PATH lookup");
-            assert!(!err.starts_with("bad"), "empty pref should not report invalid path");
+            assert!(
+                !err.starts_with("bad"),
+                "empty pref should not report invalid path"
+            );
         }
     }
 
@@ -2047,7 +2223,10 @@ mod tests {
         let lua_path = dir.join("escape-ampersand.lua");
         std::fs::write(&lua_path, "-- filter\n").unwrap();
 
-        assert_eq!(resolve_ampersand_filter("pdf", Some(tmp.path())), Some(lua_path));
+        assert_eq!(
+            resolve_ampersand_filter("pdf", Some(tmp.path())),
+            Some(lua_path)
+        );
     }
 
     #[test]
@@ -2058,6 +2237,9 @@ mod tests {
         let lua_path = dir.join("escape-ampersand.lua");
         std::fs::write(&lua_path, "-- filter\n").unwrap();
 
-        assert_eq!(resolve_ampersand_filter("latex", Some(tmp.path())), Some(lua_path));
+        assert_eq!(
+            resolve_ampersand_filter("latex", Some(tmp.path())),
+            Some(lua_path)
+        );
     }
 }

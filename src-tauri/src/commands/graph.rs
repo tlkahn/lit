@@ -6,7 +6,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
 use tauri::{Emitter, State};
 
-pub(crate) fn reindex_event_name<T>(result: &Result<T, GraphError>) -> (&'static str, Option<String>) {
+pub(crate) fn reindex_event_name<T>(
+    result: &Result<T, GraphError>,
+) -> (&'static str, Option<String>) {
     match result {
         Ok(_) => ("lit:graph-updated", None),
         Err(e) => ("lit:graph-reindex-failed", Some(e.to_string())),
@@ -34,10 +36,13 @@ pub(crate) fn emit_annotations_removed(handle: &tauri::AppHandle, removed: &[(St
         return;
     }
     let payload = AnnotationsRemovedPayload {
-        items: removed.iter().map(|(node_id, uuid)| AnnotationRemovedItem {
-            node_id: node_id.clone(),
-            uuid: uuid.clone(),
-        }).collect(),
+        items: removed
+            .iter()
+            .map(|(node_id, uuid)| AnnotationRemovedItem {
+                node_id: node_id.clone(),
+                uuid: uuid.clone(),
+            })
+            .collect(),
     };
     let _ = handle.emit("lit:annotations-removed", &payload);
 }
@@ -109,7 +114,10 @@ impl GraphBuildState {
 
     pub fn start_build(&self, path: PathBuf) -> Arc<BuildSignal> {
         let signal = Arc::new(BuildSignal::new());
-        self.signals.lock().unwrap().insert(path, Arc::clone(&signal));
+        self.signals
+            .lock()
+            .unwrap()
+            .insert(path, Arc::clone(&signal));
         signal
     }
 
@@ -207,12 +215,14 @@ pub(crate) fn load_or_build_graph_sync(
     on_progress: impl Fn(crate::graph::progress::IndexProgress),
     notes_store: Option<crate::graph::indexer::NotesStoreHandle>,
 ) -> Result<Arc<GraphIndex>, String> {
-    match GraphIndex::load_from_store(root.clone()) {
-        Ok(Some(mut gi)) => {
-            // In DB mode, attach the notes_store so later reindexes read from DB.
-            gi.set_notes_store(notes_store.clone());
+    match GraphIndex::load_from_store(root.clone(), notes_store.clone()) {
+        Ok(Some(gi)) => {
             let gi = Arc::new(gi);
-            graph_reg.indices.lock().unwrap().insert(root.clone(), Arc::clone(&gi));
+            graph_reg
+                .indices
+                .lock()
+                .unwrap()
+                .insert(root.clone(), Arc::clone(&gi));
             build_state.mark_ready(&root);
             return Ok(gi);
         }
@@ -220,10 +230,15 @@ pub(crate) fn load_or_build_graph_sync(
         Err(e) => tracing::warn!(error = %e, "load_from_store failed, falling back to cold start"),
     }
 
-    match GraphIndex::build_with_store(root.clone(), &on_progress, annotations_enabled, notes_store) {
+    match GraphIndex::build_with_store(root.clone(), &on_progress, annotations_enabled, notes_store)
+    {
         Ok(gi) => {
             let gi = Arc::new(gi);
-            graph_reg.indices.lock().unwrap().insert(root.clone(), Arc::clone(&gi));
+            graph_reg
+                .indices
+                .lock()
+                .unwrap()
+                .insert(root.clone(), Arc::clone(&gi));
             build_state.mark_ready(&root);
             Ok(gi)
         }
@@ -245,7 +260,14 @@ pub(crate) fn initialize_graph_index_with_callbacks(
     on_layout: impl FnOnce(Arc<GraphIndex>),
     notes_store: Option<crate::graph::indexer::NotesStoreHandle>,
 ) {
-    match load_or_build_graph_sync(root.clone(), build_state, graph_reg, annotations_enabled, on_progress, notes_store) {
+    match load_or_build_graph_sync(
+        root.clone(),
+        build_state,
+        graph_reg,
+        annotations_enabled,
+        on_progress,
+        notes_store,
+    ) {
         Ok(gi) => {
             on_graph_updated(&gi);
             match gi.sync_with_disk(annotations_enabled) {
@@ -274,8 +296,12 @@ pub(crate) fn initialize_graph_index(
         &build_state,
         &graph_reg,
         ann_enabled,
-        move |p| { let _ = emit_handle.emit("lit:index-progress", &p); },
-        |_gi| { let _ = layout_handle.emit("lit:graph-updated", ()); },
+        move |p| {
+            let _ = emit_handle.emit("lit:index-progress", &p);
+        },
+        |_gi| {
+            let _ = layout_handle.emit("lit:graph-updated", ());
+        },
         |gi| spawn_layout(gi, handle),
         notes_store,
     );
@@ -313,18 +339,23 @@ pub fn get_pagerank(
     graph_state: State<Arc<GraphRegistry>>,
     n: Option<usize>,
 ) -> Result<serde_json::Value, String> {
-    with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
-        match n {
+    with_graph_index(
+        &workspace_state,
+        &graph_state,
+        window.label(),
+        |gi| match n {
             Some(n) => {
                 let top = gi.top_by_pagerank(n)?;
-                serde_json::to_value(top).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+                serde_json::to_value(top)
+                    .map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
             }
             None => {
                 let scores = gi.pagerank()?;
-                serde_json::to_value(scores).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+                serde_json::to_value(scores)
+                    .map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
             }
-        }
-    })
+        },
+    )
 }
 
 #[tauri::command]
@@ -391,7 +422,8 @@ pub fn search_pages_by_title(
 ) -> Result<serde_json::Value, String> {
     with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
         let results = gi.search_by_title(&query, limit.unwrap_or(20))?;
-        serde_json::to_value(results).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+        serde_json::to_value(results)
+            .map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
     })
 }
 
@@ -403,7 +435,8 @@ pub fn get_graph_stats(
 ) -> Result<serde_json::Value, String> {
     with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
         let stats = gi.stats()?;
-        serde_json::to_value(stats).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+        serde_json::to_value(stats)
+            .map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
     })
 }
 
@@ -418,7 +451,8 @@ pub fn get_graph_neighbors(
 ) -> Result<serde_json::Value, String> {
     with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
         let result = gi.neighbors(&id, depth, directed.unwrap_or(false))?;
-        serde_json::to_value(result).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+        serde_json::to_value(result)
+            .map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
     })
 }
 
@@ -434,7 +468,8 @@ pub fn get_graph_paths(
 ) -> Result<serde_json::Value, String> {
     with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
         let paths = gi.paths(&from, &to, max_depth, directed.unwrap_or(false))?;
-        serde_json::to_value(paths).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+        serde_json::to_value(paths)
+            .map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
     })
 }
 
@@ -450,7 +485,8 @@ pub fn get_graph_subgraph(
     with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
         let seed_refs: Vec<&str> = seeds.iter().map(|s| s.as_str()).collect();
         let result = gi.subgraph_bundle(&seed_refs, depth, directed.unwrap_or(false))?;
-        serde_json::to_value(result).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+        serde_json::to_value(result)
+            .map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
     })
 }
 
@@ -463,7 +499,8 @@ pub fn resolve_wikilink(
 ) -> Result<serde_json::Value, String> {
     with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
         let resolved = gi.resolve_wikilink(&target)?;
-        serde_json::to_value(resolved).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+        serde_json::to_value(resolved)
+            .map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
     })
 }
 
@@ -476,7 +513,8 @@ pub fn get_page_headings(
 ) -> Result<serde_json::Value, String> {
     with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
         let headings = gi.page_headings(&target)?;
-        serde_json::to_value(headings).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+        serde_json::to_value(headings)
+            .map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
     })
 }
 
@@ -498,9 +536,7 @@ pub async fn get_unlinked_mentions(
     };
 
     tauri::async_runtime::spawn_blocking(move || {
-        let mentions = gi
-            .unlinked_mentions(&page_id)
-            .map_err(|e| e.to_string())?;
+        let mentions = gi.unlinked_mentions(&page_id).map_err(|e| e.to_string())?;
         serde_json::to_value(mentions).map_err(|e| e.to_string())
     })
     .await
@@ -518,19 +554,20 @@ pub fn link_unlinked_mention(
     source_line: u32,
     matched_text: String,
 ) -> Result<(), String> {
-    let root =
-        crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
 
     let page = crate::workspace::ops::read_page(&root, &source_id, &registry)
         .map_err(|e| e.to_string())?;
 
-    let new_body =
-        crate::graph::extract::replace_mention_with_wikilink(&page.body, source_line, &matched_text)
-            .map_err(|e| e.to_string())?;
+    let new_body = crate::graph::extract::replace_mention_with_wikilink(
+        &page.body,
+        source_line,
+        &matched_text,
+    )
+    .map_err(|e| e.to_string())?;
 
     let fm: indexmap::IndexMap<String, serde_yaml::Value> =
-        crate::workspace::frontmatter::parse_raw_yaml(&page.raw_yaml)
-            .unwrap_or_default();
+        crate::workspace::frontmatter::parse_raw_yaml(&page.raw_yaml).unwrap_or_default();
 
     crate::workspace::ops::write_page(&root, &source_id, &new_body, &fm, &registry)
         .map_err(|e| e.to_string())?;
@@ -558,7 +595,8 @@ pub fn search_tags(
 ) -> Result<serde_json::Value, String> {
     with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
         let results = gi.search_tags(&query, limit.unwrap_or(20))?;
-        serde_json::to_value(results).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+        serde_json::to_value(results)
+            .map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
     })
 }
 
@@ -572,7 +610,8 @@ pub fn list_pages_by_tag(
 ) -> Result<serde_json::Value, String> {
     with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
         let results = gi.list_pages_by_tag(&tag, limit.unwrap_or(50))?;
-        serde_json::to_value(results).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+        serde_json::to_value(results)
+            .map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
     })
 }
 
@@ -827,8 +866,7 @@ mod tests {
             "---\ntitle: Alice\n---\nI am Alice.",
         )
         .unwrap();
-        std::fs::write(dir.path().join("other.md"), "I met Alice yesterday.")
-            .unwrap();
+        std::fs::write(dir.path().join("other.md"), "I met Alice yesterday.").unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let mentions = gi.unlinked_mentions("target.md").unwrap();
         assert_eq!(mentions.len(), 1);
@@ -843,8 +881,16 @@ mod tests {
     #[test]
     fn cmd_search_pages_by_title() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("quantum.md"), "---\ntitle: Quantum Physics\n---\nBody.").unwrap();
-        std::fs::write(dir.path().join("classic.md"), "---\ntitle: Classical Mechanics\n---\nBody.").unwrap();
+        std::fs::write(
+            dir.path().join("quantum.md"),
+            "---\ntitle: Quantum Physics\n---\nBody.",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("classic.md"),
+            "---\ntitle: Classical Mechanics\n---\nBody.",
+        )
+        .unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.search_by_title("Quantum", 10).unwrap();
         assert_eq!(results.len(), 1);
@@ -857,7 +903,11 @@ mod tests {
     #[test]
     fn cmd_search_tags() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("a.md"), "---\ntags: [rust, coding]\n---\nBody.").unwrap();
+        std::fs::write(
+            dir.path().join("a.md"),
+            "---\ntags: [rust, coding]\n---\nBody.",
+        )
+        .unwrap();
         std::fs::write(dir.path().join("b.md"), "---\ntags: [rust]\n---\nBody.").unwrap();
         std::fs::write(dir.path().join("c.md"), "---\ntags: [python]\n---\nBody.").unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
@@ -878,9 +928,21 @@ mod tests {
     #[test]
     fn cmd_list_pages_by_tag() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("b.md"), "---\ntitle: Beta\ntags: [rust]\n---\nBeta body.").unwrap();
-        std::fs::write(dir.path().join("a.md"), "---\ntitle: Alpha\ntags: [rust, coding]\n---\nAlpha body.").unwrap();
-        std::fs::write(dir.path().join("c.md"), "---\ntitle: Charlie\ntags: [python]\n---\nCharlie body.").unwrap();
+        std::fs::write(
+            dir.path().join("b.md"),
+            "---\ntitle: Beta\ntags: [rust]\n---\nBeta body.",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("a.md"),
+            "---\ntitle: Alpha\ntags: [rust, coding]\n---\nAlpha body.",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("c.md"),
+            "---\ntitle: Charlie\ntags: [python]\n---\nCharlie body.",
+        )
+        .unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi.list_pages_by_tag("rust", 10).unwrap();
         assert_eq!(results.len(), 2);
@@ -904,16 +966,14 @@ mod tests {
             "---\ntitle: Alice\n---\nI am Alice.",
         )
         .unwrap();
-        std::fs::write(dir.path().join("other.md"), "I met Alice yesterday.")
-            .unwrap();
+        std::fs::write(dir.path().join("other.md"), "I met Alice yesterday.").unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
 
         // Read the source page, replace, and write back
         let registry = crate::workspace::write_hash::WriteHashRegistry::new();
         let page = crate::workspace::ops::read_page(dir.path(), "other.md", &registry).unwrap();
         let new_body =
-            crate::graph::extract::replace_mention_with_wikilink(&page.body, 1, "Alice")
-                .unwrap();
+            crate::graph::extract::replace_mention_with_wikilink(&page.body, 1, "Alice").unwrap();
         assert_eq!(new_body, "I met [[Alice]] yesterday.");
         let fm: indexmap::IndexMap<String, serde_yaml::Value> = indexmap::IndexMap::new();
         crate::workspace::ops::write_page(dir.path(), "other.md", &new_body, &fm, &registry)
@@ -1135,18 +1195,26 @@ mod tests {
             old_target: "target".to_string(),
             new_target: "renamed".to_string(),
         }];
-        let planned =
-            crate::graph::rewriter::plan_vault_rewrites_for_paths(dir.path(), &redirects, &affected)
-                .unwrap();
+        let planned = crate::graph::rewriter::plan_vault_rewrites_for_paths(
+            dir.path(),
+            &redirects,
+            &affected,
+        )
+        .unwrap();
         assert_eq!(planned.files_scanned, 1);
 
-        let summary =
-            crate::graph::rewriter::apply_planned_rewrites(dir.path(), &planned).unwrap();
+        let summary = crate::graph::rewriter::apply_planned_rewrites(dir.path(), &planned).unwrap();
         assert_eq!(summary.total_links_changed, 1);
 
         let linker = std::fs::read_to_string(dir.path().join("linker.md")).unwrap();
-        assert!(linker.contains("[[renamed]]"), "linker.md should be rewritten: {linker}");
-        assert!(!linker.contains("[[target]]"), "old link should be gone: {linker}");
+        assert!(
+            linker.contains("[[renamed]]"),
+            "linker.md should be rewritten: {linker}"
+        );
+        assert!(
+            !linker.contains("[[target]]"),
+            "old link should be gone: {linker}"
+        );
 
         let bystander = std::fs::read_to_string(dir.path().join("bystander.md")).unwrap();
         assert!(
@@ -1166,8 +1234,7 @@ pub fn rewrite_links(
     app_handle: tauri::AppHandle,
     redirects: Vec<crate::graph::rewriter::LinkRedirect>,
 ) -> Result<crate::graph::rewriter::RewriteSummary, String> {
-    let root =
-        crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
 
     let gi = {
         let indices = graph_state.indices.lock().unwrap();
@@ -1197,7 +1264,9 @@ pub fn rewrite_links(
         if let Some(ref gi) = gi {
             match gi.reindex_file(&pr.relative_path, ann_enabled) {
                 Ok(removed) => all_removed.extend(removed),
-                Err(e) => { reindex_err = Some(e); }
+                Err(e) => {
+                    reindex_err = Some(e);
+                }
             }
         }
     }

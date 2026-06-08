@@ -8,9 +8,10 @@ use tauri::State;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
+use super::credential::CredentialStore;
 use crate::commands::graph::GraphRegistry;
 use crate::commands::oplog::OpLogRegistry;
-use crate::commands::workspace::{get_workspace_root, WorkspaceRegistry};
+use crate::commands::workspace::{get_workspace_backend, WorkspaceRegistry};
 use crate::llm;
 use crate::oplog::store::Action;
 use crate::workspace::merge::{self, MergeInput, MergePlan};
@@ -18,7 +19,6 @@ use crate::workspace::ops;
 use crate::workspace::split::{self, SplitPlan};
 use crate::workspace::split_execute;
 use crate::workspace::write_hash::WriteHashRegistry;
-use super::credential::CredentialStore;
 
 pub struct TitleSuggestState {
     active: Arc<Mutex<Option<JoinHandle<()>>>>,
@@ -276,7 +276,9 @@ pub async fn suggest_merge_title(
 
     state.set_active(handle);
 
-    let result = rx.await.map_err(|_| "Title suggestion cancelled".to_string())?;
+    let result = rx
+        .await
+        .map_err(|_| "Title suggestion cancelled".to_string())?;
     state.clear();
     result
 }
@@ -299,7 +301,10 @@ pub fn execute_split(
     graph_state: State<Arc<GraphRegistry>>,
     app_handle: tauri::AppHandle,
 ) -> Result<Vec<String>, String> {
-    let root = get_workspace_root(&state, window.label())?;
+    let (root, backend) = get_workspace_backend(&state, window.label())?;
+    if backend.is_db() {
+        return Err("Split is not yet supported in database storage mode.".to_string());
+    }
 
     let candidate_paths = {
         let indices = graph_state.indices.lock().unwrap();
@@ -310,7 +315,8 @@ pub fn execute_split(
     };
 
     let result =
-        split_execute::execute_split(&root, &relative_path, &registry, candidate_paths.as_ref()).map_err(|e| e.to_string())?;
+        split_execute::execute_split(&root, &relative_path, &registry, candidate_paths.as_ref())
+            .map_err(|e| e.to_string())?;
 
     let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
     let gi = {
@@ -329,7 +335,11 @@ pub fn execute_split(
     if let Some(ref gi) = gi {
         let diff = crate::graph::indexer::DiffResult {
             new: result.created_paths.clone(),
-            changed: result.rewrite_actions.iter().map(|pr| pr.relative_path.clone()).collect(),
+            changed: result
+                .rewrite_actions
+                .iter()
+                .map(|pr| pr.relative_path.clone())
+                .collect(),
             deleted: vec![relative_path.clone()],
         };
         let reindex_result = gi.batch_reindex(&diff, ann_enabled);
@@ -372,10 +382,8 @@ pub fn execute_split(
             path: relative_path.clone(),
             old_path: None,
             before_content: Some(
-                std::fs::read_to_string(
-                    root.join(".trash").join(&result.trash_entry.trash_name),
-                )
-                .unwrap_or_default(),
+                std::fs::read_to_string(root.join(".trash").join(&result.trash_entry.trash_name))
+                    .unwrap_or_default(),
             ),
             after_content: None,
         });
@@ -404,7 +412,10 @@ pub fn merge_documents(
     oplog_state: State<Arc<OpLogRegistry>>,
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
-    let root = get_workspace_root(&state, window.label())?;
+    let (root, backend) = get_workspace_backend(&state, window.label())?;
+    if backend.is_db() {
+        return Err("Merge is not yet supported in database storage mode.".to_string());
+    }
 
     let docs: Vec<(String, MergeInput)> = paths
         .iter()
@@ -454,8 +465,17 @@ pub fn merge_documents(
     if let Some(ref gi) = gi {
         let diff = crate::graph::indexer::DiffResult {
             new: vec![result.merged_path.clone()],
-            changed: result.planned_rewrites.rewrites.iter().map(|pr| pr.relative_path.clone()).collect(),
-            deleted: result.source_snapshots.iter().map(|(p, _)| p.clone()).collect(),
+            changed: result
+                .planned_rewrites
+                .rewrites
+                .iter()
+                .map(|pr| pr.relative_path.clone())
+                .collect(),
+            deleted: result
+                .source_snapshots
+                .iter()
+                .map(|(p, _)| p.clone())
+                .collect(),
         };
         let reindex_result = gi.batch_reindex(&diff, ann_enabled);
         crate::commands::graph::emit_reindex_side_effects(&app_handle, &reindex_result);
@@ -598,8 +618,8 @@ mod tests {
 
     #[tokio::test]
     async fn suggest_title_inner_returns_title_from_llm() {
-        use wiremock::{MockServer, Mock, ResponseTemplate};
         use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -635,15 +655,14 @@ mod tests {
     // never resolve an env-var key behind the caller's back.
     #[tokio::test]
     async fn suggest_title_inner_threads_none_api_key_to_provider() {
-        use wiremock::{MockServer, Mock, ResponseTemplate};
         use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/v1/chat/completions"))
             .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_string(openai_chat_response("Keyless Title")),
+                ResponseTemplate::new(200).set_body_string(openai_chat_response("Keyless Title")),
             )
             .mount(&server)
             .await;
@@ -675,7 +694,11 @@ mod tests {
         // The request never reaches the server because the key guard fires inside the
         // provider — identical to the streaming path's behavior with api_key = None.
         let received = server.received_requests().await.unwrap();
-        assert_eq!(received.len(), 0, "no request should be sent when api_key is None");
+        assert_eq!(
+            received.len(),
+            0,
+            "no request should be sent when api_key is None"
+        );
     }
 
     // F1 (companion): a needs_api_key:false provider (e.g. "ollama") routed through
@@ -689,15 +712,14 @@ mod tests {
     // merge_split's removed "No API key found" short-circuit.
     #[tokio::test]
     async fn suggest_title_inner_keyless_provider_reaches_provider_layer() {
-        use wiremock::{MockServer, Mock, ResponseTemplate};
         use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/v1/chat/completions"))
             .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_string(openai_chat_response("Keyless Title")),
+                ResponseTemplate::new(200).set_body_string(openai_chat_response("Keyless Title")),
             )
             .mount(&server)
             .await;
@@ -723,8 +745,8 @@ mod tests {
 
     #[tokio::test]
     async fn suggest_title_inner_strips_quotes() {
-        use wiremock::{MockServer, Mock, ResponseTemplate};
         use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -752,16 +774,13 @@ mod tests {
 
     #[tokio::test]
     async fn suggest_title_inner_empty_response_returns_error() {
-        use wiremock::{MockServer, Mock, ResponseTemplate};
         use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/v1/chat/completions"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_string(openai_chat_response("")),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_string(openai_chat_response("")))
             .mount(&server)
             .await;
 
@@ -782,8 +801,8 @@ mod tests {
 
     #[tokio::test]
     async fn suggest_title_inner_api_error_propagates() {
-        use wiremock::{MockServer, Mock, ResponseTemplate};
         use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -811,15 +830,14 @@ mod tests {
 
     #[tokio::test]
     async fn suggest_title_inner_sends_correct_prompt() {
-        use wiremock::{MockServer, Mock, ResponseTemplate};
         use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/v1/chat/completions"))
             .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_string(openai_chat_response("Result Title")),
+                ResponseTemplate::new(200).set_body_string(openai_chat_response("Result Title")),
             )
             .mount(&server)
             .await;
@@ -842,14 +860,24 @@ mod tests {
         let messages = body["messages"].as_array().unwrap();
         let system_msg = messages.iter().find(|m| m["role"] == "system").unwrap();
         assert!(
-            system_msg["content"].as_str().unwrap().to_lowercase().contains("title"),
+            system_msg["content"]
+                .as_str()
+                .unwrap()
+                .to_lowercase()
+                .contains("title"),
             "system prompt should mention 'title'"
         );
 
         let user_msg = messages.iter().find(|m| m["role"] == "user").unwrap();
         let user_content = user_msg["content"].as_str().unwrap();
-        assert!(user_content.contains("Note A"), "user message should contain source titles");
-        assert!(user_content.contains("Note B"), "user message should contain source titles");
+        assert!(
+            user_content.contains("Note A"),
+            "user message should contain source titles"
+        );
+        assert!(
+            user_content.contains("Note B"),
+            "user message should contain source titles"
+        );
 
         assert_eq!(body["max_tokens"], 100);
         assert_eq!(body["temperature"], 0.5);
@@ -857,17 +885,15 @@ mod tests {
 
     #[tokio::test]
     async fn suggest_title_inner_works_with_claude_model() {
-        use wiremock::{MockServer, Mock, ResponseTemplate};
         use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
         let body = r#"{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-4-6","content":[{"type":"text","text":"Claude Title"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":3}}"#;
 
         Mock::given(method("POST"))
             .and(path("/v1/messages"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_string(body),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_string(body))
             .mount(&server)
             .await;
 
@@ -887,8 +913,8 @@ mod tests {
 
     #[tokio::test]
     async fn suggest_title_inner_uses_explicit_provider_id() {
-        use wiremock::{MockServer, Mock, ResponseTemplate};
         use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
         // Anthropic provider_id -> Anthropic wire format -> /v1/messages,
@@ -901,8 +927,8 @@ mod tests {
             .await;
 
         let result = suggest_title_inner(
-            "anthropic",            // NEW first arg: provider_id
-            "gpt-4o",               // model name deliberately mismatched
+            "anthropic", // NEW first arg: provider_id
+            "gpt-4o",    // model name deliberately mismatched
             Some("fake-key"),
             Some(&server.uri()),
             &["A".into(), "B".into()],
@@ -1116,29 +1142,29 @@ mod tests {
 
     #[tokio::test]
     async fn suggest_title_inner_empty_titles_returns_error() {
-        let result = suggest_title_inner(
-            "openai",
-            "gpt-4o",
-            Some("fake-key"),
-            None,
-            &[],
-            "body",
-            0.7,
-        )
-        .await;
+        let result =
+            suggest_title_inner("openai", "gpt-4o", Some("fake-key"), None, &[], "body", 0.7).await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("source_titles must not be empty"));
+        assert!(result
+            .unwrap_err()
+            .contains("source_titles must not be empty"));
     }
 
     #[test]
     fn strip_surrounding_quotes_curly_double() {
-        assert_eq!(strip_surrounding_quotes("\u{201C}My Title\u{201D}"), "My Title");
+        assert_eq!(
+            strip_surrounding_quotes("\u{201C}My Title\u{201D}"),
+            "My Title"
+        );
     }
 
     #[test]
     fn strip_surrounding_quotes_curly_single() {
-        assert_eq!(strip_surrounding_quotes("\u{2018}My Title\u{2019}"), "My Title");
+        assert_eq!(
+            strip_surrounding_quotes("\u{2018}My Title\u{2019}"),
+            "My Title"
+        );
     }
 
     #[test]
@@ -1196,8 +1222,8 @@ mod tests {
             ),
         ];
 
-        let result = merge::merge_documents_inner(root, &docs, Some("Merged"), &[0, 1], None, None)
-            .unwrap();
+        let result =
+            merge::merge_documents_inner(root, &docs, Some("Merged"), &[0, 1], None, None).unwrap();
 
         assert!(root.join("Merged.md").exists());
         assert!(!root.join("A.md").exists());
@@ -1246,7 +1272,11 @@ mod tests {
         }
 
         store
-            .record_operation("merge_documents", "Merge 2 documents into 'Merged'", &actions)
+            .record_operation(
+                "merge_documents",
+                "Merge 2 documents into 'Merged'",
+                &actions,
+            )
             .unwrap();
 
         let op = store.pop_latest().unwrap();
@@ -1277,20 +1307,48 @@ mod tests {
         write_file(root, "D.md", "See [[A]]");
 
         let docs: Vec<(String, MergeInput)> = vec![
-            ("A.md".to_string(), MergeInput { title: "A".into(), body: "Hello from A".into(), frontmatter: IndexMap::new() }),
-            ("B.md".to_string(), MergeInput { title: "B".into(), body: "Hello from B".into(), frontmatter: IndexMap::new() }),
+            (
+                "A.md".to_string(),
+                MergeInput {
+                    title: "A".into(),
+                    body: "Hello from A".into(),
+                    frontmatter: IndexMap::new(),
+                },
+            ),
+            (
+                "B.md".to_string(),
+                MergeInput {
+                    title: "B".into(),
+                    body: "Hello from B".into(),
+                    frontmatter: IndexMap::new(),
+                },
+            ),
         ];
 
         let mut candidates: std::collections::HashSet<String> = std::collections::HashSet::new();
         candidates.insert("C.md".into());
 
-        let result = merge::merge_documents_inner(root, &docs, Some("Merged"), &[0, 1], None, Some(&candidates)).unwrap();
+        let result = merge::merge_documents_inner(
+            root,
+            &docs,
+            Some("Merged"),
+            &[0, 1],
+            None,
+            Some(&candidates),
+        )
+        .unwrap();
 
         let c_content = std::fs::read_to_string(root.join("C.md")).unwrap();
-        assert!(c_content.contains("[[Merged]]"), "C.md should be rewritten: {c_content}");
+        assert!(
+            c_content.contains("[[Merged]]"),
+            "C.md should be rewritten: {c_content}"
+        );
 
         let d_content = std::fs::read_to_string(root.join("D.md")).unwrap();
-        assert!(d_content.contains("[[A]]"), "D.md should NOT be rewritten: {d_content}");
+        assert!(
+            d_content.contains("[[A]]"),
+            "D.md should NOT be rewritten: {d_content}"
+        );
 
         assert_eq!(result.planned_rewrites.files_scanned, 1);
     }
@@ -1305,17 +1363,38 @@ mod tests {
         write_file(root, "D.md", "See [[B]]");
 
         let docs: Vec<(String, MergeInput)> = vec![
-            ("A.md".to_string(), MergeInput { title: "A".into(), body: "Hello from A".into(), frontmatter: IndexMap::new() }),
-            ("B.md".to_string(), MergeInput { title: "B".into(), body: "Hello from B".into(), frontmatter: IndexMap::new() }),
+            (
+                "A.md".to_string(),
+                MergeInput {
+                    title: "A".into(),
+                    body: "Hello from A".into(),
+                    frontmatter: IndexMap::new(),
+                },
+            ),
+            (
+                "B.md".to_string(),
+                MergeInput {
+                    title: "B".into(),
+                    body: "Hello from B".into(),
+                    frontmatter: IndexMap::new(),
+                },
+            ),
         ];
 
-        let result = merge::merge_documents_inner(root, &docs, Some("Merged"), &[0, 1], None, None).unwrap();
+        let result =
+            merge::merge_documents_inner(root, &docs, Some("Merged"), &[0, 1], None, None).unwrap();
 
         let c_content = std::fs::read_to_string(root.join("C.md")).unwrap();
-        assert!(c_content.contains("[[Merged]]"), "C.md should be rewritten: {c_content}");
+        assert!(
+            c_content.contains("[[Merged]]"),
+            "C.md should be rewritten: {c_content}"
+        );
 
         let d_content = std::fs::read_to_string(root.join("D.md")).unwrap();
-        assert!(d_content.contains("[[Merged]]"), "D.md should also be rewritten: {d_content}");
+        assert!(
+            d_content.contains("[[Merged]]"),
+            "D.md should also be rewritten: {d_content}"
+        );
 
         assert!(result.planned_rewrites.files_scanned >= 2);
     }

@@ -1,5 +1,5 @@
 use crate::commands::graph::GraphRegistry;
-use crate::commands::workspace::{get_workspace_root, WorkspaceRegistry};
+use crate::commands::workspace::{get_workspace_backend, WorkspaceRegistry};
 use crate::export::{run_export, run_subgraph_export, ExportProgress, ExportSummary};
 use std::sync::Arc;
 use tauri::{Emitter, State};
@@ -10,13 +10,20 @@ pub async fn export_data(
     window: tauri::Window,
     state: State<'_, WorkspaceRegistry>,
 ) -> Result<ExportSummary, String> {
-    let root_path = get_workspace_root(&state, window.label())?;
+    let (root_path, backend) = get_workspace_backend(&state, window.label())?;
+    if backend.is_db() {
+        return Err("ZIP export is not yet supported in database storage mode.".to_string());
+    }
     let dest = std::path::PathBuf::from(&destination);
     let win = window.clone();
 
     let summary = tokio::task::spawn_blocking(move || {
         run_export(&root_path, &dest, |current, total| {
-            let _ = win.emit_to(win.label(), "lit:export-progress", ExportProgress { current, total });
+            let _ = win.emit_to(
+                win.label(),
+                "lit:export-progress",
+                ExportProgress { current, total },
+            );
         })
     })
     .await
@@ -35,7 +42,10 @@ pub async fn export_subgraph(
     state: State<'_, WorkspaceRegistry>,
     graph_state: State<'_, Arc<GraphRegistry>>,
 ) -> Result<ExportSummary, String> {
-    let root_path = get_workspace_root(&state, window.label())?;
+    let (root_path, backend) = get_workspace_backend(&state, window.label())?;
+    if backend.is_db() {
+        return Err("ZIP export is not yet supported in database storage mode.".to_string());
+    }
     let gi = {
         let indices = graph_state.indices.lock().unwrap();
         Arc::clone(
@@ -49,7 +59,11 @@ pub async fn export_subgraph(
 
     let summary = tokio::task::spawn_blocking(move || {
         run_subgraph_export(&root_path, &gi, &node_id, depth, &dest, |current, total| {
-            let _ = win.emit_to(win.label(), "lit:export-progress", ExportProgress { current, total });
+            let _ = win.emit_to(
+                win.label(),
+                "lit:export-progress",
+                ExportProgress { current, total },
+            );
         })
     })
     .await
