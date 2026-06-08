@@ -8,6 +8,11 @@ import { MIN_PANE_PX } from "../lib/paneConstants";
 import { useLeafFileType } from "../hooks/useLeafFileType";
 
 function PaneLeafRenderer({ paneId }: { paneId: string }) {
+  // useLeafFileType resolves a `.pdf` leaf to "pdf" by extension even before the
+  // pages list loads, so a restored PDF pane routes straight here without ever
+  // flashing EditorPane (which would run readPage on a binary file). A null
+  // fileType means an empty pane (no pagePath) — EditorPane shows "No page
+  // selected".
   const fileType = useLeafFileType(paneId);
   if (fileType === "pdf") {
     return <PdfViewerPane paneId={paneId} />;

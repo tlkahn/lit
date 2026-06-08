@@ -46,10 +46,20 @@ describe("pdfPaneRef", () => {
       expect(consumeForwardSync("p1")).toBe(false);
     });
 
-    it("clearForwardSync removes the mark silently", () => {
-      markForwardSync("p1");
-      clearForwardSync("p1");
+    it("clearForwardSync removes the mark when the token matches", () => {
+      const token = markForwardSync("p1");
+      clearForwardSync("p1", token);
       expect(consumeForwardSync("p1")).toBe(false);
+    });
+
+    it("clearForwardSync with a stale token does not clear a newer mark", () => {
+      const t1 = markForwardSync("p1");
+      const t2 = markForwardSync("p1");
+      expect(t2).not.toBe(t1);
+      // A stale safety-net timeout fires with the old token; it must be a no-op.
+      clearForwardSync("p1", t1);
+      // The newer navigation's flag survives.
+      expect(consumeForwardSync("p1")).toBe(true);
     });
 
     it("_resetForTesting clears forward-sync flags", () => {

@@ -136,5 +136,37 @@ describe("usePanePdfLinkStore", () => {
       expect(usePanePdfLinkStore.getState().getLinkedPane("a")).toBeUndefined();
       expect(usePanePdfLinkStore.getState().getLinkedPane("b")).toBeUndefined();
     });
+
+    it("skips cleanup work on focus-only changes (root identity unchanged)", () => {
+      const a: PaneLeaf = { type: "leaf", id: "a", pagePath: "paper.md" };
+      const b: PaneLeaf = { type: "leaf", id: "b", pagePath: "paper.pdf" };
+      const split: PaneSplit = {
+        type: "split",
+        id: "split-1",
+        direction: "horizontal",
+        children: [a, b],
+        sizes: [50, 50],
+      };
+      usePaneStore.setState({ root: split, focusedPaneId: "a" });
+      usePanePdfLinkStore.getState().linkPanes("a", "b");
+      // Seed a stale current-page entry for a pane that no longer exists in the tree.
+      usePanePdfLinkStore.setState({ currentPage: new Map([["ghost", 7]]) });
+
+      initPanePdfLinkCleanup();
+
+      // Focus-only change: root reference stays identical.
+      usePaneStore.setState({ focusedPaneId: "b" });
+
+      // The link is intact, and — proving the cleanup body did not run — the stale
+      // entry survives because a focus-only change must not trigger the tree walk.
+      expect(usePanePdfLinkStore.getState().getLinkedPane("a")).toBe("b");
+      expect(usePanePdfLinkStore.getState().currentPage.get("ghost")).toBe(7);
+
+      // A real structural change (dropping b) now runs cleanup: the link is dropped
+      // and the stale current-page entry is pruned.
+      usePaneStore.setState({ root: a, focusedPaneId: "a" });
+      expect(usePanePdfLinkStore.getState().getLinkedPane("a")).toBeUndefined();
+      expect(usePanePdfLinkStore.getState().currentPage.has("ghost")).toBe(false);
+    });
   });
 });

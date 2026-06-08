@@ -298,6 +298,7 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
 // ---------------------------------------------------------------------------
 
 let unsub: (() => void) | null = null;
+let pdfLinkUnsub: (() => void) | null = null;
 let beforeUnloadHandler: (() => void) | null = null;
 
 export function startLayoutSync(
@@ -311,6 +312,18 @@ export function startLayoutSync(
     saveLayout(workspacePath, root, focusedPaneId, getPaneViewStates(), pdfLinks);
   };
   unsub = usePaneStore.subscribe(flush);
+  // Also persist link changes that don't touch the pane tree (e.g. a standalone
+  // unlink from the command palette). Guard on the `links` reference so the
+  // high-frequency currentPage/lastSyncedPage/syncEnabled updates that share this
+  // store don't spam localStorage on every PDF scroll tick — `links` is replaced
+  // by a new Map only on linkPanes/unlinkPane.
+  let prevLinks = usePanePdfLinkStore.getState().links;
+  pdfLinkUnsub = usePanePdfLinkStore.subscribe((state) => {
+    if (state.links !== prevLinks) {
+      prevLinks = state.links;
+      flush();
+    }
+  });
   beforeUnloadHandler = flush;
   window.addEventListener("beforeunload", beforeUnloadHandler);
 }
@@ -318,6 +331,8 @@ export function startLayoutSync(
 export function stopLayoutSync(): void {
   unsub?.();
   unsub = null;
+  pdfLinkUnsub?.();
+  pdfLinkUnsub = null;
   if (beforeUnloadHandler) {
     window.removeEventListener("beforeunload", beforeUnloadHandler);
     beforeUnloadHandler = null;

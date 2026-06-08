@@ -504,6 +504,78 @@ describe("EditorPane", () => {
       expect(markOrder).toBeLessThan(goOrder!);
     });
 
+    it("an earlier navigation's stale safety-net timeout does not clear a newer navigation's flag", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      usePanePdfLinkStore.getState().linkPanes("pane-1", "pane-pdf");
+      // Slow IPC: goToPage does NOT synchronously fire onPageChange, so the flag
+      // stays in flight until the (late) handlePageChange consumes it.
+      pdfPaneRef.registerPdfGoToPage("pane-pdf", vi.fn());
+      const viewSpy = vi.spyOn(editorViewRef, "getPaneView");
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onSelectionChange).toBeDefined();
+      });
+      const onSelectionChange = capturedProps.onSelectionChange as (l: number, c: number) => void;
+
+      // First navigation -> page 1 (cursor at the "Page 2" marker).
+      viewSpy.mockReturnValue(fakeViewAt(page2Offset, bodyWithMarkers));
+      onSelectionChange(3, 0);
+      // t=150: token1 flag set, token1 safety net scheduled for t=650.
+      vi.advanceTimersByTime(150);
+
+      // Newer navigation -> page 0 (cursor before the "Page 2" marker), still
+      // before token1's safety-net timeout fires.
+      vi.advanceTimersByTime(200); // t=350
+      viewSpy.mockReturnValue(fakeViewAt(0, bodyWithMarkers));
+      onSelectionChange(1, 0);
+      // t=500: token2 flag replaces token1, token2 safety net scheduled for t=1000.
+      vi.advanceTimersByTime(150);
+
+      // Advance past token1's t=650 safety-net timeout but BEFORE token2's
+      // t=1000 one. With a fixed/unscoped clear, token1's late timeout would
+      // clobber token2's in-flight flag; token-scoped, it is a no-op.
+      vi.advanceTimersByTime(200); // t=700
+
+      // token2's flag must survive so the (late) onPageChange suppresses the
+      // reverse-sync echo and the cursor does not bounce.
+      expect(pdfPaneRef.consumeForwardSync("pane-pdf")).toBe(true);
+    });
+
+    it("does not navigate the PDF pane if it is unlinked during the debounce window", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      usePanePdfLinkStore.getState().linkPanes("pane-1", "pane-pdf");
+      const goToPageSpy = vi.fn();
+      pdfPaneRef.registerPdfGoToPage("pane-pdf", goToPageSpy);
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(
+        fakeViewAt(page2Offset, bodyWithMarkers),
+      );
+      const markSpy = vi.spyOn(pdfPaneRef, "markForwardSync");
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onSelectionChange).toBeDefined();
+      });
+      const onSelectionChange = capturedProps.onSelectionChange as (l: number, c: number) => void;
+      // Schedule the sync while linked...
+      onSelectionChange(3, 0);
+      // ...but unlink before the trailing-edge fires.
+      usePanePdfLinkStore.getState().unlinkPane("pane-1");
+      vi.advanceTimersByTime(150);
+
+      // The link is re-validated at fire time, so the unlink is honored and
+      // forward sync is a no-op: no navigation, no flag minted.
+      expect(goToPageSpy).not.toHaveBeenCalled();
+      expect(markSpy).not.toHaveBeenCalledWith("pane-pdf");
+      expect(pdfPaneRef.consumeForwardSync("pane-pdf")).toBe(false);
+    });
+
     it("still updates cursorInfo even when linked", async () => {
       usePaneStore.setState({
         root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },

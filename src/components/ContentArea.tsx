@@ -16,6 +16,7 @@ import { buildHeadingTree, applyRename, applyMove, insertChild, insertSibling, i
 import { YamlHighlighter } from "./YamlHighlighter";
 import { globalJumpTracker } from "../editor/jumpTracker";
 import { useGraphViewState } from "../stores/graphViewState";
+import { useLeafFileType } from "../hooks/useLeafFileType";
 
 const LazyMindmapView = lazy(() => import("./MindmapView"));
 const LazyGraphView = lazy(() => import("./GraphView"));
@@ -35,6 +36,7 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
   const focusedLeaf = usePaneStore((s) => findLeaf(s.root, s.focusedPaneId));
   const currentPanePage = focusedLeaf?.pagePath ?? null;
   const isMultiPane = usePaneStore((s) => s.root.type === "split");
+  const focusedFileType = useLeafFileType(focusedPaneId);
 
   const pendingTitleFocus = useWorkspaceStore((s) => s.pendingTitleFocus);
   const clearPendingTitleFocus = useWorkspaceStore((s) => s.clearPendingTitleFocus);
@@ -343,7 +345,7 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
 
   return (
     <main className="flex min-h-0 flex-1 flex-col bg-bg-primary-alt">
-      {currentPanePage && (<div className="px-6 py-3">
+      {currentPanePage && focusedFileType !== "pdf" && (<div className="px-6 py-3">
         <div className="flex items-center gap-2">
           <input
             ref={titleInputRef}

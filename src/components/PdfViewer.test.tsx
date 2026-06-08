@@ -435,6 +435,33 @@ describe("PdfViewer", () => {
     });
   });
 
+  it("advances two pages on a rapid double key-press without dropping one", async () => {
+    const onPageChange = vi.fn();
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" onPageChange={onPageChange} />);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+    });
+
+    // Fire two keydown events back-to-back WITHOUT awaiting a re-render between
+    // them. The default mock resolves renders synchronously, so currentPageRef
+    // updates synchronously while the React `currentPage` state commit is
+    // batched — the exact condition that drops every other press when the
+    // handler reads stale state instead of the ref.
+    const viewer = screen.getByTestId("pdf-viewer");
+    fireEvent.keyDown(viewer, { key: "j" });
+    fireEvent.keyDown(viewer, { key: "j" });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 3 / 3");
+    });
+
+    // The two presses must net to a two-page advance: onPageChange fires with
+    // the final target (2). Before the fix the second press was dropped by the
+    // ref guard and the viewer stalled on Page 2 / 3 (index 1).
+    const pageChanges = onPageChange.mock.calls.map((c) => c[0]);
+    expect(pageChanges).toContain(2);
+  });
+
   it("ArrowRight navigates to the next page", async () => {
     render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
     await waitFor(() => {
@@ -497,19 +524,27 @@ describe("PdfViewer", () => {
     });
   });
 
-  it("navigates to controlled page when the page prop changes", async () => {
-    const { rerender } = render(
-      <PdfViewer filePath="/test/doc.pdf" paneId="pane-1" page={0} />,
+  it("ignores a `page` prop and does not navigate from it (imperative-only navigation)", async () => {
+    // The controlled `page` prop was removed; navigation is driven exclusively
+    // through the imperative registerGoToPage channel. A stray `page` prop must
+    // be inert — it must not navigate the viewer.
+    render(
+      <PdfViewer filePath="/test/doc.pdf" paneId="pane-1" {...({ page: 2 } as unknown as Record<string, never>)} />,
     );
     await waitFor(() => {
       expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
     });
 
-    rerender(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" page={2} />);
+    // Give any (now-removed) controlled effect a chance to misbehave.
+    await Promise.resolve();
 
-    await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 3 / 3");
-    });
+    const { invoke } = await import("@tauri-apps/api/core");
+    const renderedPage2 = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
+      .filter((c: unknown[]) => c[0] === "pdf_render_page")
+      .some((c: unknown[]) => (c[1] as { pageIndex?: number })?.pageIndex === 2);
+
+    expect(renderedPage2).toBe(false);
+    expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
   });
 
   it("goToPage does not fire onPageChange for same-page navigation", async () => {
@@ -536,22 +571,70 @@ describe("PdfViewer", () => {
     });
   });
 
-  it("does not re-render when controlled page equals current page", async () => {
-    const { rerender } = render(
-      <PdfViewer filePath="/test/doc.pdf" paneId="pane-1" page={0} />,
+  it("does not revert to an earlier page when a slow render resolves after a newer cache-hit navigation", async () => {
+    const onPageChange = vi.fn();
+    let goToPage: ((i: number) => void) | null = null;
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        onPageChange={onPageChange}
+        registerGoToPage={(fn) => { goToPage = fn; }}
+      />,
     );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+    });
+    expect(goToPage).not.toBeNull();
+
+    // Pre-warm the cache for page index 2 by jumping straight there (skipping
+    // page index 1), so page 2 is cached but page 1 is NOT. Page 0 is already
+    // cached from the initial load.
+    goToPage!(2);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 3 / 3");
+    });
+
+    // Install a mock where page index 1 renders slowly (deferred), so a
+    // navigation to page 1 is an awaiting cache miss.
+    let resolveSlow!: (v: unknown) => void;
+    const slow = new Promise((r) => { resolveSlow = r; });
+    mockInvoke((cmd, args) => {
+      if (cmd === "pdf_render_page") {
+        const a = args as Record<string, unknown>;
+        const idx = (a?.pageIndex ?? 0) as number;
+        if (idx === 1) return slow;
+        return { ...mockRenderedPage, page_index: idx, png_path: `/tmp/lit-pdf-test/page_${idx}.png` };
+      }
+      if (cmd === "pdf_prefetch") return null;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    onPageChange.mockClear();
+
+    // Start a slow navigation to page index 1 (cache miss -> awaits IPC).
+    goToPage!(1);
+    // Immediately navigate to page index 0 (cache hit -> commits synchronously,
+    // shows Page 1 / 3).
+    goToPage!(0);
+
     await waitFor(() => {
       expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
     });
 
-    const { invoke } = await import("@tauri-apps/api/core");
-    const before = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
-      .filter((c: unknown[]) => c[0] === "pdf_render_page").length;
+    // Now resolve the slow page-1 render. It is stale and must NOT revert us.
+    resolveSlow({ ...mockRenderedPage, page_index: 1, png_path: "/tmp/lit-pdf-test/page_1.png" });
 
-    rerender(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" page={0} />);
+    // Give the resolved promise a chance to (incorrectly) commit.
+    await Promise.resolve();
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+    });
+    expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
 
-    const after = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
-      .filter((c: unknown[]) => c[0] === "pdf_render_page").length;
-    expect(after).toBe(before);
+    const pageChanges = onPageChange.mock.calls.map((c) => c[0]);
+    expect(pageChanges[pageChanges.length - 1]).toBe(0);
+    expect(onPageChange).not.toHaveBeenCalledWith(1);
   });
 });

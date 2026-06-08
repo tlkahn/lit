@@ -37,7 +37,6 @@ function cacheGet(cache: Map<string, RenderedPage>, key: string): RenderedPage |
 interface PdfViewerProps {
   filePath: string;
   paneId: string;
-  page?: number;
   onPageChange?: (pageIndex: number) => void;
   /**
    * Publish this viewer's internal `goToPage` so an external owner (e.g. the
@@ -47,7 +46,7 @@ interface PdfViewerProps {
   registerGoToPage?: (fn: (pageIndex: number) => void) => void;
 }
 
-export function PdfViewer({ filePath, paneId, page, onPageChange, registerGoToPage }: PdfViewerProps) {
+export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: PdfViewerProps) {
   const [pdfInfo, setPdfInfo] = useState<PdfInfo | null>(null);
   const [currentPage, setCurrentPage] = useState(0);
   const [rendered, setRendered] = useState<RenderedPage | null>(null);
@@ -56,6 +55,7 @@ export function PdfViewer({ filePath, paneId, page, onPageChange, registerGoToPa
   const filePathRef = useRef(filePath);
   const currentPageRef = useRef(currentPage);
   const cacheRef = useRef(new Map<string, RenderedPage>());
+  const navSeqRef = useRef(0);
 
   const prefetchAdjacent = useCallback((pageIndex: number, pageCount: number, dpi: number) => {
     if (pageIndex > 0) pdfPrefetch(pageIndex - 1, dpi, paneId).catch(() => {});
@@ -96,6 +96,14 @@ export function PdfViewer({ filePath, paneId, page, onPageChange, registerGoToPa
   const goToPage = useCallback(
     async (index: number) => {
       if (index === currentPageRef.current) return;
+      // Monotonic navigation token: any newer navigation (even a synchronous
+      // cache hit) supersedes an in-flight slow render so it cannot revert us.
+      const mySeq = ++navSeqRef.current;
+      // Advance the ref synchronously to the navigation target so a rapid
+      // second key-press (which reads currentPageRef before this invocation's
+      // awaited render commits) derives the *next* target instead of recomputing
+      // this same one and getting dropped by the same-page guard above.
+      currentPageRef.current = index;
       try {
         const dpi = getEffectiveDpi();
         const key = cacheKey(index, dpi);
@@ -103,7 +111,7 @@ export function PdfViewer({ filePath, paneId, page, onPageChange, registerGoToPa
         if (cached && filePathRef.current === filePath) {
           setRendered(cached);
           setCurrentPage(index);
-          currentPageRef.current = index;
+          // currentPageRef already set to index synchronously above.
           onPageChange?.(index);
           prefetchAdjacent(index, pdfInfo?.page_count ?? 0, dpi);
           return;
@@ -112,7 +120,7 @@ export function PdfViewer({ filePath, paneId, page, onPageChange, registerGoToPa
         setPageLoading(true);
         try {
           const rp = await pdfRenderPage(index, dpi, paneId);
-          if (filePathRef.current === filePath) {
+          if (filePathRef.current === filePath && navSeqRef.current === mySeq) {
             cacheSet(cacheRef.current, key, rp);
             setRendered(rp);
             setCurrentPage(index);
@@ -135,30 +143,28 @@ export function PdfViewer({ filePath, paneId, page, onPageChange, registerGoToPa
     registerGoToPage?.(goToPage);
   }, [goToPage, registerGoToPage]);
 
-  // Controlled page: navigate when the `page` prop changes externally.
-  // The `page !== currentPage` guard prevents an onPageChange/page feedback loop.
-  useEffect(() => {
-    if (page != null && page !== currentPage) {
-      goToPage(page);
-    }
-  }, [page, currentPage, goToPage]);
-
   const handleKeyDown = useCallback(
     (e: ReactKeyboardEvent) => {
       const pageCount = pdfInfo?.page_count ?? 0;
+      // Read the synchronous source of truth (the ref) that goToPage's guard
+      // uses. On a rapid double-press the React `currentPage` state is still
+      // stale (its commit is batched), so reading it would recompute the same
+      // target the prior press already committed and get dropped by the ref
+      // guard. The ref is always current.
+      const current = currentPageRef.current;
       if (e.key === "j" || e.key === "ArrowRight") {
-        if (currentPage < pageCount - 1) {
+        if (current < pageCount - 1) {
           e.preventDefault();
-          goToPage(currentPage + 1);
+          goToPage(current + 1);
         }
       } else if (e.key === "k" || e.key === "ArrowLeft") {
-        if (currentPage > 0) {
+        if (current > 0) {
           e.preventDefault();
-          goToPage(currentPage - 1);
+          goToPage(current - 1);
         }
       }
     },
-    [currentPage, pdfInfo, goToPage],
+    [pdfInfo, goToPage],
   );
 
   if (error) {

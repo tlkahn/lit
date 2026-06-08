@@ -26,7 +26,13 @@ describe("getFileType", () => {
     expect(getFileType(null, [meta("note.md", "markdown")])).toBe(null);
   });
 
-  it("returns null when no matching page exists", () => {
-    expect(getFileType("missing.md", [meta("note.md", "markdown")])).toBe(null);
+  it("falls back to 'pdf' by extension when the pages list has not loaded", () => {
+    expect(getFileType("doc.pdf", [])).toBe("pdf");
+    expect(getFileType("DOC.PDF", [])).toBe("pdf");
+  });
+
+  it("falls back to 'markdown' by extension for a non-pdf path with no matching page", () => {
+    expect(getFileType("missing.md", [meta("note.md", "markdown")])).toBe("markdown");
+    expect(getFileType("untitled", [])).toBe("markdown");
   });
 });

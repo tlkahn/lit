@@ -782,6 +782,45 @@ describe("ContentArea PDF rendering", () => {
     expect(screen.queryByTestId("editor")).not.toBeInTheDocument();
   });
 
+  it("does not render editor chrome (title input or view-mode tabs) for a focused PDF pane", async () => {
+    const pdfPage = {
+      title: "Doc",
+      relative_path: "doc.pdf",
+      frontmatter: {},
+      created_at: 1000,
+      modified_at: 2000,
+      file_type: "pdf" as const,
+    };
+    useWorkspaceStore.setState({
+      workspacePath: "/test",
+      pages: [pdfPage],
+      currentPagePath: "doc.pdf",
+    });
+    usePaneStore.getState().setPanePage("test-pane", "doc.pdf");
+
+    mockInvoke((cmd, args) => {
+      if (cmd === "pdf_open") return { page_count: 2, path: (args as Record<string, unknown>)?.path ?? "" };
+      if (cmd === "pdf_render_page") {
+        const idx = (args as Record<string, unknown>)?.pageIndex ?? 0;
+        return { page_index: idx, png_path: `/tmp/lit-pdf/page_${idx}.png`, width: 100, height: 200 };
+      }
+      if (cmd === "pdf_prefetch") return null;
+      if (cmd === "pdf_close") return null;
+      if (cmd === "get_keymaps") return [];
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer-pane")).toBeInTheDocument();
+    });
+    // The editor chrome must be suppressed for a PDF: no title input (which
+    // would rename the PDF file) and no view-mode tabs (which would hide the PDF).
+    expect(screen.queryByTestId("page-title")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Mindmap" })).not.toBeInTheDocument();
+  });
+
   it("does NOT render PdfViewer for markdown files", async () => {
     useWorkspaceStore.setState({
       workspacePath: "/test",

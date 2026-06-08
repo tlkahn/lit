@@ -70,6 +70,32 @@ describe("PaneContainer leaf routing", () => {
     const { getByTestId } = render(<PaneContainer />);
     expect(getByTestId("editor-pane-leaf-empty")).toBeTruthy();
   });
+
+  it("routes a restored .pdf leaf to the PDF viewer (not EditorPane) while pages list is empty", () => {
+    // pagePath is a restored PDF leaf but the workspace pages list has not
+    // loaded yet. The .pdf extension is sniffed so the leaf renders the PDF
+    // viewer immediately — never EditorPane, which would call readPage on a
+    // binary file.
+    usePaneStore.setState({
+      root: { type: "leaf", id: "leaf-loading", pagePath: "doc.pdf" },
+      focusedPaneId: "leaf-loading",
+    });
+    useWorkspaceStore.setState({ pages: [] });
+    const { getByTestId, queryByTestId } = render(<PaneContainer />);
+    expect(queryByTestId("editor-pane-leaf-loading")).toBeNull();
+    expect(getByTestId("pdf-viewer-pane-leaf-loading")).toBeTruthy();
+  });
+
+  it("routes a restored .md leaf to EditorPane while pages list is empty", () => {
+    usePaneStore.setState({
+      root: { type: "leaf", id: "leaf-md-loading", pagePath: "note.md" },
+      focusedPaneId: "leaf-md-loading",
+    });
+    useWorkspaceStore.setState({ pages: [] });
+    const { getByTestId, queryByTestId } = render(<PaneContainer />);
+    expect(queryByTestId("pdf-viewer-pane-leaf-md-loading")).toBeNull();
+    expect(getByTestId("editor-pane-leaf-md-loading")).toBeTruthy();
+  });
 });
 
 describe("PaneContainer", () => {
@@ -394,6 +420,9 @@ describe("PaneContainer", () => {
 
   // Cycle 22 — close middle pane leaves correct pane count (#132)
   it("closing middle pane leaves 2 editor panes rendered", () => {
+    useWorkspaceStore.setState({
+      pages: [meta("a.md", "markdown"), meta("b.md", "markdown")],
+    });
     const root: PaneNode = {
       type: "split",
       id: "s1",

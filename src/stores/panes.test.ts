@@ -1534,6 +1534,34 @@ describe("Section F: Layout Persistence", () => {
       expect(stored.pdfLinks).toHaveLength(1);
       expect(new Set(stored.pdfLinks[0])).toEqual(new Set([a, b]));
     });
+
+    it("persists link-store changes without a pane-tree mutation", () => {
+      usePaneStore.getState().splitPane("solo", "horizontal");
+      const root = usePaneStore.getState().root as PaneSplit;
+      const a = (root.children[0] as PaneLeaf).id;
+      const b = (root.children[1] as PaneLeaf).id;
+      usePanePdfLinkStore.getState().linkPanes(a, b);
+
+      startLayoutSync(WS, () => useWorkspaceStore.getState().paneViewStates);
+      usePaneStore.getState().setPanePage(a, "note.md");
+      localStorage.removeItem(key);
+
+      // Unlink with no accompanying pane-tree mutation.
+      usePanePdfLinkStore.getState().unlinkPane(a);
+
+      const stored = JSON.parse(localStorage.getItem(key)!);
+      expect(stored.pdfLinks).toHaveLength(0);
+    });
+
+    it("does not write on non-link link-store mutations (currentPage churn)", () => {
+      startLayoutSync(WS, () => useWorkspaceStore.getState().paneViewStates);
+      usePaneStore.getState().setPanePage("solo", "note.md");
+      localStorage.removeItem(key);
+
+      // setCurrentPage fires on every PDF scroll tick; it must not flush.
+      usePanePdfLinkStore.getState().setCurrentPage("solo", 3);
+      expect(localStorage.getItem(key)).toBeNull();
+    });
   });
 
   describe("stopLayoutSync", () => {

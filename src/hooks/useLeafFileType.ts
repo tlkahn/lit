@@ -8,17 +8,22 @@ export type LeafFileType = "pdf" | "markdown";
  * Derive a leaf's file type from the workspace pages list by matching its
  * `pagePath` against `relative_path`.
  *
- * Returns `null` when `pagePath` is null OR when no page metadata is found
- * (e.g. the pages list has not loaded yet). Callers should treat a `null`
- * result as "not yet known" and fall back to the markdown editor; the leaf
- * re-renders and re-routes once the matching page meta arrives.
+ * Returns `null` only when `pagePath` is null (an empty pane). When the pages
+ * list has not loaded yet (no matching meta), falls back to sniffing the
+ * extension: a `.pdf` path resolves to `"pdf"` so the leaf routes straight to
+ * the PDF viewer instead of flashing the markdown editor (which would run
+ * `readPage` on a binary file); everything else resolves to `"markdown"`, the
+ * documented fallback. Once the real meta arrives the leaf re-renders with the
+ * authoritative type.
  */
 export function getFileType(
   pagePath: string | null,
   pages: PageMeta[],
 ): LeafFileType | null {
   if (pagePath == null) return null;
-  return pages.find((p) => p.relative_path === pagePath)?.file_type ?? null;
+  const known = pages.find((p) => p.relative_path === pagePath)?.file_type;
+  if (known != null) return known;
+  return pagePath.toLowerCase().endsWith(".pdf") ? "pdf" : "markdown";
 }
 
 export function useLeafFileType(paneId: string): LeafFileType | null {

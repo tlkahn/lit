@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { usePaneStore, collectLeaves } from "./panes";
+import { usePaneStore, collectLeaves, type PaneNode } from "./panes";
 
 export interface PanePdfLinkStore {
   links: Map<string, string>;
@@ -112,10 +112,17 @@ export function deserializeLinks(pairs: [string, string][]): Map<string, string>
 // ---------------------------------------------------------------------------
 
 let cleanupUnsub: (() => void) | null = null;
+// Last pane-tree root we processed. The subscription fires on EVERY pane-store
+// change (including focus-only updates), but only structural mutations mint a
+// new root object — so we skip the tree walk when root identity is unchanged.
+let prevRoot: PaneNode | null = null;
 
 export function initPanePdfLinkCleanup(): void {
   if (cleanupUnsub) return;
+  prevRoot = usePaneStore.getState().root;
   cleanupUnsub = usePaneStore.subscribe((state) => {
+    if (state.root === prevRoot) return;
+    prevRoot = state.root;
     const live = new Set(collectLeaves(state.root).map((l) => l.id));
     const { links, unlinkPane, currentPage } = usePanePdfLinkStore.getState();
     for (const [key, value] of links) {
@@ -139,4 +146,5 @@ export function initPanePdfLinkCleanup(): void {
 export function stopPanePdfLinkCleanup(): void {
   cleanupUnsub?.();
   cleanupUnsub = null;
+  prevRoot = null;
 }
