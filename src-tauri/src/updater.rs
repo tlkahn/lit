@@ -28,14 +28,23 @@ impl Drop for UpdateGuard {
     }
 }
 
+pub(crate) async fn oneshot_bridge(
+    start: impl FnOnce(Box<dyn FnOnce(bool) + Send + 'static>),
+) -> bool {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    start(Box::new(move |result| {
+        let _ = tx.send(result);
+    }));
+    rx.await.unwrap_or_else(|_| {
+        tracing::warn!("dialog oneshot dropped without response — defaulting to false");
+        false
+    })
+}
+
 pub(crate) async fn show_dialog<R: tauri::Runtime>(
     builder: tauri_plugin_dialog::MessageDialogBuilder<R>,
 ) -> bool {
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    builder.show(move |result| {
-        let _ = tx.send(result);
-    });
-    rx.await.unwrap_or(false)
+    oneshot_bridge(|cb| builder.show(cb)).await
 }
 
 /// Run the full install + restart flow for a found update.
@@ -61,13 +70,11 @@ async fn install_update(app: &AppHandle, update: tauri_plugin_updater::Update) {
             }
         }
         Err(e) => {
-            show_dialog(
-                app.dialog()
-                    .message(format!("Failed to install update: {e}"))
-                    .title("Update Error")
-                    .kind(MessageDialogKind::Error),
-            )
-            .await;
+            app.dialog()
+                .message(format!("Failed to install update: {e}"))
+                .title("Update Error")
+                .kind(MessageDialogKind::Error)
+                .show(|_| {});
         }
     }
 }
@@ -98,14 +105,12 @@ pub async fn check_for_updates_interactive(app: &AppHandle) {
     let _guard = match UpdateGuard::acquire() {
         Some(g) => g,
         None => {
-            show_dialog(
-                app.dialog()
-                    .message(
-                        "An update check is already in progress. Please wait for it to finish.",
-                    )
-                    .title("Update In Progress"),
-            )
-            .await;
+            app.dialog()
+                .message(
+                    "An update check is already in progress. Please wait for it to finish.",
+                )
+                .title("Update In Progress")
+                .show(|_| {});
             return;
         }
     };
@@ -113,13 +118,11 @@ pub async fn check_for_updates_interactive(app: &AppHandle) {
     let updater = match app.updater() {
         Ok(u) => u,
         Err(e) => {
-            show_dialog(
-                app.dialog()
-                    .message(format!("Could not initialize updater: {e}"))
-                    .title("Update Error")
-                    .kind(MessageDialogKind::Error),
-            )
-            .await;
+            app.dialog()
+                .message(format!("Could not initialize updater: {e}"))
+                .title("Update Error")
+                .kind(MessageDialogKind::Error)
+                .show(|_| {});
             return;
         }
     };
@@ -129,21 +132,17 @@ pub async fn check_for_updates_interactive(app: &AppHandle) {
             prompt_and_install(app, update).await;
         }
         Ok(None) => {
-            show_dialog(
-                app.dialog()
-                    .message("You're running the latest version of Lit.")
-                    .title("No Updates"),
-            )
-            .await;
+            app.dialog()
+                .message("You're running the latest version of Lit.")
+                .title("No Updates")
+                .show(|_| {});
         }
         Err(e) => {
-            show_dialog(
-                app.dialog()
-                    .message(format!("Failed to check for updates: {e}"))
-                    .title("Update Error")
-                    .kind(MessageDialogKind::Error),
-            )
-            .await;
+            app.dialog()
+                .message(format!("Failed to check for updates: {e}"))
+                .title("Update Error")
+                .kind(MessageDialogKind::Error)
+                .show(|_| {});
         }
     }
 }
@@ -212,23 +211,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn show_dialog_bridge_returns_true_on_true() {
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        tx.send(true).unwrap();
-        assert!(rx.await.unwrap_or(false));
+    async fn oneshot_bridge_returns_true_on_true() {
+        assert!(oneshot_bridge(|cb| cb(true)).await);
     }
 
     #[tokio::test]
-    async fn show_dialog_bridge_returns_false_on_false() {
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        tx.send(false).unwrap();
-        assert!(!rx.await.unwrap_or(false));
+    async fn oneshot_bridge_returns_false_on_false() {
+        assert!(!oneshot_bridge(|cb| cb(false)).await);
     }
 
     #[tokio::test]
-    async fn show_dialog_bridge_returns_false_on_dropped_sender() {
-        let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
-        drop(tx);
-        assert!(!rx.await.unwrap_or(false));
+    async fn oneshot_bridge_returns_false_on_dropped_callback() {
+        assert!(!oneshot_bridge(|_cb| {}).await);
+    }
+
+    #[tokio::test]
+    async fn oneshot_bridge_handles_deferred_callback() {
+        assert!(oneshot_bridge(|cb| { tokio::spawn(async move { cb(true) }); }).await);
     }
 }
