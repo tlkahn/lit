@@ -89,9 +89,41 @@ export const PROVIDER_REGISTRY: Record<string, ProviderMeta> = {
       { id: "deepseek-reasoner", label: "DeepSeek Reasoner" },
     ],
   },
+  gemini: {
+    label: "Google Gemini",
+    description: "Gemini models via Google's OpenAI-compatible endpoint",
+    needsApiKey: true,
+    defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai/",
+    models: [
+      { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+      { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+      { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
+    ],
+  },
+  mistral: {
+    label: "Mistral",
+    description: "Mistral models via the Mistral API",
+    needsApiKey: true,
+    defaultBaseUrl: "https://api.mistral.ai/v1",
+    models: [
+      { id: "mistral-large-latest", label: "Mistral Large" },
+      { id: "mistral-small-latest", label: "Mistral Small" },
+    ],
+  },
+  together: {
+    label: "Together AI",
+    description: "Open models via Together AI",
+    needsApiKey: true,
+    defaultBaseUrl: "https://api.together.xyz/v1",
+    models: [
+      { id: "meta-llama/Llama-3.3-70B-Instruct-Turbo", label: "Llama 3.3 70B" },
+      { id: "deepseek-ai/DeepSeek-V3", label: "DeepSeek V3" },
+      { id: "Qwen/Qwen2.5-72B-Instruct-Turbo", label: "Qwen 2.5 72B" },
+    ],
+  },
 };
 
-export const PROVIDER_ORDER = ["openai", "anthropic", "openrouter", "ollama", "groq", "deepseek"];
+export const PROVIDER_ORDER = ["openai", "anthropic", "openrouter", "ollama", "groq", "deepseek", "gemini", "mistral", "together"];
 
 export function defaultModelForProvider(providerId: string): string {
   return PROVIDER_REGISTRY[providerId]?.models[0]?.id ?? "";

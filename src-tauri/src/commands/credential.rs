@@ -428,6 +428,9 @@ fn account_for_provider(provider: &str) -> Result<String, String> {
         "ollama" => Ok("ollama-api-key".to_string()),
         "groq" => Ok("groq-api-key".to_string()),
         "deepseek" => Ok("deepseek-api-key".to_string()),
+        "gemini" => Ok("gemini-api-key".to_string()),
+        "mistral" => Ok("mistral-api-key".to_string()),
+        "together" => Ok("together-api-key".to_string()),
         _ if provider.starts_with("custom-") => Ok(format!("{}-api-key", provider)),
         _ => Err(format!("Unknown provider: {}", provider)),
     }
@@ -635,6 +638,21 @@ mod tests {
     #[test]
     fn test_account_for_ollama() {
         assert_eq!(account_for_provider("ollama"), Ok("ollama-api-key".to_string()));
+    }
+
+    #[test]
+    fn test_account_for_gemini() {
+        assert_eq!(account_for_provider("gemini"), Ok("gemini-api-key".to_string()));
+    }
+
+    #[test]
+    fn test_account_for_mistral() {
+        assert_eq!(account_for_provider("mistral"), Ok("mistral-api-key".to_string()));
+    }
+
+    #[test]
+    fn test_account_for_together() {
+        assert_eq!(account_for_provider("together"), Ok("together-api-key".to_string()));
     }
 
     #[test]

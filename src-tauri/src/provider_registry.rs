@@ -63,6 +63,30 @@ static REGISTRY: &[ProviderEntry] = &[
         default_context_window: 128_000,
         extra_headers: &[],
     },
+    ProviderEntry {
+        id: "gemini",
+        default_base_url: "https://generativelanguage.googleapis.com/v1beta/openai/",
+        wire_format: WireFormat::OpenAi,
+        needs_api_key: true,
+        default_context_window: 1_000_000,
+        extra_headers: &[],
+    },
+    ProviderEntry {
+        id: "mistral",
+        default_base_url: "https://api.mistral.ai/v1",
+        wire_format: WireFormat::OpenAi,
+        needs_api_key: true,
+        default_context_window: 128_000,
+        extra_headers: &[],
+    },
+    ProviderEntry {
+        id: "together",
+        default_base_url: "https://api.together.xyz/v1",
+        wire_format: WireFormat::OpenAi,
+        needs_api_key: true,
+        default_context_window: 128_000,
+        extra_headers: &[],
+    },
 ];
 
 pub fn lookup(id: &str) -> Option<&'static ProviderEntry> {
@@ -129,6 +153,34 @@ mod tests {
     }
 
     #[test]
+    fn test_lookup_gemini() {
+        let e = lookup("gemini").expect("gemini must be registered");
+        assert_eq!(
+            e.default_base_url,
+            "https://generativelanguage.googleapis.com/v1beta/openai/"
+        );
+        assert_eq!(e.wire_format, WireFormat::OpenAi);
+        assert!(e.needs_api_key);
+        assert_eq!(e.default_context_window, 1_000_000);
+    }
+
+    #[test]
+    fn test_lookup_mistral() {
+        let e = lookup("mistral").expect("mistral must be registered");
+        assert_eq!(e.default_base_url, "https://api.mistral.ai/v1");
+        assert_eq!(e.wire_format, WireFormat::OpenAi);
+        assert!(e.needs_api_key);
+    }
+
+    #[test]
+    fn test_lookup_together() {
+        let e = lookup("together").expect("together must be registered");
+        assert_eq!(e.default_base_url, "https://api.together.xyz/v1");
+        assert_eq!(e.wire_format, WireFormat::OpenAi);
+        assert!(e.needs_api_key);
+    }
+
+    #[test]
     fn test_openrouter_has_extra_headers() {
         let e = lookup("openrouter").expect("openrouter must be registered");
         assert_eq!(e.extra_headers.len(), 2);
@@ -138,7 +190,7 @@ mod tests {
 
     #[test]
     fn test_other_providers_no_extra_headers() {
-        for id in &["openai", "anthropic", "ollama", "groq", "deepseek"] {
+        for id in &["openai", "anthropic", "ollama", "groq", "deepseek", "gemini", "mistral", "together"] {
             let e = lookup(id).unwrap();
             assert!(e.extra_headers.is_empty(), "{id} should have no extra headers");
         }

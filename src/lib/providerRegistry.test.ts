@@ -46,6 +46,18 @@ describe("providerNeedsApiKey", () => {
     expect(providerNeedsApiKey("deepseek")).toBe(true);
   });
 
+  it("returns true for gemini", () => {
+    expect(providerNeedsApiKey("gemini")).toBe(true);
+  });
+
+  it("returns true for mistral", () => {
+    expect(providerNeedsApiKey("mistral")).toBe(true);
+  });
+
+  it("returns true for together", () => {
+    expect(providerNeedsApiKey("together")).toBe(true);
+  });
+
   it("returns true for unknown providers", () => {
     expect(providerNeedsApiKey("unknown-provider")).toBe(true);
   });
@@ -80,7 +92,7 @@ describe("providerIdForModel", () => {
 describe("PROVIDER_REGISTRY", () => {
   it("has all expected providers", () => {
     expect(Object.keys(PROVIDER_REGISTRY).sort()).toEqual([
-      "anthropic", "deepseek", "groq", "ollama", "openai", "openrouter",
+      "anthropic", "deepseek", "gemini", "groq", "mistral", "ollama", "openai", "openrouter", "together",
     ]);
   });
 });
@@ -156,7 +168,7 @@ describe("getMergedRegistry", () => {
 
   it("does not mutate PROVIDER_REGISTRY", () => {
     getMergedRegistry([makeDef()]);
-    expect(Object.keys(PROVIDER_REGISTRY)).toHaveLength(6);
+    expect(Object.keys(PROVIDER_REGISTRY)).toHaveLength(9);
   });
 });
 
@@ -175,6 +187,6 @@ describe("getMergedProviderOrder", () => {
 
   it("does not mutate PROVIDER_ORDER", () => {
     getMergedProviderOrder([makeDef()]);
-    expect(PROVIDER_ORDER).toHaveLength(6);
+    expect(PROVIDER_ORDER).toHaveLength(9);
   });
 });
