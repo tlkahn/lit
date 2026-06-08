@@ -264,14 +264,14 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
             let _ = app.emit(EVENT_LICENSE_INFO, ());
         }
         MenuAction::CheckForUpdates => {
-            #[cfg(not(feature = "app-store"))]
+            #[cfg(all(not(feature = "app-store"), not(debug_assertions)))]
             {
                 let handle = app.clone();
                 tauri::async_runtime::spawn(async move {
                     crate::updater::check_for_updates_interactive(&handle).await;
                 });
             }
-            #[cfg(feature = "app-store")]
+            #[cfg(any(feature = "app-store", debug_assertions))]
             {
                 let _ = app;
             }
@@ -282,7 +282,7 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
 pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let app_menu = Submenu::new(app, "Lit", true)?;
     app_menu.append(&MenuItem::with_id(app, MENU_ID_INSTALL_CLI, "Install Command Line Tool\u{2026}", true, None::<&str>)?)?;
-    #[cfg(not(feature = "app-store"))]
+    #[cfg(all(not(feature = "app-store"), not(debug_assertions)))]
     {
         app_menu.append(&MenuItem::with_id(
             app,
