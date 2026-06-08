@@ -187,7 +187,7 @@ pub fn run() {
                 app.manage(watcher);
             }
 
-            #[cfg(not(feature = "app-store"))]
+            #[cfg(all(not(feature = "app-store"), not(debug_assertions)))]
             {
                 let update_handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
