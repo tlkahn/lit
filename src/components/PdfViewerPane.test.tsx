@@ -43,6 +43,7 @@ import { PdfViewerPane } from "./PdfViewerPane";
 /** Fake EditorView with a real Text object so getCachedPageMarkers can scan it. */
 function makeFakeEditorView(doc: string): EditorView {
   return {
+    hasFocus: false,
     state: {
       doc: Text.of(doc.split("\n")),
       selection: { main: { head: 0 } },

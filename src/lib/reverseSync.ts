@@ -43,6 +43,11 @@ export function dispatchReverseSync(
     return;
   }
 
+  if (view.hasFocus) {
+    console.log("[sync:rev] BAIL — editor has focus");
+    return;
+  }
+
   console.log("[sync:rev] page=%d → charOffset=%d (editor pane %s)", pageIndex, marker.charOffset, linkedEditorPaneId);
   usePanePdfLinkStore.getState().setLastSyncedPage(pageIndex);
 
