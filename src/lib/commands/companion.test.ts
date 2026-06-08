@@ -16,6 +16,7 @@ const mockPaneState = vi.hoisted(() => {
       return "new-pane";
     }),
     setPanePage: vi.fn(),
+    focusPane: vi.fn(),
   };
   return state;
 });
@@ -93,6 +94,46 @@ describe("initCompanionCommands", () => {
       expect(mockPaneState.splitPane).toHaveBeenCalledWith("src-pane", "horizontal");
       expect(mockPaneState.setPanePage).toHaveBeenCalledWith("new-pane", "paper.pdf");
       expect(mockLinkState.linkPanes).toHaveBeenCalledWith("src-pane", "new-pane");
+      expect(mockPaneState.focusPane).toHaveBeenCalledWith("new-pane");
+    });
+  });
+
+  it("reuses a vacant pane instead of splitting", async () => {
+    mockPaneState.root = {
+      type: "split",
+      id: "root",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "src-pane", pagePath: "paper.md" },
+        { type: "leaf", id: "vacant-pane", pagePath: null },
+      ],
+    } as any;
+    initCompanionCommands();
+    executeCommand("companion.open");
+
+    await vi.waitFor(() => {
+      expect(mockPaneState.splitPane).not.toHaveBeenCalled();
+      expect(mockPaneState.setPanePage).toHaveBeenCalledWith("vacant-pane", "paper.pdf");
+      expect(mockLinkState.linkPanes).toHaveBeenCalledWith("src-pane", "vacant-pane");
+      expect(mockPaneState.focusPane).toHaveBeenCalledWith("vacant-pane");
+    });
+  });
+
+  it("splits when no vacant pane exists (all panes have pages)", async () => {
+    mockPaneState.root = {
+      type: "split",
+      id: "root",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "src-pane", pagePath: "paper.md" },
+        { type: "leaf", id: "other-pane", pagePath: "other.md" },
+      ],
+    } as any;
+    initCompanionCommands();
+    executeCommand("companion.open");
+
+    await vi.waitFor(() => {
+      expect(mockPaneState.splitPane).toHaveBeenCalledWith("src-pane", "horizontal");
     });
   });
 

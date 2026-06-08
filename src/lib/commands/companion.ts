@@ -1,5 +1,5 @@
 import { registerOnce } from "../commandRegistry";
-import { usePaneStore, findLeaf } from "../../stores/panes";
+import { usePaneStore, findLeaf, collectLeaves } from "../../stores/panes";
 import { usePanePdfLinkStore } from "../../stores/panePdfLink";
 import { useStatusMessageStore } from "../../stores/statusMessage";
 import { findCompanionFile } from "../ipc";
@@ -32,13 +32,17 @@ export function initCompanionCommands(): void {
               return;
             }
             const store = usePaneStore.getState();
-            const newId = store.splitPane(sourceId, "horizontal");
+            const vacant = collectLeaves(store.root).find(
+              (l) => l.pagePath == null && l.id !== sourceId,
+            );
+            const newId = vacant?.id ?? store.splitPane(sourceId, "horizontal");
             if (newId == null) {
               useStatusMessageStore
                 .getState()
                 .show("Cannot split: maximum panes reached or source pane closed", "error");
               return;
             }
+            store.focusPane(newId);
             store.setPanePage(newId, companion);
             console.log("[sync:link] linkPanes(%s, %s) — %s ↔ %s", sourceId, newId, pagePath, companion);
             usePanePdfLinkStore.getState().linkPanes(sourceId, newId);
