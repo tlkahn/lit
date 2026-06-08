@@ -149,7 +149,10 @@ pub fn companion_search_paths(prefs: &Preferences) -> Vec<String> {
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
-                .filter_map(|x| x.as_str().map(String::from))
+                .filter_map(|x| x.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
                 .collect::<Vec<String>>()
         })
         .filter(|v| !v.is_empty())
@@ -762,6 +765,16 @@ mod tests {
         let prefs: Preferences =
             serde_json::from_str(r#"{"companion.searchPath": "pdfs"}"#).unwrap();
         assert_eq!(super::companion_search_paths(&prefs), vec![".".to_string()]);
+    }
+
+    #[test]
+    fn companion_search_paths_filters_empty_and_whitespace_entries() {
+        let prefs: Preferences =
+            serde_json::from_str(r#"{"companion.searchPath": [".", "", "  ", "pdfs"]}"#).unwrap();
+        assert_eq!(
+            super::companion_search_paths(&prefs),
+            vec![".".to_string(), "pdfs".to_string()]
+        );
     }
 
     #[test]

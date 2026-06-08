@@ -998,6 +998,62 @@ describe("PreferencesStore", () => {
     expect(usePreferencesStore.getState().companionSearchPath).toEqual(["."]);
   });
 
+  it("setCompanionSearchPath does not clobber a newer value when an earlier call's persistence rejects", async () => {
+    usePreferencesStore.setState({ companionSearchPath: ["."] });
+    let setPreferenceCalls = 0;
+    mockInvoke((cmd) => {
+      if (cmd === "set_preference") {
+        setPreferenceCalls += 1;
+        // First call (A) rejects late; second call (B) resolves.
+        return setPreferenceCalls === 1
+          ? Promise.reject(new Error("write failed"))
+          : undefined;
+      }
+      return undefined;
+    });
+
+    setCompanionSearchPath([".", "a"]); // A — will reject
+    setCompanionSearchPath([".", "b"]); // B — will resolve, supersedes A
+    await new Promise((r) => setTimeout(r, 0));
+
+    // A's stale rollback must not clobber B's value.
+    expect(usePreferencesStore.getState().companionSearchPath).toEqual([".", "b"]);
+  });
+
+  it("setCompanionSearchPath normalizes empty array to ['.'] in store and persistence", async () => {
+    usePreferencesStore.setState({ companionSearchPath: [".", "pdfs"] });
+    const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+    mockInvoke((cmd, args) => {
+      calls.push({ cmd, args });
+      return undefined;
+    });
+
+    setCompanionSearchPath([]);
+    await Promise.resolve();
+
+    expect(usePreferencesStore.getState().companionSearchPath).toEqual(["."]);
+    const setCall = calls.find((c) => c.cmd === "set_preference");
+    expect(setCall).toBeDefined();
+    expect(setCall?.args?.key).toBe("companion.searchPath");
+    expect(setCall?.args?.value).toEqual(["."]);
+  });
+
+  it("setCompanionSearchPath filters non-string entries", async () => {
+    usePreferencesStore.setState({ companionSearchPath: ["."] });
+    const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+    mockInvoke((cmd, args) => {
+      calls.push({ cmd, args });
+      return undefined;
+    });
+
+    setCompanionSearchPath(["pdfs", 5 as unknown as string, "."]);
+    await Promise.resolve();
+
+    expect(usePreferencesStore.getState().companionSearchPath).toEqual(["pdfs", "."]);
+    const setCall = calls.find((c) => c.cmd === "set_preference");
+    expect(setCall?.args?.value).toEqual(["pdfs", "."]);
+  });
+
   it("maps academic.pandocPath from IPC", async () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {

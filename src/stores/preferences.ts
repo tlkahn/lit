@@ -198,9 +198,12 @@ export function setLlmProvider(patch: Partial<LlmProviderConfig>) {
 
 export function setCompanionSearchPath(paths: string[]) {
   const prev = usePreferencesStore.getState().companionSearchPath;
-  usePreferencesStore.setState({ companionSearchPath: paths });
-  setPreference("companion.searchPath", paths).catch(() => {
-    usePreferencesStore.setState({ companionSearchPath: prev });
+  const next = applyCompanionSearchPath(paths);
+  usePreferencesStore.setState({ companionSearchPath: next });
+  setPreference("companion.searchPath", next).catch(() => {
+    usePreferencesStore.setState((state) =>
+      state.companionSearchPath === next ? { companionSearchPath: prev } : {},
+    );
   });
 }
 
