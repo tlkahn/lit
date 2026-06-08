@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PdfViewer } from "./PdfViewer";
 import { mockInvoke } from "../test/tauri-mock";
@@ -462,6 +462,35 @@ describe("PdfViewer", () => {
     expect(pageChanges).toContain(2);
   });
 
+  it("advances two pages on a rapid Next-button double-click without dropping one", async () => {
+    const onPageChange = vi.fn();
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" onPageChange={onPageChange} />);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+    });
+
+    // Fire two clicks back-to-back WITHOUT awaiting a re-render between them
+    // (userEvent.click would await microtasks and let the batched state commit
+    // flush, masking the bug). The default mock resolves renders synchronously,
+    // so currentPageRef updates synchronously while the React `currentPage`
+    // state commit is batched — the exact condition that drops every other
+    // click when the handler reads stale state instead of the ref.
+    const next = screen.getByTestId("pdf-next");
+    fireEvent.click(next);
+    fireEvent.click(next);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 3 / 3");
+    });
+
+    // The two clicks must net to a two-page advance: onPageChange fires with the
+    // final target (2). Before the fix the second click read stale currentPage
+    // and recomputed the same target the first click already advanced the ref
+    // to, so the ref guard dropped it and the viewer stalled on Page 2 / 3.
+    const pageChanges = onPageChange.mock.calls.map((c) => c[0]);
+    expect(pageChanges).toContain(2);
+  });
+
   it("ArrowRight navigates to the next page", async () => {
     render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
     await waitFor(() => {
@@ -508,6 +537,27 @@ describe("PdfViewer", () => {
 
     fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "j" });
     expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 3 / 3");
+  });
+
+  it("fires onPageChange(0) exactly once after the initial page renders", async () => {
+    const onPageChange = vi.fn();
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" onPageChange={onPageChange} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+    });
+
+    // The mount effect must publish the initial page so the parent's status bar
+    // and reverse sync are seeded. Before the fix it was never called with 0,
+    // and the goToPage same-page guard prevented it from ever firing for page 0.
+    await waitFor(() => {
+      expect(onPageChange).toHaveBeenCalledWith(0);
+    });
+
+    // Pin the once-only contract: a regression where the mount effect re-runs
+    // would fire onPageChange(0) more than once.
+    const zeroCalls = onPageChange.mock.calls.filter((c) => c[0] === 0);
+    expect(zeroCalls).toHaveLength(1);
   });
 
   it("calls onPageChange when the page changes", async () => {
@@ -636,5 +686,72 @@ describe("PdfViewer", () => {
     const pageChanges = onPageChange.mock.calls.map((c) => c[0]);
     expect(pageChanges[pageChanges.length - 1]).toBe(0);
     expect(onPageChange).not.toHaveBeenCalledWith(1);
+  });
+
+  it("keeps spinner while a superseding cache-miss navigation is still rendering after a stale render resolves", async () => {
+    let goToPage: ((i: number) => void) | null = null;
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        registerGoToPage={(fn) => { goToPage = fn; }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+    });
+    expect(goToPage).not.toBeNull();
+
+    // Two distinct deferred renders: page index 1 (navigation A) and page index
+    // 2 (navigation B). Both are cache misses — page 0 is cached from mount,
+    // pages 1 and 2 were never pre-warmed.
+    let resolveA!: (v: unknown) => void;
+    let resolveB!: (v: unknown) => void;
+    const renderA = new Promise((r) => { resolveA = r; });
+    const renderB = new Promise((r) => { resolveB = r; });
+    mockInvoke((cmd, args) => {
+      if (cmd === "pdf_render_page") {
+        const a = args as Record<string, unknown>;
+        const idx = (a?.pageIndex ?? 0) as number;
+        if (idx === 1) return renderA;
+        if (idx === 2) return renderB;
+        return { ...mockRenderedPage, page_index: idx, png_path: `/tmp/lit-pdf-test/page_${idx}.png` };
+      }
+      if (cmd === "pdf_prefetch") return null;
+      if (cmd === "pdf_close") return null;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    // Navigation A to page index 1 (spinner on, mySeq = N), then immediately
+    // navigation B to page index 2 (supersedes A, mySeq = N+1, spinner stays on).
+    goToPage!(1);
+    goToPage!(2);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-loading")).toBeInTheDocument();
+    });
+
+    // Resolve the STALE older render A. Its finally must NOT tear down the
+    // spinner, because the superseding navigation B is still in flight. Wrap in
+    // act so A's full continuation chain (await body -> finally -> setState) is
+    // flushed and any (buggy) unconditional setPageLoading(false) is committed
+    // to the DOM before we assert.
+    await act(async () => {
+      resolveA({ ...mockRenderedPage, page_index: 1, png_path: "/tmp/lit-pdf-test/page_1.png" });
+      await renderA;
+    });
+
+    // Spinner MUST still be present: the current navigation B is still
+    // rendering. On the buggy unconditional finally this is null (RED).
+    expect(screen.queryByTestId("pdf-page-loading")).toBeInTheDocument();
+
+    // Now resolve the current render B — it owns spinner teardown and commits.
+    resolveB({ ...mockRenderedPage, page_index: 2, png_path: "/tmp/lit-pdf-test/page_2.png" });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("pdf-page-loading")).not.toBeInTheDocument();
+    });
+    expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 3 / 3");
   });
 });

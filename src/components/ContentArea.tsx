@@ -437,7 +437,7 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
           )
         )}
       </div>)}
-      <PaneContainer style={viewMode !== "editor" ? { display: "none" } : undefined} />
+      <PaneContainer style={viewMode !== "editor" && focusedFileType !== "pdf" ? { display: "none" } : undefined} />
       {viewMode === "mindmap" && (
         <div
           data-testid="mindmap-view"

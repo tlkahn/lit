@@ -56,6 +56,13 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
   const currentPageRef = useRef(currentPage);
   const cacheRef = useRef(new Map<string, RenderedPage>());
   const navSeqRef = useRef(0);
+  // Keep an always-current ref to onPageChange so the mount effect can publish
+  // the initial page without listing onPageChange as a dependency (which would
+  // re-open the PDF and reset to page 0 on every callback identity change).
+  const onPageChangeRef = useRef(onPageChange);
+  useEffect(() => {
+    onPageChangeRef.current = onPageChange;
+  }, [onPageChange]);
 
   const prefetchAdjacent = useCallback((pageIndex: number, pageCount: number, dpi: number) => {
     if (pageIndex > 0) pdfPrefetch(pageIndex - 1, dpi, paneId).catch(() => {});
@@ -80,6 +87,10 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
         if (cancelled) return;
         cacheSet(cacheRef.current, cacheKey(0, dpi), page);
         setRendered(page);
+        // Publish the initial page exactly once so the parent's status bar and
+        // reverse sync are seeded. The goToPage same-page guard would otherwise
+        // suppress this for page 0 since currentPageRef is already 0.
+        onPageChangeRef.current?.(0);
         prefetchAdjacent(0, info.page_count, dpi);
       } catch (err) {
         if (cancelled) return;
@@ -129,7 +140,11 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
             prefetchAdjacent(index, pdfInfo?.page_count ?? 0, dpi);
           }
         } finally {
-          setPageLoading(false);
+          // Only tear down the spinner if this navigation is still current. A
+          // superseded navigation must leave the spinner up for the newer
+          // (current) navigation that is still rendering; that navigation owns
+          // clearing it when its own render resolves.
+          if (navSeqRef.current === mySeq) setPageLoading(false);
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
@@ -203,7 +218,7 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
         <button
           data-testid="pdf-prev"
           disabled={currentPage <= 0}
-          onClick={() => goToPage(currentPage - 1)}
+          onClick={() => goToPage(currentPageRef.current - 1)}
           className="rounded px-2 py-1 text-sm text-text-normal hover:bg-bg-secondary disabled:opacity-30 disabled:cursor-not-allowed"
         >
           ← Prev
@@ -214,7 +229,7 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
         <button
           data-testid="pdf-next"
           disabled={currentPage >= pageCount - 1}
-          onClick={() => goToPage(currentPage + 1)}
+          onClick={() => goToPage(currentPageRef.current + 1)}
           className="rounded px-2 py-1 text-sm text-text-normal hover:bg-bg-secondary disabled:opacity-30 disabled:cursor-not-allowed"
         >
           Next →

@@ -77,13 +77,22 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
     if (!linked) return;
     const view = getPaneView(paneId);
     if (!view) return;
-    // CodeMirror's doc is the frontmatter-stripped body, so both the markers
-    // and the offset live in the same coordinate space (no FM adjustment).
-    const offset = view.state.selection.main.head;
-    const markers = getCachedPageMarkers(view.state.doc);
     dispatchForwardSync({
-      offset,
-      markers,
+      // The offset and markers are read inside this fire-time callback (not at
+      // schedule time) so a document edit during the debounce window — one that
+      // mutates the doc/cursor without re-firing onSelectionChange — cannot make
+      // them stale. Re-read the live view here so the latest state.doc/selection
+      // is used; null if the view disappeared mid-debounce. CodeMirror's doc is
+      // the frontmatter-stripped body, so both the markers and the offset live
+      // in the same coordinate space (no FM adjustment).
+      read: () => {
+        const v = getPaneView(paneId);
+        if (!v) return null;
+        return {
+          offset: v.state.selection.main.head,
+          markers: getCachedPageMarkers(v.state.doc),
+        };
+      },
       // The lastSyncedPage echo guard lives in dispatchForwardSync's fire path
       // (it consults the panePdfLink store), so reverse sync (PDF -> md) cannot
       // bounce back into forward sync. No guard wrapping needed here.

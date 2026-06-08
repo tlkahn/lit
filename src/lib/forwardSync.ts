@@ -20,10 +20,16 @@ export const DEBOUNCE_MS = 150;
 export const ECHO_GUARD_MS = 300;
 
 export interface ForwardSyncArgs {
-  /** Absolute char offset of the cursor in the (frontmatter-stripped) body. */
-  offset: number;
-  /** Page markers parsed from the same body. */
-  markers: PageMarker[];
+  /**
+   * Reads the cursor offset and page markers at FIRE time (inside the
+   * trailing-edge timer), not at schedule time. Reading here — rather than
+   * capturing plain values in the closure — closes the window where a document
+   * edit during the debounce window (one that mutates the doc/cursor WITHOUT
+   * firing a new selection change, e.g. a programmatic edit or external sync)
+   * would otherwise leave the captured markers/offset stale. Returns null if
+   * the source view has disappeared between schedule and fire.
+   */
+  read: () => { offset: number; markers: PageMarker[] } | null;
   /** Drives the linked PDF pane to a 0-based page index. */
   goToPage: (pageIndex: number) => void;
 }
@@ -42,16 +48,22 @@ let timer: ReturnType<typeof setTimeout> | null = null;
  * trailing-edge timer, not at call time — the resolved page index is what the
  * guard compares against the store's lastSyncedPage (see ECHO_GUARD_MS).
  */
-export function dispatchForwardSync({ offset, markers, goToPage }: ForwardSyncArgs): void {
+export function dispatchForwardSync({ read, goToPage }: ForwardSyncArgs): void {
   if (timer !== null) clearTimeout(timer);
-  // Capture this call's args in the closure so the trailing-edge fire uses the
-  // most recent values (no stale-closure bug across rapid calls).
+  // Capture only the read/goToPage callbacks in the closure. The markers and
+  // offset are read at FIRE time via read() (not captured here), so a document
+  // edit during the post-last-selection-change debounce window cannot make them
+  // stale. The trailing-edge timer keeps only the last call's callbacks.
   timer = setTimeout(() => {
     timer = null;
     // Sync toggle is checked at FIRE time (not schedule time) so a toggle during
     // the debounce window is honored.
     if (!usePanePdfLinkStore.getState().syncEnabled) return;
-    const resolved = pageForOffset(markers, offset);
+    // Read markers/offset at FIRE time. Null means the source view vanished
+    // between schedule and fire — nothing to sync.
+    const data = read();
+    if (!data) return;
+    const resolved = pageForOffset(data.markers, data.offset);
     // Echo guard: suppress the forward sync that reverse sync just triggered.
     const last = usePanePdfLinkStore.getState().lastSyncedPage;
     if (last !== null && last.page === resolved && Date.now() - last.at < ECHO_GUARD_MS) {

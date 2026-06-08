@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { mockInvoke } from "../test/tauri-mock";
 import { StatusBar } from "./StatusBar";
@@ -585,6 +585,64 @@ describe("StatusBar", () => {
       });
       render(<StatusBar />);
       expect(screen.getByTestId("status-bar-pdf-link")).not.toHaveTextContent("Page");
+    });
+
+    it("updates the page when the linked partner pane's page changes", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      usePaneStore.setState({
+        root: {
+          type: "split",
+          id: "s1",
+          direction: "horizontal",
+          children: [
+            { type: "leaf", id: "md", pagePath: "notes/hello.md" },
+            { type: "leaf", id: "pdf", pagePath: "notes/hello.pdf" },
+          ],
+          sizes: [50, 50],
+        },
+        focusedPaneId: "md",
+      });
+      usePanePdfLinkStore.setState({
+        links: new Map([["md", "pdf"], ["pdf", "md"]]),
+        currentPage: new Map([["pdf", 4]]),
+      });
+      render(<StatusBar />);
+      expect(screen.getByTestId("status-bar-pdf-link")).toHaveTextContent("Page 5");
+
+      act(() => {
+        usePanePdfLinkStore.getState().setCurrentPage("pdf", 7);
+      });
+      expect(screen.getByTestId("status-bar-pdf-link")).toHaveTextContent("Page 8");
+    });
+
+    it("does not change output when an unrelated pane's page changes", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      usePaneStore.setState({
+        root: {
+          type: "split",
+          id: "s1",
+          direction: "horizontal",
+          children: [
+            { type: "leaf", id: "md", pagePath: "notes/hello.md" },
+            { type: "leaf", id: "pdf", pagePath: "notes/hello.pdf" },
+          ],
+          sizes: [50, 50],
+        },
+        focusedPaneId: "md",
+      });
+      usePanePdfLinkStore.setState({
+        links: new Map([["md", "pdf"], ["pdf", "md"]]),
+        currentPage: new Map([["pdf", 4]]),
+      });
+      render(<StatusBar />);
+      expect(screen.getByTestId("status-bar-pdf-link")).toHaveTextContent("Page 5");
+
+      // A page change for a pane that is NOT the focused partner must not
+      // alter what the indicator displays.
+      act(() => {
+        usePanePdfLinkStore.getState().setCurrentPage("otherPane", 9);
+      });
+      expect(screen.getByTestId("status-bar-pdf-link")).toHaveTextContent("Page 5");
     });
   });
 

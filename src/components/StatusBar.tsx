@@ -82,14 +82,17 @@ function BottomPanelTabs() {
 
 function PdfLinkIndicator() {
   const focusedPaneId = usePaneStore((s) => s.focusedPaneId);
-  const links = usePanePdfLinkStore((s) => s.links);
-  const currentPage = usePanePdfLinkStore((s) => s.currentPage);
+  // Narrow selectors to primitives so a page change in an unrelated pane
+  // (which mints a new currentPage Map identity) does not re-render here.
+  const partner = usePanePdfLinkStore((s) => s.links.get(focusedPaneId) ?? null);
+  // The current page may live under either endpoint (whichever is the PDF pane).
+  const pageIdx = usePanePdfLinkStore((s) => {
+    const p = s.links.get(focusedPaneId);
+    return p ? (s.currentPage.get(p) ?? s.currentPage.get(focusedPaneId) ?? null) : null;
+  });
 
-  const partner = links.get(focusedPaneId);
   if (!partner) return null;
 
-  // The current page may live under either endpoint (whichever is the PDF pane).
-  const pageIdx = currentPage.get(partner) ?? currentPage.get(focusedPaneId);
   const label =
     pageIdx != null ? `PDF ↔ MD · Page ${pageIdx + 1}` : "PDF ↔ MD";
 
