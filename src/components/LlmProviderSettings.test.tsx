@@ -1,10 +1,24 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, fireEvent, act } from "@testing-library/react";
 import { LlmProviderSettings } from "./LlmProviderSettings";
 import { mockInvoke } from "../test/tauri-mock";
 import { usePreferencesStore } from "../stores/preferences";
-import { PROVIDER_ORDER } from "../lib/providerRegistry";
+import * as prefs from "../stores/preferences";
+import { PROVIDER_ORDER, getMergedProviderOrder } from "../lib/providerRegistry";
+import type { CustomProviderDef } from "../lib/providerRegistry";
 import { useSecretStoreStore } from "../stores/secretStore";
+
+function customDef(over: Partial<CustomProviderDef> = {}): CustomProviderDef {
+  return {
+    id: "custom-my-llm",
+    name: "My LLM",
+    baseUrl: "https://example.com/v1",
+    needsApiKey: true,
+    modelId: "my-model",
+    contextWindow: 64000,
+    ...over,
+  };
+}
 
 let invokeCalls: { cmd: string; args: Record<string, unknown> }[];
 
@@ -19,10 +33,15 @@ beforeEach(() => {
   });
   usePreferencesStore.setState({
     llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", apiKeySet: false },
+    llmCustomProviders: [],
   });
   useSecretStoreStore.getState()._resetSettler();
   useSecretStoreStore.setState({ exists: false, unlocked: false, loading: false, migrationPromptOpen: false });
   ensureUnlocked.mockClear();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("LlmProviderSettings", () => {
@@ -133,5 +152,107 @@ describe("LlmProviderSettings", () => {
     await vi.waitFor(() => {
       expect(invokeCalls).toContainEqual({ cmd: "has_api_key", args: { provider: "groq" } });
     });
+  });
+
+  it("dropdown options follow merged provider order including custom providers", () => {
+    const def = customDef();
+    usePreferencesStore.setState({ llmCustomProviders: [def] });
+    const { container } = render(<LlmProviderSettings ensureUnlocked={ensureUnlocked} />);
+    const select = container.querySelector("[data-testid='settings-llmProvider']") as HTMLSelectElement;
+    const opts = Array.from(select.querySelectorAll("option"));
+    expect(opts.map((o) => o.value)).toEqual(getMergedProviderOrder([def]));
+    expect(opts.map((o) => o.value)).toContain(def.id);
+    const customOpt = opts.find((o) => o.value === def.id)!;
+    expect(customOpt.textContent).toBe(def.name);
+  });
+
+  it("Edit/Delete buttons shown for custom provider, absent for built-in", () => {
+    const def = customDef();
+    usePreferencesStore.setState({
+      llmCustomProviders: [def],
+      llmProvider: { providerId: def.id, model: def.modelId, apiKeySet: false },
+    });
+    const { container, rerender } = render(<LlmProviderSettings ensureUnlocked={ensureUnlocked} />);
+    expect(container.querySelector("[data-testid='custom-provider-edit']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='custom-provider-delete']")).toBeTruthy();
+
+    usePreferencesStore.setState({
+      llmProvider: { providerId: "openai", model: "gpt-4o", apiKeySet: false },
+    });
+    rerender(<LlmProviderSettings ensureUnlocked={ensureUnlocked} />);
+    expect(container.querySelector("[data-testid='custom-provider-edit']")).toBeNull();
+    expect(container.querySelector("[data-testid='custom-provider-delete']")).toBeNull();
+  });
+
+  it("Add Custom Provider button opens the form; successful add selects new provider", async () => {
+    const setSpy = vi.spyOn(prefs, "setLlmProvider");
+    const addSpy = vi.spyOn(prefs, "addCustomProvider").mockImplementation(() => {});
+    const { container } = render(<LlmProviderSettings ensureUnlocked={ensureUnlocked} />);
+    expect(container.querySelector("[data-testid='custom-provider-form']")).toBeNull();
+    fireEvent.click(container.querySelector("[data-testid='custom-provider-add']")!);
+    expect(container.querySelector("[data-testid='custom-provider-form']")).toBeTruthy();
+
+    fireEvent.change(container.querySelector("[data-testid='custom-provider-name']")!, { target: { value: "Cool" } });
+    fireEvent.change(container.querySelector("[data-testid='custom-provider-baseUrl']")!, { target: { value: "https://c/v1" } });
+    fireEvent.change(container.querySelector("[data-testid='custom-provider-modelId']")!, { target: { value: "c-1" } });
+    await act(async () => {
+      fireEvent.click(container.querySelector("[data-testid='custom-provider-save']")!);
+    });
+    expect(addSpy).toHaveBeenCalledTimes(1);
+    expect(container.querySelector("[data-testid='custom-provider-form']")).toBeNull();
+    await vi.waitFor(() => {
+      const calls = setSpy.mock.calls.map((c) => c[0]);
+      expect(calls.some((c) => c.providerId === "custom-cool")).toBe(true);
+    });
+  });
+
+  it("Delete flow: confirm true removes provider and switches to first built-in", async () => {
+    const def = customDef();
+    usePreferencesStore.setState({
+      llmCustomProviders: [def],
+      llmProvider: { providerId: def.id, model: def.modelId, apiKeySet: false },
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const { container } = render(<LlmProviderSettings ensureUnlocked={ensureUnlocked} />);
+    await act(async () => {
+      fireEvent.click(container.querySelector("[data-testid='custom-provider-delete']")!);
+    });
+    expect(usePreferencesStore.getState().llmCustomProviders.find((p) => p.id === def.id)).toBeUndefined();
+    await vi.waitFor(() => {
+      expect(usePreferencesStore.getState().llmProvider.providerId).toBe(PROVIDER_ORDER[0]);
+    });
+  });
+
+  it("Delete flow: confirm false leaves provider intact", () => {
+    const def = customDef();
+    usePreferencesStore.setState({
+      llmCustomProviders: [def],
+      llmProvider: { providerId: def.id, model: def.modelId, apiKeySet: false },
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    const removeSpy = vi.spyOn(prefs, "removeCustomProvider");
+    const { container } = render(<LlmProviderSettings ensureUnlocked={ensureUnlocked} />);
+    fireEvent.click(container.querySelector("[data-testid='custom-provider-delete']")!);
+    expect(removeSpy).not.toHaveBeenCalled();
+    expect(usePreferencesStore.getState().llmProvider.providerId).toBe(def.id);
+    expect(usePreferencesStore.getState().llmCustomProviders).toHaveLength(1);
+  });
+
+  it("Edit opens form pre-populated from the def", () => {
+    const def = customDef();
+    usePreferencesStore.setState({
+      llmCustomProviders: [def],
+      llmProvider: { providerId: def.id, model: def.modelId, apiKeySet: false },
+    });
+    const { container } = render(<LlmProviderSettings ensureUnlocked={ensureUnlocked} />);
+    fireEvent.click(container.querySelector("[data-testid='custom-provider-edit']")!);
+    const name = container.querySelector("[data-testid='custom-provider-name']") as HTMLInputElement;
+    const baseUrl = container.querySelector("[data-testid='custom-provider-baseUrl']") as HTMLInputElement;
+    const modelId = container.querySelector("[data-testid='custom-provider-modelId']") as HTMLInputElement;
+    const ctx = container.querySelector("[data-testid='custom-provider-contextWindow']") as HTMLInputElement;
+    expect(name.value).toBe(def.name);
+    expect(baseUrl.value).toBe(def.baseUrl);
+    expect(modelId.value).toBe(def.modelId);
+    expect(ctx.value).toBe(String(def.contextWindow));
   });
 });

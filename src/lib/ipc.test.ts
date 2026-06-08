@@ -1461,6 +1461,7 @@ describe("ipc", () => {
         options: {},
         base_url: null,
         provider: "",
+        context_window: null,
       },
     });
   });
@@ -1484,6 +1485,7 @@ describe("ipc", () => {
         options: { temperature: 0.5 },
         base_url: "https://api.example.com",
         provider: "",
+        context_window: null,
       },
     });
   });
@@ -1504,6 +1506,24 @@ describe("ipc", () => {
         options: {},
         base_url: null,
         provider: "anthropic",
+        context_window: null,
+      },
+    });
+  });
+
+  it("llmPromptStreaming passes context_window when contextWindow specified", async () => {
+    await llmPromptStreaming({ model: "vllm-model", text: "hello", contextWindow: 32000 });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("llm_prompt_streaming", {
+      args: {
+        model: "vllm-model",
+        text: "hello",
+        system: null,
+        messages: [],
+        options: {},
+        base_url: null,
+        provider: "",
+        context_window: 32000,
       },
     });
   });
@@ -1561,6 +1581,7 @@ describe("ipc", () => {
         model: "claude-sonnet-4-6",
         messages: [{ role: "user", content: "hi" }],
         provider: "",
+        context_window: null,
       },
     });
   });
@@ -1581,6 +1602,7 @@ describe("ipc", () => {
         model: "claude-sonnet-4-6",
         messages: [],
         provider: "",
+        context_window: null,
       },
     });
   });
@@ -1602,6 +1624,29 @@ describe("ipc", () => {
         model: "gpt-4o",
         messages: [],
         provider: "openai",
+        context_window: null,
+      },
+    });
+  });
+
+  it("llmBuildContext passes context_window when contextWindow specified", async () => {
+    await llmBuildContext({
+      nodeId: "notes/a.md",
+      neighborsDepth: 1,
+      model: "vllm-model",
+      messages: [],
+      contextWindow: 64000,
+    });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("llm_build_context", {
+      args: {
+        node_id: "notes/a.md",
+        system_prompt: "",
+        neighbors_depth: 1,
+        model: "vllm-model",
+        messages: [],
+        provider: "",
+        context_window: 64000,
       },
     });
   });

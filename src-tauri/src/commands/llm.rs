@@ -70,6 +70,8 @@ pub struct LlmPromptArgs {
     #[serde(default)]
     pub options: HashMap<String, serde_json::Value>,
     pub base_url: Option<String>,
+    #[serde(default)]
+    pub context_window: Option<usize>,
 }
 
 pub fn log_prompt_info(
@@ -118,7 +120,7 @@ pub async fn llm_prompt_streaming(
         &args.options,
     );
 
-    let (prompt, truncation) = llm::apply_token_budget(prompt, provider_id, &args.model);
+    let (prompt, truncation) = llm::apply_token_budget(prompt, provider_id, &args.model, args.context_window);
 
     log_prompt_info(
         &args.model,
@@ -240,6 +242,7 @@ pub fn build_context_inner(
     graph_index: Option<&GraphIndex>,
     workspace_root: Option<&Path>,
     registry: &WriteHashRegistry,
+    context_window_override: Option<usize>,
 ) -> Result<BuiltContext, String> {
     let (doc_content, doc_title, neighbors) = if node_id == GLOBAL_NODE_ID || workspace_root.is_none() {
         (String::new(), String::new(), vec![])
@@ -321,7 +324,7 @@ pub fn build_context_inner(
     };
 
     Ok(build_context_layers(
-        system_prompt, messages, &doc_content, &doc_title, &neighbors, provider_id, model,
+        system_prompt, messages, &doc_content, &doc_title, &neighbors, provider_id, model, context_window_override,
     ))
 }
 
@@ -337,6 +340,8 @@ pub struct BuildContextArgs {
     pub model: String,
     #[serde(default)]
     pub messages: Vec<ChatMessage>,
+    #[serde(default)]
+    pub context_window: Option<usize>,
 }
 
 #[tauri::command]
@@ -363,6 +368,7 @@ pub async fn llm_build_context(
             gi_arc.as_deref(),
             root.as_deref(),
             &registry,
+            args.context_window,
         )
     })
     .await
@@ -624,7 +630,7 @@ mod tests {
             ChatMessage { role: "assistant".into(), content: "Hi".into() },
         ];
         let registry = WriteHashRegistry::new();
-        let result = build_context_inner(GLOBAL_NODE_ID, "Be helpful", 0, "openai", "gpt-4o", &msgs, None, None, &registry).unwrap();
+        let result = build_context_inner(GLOBAL_NODE_ID, "Be helpful", 0, "openai", "gpt-4o", &msgs, None, None, &registry, None).unwrap();
         assert!(result.system.contains("Be helpful"));
         assert!(!result.system.contains("## Current document"));
         assert!(!result.system.contains("## Linked notes"));
@@ -638,7 +644,7 @@ mod tests {
         std::fs::write(dir.path().join("note.md"), "---\ntitle: My Note\n---\nThe body.").unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let registry = WriteHashRegistry::new();
-        let r = build_context_inner("note.md", "Sys", 0, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry).unwrap();
+        let r = build_context_inner("note.md", "Sys", 0, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, None).unwrap();
         assert!(r.system.contains("## Current document:"), "should contain document section");
         assert!(r.system.contains("The body."));
     }
@@ -648,7 +654,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let registry = WriteHashRegistry::new();
-        let r = build_context_inner("ghost.md", "Sys", 0, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry);
+        let r = build_context_inner("ghost.md", "Sys", 0, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, None);
         assert!(r.is_ok());
         assert!(!r.unwrap().system.contains("## Current document"));
     }
@@ -661,7 +667,7 @@ mod tests {
         std::fs::write(dir.path().join("c.md"), "First paragraph of C.\n\nLinks to [[a]].").unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let registry = WriteHashRegistry::new();
-        let r = build_context_inner("a.md", "Sys", 1, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry).unwrap();
+        let r = build_context_inner("a.md", "Sys", 1, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, None).unwrap();
         assert!(r.system.contains("## Linked notes"), "should have linked notes section");
         assert!(r.system.contains("forward link"), "b should appear as forward link");
         assert!(r.system.contains("backlink"), "c should appear as backlink");
@@ -674,7 +680,7 @@ mod tests {
         std::fs::write(dir.path().join("b.md"), "Body B.").unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let registry = WriteHashRegistry::new();
-        let r = build_context_inner("a.md", "Sys", 0, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry).unwrap();
+        let r = build_context_inner("a.md", "Sys", 0, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, None).unwrap();
         assert!(!r.system.contains("## Linked notes"));
     }
 
@@ -685,7 +691,7 @@ mod tests {
         std::fs::write(dir.path().join("b.md"), "First paragraph of B.\n\nLinks to [[a]].").unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let registry = WriteHashRegistry::new();
-        let r = build_context_inner("a.md", "Sys", 1, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry).unwrap();
+        let r = build_context_inner("a.md", "Sys", 1, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, None).unwrap();
         let neighbor_count = r.system.matches("###").count();
         assert_eq!(neighbor_count, 1, "mutual link should produce exactly one neighbor entry");
     }
@@ -698,7 +704,7 @@ mod tests {
         std::fs::write(dir.path().join("c.md"), "First para C.").unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let registry = WriteHashRegistry::new();
-        let r = build_context_inner("a.md", "Sys", 2, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry).unwrap();
+        let r = build_context_inner("a.md", "Sys", 2, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, None).unwrap();
         assert!(r.system.contains("c"), "2-hop neighbor c.md should appear");
     }
 
@@ -713,7 +719,7 @@ mod tests {
         std::fs::write(dir.path().join("hub.md"), &body).unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let registry = WriteHashRegistry::new();
-        let r = build_context_inner("hub.md", "Sys", 1, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry).unwrap();
+        let r = build_context_inner("hub.md", "Sys", 1, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, None).unwrap();
         let count = r.system.matches("###").count();
         assert!(count <= 20, "neighbor count {count} should be capped at 20");
     }
@@ -725,7 +731,7 @@ mod tests {
         std::fs::write(dir.path().join("note.md"), content).unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let registry = WriteHashRegistry::new();
-        let _ = build_context_inner("note.md", "Sys", 0, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry).unwrap();
+        let _ = build_context_inner("note.md", "Sys", 0, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, None).unwrap();
         assert!(registry.check(&dir.path().join("note.md"), content), "registry should record hash for the read page");
     }
 
@@ -736,7 +742,7 @@ mod tests {
         std::fs::write(dir.path().join("a.md"), "body").unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let registry = WriteHashRegistry::new();
-        let result = build_context_inner("a.md", "Sys", 0, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry);
+        let result = build_context_inner("a.md", "Sys", 0, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, None);
         assert_send(result);
     }
 
@@ -802,5 +808,54 @@ mod tests {
         let json = r#"{"node_id":"n1","model":"gpt-4o"}"#;
         let args: BuildContextArgs = serde_json::from_str(json).unwrap();
         assert_eq!(args.provider, "");
+    }
+
+    #[test]
+    fn build_context_args_deserializes_context_window() {
+        let json = r#"{"node_id":"n1","model":"gpt-4o","context_window":4096}"#;
+        let args: BuildContextArgs = serde_json::from_str(json).unwrap();
+        assert_eq!(args.context_window, Some(4096));
+    }
+
+    #[test]
+    fn build_context_args_context_window_defaults_none() {
+        let json = r#"{"node_id":"n1","model":"gpt-4o"}"#;
+        let args: BuildContextArgs = serde_json::from_str(json).unwrap();
+        assert_eq!(args.context_window, None);
+    }
+
+    #[test]
+    fn prompt_args_deserializes_context_window() {
+        let json = r#"{"model":"gpt-4o","text":"hi","context_window":4096}"#;
+        let args: LlmPromptArgs = serde_json::from_str(json).unwrap();
+        assert_eq!(args.context_window, Some(4096));
+    }
+
+    #[test]
+    fn prompt_args_context_window_defaults_none() {
+        let json = r#"{"model":"gpt-4o","text":"hi"}"#;
+        let args: LlmPromptArgs = serde_json::from_str(json).unwrap();
+        assert_eq!(args.context_window, None);
+    }
+
+    #[test]
+    fn build_context_inner_passes_override() {
+        // A large document fits under openai's default but a tiny override
+        // forces truncation, proving the override reaches build_context_layers.
+        let dir = tempfile::tempdir().unwrap();
+        let big_body = "word ".repeat(24_000); // ~30000 tokens, under openai doc_cap
+        std::fs::write(dir.path().join("note.md"), format!("---\ntitle: Big\n---\n{big_body}")).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let registry = WriteHashRegistry::new();
+
+        let with_override = build_context_inner(
+            "note.md", "Sys", 0, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, Some(1000),
+        ).unwrap();
+        assert!(with_override.truncation.is_some(), "tiny override should truncate the document");
+
+        let without = build_context_inner(
+            "note.md", "Sys", 0, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, None,
+        ).unwrap();
+        assert!(without.truncation.is_none(), "openai default should not truncate this document");
     }
 }

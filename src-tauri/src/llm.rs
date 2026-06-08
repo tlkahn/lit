@@ -102,8 +102,9 @@ pub fn symmetric_trim(text: &str, budget_chars: usize) -> String {
     text[start_byte..end_byte].to_string()
 }
 
-pub fn apply_token_budget(prompt: Prompt, provider_id: &str, _model: &str) -> (Prompt, Option<TruncationInfo>) {
-    let budget = (context_window(provider_id) as f64 * 0.8) as usize;
+pub fn apply_token_budget(prompt: Prompt, provider_id: &str, _model: &str, context_window_override: Option<usize>) -> (Prompt, Option<TruncationInfo>) {
+    let window = context_window_override.unwrap_or_else(|| context_window(provider_id));
+    let budget = (window as f64 * 0.8) as usize;
     let size = estimate_prompt_size(&prompt);
 
     if size <= budget {
@@ -369,16 +370,46 @@ mod tests {
     #[test]
     fn apply_token_budget_short_text_unchanged() {
         let prompt = Prompt::new("Hello");
-        let (result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o");
+        let (result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", None);
         assert_eq!(result.text, "Hello");
         assert!(trunc.is_none());
+    }
+
+    #[test]
+    fn apply_token_budget_override_some_wins() {
+        // Build a prompt that fits comfortably under openai's 128k default
+        // (0.8 * 128000 = 102400 token budget) but exceeds a small 1000-token
+        // override (0.8 * 1000 = 800 token budget). ~2000 tokens of text.
+        let text = "word ".repeat(8_000); // 40000 chars => ~10000 tokens
+        let prompt = Prompt::new(&text);
+        let (_result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", Some(1000));
+        assert!(trunc.is_some(), "override (1000) should force truncation");
+    }
+
+    #[test]
+    fn apply_token_budget_override_none_falls_back() {
+        // Same prompt that fits under the openai default — with None we should
+        // fall back to context_window(provider_id) and NOT truncate.
+        let text = "word ".repeat(8_000);
+        let prompt = Prompt::new(&text);
+        let (_result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", None);
+        assert!(trunc.is_none(), "fallback to openai default should not truncate");
+    }
+
+    #[test]
+    fn apply_token_budget_override_larger_than_default_prevents_truncation() {
+        // Text that WOULD truncate under the 128k default but fits under a huge override.
+        let long_text = "word ".repeat(200_000);
+        let prompt = Prompt::new(&long_text);
+        let (_result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", Some(1_000_000));
+        assert!(trunc.is_none(), "huge override should prevent truncation");
     }
 
     #[test]
     fn apply_token_budget_long_text_truncated() {
         let long_text = "word ".repeat(200_000);
         let prompt = Prompt::new(&long_text);
-        let (result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o");
+        let (result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", None);
         assert!(result.text.len() < long_text.len(), "text should be truncated");
         let info = trunc.expect("should have truncation info");
         assert!(info.kept_tokens < info.original_tokens);
@@ -388,7 +419,7 @@ mod tests {
     fn apply_token_budget_symmetric_truncation() {
         let long_text = "word ".repeat(200_000);
         let prompt = Prompt::new(&long_text);
-        let (result, _) = apply_token_budget(prompt, "openai", "gpt-4o");
+        let (result, _) = apply_token_budget(prompt, "openai", "gpt-4o", None);
         let center_of_original = long_text.len() / 2;
         let center_region = &long_text[center_of_original - 10..center_of_original + 10];
         assert!(
@@ -630,7 +661,7 @@ data: [DONE]\n\n";
     fn apply_token_budget_cjk_no_panic() {
         let cjk_text = "你好".repeat(300_000);
         let prompt = Prompt::new(&cjk_text);
-        let (result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o");
+        let (result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", None);
         assert!(result.text.len() < cjk_text.len());
         let info = trunc.expect("should have truncation info");
         assert!(info.kept_tokens < info.original_tokens);
@@ -640,7 +671,7 @@ data: [DONE]\n\n";
     fn apply_token_budget_cjk_preserves_center() {
         let cjk_text = "你好".repeat(300_000);
         let prompt = Prompt::new(&cjk_text);
-        let (result, _) = apply_token_budget(prompt, "openai", "gpt-4o");
+        let (result, _) = apply_token_budget(prompt, "openai", "gpt-4o", None);
         let char_count = cjk_text.chars().count();
         let center_char = char_count / 2;
         let check_start: String = cjk_text.chars().skip(center_char - 2).take(4).collect();
@@ -651,7 +682,7 @@ data: [DONE]\n\n";
     fn apply_token_budget_mixed_script_no_panic() {
         let mixed = "Hello你好World世界".repeat(50_000);
         let prompt = Prompt::new(&mixed);
-        let (result, _) = apply_token_budget(prompt, "openai", "gpt-4o");
+        let (result, _) = apply_token_budget(prompt, "openai", "gpt-4o", None);
         assert!(result.text.len() < mixed.len());
     }
 

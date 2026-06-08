@@ -11,6 +11,18 @@ export interface ProviderMeta {
   models: ModelInfo[];
 }
 
+// A user-defined provider. `id` is always "custom-" prefixed (see `slugify`).
+// `contextWindow` defaults to 128000; that default is applied by the form/store
+// layer, not by this type.
+export interface CustomProviderDef {
+  id: string;
+  name: string;
+  baseUrl: string;
+  needsApiKey: boolean;
+  modelId: string;
+  contextWindow: number;
+}
+
 export const PROVIDER_REGISTRY: Record<string, ProviderMeta> = {
   openai: {
     label: "OpenAI",
@@ -92,4 +104,41 @@ export function providerNeedsApiKey(providerId: string): boolean {
 export function providerIdForModel(model: string): string {
   if (model.startsWith("claude-")) return "anthropic";
   return "openai";
+}
+
+// Derive a stable provider id from a human-readable name. Lowercases, collapses
+// runs of non-alphanumeric characters into single hyphens, trims leading/trailing
+// hyphens, and prefixes "custom-". An all-non-alphanumeric name yields "custom-".
+export function slugify(name: string): string {
+  return "custom-" + name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+// Convert a custom provider definition into the same ProviderMeta shape used by
+// built-ins. Synthesizes a description, wraps the single modelId into a models
+// array, and drops contextWindow (which lives only on the def).
+export function customProviderToMeta(def: CustomProviderDef): ProviderMeta {
+  return {
+    label: def.name,
+    description: `Custom provider (${def.baseUrl})`,
+    needsApiKey: def.needsApiKey,
+    defaultBaseUrl: def.baseUrl,
+    models: [{ id: def.modelId, label: def.modelId }],
+  };
+}
+
+// Merge custom providers into the built-in registry without mutating it.
+export function getMergedRegistry(
+  customProviders: CustomProviderDef[],
+): Record<string, ProviderMeta> {
+  const merged = { ...PROVIDER_REGISTRY };
+  for (const def of customProviders) {
+    merged[def.id] = customProviderToMeta(def);
+  }
+  return merged;
+}
+
+// Built-in provider order followed by custom provider ids, without mutating
+// PROVIDER_ORDER.
+export function getMergedProviderOrder(customProviders: CustomProviderDef[]): string[] {
+  return [...PROVIDER_ORDER, ...customProviders.map((p) => p.id)];
 }

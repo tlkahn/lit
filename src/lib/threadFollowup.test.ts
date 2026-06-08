@@ -342,6 +342,46 @@ describe("threadFollowup", () => {
     view.destroy();
   });
 
+  it("passes contextWindow for a custom provider", async () => {
+    usePreferencesStore.setState({
+      llmProvider: { providerId: "custom-vllm", model: "m", baseUrl: "http://x", apiKeySet: false },
+      llmCustomProviders: [
+        { id: "custom-vllm", name: "vLLM", baseUrl: "http://x", needsApiKey: false, modelId: "m", contextWindow: 8000 },
+      ],
+    });
+    const view = makeView(DOC);
+
+    await threadFollowup({ view, annotation: makeThreadAnnotation(), question: "C" });
+
+    expect(mockStream.mock.calls[0]![0].contextWindow).toBe(8000);
+    view.destroy();
+  });
+
+  it("does NOT set contextWindow for a built-in provider", async () => {
+    usePreferencesStore.setState({
+      llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", apiKeySet: false },
+    });
+    const view = makeView(DOC);
+
+    await threadFollowup({ view, annotation: makeThreadAnnotation(), question: "C" });
+
+    expect(mockStream.mock.calls[0]![0].contextWindow).toBeUndefined();
+    view.destroy();
+  });
+
+  it("does NOT set contextWindow when providerId is custom- but no matching def exists", async () => {
+    usePreferencesStore.setState({
+      llmProvider: { providerId: "custom-missing", model: "m", apiKeySet: false },
+      llmCustomProviders: [],
+    });
+    const view = makeView(DOC);
+
+    await threadFollowup({ view, annotation: makeThreadAnnotation(), question: "C" });
+
+    expect(mockStream.mock.calls[0]![0].contextWindow).toBeUndefined();
+    view.destroy();
+  });
+
   it("the appended turn is parseable as a new last turn", async () => {
     mockStream.mockImplementation(async (_a: unknown, cb: { onChunk: (t: string) => void; onDone: () => void }) => {
       cb.onChunk("answer C");

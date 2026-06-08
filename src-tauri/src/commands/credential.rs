@@ -420,36 +420,37 @@ impl CredentialStore for EncryptedFileStore {
     }
 }
 
-fn account_for_provider(provider: &str) -> Result<&'static str, String> {
+fn account_for_provider(provider: &str) -> Result<String, String> {
     match provider {
-        "openai" => Ok(ACCOUNT_OPENAI),
-        "anthropic" => Ok(ACCOUNT_ANTHROPIC),
-        "openrouter" => Ok("openrouter-api-key"),
-        "ollama" => Ok("ollama-api-key"),
-        "groq" => Ok("groq-api-key"),
-        "deepseek" => Ok("deepseek-api-key"),
+        "openai" => Ok(ACCOUNT_OPENAI.to_string()),
+        "anthropic" => Ok(ACCOUNT_ANTHROPIC.to_string()),
+        "openrouter" => Ok("openrouter-api-key".to_string()),
+        "ollama" => Ok("ollama-api-key".to_string()),
+        "groq" => Ok("groq-api-key".to_string()),
+        "deepseek" => Ok("deepseek-api-key".to_string()),
+        _ if provider.starts_with("custom-") => Ok(format!("{}-api-key", provider)),
         _ => Err(format!("Unknown provider: {}", provider)),
     }
 }
 
 fn set_api_key_inner(store: &dyn CredentialStore, provider: &str, key: &str) -> Result<(), String> {
     let account = account_for_provider(provider)?;
-    store.set(SERVICE_NAME, account, key)
+    store.set(SERVICE_NAME, &account, key)
 }
 
 pub(crate) fn get_api_key_inner(store: &dyn CredentialStore, provider: &str) -> Result<String, String> {
     let account = account_for_provider(provider)?;
-    store.get(SERVICE_NAME, account)
+    store.get(SERVICE_NAME, &account)
 }
 
 fn has_api_key_inner(store: &dyn CredentialStore, provider: &str) -> Result<bool, String> {
     let account = account_for_provider(provider)?;
-    Ok(store.has(SERVICE_NAME, account))
+    Ok(store.has(SERVICE_NAME, &account))
 }
 
 fn delete_api_key_inner(store: &dyn CredentialStore, provider: &str) -> Result<(), String> {
     let account = account_for_provider(provider)?;
-    store.delete(SERVICE_NAME, account)
+    store.delete(SERVICE_NAME, &account)
 }
 
 #[tauri::command]
@@ -618,22 +619,48 @@ mod tests {
 
     #[test]
     fn test_account_for_openrouter() {
-        assert_eq!(account_for_provider("openrouter"), Ok("openrouter-api-key"));
+        assert_eq!(account_for_provider("openrouter"), Ok("openrouter-api-key".to_string()));
     }
 
     #[test]
     fn test_account_for_groq() {
-        assert_eq!(account_for_provider("groq"), Ok("groq-api-key"));
+        assert_eq!(account_for_provider("groq"), Ok("groq-api-key".to_string()));
     }
 
     #[test]
     fn test_account_for_deepseek() {
-        assert_eq!(account_for_provider("deepseek"), Ok("deepseek-api-key"));
+        assert_eq!(account_for_provider("deepseek"), Ok("deepseek-api-key".to_string()));
     }
 
     #[test]
     fn test_account_for_ollama() {
-        assert_eq!(account_for_provider("ollama"), Ok("ollama-api-key"));
+        assert_eq!(account_for_provider("ollama"), Ok("ollama-api-key".to_string()));
+    }
+
+    #[test]
+    fn test_account_for_custom_provider() {
+        assert_eq!(
+            account_for_provider("custom-my-vllm"),
+            Ok("custom-my-vllm-api-key".to_string())
+        );
+    }
+
+    #[test]
+    fn test_account_for_custom_provider_arbitrary_slug() {
+        assert_eq!(
+            account_for_provider("custom-corp-proxy-2"),
+            Ok("custom-corp-proxy-2-api-key".to_string())
+        );
+    }
+
+    #[test]
+    fn test_custom_provider_credential_cycle() {
+        let store = InMemoryStore::new();
+        set_api_key_inner(&store, "custom-my-vllm", "sk-custom").unwrap();
+        assert_eq!(get_api_key_inner(&store, "custom-my-vllm").unwrap(), "sk-custom");
+        assert_eq!(has_api_key_inner(&store, "custom-my-vllm").unwrap(), true);
+        delete_api_key_inner(&store, "custom-my-vllm").unwrap();
+        assert_eq!(has_api_key_inner(&store, "custom-my-vllm").unwrap(), false);
     }
 
     // --- EncryptedFileStore tests ---

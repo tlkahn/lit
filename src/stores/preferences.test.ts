@@ -1,6 +1,13 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { usePreferencesStore, migrateLlmProvider } from "./preferences";
+import {
+  usePreferencesStore,
+  migrateLlmProvider,
+  addCustomProvider,
+  updateCustomProvider,
+  removeCustomProvider,
+} from "./preferences";
 import type { Preferences } from "../lib/ipc";
+import type { CustomProviderDef } from "../lib/providerRegistry";
 import { mockInvoke, mockListen, emitMockEvent } from "../test/tauri-mock";
 
 describe("PreferencesStore", () => {
@@ -17,6 +24,7 @@ describe("PreferencesStore", () => {
       mediaThumbnails: true,
       experimentalUnlinkedReferences: true,
       neighborsDepth: 1,
+      llmCustomProviders: [],
       loaded: false,
     });
   });
@@ -1312,5 +1320,184 @@ describe("PreferencesStore", () => {
 
     await usePreferencesStore.getState().loadPreferences();
     expect(usePreferencesStore.getState().annotationBuilderDefaults).toBeNull();
+  });
+
+  describe("llmCustomProviders", () => {
+    const sampleDef: CustomProviderDef = {
+      id: "custom-vllm",
+      name: "My vLLM",
+      baseUrl: "http://localhost:8000/v1",
+      needsApiKey: true,
+      modelId: "qwen",
+      contextWindow: 32000,
+    };
+
+    const baseGet = {
+      "workbench.colorTheme": null,
+      "workbench.darkMode": "auto",
+      "workbench.sideBar.location": "left",
+    };
+
+    it("defaults to []", () => {
+      expect(usePreferencesStore.getState().llmCustomProviders).toEqual([]);
+    });
+
+    it("parses a valid llm.customProviders array from IPC", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "get_preferences") {
+          return { ...baseGet, "llm.customProviders": [sampleDef] };
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      mockListen();
+
+      await usePreferencesStore.getState().loadPreferences();
+      const state = usePreferencesStore.getState();
+      expect(state.llmCustomProviders).toHaveLength(1);
+      expect(state.llmCustomProviders).toEqual([sampleDef]);
+    });
+
+    it("defaults to [] when llm.customProviders key is missing", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "get_preferences") return { ...baseGet };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      mockListen();
+
+      await usePreferencesStore.getState().loadPreferences();
+      expect(usePreferencesStore.getState().llmCustomProviders).toEqual([]);
+    });
+
+    it("defaults to [] when llm.customProviders is not an array", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "get_preferences") {
+          return { ...baseGet, "llm.customProviders": "not-an-array" };
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      mockListen();
+
+      await usePreferencesStore.getState().loadPreferences();
+      expect(usePreferencesStore.getState().llmCustomProviders).toEqual([]);
+    });
+
+    it("defaults to [] when an entry is malformed", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "get_preferences") {
+          return {
+            ...baseGet,
+            "llm.customProviders": [{ id: "custom-x", name: "X" }],
+          };
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      mockListen();
+
+      await usePreferencesStore.getState().loadPreferences();
+      expect(usePreferencesStore.getState().llmCustomProviders).toEqual([]);
+    });
+
+    it("updates llmCustomProviders on preferences://changed event", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "get_preferences") return { ...baseGet };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      mockListen();
+
+      await usePreferencesStore.getState().loadPreferences();
+      expect(usePreferencesStore.getState().llmCustomProviders).toEqual([]);
+
+      emitMockEvent("preferences://changed", {
+        ...baseGet,
+        "llm.customProviders": [sampleDef],
+      });
+
+      expect(usePreferencesStore.getState().llmCustomProviders).toEqual([sampleDef]);
+    });
+
+    it("addCustomProvider appends and persists", async () => {
+      usePreferencesStore.setState({ llmCustomProviders: [] });
+      const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+      mockInvoke((cmd, args) => {
+        calls.push({ cmd, args });
+        return undefined;
+      });
+
+      addCustomProvider(sampleDef);
+      await Promise.resolve();
+
+      expect(usePreferencesStore.getState().llmCustomProviders).toEqual([sampleDef]);
+      const setCall = calls.find((c) => c.cmd === "set_preference");
+      expect(setCall).toBeDefined();
+      expect(setCall?.args?.key).toBe("llm.customProviders");
+      expect(setCall?.args?.value).toEqual([sampleDef]);
+    });
+
+    it("updateCustomProvider patches in place and persists", async () => {
+      usePreferencesStore.setState({ llmCustomProviders: [sampleDef] });
+      const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+      mockInvoke((cmd, args) => {
+        calls.push({ cmd, args });
+        return undefined;
+      });
+
+      updateCustomProvider("custom-vllm", { contextWindow: 64000 });
+      await Promise.resolve();
+
+      const updated = usePreferencesStore.getState().llmCustomProviders;
+      expect(updated).toHaveLength(1);
+      expect(updated[0]).toEqual({ ...sampleDef, contextWindow: 64000 });
+
+      const setCall = calls.find((c) => c.cmd === "set_preference");
+      expect(setCall?.args?.value).toEqual([{ ...sampleDef, contextWindow: 64000 }]);
+    });
+
+    it("updateCustomProvider is a no-op when id is not found", async () => {
+      usePreferencesStore.setState({ llmCustomProviders: [sampleDef] });
+      mockInvoke(() => undefined);
+
+      updateCustomProvider("custom-missing", { contextWindow: 99999 });
+      await Promise.resolve();
+
+      expect(usePreferencesStore.getState().llmCustomProviders).toEqual([sampleDef]);
+    });
+
+    it("removeCustomProvider filters, persists, and deletes the api key", async () => {
+      usePreferencesStore.setState({ llmCustomProviders: [sampleDef] });
+      const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+      mockInvoke((cmd, args) => {
+        calls.push({ cmd, args });
+        return undefined;
+      });
+
+      removeCustomProvider("custom-vllm");
+      await Promise.resolve();
+
+      expect(usePreferencesStore.getState().llmCustomProviders).toEqual([]);
+
+      const setCall = calls.find((c) => c.cmd === "set_preference");
+      expect(setCall?.args?.key).toBe("llm.customProviders");
+      expect(setCall?.args?.value).toEqual([]);
+
+      const delCall = calls.find((c) => c.cmd === "delete_api_key");
+      expect(delCall).toBeDefined();
+      expect(delCall?.args?.provider).toBe("custom-vllm");
+    });
+
+    it("addCustomProvider rolls back when persistence rejects", async () => {
+      usePreferencesStore.setState({ llmCustomProviders: [] });
+      mockInvoke((cmd) => {
+        if (cmd === "set_preference") {
+          return Promise.reject(new Error("write failed"));
+        }
+        return undefined;
+      });
+
+      addCustomProvider(sampleDef);
+      // flush the optimistic update + the rejected promise's .catch rollback
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(usePreferencesStore.getState().llmCustomProviders).toEqual([]);
+    });
   });
 });

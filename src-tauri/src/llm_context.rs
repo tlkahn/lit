@@ -22,8 +22,10 @@ pub fn build_context_layers(
     neighbors: &[Neighbor],
     provider_id: &str,
     _model: &str,
+    context_window_override: Option<usize>,
 ) -> BuiltContext {
-    let budget = (context_window(provider_id) as f64 * 0.8) as usize;
+    let window = context_window_override.unwrap_or_else(|| context_window(provider_id));
+    let budget = (window as f64 * 0.8) as usize;
     let system_tokens = estimate_tokens(system_prompt);
     let remainder = budget.saturating_sub(system_tokens);
 
@@ -113,7 +115,7 @@ mod tests {
     // Cycle 1: Empty passthrough
     #[test]
     fn empty_system_no_doc_no_neighbors() {
-        let result = build_context_layers("", &[], "", "", &[], "openai", "gpt-4o");
+        let result = build_context_layers("", &[], "", "", &[], "openai", "gpt-4o", None);
         assert_eq!(result.system, "");
         assert!(result.messages.is_empty());
         assert!(result.truncation.is_none());
@@ -122,13 +124,13 @@ mod tests {
     // Cycle 2: Document section rendering
     #[test]
     fn document_section_present_when_nonempty() {
-        let result = build_context_layers("", &[], "Hello world", "My Note", &[], "openai", "gpt-4o");
+        let result = build_context_layers("", &[], "Hello world", "My Note", &[], "openai", "gpt-4o", None);
         assert!(result.system.contains("## Current document: My Note\nHello world"));
     }
 
     #[test]
     fn document_section_absent_when_empty() {
-        let result = build_context_layers("You are helpful.", &[], "", "", &[], "openai", "gpt-4o");
+        let result = build_context_layers("You are helpful.", &[], "", "", &[], "openai", "gpt-4o", None);
         assert!(!result.system.contains("## Current document"));
     }
 
@@ -140,13 +142,13 @@ mod tests {
             excerpt: "bar".into(),
             relation: "forward link".into(),
         }];
-        let result = build_context_layers("", &[], "", "", &neighbors, "openai", "gpt-4o");
+        let result = build_context_layers("", &[], "", "", &neighbors, "openai", "gpt-4o", None);
         assert!(result.system.contains("## Linked notes\n### Foo (forward link)\nbar"));
     }
 
     #[test]
     fn neighbor_section_absent_when_empty() {
-        let result = build_context_layers("You are helpful.", &[], "", "", &[], "openai", "gpt-4o");
+        let result = build_context_layers("You are helpful.", &[], "", "", &[], "openai", "gpt-4o", None);
         assert!(!result.system.contains("## Linked notes"));
     }
 
@@ -170,6 +172,7 @@ mod tests {
             &neighbors,
             "openai",
             "gpt-4o",
+            None,
         );
         assert_eq!(result.messages, messages);
         assert!(result.truncation.is_none());
@@ -179,7 +182,7 @@ mod tests {
     #[test]
     fn system_prompt_never_trimmed() {
         let huge_prompt = "x".repeat(200_000);
-        let result = build_context_layers(&huge_prompt, &[], "", "", &[], "openai", "gpt-4o");
+        let result = build_context_layers(&huge_prompt, &[], "", "", &[], "openai", "gpt-4o", None);
         assert!(result.system.starts_with(&huge_prompt[..100]));
         assert!(result.system.ends_with(&huge_prompt[huge_prompt.len() - 100..]));
     }
@@ -204,6 +207,7 @@ mod tests {
             &neighbors,
             "openai",
             "gpt-4o",
+            None,
         );
         // History should be intact
         assert_eq!(result.messages.len(), 2);
@@ -234,6 +238,7 @@ mod tests {
             &[],
             "openai",
             "gpt-4o",
+            None,
         );
         assert!(result.messages.len() < messages.len(), "some messages should be trimmed");
         assert!(result.messages.len() >= 2, "should keep at least one pair");
@@ -255,6 +260,7 @@ mod tests {
             &[],
             "openai",
             "gpt-4o",
+            None,
         );
         assert!(result.truncation.is_some());
         let info = result.truncation.unwrap();
@@ -277,6 +283,7 @@ mod tests {
             &[],
             "openai",
             "gpt-4o",
+            None,
         );
         assert!(result.truncation.is_some());
     }
@@ -289,7 +296,7 @@ mod tests {
             role: "user".into(),
             content: huge_content,
         }];
-        let result = build_context_layers("Be helpful.", &messages, "", "", &[], "openai", "gpt-4o");
+        let result = build_context_layers("Be helpful.", &messages, "", "", &[], "openai", "gpt-4o", None);
         let kept_tokens: usize = result.messages.iter().map(|m| estimate_tokens(&m.content)).sum();
         let budget = (context_window("openai") as f64 * 0.8) as usize;
         let system_tokens = estimate_tokens("Be helpful.");
@@ -310,7 +317,7 @@ mod tests {
             role: "user".into(),
             content: huge_content,
         }];
-        let result = build_context_layers("Be helpful.", &messages, "", "", &[], "openai", "gpt-4o");
+        let result = build_context_layers("Be helpful.", &messages, "", "", &[], "openai", "gpt-4o", None);
         assert_eq!(result.messages.len(), 1);
         assert!(
             result.messages[0].content.contains(&center_region),
@@ -341,6 +348,7 @@ mod tests {
             &[],
             "openai",
             "gpt-4o",
+            None,
         );
         // Without document content (global chat)
         let result_no_doc = build_context_layers(
@@ -351,6 +359,7 @@ mod tests {
             &[],
             "openai",
             "gpt-4o",
+            None,
         );
         assert!(
             result_no_doc.messages.len() > result_with_doc.messages.len(),
@@ -376,9 +385,61 @@ mod tests {
             &neighbors,
             "openai",
             "gpt-4o",
+            None,
         );
         assert!(result.system.starts_with("System prompt."));
         assert!(result.system.contains("## Current document: My Doc\nDoc content"));
         assert!(result.system.contains("## Linked notes\n### Related (backlink)\nsome info"));
+    }
+
+    // Context-window override
+    #[test]
+    fn build_context_layers_override_some_used() {
+        // A document that fits comfortably under openai's 128k default but
+        // overflows a tiny override window — the override must shape the budget.
+        let doc = "word ".repeat(24_000); // ~30000 tokens, under openai doc_cap (~40960)
+        let with_override = build_context_layers(
+            "Be helpful.",
+            &[],
+            &doc,
+            "Doc",
+            &[],
+            "openai",
+            "gpt-4o",
+            Some(1000),
+        );
+        let without = build_context_layers(
+            "Be helpful.",
+            &[],
+            &doc,
+            "Doc",
+            &[],
+            "openai",
+            "gpt-4o",
+            None,
+        );
+        assert!(with_override.truncation.is_some(), "tiny override should truncate doc");
+        assert!(without.truncation.is_none(), "openai default should not truncate this doc");
+        let kept_override = with_override.truncation.unwrap().kept_tokens;
+        let doc_tokens = estimate_tokens(&doc);
+        assert!(kept_override < doc_tokens, "override should keep fewer tokens than the full doc");
+    }
+
+    #[test]
+    fn build_context_layers_override_none_matches_provider_lookup() {
+        // With None, behavior must match the provider-id-based budget: a doc that
+        // fits under openai's 128k default yields no truncation.
+        let doc = "word ".repeat(24_000);
+        let result = build_context_layers(
+            "Be helpful.",
+            &[],
+            &doc,
+            "Doc",
+            &[],
+            "openai",
+            "gpt-4o",
+            None,
+        );
+        assert!(result.truncation.is_none());
     }
 }

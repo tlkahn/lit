@@ -1,10 +1,11 @@
 import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
 import type { DarkModePref, ViewMode, Preferences } from "../lib/ipc";
-import { getPreferences, setPreference } from "../lib/ipc";
+import { getPreferences, setPreference, deleteApiKey } from "../lib/ipc";
 import type { AnnotationBuilderDefaults } from "../lib/annotationBuilderDefaults";
 import { isValidBuilderDefaults } from "../lib/annotationBuilderDefaults";
 import { providerIdForModel } from "../lib/providerRegistry";
+import type { CustomProviderDef } from "../lib/providerRegistry";
 
 export type FoldingShowControls = "mouseover" | "always" | "never";
 
@@ -39,6 +40,7 @@ export interface PreferencesState {
   llmOpenaiBaseUrl: string;
   llmAnthropicBaseUrl: string;
   llmProvider: LlmProviderConfig;
+  llmCustomProviders: CustomProviderDef[];
   llmSystemPrompt: string;
   llmTemperature: number;
   neighborsDepth: number;
@@ -118,6 +120,33 @@ export function migrateLlmProvider(prefs: Preferences): LlmProviderConfig {
   return { providerId, model, baseUrl, apiKeySet: false };
 }
 
+function isCustomProviderDef(val: unknown): val is CustomProviderDef {
+  if (val == null || typeof val !== "object") return false;
+  const obj = val as Record<string, unknown>;
+  return (
+    typeof obj.id === "string" &&
+    obj.id.startsWith("custom-") &&
+    typeof obj.name === "string" &&
+    typeof obj.baseUrl === "string" &&
+    typeof obj.needsApiKey === "boolean" &&
+    typeof obj.modelId === "string" &&
+    typeof obj.contextWindow === "number"
+  );
+}
+
+function applyCustomProviders(val: unknown): CustomProviderDef[] {
+  if (!Array.isArray(val)) return [];
+  if (!val.every(isCustomProviderDef)) return [];
+  return val.map((def) => ({
+    id: def.id,
+    name: def.name,
+    baseUrl: def.baseUrl,
+    needsApiKey: def.needsApiKey,
+    modelId: def.modelId,
+    contextWindow: def.contextWindow,
+  }));
+}
+
 function mapPreferences(prefs: Preferences) {
   return {
     darkMode: applyDarkMode(prefs["workbench.darkMode"]),
@@ -141,6 +170,7 @@ function mapPreferences(prefs: Preferences) {
     llmOpenaiBaseUrl: (prefs["llm.openai.baseUrl"] as string) ?? "",
     llmAnthropicBaseUrl: (prefs["llm.anthropic.baseUrl"] as string) ?? "",
     llmProvider: migrateLlmProvider(prefs),
+    llmCustomProviders: applyCustomProviders(prefs["llm.customProviders"]),
     llmSystemPrompt: (prefs["llm.systemPrompt"] as string) ?? "",
     llmTemperature: (prefs["llm.temperature"] as number) ?? 0.7,
     neighborsDepth: (prefs["llm.neighborsDepth"] as number) ?? 1,
@@ -167,6 +197,36 @@ export function setLlmProvider(patch: Partial<LlmProviderConfig>) {
   });
 }
 
+export function addCustomProvider(def: CustomProviderDef) {
+  const prev = usePreferencesStore.getState().llmCustomProviders;
+  const next = [...prev, def];
+  usePreferencesStore.setState({ llmCustomProviders: next });
+  setPreference("llm.customProviders", next).catch(() => {
+    usePreferencesStore.setState({ llmCustomProviders: prev });
+  });
+}
+
+export function updateCustomProvider(id: string, patch: Partial<CustomProviderDef>) {
+  const prev = usePreferencesStore.getState().llmCustomProviders;
+  const next = prev.map((p) => (p.id === id ? { ...p, ...patch } : p));
+  usePreferencesStore.setState({ llmCustomProviders: next });
+  setPreference("llm.customProviders", next).catch(() => {
+    usePreferencesStore.setState({ llmCustomProviders: prev });
+  });
+}
+
+export function removeCustomProvider(id: string) {
+  const prev = usePreferencesStore.getState().llmCustomProviders;
+  const next = prev.filter((p) => p.id !== id);
+  usePreferencesStore.setState({ llmCustomProviders: next });
+  setPreference("llm.customProviders", next).catch(() => {
+    usePreferencesStore.setState({ llmCustomProviders: prev });
+  });
+  // Clean up any stored credential. A custom provider with needsApiKey:false
+  // may have no stored key, so swallow errors and never roll back the array.
+  deleteApiKey(id).catch(() => {});
+}
+
 export const usePreferencesStore = create<PreferencesState>((set) => ({
   darkMode: "auto",
   colorTheme: null,
@@ -189,6 +249,7 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   llmOpenaiBaseUrl: "",
   llmAnthropicBaseUrl: "",
   llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", apiKeySet: false },
+  llmCustomProviders: [],
   llmSystemPrompt: "",
   llmTemperature: 0.7,
   neighborsDepth: 1,

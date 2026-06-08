@@ -286,6 +286,7 @@ export interface LlmPromptStreamingArgs {
   options?: Record<string, unknown>;
   baseUrl?: string;
   provider?: string;
+  contextWindow?: number;
 }
 
 export async function llmPromptStreaming(args: LlmPromptStreamingArgs): Promise<void> {
@@ -298,6 +299,7 @@ export async function llmPromptStreaming(args: LlmPromptStreamingArgs): Promise<
       options: args.options ?? {},
       base_url: args.baseUrl ?? null,
       provider: args.provider ?? "",
+      context_window: args.contextWindow ?? null,
     },
   });
 }
@@ -315,6 +317,7 @@ export async function llmBuildContext(args: {
   model: string;
   messages: Array<{ role: string; content: string }>;
   provider?: string;
+  contextWindow?: number;
 }): Promise<BuiltContext> {
   return invoke<BuiltContext>("llm_build_context", {
     args: {
@@ -324,6 +327,7 @@ export async function llmBuildContext(args: {
       model: args.model,
       messages: args.messages,
       provider: args.provider ?? "",
+      context_window: args.contextWindow ?? null,
     },
   });
 }

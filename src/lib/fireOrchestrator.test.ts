@@ -704,6 +704,49 @@ describe("fireAnnotation", () => {
     view.destroy();
   });
 
+  it("passes contextWindow for a custom provider", async () => {
+    usePreferencesStore.setState({
+      llmProvider: { providerId: "custom-vllm", model: "m", baseUrl: "http://x", apiKeySet: false },
+      llmCustomProviders: [
+        { id: "custom-vllm", name: "vLLM", baseUrl: "http://x", needsApiKey: false, modelId: "m", contextWindow: 8000 },
+      ],
+    });
+    const view = makeView();
+    const ann = makeAnnotation({ annotation_type: "llm" });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    expect(mockStream.mock.calls[0]![0].contextWindow).toBe(8000);
+    view.destroy();
+  });
+
+  it("does NOT set contextWindow for a built-in provider", async () => {
+    usePreferencesStore.setState({
+      llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", apiKeySet: false },
+    });
+    const view = makeView();
+    const ann = makeAnnotation({ annotation_type: "llm" });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    expect(mockStream.mock.calls[0]![0].contextWindow).toBeUndefined();
+    view.destroy();
+  });
+
+  it("does NOT set contextWindow when providerId is custom- but no matching def exists", async () => {
+    usePreferencesStore.setState({
+      llmProvider: { providerId: "custom-missing", model: "m", apiKeySet: false },
+      llmCustomProviders: [],
+    });
+    const view = makeView();
+    const ann = makeAnnotation({ annotation_type: "llm" });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    expect(mockStream.mock.calls[0]![0].contextWindow).toBeUndefined();
+    view.destroy();
+  });
+
   it("replacing type: proceeds without prompting when store is already unlocked", async () => {
     useSecretStoreStore.setState({ exists: true, unlocked: true });
     const view = makeView();
