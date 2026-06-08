@@ -95,8 +95,6 @@ describe("App", () => {
           return null;
         case "get_license_status":
           return { state: "licensed", licensed_to: "Test User", source: "direct" };
-        case "get_build_info":
-          return { source: "direct" };
         case "has_api_key":
           return false;
         case "cancel_title_suggestion":

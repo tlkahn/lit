@@ -294,7 +294,6 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::app_info::get_app_info,
-            commands::app_info::get_build_info,
             commands::workspace::open_workspace,
             commands::workspace::list_pages,
             commands::workspace::get_workspace_path,

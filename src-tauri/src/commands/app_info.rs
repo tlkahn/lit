@@ -14,18 +14,6 @@ pub fn get_app_info() -> AppInfo {
     }
 }
 
-#[derive(Debug, Serialize)]
-pub struct BuildInfo {
-    pub source: String,
-}
-
-#[tauri::command]
-pub fn get_build_info() -> BuildInfo {
-    BuildInfo {
-        source: "direct".to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -75,14 +63,5 @@ mod tests {
         let json = serde_json::to_value(&info).unwrap();
         assert_eq!(json["name"], "Lit");
         assert!(json["version"].as_str().map_or(false, |v| !v.is_empty()));
-    }
-
-    #[test]
-    fn get_build_info_default_is_direct() {
-        let info = get_build_info();
-        assert_eq!(info.source, "direct");
-
-        let json = serde_json::to_value(&info).unwrap();
-        assert_eq!(json["source"], "direct");
     }
 }
