@@ -45,11 +45,29 @@ enum PdfCommand {
     },
     PreCacheAll {
         dpi: u32,
-        start_page: usize,
+        anchor_page: usize,
         cancel: Arc<AtomicBool>,
         progress_tx: mpsc::Sender<(usize, usize)>, // (current, total)
     },
     Shutdown,
+}
+
+pub fn spiral_order(anchor: usize, page_count: usize) -> Vec<usize> {
+    if page_count == 0 {
+        return Vec::new();
+    }
+    let mut result = Vec::with_capacity(page_count);
+    result.push(anchor);
+    for dist in 1..page_count {
+        let right = anchor + dist;
+        if right < page_count {
+            result.push(right);
+        }
+        if dist <= anchor {
+            result.push(anchor - dist);
+        }
+    }
+    result
 }
 
 pub fn create_pdf_temp_dir() -> Result<PathBuf, String> {
@@ -193,7 +211,7 @@ impl PdfRenderThread {
                     }
                     PdfCommand::PreCacheAll {
                         dpi,
-                        start_page,
+                        anchor_page,
                         cancel,
                         progress_tx,
                     } => {
@@ -203,7 +221,9 @@ impl PdfRenderThread {
                         };
                         let total = page_count;
                         let mut shutdown = false;
-                        'precache: for page_index in start_page..page_count {
+                        let order = spiral_order(anchor_page, page_count);
+                        let mut rendered_count = 0usize;
+                        'precache: for page_index in order {
                             // 1. cancel check
                             if cancel.load(Ordering::Relaxed) {
                                 break 'precache;
@@ -281,24 +301,23 @@ impl PdfRenderThread {
                                 }
                             }
                             // 3. skip if already cached
-                            if cache.contains_key(&(page_index, dpi)) {
-                                continue;
-                            }
-                            // 4. render + insert (document still present?)
-                            match document.as_ref() {
-                                Some(doc) => {
-                                    if let Ok(r) =
-                                        render_page(doc, page_index, dpi, &thread_temp_dir)
-                                    {
-                                        cache.insert((page_index, dpi), r);
+                            if !cache.contains_key(&(page_index, dpi)) {
+                                // 4. render + insert (document still present?)
+                                match document.as_ref() {
+                                    Some(doc) => {
+                                        if let Ok(r) =
+                                            render_page(doc, page_index, dpi, &thread_temp_dir)
+                                        {
+                                            cache.insert((page_index, dpi), r);
+                                        }
                                     }
+                                    None => break 'precache,
                                 }
-                                None => break 'precache,
                             }
                             // 5. throttled progress: every 5 pages and on the final page
-                            let done_count = page_index + 1;
-                            if done_count % 5 == 0 || done_count == total {
-                                let _ = progress_tx.send((done_count, total));
+                            rendered_count += 1;
+                            if rendered_count % 5 == 0 || rendered_count == total {
+                                let _ = progress_tx.send((rendered_count, total));
                             }
                         }
                         // Always send a final completion so consumers see (total, total).
@@ -362,20 +381,20 @@ impl PdfRenderThread {
             .map_err(|_| "Render thread died".to_string())
     }
 
-    /// Fire-and-forget: pre-renders all pages from `start_page` to the end on the
-    /// render thread, reporting progress over `progress_tx`. Honors the `cancel`
+    /// Fire-and-forget: pre-renders pages in spiral order around `anchor_page` on
+    /// the render thread, reporting progress over `progress_tx`. Honors the `cancel`
     /// flag between pages and yields to pending priority commands.
     pub fn precache_all(
         &self,
         dpi: u32,
-        start_page: usize,
+        anchor_page: usize,
         cancel: Arc<AtomicBool>,
         progress_tx: mpsc::Sender<(usize, usize)>,
     ) -> Result<(), String> {
         self.cmd_tx
             .send(PdfCommand::PreCacheAll {
                 dpi,
-                start_page,
+                anchor_page,
                 cancel,
                 progress_tx,
             })
@@ -726,10 +745,36 @@ mod tests {
         let (tx, _rx) = mpsc::channel::<(usize, usize)>();
         let _cmd = PdfCommand::PreCacheAll {
             dpi: 144,
-            start_page: 0,
+            anchor_page: 0,
             cancel: Arc::new(AtomicBool::new(false)),
             progress_tx: tx,
         };
+    }
+
+    #[test]
+    fn test_spiral_order_at_start() {
+        assert_eq!(spiral_order(0, 5), vec![0usize, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn test_spiral_order_at_middle() {
+        assert_eq!(spiral_order(3, 7), vec![3usize, 4, 2, 5, 1, 6, 0]);
+    }
+
+    #[test]
+    fn test_spiral_order_at_end() {
+        assert_eq!(spiral_order(4, 5), vec![4usize, 3, 2, 1, 0]);
+    }
+
+    #[test]
+    fn test_spiral_order_single_page() {
+        assert_eq!(spiral_order(0, 1), vec![0usize]);
+    }
+
+    #[test]
+    fn test_spiral_order_empty() {
+        let empty: Vec<usize> = vec![];
+        assert_eq!(spiral_order(0, 0), empty);
     }
 
     #[test]
