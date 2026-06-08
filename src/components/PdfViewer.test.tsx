@@ -360,7 +360,7 @@ describe("PdfViewer", () => {
   });
 
   it("evicts oldest entry when cache exceeds MAX_CACHE", async () => {
-    const bigPdfInfo = { page_count: 8, path: "/test/big.pdf" };
+    const bigPdfInfo = { page_count: 14, path: "/test/big.pdf" };
     mockInvoke((cmd, args) => {
       switch (cmd) {
         case "pdf_open":
@@ -383,13 +383,15 @@ describe("PdfViewer", () => {
     render(<PdfViewer filePath="/test/big.pdf" paneId="pane-1" />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 8");
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 14");
     });
 
-    for (let i = 0; i < 6; i++) {
+    // Visit pages 1..13 (more than MAX_CACHE distinct entries) so the earliest
+    // pages are guaranteed to be evicted regardless of the exact MAX_CACHE.
+    for (let i = 0; i < 13; i++) {
       await user.click(screen.getByTestId("pdf-next"));
       await waitFor(() => {
-        expect(screen.getByTestId("pdf-page-indicator").textContent).toBe(`Page ${i + 2} / 8`);
+        expect(screen.getByTestId("pdf-page-indicator").textContent).toBe(`Page ${i + 2} / 14`);
       });
     }
 
@@ -410,16 +412,87 @@ describe("PdfViewer", () => {
       }
     });
 
-    for (let i = 5; i >= 0; i--) {
+    for (let i = 12; i >= 0; i--) {
       await user.click(screen.getByTestId("pdf-prev"));
       await waitFor(() => {
-        expect(screen.getByTestId("pdf-page-indicator").textContent).toBe(`Page ${i + 1} / 8`);
+        expect(screen.getByTestId("pdf-page-indicator").textContent).toBe(`Page ${i + 1} / 14`);
       });
     }
 
     const renderCalls = (invoke as unknown as ReturnType<typeof import("vitest").vi.fn>).mock.calls
       .filter((c: unknown[]) => c[0] === "pdf_render_page");
     expect(renderCalls.length).toBeGreaterThan(0);
+  });
+
+  it("retains the 10 most-recent pages in the render cache (MAX_CACHE=10)", async () => {
+    // 12-page doc. Visit pages 0..10 in order (11 distinct cache entries). With
+    // MAX_CACHE=10 the cache keeps the 10 most-recent (pages 1..10); only page 0
+    // is evicted. Returning to page 1 must be a cache hit (no re-render), while
+    // returning to page 0 must re-render. At MAX_CACHE=5 page 1 would also be
+    // evicted, so this test fails until MAX_CACHE is bumped to 10.
+    const bigPdfInfo = { page_count: 12, path: "/test/big.pdf" };
+    let goToPage: ((i: number) => void) | null = null;
+    mockInvoke((cmd, args) => {
+      switch (cmd) {
+        case "pdf_open":
+          return bigPdfInfo;
+        case "pdf_render_page": {
+          const a = args as Record<string, unknown>;
+          const idx = a?.pageIndex ?? 0;
+          return { ...mockRenderedPage, page_index: idx, png_path: `/tmp/lit-pdf-test/page_${idx}.png` };
+        }
+        case "pdf_prefetch":
+          return null;
+        case "pdf_close":
+          return null;
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    render(
+      <PdfViewer
+        filePath="/test/big.pdf"
+        paneId="pane-1"
+        registerGoToPage={(fn) => { goToPage = fn; }}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 12");
+    });
+    expect(goToPage).not.toBeNull();
+
+    // Visit pages 1..10 sequentially (page 0 already loaded on mount).
+    for (let i = 1; i <= 10; i++) {
+      goToPage!(i);
+      await waitFor(() => {
+        expect(screen.getByTestId("pdf-page-indicator").textContent).toBe(`Page ${i + 1} / 12`);
+      });
+    }
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    const invokeMock = invoke as unknown as ReturnType<typeof vi.fn>;
+    const rendersOf = (idx: number) =>
+      invokeMock.mock.calls.filter(
+        (c: unknown[]) =>
+          c[0] === "pdf_render_page" && (c[1] as { pageIndex?: number })?.pageIndex === idx,
+      ).length;
+
+    // Return to page 1 — should be a retained cache hit (no new render).
+    const page1Before = rendersOf(1);
+    goToPage!(1);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 2 / 12");
+    });
+    expect(rendersOf(1)).toBe(page1Before);
+
+    // Return to page 0 — evicted, so it must re-render.
+    const page0Before = rendersOf(0);
+    goToPage!(0);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 12");
+    });
+    expect(rendersOf(0)).toBeGreaterThan(page0Before);
   });
 
   it("J navigates to the next page", async () => {
@@ -753,5 +826,318 @@ describe("PdfViewer", () => {
       expect(screen.queryByTestId("pdf-page-loading")).not.toBeInTheDocument();
     });
     expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 3 / 3");
+  });
+
+  it("shows zoom indicator at 100% by default", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument());
+    expect(screen.getByTestId("pdf-zoom-indicator").textContent).toBe("100%");
+  });
+
+  it("ctrl+scroll up zooms in", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument());
+    const container = screen.getByTestId("pdf-scroll-container");
+    fireEvent.wheel(container, { ctrlKey: true, deltaY: -100 });
+    await waitFor(() => {
+      const pct = parseInt(screen.getByTestId("pdf-zoom-indicator").textContent!);
+      expect(pct).toBeGreaterThan(100);
+    });
+  });
+
+  it("ctrl+scroll down zooms out", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument());
+    const container = screen.getByTestId("pdf-scroll-container");
+    fireEvent.wheel(container, { ctrlKey: true, deltaY: 100 });
+    await waitFor(() => {
+      const pct = parseInt(screen.getByTestId("pdf-zoom-indicator").textContent!);
+      expect(pct).toBeLessThan(100);
+    });
+  });
+
+  it("clamps zoom to 25%-400%", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument());
+    const container = screen.getByTestId("pdf-scroll-container");
+    for (let i = 0; i < 50; i++) fireEvent.wheel(container, { ctrlKey: true, deltaY: -200 });
+    await waitFor(() =>
+      expect(parseInt(screen.getByTestId("pdf-zoom-indicator").textContent!)).toBe(400),
+    );
+    for (let i = 0; i < 50; i++) fireEvent.wheel(container, { ctrlKey: true, deltaY: 200 });
+    await waitFor(() =>
+      expect(parseInt(screen.getByTestId("pdf-zoom-indicator").textContent!)).toBe(25),
+    );
+  });
+
+  it("plain scroll (no modifier) does not zoom", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument());
+    const container = screen.getByTestId("pdf-scroll-container");
+    fireEvent.wheel(container, { deltaY: -100 });
+    await Promise.resolve();
+    expect(screen.getByTestId("pdf-zoom-indicator").textContent).toBe("100%");
+  });
+
+  it("applies CSS scale transform and scaled wrapper size on zoom", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument());
+    const container = screen.getByTestId("pdf-scroll-container");
+    fireEvent.wheel(container, { ctrlKey: true, deltaY: -100 });
+    await waitFor(() => {
+      const wrapper = screen.getByTestId("pdf-zoom-wrapper");
+      expect(wrapper.style.width).not.toBe("");
+      expect(wrapper.style.height).not.toBe("");
+      const img = screen.getByTestId("pdf-page-image") as HTMLImageElement;
+      expect(img.style.transform).toContain("scale(");
+      expect(img.style.transformOrigin).toBe("top left");
+    });
+  });
+
+  it("ctrl+= zooms in by factor", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument());
+    fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "=", ctrlKey: true });
+    await waitFor(() =>
+      expect(parseInt(screen.getByTestId("pdf-zoom-indicator").textContent!)).toBe(125),
+    );
+  });
+
+  it("ctrl+- zooms out by factor", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument());
+    fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "-", ctrlKey: true });
+    await waitFor(() =>
+      expect(parseInt(screen.getByTestId("pdf-zoom-indicator").textContent!)).toBe(80),
+    );
+  });
+
+  it("ctrl+0 resets zoom to 100%", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument());
+    const viewer = screen.getByTestId("pdf-viewer");
+    fireEvent.keyDown(viewer, { key: "=", ctrlKey: true });
+    fireEvent.keyDown(viewer, { key: "=", ctrlKey: true });
+    await waitFor(() =>
+      expect(parseInt(screen.getByTestId("pdf-zoom-indicator").textContent!)).toBeGreaterThan(100),
+    );
+    fireEvent.keyDown(viewer, { key: "0", ctrlKey: true });
+    await waitFor(() =>
+      expect(screen.getByTestId("pdf-zoom-indicator").textContent).toBe("100%"),
+    );
+  });
+
+  it("re-renders at zoomed DPI after 300ms debounce", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument());
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    const invokeMock = invoke as unknown as ReturnType<typeof vi.fn>;
+
+    const viewer = screen.getByTestId("pdf-viewer");
+
+    // Switch to fake timers only now (mount + initial render done under real timers).
+    vi.useFakeTimers();
+    try {
+      // Two zoom-in presses: 1.25 * 1.25 = 1.5625.
+      act(() => {
+        fireEvent.keyDown(viewer, { key: "=", ctrlKey: true });
+        fireEvent.keyDown(viewer, { key: "=", ctrlKey: true });
+      });
+
+      const pct = parseInt(screen.getByTestId("pdf-zoom-indicator").textContent!);
+      const expectedDpi = Math.round(144 * (pct / 100));
+
+      // Before the debounce elapses, no sharp re-render at the zoomed DPI yet.
+      const before = invokeMock.mock.calls.filter(
+        (c: unknown[]) =>
+          c[0] === "pdf_render_page" && (c[1] as { dpi?: number })?.dpi === expectedDpi,
+      );
+      expect(before).toHaveLength(0);
+
+      await act(async () => {
+        vi.advanceTimersByTime(300);
+      });
+
+      const after = invokeMock.mock.calls.filter(
+        (c: unknown[]) =>
+          c[0] === "pdf_render_page" && (c[1] as { dpi?: number })?.dpi === expectedDpi,
+      );
+      expect(after.length).toBeGreaterThan(0);
+      expect(after[0]![1]).toEqual({ pageIndex: 0, dpi: expectedDpi, paneId: "pane-1" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resets CSS scale to 1 and swaps img src after sharp re-render", async () => {
+    // Vary png_path and dimensions by the requested dpi so we can observe the
+    // bitmap swap (src change) and the wrapper sharpening (baseW grows).
+    mockInvoke((cmd, args) => {
+      switch (cmd) {
+        case "pdf_open":
+          return mockPdfInfo;
+        case "pdf_render_page": {
+          const a = args as Record<string, unknown>;
+          const idx = (a?.pageIndex ?? 0) as number;
+          const dpi = (a?.dpi ?? 144) as number;
+          return {
+            page_index: idx,
+            png_path: `/tmp/lit-pdf-test/page_${idx}_dpi${dpi}.png`,
+            width: Math.round(1224 * (dpi / 144)),
+            height: Math.round(1584 * (dpi / 144)),
+          };
+        }
+        case "pdf_prefetch":
+          return null;
+        case "pdf_close":
+          return null;
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument());
+
+    const img0 = screen.getByTestId("pdf-page-image") as HTMLImageElement;
+    const srcBefore = img0.src;
+    const wrapperWidthBefore = parseFloat(
+      (screen.getByTestId("pdf-zoom-wrapper") as HTMLElement).style.width,
+    );
+
+    const viewer = screen.getByTestId("pdf-viewer");
+
+    vi.useFakeTimers();
+    try {
+      act(() => {
+        fireEvent.keyDown(viewer, { key: "=", ctrlKey: true });
+        fireEvent.keyDown(viewer, { key: "=", ctrlKey: true });
+      });
+
+      await act(async () => {
+        vi.advanceTimersByTime(300);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    await waitFor(() => {
+      const img = screen.getByTestId("pdf-page-image") as HTMLImageElement;
+      // Sharp render at higher DPI: src points at the higher-dpi bitmap.
+      expect(img.src).not.toBe(srcBefore);
+      expect(img.src).toContain("dpi225");
+      // cssScale collapses to 1 once the bitmap is rendered at the target zoom.
+      expect(img.style.transform).toBe("scale(1)");
+    });
+
+    // Wrapper grew because baseW now reflects the enlarged bitmap.
+    const wrapperWidthAfter = parseFloat(
+      (screen.getByTestId("pdf-zoom-wrapper") as HTMLElement).style.width,
+    );
+    expect(wrapperWidthAfter).toBeGreaterThan(wrapperWidthBefore);
+  });
+
+  it("preserves viewport center when zooming", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument());
+
+    const container = screen.getByTestId("pdf-scroll-container") as HTMLDivElement;
+    // jsdom reports clientWidth/Height as 0 and scrollTop/Left as read-only;
+    // back them with mutable storage so the impl can read and write them.
+    let scrollTop = 100;
+    let scrollLeft = 50;
+    Object.defineProperty(container, "clientWidth", { configurable: true, get: () => 800 });
+    Object.defineProperty(container, "clientHeight", { configurable: true, get: () => 600 });
+    Object.defineProperty(container, "scrollTop", {
+      configurable: true,
+      get: () => scrollTop,
+      set: (v: number) => {
+        scrollTop = v;
+      },
+    });
+    Object.defineProperty(container, "scrollLeft", {
+      configurable: true,
+      get: () => scrollLeft,
+      set: (v: number) => {
+        scrollLeft = v;
+      },
+    });
+
+    // One ctrl+= press: zoom 1 -> 1.25.
+    fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "=", ctrlKey: true });
+
+    // newScroll = (oldScroll + clientSize/2) * newZoom/oldZoom - clientSize/2
+    // top:  (100 + 300) * 1.25 - 300 = 200
+    // left: (50  + 400) * 1.25 - 400 = 162.5
+    await waitFor(() => {
+      expect(scrollTop).toBeCloseTo(200, 1);
+      expect(scrollLeft).toBeCloseTo(162.5, 1);
+    });
+  });
+
+  it("debounce resets on rapid zoom; renders only final DPI", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument());
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    const invokeMock = invoke as unknown as ReturnType<typeof vi.fn>;
+    const viewer = screen.getByTestId("pdf-viewer");
+
+    vi.useFakeTimers();
+    try {
+      // First zoom press: 1 -> 1.25 (125%).
+      act(() => {
+        fireEvent.keyDown(viewer, { key: "=", ctrlKey: true });
+      });
+      const intermediateDpi = Math.round(
+        144 * (parseInt(screen.getByTestId("pdf-zoom-indicator").textContent!) / 100),
+      );
+
+      // Advance only 200ms (< 300ms debounce).
+      await act(async () => {
+        vi.advanceTimersByTime(200);
+      });
+
+      // Second zoom press resets the debounce: 1.25 -> 1.5625 (~156%).
+      act(() => {
+        fireEvent.keyDown(viewer, { key: "=", ctrlKey: true });
+      });
+      const finalDpi = Math.round(
+        144 * (parseInt(screen.getByTestId("pdf-zoom-indicator").textContent!) / 100),
+      );
+
+      await act(async () => {
+        vi.advanceTimersByTime(200);
+      });
+
+      // The debounce was reset before 300ms elapsed: NO render at the
+      // intermediate DPI should have fired.
+      const intermediate = invokeMock.mock.calls.filter(
+        (c: unknown[]) =>
+          c[0] === "pdf_render_page" && (c[1] as { dpi?: number })?.dpi === intermediateDpi,
+      );
+      expect(intermediate).toHaveLength(0);
+
+      // Now let the (reset) debounce fully elapse.
+      await act(async () => {
+        vi.advanceTimersByTime(300);
+      });
+
+      const finalCalls = invokeMock.mock.calls.filter(
+        (c: unknown[]) =>
+          c[0] === "pdf_render_page" && (c[1] as { dpi?: number })?.dpi === finalDpi,
+      );
+      expect(finalCalls.length).toBeGreaterThan(0);
+
+      // Still no intermediate-DPI render ever fired.
+      const intermediateAfter = invokeMock.mock.calls.filter(
+        (c: unknown[]) =>
+          c[0] === "pdf_render_page" && (c[1] as { dpi?: number })?.dpi === intermediateDpi,
+      );
+      expect(intermediateAfter).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
