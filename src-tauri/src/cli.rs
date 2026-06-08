@@ -51,7 +51,7 @@ pub fn parse_position_suffix(arg: &str) -> (&str, PositionSuffix) {
     (arg, PositionSuffix::default())
 }
 
-fn expand_tilde(path_str: &str) -> String {
+pub fn expand_tilde(path_str: &str) -> String {
     if path_str == "~" {
         if let Some(home) = std::env::var_os("HOME") {
             return home.to_string_lossy().to_string();

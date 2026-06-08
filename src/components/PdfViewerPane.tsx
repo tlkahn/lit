@@ -79,7 +79,7 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
     );
   }
 
-  const absolutePath = `${workspacePath}/${pagePath}`;
+  const absolutePath = pagePath.startsWith("/") ? pagePath : `${workspacePath}/${pagePath}`;
 
   return (
     <div
