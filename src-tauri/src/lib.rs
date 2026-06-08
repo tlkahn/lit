@@ -169,7 +169,26 @@ pub fn run() {
 
             let resource_dir = app.handle().path().resource_dir().ok();
             let pdfium_path = pdf::find_libpdfium_or_default(resource_dir.as_deref());
-            app.manage(commands::pdf_viewer::PdfViewerState::new(&pdfium_path));
+            // Bare cache dir for the render-cache root: `resolve_disk_cache`
+            // appends the `pdf-render-cache` segment itself.
+            let pdf_cache_root = app.path().app_cache_dir().ok();
+            app.manage(commands::pdf_viewer::PdfViewerState::new_with_cache_root(
+                &pdfium_path,
+                pdf_cache_root.clone(),
+            ));
+            // Sweep stale render-cache entries once at startup. `evict_stale_cache`
+            // scans its argument for per-PDF subdirs, so point it at the actual
+            // `pdf-render-cache` directory (one level below the bare cache dir).
+            if let Some(root) = pdf_cache_root {
+                let evict_dir = root.join("pdf-render-cache");
+                tauri::async_runtime::spawn_blocking(move || {
+                    commands::pdf_viewer::evict_stale_cache(
+                        &evict_dir,
+                        commands::pdf_viewer::CACHE_MAX_AGE_DAYS,
+                        commands::pdf_viewer::CACHE_MAX_SIZE_MB,
+                    );
+                });
+            }
             let seed_state: Arc<seed::SeedState> =
                 app.state::<Arc<seed::SeedState>>().inner().clone();
             let seed_handle = app.handle().clone();
@@ -362,6 +381,7 @@ pub fn run() {
             commands::pdf_viewer::pdf_prefetch,
             commands::pdf_viewer::pdf_close,
             commands::pdf_viewer::pdf_cancel_precache,
+            commands::pdf_viewer::pdf_seek_precache,
             commands::annotation::parse_annotations,
             commands::annotation::resolve_annotation_scope,
             commands::annotation::resolve_annotation_scope_with_mode,

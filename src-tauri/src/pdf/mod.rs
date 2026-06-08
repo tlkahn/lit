@@ -7,8 +7,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
+
+pub mod disk_cache;
+
+use disk_cache::{read_manifest, write_manifest, CacheManifest};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -26,9 +31,22 @@ pub struct RenderedPage {
     pub height: u32,
 }
 
+/// Resolved on-disk render cache target for one open PDF.
+///
+/// `cache_dir` is `<cache_root>/pdf-render-cache/<key>/`, where `<key>` is the
+/// content-identity hash from [`disk_cache::cache_key`]. B5 extends this struct
+/// to thread it into `PdfCommand::Open` and the render thread; for B3 it only
+/// needs to be constructible and importable.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DiskCacheConfig {
+    pub cache_dir: PathBuf,
+    pub dpi: u32,
+}
+
 enum PdfCommand {
     Open {
         path: String,
+        disk_cache: Option<DiskCacheConfig>,
         reply: mpsc::Sender<Result<PdfInfo, String>>,
     },
     RenderPage {
@@ -87,6 +105,74 @@ pub fn cleanup_pdf_temp_dir(dir: &std::path::Path) {
     let _ = fs::remove_dir_all(dir);
 }
 
+/// Scans a persistent cache directory for previously rendered page PNGs and
+/// rebuilds the in-memory render cache from them. Files are expected to be named
+/// `page_{idx}_{dpi}.png`; anything else (including `manifest.json`) is skipped.
+fn scan_cache_dir(dir: &std::path::Path) -> HashMap<(usize, u32), RenderedPage> {
+    let mut cache = HashMap::new();
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return cache,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n,
+            None => continue,
+        };
+        let stem = match name.strip_suffix(".png") {
+            Some(s) => s,
+            None => continue,
+        };
+        // Expect "page_{idx}_{dpi}".
+        let rest = match stem.strip_prefix("page_") {
+            Some(r) => r,
+            None => continue,
+        };
+        let mut parts = rest.splitn(2, '_');
+        let idx = match parts.next().and_then(|s| s.parse::<usize>().ok()) {
+            Some(i) => i,
+            None => continue,
+        };
+        let dpi = match parts.next().and_then(|s| s.parse::<u32>().ok()) {
+            Some(d) => d,
+            None => continue,
+        };
+        let (width, height) = match image::image_dimensions(&path) {
+            Ok(dims) => dims,
+            Err(_) => continue,
+        };
+        cache.insert(
+            (idx, dpi),
+            RenderedPage {
+                page_index: idx,
+                png_path: path.to_string_lossy().to_string(),
+                width,
+                height,
+            },
+        );
+    }
+    cache
+}
+
+/// Refreshes the `last_accessed` timestamp in `dir`'s manifest, if one exists.
+/// Best-effort: missing or unreadable manifests are silently left alone.
+fn touch_manifest_last_accessed(dir: &std::path::Path) {
+    if let Some(m) = read_manifest(dir) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let _ = write_manifest(
+            dir,
+            &CacheManifest {
+                last_accessed: now,
+                ..m
+            },
+        );
+    }
+}
+
 pub struct PdfRenderThread {
     cmd_tx: mpsc::Sender<PdfCommand>,
     handle: Option<thread::JoinHandle<()>>,
@@ -115,6 +201,7 @@ impl PdfRenderThread {
 
             let mut document: Option<lmpdf::Document> = None;
             let mut cache: HashMap<(usize, u32), RenderedPage> = HashMap::new();
+            let mut active_cache_dir: Option<PathBuf> = None;
 
             let render_page = |doc: &lmpdf::Document,
                                page_index: usize,
@@ -155,7 +242,11 @@ impl PdfRenderThread {
 
             while let Ok(cmd) = cmd_rx.recv() {
                 match cmd {
-                    PdfCommand::Open { path, reply } => {
+                    PdfCommand::Open {
+                        path,
+                        disk_cache,
+                        reply,
+                    } => {
                         match pdfium.open_document(&path, None) {
                             Ok(doc) => {
                                 let info = PdfInfo {
@@ -163,7 +254,11 @@ impl PdfRenderThread {
                                     path: path.clone(),
                                 };
                                 document = Some(doc);
-                                cache.clear();
+                                active_cache_dir = disk_cache.map(|c| c.cache_dir);
+                                cache = active_cache_dir
+                                    .as_deref()
+                                    .map(scan_cache_dir)
+                                    .unwrap_or_default();
                                 let _ = reply.send(Ok(info));
                             }
                             Err(e) => {
@@ -184,7 +279,12 @@ impl PdfRenderThread {
                             let doc = document
                                 .as_ref()
                                 .ok_or_else(|| "No document open".to_string())?;
-                            render_page(doc, page_index, dpi, &thread_temp_dir)
+                            render_page(
+                                doc,
+                                page_index,
+                                dpi,
+                                active_cache_dir.as_deref().unwrap_or(&thread_temp_dir),
+                            )
                         })();
                         if let Ok(ref rendered) = result {
                             cache.insert((page_index, dpi), rendered.clone());
@@ -192,9 +292,13 @@ impl PdfRenderThread {
                         let _ = reply.send(result);
                     }
                     PdfCommand::Close { reply } => {
+                        if let Some(dir) = active_cache_dir.as_ref() {
+                            touch_manifest_last_accessed(dir);
+                        }
                         document = None;
                         cache.clear();
                         cleanup_pdf_temp_dir(&thread_temp_dir);
+                        active_cache_dir = None;
                         let _ = reply.send(Ok(()));
                     }
                     PdfCommand::PreRender { page_index, dpi } => {
@@ -202,9 +306,12 @@ impl PdfRenderThread {
                             continue;
                         }
                         if let Some(doc) = document.as_ref() {
-                            if let Ok(rendered) =
-                                render_page(doc, page_index, dpi, &thread_temp_dir)
-                            {
+                            if let Ok(rendered) = render_page(
+                                doc,
+                                page_index,
+                                dpi,
+                                active_cache_dir.as_deref().unwrap_or(&thread_temp_dir),
+                            ) {
                                 cache.insert((page_index, dpi), rendered);
                             }
                         }
@@ -244,7 +351,14 @@ impl PdfRenderThread {
                                                 let doc = document.as_ref().ok_or_else(|| {
                                                     "No document open".to_string()
                                                 })?;
-                                                render_page(doc, pi, pd, &thread_temp_dir)
+                                                render_page(
+                                                    doc,
+                                                    pi,
+                                                    pd,
+                                                    active_cache_dir
+                                                        .as_deref()
+                                                        .unwrap_or(&thread_temp_dir),
+                                                )
                                             })();
                                             if let Ok(ref r) = result {
                                                 cache.insert((pi, pd), r.clone());
@@ -252,7 +366,11 @@ impl PdfRenderThread {
                                             let _ = reply.send(result);
                                         }
                                     }
-                                    PdfCommand::Open { path, reply } => {
+                                    PdfCommand::Open {
+                                        path,
+                                        disk_cache,
+                                        reply,
+                                    } => {
                                         // a new document supersedes precache
                                         match pdfium.open_document(&path, None) {
                                             Ok(doc) => {
@@ -261,7 +379,12 @@ impl PdfRenderThread {
                                                     path: path.clone(),
                                                 };
                                                 document = Some(doc);
-                                                cache.clear();
+                                                active_cache_dir =
+                                                    disk_cache.map(|c| c.cache_dir);
+                                                cache = active_cache_dir
+                                                    .as_deref()
+                                                    .map(scan_cache_dir)
+                                                    .unwrap_or_default();
                                                 let _ = reply.send(Ok(info));
                                             }
                                             Err(e) => {
@@ -272,9 +395,13 @@ impl PdfRenderThread {
                                         break 'precache; // abandon precache for the old doc
                                     }
                                     PdfCommand::Close { reply } => {
+                                        if let Some(dir) = active_cache_dir.as_ref() {
+                                            touch_manifest_last_accessed(dir);
+                                        }
                                         document = None;
                                         cache.clear();
                                         cleanup_pdf_temp_dir(&thread_temp_dir);
+                                        active_cache_dir = None;
                                         let _ = reply.send(Ok(()));
                                         break 'precache; // document gone; stop precaching
                                     }
@@ -286,9 +413,14 @@ impl PdfRenderThread {
                                             continue;
                                         }
                                         if let Some(doc) = document.as_ref() {
-                                            if let Ok(r) =
-                                                render_page(doc, pi, pd, &thread_temp_dir)
-                                            {
+                                            if let Ok(r) = render_page(
+                                                doc,
+                                                pi,
+                                                pd,
+                                                active_cache_dir
+                                                    .as_deref()
+                                                    .unwrap_or(&thread_temp_dir),
+                                            ) {
                                                 cache.insert((pi, pd), r);
                                             }
                                         }
@@ -305,9 +437,12 @@ impl PdfRenderThread {
                                 // 4. render + insert (document still present?)
                                 match document.as_ref() {
                                     Some(doc) => {
-                                        if let Ok(r) =
-                                            render_page(doc, page_index, dpi, &thread_temp_dir)
-                                        {
+                                        if let Ok(r) = render_page(
+                                            doc,
+                                            page_index,
+                                            dpi,
+                                            active_cache_dir.as_deref().unwrap_or(&thread_temp_dir),
+                                        ) {
                                             cache.insert((page_index, dpi), r);
                                         }
                                     }
@@ -344,11 +479,16 @@ impl PdfRenderThread {
         })
     }
 
-    pub fn open(&self, path: &str) -> Result<PdfInfo, String> {
+    pub fn open(
+        &self,
+        path: &str,
+        disk_cache: Option<DiskCacheConfig>,
+    ) -> Result<PdfInfo, String> {
         let (tx, rx) = mpsc::channel();
         self.cmd_tx
             .send(PdfCommand::Open {
                 path: path.to_string(),
+                disk_cache,
                 reply: tx,
             })
             .map_err(|_| "Render thread died".to_string())?;
@@ -503,7 +643,7 @@ mod tests {
         let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
-        let info = thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+        let info = thread.open(fixture_path("sample.pdf").to_str().unwrap(), None).unwrap();
         assert_eq!(info.page_count, 2);
         assert!(info.path.ends_with("sample.pdf"));
     }
@@ -514,7 +654,7 @@ mod tests {
         let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
-        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap(), None).unwrap();
 
         let rendered = thread.render_page(0, 144).unwrap();
         let path = std::path::Path::new(&rendered.png_path);
@@ -535,7 +675,7 @@ mod tests {
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
         let temp_dir = thread.temp_dir().to_path_buf();
-        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap(), None).unwrap();
         thread.render_page(0, 144).unwrap();
         assert!(temp_dir.exists());
         thread.close().unwrap();
@@ -548,7 +688,7 @@ mod tests {
         let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
-        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap(), None).unwrap();
         thread.close().unwrap();
     }
 
@@ -558,7 +698,7 @@ mod tests {
         let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
-        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap(), None).unwrap();
         thread.close().unwrap();
 
         let result = thread.render_page(0, 144);
@@ -572,7 +712,7 @@ mod tests {
         let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
-        let result = thread.open("/nonexistent/fake.pdf");
+        let result = thread.open("/nonexistent/fake.pdf", None);
         assert!(result.is_err());
     }
 
@@ -583,8 +723,8 @@ mod tests {
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
         let path = fixture_path("sample.pdf").to_str().unwrap().to_string();
-        let info1 = thread.open(&path).unwrap();
-        let info2 = thread.open(&path).unwrap();
+        let info1 = thread.open(&path, None).unwrap();
+        let info2 = thread.open(&path, None).unwrap();
         assert_eq!(info1.page_count, info2.page_count);
     }
 
@@ -594,7 +734,7 @@ mod tests {
         let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
-        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap(), None).unwrap();
 
         let r1 = thread.render_page(0, 72).unwrap();
         let r2 = thread.render_page(0, 288).unwrap();
@@ -614,7 +754,7 @@ mod tests {
         let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
-        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap(), None).unwrap();
 
         let rendered = thread.render_page(0, 144).unwrap();
         assert!(
@@ -632,7 +772,7 @@ mod tests {
         let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
-        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap(), None).unwrap();
 
         let r1 = thread.render_page(0, 144).unwrap();
         let mtime1 = fs::metadata(&r1.png_path).unwrap().modified().unwrap();
@@ -655,14 +795,14 @@ mod tests {
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
         let pdf = fixture_path("sample.pdf").to_str().unwrap().to_string();
-        thread.open(&pdf).unwrap();
+        thread.open(&pdf, None).unwrap();
 
         let r1 = thread.render_page(0, 144).unwrap();
         let mtime1 = fs::metadata(&r1.png_path).unwrap().modified().unwrap();
 
         std::thread::sleep(std::time::Duration::from_millis(50));
 
-        thread.open(&pdf).unwrap();
+        thread.open(&pdf, None).unwrap();
         let r2 = thread.render_page(0, 144).unwrap();
         let mtime2 = fs::metadata(&r2.png_path).unwrap().modified().unwrap();
 
@@ -677,7 +817,7 @@ mod tests {
         let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
-        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap(), None).unwrap();
 
         thread.prefetch(1, 144).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(500));
@@ -704,7 +844,7 @@ mod tests {
         let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
-        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap(), None).unwrap();
 
         thread.prefetch(0, 144).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(500));
@@ -717,6 +857,97 @@ mod tests {
         let rendered = thread.render_page(0, 144).unwrap();
         let mtime2 = fs::metadata(&rendered.png_path).unwrap().modified().unwrap();
         assert_eq!(mtime1, mtime2, "render_page should use prefetched cache");
+
+        thread.close().unwrap();
+    }
+
+    #[test]
+    #[ignore]
+    fn test_render_page_writes_to_persistent_dir() {
+        let _guard = lock_pdfium();
+        let lib = require_pdfium();
+        let persist = tempfile::TempDir::new().unwrap();
+        let thread = PdfRenderThread::new(&lib).unwrap();
+        thread
+            .open(
+                fixture_path("sample.pdf").to_str().unwrap(),
+                Some(DiskCacheConfig {
+                    cache_dir: persist.path().to_path_buf(),
+                    dpi: 144,
+                }),
+            )
+            .unwrap();
+
+        let rendered = thread.render_page(0, 144).unwrap();
+        assert!(
+            rendered.png_path.starts_with(persist.path().to_str().unwrap()),
+            "PNG should be written to persistent dir, got: {}",
+            rendered.png_path
+        );
+        assert!(
+            !rendered.png_path.starts_with(thread.temp_dir().to_str().unwrap()),
+            "PNG should NOT be in the thread temp dir"
+        );
+        assert!(persist.path().join("page_0_144.png").exists());
+
+        thread.close().unwrap();
+    }
+
+    #[test]
+    #[ignore]
+    fn test_persistent_cache_survives_close() {
+        let _guard = lock_pdfium();
+        let lib = require_pdfium();
+        let persist = tempfile::TempDir::new().unwrap();
+        let thread = PdfRenderThread::new(&lib).unwrap();
+        thread
+            .open(
+                fixture_path("sample.pdf").to_str().unwrap(),
+                Some(DiskCacheConfig {
+                    cache_dir: persist.path().to_path_buf(),
+                    dpi: 144,
+                }),
+            )
+            .unwrap();
+
+        let _rendered = thread.render_page(0, 144).unwrap();
+        thread.close().unwrap();
+
+        assert!(
+            persist.path().join("page_0_144.png").exists(),
+            "persistent PNG should survive close"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn test_reopen_with_warm_cache_is_cache_hit() {
+        let _guard = lock_pdfium();
+        let lib = require_pdfium();
+        let persist = tempfile::TempDir::new().unwrap();
+        let cfg = DiskCacheConfig {
+            cache_dir: persist.path().to_path_buf(),
+            dpi: 144,
+        };
+        let pdf = fixture_path("sample.pdf").to_str().unwrap().to_string();
+        let thread = PdfRenderThread::new(&lib).unwrap();
+        thread.open(&pdf, Some(cfg.clone())).unwrap();
+
+        let r1 = thread.render_page(0, 144).unwrap();
+        let png = persist.path().join("page_0_144.png");
+        let mtime1 = fs::metadata(&png).unwrap().modified().unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        thread.close().unwrap();
+        thread.open(&pdf, Some(cfg.clone())).unwrap();
+
+        let r2 = thread.render_page(0, 144).unwrap();
+        let mtime2 = fs::metadata(&png).unwrap().modified().unwrap();
+
+        assert_eq!(r2.png_path, png.to_string_lossy().to_string());
+        assert_eq!(r1.png_path, r2.png_path);
+        assert_eq!(mtime1, mtime2, "warm reopen should be a cache hit, not a re-render");
 
         thread.close().unwrap();
     }
@@ -741,11 +972,45 @@ mod tests {
     }
 
     #[test]
+    fn test_disk_cache_config_struct_fields() {
+        let cfg = DiskCacheConfig {
+            cache_dir: PathBuf::from("/tmp/cache/abc"),
+            dpi: 144,
+        };
+        assert_eq!(cfg.cache_dir, PathBuf::from("/tmp/cache/abc"));
+        assert_eq!(cfg.dpi, 144);
+    }
+
+    #[test]
+    fn test_open_with_disk_cache_config_compiles() {
+        let (tx, _rx) = mpsc::channel::<Result<PdfInfo, String>>();
+        let _cmd = PdfCommand::Open {
+            path: String::new(),
+            disk_cache: Some(DiskCacheConfig {
+                cache_dir: PathBuf::from("/tmp/x"),
+                dpi: 144,
+            }),
+            reply: tx,
+        };
+    }
+
+    #[test]
     fn test_precache_all_command_variant_exists() {
         let (tx, _rx) = mpsc::channel::<(usize, usize)>();
         let _cmd = PdfCommand::PreCacheAll {
             dpi: 144,
             anchor_page: 0,
+            cancel: Arc::new(AtomicBool::new(false)),
+            progress_tx: tx,
+        };
+    }
+
+    #[test]
+    fn test_precache_all_command_accepts_anchor_page() {
+        let (tx, _rx) = mpsc::channel::<(usize, usize)>();
+        let _cmd = PdfCommand::PreCacheAll {
+            dpi: 144,
+            anchor_page: 3,
             cancel: Arc::new(AtomicBool::new(false)),
             progress_tx: tx,
         };
@@ -783,7 +1048,7 @@ mod tests {
         let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
-        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap(), None).unwrap();
 
         let cancel = Arc::new(AtomicBool::new(false));
         let (tx, rx) = mpsc::channel::<(usize, usize)>();
@@ -815,7 +1080,7 @@ mod tests {
         let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
-        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap(), None).unwrap();
 
         let cancel = Arc::new(AtomicBool::new(false));
         let (tx, rx) = mpsc::channel::<(usize, usize)>();
@@ -836,7 +1101,7 @@ mod tests {
         let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
-        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap(), None).unwrap();
 
         let r0 = thread.render_page(0, 144).unwrap();
         let mtime0 = fs::metadata(&r0.png_path).unwrap().modified().unwrap();
@@ -865,7 +1130,7 @@ mod tests {
         let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
-        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap(), None).unwrap();
 
         let cancel = Arc::new(AtomicBool::new(false));
         let (tx, _rx) = mpsc::channel::<(usize, usize)>();
@@ -885,7 +1150,7 @@ mod tests {
         let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
-        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap(), None).unwrap();
 
         let cancel = Arc::new(AtomicBool::new(true));
         let (tx, rx) = mpsc::channel::<(usize, usize)>();
@@ -927,7 +1192,7 @@ mod tests {
         let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
-        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap(), None).unwrap();
 
         let pages = thread.render_pages_sync(0, 2, 144);
         assert_eq!(pages.len(), 2);
@@ -945,7 +1210,7 @@ mod tests {
         let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
-        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap(), None).unwrap();
 
         let pages = thread.render_pages_sync(0, 5, 144);
         assert_eq!(pages.len(), 2, "out-of-range pages should be skipped, not panic");
@@ -959,7 +1224,7 @@ mod tests {
         let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
-        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap(), None).unwrap();
 
         let r0 = thread.render_page(0, 144).unwrap();
         let mtime0 = fs::metadata(&r0.png_path).unwrap().modified().unwrap();
@@ -983,12 +1248,12 @@ mod tests {
         {
             let thread = PdfRenderThread::new(&lib).unwrap();
             temp_dir = thread.temp_dir().to_path_buf();
-            thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+            thread.open(fixture_path("sample.pdf").to_str().unwrap(), None).unwrap();
             assert!(temp_dir.exists());
         }
         assert!(!temp_dir.exists(), "temp dir should be cleaned up on drop");
         let thread2 = PdfRenderThread::new(&lib).unwrap();
-        let info = thread2.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+        let info = thread2.open(fixture_path("sample.pdf").to_str().unwrap(), None).unwrap();
         assert_eq!(info.page_count, 2);
     }
 
@@ -998,9 +1263,9 @@ mod tests {
         let _guard = lock_pdfium();
         let lib = require_pdfium();
         let thread = PdfRenderThread::new(&lib).unwrap();
-        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap(), None).unwrap();
         thread.close().unwrap();
-        let info = thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+        let info = thread.open(fixture_path("sample.pdf").to_str().unwrap(), None).unwrap();
         assert_eq!(info.page_count, 2);
     }
 
@@ -1011,7 +1276,7 @@ mod tests {
         let lib = require_pdfium();
         for _ in 0..5 {
             let thread = PdfRenderThread::new(&lib).unwrap();
-            thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+            thread.open(fixture_path("sample.pdf").to_str().unwrap(), None).unwrap();
             drop(thread);
         }
     }

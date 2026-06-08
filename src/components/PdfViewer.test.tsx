@@ -19,8 +19,16 @@ beforeEach(() => {
   });
   mockInvoke((cmd, args) => {
     switch (cmd) {
-      case "pdf_open":
-        return { ...mockPdfInfo, initial_pages: [mockRenderedPage] };
+      case "pdf_open": {
+        const a = args as Record<string, unknown>;
+        const anchor = (a?.anchorPage as number | undefined) ?? 0;
+        return {
+          ...mockPdfInfo,
+          initial_pages: [
+            { ...mockRenderedPage, page_index: anchor, png_path: `/tmp/lit-pdf-test/page_${anchor}.png` },
+          ],
+        };
+      }
       case "pdf_render_page": {
         const a = args as Record<string, unknown>;
         const idx = a?.pageIndex ?? 0;
@@ -31,6 +39,8 @@ beforeEach(() => {
       case "pdf_close":
         return null;
       case "pdf_cancel_precache":
+        return null;
+      case "pdf_seek_precache":
         return null;
       default:
         throw new Error(`Unknown command: ${cmd}`);
@@ -110,6 +120,20 @@ describe("PdfViewer", () => {
 
     expect(invoke).toHaveBeenCalledWith("pdf_cancel_precache", { paneId: "pane-1" });
     expect(invoke).toHaveBeenCalledWith("pdf_close", { paneId: "pane-1" });
+  });
+
+  it("opens on initialPage and forwards anchorPage to pdf_open", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" initialPage={2} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 3 / 3");
+    });
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith(
+      "pdf_open",
+      expect.objectContaining({ path: "/test/doc.pdf", paneId: "pane-1", anchorPage: 2 }),
+    );
   });
 
   it("shows loading state initially", () => {

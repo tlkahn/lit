@@ -1,12 +1,17 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { pdfOpen, pdfRenderPage, pdfPrefetch, pdfClose, pdfCancelPrecache } from "../lib/ipc";
+import { pdfOpen, pdfRenderPage, pdfPrefetch, pdfClose, pdfCancelPrecache, pdfSeekPrecache } from "../lib/ipc";
 import type { PdfInfo, RenderedPage } from "../lib/ipc";
 import { SpinnerSvg } from "./SpinnerSvg";
 import { usePdfZoom } from "../hooks/usePdfZoom";
 
 const BASE_DPI = 144;
+
+// Mirrors the Rust-side INITIAL_SYNC_PAGES: a navigation jump larger than this
+// from the last precache anchor restarts the background spiral around the new
+// target so far-away pages warm up instead of relying on adjacent prefetch.
+const INITIAL_SYNC_PAGES = 10;
 
 function getEffectiveDpi(): number {
   return Math.round(BASE_DPI * (window.devicePixelRatio || 1));
@@ -37,6 +42,12 @@ function cacheGet(cache: Map<string, RenderedPage>, key: string): RenderedPage |
 interface PdfViewerProps {
   filePath: string;
   paneId: string;
+  /**
+   * Page to open on (0-based). When provided, the viewer opens anchored at this
+   * page — it is forwarded to pdf_open as the precache anchor and shown first
+   * instead of page 0. Omit (undefined) to open on page 0.
+   */
+  initialPage?: number;
   onPageChange?: (pageIndex: number) => void;
   /**
    * Publish this viewer's internal `goToPage` so an external owner (e.g. the
@@ -46,9 +57,9 @@ interface PdfViewerProps {
   registerGoToPage?: (fn: (pageIndex: number) => void) => void;
 }
 
-export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: PdfViewerProps) {
+export function PdfViewer({ filePath, paneId, initialPage, onPageChange, registerGoToPage }: PdfViewerProps) {
   const [pdfInfo, setPdfInfo] = useState<PdfInfo | null>(null);
-  const [currentPage, setCurrentPage] = useState(0);
+  const [currentPage, setCurrentPage] = useState(initialPage ?? 0);
   const [rendered, setRendered] = useState<RenderedPage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pageLoading, setPageLoading] = useState(false);
@@ -56,20 +67,10 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
   const currentPageRef = useRef(currentPage);
   const cacheRef = useRef(new Map<string, RenderedPage>());
   const navSeqRef = useRef(0);
-  // Monotonic zoom-render token, the zoom analog of navSeqRef. Each renderSharp
-  // call claims the next token at entry; after its (possibly slow) IPC awaits it
-  // commits only if still the latest. This prevents an out-of-order stale
-  // resolution (e.g. a slow renderSharp(1.5) finishing after a fast cache-hit
-  // renderSharp(2)) from overwriting renderedZoomRef + the bitmap with the wrong
-  // zoom. The file+page guards below do not cover the zoom dimension.
   const zoomSeqRef = useRef(0);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  // The logical zoom the *current* `rendered` image was produced at. The mount
-  // render uses plain effectiveDpi (logical zoom = 1). cssScale (the visual
-  // transform) is derived as zoomLevel / renderedZoomRef — so before a sharp
-  // re-render it equals zoomLevel (pure CSS zoom), and after a sharp re-render
-  // at zoom Z it collapses to 1 (the bitmap itself is now Z× larger).
   const renderedZoomRef = useRef(1);
+  const lastAnchorRef = useRef(initialPage ?? 0);
   // Keep an always-current ref to onPageChange so the mount effect can publish
   // the initial page without listing onPageChange as a dependency (which would
   // re-open the PDF and reset to page 0 on every callback identity change).
@@ -83,15 +84,8 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
     if (pageIndex < pageCount - 1) pdfPrefetch(pageIndex + 1, dpi, paneId).catch(() => {});
   }, [paneId]);
 
-  // Re-render the current page at a DPI matching the target zoom, then swap the
-  // bitmap in via the SAME cache + setRendered path goToPage uses. Routes
-  // through the cache even for zoom===1 (the mount already cached page@baseDPI)
-  // so resetting to 100% returns renderedZoomRef — and thus cssScale — to 1.
   const renderSharp = useCallback(
     async (zoom: number) => {
-      // Claim a monotonic token synchronously at entry. A newer renderSharp (a
-      // further zoom whose debounce already fired) supersedes this one even if
-      // it resolves first, so a slow stale resolution here cannot revert us.
       const mySeq = ++zoomSeqRef.current;
       const dpi = Math.round(getEffectiveDpi() * zoom);
       const page = currentPageRef.current;
@@ -100,10 +94,7 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
         const cached = cacheGet(cacheRef.current, key);
         const rp = cached ?? (await pdfRenderPage(page, dpi, paneId));
         if (filePathRef.current !== filePath) return;
-        // The page may have changed while an awaited render was in flight.
         if (currentPageRef.current !== page) return;
-        // A newer renderSharp superseded this one (out-of-order resolution):
-        // bail so a stale lower/higher zoom does not overwrite renderedZoomRef.
         if (zoomSeqRef.current !== mySeq) return;
         if (!cached) cacheSet(cacheRef.current, key, rp);
         renderedZoomRef.current = zoom;
@@ -115,16 +106,19 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
     [filePath, paneId],
   );
 
-  // Zoom concerns (state, refs, debounce + wheel effects, zoom-chord keys) live
-  // in usePdfZoom. renderSharp / renderedZoomRef / the cache stay here because
-  // they are coupled to page + IPC state; the hook receives renderSharp as an
-  // injected (stable) callback and drives the debounced re-render through it.
   const ready = rendered !== null;
   const { zoomLevel, zoomLevelRef, resetZoom, handleZoomKey } = usePdfZoom({
     ready,
     scrollContainerRef,
     renderSharp,
   });
+
+  const maybeSeekPrecache = useCallback((index: number, dpi: number) => {
+    if (Math.abs(index - lastAnchorRef.current) > INITIAL_SYNC_PAGES) {
+      lastAnchorRef.current = index;
+      pdfSeekPrecache(paneId, index, dpi).catch(() => {});
+    }
+  }, [paneId]);
 
   useEffect(() => {
     filePathRef.current = filePath;
@@ -139,11 +133,13 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
         // Compute the DPI once so the same value keys the initial_pages cache
         // population, the page-0 display, and every later goToPage lookup.
         const dpi = getEffectiveDpi();
-        const result = await pdfOpen(filePath, paneId, dpi);
+        const anchor = initialPage ?? 0;
+        const result = await pdfOpen(filePath, paneId, dpi, initialPage);
         if (cancelled) return;
         setPdfInfo({ page_count: result.page_count, path: result.path });
-        setCurrentPage(0);
-        currentPageRef.current = 0;
+        setCurrentPage(anchor);
+        currentPageRef.current = anchor;
+        lastAnchorRef.current = anchor;
 
         // Populate the frontend cache from the synchronously-rendered initial
         // batch so navigation across those pages is an in-memory hit.
@@ -151,21 +147,21 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
           cacheSet(cacheRef.current, cacheKey(p.page_index, dpi), p);
         }
 
-        // Show page 0: normally it is in initial_pages (backend renders 0..min(10,N)).
-        // Fall back to an on-demand render only if the batch omitted it (e.g. a
-        // legacy/empty mock or a degenerate document).
-        let page0 = cacheGet(cacheRef.current, cacheKey(0, dpi));
-        if (!page0) {
-          page0 = await pdfRenderPage(0, dpi, paneId);
+        // Show the anchor page: normally it is in initial_pages (backend renders
+        // the batch around the anchor). Fall back to an on-demand render only if
+        // the batch omitted it (e.g. a legacy/empty mock or a degenerate document).
+        let anchorPage = cacheGet(cacheRef.current, cacheKey(anchor, dpi));
+        if (!anchorPage) {
+          anchorPage = await pdfRenderPage(anchor, dpi, paneId);
           if (cancelled) return;
-          cacheSet(cacheRef.current, cacheKey(0, dpi), page0);
+          cacheSet(cacheRef.current, cacheKey(anchor, dpi), anchorPage);
         }
-        setRendered(page0);
+        setRendered(anchorPage);
         // Publish the initial page exactly once so the parent's status bar and
         // reverse sync are seeded. The goToPage same-page guard would otherwise
-        // suppress this for page 0 since currentPageRef is already 0.
-        onPageChangeRef.current?.(0);
-        prefetchAdjacent(0, result.page_count, dpi);
+        // suppress this since currentPageRef is already at the anchor.
+        onPageChangeRef.current?.(anchor);
+        prefetchAdjacent(anchor, result.page_count, dpi);
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : String(err));
@@ -179,7 +175,7 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
       pdfCancelPrecache(paneId).catch(() => {});
       pdfClose(paneId).catch(() => {});
     };
-  }, [filePath, paneId, prefetchAdjacent, resetZoom]);
+  }, [filePath, paneId, initialPage, prefetchAdjacent, resetZoom]);
 
   const goToPage = useCallback(
     async (index: number) => {
@@ -214,10 +210,8 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
           // currentPageRef already set to index synchronously above.
           onPageChange?.(index);
           prefetchAdjacent(index, pdfInfo?.page_count ?? 0, dpi);
-          // The debounce in usePdfZoom does not re-fire on navigation, so if the
-          // user is zoomed, schedule a corrective sharp re-render for this page.
-          // Read the live zoom via the ref to keep it out of the dep array.
           if (zoomLevelRef.current !== 1) void renderSharp(zoomLevelRef.current);
+          maybeSeekPrecache(index, dpi);
           return;
         }
 
@@ -231,9 +225,8 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
             currentPageRef.current = index;
             onPageChange?.(index);
             prefetchAdjacent(index, pdfInfo?.page_count ?? 0, dpi);
-            // See cache-hit branch: schedule a corrective sharp re-render when
-            // zoomed since the debounce does not re-fire on navigation.
             if (zoomLevelRef.current !== 1) void renderSharp(zoomLevelRef.current);
+            maybeSeekPrecache(index, dpi);
           }
         } finally {
           // Only tear down the spinner if this navigation is still current. A
@@ -246,7 +239,7 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
         setError(err instanceof Error ? err.message : String(err));
       }
     },
-    [filePath, paneId, pdfInfo, prefetchAdjacent, onPageChange, renderSharp],
+    [filePath, paneId, pdfInfo, prefetchAdjacent, maybeSeekPrecache, onPageChange, renderSharp],
   );
 
   useEffect(() => {

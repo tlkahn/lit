@@ -37,6 +37,7 @@ import {
   renderBibCitations,
   pdfOpen,
   pdfCancelPrecache,
+  pdfSeekPrecache,
   pdfRenderPage,
   pdfPrefetch,
   pdfClose,
@@ -266,6 +267,8 @@ describe("ipc", () => {
             initial_pages: [],
           };
         case "pdf_cancel_precache":
+          return null;
+        case "pdf_seek_precache":
           return null;
         case "pdf_render_page":
           return {
@@ -1108,6 +1111,37 @@ describe("ipc", () => {
       path: "/path/to/doc.pdf",
       paneId: "pane-1",
       dpi: 144,
+    });
+  });
+
+  it("pdfOpen forwards anchorPage when provided", async () => {
+    await pdfOpen("/path/to/doc.pdf", "pane-1", 144, 7);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("pdf_open", {
+      path: "/path/to/doc.pdf",
+      paneId: "pane-1",
+      dpi: 144,
+      anchorPage: 7,
+    });
+  });
+
+  it("pdfOpen omits anchorPage when not provided", async () => {
+    await pdfOpen("/path/to/doc.pdf", "pane-1", 144);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("pdf_open", {
+      path: "/path/to/doc.pdf",
+      paneId: "pane-1",
+      dpi: 144,
+    });
+  });
+
+  it("pdfSeekPrecache calls pdf_seek_precache with paneId, anchorPage, dpi", async () => {
+    await pdfSeekPrecache("pane-1", 42, 288);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("pdf_seek_precache", {
+      paneId: "pane-1",
+      anchorPage: 42,
+      dpi: 288,
     });
   });
 

@@ -695,8 +695,13 @@ export async function pdfOpen(
   path: string,
   paneId: string,
   dpi: number,
+  anchorPage?: number,
 ): Promise<PdfOpenResult> {
-  return invoke<PdfOpenResult>("pdf_open", { path, paneId, dpi });
+  // Omit the anchorPage key entirely when undefined: the backend treats a
+  // missing arg as anchor 0, and callers/tests assert the exact payload shape.
+  const args: Record<string, unknown> = { path, paneId, dpi };
+  if (anchorPage !== undefined) args.anchorPage = anchorPage;
+  return invoke<PdfOpenResult>("pdf_open", args);
 }
 
 export async function pdfRenderPage(
@@ -717,6 +722,14 @@ export async function pdfClose(paneId: string): Promise<void> {
 
 export async function pdfCancelPrecache(paneId: string): Promise<void> {
   return invoke<void>("pdf_cancel_precache", { paneId });
+}
+
+export async function pdfSeekPrecache(
+  paneId: string,
+  anchorPage: number,
+  dpi: number,
+): Promise<void> {
+  return invoke<void>("pdf_seek_precache", { paneId, anchorPage, dpi });
 }
 
 /**
