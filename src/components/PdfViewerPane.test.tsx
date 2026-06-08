@@ -19,17 +19,18 @@ vi.mock("./PdfViewer", () => ({
     paneId,
     registerGoToPage,
     onPageChange,
+    onPageCount,
   }: {
     filePath: string;
     paneId: string;
     registerGoToPage?: (fn: (i: number) => void) => void;
     onPageChange?: (i: number) => void;
+    onPageCount?: (count: number) => void;
   }) => {
-    // Simulate PdfViewer publishing its internal goToPage on mount.
     useEffect(() => {
       registerGoToPage?.(() => {});
-    }, [registerGoToPage]);
-    // Expose a button the test can click to drive onPageChange(2).
+      onPageCount?.(5);
+    }, [registerGoToPage, onPageCount]);
     return (
       <div data-testid={`pdf-viewer-${filePath}-${paneId}`}>
         <button data-testid="fire-page-change" onClick={() => onPageChange?.(2)} />
@@ -118,6 +119,11 @@ describe("PdfViewerPane", () => {
     expect(pdfPaneRef.getPdfGoToPage("p1")).toBeTypeOf("function");
     unmount();
     expect(pdfPaneRef.getPdfGoToPage("p1")).toBeNull();
+  });
+
+  it("stores page count from onPageCount in usePanePdfLinkStore", () => {
+    render(<PdfViewerPane paneId="p1" />);
+    expect(usePanePdfLinkStore.getState().pageCount.get("p1")).toBe(5);
   });
 
   describe("reverse sync on page change", () => {

@@ -39,6 +39,7 @@ interface PdfViewerProps {
   filePath: string;
   paneId: string;
   onPageChange?: (pageIndex: number) => void;
+  onPageCount?: (count: number) => void;
   /**
    * Publish this viewer's internal `goToPage` so an external owner (e.g. the
    * pane, for forward sync) can drive navigation imperatively. Called whenever
@@ -47,7 +48,7 @@ interface PdfViewerProps {
   registerGoToPage?: (fn: (pageIndex: number) => void) => void;
 }
 
-export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: PdfViewerProps) {
+export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registerGoToPage }: PdfViewerProps) {
   const [pdfInfo, setPdfInfo] = useState<PdfInfo | null>(null);
   const [currentPage, setCurrentPage] = useState(0);
   const [rendered, setRendered] = useState<RenderedPage | null>(null);
@@ -78,6 +79,10 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
   useEffect(() => {
     onPageChangeRef.current = onPageChange;
   }, [onPageChange]);
+  const onPageCountRef = useRef(onPageCount);
+  useEffect(() => {
+    onPageCountRef.current = onPageCount;
+  }, [onPageCount]);
 
   const prefetchAdjacent = useCallback((pageIndex: number, pageCount: number, dpi: number) => {
     if (pageIndex > 0) pdfPrefetch(pageIndex - 1, dpi, paneId).catch(() => {});
@@ -140,6 +145,7 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
         const info = await pdfOpen(filePath, paneId);
         if (cancelled) return;
         setPdfInfo(info);
+        onPageCountRef.current?.(info.page_count);
         setCurrentPage(0);
         currentPageRef.current = 0;
 
@@ -288,7 +294,6 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
     );
   }
 
-  const pageCount = pdfInfo?.page_count ?? 0;
   const dpr = window.devicePixelRatio || 1;
   // baseW/baseH are the CSS dimensions of the *current* bitmap, which was
   // rendered at logical zoom renderedZoomRef. The visual zoom still owed on top
@@ -307,30 +312,6 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
       tabIndex={0}
       onKeyDown={handleKeyDown}
     >
-      <div className="flex items-center gap-3 py-2">
-        <button
-          data-testid="pdf-prev"
-          disabled={currentPage <= 0}
-          onClick={() => goToPage(currentPageRef.current - 1)}
-          className="rounded px-2 py-1 text-sm text-text-normal hover:bg-bg-secondary disabled:opacity-30 disabled:cursor-not-allowed"
-        >
-          ← Prev
-        </button>
-        <span data-testid="pdf-page-indicator" className="text-sm text-text-muted">
-          Page {currentPage + 1} / {pageCount}
-        </span>
-        <span data-testid="pdf-zoom-indicator" className="text-sm text-text-muted">
-          {Math.round(zoomLevel * 100)}%
-        </span>
-        <button
-          data-testid="pdf-next"
-          disabled={currentPage >= pageCount - 1}
-          onClick={() => goToPage(currentPageRef.current + 1)}
-          className="rounded px-2 py-1 text-sm text-text-normal hover:bg-bg-secondary disabled:opacity-30 disabled:cursor-not-allowed"
-        >
-          Next →
-        </button>
-      </div>
       <div
         ref={scrollContainerRef}
         data-testid="pdf-scroll-container"

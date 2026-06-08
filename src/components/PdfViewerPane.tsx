@@ -32,6 +32,13 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
   // use getCachedPageMarkers (shared single-entry cache keyed by Text identity).
   // reverseSync records lastSyncedPage, which suppresses the forward-sync echo
   // so this does not loop.
+  const handlePageCount = useCallback(
+    (count: number) => {
+      usePanePdfLinkStore.getState().setPageCount(paneId, count);
+    },
+    [paneId],
+  );
+
   const handlePageChange = useCallback(
     (pageIndex: number) => {
       console.log("[sync:rev:pdf] onPageChange page=%d pane=%s", pageIndex, paneId);
@@ -94,6 +101,7 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
         paneId={paneId}
         registerGoToPage={handleRegisterGoToPage}
         onPageChange={handlePageChange}
+        onPageCount={handlePageCount}
       />
     </div>
   );
