@@ -43,6 +43,15 @@ describe("parsePageMarkers", () => {
       { page: 4, charOffset: text.indexOf("<!--   Page   4   -->") },
     ]);
   });
+
+  it("matches markers with trailing metadata", () => {
+    const text = "<!-- Page 1 - 0 images -->\nintro\n<!-- Page 2 - 3 images 1 videos 2 audios -->\nmore";
+    const markers = parsePageMarkers(text);
+    expect(markers).toEqual([
+      { page: 1, charOffset: 0 },
+      { page: 2, charOffset: text.indexOf("<!-- Page 2") },
+    ]);
+  });
 });
 
 describe("pageForOffset", () => {

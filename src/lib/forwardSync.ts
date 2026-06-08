@@ -50,25 +50,26 @@ let timer: ReturnType<typeof setTimeout> | null = null;
  */
 export function dispatchForwardSync({ read, goToPage }: ForwardSyncArgs): void {
   if (timer !== null) clearTimeout(timer);
-  // Capture only the read/goToPage callbacks in the closure. The markers and
-  // offset are read at FIRE time via read() (not captured here), so a document
-  // edit during the post-last-selection-change debounce window cannot make them
-  // stale. The trailing-edge timer keeps only the last call's callbacks.
+  console.log("[sync:fwd] scheduled (debounce %dms)", DEBOUNCE_MS);
   timer = setTimeout(() => {
     timer = null;
-    // Sync toggle is checked at FIRE time (not schedule time) so a toggle during
-    // the debounce window is honored.
-    if (!usePanePdfLinkStore.getState().syncEnabled) return;
-    // Read markers/offset at FIRE time. Null means the source view vanished
-    // between schedule and fire — nothing to sync.
-    const data = read();
-    if (!data) return;
-    const resolved = pageForOffset(data.markers, data.offset);
-    // Echo guard: suppress the forward sync that reverse sync just triggered.
-    const last = usePanePdfLinkStore.getState().lastSyncedPage;
-    if (last !== null && last.page === resolved && Date.now() - last.at < ECHO_GUARD_MS) {
+    if (!usePanePdfLinkStore.getState().syncEnabled) {
+      console.log("[sync:fwd] BAIL — syncEnabled=false");
       return;
     }
+    const data = read();
+    if (!data) {
+      console.log("[sync:fwd] BAIL — read() returned null (view gone?)");
+      return;
+    }
+    console.log("[sync:fwd] fire: offset=%d, markers=%d", data.offset, data.markers.length);
+    const resolved = pageForOffset(data.markers, data.offset);
+    const last = usePanePdfLinkStore.getState().lastSyncedPage;
+    if (last !== null && last.page === resolved && Date.now() - last.at < ECHO_GUARD_MS) {
+      console.log("[sync:fwd] SUPPRESSED by echo guard (page=%d, age=%dms)", resolved, Date.now() - last.at);
+      return;
+    }
+    console.log("[sync:fwd] → goToPage(%d)", resolved);
     goToPage(resolved);
   }, DEBOUNCE_MS);
 }

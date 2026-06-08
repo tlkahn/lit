@@ -14,8 +14,8 @@ export interface PageMarker {
   charOffset: number;
 }
 
-/** Matches `<!-- Page N -->` with flexible internal whitespace. */
-export const PAGE_MARKER_REGEX_SOURCE = "<!--\\s*Page\\s+(\\d+)\\s*-->";
+/** Matches `<!-- Page N -->` with optional trailing metadata (e.g. `<!-- Page 3 - 2 images 1 videos -->`). */
+export const PAGE_MARKER_REGEX_SOURCE = "<!--\\s*Page\\s+(\\d+)\\b.*?-->";
 
 /**
  * Scan `text` for page markers, returning them in document (offset) order.

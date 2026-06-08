@@ -34,16 +34,24 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
   // so this does not loop.
   const handlePageChange = useCallback(
     (pageIndex: number) => {
-      // Best-effort: record the live page for the status-bar linked indicator.
+      console.log("[sync:rev:pdf] onPageChange page=%d pane=%s", pageIndex, paneId);
       usePanePdfLinkStore.getState().setCurrentPage(paneId, pageIndex);
-      // Forward-sync-driven page change: skip reverse sync so the editor cursor
-      // is not yanked to the page marker line.
-      if (consumeForwardSync(paneId)) return;
+      if (consumeForwardSync(paneId)) {
+        console.log("[sync:rev:pdf] SKIP — forward-sync initiated this page change");
+        return;
+      }
       const linked = usePanePdfLinkStore.getState().getLinkedPane(paneId);
-      if (!linked) return;
+      if (!linked) {
+        console.log("[sync:rev:pdf] no linked editor pane for %s", paneId);
+        return;
+      }
       const view = getPaneView(linked);
-      if (!view) return;
+      if (!view) {
+        console.log("[sync:rev:pdf] no EditorView for linked pane %s", linked);
+        return;
+      }
       const markers = getCachedPageMarkers(view.state.doc);
+      console.log("[sync:rev:pdf] dispatching reverse sync: page=%d, markers=%d, editor=%s", pageIndex, markers.length, linked);
       dispatchReverseSync(pageIndex, linked, markers);
     },
     [paneId],

@@ -26,20 +26,24 @@ export function dispatchReverseSync(
   linkedEditorPaneId: string,
   markers: PageMarker[],
 ): void {
-  // Sync toggle: bail before any work so no dispatch and no setLastSyncedPage
-  // occur when sync is disabled (which would otherwise poison the echo guard).
-  if (!usePanePdfLinkStore.getState().syncEnabled) return;
+  if (!usePanePdfLinkStore.getState().syncEnabled) {
+    console.log("[sync:rev] BAIL — syncEnabled=false");
+    return;
+  }
 
-  // Marker lookup first: array index N maps to PDF page index N.
   const marker = markers[pageIndex];
-  if (!marker) return;
+  if (!marker) {
+    console.log("[sync:rev] BAIL — no marker for pageIndex=%d (markers.length=%d)", pageIndex, markers.length);
+    return;
+  }
 
   const view = getPaneView(linkedEditorPaneId);
-  if (!view) return;
+  if (!view) {
+    console.log("[sync:rev] BAIL — no EditorView for pane %s", linkedEditorPaneId);
+    return;
+  }
 
-  // Record this page as the most recent reverse-sync target BEFORE dispatching,
-  // so the resulting editor selection change (which schedules a forward sync)
-  // is recognized as an echo and suppressed (see forwardSync.ts ECHO_GUARD_MS).
+  console.log("[sync:rev] page=%d → charOffset=%d (editor pane %s)", pageIndex, marker.charOffset, linkedEditorPaneId);
   usePanePdfLinkStore.getState().setLastSyncedPage(pageIndex);
 
   const pos = Math.min(marker.charOffset, view.state.doc.length);
