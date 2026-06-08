@@ -1014,7 +1014,7 @@ describe("PdfViewer", () => {
     mockInvoke((cmd, args) => {
       switch (cmd) {
         case "pdf_open":
-          return mockPdfInfo;
+          return { ...mockPdfInfo, initial_pages: [mockRenderedPage] };
         case "pdf_render_page": {
           const a = args as Record<string, unknown>;
           const idx = (a?.pageIndex ?? 0) as number;
@@ -1083,7 +1083,7 @@ describe("PdfViewer", () => {
     mockInvoke((cmd, args) => {
       switch (cmd) {
         case "pdf_open":
-          return mockPdfInfo;
+          return { ...mockPdfInfo, initial_pages: [mockRenderedPage] };
         case "pdf_render_page": {
           const a = args as Record<string, unknown>;
           const idx = (a?.pageIndex ?? 0) as number;
@@ -1186,7 +1186,7 @@ describe("PdfViewer", () => {
     mockInvoke((cmd, args) => {
       switch (cmd) {
         case "pdf_open":
-          return mockPdfInfo;
+          return { ...mockPdfInfo, initial_pages: [mockRenderedPage] };
         case "pdf_render_page": {
           const a = args as Record<string, unknown>;
           const idx = (a?.pageIndex ?? 0) as number;
