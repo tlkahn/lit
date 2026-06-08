@@ -36,6 +36,7 @@ import {
   resolveBibEntries,
   renderBibCitations,
   pdfOpen,
+  pdfCancelPrecache,
   pdfRenderPage,
   pdfPrefetch,
   pdfClose,
@@ -259,7 +260,13 @@ describe("ipc", () => {
         case "link_unlinked_mention":
           return null;
         case "pdf_open":
-          return { page_count: 3, path: (args as Record<string, unknown>)?.path ?? "" };
+          return {
+            page_count: 3,
+            path: (args as Record<string, unknown>)?.path ?? "",
+            initial_pages: [],
+          };
+        case "pdf_cancel_precache":
+          return null;
         case "pdf_render_page":
           return {
             page_index: (args as Record<string, unknown>)?.pageIndex ?? 0,
@@ -1091,12 +1098,23 @@ describe("ipc", () => {
     expect(positions["page-2"]).toEqual({ x: 3.0, y: 4.0 });
   });
 
-  it("pdfOpen calls pdf_open with path and paneId", async () => {
-    const info = await pdfOpen("/path/to/doc.pdf", "pane-1");
-    expect(info.page_count).toBe(3);
-    expect(info.path).toBe("/path/to/doc.pdf");
+  it("pdfOpen calls pdf_open with path, paneId, and dpi", async () => {
+    const result = await pdfOpen("/path/to/doc.pdf", "pane-1", 144);
+    expect(result.page_count).toBe(3);
+    expect(result.path).toBe("/path/to/doc.pdf");
+    expect(result.initial_pages).toEqual([]);
     const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("pdf_open", { path: "/path/to/doc.pdf", paneId: "pane-1" });
+    expect(invoke).toHaveBeenCalledWith("pdf_open", {
+      path: "/path/to/doc.pdf",
+      paneId: "pane-1",
+      dpi: 144,
+    });
+  });
+
+  it("pdfCancelPrecache calls pdf_cancel_precache with paneId", async () => {
+    await pdfCancelPrecache("pane-1");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("pdf_cancel_precache", { paneId: "pane-1" });
   });
 
   it("pdfRenderPage calls pdf_render_page with paneId", async () => {

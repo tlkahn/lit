@@ -1,13 +1,12 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { pdfOpen, pdfRenderPage, pdfPrefetch, pdfClose } from "../lib/ipc";
+import { pdfOpen, pdfRenderPage, pdfPrefetch, pdfClose, pdfCancelPrecache } from "../lib/ipc";
 import type { PdfInfo, RenderedPage } from "../lib/ipc";
 import { SpinnerSvg } from "./SpinnerSvg";
 import { usePdfZoom } from "../hooks/usePdfZoom";
 
 const BASE_DPI = 144;
-const MAX_CACHE = 10;
 
 function getEffectiveDpi(): number {
   return Math.round(BASE_DPI * (window.devicePixelRatio || 1));
@@ -17,13 +16,13 @@ function cacheKey(pageIndex: number, dpi: number): string {
   return `${pageIndex}_${dpi}`;
 }
 
+// The Rust-side cache is the source of truth for precached pages; this frontend
+// map only avoids redundant IPC for pages already fetched, so it is uncapped.
+// Entries are small metadata ({page_index, png_path, width, height}); png_path is
+// a file path, not image data, so the map stays trivially small even for large PDFs.
 function cacheSet(cache: Map<string, RenderedPage>, key: string, value: RenderedPage) {
   cache.delete(key);
   cache.set(key, value);
-  if (cache.size > MAX_CACHE) {
-    const oldest = cache.keys().next().value!;
-    cache.delete(oldest);
-  }
 }
 
 function cacheGet(cache: Map<string, RenderedPage>, key: string): RenderedPage | undefined {
@@ -137,22 +136,36 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
 
     (async () => {
       try {
-        const info = await pdfOpen(filePath, paneId);
+        // Compute the DPI once so the same value keys the initial_pages cache
+        // population, the page-0 display, and every later goToPage lookup.
+        const dpi = getEffectiveDpi();
+        const result = await pdfOpen(filePath, paneId, dpi);
         if (cancelled) return;
-        setPdfInfo(info);
+        setPdfInfo({ page_count: result.page_count, path: result.path });
         setCurrentPage(0);
         currentPageRef.current = 0;
 
-        const dpi = getEffectiveDpi();
-        const page = await pdfRenderPage(0, dpi, paneId);
-        if (cancelled) return;
-        cacheSet(cacheRef.current, cacheKey(0, dpi), page);
-        setRendered(page);
+        // Populate the frontend cache from the synchronously-rendered initial
+        // batch so navigation across those pages is an in-memory hit.
+        for (const p of result.initial_pages) {
+          cacheSet(cacheRef.current, cacheKey(p.page_index, dpi), p);
+        }
+
+        // Show page 0: normally it is in initial_pages (backend renders 0..min(10,N)).
+        // Fall back to an on-demand render only if the batch omitted it (e.g. a
+        // legacy/empty mock or a degenerate document).
+        let page0 = cacheGet(cacheRef.current, cacheKey(0, dpi));
+        if (!page0) {
+          page0 = await pdfRenderPage(0, dpi, paneId);
+          if (cancelled) return;
+          cacheSet(cacheRef.current, cacheKey(0, dpi), page0);
+        }
+        setRendered(page0);
         // Publish the initial page exactly once so the parent's status bar and
         // reverse sync are seeded. The goToPage same-page guard would otherwise
         // suppress this for page 0 since currentPageRef is already 0.
         onPageChangeRef.current?.(0);
-        prefetchAdjacent(0, info.page_count, dpi);
+        prefetchAdjacent(0, result.page_count, dpi);
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : String(err));
@@ -161,6 +174,9 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
 
     return () => {
       cancelled = true;
+      // Stop the background precache thread promptly before closing so no stale
+      // progress events arrive after unmount. pdf_close also cancels defensively.
+      pdfCancelPrecache(paneId).catch(() => {});
       pdfClose(paneId).catch(() => {});
     };
   }, [filePath, paneId, prefetchAdjacent, resetZoom]);

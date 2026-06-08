@@ -361,6 +361,7 @@ pub fn run() {
             commands::pdf_viewer::pdf_render_page,
             commands::pdf_viewer::pdf_prefetch,
             commands::pdf_viewer::pdf_close,
+            commands::pdf_viewer::pdf_cancel_precache,
             commands::annotation::parse_annotations,
             commands::annotation::resolve_annotation_scope,
             commands::annotation::resolve_annotation_scope_with_mode,

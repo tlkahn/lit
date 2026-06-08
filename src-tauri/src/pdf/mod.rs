@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::BufWriter;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread;
 
 use serde::Serialize;
@@ -40,6 +42,12 @@ enum PdfCommand {
     PreRender {
         page_index: usize,
         dpi: u32,
+    },
+    PreCacheAll {
+        dpi: u32,
+        start_page: usize,
+        cancel: Arc<AtomicBool>,
+        progress_tx: mpsc::Sender<(usize, usize)>, // (current, total)
     },
     Shutdown,
 }
@@ -183,6 +191,122 @@ impl PdfRenderThread {
                             }
                         }
                     }
+                    PdfCommand::PreCacheAll {
+                        dpi,
+                        start_page,
+                        cancel,
+                        progress_tx,
+                    } => {
+                        let page_count = match document.as_ref() {
+                            Some(doc) => doc.page_count(),
+                            None => continue, // no document; nothing to do
+                        };
+                        let total = page_count;
+                        let mut shutdown = false;
+                        'precache: for page_index in start_page..page_count {
+                            // 1. cancel check
+                            if cancel.load(Ordering::Relaxed) {
+                                break 'precache;
+                            }
+                            // 2. drain & handle any pending priority commands so
+                            //    navigation stays responsive during precaching
+                            while let Ok(pending) = cmd_rx.try_recv() {
+                                match pending {
+                                    PdfCommand::RenderPage {
+                                        page_index: pi,
+                                        dpi: pd,
+                                        reply,
+                                    } => {
+                                        if let Some(cached) = cache.get(&(pi, pd)) {
+                                            let _ = reply.send(Ok(cached.clone()));
+                                        } else {
+                                            let result = (|| -> Result<RenderedPage, String> {
+                                                let doc = document.as_ref().ok_or_else(|| {
+                                                    "No document open".to_string()
+                                                })?;
+                                                render_page(doc, pi, pd, &thread_temp_dir)
+                                            })();
+                                            if let Ok(ref r) = result {
+                                                cache.insert((pi, pd), r.clone());
+                                            }
+                                            let _ = reply.send(result);
+                                        }
+                                    }
+                                    PdfCommand::Open { path, reply } => {
+                                        // a new document supersedes precache
+                                        match pdfium.open_document(&path, None) {
+                                            Ok(doc) => {
+                                                let info = PdfInfo {
+                                                    page_count: doc.page_count(),
+                                                    path: path.clone(),
+                                                };
+                                                document = Some(doc);
+                                                cache.clear();
+                                                let _ = reply.send(Ok(info));
+                                            }
+                                            Err(e) => {
+                                                let _ = reply
+                                                    .send(Err(format!("Failed to open PDF: {e}")));
+                                            }
+                                        }
+                                        break 'precache; // abandon precache for the old doc
+                                    }
+                                    PdfCommand::Close { reply } => {
+                                        document = None;
+                                        cache.clear();
+                                        cleanup_pdf_temp_dir(&thread_temp_dir);
+                                        let _ = reply.send(Ok(()));
+                                        break 'precache; // document gone; stop precaching
+                                    }
+                                    PdfCommand::PreRender {
+                                        page_index: pi,
+                                        dpi: pd,
+                                    } => {
+                                        if cache.contains_key(&(pi, pd)) {
+                                            continue;
+                                        }
+                                        if let Some(doc) = document.as_ref() {
+                                            if let Ok(r) =
+                                                render_page(doc, pi, pd, &thread_temp_dir)
+                                            {
+                                                cache.insert((pi, pd), r);
+                                            }
+                                        }
+                                    }
+                                    PdfCommand::Shutdown => {
+                                        shutdown = true;
+                                        break 'precache;
+                                    }
+                                    PdfCommand::PreCacheAll { .. } => { /* ignore nested */ }
+                                }
+                            }
+                            // 3. skip if already cached
+                            if cache.contains_key(&(page_index, dpi)) {
+                                continue;
+                            }
+                            // 4. render + insert (document still present?)
+                            match document.as_ref() {
+                                Some(doc) => {
+                                    if let Ok(r) =
+                                        render_page(doc, page_index, dpi, &thread_temp_dir)
+                                    {
+                                        cache.insert((page_index, dpi), r);
+                                    }
+                                }
+                                None => break 'precache,
+                            }
+                            // 5. throttled progress: every 5 pages and on the final page
+                            let done_count = page_index + 1;
+                            if done_count % 5 == 0 || done_count == total {
+                                let _ = progress_tx.send((done_count, total));
+                            }
+                        }
+                        // Always send a final completion so consumers see (total, total).
+                        let _ = progress_tx.send((total, total));
+                        if shutdown {
+                            break; // terminate the render thread
+                        }
+                    }
                     PdfCommand::Shutdown => {
                         break;
                     }
@@ -236,6 +360,43 @@ impl PdfRenderThread {
         self.cmd_tx
             .send(PdfCommand::PreRender { page_index, dpi })
             .map_err(|_| "Render thread died".to_string())
+    }
+
+    /// Fire-and-forget: pre-renders all pages from `start_page` to the end on the
+    /// render thread, reporting progress over `progress_tx`. Honors the `cancel`
+    /// flag between pages and yields to pending priority commands.
+    pub fn precache_all(
+        &self,
+        dpi: u32,
+        start_page: usize,
+        cancel: Arc<AtomicBool>,
+        progress_tx: mpsc::Sender<(usize, usize)>,
+    ) -> Result<(), String> {
+        self.cmd_tx
+            .send(PdfCommand::PreCacheAll {
+                dpi,
+                start_page,
+                cancel,
+                progress_tx,
+            })
+            .map_err(|_| "Render thread died".to_string())
+    }
+
+    /// Synchronously renders `count` pages starting at `start_page`. Individual
+    /// failures (e.g. out-of-range indices) are skipped; the cache dedups repeats.
+    pub fn render_pages_sync(
+        &self,
+        start_page: usize,
+        count: usize,
+        dpi: u32,
+    ) -> Vec<RenderedPage> {
+        let mut pages = Vec::new();
+        for page_index in start_page..start_page + count {
+            if let Ok(rendered) = self.render_page(page_index, dpi) {
+                pages.push(rendered);
+            }
+        }
+        pages
     }
 
     pub fn temp_dir(&self) -> &std::path::Path {
@@ -558,6 +719,214 @@ mod tests {
     #[test]
     fn test_shutdown_command_variant_exists() {
         let _cmd = PdfCommand::Shutdown;
+    }
+
+    #[test]
+    fn test_precache_all_command_variant_exists() {
+        let (tx, _rx) = mpsc::channel::<(usize, usize)>();
+        let _cmd = PdfCommand::PreCacheAll {
+            dpi: 144,
+            start_page: 0,
+            cancel: Arc::new(AtomicBool::new(false)),
+            progress_tx: tx,
+        };
+    }
+
+    #[test]
+    #[ignore]
+    fn test_precache_all_caches_all_pages() {
+        let _guard = lock_pdfium();
+        let lib = require_pdfium();
+        let thread = PdfRenderThread::new(&lib).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = mpsc::channel::<(usize, usize)>();
+        thread.precache_all(144, 0, cancel, tx).unwrap();
+
+        // Drain until completion (n == total) or timeout.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            match rx.recv_timeout(std::time::Duration::from_millis(200)) {
+                Ok((n, total)) if n == total => break,
+                Ok(_) => {}
+                Err(_) => {
+                    if std::time::Instant::now() > deadline {
+                        panic!("precache did not complete in time");
+                    }
+                }
+            }
+        }
+
+        assert!(thread.temp_dir().join("page_0_144.png").exists());
+        assert!(thread.temp_dir().join("page_1_144.png").exists());
+
+        thread.close().unwrap();
+    }
+
+    #[test]
+    #[ignore]
+    fn test_precache_all_emits_final_progress() {
+        let _guard = lock_pdfium();
+        let lib = require_pdfium();
+        let thread = PdfRenderThread::new(&lib).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = mpsc::channel::<(usize, usize)>();
+        thread.precache_all(144, 0, cancel, tx).unwrap();
+
+        let mut last = None;
+        while let Ok(msg) = rx.recv_timeout(std::time::Duration::from_millis(500)) {
+            last = Some(msg);
+        }
+        assert_eq!(last, Some((2, 2)), "final progress should be (page_count, page_count)");
+
+        thread.close().unwrap();
+    }
+
+    #[test]
+    #[ignore]
+    fn test_precache_all_skips_already_cached() {
+        let _guard = lock_pdfium();
+        let lib = require_pdfium();
+        let thread = PdfRenderThread::new(&lib).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+
+        let r0 = thread.render_page(0, 144).unwrap();
+        let mtime0 = fs::metadata(&r0.png_path).unwrap().modified().unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = mpsc::channel::<(usize, usize)>();
+        thread.precache_all(144, 0, cancel, tx).unwrap();
+        while let Ok(msg) = rx.recv_timeout(std::time::Duration::from_millis(500)) {
+            if msg.0 == msg.1 {
+                break;
+            }
+        }
+
+        let mtime0_after = fs::metadata(&r0.png_path).unwrap().modified().unwrap();
+        assert_eq!(mtime0, mtime0_after, "already-cached page should not be re-rendered");
+        assert!(thread.temp_dir().join("page_1_144.png").exists());
+
+        thread.close().unwrap();
+    }
+
+    #[test]
+    #[ignore]
+    fn test_precache_all_render_page_priority_during_precache() {
+        let _guard = lock_pdfium();
+        let lib = require_pdfium();
+        let thread = PdfRenderThread::new(&lib).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (tx, _rx) = mpsc::channel::<(usize, usize)>();
+        thread.precache_all(144, 0, cancel, tx).unwrap();
+
+        // RenderPage goes through the same channel and must be served promptly.
+        let rendered = thread.render_page(1, 144).unwrap();
+        assert_eq!(rendered.page_index, 1);
+        assert!(std::path::Path::new(&rendered.png_path).exists());
+
+        thread.close().unwrap();
+    }
+
+    #[test]
+    #[ignore]
+    fn test_precache_all_cancel_stops_loop() {
+        let _guard = lock_pdfium();
+        let lib = require_pdfium();
+        let thread = PdfRenderThread::new(&lib).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+
+        let cancel = Arc::new(AtomicBool::new(true));
+        let (tx, rx) = mpsc::channel::<(usize, usize)>();
+        thread.precache_all(144, 0, cancel, tx).unwrap();
+
+        // Drain progress; the only message should be the final completion send.
+        while rx.recv_timeout(std::time::Duration::from_millis(300)).is_ok() {}
+
+        assert!(
+            !thread.temp_dir().join("page_0_144.png").exists(),
+            "cancelled precache should not render pages"
+        );
+        assert!(
+            !thread.temp_dir().join("page_1_144.png").exists(),
+            "cancelled precache should not render pages"
+        );
+
+        thread.close().unwrap();
+    }
+
+    #[test]
+    #[ignore]
+    fn test_precache_all_no_document_does_not_panic() {
+        let _guard = lock_pdfium();
+        let lib = require_pdfium();
+        let thread = PdfRenderThread::new(&lib).unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (tx, _rx) = mpsc::channel::<(usize, usize)>();
+        let result = thread.precache_all(144, 0, cancel, tx);
+        assert!(result.is_ok());
+        // Thread should still be alive and responsive.
+        let r = thread.prefetch(0, 144);
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    #[ignore]
+    fn test_render_pages_sync_returns_pages() {
+        let _guard = lock_pdfium();
+        let lib = require_pdfium();
+        let thread = PdfRenderThread::new(&lib).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+
+        let pages = thread.render_pages_sync(0, 2, 144);
+        assert_eq!(pages.len(), 2);
+        assert_eq!(pages[0].page_index, 0);
+        assert_eq!(pages[1].page_index, 1);
+        assert!(std::path::Path::new(&pages[0].png_path).exists());
+        assert!(std::path::Path::new(&pages[1].png_path).exists());
+
+        thread.close().unwrap();
+    }
+
+    #[test]
+    #[ignore]
+    fn test_render_pages_sync_clamps_out_of_range() {
+        let _guard = lock_pdfium();
+        let lib = require_pdfium();
+        let thread = PdfRenderThread::new(&lib).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+
+        let pages = thread.render_pages_sync(0, 5, 144);
+        assert_eq!(pages.len(), 2, "out-of-range pages should be skipped, not panic");
+
+        thread.close().unwrap();
+    }
+
+    #[test]
+    #[ignore]
+    fn test_render_pages_sync_uses_cache() {
+        let _guard = lock_pdfium();
+        let lib = require_pdfium();
+        let thread = PdfRenderThread::new(&lib).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap()).unwrap();
+
+        let r0 = thread.render_page(0, 144).unwrap();
+        let mtime0 = fs::metadata(&r0.png_path).unwrap().modified().unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let pages = thread.render_pages_sync(0, 1, 144);
+        assert_eq!(pages.len(), 1);
+        let mtime0_after = fs::metadata(&pages[0].png_path).unwrap().modified().unwrap();
+        assert_eq!(mtime0, mtime0_after, "cache hit should not rewrite the PNG");
+
+        thread.close().unwrap();
     }
 
     #[test]

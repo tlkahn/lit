@@ -10,6 +10,7 @@ import { useBottomPanelStore, defaultTabMeta } from "../stores/bottomPanel";
 import { usePreferencesStore } from "../stores/preferences";
 import { useStatusMessageStore } from "../stores/statusMessage";
 import { usePanePdfLinkStore } from "../stores/panePdfLink";
+import { usePdfCacheProgressStore } from "../stores/pdfCacheProgress";
 
 beforeEach(() => {
   useWorkspaceStore.setState({
@@ -34,6 +35,7 @@ beforeEach(() => {
   });
   useStatusMessageStore.setState({ message: null, variant: "success" });
   usePanePdfLinkStore.setState({ links: new Map(), currentPage: new Map() });
+  usePdfCacheProgressStore.setState({ progress: new Map() });
 });
 
 describe("StatusBar", () => {
@@ -643,6 +645,74 @@ describe("StatusBar", () => {
         usePanePdfLinkStore.getState().setCurrentPage("otherPane", 9);
       });
       expect(screen.getByTestId("status-bar-pdf-link")).toHaveTextContent("Page 5");
+    });
+  });
+
+  describe("PDF cache indicator", () => {
+    function setupFocusedPane(focusedPaneId: string) {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      usePaneStore.setState({
+        root: { type: "leaf", id: focusedPaneId, pagePath: "notes/hello.pdf" },
+        focusedPaneId,
+      });
+    }
+
+    it("renders 'Caching PDF… 42%' with a fill bar when the focused pane is caching", () => {
+      setupFocusedPane("pdf");
+      usePdfCacheProgressStore.setState({
+        progress: new Map([["win:pdf", { current: 42, total: 100, done: false }]]),
+      });
+      render(<StatusBar />);
+      const indicator = screen.getByTestId("status-bar-pdf-cache");
+      expect(indicator.textContent).toContain("42%");
+      expect(screen.getByTestId("status-bar-pdf-cache-fill").style.width).toBe("42%");
+    });
+
+    it("renders nothing when the entry is done", () => {
+      setupFocusedPane("pdf");
+      usePdfCacheProgressStore.setState({
+        progress: new Map([["win:pdf", { current: 100, total: 100, done: true }]]),
+      });
+      render(<StatusBar />);
+      expect(screen.queryByTestId("status-bar-pdf-cache")).toBeNull();
+    });
+
+    it("renders nothing when no entry matches the focused pane", () => {
+      setupFocusedPane("pdf");
+      usePdfCacheProgressStore.setState({
+        progress: new Map([["win:other", { current: 42, total: 100, done: false }]]),
+      });
+      render(<StatusBar />);
+      expect(screen.queryByTestId("status-bar-pdf-cache")).toBeNull();
+    });
+
+    it("renders nothing when the progress map is empty", () => {
+      setupFocusedPane("pdf");
+      render(<StatusBar />);
+      expect(screen.queryByTestId("status-bar-pdf-cache")).toBeNull();
+    });
+
+    it("matches by the paneId segment of the slot regardless of the window label", () => {
+      setupFocusedPane("pdf");
+      usePdfCacheProgressStore.setState({
+        progress: new Map([["win-2:pdf", { current: 30, total: 100, done: false }]]),
+      });
+      render(<StatusBar />);
+      expect(screen.getByTestId("status-bar-pdf-cache").textContent).toContain("30%");
+    });
+
+    it("hides when a done event clears the entry", () => {
+      setupFocusedPane("pdf");
+      usePdfCacheProgressStore.setState({
+        progress: new Map([["win:pdf", { current: 50, total: 100, done: false }]]),
+      });
+      render(<StatusBar />);
+      expect(screen.getByTestId("status-bar-pdf-cache")).toBeInTheDocument();
+
+      act(() => {
+        usePdfCacheProgressStore.getState().clear("win:pdf");
+      });
+      expect(screen.queryByTestId("status-bar-pdf-cache")).toBeNull();
     });
   });
 

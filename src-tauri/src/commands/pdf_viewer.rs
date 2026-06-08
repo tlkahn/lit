@@ -1,10 +1,18 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 
-use tauri::Manager;
+use serde::Serialize;
+use tauri::{Emitter, Manager};
 
 use crate::pdf::{PdfInfo, PdfRenderThread, RenderedPage};
+
+/// Cap eager precaching at this many pages. Beyond this, pages render on demand.
+const MAX_PRECACHE_PAGES: usize = 200;
+/// Number of pages rendered synchronously before returning from `pdf_open`.
+const INITIAL_SYNC_PAGES: usize = 10;
 
 /// Holds one PDF render thread per open slot.
 ///
@@ -14,7 +22,30 @@ use crate::pdf::{PdfInfo, PdfRenderThread, RenderedPage};
 /// open PDF side by side.
 pub struct PdfViewerState {
     threads: Mutex<HashMap<String, PdfRenderThread>>,
+    /// One cancel token per slot with an in-flight background precache.
+    cancel_tokens: Mutex<HashMap<String, Arc<AtomicBool>>>,
     lib_path: String,
+}
+
+/// Result of [`pdf_open`]: the page count, the resolved path, and the first
+/// batch of synchronously rendered pages so navigation is instant on open.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct PdfOpenResult {
+    pub page_count: usize,
+    pub path: String,
+    pub initial_pages: Vec<RenderedPage>,
+}
+
+/// Progress payload emitted as `"lit:pdf-cache-progress"` during background
+/// precaching. `done` is set once `current >= total`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct PdfCacheProgress {
+    pub slot: String,
+    pub current: usize,
+    pub total: usize,
+    pub done: bool,
 }
 
 /// Compose the [`PdfViewerState`] slot key for a given window + pane.
@@ -26,7 +57,94 @@ impl PdfViewerState {
     pub fn new(lib_path: &str) -> Self {
         Self {
             threads: Mutex::new(HashMap::new()),
+            cancel_tokens: Mutex::new(HashMap::new()),
             lib_path: lib_path.to_string(),
+        }
+    }
+
+    /// Signals any in-flight precache for `slot` to stop, and forgets its token.
+    /// Safe to call when no precache is active (no-op).
+    pub fn cancel_precache(&self, slot: &str) {
+        let mut tokens = self.cancel_tokens.lock().unwrap();
+        if let Some(flag) = tokens.remove(slot) {
+            flag.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Begins background precaching from `start_page`. Creates a fresh cancel
+    /// token (cancelling/replacing any prior one for this slot), sends
+    /// `PreCacheAll` to the render thread, and spawns a thread that drains
+    /// progress and emits `"lit:pdf-cache-progress"` to the originating window.
+    pub fn start_precache(&self, window: &tauri::Window, slot: &str, start_page: usize, dpi: u32) {
+        // Cancel + replace any prior token for this slot (reopen case).
+        let cancel = Arc::new(AtomicBool::new(false));
+        {
+            let mut tokens = self.cancel_tokens.lock().unwrap();
+            if let Some(old) = tokens.insert(slot.to_string(), Arc::clone(&cancel)) {
+                old.store(true, Ordering::Relaxed);
+            }
+        }
+
+        let (progress_tx, progress_rx) = mpsc::channel::<(usize, usize)>();
+
+        // Send PreCacheAll to the render thread (under the threads lock). The
+        // threads lock is released before the progress thread is spawned.
+        {
+            let threads = self.threads.lock().unwrap();
+            match threads.get(slot) {
+                Some(thread) => {
+                    if thread
+                        .precache_all(dpi, start_page, Arc::clone(&cancel), progress_tx)
+                        .is_err()
+                    {
+                        // Thread died; drop token, no progress thread.
+                        drop(threads);
+                        self.cancel_tokens.lock().unwrap().remove(slot);
+                        return;
+                    }
+                }
+                None => {
+                    drop(threads);
+                    self.cancel_tokens.lock().unwrap().remove(slot);
+                    return;
+                }
+            }
+        }
+
+        // Progress-forwarding thread: read (current,total) and emit to the window.
+        let window = window.clone(); // tauri::Window is Clone + Send
+        let slot_string = slot.to_string();
+        std::thread::spawn(move || {
+            let label = window.label().to_string();
+            while let Ok((current, total)) = progress_rx.recv() {
+                let done = current >= total;
+                let payload = PdfCacheProgress {
+                    slot: slot_string.clone(),
+                    current,
+                    total,
+                    done,
+                };
+                let _ = window.emit_to(&label, "lit:pdf-cache-progress", payload);
+                if done {
+                    break; // final (total,total) send terminates the loop
+                }
+            }
+        });
+    }
+
+    /// Synchronously render the first `count` pages for `slot`, returning
+    /// whatever rendered successfully (out-of-range pages are skipped). Returns
+    /// an empty vec if the slot has no open thread.
+    pub fn render_initial_for_window(
+        &self,
+        slot: &str,
+        count: usize,
+        dpi: u32,
+    ) -> Vec<RenderedPage> {
+        let threads = self.threads.lock().unwrap();
+        match threads.get(slot) {
+            Some(thread) => thread.render_pages_sync(0, count, dpi),
+            None => Vec::new(),
         }
     }
 
@@ -55,6 +173,10 @@ impl PdfViewerState {
     }
 
     pub fn close_for_window(&self, slot: &str) -> Result<(), String> {
+        // Cancel before sending Close so the precache loop sees the flag and
+        // breaks at the next page boundary, rather than the close blocking on an
+        // in-progress render.
+        self.cancel_precache(slot);
         let mut threads = self.threads.lock().unwrap();
         if let Some(thread) = threads.remove(slot) {
             thread.close()?;
@@ -77,6 +199,24 @@ impl PdfViewerState {
     /// shutdown time of every closed pane.
     pub fn close_all_for_window(&self, window_label: &str) {
         let prefix = format!("{window_label}:");
+
+        // Cancel any in-flight precaches for this window first so their render
+        // loops break promptly, then drop the render threads. Released before
+        // the threads block runs — we never hold both locks at once.
+        {
+            let mut tokens = self.cancel_tokens.lock().unwrap();
+            let keys: Vec<String> = tokens
+                .keys()
+                .filter(|k| k.starts_with(&prefix))
+                .cloned()
+                .collect();
+            for k in keys {
+                if let Some(flag) = tokens.remove(&k) {
+                    flag.store(true, Ordering::Relaxed);
+                }
+            }
+        }
+
         let to_close: Vec<PdfRenderThread> = {
             let mut threads = self.threads.lock().unwrap();
             let keys: Vec<String> = threads
@@ -113,10 +253,15 @@ impl PdfViewerState {
 pub fn pdf_open(
     path: String,
     pane_id: String,
+    dpi: u32,
     window: tauri::Window,
     state: tauri::State<'_, PdfViewerState>,
-) -> Result<PdfInfo, String> {
+) -> Result<PdfOpenResult, String> {
     let slot = slot_key(window.label(), &pane_id);
+
+    // Cancel any precache from a prior PDF in this slot before reopening.
+    state.cancel_precache(&slot);
+
     let info = state.open_for_window(&slot, &path)?;
 
     if let Some(temp_dir) = state.temp_dir_for_window(&slot) {
@@ -127,7 +272,32 @@ pub fn pdf_open(
             .map_err(|e| format!("Failed to register asset scope: {e}"))?;
     }
 
-    Ok(info)
+    // Synchronously render the first batch so navigation is instant on open.
+    let initial_count = info.page_count.min(INITIAL_SYNC_PAGES);
+    let initial_pages = state.render_initial_for_window(&slot, initial_count, dpi);
+
+    // Kick off background precache for the remainder. The Phase-1 precache loop
+    // runs `start_page..page_count` with no internal cap, so we enforce
+    // MAX_PRECACHE_PAGES on the start side: only precache when the whole
+    // document fits under the cap. Larger PDFs rely on on-demand rendering.
+    if initial_count < info.page_count && info.page_count <= MAX_PRECACHE_PAGES {
+        state.start_precache(&window, &slot, initial_count, dpi);
+    }
+
+    Ok(PdfOpenResult {
+        page_count: info.page_count,
+        path: info.path,
+        initial_pages,
+    })
+}
+
+#[tauri::command]
+pub fn pdf_cancel_precache(
+    pane_id: String,
+    window: tauri::Window,
+    state: tauri::State<'_, PdfViewerState>,
+) {
+    state.cancel_precache(&slot_key(window.label(), &pane_id));
 }
 
 #[tauri::command]
@@ -431,6 +601,103 @@ mod tests {
         let idx: usize = 0;
         let _ = state.render_for_window("x", idx, 72);
         let _ = state.prefetch_for_window("x", idx, 72);
+    }
+
+    #[test]
+    fn test_cancel_precache_noop_when_no_token() {
+        let state = PdfViewerState::new("dummy");
+        // No precache active for this slot — must not panic.
+        state.cancel_precache("main:pane-1");
+    }
+
+    #[test]
+    fn test_cancel_precache_is_idempotent() {
+        let state = PdfViewerState::new("dummy");
+        // Calling twice on a slot with no token is a safe no-op.
+        state.cancel_precache("main:pane-1");
+        state.cancel_precache("main:pane-1");
+    }
+
+    #[test]
+    fn test_render_initial_for_unknown_slot_returns_empty() {
+        let state = PdfViewerState::new("dummy");
+        assert!(state.render_initial_for_window("unknown", 5, 144).is_empty());
+    }
+
+    #[test]
+    fn test_pdf_open_result_struct_fields() {
+        let result = PdfOpenResult {
+            page_count: 7,
+            path: "/tmp/x.pdf".to_string(),
+            initial_pages: vec![],
+        };
+        assert_eq!(result.page_count, 7);
+        assert_eq!(result.path, "/tmp/x.pdf");
+        assert!(result.initial_pages.is_empty());
+
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("page_count"), "got: {json}");
+        assert!(json.contains("initial_pages"), "got: {json}");
+        // camelCase must NOT appear — frontend reads snake_case.
+        assert!(!json.contains("pageCount"));
+        assert!(!json.contains("initialPages"));
+    }
+
+    #[test]
+    fn test_pdf_cache_progress_serializes_snake_case() {
+        let progress = PdfCacheProgress {
+            slot: "main:pane-1".to_string(),
+            current: 5,
+            total: 10,
+            done: false,
+        };
+        let json = serde_json::to_string(&progress).unwrap();
+        assert!(json.contains("\"slot\""), "got: {json}");
+        assert!(json.contains("\"current\""), "got: {json}");
+        assert!(json.contains("\"total\""), "got: {json}");
+        assert!(json.contains("\"done\""), "got: {json}");
+    }
+
+    #[test]
+    fn test_close_all_for_window_clears_cancel_tokens() {
+        let state = PdfViewerState::new("dummy");
+        // The new token-draining block must handle the empty-map path cleanly.
+        state.close_all_for_window("main");
+    }
+
+    #[test]
+    fn test_close_for_window_cancels_precache_safely_on_empty_slot() {
+        let state = PdfViewerState::new("dummy");
+        // cancel_precache(slot) runs first inside close_for_window; with no
+        // token and no thread this is a no-op and returns Ok.
+        assert!(state.close_for_window("main:pane-1").is_ok());
+    }
+
+    #[test]
+    fn test_max_precache_and_initial_constants() {
+        assert_eq!(MAX_PRECACHE_PAGES, 200);
+        assert_eq!(INITIAL_SYNC_PAGES, 10);
+        assert!(INITIAL_SYNC_PAGES <= MAX_PRECACHE_PAGES);
+    }
+
+    #[test]
+    #[ignore]
+    fn test_render_initial_for_window_renders_fixture_pages() {
+        let _guard = lock_pdfium();
+        let lib = require_pdfium();
+        let state = PdfViewerState::new(&lib);
+        let slot = slot_key("main", "pane-1");
+        state
+            .open_for_window(&slot, fixture_path("sample.pdf").to_str().unwrap())
+            .unwrap();
+
+        // sample.pdf has 2 pages; asking for 10 should clamp to 2.
+        let pages = state.render_initial_for_window(&slot, 10, 144);
+        assert_eq!(pages.len(), 2);
+        assert!(std::path::Path::new(&pages[0].png_path).exists());
+        assert!(std::path::Path::new(&pages[1].png_path).exists());
+
+        state.close_for_window(&slot).unwrap();
     }
 
     #[test]

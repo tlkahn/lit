@@ -759,13 +759,14 @@ describe("ContentArea PDF rendering", () => {
     usePaneStore.getState().setPanePage("test-pane", "doc.pdf");
 
     mockInvoke((cmd, args) => {
-      if (cmd === "pdf_open") return { page_count: 2, path: (args as Record<string, unknown>)?.path ?? "" };
+      if (cmd === "pdf_open") return { page_count: 2, path: (args as Record<string, unknown>)?.path ?? "", initial_pages: [] };
       if (cmd === "pdf_render_page") {
         const idx = (args as Record<string, unknown>)?.pageIndex ?? 0;
         return { page_index: idx, png_path: `/tmp/lit-pdf/page_${idx}.png`, width: 100, height: 200 };
       }
       if (cmd === "pdf_prefetch") return null;
       if (cmd === "pdf_close") return null;
+      if (cmd === "pdf_cancel_precache") return null;
       if (cmd === "get_keymaps") return [];
       throw new Error(`Unknown command: ${cmd}`);
     });
@@ -799,13 +800,14 @@ describe("ContentArea PDF rendering", () => {
     usePaneStore.getState().setPanePage("test-pane", "doc.pdf");
 
     mockInvoke((cmd, args) => {
-      if (cmd === "pdf_open") return { page_count: 2, path: (args as Record<string, unknown>)?.path ?? "" };
+      if (cmd === "pdf_open") return { page_count: 2, path: (args as Record<string, unknown>)?.path ?? "", initial_pages: [] };
       if (cmd === "pdf_render_page") {
         const idx = (args as Record<string, unknown>)?.pageIndex ?? 0;
         return { page_index: idx, png_path: `/tmp/lit-pdf/page_${idx}.png`, width: 100, height: 200 };
       }
       if (cmd === "pdf_prefetch") return null;
       if (cmd === "pdf_close") return null;
+      if (cmd === "pdf_cancel_precache") return null;
       if (cmd === "get_keymaps") return [];
       throw new Error(`Unknown command: ${cmd}`);
     });
@@ -838,13 +840,14 @@ describe("ContentArea PDF rendering", () => {
     usePaneStore.getState().setPanePage("test-pane", "doc.pdf");
 
     mockInvoke((cmd, args) => {
-      if (cmd === "pdf_open") return { page_count: 2, path: (args as Record<string, unknown>)?.path ?? "" };
+      if (cmd === "pdf_open") return { page_count: 2, path: (args as Record<string, unknown>)?.path ?? "", initial_pages: [] };
       if (cmd === "pdf_render_page") {
         const idx = (args as Record<string, unknown>)?.pageIndex ?? 0;
         return { page_index: idx, png_path: `/tmp/lit-pdf/page_${idx}.png`, width: 100, height: 200 };
       }
       if (cmd === "pdf_prefetch") return null;
       if (cmd === "pdf_close") return null;
+      if (cmd === "pdf_cancel_precache") return null;
       if (cmd === "get_keymaps") return [];
       throw new Error(`Unknown command: ${cmd}`);
     });

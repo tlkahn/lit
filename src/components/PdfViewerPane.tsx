@@ -1,7 +1,10 @@
 import React, { useCallback, useEffect } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePanePdfLinkStore } from "../stores/panePdfLink";
+import { usePdfCacheProgressStore } from "../stores/pdfCacheProgress";
+import type { PdfCacheProgress } from "../lib/ipc";
 import { registerPdfGoToPage, unregisterPdfGoToPage, consumeForwardSync } from "../lib/pdfPaneRef";
 import { getPaneView } from "../lib/editorViewRef";
 import { getCachedPageMarkers } from "../lib/pageMarkers";
@@ -61,6 +64,37 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
   // linked editor pane never drives a stale/closed PDF viewer.
   useEffect(() => {
     return () => unregisterPdfGoToPage(paneId);
+  }, [paneId]);
+
+  // Subscribe to the backend's window-scoped precache progress events and route
+  // only this pane's events into the progress store. The slot is the composite
+  // "<window_label>:<paneId>"; paneIds are colon-free UUIDs, so the segment after
+  // the LAST ':' is unambiguously this pane's id. `done` events clear the entry so
+  // the status-bar indicator disappears; other events update it.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let active = true;
+    listen<PdfCacheProgress>("lit:pdf-cache-progress", (e) => {
+      const p = e.payload;
+      const slotPane = p.slot.slice(p.slot.lastIndexOf(":") + 1);
+      if (slotPane !== paneId) return;
+      const store = usePdfCacheProgressStore.getState();
+      if (p.done) store.clear(p.slot);
+      else store.update(p.slot, p.current, p.total, p.done);
+    }).then((un) => {
+      if (active) unlisten = un;
+      else un();
+    });
+    return () => {
+      active = false;
+      unlisten?.();
+      // Drop any lingering progress entry for this pane so a closed PDF never
+      // leaves a stale "Caching PDF…" indicator behind.
+      const store = usePdfCacheProgressStore.getState();
+      for (const slot of [...store.progress.keys()]) {
+        if (slot.slice(slot.lastIndexOf(":") + 1) === paneId) store.clear(slot);
+      }
+    };
   }, [paneId]);
 
   const borderClass = isFocused ? "border-interactive-accent" : "border-transparent";

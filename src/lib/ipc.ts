@@ -677,8 +677,26 @@ export interface RenderedPage {
   height: number;
 }
 
-export async function pdfOpen(path: string, paneId: string): Promise<PdfInfo> {
-  return invoke<PdfInfo>("pdf_open", { path, paneId });
+export interface PdfOpenResult {
+  page_count: number;
+  path: string;
+  initial_pages: RenderedPage[];
+}
+
+/** Payload of the `"lit:pdf-cache-progress"` event emitted during background precache. */
+export interface PdfCacheProgress {
+  slot: string;
+  current: number;
+  total: number;
+  done: boolean;
+}
+
+export async function pdfOpen(
+  path: string,
+  paneId: string,
+  dpi: number,
+): Promise<PdfOpenResult> {
+  return invoke<PdfOpenResult>("pdf_open", { path, paneId, dpi });
 }
 
 export async function pdfRenderPage(
@@ -695,6 +713,10 @@ export async function pdfPrefetch(pageIndex: number, dpi: number, paneId: string
 
 export async function pdfClose(paneId: string): Promise<void> {
   return invoke<void>("pdf_close", { paneId });
+}
+
+export async function pdfCancelPrecache(paneId: string): Promise<void> {
+  return invoke<void>("pdf_cancel_precache", { paneId });
 }
 
 /**

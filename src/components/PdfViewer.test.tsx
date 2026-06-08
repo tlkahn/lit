@@ -20,7 +20,7 @@ beforeEach(() => {
   mockInvoke((cmd, args) => {
     switch (cmd) {
       case "pdf_open":
-        return mockPdfInfo;
+        return { ...mockPdfInfo, initial_pages: [mockRenderedPage] };
       case "pdf_render_page": {
         const a = args as Record<string, unknown>;
         const idx = a?.pageIndex ?? 0;
@@ -29,6 +29,8 @@ beforeEach(() => {
       case "pdf_prefetch":
         return null;
       case "pdf_close":
+        return null;
+      case "pdf_cancel_precache":
         return null;
       default:
         throw new Error(`Unknown command: ${cmd}`);
@@ -102,10 +104,11 @@ describe("PdfViewer", () => {
     });
 
     const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("pdf_open", { path: "/test/doc.pdf", paneId: "pane-1" });
+    expect(invoke).toHaveBeenCalledWith("pdf_open", { path: "/test/doc.pdf", paneId: "pane-1", dpi: 144 });
 
     unmount();
 
+    expect(invoke).toHaveBeenCalledWith("pdf_cancel_precache", { paneId: "pane-1" });
     expect(invoke).toHaveBeenCalledWith("pdf_close", { paneId: "pane-1" });
   });
 
@@ -130,7 +133,7 @@ describe("PdfViewer", () => {
     });
   });
 
-  it("passes DPI = 144 × devicePixelRatio to pdfRenderPage", async () => {
+  it("passes DPI = 144 × devicePixelRatio to pdfOpen", async () => {
     Object.defineProperty(window, "devicePixelRatio", { value: 2 });
     render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
 
@@ -139,11 +142,85 @@ describe("PdfViewer", () => {
     });
 
     const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith(
+      "pdf_open",
+      expect.objectContaining({ dpi: 288, paneId: "pane-1" }),
+    );
+  });
+
+  it("passes DPI = 144 × devicePixelRatio to pdfRenderPage for an uncached page", async () => {
+    Object.defineProperty(window, "devicePixelRatio", { value: 2 });
+    const user = userEvent.setup();
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+    });
+
+    // Page 1 is NOT in initial_pages, so navigation to it falls back to pdfRenderPage.
+    await user.click(screen.getByTestId("pdf-next"));
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 2 / 3");
+    });
+
+    const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("pdf_render_page", {
-      pageIndex: 0,
+      pageIndex: 1,
       dpi: 288,
       paneId: "pane-1",
     });
+  });
+
+  it("populates the frontend cache from initial_pages and shows page 0 without a render call", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+    });
+
+    // Page 0 came from initial_pages: no pdf_render_page call for index 0.
+    const renderZeroCalls = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
+      .filter((c: unknown[]) => c[0] === "pdf_render_page")
+      .filter((c: unknown[]) => (c[1] as { pageIndex?: number })?.pageIndex === 0);
+    expect(renderZeroCalls).toHaveLength(0);
+    expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+  });
+
+  it("falls back to pdfRenderPage(0) when initial_pages is empty", async () => {
+    mockInvoke((cmd, args) => {
+      switch (cmd) {
+        case "pdf_open":
+          return { ...mockPdfInfo, initial_pages: [] };
+        case "pdf_render_page": {
+          const a = args as Record<string, unknown>;
+          const idx = a?.pageIndex ?? 0;
+          return { ...mockRenderedPage, page_index: idx, png_path: `/tmp/lit-pdf-test/page_${idx}.png` };
+        }
+        case "pdf_prefetch":
+          return null;
+        case "pdf_close":
+          return null;
+        case "pdf_cancel_precache":
+          return null;
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+    });
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("pdf_render_page", {
+      pageIndex: 0,
+      dpi: 144,
+      paneId: "pane-1",
+    });
+    expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
   });
 
   it("sets CSS width to rendered.width / devicePixelRatio", async () => {
@@ -198,7 +275,7 @@ describe("PdfViewer", () => {
     mockInvoke((cmd, args) => {
       switch (cmd) {
         case "pdf_open":
-          return { page_count: 2, path: "/test/other.pdf" };
+          return { page_count: 2, path: "/test/other.pdf", initial_pages: [] };
         case "pdf_render_page": {
           const a = args as Record<string, unknown>;
           const idx = a?.pageIndex ?? 0;
@@ -207,6 +284,8 @@ describe("PdfViewer", () => {
         case "pdf_prefetch":
           return null;
         case "pdf_close":
+          return null;
+        case "pdf_cancel_precache":
           return null;
         default:
           throw new Error(`Unknown command: ${cmd}`);
@@ -359,12 +438,12 @@ describe("PdfViewer", () => {
     expect(screen.queryByTestId("pdf-page-loading")).not.toBeInTheDocument();
   });
 
-  it("evicts oldest entry when cache exceeds MAX_CACHE", async () => {
+  it("does not evict visited pages: navigating back is an in-memory cache hit (no re-render)", async () => {
     const bigPdfInfo = { page_count: 14, path: "/test/big.pdf" };
     mockInvoke((cmd, args) => {
       switch (cmd) {
         case "pdf_open":
-          return bigPdfInfo;
+          return { ...bigPdfInfo, initial_pages: [mockRenderedPage] };
         case "pdf_render_page": {
           const a = args as Record<string, unknown>;
           const idx = a?.pageIndex ?? 0;
@@ -373,6 +452,8 @@ describe("PdfViewer", () => {
         case "pdf_prefetch":
           return null;
         case "pdf_close":
+          return null;
+        case "pdf_cancel_precache":
           return null;
         default:
           throw new Error(`Unknown command: ${cmd}`);
@@ -386,8 +467,6 @@ describe("PdfViewer", () => {
       expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 14");
     });
 
-    // Visit pages 1..13 (more than MAX_CACHE distinct entries) so the earliest
-    // pages are guaranteed to be evicted regardless of the exact MAX_CACHE.
     for (let i = 0; i < 13; i++) {
       await user.click(screen.getByTestId("pdf-next"));
       await waitFor(() => {
@@ -398,20 +477,6 @@ describe("PdfViewer", () => {
     const { invoke } = await import("@tauri-apps/api/core");
     (invoke as unknown as ReturnType<typeof import("vitest").vi.fn>).mockClear();
 
-    mockInvoke((cmd, args) => {
-      switch (cmd) {
-        case "pdf_render_page": {
-          const a = args as Record<string, unknown>;
-          const idx = a?.pageIndex ?? 0;
-          return { ...mockRenderedPage, page_index: idx, png_path: `/tmp/lit-pdf-test/page_${idx}.png` };
-        }
-        case "pdf_prefetch":
-          return null;
-        default:
-          throw new Error(`Unknown command: ${cmd}`);
-      }
-    });
-
     for (let i = 12; i >= 0; i--) {
       await user.click(screen.getByTestId("pdf-prev"));
       await waitFor(() => {
@@ -421,78 +486,7 @@ describe("PdfViewer", () => {
 
     const renderCalls = (invoke as unknown as ReturnType<typeof import("vitest").vi.fn>).mock.calls
       .filter((c: unknown[]) => c[0] === "pdf_render_page");
-    expect(renderCalls.length).toBeGreaterThan(0);
-  });
-
-  it("retains the 10 most-recent pages in the render cache (MAX_CACHE=10)", async () => {
-    // 12-page doc. Visit pages 0..10 in order (11 distinct cache entries). With
-    // MAX_CACHE=10 the cache keeps the 10 most-recent (pages 1..10); only page 0
-    // is evicted. Returning to page 1 must be a cache hit (no re-render), while
-    // returning to page 0 must re-render. At MAX_CACHE=5 page 1 would also be
-    // evicted, so this test fails until MAX_CACHE is bumped to 10.
-    const bigPdfInfo = { page_count: 12, path: "/test/big.pdf" };
-    let goToPage: ((i: number) => void) | null = null;
-    mockInvoke((cmd, args) => {
-      switch (cmd) {
-        case "pdf_open":
-          return bigPdfInfo;
-        case "pdf_render_page": {
-          const a = args as Record<string, unknown>;
-          const idx = a?.pageIndex ?? 0;
-          return { ...mockRenderedPage, page_index: idx, png_path: `/tmp/lit-pdf-test/page_${idx}.png` };
-        }
-        case "pdf_prefetch":
-          return null;
-        case "pdf_close":
-          return null;
-        default:
-          throw new Error(`Unknown command: ${cmd}`);
-      }
-    });
-
-    render(
-      <PdfViewer
-        filePath="/test/big.pdf"
-        paneId="pane-1"
-        registerGoToPage={(fn) => { goToPage = fn; }}
-      />,
-    );
-    await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 12");
-    });
-    expect(goToPage).not.toBeNull();
-
-    // Visit pages 1..10 sequentially (page 0 already loaded on mount).
-    for (let i = 1; i <= 10; i++) {
-      goToPage!(i);
-      await waitFor(() => {
-        expect(screen.getByTestId("pdf-page-indicator").textContent).toBe(`Page ${i + 1} / 12`);
-      });
-    }
-
-    const { invoke } = await import("@tauri-apps/api/core");
-    const invokeMock = invoke as unknown as ReturnType<typeof vi.fn>;
-    const rendersOf = (idx: number) =>
-      invokeMock.mock.calls.filter(
-        (c: unknown[]) =>
-          c[0] === "pdf_render_page" && (c[1] as { pageIndex?: number })?.pageIndex === idx,
-      ).length;
-
-    // Return to page 1 — should be a retained cache hit (no new render).
-    const page1Before = rendersOf(1);
-    goToPage!(1);
-    await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 2 / 12");
-    });
-    expect(rendersOf(1)).toBe(page1Before);
-
-    // Return to page 0 — evicted, so it must re-render.
-    const page0Before = rendersOf(0);
-    goToPage!(0);
-    await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 12");
-    });
-    expect(rendersOf(0)).toBeGreaterThan(page0Before);
+    expect(renderCalls).toHaveLength(0);
   });
 
   it("J navigates to the next page", async () => {

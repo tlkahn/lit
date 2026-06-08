@@ -6,6 +6,7 @@ import { usePreferencesStore } from "../stores/preferences";
 import { useStatusMessageStore } from "../stores/statusMessage";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import { usePanePdfLinkStore } from "../stores/panePdfLink";
+import { usePdfCacheProgressStore } from "../stores/pdfCacheProgress";
 import { getNextUntitledName } from "../lib/naming";
 import { BufferStack } from "./BufferStack";
 import type { TabId } from "../stores/bottomPanel";
@@ -99,6 +100,40 @@ function PdfLinkIndicator() {
   return (
     <span data-testid="status-bar-pdf-link" className="ml-3 text-text-muted">
       {label}
+    </span>
+  );
+}
+
+function PdfCacheIndicator() {
+  const focusedPaneId = usePaneStore((s) => s.focusedPaneId);
+  // The progress store is keyed by the full slot "<window_label>:<paneId>" but
+  // here we only know the focused paneId. paneIds are colon-free UUIDs, so the
+  // segment after the LAST ':' is unambiguously the paneId. Subscribing to the
+  // Map (which is replaced on every update/clear) re-runs this selector so the
+  // bar animates and disappears.
+  const entry = usePdfCacheProgressStore((s) => {
+    for (const [slot, e] of s.progress) {
+      if (slot.slice(slot.lastIndexOf(":") + 1) === focusedPaneId) return e;
+    }
+    return null;
+  });
+
+  if (!entry || entry.done || entry.total === 0) return null;
+  const pct = Math.round((entry.current / entry.total) * 100);
+
+  return (
+    <span
+      data-testid="status-bar-pdf-cache"
+      className="ml-3 flex items-center gap-2 text-text-muted"
+    >
+      <span>Caching PDF… {pct}%</span>
+      <span className="h-1.5 w-16 overflow-hidden rounded-full bg-bg-hover">
+        <span
+          data-testid="status-bar-pdf-cache-fill"
+          className="block h-full rounded-full bg-interactive-accent transition-all duration-200"
+          style={{ width: `${pct}%` }}
+        />
+      </span>
     </span>
   );
 }
@@ -207,6 +242,7 @@ export function StatusBar() {
         )}
         <BottomPanelTabs />
         <PdfLinkIndicator />
+        <PdfCacheIndicator />
         {line > 0 && <span data-testid="status-bar-cursor" className="ml-3">Ln {line}, Col {col}</span>}
       </div>
     </div>

@@ -6,6 +6,8 @@ import { Text } from "@codemirror/state";
 import { usePaneStore } from "../stores/panes";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePanePdfLinkStore } from "../stores/panePdfLink";
+import { usePdfCacheProgressStore } from "../stores/pdfCacheProgress";
+import { mockListen, emitMockEvent } from "../test/tauri-mock";
 import * as pdfPaneRef from "../lib/pdfPaneRef";
 import {
   registerPaneView,
@@ -59,6 +61,7 @@ beforeEach(() => {
   });
   useWorkspaceStore.setState({ workspacePath: "/ws" });
   usePanePdfLinkStore.setState({ links: new Map(), lastSyncedPage: null });
+  usePdfCacheProgressStore.setState({ progress: new Map() });
   pdfPaneRef._resetForTesting();
   resetEditorViewRef();
   resetMarkerCache();
@@ -180,6 +183,78 @@ describe("PdfViewerPane", () => {
       // Second click with no flag: reverse sync fires normally.
       fireEvent.click(getByTestId("fire-page-change"));
       expect(view.dispatch).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("pdf cache progress events", () => {
+    it("updates the progress store on an event whose slot ends with this paneId", () => {
+      mockListen();
+      render(<PdfViewerPane paneId="p1" />);
+
+      emitMockEvent("lit:pdf-cache-progress", {
+        slot: "main:p1",
+        current: 3,
+        total: 20,
+        done: false,
+      });
+
+      expect(usePdfCacheProgressStore.getState().progress.get("main:p1")).toEqual({
+        current: 3,
+        total: 20,
+        done: false,
+      });
+    });
+
+    it("clears the store entry when a done event arrives", () => {
+      mockListen();
+      render(<PdfViewerPane paneId="p1" />);
+
+      emitMockEvent("lit:pdf-cache-progress", {
+        slot: "main:p1",
+        current: 10,
+        total: 20,
+        done: false,
+      });
+      expect(usePdfCacheProgressStore.getState().progress.has("main:p1")).toBe(true);
+
+      emitMockEvent("lit:pdf-cache-progress", {
+        slot: "main:p1",
+        current: 20,
+        total: 20,
+        done: true,
+      });
+      expect(usePdfCacheProgressStore.getState().progress.has("main:p1")).toBe(false);
+    });
+
+    it("ignores events whose slot's last segment is not this paneId", () => {
+      mockListen();
+      render(<PdfViewerPane paneId="p1" />);
+
+      emitMockEvent("lit:pdf-cache-progress", {
+        slot: "main:other-pane",
+        current: 3,
+        total: 20,
+        done: false,
+      });
+
+      expect(usePdfCacheProgressStore.getState().progress.has("main:other-pane")).toBe(false);
+      expect(usePdfCacheProgressStore.getState().progress.has("main:p1")).toBe(false);
+    });
+
+    it("clears any lingering progress entry for this pane on unmount", () => {
+      mockListen();
+      const { unmount } = render(<PdfViewerPane paneId="p1" />);
+
+      emitMockEvent("lit:pdf-cache-progress", {
+        slot: "main:p1",
+        current: 5,
+        total: 20,
+        done: false,
+      });
+      expect(usePdfCacheProgressStore.getState().progress.has("main:p1")).toBe(true);
+
+      unmount();
+      expect(usePdfCacheProgressStore.getState().progress.has("main:p1")).toBe(false);
     });
   });
 });
