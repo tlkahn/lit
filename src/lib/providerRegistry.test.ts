@@ -124,8 +124,18 @@ describe("slugify", () => {
     expect(slugify("  Leading and trailing  ")).toBe("custom-leading-and-trailing");
   });
 
-  it("yields exactly 'custom-' for all-non-alphanumeric (e.g. CJK) names", () => {
-    expect(slugify("已经")).toBe("custom-");
+  it("yields a usable, non-degenerate id for all-non-alphanumeric (e.g. CJK) names", () => {
+    const id = slugify("已经");
+    expect(id).not.toBe("custom-");
+    expect(id).toMatch(/^custom-[a-z0-9]+$/);
+  });
+
+  it("is deterministic for the same all-non-alphanumeric name", () => {
+    expect(slugify("本地模型")).toBe(slugify("本地模型"));
+  });
+
+  it("produces distinct ids for distinct all-non-alphanumeric names", () => {
+    expect(slugify("本地模型")).not.toBe(slugify("已经"));
   });
 
   it("does not produce double hyphens for hyphenated names", () => {

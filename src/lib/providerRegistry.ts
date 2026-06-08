@@ -11,9 +11,10 @@ export interface ProviderMeta {
   models: ModelInfo[];
 }
 
-// A user-defined provider. `id` is always "custom-" prefixed (see `slugify`).
-// `contextWindow` defaults to 128000; that default is applied by the form/store
-// layer, not by this type.
+// A user-defined provider. `id` is always "custom-" prefixed with a non-empty
+// suffix (slugified name, or a deterministic hash for all-non-alphanumeric names;
+// see `slugify`). `contextWindow` defaults to 128000; that default is applied by
+// the form/store layer, not by this type.
 export interface CustomProviderDef {
   id: string;
   name: string;
@@ -141,11 +142,26 @@ export function providerIdForModel(model: string): string {
   return "openai";
 }
 
+// Deterministic 32-bit FNV-1a hash of a string, returned as a base36 string so
+// it only contains [a-z0-9]. Used to derive a stable, non-empty id suffix for
+// names that strip to nothing (e.g. CJK-only names). Module-private.
+function hashName(name: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < name.length; i++) {
+    h ^= name.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
+}
+
 // Derive a stable provider id from a human-readable name. Lowercases, collapses
 // runs of non-alphanumeric characters into single hyphens, trims leading/trailing
-// hyphens, and prefixes "custom-". An all-non-alphanumeric name yields "custom-".
+// hyphens, and prefixes "custom-". When the name strips to nothing (e.g. an
+// all-non-alphanumeric name like a CJK-only name), falls back to a deterministic
+// hash suffix so a usable, unique id is always produced (never bare "custom-").
 export function slugify(name: string): string {
-  return "custom-" + name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  const core = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return "custom-" + (core || hashName(name));
 }
 
 // Convert a custom provider definition into the same ProviderMeta shape used by

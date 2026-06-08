@@ -46,13 +46,11 @@ export function LlmProviderSettings({ ensureUnlocked }: LlmProviderSettingsProps
     setLocalBaseUrl("");
     setBaseUrlExpanded(false);
     const reqId = ++providerChangeReq.current;
+    setLlmProvider({ providerId: newId, model, baseUrl: undefined, apiKeySet: false });
     hasApiKey(newId).then((has) => {
       if (reqId !== providerChangeReq.current) return;
-      setLlmProvider({ providerId: newId, model, baseUrl: undefined, apiKeySet: has });
-    }).catch(() => {
-      if (reqId !== providerChangeReq.current) return;
-      setLlmProvider({ providerId: newId, model, baseUrl: undefined, apiKeySet: false });
-    });
+      setLlmProvider({ apiKeySet: has });
+    }).catch(() => {});
   }
 
   function handleModelChange(value: string) {
@@ -70,10 +68,13 @@ export function LlmProviderSettings({ ensureUnlocked }: LlmProviderSettingsProps
   }
 
   function handleDelete() {
-    const label = registry[llmProvider.providerId]?.label ?? llmProvider.providerId;
+    const deletedId = llmProvider.providerId;
+    const label = registry[deletedId]?.label ?? deletedId;
     if (!window.confirm(`Delete custom provider "${label}"?`)) return;
-    removeCustomProvider(llmProvider.providerId);
+    // Set the fallback provider synchronously BEFORE removing the custom def so the
+    // store never holds a selected provider that is absent from the merged registry.
     handleProviderChange(PROVIDER_ORDER[0]!);
+    removeCustomProvider(deletedId);
   }
 
   const needsApiKey = registry[llmProvider.providerId]?.needsApiKey ?? true;

@@ -1257,6 +1257,18 @@ describe("PreferencesStore", () => {
       expect(result.apiKeySet).toBe(true);
     });
 
+    it("defaults model when persisted llm.provider model is empty string", () => {
+      const result = migrateLlmProvider({
+        ...base,
+        "llm.provider": {
+          providerId: "anthropic",
+          model: "",
+          apiKeySet: false,
+        },
+      });
+      expect(result.model).toBe("claude-sonnet-4-6");
+    });
+
     it("defaults to claude-sonnet-4-6 when llm.model is missing", () => {
       const result = migrateLlmProvider(base);
       expect(result.model).toBe("claude-sonnet-4-6");
@@ -1336,6 +1348,69 @@ describe("PreferencesStore", () => {
     const state = usePreferencesStore.getState();
     expect(state.llmProvider.providerId).toBe("anthropic");
     expect(state.llmProvider.apiKeySet).toBe(false);
+  });
+
+  it("loadPreferences persists the migrated llm.provider when none existed on disk", async () => {
+    const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+    mockInvoke((cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "llm.model": "gpt-4o",
+          "llm.openai.baseUrl": "https://custom.openai.com",
+        };
+      }
+      if (cmd === "has_api_key") return false;
+      return undefined;
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    await new Promise((r) => setTimeout(r, 0));
+
+    const providerWrites = calls.filter(
+      (c) => c.cmd === "set_preference" && c.args?.key === "llm.provider",
+    );
+    expect(providerWrites).toHaveLength(1);
+    expect(providerWrites[0]?.args?.value).toEqual({
+      providerId: "openai",
+      model: "gpt-4o",
+      baseUrl: "https://custom.openai.com",
+      apiKeySet: false,
+    });
+  });
+
+  it("loadPreferences does NOT persist llm.provider when it already exists on disk", async () => {
+    const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+    mockInvoke((cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "llm.provider": {
+            providerId: "openrouter",
+            model: "anthropic/claude-3.5-sonnet",
+            apiKeySet: true,
+          },
+        };
+      }
+      if (cmd === "has_api_key") return false;
+      return undefined;
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    await new Promise((r) => setTimeout(r, 0));
+
+    const providerWrites = calls.filter(
+      (c) => c.cmd === "set_preference" && c.args?.key === "llm.provider",
+    );
+    expect(providerWrites).toHaveLength(0);
   });
 
   it("maps invalid annotations.builderDefaults to null", async () => {
@@ -1446,6 +1521,32 @@ describe("PreferencesStore", () => {
 
       await usePreferencesStore.getState().loadPreferences();
       expect(usePreferencesStore.getState().llmCustomProviders).toEqual([]);
+    });
+
+    it("keeps valid entries and drops only the malformed ones in a mixed array", async () => {
+      const invalidDef = {
+        id: "custom-broken",
+        name: "Broken",
+        baseUrl: "http://localhost:9000/v1",
+        needsApiKey: true,
+        modelId: "m",
+        // contextWindow omitted -> fails isCustomProviderDef
+      };
+      mockInvoke((cmd) => {
+        if (cmd === "get_preferences") {
+          return {
+            ...baseGet,
+            "llm.customProviders": [sampleDef, invalidDef],
+          };
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      mockListen();
+
+      await usePreferencesStore.getState().loadPreferences();
+      const state = usePreferencesStore.getState();
+      expect(state.llmCustomProviders).toHaveLength(1);
+      expect(state.llmCustomProviders).toEqual([sampleDef]);
     });
 
     it("updates llmCustomProviders on preferences://changed event", async () => {

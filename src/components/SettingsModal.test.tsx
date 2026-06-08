@@ -803,6 +803,20 @@ describe("SettingsModal", () => {
     expect(container.querySelector("[data-testid='settings-llmSystemPrompt']")).toBeTruthy();
   });
 
+  it("search 'provider' keeps the LLM provider UI reachable", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "provider" } });
+    expect(container.querySelector("[data-testid='llm-provider-settings']")).toBeTruthy();
+  });
+
+  it("search 'model' keeps the LLM provider UI reachable", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "model" } });
+    expect(container.querySelector("[data-testid='llm-provider-settings']")).toBeTruthy();
+  });
+
   // --- experimentalUnlinkedReferences (ToggleSwitch) ---
 
   describe("experimentalUnlinkedReferences", () => {
@@ -1369,16 +1383,17 @@ describe("SettingsModal", () => {
   it("arrow navigation wraps through matching categories during search", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
-    // "mode" matches Appearance (Dark Mode, Default View Mode) and Annotations (Display Mode)
+    // "mode" matches Appearance (Dark Mode, Default View Mode), Annotations
+    // (Display Mode), and LLM (via the "model" search keyword).
     fireEvent.change(search, { target: { value: "mode" } });
 
     const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
     const buttons = Array.from(sidebar.querySelectorAll("button"));
-    const annotationsBtn = buttons.find((b) => b.textContent === "Annotations")!;
+    const llmBtn = buttons.find((b) => b.textContent === "LLM")!;
 
-    // Start at Annotations (last matching category)
-    fireEvent.click(annotationsBtn);
-    annotationsBtn.focus();
+    // Start at LLM (last matching category)
+    fireEvent.click(llmBtn);
+    llmBtn.focus();
 
     // ArrowDown should wrap past remaining non-matching categories to Appearance (first match)
     fireEvent.keyDown(sidebar, { key: "ArrowDown" });
@@ -1606,6 +1621,42 @@ describe("SettingsModal", () => {
       await vi.waitFor(() => {
         expect(usePreferencesStore.getState().llmProvider.apiKeySet).toBe(true);
       });
+    });
+
+    it("does not apply stale apiKeySet when provider switches before hasApiKey resolves", async () => {
+      let resolveHas!: (value: boolean) => void;
+      const hasPromise = new Promise<boolean>((r) => {
+        resolveHas = r;
+      });
+      mockInvoke((cmd, args) => {
+        invokeCalls.push({ cmd, args: args ?? {} });
+        if (cmd === "has_api_key" && args?.provider === "anthropic") return hasPromise;
+        if (cmd === "has_api_key") return false;
+        if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
+        return undefined;
+      });
+      usePreferencesStore.setState({
+        llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", apiKeySet: false },
+      });
+      // exists=false / unlocked=false is the default-fresh path so the effect runs.
+      await act(async () => {
+        render(<SettingsModal open={true} onClose={vi.fn()} />);
+      });
+      // Effect fired has_api_key("anthropic") but it has NOT resolved yet.
+      // User switches providers in the meantime.
+      await act(async () => {
+        usePreferencesStore.setState({
+          llmProvider: { providerId: "openai", model: "gpt-4o", apiKeySet: false },
+        });
+      });
+      // Now the stale anthropic check resolves with `true`.
+      await act(async () => {
+        resolveHas(true);
+        await hasPromise;
+      });
+      // The stale anthropic value must NOT clobber the openai provider.
+      expect(usePreferencesStore.getState().llmProvider.providerId).toBe("openai");
+      expect(usePreferencesStore.getState().llmProvider.apiKeySet).toBe(false);
     });
   });
 

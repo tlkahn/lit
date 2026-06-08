@@ -182,6 +182,31 @@ describe("LlmProviderSettings", () => {
     spy.mockRestore();
   });
 
+  it("provider change updates the store synchronously before has_api_key resolves", async () => {
+    let resolveOpenai!: (v: boolean) => void;
+    const deferred = new Promise<boolean>((r) => { resolveOpenai = r; });
+    const spy = vi.spyOn(ipc, "hasApiKey").mockReturnValue(deferred);
+
+    const { container } = render(<LlmProviderSettings ensureUnlocked={ensureUnlocked} />);
+    const select = container.querySelector("[data-testid='settings-llmProvider']") as HTMLSelectElement;
+
+    // Fire the change WITHOUT resolving the deferred has_api_key promise.
+    fireEvent.change(select, { target: { value: "openai" } });
+
+    // Store must be updated synchronously (optimistically) — not waiting on the IPC round-trip.
+    const provider = usePreferencesStore.getState().llmProvider;
+    expect(provider.providerId).toBe("openai");
+    expect(provider.model).toBe("gpt-4o");
+    expect(provider.baseUrl).toBeUndefined();
+    expect(provider.apiKeySet).toBe(false);
+    expect(select.value).toBe("openai");
+
+    // Resolving has_api_key to true upgrades apiKeySet via the staleness-guarded .then().
+    await act(async () => { resolveOpenai(true); await deferred; });
+    expect(usePreferencesStore.getState().llmProvider.apiKeySet).toBe(true);
+    spy.mockRestore();
+  });
+
   it("dropdown options follow merged provider order including custom providers", () => {
     const def = customDef();
     usePreferencesStore.setState({ llmCustomProviders: [def] });
@@ -249,6 +274,38 @@ describe("LlmProviderSettings", () => {
     await vi.waitFor(() => {
       expect(usePreferencesStore.getState().llmProvider.providerId).toBe(PROVIDER_ORDER[0]);
     });
+  });
+
+  it("Delete flow: store never holds a selected provider missing from the registry mid-delete", async () => {
+    const def = customDef();
+    usePreferencesStore.setState({
+      llmCustomProviders: [def],
+      llmProvider: { providerId: def.id, model: def.modelId, apiKeySet: false },
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const snapshots: { providerId: string; hasDefInList: boolean }[] = [];
+    const unsub = usePreferencesStore.subscribe((s) => {
+      snapshots.push({
+        providerId: s.llmProvider.providerId,
+        hasDefInList: s.llmCustomProviders.some((p) => p.id === def.id),
+      });
+    });
+
+    const { container } = render(<LlmProviderSettings ensureUnlocked={ensureUnlocked} />);
+    await act(async () => {
+      fireEvent.click(container.querySelector("[data-testid='custom-provider-delete']")!);
+    });
+    unsub();
+
+    // Invariant: at no emitted snapshot is the deleted custom provider still selected
+    // while it has already been removed from the custom provider list (registry-missing-but-selected).
+    const inconsistent = snapshots.filter((s) => s.providerId === def.id && !s.hasDefInList);
+    expect(inconsistent).toEqual([]);
+
+    // Final state: provider removed and selection moved to first built-in.
+    expect(usePreferencesStore.getState().llmCustomProviders.find((p) => p.id === def.id)).toBeUndefined();
+    expect(usePreferencesStore.getState().llmProvider.providerId).toBe(PROVIDER_ORDER[0]);
   });
 
   it("Delete flow: confirm false leaves provider intact", () => {

@@ -24,6 +24,9 @@ interface SettingEntryBase {
   testId: string;
   nullable?: boolean;
   group?: string;
+  /** Extra search-only terms; never rendered. Lets an entry surface for
+   *  related queries whose words are absent from its visible label. */
+  keywords?: string[];
 }
 
 interface ToggleEntry extends SettingEntryBase { controlType: "toggle"; }
@@ -33,8 +36,11 @@ interface TextAreaEntry extends SettingEntryBase { controlType: "textarea"; }
 interface DropdownEntry extends SettingEntryBase { controlType: "dropdown"; options?: { value: string; label: string }[]; }
 interface PasswordEntry extends SettingEntryBase { controlType: "password"; provider: string; }
 interface SliderEntry extends SettingEntryBase { controlType: "slider"; min: number; max: number; step: number; }
+/** Renders nothing itself (a dedicated component owns the UI). Exists purely
+ *  to give a section a searchable anchor so search cannot hide it. */
+interface PlaceholderEntry extends SettingEntryBase { controlType: "custom"; }
 
-export type SettingEntry = ToggleEntry | SegmentedEntry | TextEntry | TextAreaEntry | DropdownEntry | PasswordEntry | SliderEntry;
+export type SettingEntry = ToggleEntry | SegmentedEntry | TextEntry | TextAreaEntry | DropdownEntry | PasswordEntry | SliderEntry | PlaceholderEntry;
 
 export const SETTINGS_REGISTRY: SettingEntry[] = [
   // Appearance
@@ -208,6 +214,15 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   // LLM
   {
     category: "LLM",
+    label: "LLM Provider",
+    storeField: "llmProvider",
+    jsonKey: "llm.provider",
+    controlType: "custom",
+    testId: "settings-llmProviderSearch",
+    keywords: ["model", "api key", "openai", "anthropic", "gemini", "mistral", "base url", "provider"],
+  },
+  {
+    category: "LLM",
     label: "System Prompt",
     storeField: "llmSystemPrompt",
     jsonKey: "llm.systemPrompt",
@@ -373,9 +388,17 @@ export function filterSettings(
   }
   const results: (FilteredSetting & { score: number })[] = [];
   for (const entry of entries) {
-    const match = fuzzyMatch(query, entry.label);
-    if (match) {
-      results.push({ entry, indices: match.indices, score: match.score });
+    const labelMatch = fuzzyMatch(query, entry.label);
+    let bestScore = labelMatch ? labelMatch.score : -1;
+    // Keyword matches only affect inclusion/sorting — their indices reference
+    // the keyword string, not entry.label, so we never expose them for
+    // highlighting. Use label indices when the label matched, else [].
+    for (const keyword of entry.keywords ?? []) {
+      const kwMatch = fuzzyMatch(query, keyword);
+      if (kwMatch && kwMatch.score > bestScore) bestScore = kwMatch.score;
+    }
+    if (bestScore >= 0) {
+      results.push({ entry, indices: labelMatch ? labelMatch.indices : [], score: bestScore });
     }
   }
   results.sort((a, b) => b.score - a.score);

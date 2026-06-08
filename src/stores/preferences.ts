@@ -103,7 +103,7 @@ export function migrateLlmProvider(prefs: Preferences): LlmProviderConfig {
     const obj = existing as Record<string, unknown>;
     return {
       providerId: obj.providerId as string,
-      model: (obj.model as string) ?? "claude-sonnet-4-6",
+      model: (obj.model as string) || "claude-sonnet-4-6",
       baseUrl: obj.baseUrl ? String(obj.baseUrl) : undefined,
       apiKeySet: (obj.apiKeySet as boolean) ?? false,
     };
@@ -136,8 +136,7 @@ function isCustomProviderDef(val: unknown): val is CustomProviderDef {
 
 function applyCustomProviders(val: unknown): CustomProviderDef[] {
   if (!Array.isArray(val)) return [];
-  if (!val.every(isCustomProviderDef)) return [];
-  return val.map((def) => ({
+  return val.filter(isCustomProviderDef).map((def) => ({
     id: def.id,
     name: def.name,
     baseUrl: def.baseUrl,
@@ -272,6 +271,24 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
     try {
       const prefs = await getPreferences();
       set({ ...mapPreferences(prefs), loaded: true });
+
+      // Persist the migrated llm.provider exactly once, only when migration
+      // actually synthesized it from legacy flat keys (no valid object on disk).
+      // Otherwise every launch re-runs migration from stale keys and Rust code
+      // paths reading on-disk llm.provider never see the migrated config. Use
+      // the same predicate as migrateLlmProvider so "ran vs passed-through" agree.
+      const existingProvider = prefs["llm.provider"];
+      const hadPersistedProvider =
+        existingProvider != null &&
+        typeof existingProvider === "object" &&
+        typeof (existingProvider as Record<string, unknown>).providerId === "string";
+      if (!hadPersistedProvider) {
+        // Snapshot the migrated config now (apiKeySet:false), before the async
+        // hasApiKey upgrade below mutates the store. The persisted object stays
+        // deterministic; the in-memory upgrade is a UX-only convenience.
+        const migrated = usePreferencesStore.getState().llmProvider;
+        setPreference("llm.provider", migrated).catch(() => {});
+      }
 
       // Reconcile apiKeySet against the real credential store. migrateLlmProvider
       // hard-codes apiKeySet:false for legacy users, so upgraded users with a

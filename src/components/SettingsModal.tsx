@@ -163,6 +163,10 @@ function renderControl(params: RenderControlParams) {
           onChange={(v) => setRegistryPref(entry.storeField, entry.jsonKey, v)}
         />
       );
+    case "custom":
+      // A dedicated component (e.g. LlmProviderSettings) owns the real UI; this
+      // entry is a search-only anchor and renders nothing here.
+      return null;
   }
 }
 
@@ -207,9 +211,13 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
     if (exists && !unlocked) return;
     const currentProvider = usePreferencesStore.getState().llmProvider;
     hasApiKey(currentProvider.providerId).then((has) => {
-      usePreferencesStore.setState((prev) => ({
-        llmProvider: { ...prev.llmProvider, apiKeySet: has },
-      }));
+      usePreferencesStore.setState((prev) => {
+        // Guard against a stale result: if the user switched providers between
+        // when this check fired and when it resolved, don't clobber the new
+        // provider's flag with the old provider's `has` value.
+        if (prev.llmProvider.providerId !== currentProvider.providerId) return prev;
+        return { llmProvider: { ...prev.llmProvider, apiKeySet: has } };
+      });
     });
   }, [open, exists, unlocked]);
 
