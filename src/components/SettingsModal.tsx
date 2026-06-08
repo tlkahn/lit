@@ -16,8 +16,8 @@ import { SettingsJsonEditor } from "./SettingsJsonEditor";
 import { CATEGORIES, SETTINGS_REGISTRY, STORE_FIELDS, filterSettings, type Category, type SettingEntry, type FilteredSetting, type PreferenceField } from "../lib/settingsRegistry";
 import { useThemeStore } from "../stores/theme";
 import { KeyboardShortcutsPanel } from "./KeyboardShortcutsPanel";
-import { TestConnectionButton } from "./TestConnectionButton";
 import { AcademicExportSettings } from "./AcademicExportSettings";
+import { LlmProviderSettings } from "./LlmProviderSettings";
 import { useSecretStoreStore } from "../stores/secretStore";
 
 interface SettingsModalProps {
@@ -163,6 +163,10 @@ function renderControl(params: RenderControlParams) {
           onChange={(v) => setRegistryPref(entry.storeField, entry.jsonKey, v)}
         />
       );
+    case "custom":
+      // A dedicated component (e.g. LlmProviderSettings) owns the real UI; this
+      // entry is a search-only anchor and renders nothing here.
+      return null;
   }
 }
 
@@ -177,7 +181,6 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
     for (const f of STORE_FIELDS) obj[f] = s[f];
     return obj;
   }));
-
   const availableThemes = useThemeStore((s) => s.availableThemes);
   const dynamicOptions: Record<string, { value: string; label: string }[]> = useMemo(() => ({
     colorTheme: availableThemes.map((t) => ({ value: t.directory_name, label: t.name })),
@@ -206,14 +209,16 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
     // effect re-runs once `unlocked` flips. A non-existent store (exists=false)
     // is a fresh user with no keys, so running the check is correct there.
     if (exists && !unlocked) return;
-    const passwordEntries = SETTINGS_REGISTRY.filter(
-      (e): e is Extract<SettingEntry, { controlType: "password" }> => e.controlType === "password",
-    );
-    for (const entry of passwordEntries) {
-      hasApiKey(entry.provider).then((has) => {
-        usePreferencesStore.setState({ [entry.storeField]: has } as Partial<PreferencesState>);
+    const currentProvider = usePreferencesStore.getState().llmProvider;
+    hasApiKey(currentProvider.providerId).then((has) => {
+      usePreferencesStore.setState((prev) => {
+        // Guard against a stale result: if the user switched providers between
+        // when this check fired and when it resolved, don't clobber the new
+        // provider's flag with the old provider's `has` value.
+        if (prev.llmProvider.providerId !== currentProvider.providerId) return prev;
+        return { llmProvider: { ...prev.llmProvider, apiKeySet: has } };
       });
-    }
+    });
   }, [open, exists, unlocked]);
 
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -469,14 +474,14 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
                       return (
                         <section key={cat} id={`settings-section-${cat}`} className={i > 0 ? "mt-5" : undefined}>
                           <h3 className="text-sm font-medium text-text-muted mb-3">{cat}</h3>
+                          {cat === "LLM" && (
+                            <div className="mb-3">
+                              <LlmProviderSettings ensureUnlocked={ensureUnlocked} />
+                            </div>
+                          )}
                           <div className="space-y-3">
                             {ungrouped.map(({ entry, indices }) => renderControl({ entry, prefs, localTextValues, setLocalTextValues, matchIndices: indices, dynamicOptions, ensureUnlocked }))}
                           </div>
-                          {cat === "LLM" && (
-                            <div className="mt-3">
-                              <TestConnectionButton model={prefs.llmModel as string} baseUrl={(prefs.llmModel as string).startsWith("claude-") ? (prefs.llmAnthropicBaseUrl as string) || undefined : (prefs.llmOpenaiBaseUrl as string) || undefined} />
-                            </div>
-                          )}
                           {cat === "Academic Export" && (
                             <div className="mt-3">
                               <AcademicExportSettings />

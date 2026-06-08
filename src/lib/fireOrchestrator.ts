@@ -70,7 +70,17 @@ export async function fireAnnotation(args: FireAnnotationArgs): Promise<void> {
 
       const system = getTypePrompt(annotation.annotation_type);
       const text = buildFirePrompt(scopeText, annotation.body);
-      return { model: prefs.llmModel, text, system: system || undefined };
+      const customDef = prefs.llmProvider.providerId.startsWith("custom-")
+        ? prefs.llmCustomProviders.find((p) => p.id === prefs.llmProvider.providerId)
+        : undefined;
+      return {
+        provider: prefs.llmProvider.providerId,
+        model: prefs.llmProvider.model,
+        text,
+        system: system || undefined,
+        baseUrl: prefs.llmProvider.baseUrl ?? customDef?.baseUrl,
+        contextWindow: customDef?.contextWindow,
+      };
     },
     onDone: ({ responseText, markFiringCleared, liveRange }) => {
       try {

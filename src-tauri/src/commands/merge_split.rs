@@ -104,8 +104,9 @@ fn strip_surrounding_quotes(s: &str) -> &str {
 }
 
 pub(crate) async fn suggest_title_inner(
+    provider_id: &str,
     model: &str,
-    api_key: &str,
+    api_key: Option<&str>,
     base_url: Option<&str>,
     source_titles: &[String],
     merged_body: &str,
@@ -115,7 +116,7 @@ pub(crate) async fn suggest_title_inner(
         return Err("source_titles must not be empty".to_string());
     }
 
-    let provider = llm::create_provider(model, base_url);
+    let provider = llm::create_provider(provider_id, base_url);
 
     let titles_text = source_titles.join(", ");
     let body_preview: String = merged_body.chars().take(2000).collect();
@@ -130,7 +131,7 @@ pub(crate) async fn suggest_title_inner(
     let prompt = llm::build_prompt(&user_text, Some(TITLE_SYSTEM_PROMPT), &[], &options);
 
     let stream = provider
-        .execute(model, &prompt, Some(api_key), false)
+        .execute(model, &prompt, api_key, false)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -144,6 +145,105 @@ pub(crate) async fn suggest_title_inner(
     Ok(title.to_string())
 }
 
+/// Resolve LLM settings from the persisted preferences.
+///
+/// The frontend (see `setLlmProvider` in src/stores/preferences.ts) writes the
+/// provider config as a single nested JSON object under `llm.provider`:
+/// `{ providerId, model, baseUrl, apiKeySet }`. This reads from that object,
+/// falling back to model-name sniffing when no `providerId` is set.
+///
+/// As a defensive belt-and-suspenders fallback (mirroring `migrateLlmProvider`
+/// in src/stores/preferences.ts), legacy flat keys are honored when no
+/// `llm.provider` object is present: `llm.model` for the model, and
+/// `llm.anthropic.baseUrl` / `llm.openai.baseUrl` for the base URL (selected by
+/// the resolved provider). F8 also persists a migrated `llm.provider` on first
+/// frontend load; this fallback covers headless/early invocations that run
+/// before that write fires. Empty-string values are filtered throughout.
+///
+/// Returns `(provider_id, model, base_url, temperature)`.
+fn resolve_llm_settings(
+    prefs: &crate::preferences::Preferences,
+) -> (String, String, Option<String>, f64) {
+    let provider_obj = prefs.extra.get("llm.provider");
+
+    let provider_pref = provider_obj
+        .and_then(|v| v.get("providerId"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let model = provider_obj
+        .and_then(|v| v.get("model"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        // Legacy flat key fallback (no llm.provider object on disk).
+        .or_else(|| {
+            prefs
+                .extra
+                .get("llm.model")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or("claude-sonnet-4-6")
+        .to_string();
+
+    let provider_id = if provider_pref.is_empty() {
+        llm::provider_id_for_model(&model).to_string()
+    } else {
+        provider_pref
+    };
+
+    let base_url = provider_obj
+        .and_then(|v| v.get("baseUrl"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        // Legacy flat key fallback: pick the per-provider base URL key.
+        .or_else(|| {
+            let legacy_key = if provider_id == "anthropic" {
+                "llm.anthropic.baseUrl"
+            } else {
+                "llm.openai.baseUrl"
+            };
+            prefs
+                .extra
+                .get(legacy_key)
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+        })
+        // Custom provider fallback: the frontend stores llm.provider.baseUrl = undefined for
+        // custom providers; the canonical URL lives in llm.customProviders[].baseUrl. Mirror the
+        // frontend's `prefs.llmProvider.baseUrl ?? customDef?.baseUrl` (only when still None, so an
+        // explicit baseUrl wins). Gated on the `custom-` prefix to skip registry providers.
+        .or_else(|| {
+            if !provider_id.starts_with("custom-") {
+                return None;
+            }
+            prefs
+                .extra
+                .get("llm.customProviders")
+                .and_then(|v| v.as_array())
+                .and_then(|defs| {
+                    defs.iter().find(|def| {
+                        def.get("id").and_then(|v| v.as_str()) == Some(provider_id.as_str())
+                    })
+                })
+                .and_then(|def| def.get("baseUrl"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+        });
+
+    let temperature = prefs
+        .extra
+        .get("llm.temperature")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.7);
+
+    (provider_id, model, base_url, temperature)
+}
+
 #[tauri::command]
 pub async fn suggest_merge_title(
     source_titles: Vec<String>,
@@ -154,36 +254,17 @@ pub async fn suggest_merge_title(
 ) -> Result<String, String> {
     let prefs = crate::preferences::read_preferences(&app_handle);
 
-    let model = prefs
-        .extra
-        .get("llm.model")
-        .and_then(|v| v.as_str())
-        .unwrap_or("claude-sonnet-4-6")
-        .to_string();
+    let (provider_id, model, base_url, temperature) = resolve_llm_settings(&prefs);
 
-    let temperature = prefs
-        .extra
-        .get("llm.temperature")
-        .and_then(|v| v.as_f64())
-        .unwrap_or(0.7);
-
-    let base_url = prefs
-        .extra
-        .get("llm.baseUrl")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string());
-
-    let provider = llm::create_provider(&model, base_url.as_deref());
-    let api_key = llm::resolve_api_key(provider.id(), store.as_ref())
-        .ok_or_else(|| "No API key found. Set one in Settings.".to_string())?;
+    let api_key = llm::resolve_api_key(&provider_id, store.as_ref());
 
     let (tx, rx) = oneshot::channel();
 
     let handle = tokio::spawn(async move {
         let result = suggest_title_inner(
+            &provider_id,
             &model,
-            &api_key,
+            api_key.as_deref(),
             base_url.as_deref(),
             &source_titles,
             &merged_body,
@@ -531,8 +612,9 @@ mod tests {
             .await;
 
         let result = suggest_title_inner(
+            "openai",
             "gpt-4o",
-            "fake-key",
+            Some("fake-key"),
             Some(&server.uri()),
             &["A".into(), "B".into()],
             "some body text",
@@ -541,6 +623,102 @@ mod tests {
         .await;
 
         assert_eq!(result.unwrap(), "Combined Notes");
+    }
+
+    // F1: keyless providers (Ollama / custom with needsApiKey:false) must not be
+    // rejected by a mandatory `.ok_or_else("No API key found")` before the provider
+    // is ever called. suggest_title_inner now takes `Option<&str>` and threads it
+    // straight through to `provider.execute`, exactly matching the streaming path
+    // (see llm.rs `test_connection_inner_does_not_resolve_env_var`). When no key is
+    // supplied, the call must reach the provider layer (and surface the provider's
+    // own error if that provider needs a key) rather than failing early — and it must
+    // never resolve an env-var key behind the caller's back.
+    #[tokio::test]
+    async fn suggest_title_inner_threads_none_api_key_to_provider() {
+        use wiremock::{MockServer, Mock, ResponseTemplate};
+        use wiremock::matchers::{method, path};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(openai_chat_response("Keyless Title")),
+            )
+            .mount(&server)
+            .await;
+
+        std::env::set_var("OPENAI_API_KEY", "env-key-should-not-be-used");
+        // Passing None must compile (Option<&str>) and be threaded to the provider,
+        // not short-circuited inside suggest_title_inner with its own key error.
+        let result = suggest_title_inner(
+            "openai",
+            "gpt-4o",
+            None,
+            Some(&server.uri()),
+            &["A".into()],
+            "body",
+            0.7,
+        )
+        .await;
+        std::env::remove_var("OPENAI_API_KEY");
+
+        // The openai provider requires a key, so the provider's own NeedsKey error
+        // surfaces — NOT the old command-level "No API key found" message, and the
+        // env var is never silently used.
+        let err = result.expect_err("openai with no key should surface provider error");
+        assert!(
+            !err.contains("No API key found"),
+            "should not short-circuit with command-level key error, got: {err}"
+        );
+
+        // The request never reaches the server because the key guard fires inside the
+        // provider — identical to the streaming path's behavior with api_key = None.
+        let received = server.received_requests().await.unwrap();
+        assert_eq!(received.len(), 0, "no request should be sent when api_key is None");
+    }
+
+    // F1 (companion): a needs_api_key:false provider (e.g. "ollama") routed through
+    // suggest_title_inner with api_key = None must not be rejected by merge_split's
+    // own key check. The fix removes that check, so the call now reaches the provider
+    // layer just like the streaming path. NOTE: the upstream OpenAi-wire provider in
+    // llm-openai still hard-requires a key in execute(), so the *provider* (not
+    // merge_split) is what currently gates fully-keyless Ollama use — making the
+    // genuinely-keyless path an upstream concern beyond F1's scope. This test pins
+    // that boundary: the error, if any, comes from the provider, never from
+    // merge_split's removed "No API key found" short-circuit.
+    #[tokio::test]
+    async fn suggest_title_inner_keyless_provider_reaches_provider_layer() {
+        use wiremock::{MockServer, Mock, ResponseTemplate};
+        use wiremock::matchers::{method, path};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(openai_chat_response("Keyless Title")),
+            )
+            .mount(&server)
+            .await;
+
+        let result = suggest_title_inner(
+            "ollama",
+            "llama3",
+            None,
+            Some(&server.uri()),
+            &["A".into()],
+            "body",
+            0.7,
+        )
+        .await;
+
+        if let Err(ref err) = result {
+            assert!(
+                !err.contains("No API key found"),
+                "must not short-circuit on merge_split's key check; got: {err}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -559,8 +737,9 @@ mod tests {
             .await;
 
         let result = suggest_title_inner(
+            "openai",
             "gpt-4o",
-            "fake-key",
+            Some("fake-key"),
             Some(&server.uri()),
             &["A".into()],
             "body",
@@ -587,8 +766,9 @@ mod tests {
             .await;
 
         let result = suggest_title_inner(
+            "openai",
             "gpt-4o",
-            "fake-key",
+            Some("fake-key"),
             Some(&server.uri()),
             &["A".into()],
             "body",
@@ -616,8 +796,9 @@ mod tests {
             .await;
 
         let result = suggest_title_inner(
+            "openai",
             "gpt-4o",
-            "bad-key",
+            Some("bad-key"),
             Some(&server.uri()),
             &["A".into()],
             "body",
@@ -644,8 +825,9 @@ mod tests {
             .await;
 
         let _ = suggest_title_inner(
+            "openai",
             "gpt-4o",
-            "fake-key",
+            Some("fake-key"),
             Some(&server.uri()),
             &["Note A".into(), "Note B".into()],
             "merged body content here",
@@ -690,8 +872,9 @@ mod tests {
             .await;
 
         let result = suggest_title_inner(
+            "anthropic",
             "claude-sonnet-4-6",
-            "fake-key",
+            Some("fake-key"),
             Some(&server.uri()),
             &["A".into(), "B".into()],
             "body",
@@ -702,33 +885,241 @@ mod tests {
         assert_eq!(result.unwrap(), "Claude Title");
     }
 
+    #[tokio::test]
+    async fn suggest_title_inner_uses_explicit_provider_id() {
+        use wiremock::{MockServer, Mock, ResponseTemplate};
+        use wiremock::matchers::{method, path};
+
+        let server = MockServer::start().await;
+        // Anthropic provider_id -> Anthropic wire format -> /v1/messages,
+        // even though the model string is "gpt-4o".
+        let body = r#"{"id":"msg_1","type":"message","role":"assistant","model":"x","content":[{"type":"text","text":"Routed By Provider"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}"#;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(body))
+            .mount(&server)
+            .await;
+
+        let result = suggest_title_inner(
+            "anthropic",            // NEW first arg: provider_id
+            "gpt-4o",               // model name deliberately mismatched
+            Some("fake-key"),
+            Some(&server.uri()),
+            &["A".into(), "B".into()],
+            "body",
+            0.7,
+        )
+        .await;
+
+        assert_eq!(result.unwrap(), "Routed By Provider");
+    }
+
+    #[test]
+    fn resolve_llm_settings_reads_nested_provider_object() {
+        // Frontend persists the provider config as a nested object under llm.provider.
+        let mut prefs = crate::preferences::Preferences::default();
+        prefs.extra.insert(
+            "llm.provider".into(),
+            serde_json::json!({
+                "providerId": "groq",
+                "model": "llama-3.3-70b",
+                "baseUrl": "https://api.groq.com",
+                "apiKeySet": true
+            }),
+        );
+
+        let (provider_id, model, base_url, _temp) = resolve_llm_settings(&prefs);
+        assert_eq!(provider_id, "groq");
+        assert_eq!(model, "llama-3.3-70b");
+        assert_eq!(base_url.as_deref(), Some("https://api.groq.com"));
+    }
+
+    #[test]
+    fn resolve_llm_settings_falls_back_to_model_sniffing() {
+        // No providerId set: provider is sniffed from the model name.
+        let mut prefs = crate::preferences::Preferences::default();
+        prefs.extra.insert(
+            "llm.provider".into(),
+            serde_json::json!({
+                "providerId": "",
+                "model": "gpt-4o",
+                "baseUrl": "",
+                "apiKeySet": true
+            }),
+        );
+
+        let (provider_id, model, base_url, _temp) = resolve_llm_settings(&prefs);
+        assert_eq!(provider_id, llm::provider_id_for_model("gpt-4o"));
+        assert_eq!(model, "gpt-4o");
+        assert_eq!(base_url, None);
+    }
+
+    #[test]
+    fn resolve_llm_settings_legacy_flat_keys_openai() {
+        // Legacy install: no llm.provider object, only flat keys on disk.
+        let mut prefs = crate::preferences::Preferences::default();
+        prefs
+            .extra
+            .insert("llm.model".into(), serde_json::json!("gpt-4o"));
+        prefs.extra.insert(
+            "llm.openai.baseUrl".into(),
+            serde_json::json!("https://api.example.com"),
+        );
+
+        let (provider_id, model, base_url, _temp) = resolve_llm_settings(&prefs);
+        assert_eq!(model, "gpt-4o");
+        assert_eq!(provider_id, llm::provider_id_for_model("gpt-4o"));
+        assert_eq!(base_url.as_deref(), Some("https://api.example.com"));
+    }
+
+    #[test]
+    fn resolve_llm_settings_legacy_flat_keys_anthropic_base_url() {
+        // Legacy anthropic install reads from llm.anthropic.baseUrl, not llm.openai.baseUrl.
+        let mut prefs = crate::preferences::Preferences::default();
+        prefs
+            .extra
+            .insert("llm.model".into(), serde_json::json!("claude-3-5-sonnet"));
+        prefs.extra.insert(
+            "llm.anthropic.baseUrl".into(),
+            serde_json::json!("https://anthropic.example"),
+        );
+
+        let (provider_id, model, base_url, _temp) = resolve_llm_settings(&prefs);
+        assert_eq!(model, "claude-3-5-sonnet");
+        assert_eq!(provider_id, "anthropic");
+        assert_eq!(base_url.as_deref(), Some("https://anthropic.example"));
+    }
+
+    #[test]
+    fn resolve_llm_settings_legacy_empty_base_url_filtered() {
+        // Empty-string filtering is preserved on the legacy path.
+        let mut prefs = crate::preferences::Preferences::default();
+        prefs
+            .extra
+            .insert("llm.model".into(), serde_json::json!("gpt-4o"));
+        prefs
+            .extra
+            .insert("llm.openai.baseUrl".into(), serde_json::json!(""));
+
+        let (provider_id, model, base_url, _temp) = resolve_llm_settings(&prefs);
+        assert_eq!(model, "gpt-4o");
+        assert_eq!(provider_id, llm::provider_id_for_model("gpt-4o"));
+        assert_eq!(base_url, None);
+    }
+
     #[test]
     fn resolve_llm_settings_defaults() {
+        // Empty prefs: anthropic default model, no base_url, default temperature.
         let prefs = crate::preferences::Preferences::default();
 
-        let model = prefs
-            .extra
-            .get("llm.model")
-            .and_then(|v| v.as_str())
-            .unwrap_or("claude-sonnet-4-6");
+        let (provider_id, model, base_url, temperature) = resolve_llm_settings(&prefs);
+        assert_eq!(provider_id, "anthropic");
         assert_eq!(model, "claude-sonnet-4-6");
-
-        let temperature = prefs
-            .extra
-            .get("llm.temperature")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.7);
+        assert_eq!(base_url, None);
         assert!((temperature - 0.7).abs() < f64::EPSILON);
+    }
 
-        let provider = crate::llm::create_provider(model, None);
-        assert_eq!(provider.id(), "anthropic");
+    #[test]
+    fn resolve_llm_settings_custom_provider_reads_base_url_from_custom_defs() {
+        // For a custom provider the frontend stores llm.provider.baseUrl = undefined (null);
+        // the canonical URL lives in llm.customProviders[].baseUrl. resolve_llm_settings must
+        // mirror the frontend fallback (prefs.llmProvider.baseUrl ?? customDef?.baseUrl).
+        let mut prefs = crate::preferences::Preferences::default();
+        prefs.extra.insert(
+            "llm.provider".into(),
+            serde_json::json!({
+                "providerId": "custom-xyz",
+                "model": "my-model",
+                "baseUrl": null,
+                "apiKeySet": true
+            }),
+        );
+        prefs.extra.insert(
+            "llm.customProviders".into(),
+            serde_json::json!([{
+                "id": "custom-xyz",
+                "name": "My vLLM",
+                "baseUrl": "http://localhost:8000",
+                "needsApiKey": false,
+                "modelId": "my-model",
+                "contextWindow": 8192
+            }]),
+        );
+
+        let (provider_id, model, base_url, _temp) = resolve_llm_settings(&prefs);
+        assert_eq!(provider_id, "custom-xyz");
+        assert_eq!(model, "my-model");
+        assert_eq!(base_url.as_deref(), Some("http://localhost:8000"));
+    }
+
+    #[test]
+    fn resolve_llm_settings_custom_provider_explicit_base_url_wins() {
+        // When llm.provider.baseUrl is a non-empty string AND a custom def exists, the explicit
+        // provider baseUrl takes precedence (matching ?? semantics) - custom def is not consulted.
+        let mut prefs = crate::preferences::Preferences::default();
+        prefs.extra.insert(
+            "llm.provider".into(),
+            serde_json::json!({
+                "providerId": "custom-xyz",
+                "model": "my-model",
+                "baseUrl": "http://explicit:9000",
+                "apiKeySet": true
+            }),
+        );
+        prefs.extra.insert(
+            "llm.customProviders".into(),
+            serde_json::json!([{
+                "id": "custom-xyz",
+                "name": "My vLLM",
+                "baseUrl": "http://localhost:8000",
+                "needsApiKey": false,
+                "modelId": "my-model",
+                "contextWindow": 8192
+            }]),
+        );
+
+        let (provider_id, _model, base_url, _temp) = resolve_llm_settings(&prefs);
+        assert_eq!(provider_id, "custom-xyz");
+        assert_eq!(base_url.as_deref(), Some("http://explicit:9000"));
+    }
+
+    #[test]
+    fn resolve_llm_settings_custom_provider_no_matching_def() {
+        // No matching custom def (or empty/missing llm.customProviders): base_url stays None,
+        // no panic, graceful degradation.
+        let mut prefs = crate::preferences::Preferences::default();
+        prefs.extra.insert(
+            "llm.provider".into(),
+            serde_json::json!({
+                "providerId": "custom-zzz",
+                "model": "my-model",
+                "baseUrl": null,
+                "apiKeySet": true
+            }),
+        );
+        prefs.extra.insert(
+            "llm.customProviders".into(),
+            serde_json::json!([{
+                "id": "custom-xyz",
+                "name": "My vLLM",
+                "baseUrl": "http://localhost:8000",
+                "needsApiKey": false,
+                "modelId": "my-model",
+                "contextWindow": 8192
+            }]),
+        );
+
+        let (provider_id, _model, base_url, _temp) = resolve_llm_settings(&prefs);
+        assert_eq!(provider_id, "custom-zzz");
+        assert_eq!(base_url, None);
     }
 
     #[tokio::test]
     async fn suggest_title_inner_empty_titles_returns_error() {
         let result = suggest_title_inner(
+            "openai",
             "gpt-4o",
-            "fake-key",
+            Some("fake-key"),
             None,
             &[],
             "body",

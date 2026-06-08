@@ -66,7 +66,7 @@ describe("TestConnectionButton", () => {
     render(<TestConnectionButton model="gpt-4o" baseUrl="https://custom.api" />);
     await userEvent.click(screen.getByTestId("test-connection-btn"));
 
-    expect(testLlmConnection).toHaveBeenCalledWith("gpt-4o", "https://custom.api");
+    expect(testLlmConnection).toHaveBeenCalledWith("gpt-4o", "https://custom.api", undefined);
   });
 
   it("success status uses text-text-success theme class, not hardcoded green", async () => {

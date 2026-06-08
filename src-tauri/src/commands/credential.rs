@@ -420,32 +420,40 @@ impl CredentialStore for EncryptedFileStore {
     }
 }
 
-fn account_for_provider(provider: &str) -> Result<&'static str, String> {
+fn account_for_provider(provider: &str) -> Result<String, String> {
     match provider {
-        "openai" => Ok(ACCOUNT_OPENAI),
-        "anthropic" => Ok(ACCOUNT_ANTHROPIC),
+        "openai" => Ok(ACCOUNT_OPENAI.to_string()),
+        "anthropic" => Ok(ACCOUNT_ANTHROPIC.to_string()),
+        // Any registry-known provider or a custom-* slug derives its account from
+        // the id directly, so adding a provider to provider_registry::REGISTRY
+        // requires no second edit here.
+        _ if crate::provider_registry::lookup(provider).is_some()
+            || provider.starts_with("custom-") =>
+        {
+            Ok(format!("{}-api-key", provider))
+        }
         _ => Err(format!("Unknown provider: {}", provider)),
     }
 }
 
 fn set_api_key_inner(store: &dyn CredentialStore, provider: &str, key: &str) -> Result<(), String> {
     let account = account_for_provider(provider)?;
-    store.set(SERVICE_NAME, account, key)
+    store.set(SERVICE_NAME, &account, key)
 }
 
 pub(crate) fn get_api_key_inner(store: &dyn CredentialStore, provider: &str) -> Result<String, String> {
     let account = account_for_provider(provider)?;
-    store.get(SERVICE_NAME, account)
+    store.get(SERVICE_NAME, &account)
 }
 
 fn has_api_key_inner(store: &dyn CredentialStore, provider: &str) -> Result<bool, String> {
     let account = account_for_provider(provider)?;
-    Ok(store.has(SERVICE_NAME, account))
+    Ok(store.has(SERVICE_NAME, &account))
 }
 
 fn delete_api_key_inner(store: &dyn CredentialStore, provider: &str) -> Result<(), String> {
     let account = account_for_provider(provider)?;
-    store.delete(SERVICE_NAME, account)
+    store.delete(SERVICE_NAME, &account)
 }
 
 #[tauri::command]
@@ -610,6 +618,94 @@ mod tests {
         assert!(get_api_key_inner(&store, "invalid").is_err());
         assert!(has_api_key_inner(&store, "invalid").is_err());
         assert!(delete_api_key_inner(&store, "invalid").is_err());
+    }
+
+    #[test]
+    fn test_account_for_openrouter() {
+        assert_eq!(account_for_provider("openrouter"), Ok("openrouter-api-key".to_string()));
+    }
+
+    #[test]
+    fn test_account_for_groq() {
+        assert_eq!(account_for_provider("groq"), Ok("groq-api-key".to_string()));
+    }
+
+    #[test]
+    fn test_account_for_deepseek() {
+        assert_eq!(account_for_provider("deepseek"), Ok("deepseek-api-key".to_string()));
+    }
+
+    #[test]
+    fn test_account_for_ollama() {
+        assert_eq!(account_for_provider("ollama"), Ok("ollama-api-key".to_string()));
+    }
+
+    #[test]
+    fn test_account_for_gemini() {
+        assert_eq!(account_for_provider("gemini"), Ok("gemini-api-key".to_string()));
+    }
+
+    #[test]
+    fn test_account_for_mistral() {
+        assert_eq!(account_for_provider("mistral"), Ok("mistral-api-key".to_string()));
+    }
+
+    #[test]
+    fn test_account_for_together() {
+        assert_eq!(account_for_provider("together"), Ok("together-api-key".to_string()));
+    }
+
+    #[test]
+    fn test_account_for_every_registry_provider() {
+        // The credential account mapping must be registry-driven: every provider
+        // the registry knows about resolves to an account, with openai/anthropic
+        // mapping to their distinct constants and all others to "{id}-api-key".
+        // This fails if a registry provider lacks coverage in account_for_provider,
+        // catching the silent "Unknown provider" regression when a new provider is
+        // added to REGISTRY without a corresponding match arm.
+        for id in crate::provider_registry::ids() {
+            let expected = match id {
+                "openai" => ACCOUNT_OPENAI.to_string(),
+                "anthropic" => ACCOUNT_ANTHROPIC.to_string(),
+                _ => format!("{}-api-key", id),
+            };
+            assert_eq!(
+                account_for_provider(id),
+                Ok(expected),
+                "provider {id} must resolve to a credential account"
+            );
+        }
+        assert_eq!(account_for_provider("openai"), Ok(ACCOUNT_OPENAI.to_string()));
+        assert_eq!(
+            account_for_provider("anthropic"),
+            Ok(ACCOUNT_ANTHROPIC.to_string())
+        );
+    }
+
+    #[test]
+    fn test_account_for_custom_provider() {
+        assert_eq!(
+            account_for_provider("custom-my-vllm"),
+            Ok("custom-my-vllm-api-key".to_string())
+        );
+    }
+
+    #[test]
+    fn test_account_for_custom_provider_arbitrary_slug() {
+        assert_eq!(
+            account_for_provider("custom-corp-proxy-2"),
+            Ok("custom-corp-proxy-2-api-key".to_string())
+        );
+    }
+
+    #[test]
+    fn test_custom_provider_credential_cycle() {
+        let store = InMemoryStore::new();
+        set_api_key_inner(&store, "custom-my-vllm", "sk-custom").unwrap();
+        assert_eq!(get_api_key_inner(&store, "custom-my-vllm").unwrap(), "sk-custom");
+        assert_eq!(has_api_key_inner(&store, "custom-my-vllm").unwrap(), true);
+        delete_api_key_inner(&store, "custom-my-vllm").unwrap();
+        assert_eq!(has_api_key_inner(&store, "custom-my-vllm").unwrap(), false);
     }
 
     // --- EncryptedFileStore tests ---

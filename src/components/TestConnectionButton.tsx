@@ -4,9 +4,10 @@ import { testLlmConnection } from "../lib/ipc";
 interface TestConnectionButtonProps {
   model: string;
   baseUrl?: string;
+  provider?: string;
 }
 
-export function TestConnectionButton({ model, baseUrl }: TestConnectionButtonProps) {
+export function TestConnectionButton({ model, baseUrl, provider }: TestConnectionButtonProps) {
   const [status, setStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
 
@@ -20,7 +21,7 @@ export function TestConnectionButton({ model, baseUrl }: TestConnectionButtonPro
     setStatus("testing");
     setErrorMsg("");
     try {
-      await testLlmConnection(model, baseUrl);
+      await testLlmConnection(model, baseUrl, provider);
       setStatus("success");
     } catch (e) {
       setStatus("error");

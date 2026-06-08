@@ -24,6 +24,9 @@ interface SettingEntryBase {
   testId: string;
   nullable?: boolean;
   group?: string;
+  /** Extra search-only terms; never rendered. Lets an entry surface for
+   *  related queries whose words are absent from its visible label. */
+  keywords?: string[];
 }
 
 interface ToggleEntry extends SettingEntryBase { controlType: "toggle"; }
@@ -33,8 +36,11 @@ interface TextAreaEntry extends SettingEntryBase { controlType: "textarea"; }
 interface DropdownEntry extends SettingEntryBase { controlType: "dropdown"; options?: { value: string; label: string }[]; }
 interface PasswordEntry extends SettingEntryBase { controlType: "password"; provider: string; }
 interface SliderEntry extends SettingEntryBase { controlType: "slider"; min: number; max: number; step: number; }
+/** Renders nothing itself (a dedicated component owns the UI). Exists purely
+ *  to give a section a searchable anchor so search cannot hide it. */
+interface PlaceholderEntry extends SettingEntryBase { controlType: "custom"; }
 
-export type SettingEntry = ToggleEntry | SegmentedEntry | TextEntry | TextAreaEntry | DropdownEntry | PasswordEntry | SliderEntry;
+export type SettingEntry = ToggleEntry | SegmentedEntry | TextEntry | TextAreaEntry | DropdownEntry | PasswordEntry | SliderEntry | PlaceholderEntry;
 
 export const SETTINGS_REGISTRY: SettingEntry[] = [
   // Appearance
@@ -208,52 +214,12 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   // LLM
   {
     category: "LLM",
-    label: "Model",
-    storeField: "llmModel",
-    jsonKey: "llm.model",
-    controlType: "dropdown",
-    testId: "settings-llmModel",
-    options: [
-      { value: "claude-opus-4-6", label: "Claude Opus" },
-      { value: "claude-sonnet-4-6", label: "Claude Sonnet" },
-      { value: "claude-haiku-4-5", label: "Claude Haiku" },
-      { value: "gpt-4o", label: "GPT-4o" },
-      { value: "gpt-4o-mini", label: "GPT-4o Mini" },
-    ],
-  },
-  {
-    category: "LLM",
-    label: "OpenAI API Key",
-    storeField: "llmOpenaiApiKeySet",
-    jsonKey: "",
-    controlType: "password",
-    testId: "settings-llmOpenaiApiKeySet",
-    provider: "openai",
-  },
-  {
-    category: "LLM",
-    label: "OpenAI Base URL",
-    storeField: "llmOpenaiBaseUrl",
-    jsonKey: "llm.openai.baseUrl",
-    controlType: "text",
-    testId: "settings-llmOpenaiBaseUrl",
-  },
-  {
-    category: "LLM",
-    label: "Anthropic API Key",
-    storeField: "llmAnthropicApiKeySet",
-    jsonKey: "",
-    controlType: "password",
-    testId: "settings-llmAnthropicApiKeySet",
-    provider: "anthropic",
-  },
-  {
-    category: "LLM",
-    label: "Anthropic Base URL",
-    storeField: "llmAnthropicBaseUrl",
-    jsonKey: "llm.anthropic.baseUrl",
-    controlType: "text",
-    testId: "settings-llmAnthropicBaseUrl",
+    label: "LLM Provider",
+    storeField: "llmProvider",
+    jsonKey: "llm.provider",
+    controlType: "custom",
+    testId: "settings-llmProviderSearch",
+    keywords: ["model", "api key", "openai", "anthropic", "gemini", "mistral", "base url", "provider"],
   },
   {
     category: "LLM",
@@ -422,9 +388,17 @@ export function filterSettings(
   }
   const results: (FilteredSetting & { score: number })[] = [];
   for (const entry of entries) {
-    const match = fuzzyMatch(query, entry.label);
-    if (match) {
-      results.push({ entry, indices: match.indices, score: match.score });
+    const labelMatch = fuzzyMatch(query, entry.label);
+    let bestScore = labelMatch ? labelMatch.score : -1;
+    // Keyword matches only affect inclusion/sorting — their indices reference
+    // the keyword string, not entry.label, so we never expose them for
+    // highlighting. Use label indices when the label matched, else [].
+    for (const keyword of entry.keywords ?? []) {
+      const kwMatch = fuzzyMatch(query, keyword);
+      if (kwMatch && kwMatch.score > bestScore) bestScore = kwMatch.score;
+    }
+    if (bestScore >= 0) {
+      results.push({ entry, indices: labelMatch ? labelMatch.indices : [], score: bestScore });
     }
   }
   results.sort((a, b) => b.score - a.score);

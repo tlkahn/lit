@@ -60,6 +60,8 @@ impl LlmState {
 
 #[derive(Deserialize)]
 pub struct LlmPromptArgs {
+    #[serde(default)]
+    pub provider: String,
     pub model: String,
     pub text: String,
     pub system: Option<String>,
@@ -68,6 +70,8 @@ pub struct LlmPromptArgs {
     #[serde(default)]
     pub options: HashMap<String, serde_json::Value>,
     pub base_url: Option<String>,
+    #[serde(default)]
+    pub context_window: Option<usize>,
 }
 
 pub fn log_prompt_info(
@@ -106,7 +110,8 @@ pub async fn llm_prompt_streaming(
 ) -> Result<(), String> {
     state.cancel();
 
-    let provider = llm::create_provider(&args.model, args.base_url.as_deref());
+    let provider_id = resolve_provider_id(&args.provider, &args.model);
+    let provider = llm::create_provider(provider_id, args.base_url.as_deref());
 
     let prompt = llm::build_prompt(
         &args.text,
@@ -115,7 +120,7 @@ pub async fn llm_prompt_streaming(
         &args.options,
     );
 
-    let (prompt, truncation) = llm::apply_token_budget(prompt, &args.model);
+    let (prompt, truncation) = llm::apply_token_budget(prompt, provider_id, &args.model, args.context_window);
 
     log_prompt_info(
         &args.model,
@@ -129,7 +134,7 @@ pub async fn llm_prompt_streaming(
         let _ = window.emit("llm://truncated", &info);
     }
 
-    let api_key = llm::resolve_api_key(provider.id(), store.as_ref());
+    let api_key = llm::resolve_api_key(provider_id, store.as_ref());
 
     let model = args.model.clone();
     let state_ref = state.clone_ref();
@@ -189,11 +194,12 @@ pub fn llm_cancel(state: tauri::State<'_, LlmState>) -> Result<(), String> {
 }
 
 pub async fn test_connection_inner(
+    provider_id: &str,
     model: &str,
     api_key: Option<&str>,
     base_url: Option<&str>,
 ) -> Result<(), String> {
-    let provider = llm::create_provider(model, base_url);
+    let provider = llm::create_provider(provider_id, base_url);
     let mut options = HashMap::new();
     options.insert("max_tokens".into(), serde_json::json!(1));
     let prompt = llm::build_prompt("hi", None, &[], &options);
@@ -207,23 +213,36 @@ pub async fn test_connection_inner(
 #[tauri::command]
 pub async fn llm_test_connection(
     model: String,
+    provider: Option<String>,
     base_url: Option<String>,
     store: tauri::State<'_, Arc<dyn CredentialStore>>,
 ) -> Result<(), String> {
-    let provider = llm::create_provider(&model, base_url.as_deref());
-    let api_key = llm::resolve_api_key(provider.id(), store.as_ref());
-    test_connection_inner(&model, api_key.as_deref(), base_url.as_deref()).await
+    let provider_id = resolve_provider_id(provider.as_deref().unwrap_or(""), &model);
+    let api_key = llm::resolve_api_key(provider_id, store.as_ref());
+    test_connection_inner(provider_id, &model, api_key.as_deref(), base_url.as_deref()).await
+}
+
+/// Resolve the provider id to use: an explicit non-empty `provider` wins;
+/// otherwise fall back to sniffing the provider from the model name.
+fn resolve_provider_id<'a>(provider: &'a str, model: &str) -> &'a str {
+    if provider.is_empty() {
+        llm::provider_id_for_model(model)
+    } else {
+        provider
+    }
 }
 
 pub fn build_context_inner(
     node_id: &str,
     system_prompt: &str,
     neighbors_depth: usize,
+    provider_id: &str,
     model: &str,
     messages: &[ChatMessage],
     graph_index: Option<&GraphIndex>,
     workspace_root: Option<&Path>,
     registry: &WriteHashRegistry,
+    context_window_override: Option<usize>,
 ) -> Result<BuiltContext, String> {
     let (doc_content, doc_title, neighbors) = if node_id == GLOBAL_NODE_ID || workspace_root.is_none() {
         (String::new(), String::new(), vec![])
@@ -305,12 +324,14 @@ pub fn build_context_inner(
     };
 
     Ok(build_context_layers(
-        system_prompt, messages, &doc_content, &doc_title, &neighbors, model,
+        system_prompt, messages, &doc_content, &doc_title, &neighbors, provider_id, model, context_window_override,
     ))
 }
 
 #[derive(Deserialize)]
 pub struct BuildContextArgs {
+    #[serde(default)]
+    pub provider: String,
     pub node_id: String,
     #[serde(default)]
     pub system_prompt: String,
@@ -319,6 +340,8 @@ pub struct BuildContextArgs {
     pub model: String,
     #[serde(default)]
     pub messages: Vec<ChatMessage>,
+    #[serde(default)]
+    pub context_window: Option<usize>,
 }
 
 #[tauri::command]
@@ -339,11 +362,13 @@ pub async fn llm_build_context(
             &args.node_id,
             &args.system_prompt,
             args.neighbors_depth,
+            resolve_provider_id(&args.provider, &args.model),
             &args.model,
             &args.messages,
             gi_arc.as_deref(),
             root.as_deref(),
             &registry,
+            args.context_window,
         )
     })
     .await
@@ -445,7 +470,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let result = test_connection_inner("gpt-4o", Some("fake-key"), Some(&server.uri())).await;
+        let result = test_connection_inner("openai", "gpt-4o", Some("fake-key"), Some(&server.uri())).await;
         assert!(result.is_ok(), "expected Ok, got {:?}", result);
     }
 
@@ -464,13 +489,13 @@ mod tests {
             .mount(&server)
             .await;
 
-        let result = test_connection_inner("gpt-4o", Some("bad-key"), Some(&server.uri())).await;
+        let result = test_connection_inner("openai", "gpt-4o", Some("bad-key"), Some(&server.uri())).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_connection_fails_without_key() {
-        let result = test_connection_inner("gpt-4o", None, Some("http://localhost:1")).await;
+        let result = test_connection_inner("openai", "gpt-4o", None, Some("http://localhost:1")).await;
         assert!(result.is_err());
     }
 
@@ -489,7 +514,7 @@ mod tests {
             .await;
 
         std::env::set_var("OPENAI_API_KEY", "env-key-should-not-be-used");
-        let result = test_connection_inner("gpt-4o", None, Some(&server.uri())).await;
+        let result = test_connection_inner("openai", "gpt-4o", None, Some(&server.uri())).await;
         std::env::remove_var("OPENAI_API_KEY");
 
         // With api_key=None the call should fail (no key provided)
@@ -512,12 +537,68 @@ mod tests {
             .mount(&server)
             .await;
 
-        let _ = test_connection_inner("gpt-4o", Some("fake-key"), Some(&server.uri())).await;
+        let _ = test_connection_inner("openai", "gpt-4o", Some("fake-key"), Some(&server.uri())).await;
 
         let received = server.received_requests().await.unwrap();
         assert_eq!(received.len(), 1);
         let req_body: serde_json::Value = serde_json::from_slice(&received[0].body).unwrap();
         assert_eq!(req_body["max_tokens"], 1, "test_connection should send max_tokens=1 to minimize token usage");
+    }
+
+    #[tokio::test]
+    async fn test_connection_inner_uses_explicit_provider() {
+        use wiremock::{MockServer, Mock, ResponseTemplate};
+        use wiremock::matchers::{method, path};
+
+        let server = MockServer::start().await;
+        let body = r#"{"id":"1","object":"chat.completion","model":"x","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(body))
+            .mount(&server)
+            .await;
+
+        // "openrouter" is OpenAI wire format → /v1/chat/completions
+        let result = test_connection_inner(
+            "openrouter",
+            "meta-llama/llama-4-maverick",
+            Some("fake-key"),
+            Some(&server.uri()),
+        )
+        .await;
+        assert!(result.is_ok(), "expected Ok, got {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_connection_openrouter_provider() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let body = r#"{"id":"1","object":"chat.completion","model":"x","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(body))
+            .mount(&server)
+            .await;
+
+        let result = test_connection_inner(
+            "openrouter",
+            "meta-llama/llama-4-maverick",
+            Some("fake-key"),
+            Some(&server.uri()),
+        )
+        .await;
+        assert!(result.is_ok(), "expected Ok, got {:?}", result);
+
+        // Prove the openrouter provider id routed to the OpenAI-wire
+        // /v1/chat/completions endpoint (exactly one request reached it).
+        let received = server.received_requests().await.unwrap();
+        assert_eq!(
+            received.len(),
+            1,
+            "openrouter provider should route to the OpenAI /v1/chat/completions path"
+        );
     }
 
     #[tokio::test]
@@ -549,7 +630,7 @@ mod tests {
             ChatMessage { role: "assistant".into(), content: "Hi".into() },
         ];
         let registry = WriteHashRegistry::new();
-        let result = build_context_inner(GLOBAL_NODE_ID, "Be helpful", 0, "gpt-4o", &msgs, None, None, &registry).unwrap();
+        let result = build_context_inner(GLOBAL_NODE_ID, "Be helpful", 0, "openai", "gpt-4o", &msgs, None, None, &registry, None).unwrap();
         assert!(result.system.contains("Be helpful"));
         assert!(!result.system.contains("## Current document"));
         assert!(!result.system.contains("## Linked notes"));
@@ -563,7 +644,7 @@ mod tests {
         std::fs::write(dir.path().join("note.md"), "---\ntitle: My Note\n---\nThe body.").unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let registry = WriteHashRegistry::new();
-        let r = build_context_inner("note.md", "Sys", 0, "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry).unwrap();
+        let r = build_context_inner("note.md", "Sys", 0, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, None).unwrap();
         assert!(r.system.contains("## Current document:"), "should contain document section");
         assert!(r.system.contains("The body."));
     }
@@ -573,7 +654,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let registry = WriteHashRegistry::new();
-        let r = build_context_inner("ghost.md", "Sys", 0, "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry);
+        let r = build_context_inner("ghost.md", "Sys", 0, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, None);
         assert!(r.is_ok());
         assert!(!r.unwrap().system.contains("## Current document"));
     }
@@ -586,7 +667,7 @@ mod tests {
         std::fs::write(dir.path().join("c.md"), "First paragraph of C.\n\nLinks to [[a]].").unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let registry = WriteHashRegistry::new();
-        let r = build_context_inner("a.md", "Sys", 1, "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry).unwrap();
+        let r = build_context_inner("a.md", "Sys", 1, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, None).unwrap();
         assert!(r.system.contains("## Linked notes"), "should have linked notes section");
         assert!(r.system.contains("forward link"), "b should appear as forward link");
         assert!(r.system.contains("backlink"), "c should appear as backlink");
@@ -599,7 +680,7 @@ mod tests {
         std::fs::write(dir.path().join("b.md"), "Body B.").unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let registry = WriteHashRegistry::new();
-        let r = build_context_inner("a.md", "Sys", 0, "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry).unwrap();
+        let r = build_context_inner("a.md", "Sys", 0, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, None).unwrap();
         assert!(!r.system.contains("## Linked notes"));
     }
 
@@ -610,7 +691,7 @@ mod tests {
         std::fs::write(dir.path().join("b.md"), "First paragraph of B.\n\nLinks to [[a]].").unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let registry = WriteHashRegistry::new();
-        let r = build_context_inner("a.md", "Sys", 1, "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry).unwrap();
+        let r = build_context_inner("a.md", "Sys", 1, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, None).unwrap();
         let neighbor_count = r.system.matches("###").count();
         assert_eq!(neighbor_count, 1, "mutual link should produce exactly one neighbor entry");
     }
@@ -623,7 +704,7 @@ mod tests {
         std::fs::write(dir.path().join("c.md"), "First para C.").unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let registry = WriteHashRegistry::new();
-        let r = build_context_inner("a.md", "Sys", 2, "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry).unwrap();
+        let r = build_context_inner("a.md", "Sys", 2, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, None).unwrap();
         assert!(r.system.contains("c"), "2-hop neighbor c.md should appear");
     }
 
@@ -638,7 +719,7 @@ mod tests {
         std::fs::write(dir.path().join("hub.md"), &body).unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let registry = WriteHashRegistry::new();
-        let r = build_context_inner("hub.md", "Sys", 1, "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry).unwrap();
+        let r = build_context_inner("hub.md", "Sys", 1, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, None).unwrap();
         let count = r.system.matches("###").count();
         assert!(count <= 20, "neighbor count {count} should be capped at 20");
     }
@@ -650,7 +731,7 @@ mod tests {
         std::fs::write(dir.path().join("note.md"), content).unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let registry = WriteHashRegistry::new();
-        let _ = build_context_inner("note.md", "Sys", 0, "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry).unwrap();
+        let _ = build_context_inner("note.md", "Sys", 0, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, None).unwrap();
         assert!(registry.check(&dir.path().join("note.md"), content), "registry should record hash for the read page");
     }
 
@@ -661,28 +742,120 @@ mod tests {
         std::fs::write(dir.path().join("a.md"), "body").unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let registry = WriteHashRegistry::new();
-        let result = build_context_inner("a.md", "Sys", 0, "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry);
+        let result = build_context_inner("a.md", "Sys", 0, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, None);
         assert_send(result);
+    }
+
+    #[test]
+    fn build_context_resolves_explicit_provider_over_model() {
+        // explicit provider wins
+        assert_eq!(resolve_provider_id("openrouter", "gpt-4o"), "openrouter");
+        // empty provider falls back to model sniffing
+        assert_eq!(resolve_provider_id("", "claude-sonnet-4-6"), "anthropic");
+        assert_eq!(resolve_provider_id("", "gpt-4o"), "openai");
     }
 
     #[test]
     fn provider_id_matches_credential_store() {
         use crate::commands::credential::{self, InMemoryStore};
 
-        let models_and_expected = [
-            ("claude-sonnet-4-6", "anthropic"),
-            ("claude-opus-4-6", "anthropic"),
-            ("gpt-4o", "openai"),
-            ("gpt-4o-mini", "openai"),
+        let cases = [
+            ("openai", "gpt-4o"),
+            ("anthropic", "claude-sonnet-4-6"),
+            ("openrouter", "gpt-4o"),
+            ("groq", "llama-3.1-70b"),
         ];
         let store = InMemoryStore::new();
-        for (model, expected_id) in &models_and_expected {
-            let provider = llm::create_provider(model, None);
-            let id = provider.id();
-            assert_eq!(id, *expected_id, "provider.id() for model {model}");
-            store.set("com.lit.app", &format!("{}-api-key", id), "test-key").unwrap();
-            let key = credential::get_api_key_inner(&store, id);
-            assert!(key.is_ok(), "credential store should accept provider id '{id}' for model '{model}'");
+        for (provider_id, _model) in &cases {
+            // create_provider must succeed for each registry provider_id
+            let _provider = llm::create_provider(provider_id, None);
+            // credential store keyed by OUR provider_id (not provider.id())
+            store
+                .set("com.lit.app", &format!("{provider_id}-api-key"), "test-key")
+                .unwrap();
+            let key = credential::get_api_key_inner(&store, provider_id);
+            assert!(
+                key.is_ok(),
+                "credential store should accept provider id '{provider_id}'"
+            );
+            assert_eq!(key.unwrap(), "test-key");
         }
+    }
+
+    #[test]
+    fn test_prompt_args_with_provider() {
+        let json = r#"{"provider":"openai","model":"gpt-4o","text":"hi"}"#;
+        let args: LlmPromptArgs = serde_json::from_str(json).unwrap();
+        assert_eq!(args.provider, "openai");
+    }
+
+    #[test]
+    fn test_prompt_args_without_provider() {
+        let json = r#"{"model":"gpt-4o","text":"hi"}"#;
+        let args: LlmPromptArgs = serde_json::from_str(json).unwrap();
+        assert_eq!(args.provider, "");
+    }
+
+    #[test]
+    fn test_context_args_with_provider() {
+        let json = r#"{"provider":"openai","node_id":"n1","model":"gpt-4o"}"#;
+        let args: BuildContextArgs = serde_json::from_str(json).unwrap();
+        assert_eq!(args.provider, "openai");
+    }
+
+    #[test]
+    fn test_context_args_without_provider() {
+        let json = r#"{"node_id":"n1","model":"gpt-4o"}"#;
+        let args: BuildContextArgs = serde_json::from_str(json).unwrap();
+        assert_eq!(args.provider, "");
+    }
+
+    #[test]
+    fn build_context_args_deserializes_context_window() {
+        let json = r#"{"node_id":"n1","model":"gpt-4o","context_window":4096}"#;
+        let args: BuildContextArgs = serde_json::from_str(json).unwrap();
+        assert_eq!(args.context_window, Some(4096));
+    }
+
+    #[test]
+    fn build_context_args_context_window_defaults_none() {
+        let json = r#"{"node_id":"n1","model":"gpt-4o"}"#;
+        let args: BuildContextArgs = serde_json::from_str(json).unwrap();
+        assert_eq!(args.context_window, None);
+    }
+
+    #[test]
+    fn prompt_args_deserializes_context_window() {
+        let json = r#"{"model":"gpt-4o","text":"hi","context_window":4096}"#;
+        let args: LlmPromptArgs = serde_json::from_str(json).unwrap();
+        assert_eq!(args.context_window, Some(4096));
+    }
+
+    #[test]
+    fn prompt_args_context_window_defaults_none() {
+        let json = r#"{"model":"gpt-4o","text":"hi"}"#;
+        let args: LlmPromptArgs = serde_json::from_str(json).unwrap();
+        assert_eq!(args.context_window, None);
+    }
+
+    #[test]
+    fn build_context_inner_passes_override() {
+        // A large document fits under openai's default but a tiny override
+        // forces truncation, proving the override reaches build_context_layers.
+        let dir = tempfile::tempdir().unwrap();
+        let big_body = "word ".repeat(24_000); // ~30000 tokens, under openai doc_cap
+        std::fs::write(dir.path().join("note.md"), format!("---\ntitle: Big\n---\n{big_body}")).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let registry = WriteHashRegistry::new();
+
+        let with_override = build_context_inner(
+            "note.md", "Sys", 0, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, Some(1000),
+        ).unwrap();
+        assert!(with_override.truncation.is_some(), "tiny override should truncate the document");
+
+        let without = build_context_inner(
+            "note.md", "Sys", 0, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, None,
+        ).unwrap();
+        assert!(without.truncation.is_none(), "openai default should not truncate this document");
     }
 }

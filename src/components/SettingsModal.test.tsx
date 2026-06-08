@@ -29,6 +29,7 @@ const defaults = {
   llmOpenaiBaseUrl: "",
   llmAnthropicApiKeySet: false,
   llmAnthropicBaseUrl: "",
+  llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", apiKeySet: false },
   llmSystemPrompt: "",
   llmTemperature: 0.7,
   neighborsDepth: 1,
@@ -631,7 +632,7 @@ describe("SettingsModal", () => {
     });
   });
 
-  // --- LLM Model (SettingsDropdown) ---
+  // --- LLM Provider Settings ---
 
   describe("llmModel", () => {
     it("LLM Model dropdown reflects store value", () => {
@@ -640,49 +641,49 @@ describe("SettingsModal", () => {
       expect(select.value).toBe("claude-sonnet-4-6");
     });
 
-    it("changing model calls setPreference", async () => {
+    it("changing model calls setPreference with llm.provider", async () => {
       const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
       const select = container.querySelector("[data-testid='settings-llmModel']")!;
-      fireEvent.change(select, { target: { value: "gpt-4o" } });
-      expect(usePreferencesStore.getState().llmModel).toBe("gpt-4o");
+      fireEvent.change(select, { target: { value: "claude-opus-4-6" } });
+      expect(usePreferencesStore.getState().llmProvider.model).toBe("claude-opus-4-6");
       await vi.waitFor(() => {
         expect(invokeCalls).toContainEqual({
           cmd: "set_preference",
-          args: { key: "llm.model", value: "gpt-4o" },
+          args: { key: "llm.provider", value: { providerId: "anthropic", model: "claude-opus-4-6", apiKeySet: false } },
         });
       });
     });
   });
 
-  // --- OpenAI API Key (SettingsPasswordInput) ---
+  // --- LLM API Key (via LlmProviderSettings) ---
 
-  describe("llmOpenaiApiKeySet", () => {
-    it("OpenAI API Key renders password input", () => {
+  describe("llmApiKey", () => {
+    it("API Key renders password input for provider that needs key", () => {
       const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const input = container.querySelector("[data-testid='settings-llmOpenaiApiKeySet']");
+      const input = container.querySelector("[data-testid='settings-llmApiKey']");
       expect(input).toBeTruthy();
       expect(input!.getAttribute("type")).toBe("password");
     });
 
-    it("saving key calls set_api_key IPC and updates store", async () => {
+    it("saving key calls set_api_key IPC and updates llmProvider.apiKeySet", async () => {
       useSecretStoreStore.setState({ unlocked: true });
       let container!: HTMLElement;
       await act(async () => {
         ({ container } = render(<SettingsModal open={true} onClose={vi.fn()} />));
       });
-      const input = container.querySelector("[data-testid='settings-llmOpenaiApiKeySet']")!;
-      const saveBtn = container.querySelector("[data-testid='settings-llmOpenaiApiKeySet-save']")!;
+      const input = container.querySelector("[data-testid='settings-llmApiKey']")!;
+      const saveBtn = container.querySelector("[data-testid='settings-llmApiKey-save']")!;
       await act(async () => {
         fireEvent.change(input, { target: { value: "sk-test" } });
         fireEvent.click(saveBtn);
       });
       await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({ cmd: "set_api_key", args: { provider: "openai", key: "sk-test" } });
+        expect(invokeCalls).toContainEqual({ cmd: "set_api_key", args: { provider: "anthropic", key: "sk-test" } });
       });
-      expect(usePreferencesStore.getState().llmOpenaiApiKeySet).toBe(true);
+      expect(usePreferencesStore.getState().llmProvider.apiKeySet).toBe(true);
     });
 
-    it("deleting key calls delete_api_key IPC and updates store", async () => {
+    it("deleting key calls delete_api_key IPC and updates llmProvider.apiKeySet", async () => {
       useSecretStoreStore.setState({ unlocked: true });
       mockInvoke((cmd, args) => {
         invokeCalls.push({ cmd, args: args ?? {} });
@@ -690,19 +691,19 @@ describe("SettingsModal", () => {
         if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
         return undefined;
       });
-      usePreferencesStore.setState({ llmOpenaiApiKeySet: true });
+      usePreferencesStore.setState({ llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", apiKeySet: true } });
       let container!: HTMLElement;
       await act(async () => {
         ({ container } = render(<SettingsModal open={true} onClose={vi.fn()} />));
       });
-      const clearBtn = container.querySelector("[data-testid='settings-llmOpenaiApiKeySet-clear']")!;
+      const clearBtn = container.querySelector("[data-testid='settings-llmApiKey-clear']")!;
       await act(async () => {
         fireEvent.click(clearBtn);
       });
       await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({ cmd: "delete_api_key", args: { provider: "openai" } });
+        expect(invokeCalls).toContainEqual({ cmd: "delete_api_key", args: { provider: "anthropic" } });
       });
-      expect(usePreferencesStore.getState().llmOpenaiApiKeySet).toBe(false);
+      expect(usePreferencesStore.getState().llmProvider.apiKeySet).toBe(false);
     });
   });
 
@@ -795,11 +796,25 @@ describe("SettingsModal", () => {
 
   // --- LLM search ---
 
-  it("search 'model' includes LLM settings", () => {
+  it("search 'system' includes LLM settings", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "system" } });
+    expect(container.querySelector("[data-testid='settings-llmSystemPrompt']")).toBeTruthy();
+  });
+
+  it("search 'provider' keeps the LLM provider UI reachable", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "provider" } });
+    expect(container.querySelector("[data-testid='llm-provider-settings']")).toBeTruthy();
+  });
+
+  it("search 'model' keeps the LLM provider UI reachable", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
     fireEvent.change(search, { target: { value: "model" } });
-    expect(container.querySelector("[data-testid='settings-llmModel']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='llm-provider-settings']")).toBeTruthy();
   });
 
   // --- experimentalUnlinkedReferences (ToggleSwitch) ---
@@ -925,7 +940,7 @@ describe("SettingsModal", () => {
 
   // --- Registry-driven rendering safety net ---
 
-  it("all 30 control data-testid values exist", () => {
+  it("all 28 control data-testid values exist", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const expectedIds = [
       "settings-darkMode-auto",
@@ -943,11 +958,9 @@ describe("SettingsModal", () => {
       "settings-annotationScopeHighlight",
       "settings-annotationDefaultLang",
       "settings-annotationDisplayMode-pill",
+      "settings-llmProvider",
       "settings-llmModel",
-      "settings-llmOpenaiApiKeySet",
-      "settings-llmOpenaiBaseUrl",
-      "settings-llmAnthropicApiKeySet",
-      "settings-llmAnthropicBaseUrl",
+      "settings-llmApiKey",
       "settings-llmSystemPrompt",
       "settings-llmTemperature",
       "settings-neighborsDepth",
@@ -1047,7 +1060,7 @@ describe("SettingsModal", () => {
     expect(container.querySelector("[data-testid='settings-no-results']")!.textContent).toContain("No matching settings");
   });
 
-  it("empty search shows all 30 controls", () => {
+  it("empty search shows all 28 controls", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
     fireEvent.change(search, { target: { value: "fold" } });
@@ -1069,11 +1082,9 @@ describe("SettingsModal", () => {
       "settings-annotationScopeHighlight",
       "settings-annotationDefaultLang",
       "settings-annotationDisplayMode-pill",
+      "settings-llmProvider",
       "settings-llmModel",
-      "settings-llmOpenaiApiKeySet",
-      "settings-llmOpenaiBaseUrl",
-      "settings-llmAnthropicApiKeySet",
-      "settings-llmAnthropicBaseUrl",
+      "settings-llmApiKey",
       "settings-llmSystemPrompt",
       "settings-llmTemperature",
       "settings-neighborsDepth",
@@ -1181,11 +1192,9 @@ describe("SettingsModal", () => {
       "settings-annotationScopeHighlight",
       "settings-annotationDefaultLang",
       "settings-annotationDisplayMode-pill",
+      "settings-llmProvider",
       "settings-llmModel",
-      "settings-llmOpenaiApiKeySet",
-      "settings-llmOpenaiBaseUrl",
-      "settings-llmAnthropicApiKeySet",
-      "settings-llmAnthropicBaseUrl",
+      "settings-llmApiKey",
       "settings-llmSystemPrompt",
       "settings-llmTemperature",
       "settings-neighborsDepth",
@@ -1374,18 +1383,19 @@ describe("SettingsModal", () => {
   it("arrow navigation wraps through matching categories during search", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
-    // "mode" matches Appearance (Dark Mode), Annotations (Display Mode), and LLM (Model)
+    // "mode" matches Appearance (Dark Mode, Default View Mode), Annotations
+    // (Display Mode), and LLM (via the "model" search keyword).
     fireEvent.change(search, { target: { value: "mode" } });
 
     const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
     const buttons = Array.from(sidebar.querySelectorAll("button"));
     const llmBtn = buttons.find((b) => b.textContent === "LLM")!;
 
-    // Start at LLM (last matching category before Experimental)
+    // Start at LLM (last matching category)
     fireEvent.click(llmBtn);
     llmBtn.focus();
 
-    // ArrowDown should wrap past Experimental to Appearance (first match)
+    // ArrowDown should wrap past remaining non-matching categories to Appearance (first match)
     fireEvent.keyDown(sidebar, { key: "ArrowDown" });
     const appearanceBtn = buttons.find((b) => b.textContent === "Appearance")!;
     expect(appearanceBtn.getAttribute("aria-selected")).toBe("true");
@@ -1587,21 +1597,20 @@ describe("SettingsModal", () => {
   // --- hasApiKey effect ---
 
   describe("hasApiKey effect", () => {
-    it("checks all password providers on open", async () => {
+    it("checks current provider on open", async () => {
       const { rerender } = render(<SettingsModal open={false} onClose={vi.fn()} />);
       invokeCalls.length = 0;
       await act(async () => {
         rerender(<SettingsModal open={true} onClose={vi.fn()} />);
       });
       const calls = invokeCalls.filter((c) => c.cmd === "has_api_key");
-      expect(calls).toContainEqual({ cmd: "has_api_key", args: { provider: "openai" } });
       expect(calls).toContainEqual({ cmd: "has_api_key", args: { provider: "anthropic" } });
-      expect(calls).toHaveLength(2);
+      expect(calls).toHaveLength(1);
     });
 
-    it("updates store when provider reports key exists", async () => {
+    it("updates llmProvider.apiKeySet when provider reports key exists", async () => {
       mockInvoke((cmd, args) => {
-        if (cmd === "has_api_key" && args?.provider === "openai") return true;
+        if (cmd === "has_api_key" && args?.provider === "anthropic") return true;
         if (cmd === "has_api_key") return false;
         if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
         return undefined;
@@ -1610,9 +1619,44 @@ describe("SettingsModal", () => {
         render(<SettingsModal open={true} onClose={vi.fn()} />);
       });
       await vi.waitFor(() => {
-        expect(usePreferencesStore.getState().llmOpenaiApiKeySet).toBe(true);
+        expect(usePreferencesStore.getState().llmProvider.apiKeySet).toBe(true);
       });
-      expect(usePreferencesStore.getState().llmAnthropicApiKeySet).toBe(false);
+    });
+
+    it("does not apply stale apiKeySet when provider switches before hasApiKey resolves", async () => {
+      let resolveHas!: (value: boolean) => void;
+      const hasPromise = new Promise<boolean>((r) => {
+        resolveHas = r;
+      });
+      mockInvoke((cmd, args) => {
+        invokeCalls.push({ cmd, args: args ?? {} });
+        if (cmd === "has_api_key" && args?.provider === "anthropic") return hasPromise;
+        if (cmd === "has_api_key") return false;
+        if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
+        return undefined;
+      });
+      usePreferencesStore.setState({
+        llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", apiKeySet: false },
+      });
+      // exists=false / unlocked=false is the default-fresh path so the effect runs.
+      await act(async () => {
+        render(<SettingsModal open={true} onClose={vi.fn()} />);
+      });
+      // Effect fired has_api_key("anthropic") but it has NOT resolved yet.
+      // User switches providers in the meantime.
+      await act(async () => {
+        usePreferencesStore.setState({
+          llmProvider: { providerId: "openai", model: "gpt-4o", apiKeySet: false },
+        });
+      });
+      // Now the stale anthropic check resolves with `true`.
+      await act(async () => {
+        resolveHas(true);
+        await hasPromise;
+      });
+      // The stale anthropic value must NOT clobber the openai provider.
+      expect(usePreferencesStore.getState().llmProvider.providerId).toBe("openai");
+      expect(usePreferencesStore.getState().llmProvider.apiKeySet).toBe(false);
     });
   });
 
@@ -1628,20 +1672,17 @@ describe("SettingsModal", () => {
       return undefined;
     });
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-    const input = container.querySelector("[data-testid='settings-llmOpenaiApiKeySet']")!;
-    const saveBtn = container.querySelector("[data-testid='settings-llmOpenaiApiKeySet-save']")!;
+    const input = container.querySelector("[data-testid='settings-llmApiKey']")!;
+    const saveBtn = container.querySelector("[data-testid='settings-llmApiKey-save']")!;
     fireEvent.change(input, { target: { value: "sk-test" } });
     await act(async () => {
       fireEvent.click(saveBtn);
     });
-    // After ensureUnlocked resolves (async), setApiKey is called and fails,
-    // the optimistic update is set then rolled back
     await vi.waitFor(() => {
       expect(setApiKeyCalled).toHaveBeenCalled();
     });
-    // After IPC failure, the store rolls back to false
     await vi.waitFor(() => {
-      expect(usePreferencesStore.getState().llmOpenaiApiKeySet).toBe(false);
+      expect(usePreferencesStore.getState().llmProvider.apiKeySet).toBe(false);
     });
   });
 
@@ -1653,17 +1694,17 @@ describe("SettingsModal", () => {
       if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
       return undefined;
     });
-    usePreferencesStore.setState({ llmOpenaiApiKeySet: true });
+    usePreferencesStore.setState({ llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", apiKeySet: true } });
     let container!: HTMLElement;
     await act(async () => {
       ({ container } = render(<SettingsModal open={true} onClose={vi.fn()} />));
     });
-    const clearBtn = container.querySelector("[data-testid='settings-llmOpenaiApiKeySet-clear']")!;
+    const clearBtn = container.querySelector("[data-testid='settings-llmApiKey-clear']")!;
     await act(async () => {
       fireEvent.click(clearBtn);
     });
     await vi.waitFor(() => {
-      expect(usePreferencesStore.getState().llmOpenaiApiKeySet).toBe(true);
+      expect(usePreferencesStore.getState().llmProvider.apiKeySet).toBe(true);
     });
   });
 
@@ -1687,9 +1728,7 @@ describe("SettingsModal", () => {
 
   it("Test Connection uses Anthropic base URL for claude model", async () => {
     usePreferencesStore.setState({
-      llmModel: "claude-sonnet-4-6",
-      llmAnthropicBaseUrl: "https://anthropic.example.com",
-      llmOpenaiBaseUrl: "https://openai.example.com",
+      llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", baseUrl: "https://anthropic.example.com", apiKeySet: false },
     });
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const btn = container.querySelector("[data-testid='test-connection-btn']")!;
@@ -1699,16 +1738,14 @@ describe("SettingsModal", () => {
     await vi.waitFor(() => {
       expect(invokeCalls).toContainEqual({
         cmd: "llm_test_connection",
-        args: { model: "claude-sonnet-4-6", baseUrl: "https://anthropic.example.com" },
+        args: { model: "claude-sonnet-4-6", baseUrl: "https://anthropic.example.com", provider: "anthropic" },
       });
     });
   });
 
   it("Test Connection uses OpenAI base URL for gpt model", async () => {
     usePreferencesStore.setState({
-      llmModel: "gpt-4o",
-      llmAnthropicBaseUrl: "https://anthropic.example.com",
-      llmOpenaiBaseUrl: "https://openai.example.com",
+      llmProvider: { providerId: "openai", model: "gpt-4o", baseUrl: "https://openai.example.com", apiKeySet: false },
     });
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const btn = container.querySelector("[data-testid='test-connection-btn']")!;
@@ -1718,16 +1755,14 @@ describe("SettingsModal", () => {
     await vi.waitFor(() => {
       expect(invokeCalls).toContainEqual({
         cmd: "llm_test_connection",
-        args: { model: "gpt-4o", baseUrl: "https://openai.example.com" },
+        args: { model: "gpt-4o", baseUrl: "https://openai.example.com", provider: "openai" },
       });
     });
   });
 
   it("Test Connection passes null when provider base URL is empty", async () => {
     usePreferencesStore.setState({
-      llmModel: "claude-sonnet-4-6",
-      llmAnthropicBaseUrl: "",
-      llmOpenaiBaseUrl: "https://openai.example.com",
+      llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", apiKeySet: false },
     });
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const btn = container.querySelector("[data-testid='test-connection-btn']")!;
@@ -1737,7 +1772,7 @@ describe("SettingsModal", () => {
     await vi.waitFor(() => {
       expect(invokeCalls).toContainEqual({
         cmd: "llm_test_connection",
-        args: { model: "claude-sonnet-4-6", baseUrl: null },
+        args: { model: "claude-sonnet-4-6", baseUrl: null, provider: "anthropic" },
       });
     });
   });
@@ -1966,7 +2001,7 @@ describe("SettingsModal", () => {
       });
 
       const hasApiKeyCalls = localCalls.filter((c) => c.cmd === "has_api_key");
-      expect(hasApiKeyCalls).toHaveLength(2);
+      expect(hasApiKeyCalls).toHaveLength(1);
     });
 
     it("calls hasApiKey when store does not exist yet", async () => {
@@ -1986,13 +2021,12 @@ describe("SettingsModal", () => {
       });
 
       const hasApiKeyCalls = localCalls.filter((c) => c.cmd === "has_api_key");
-      expect(hasApiKeyCalls).toHaveLength(2);
+      expect(hasApiKeyCalls).toHaveLength(1);
     });
 
     it("does not check hasApiKey when store exists but is locked (migration pending)", async () => {
       useSecretStoreStore.setState({ exists: true, unlocked: false });
-      // Simulate keys already known to be saved (e.g. from a prior session)
-      usePreferencesStore.setState({ llmOpenaiApiKeySet: true, llmAnthropicApiKeySet: true });
+      usePreferencesStore.setState({ llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", apiKeySet: true } });
 
       const localCalls: { cmd: string; args: Record<string, unknown> }[] = [];
       mockInvoke((cmd, args) => {
@@ -2008,9 +2042,7 @@ describe("SettingsModal", () => {
 
       const hasApiKeyCalls = localCalls.filter((c) => c.cmd === "has_api_key");
       expect(hasApiKeyCalls).toHaveLength(0);
-      // Saved flags must not be clobbered to false by a locked-store has() returning false
-      expect(usePreferencesStore.getState().llmOpenaiApiKeySet).toBe(true);
-      expect(usePreferencesStore.getState().llmAnthropicApiKeySet).toBe(true);
+      expect(usePreferencesStore.getState().llmProvider.apiKeySet).toBe(true);
     });
 
     it("re-checks hasApiKey after store becomes unlocked", async () => {
@@ -2019,7 +2051,7 @@ describe("SettingsModal", () => {
       const localCalls: { cmd: string; args: Record<string, unknown> }[] = [];
       mockInvoke((cmd, args) => {
         localCalls.push({ cmd, args: args ?? {} });
-        if (cmd === "has_api_key" && args?.provider === "openai") return true;
+        if (cmd === "has_api_key" && args?.provider === "anthropic") return true;
         if (cmd === "has_api_key") return false;
         if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
         return undefined;
@@ -2030,7 +2062,6 @@ describe("SettingsModal", () => {
         ({ rerender } = render(<SettingsModal open={true} onClose={vi.fn()} />));
       });
 
-      // While locked, no checks should have run
       expect(localCalls.filter((c) => c.cmd === "has_api_key")).toHaveLength(0);
 
       await act(async () => {
@@ -2039,13 +2070,12 @@ describe("SettingsModal", () => {
       });
 
       await vi.waitFor(() => {
-        expect(usePreferencesStore.getState().llmOpenaiApiKeySet).toBe(true);
+        expect(usePreferencesStore.getState().llmProvider.apiKeySet).toBe(true);
       });
     });
 
     it("password save calls ensureUnlocked before setApiKey", async () => {
 
-      // Store is already unlocked so ensureUnlocked resolves immediately
       useSecretStoreStore.setState({ exists: true, unlocked: true });
 
       const localCalls: string[] = [];
@@ -2061,8 +2091,8 @@ describe("SettingsModal", () => {
       await act(async () => {
         ({ container } = render(<SettingsModal open={true} onClose={vi.fn()} />));
       });
-      const input = container.querySelector("[data-testid='settings-llmOpenaiApiKeySet']")!;
-      const saveBtn = container.querySelector("[data-testid='settings-llmOpenaiApiKeySet-save']")!;
+      const input = container.querySelector("[data-testid='settings-llmApiKey']")!;
+      const saveBtn = container.querySelector("[data-testid='settings-llmApiKey-save']")!;
       await act(async () => {
         fireEvent.change(input, { target: { value: "sk-test" } });
         fireEvent.click(saveBtn);
@@ -2070,11 +2100,10 @@ describe("SettingsModal", () => {
       await vi.waitFor(() => {
         expect(localCalls).toContain("set_api_key");
       });
-      expect(usePreferencesStore.getState().llmOpenaiApiKeySet).toBe(true);
+      expect(usePreferencesStore.getState().llmProvider.apiKeySet).toBe(true);
     });
 
     it("password delete calls ensureUnlocked before deleteApiKey", async () => {
-      // Store is already unlocked so ensureUnlocked resolves immediately
       useSecretStoreStore.setState({ exists: true, unlocked: true });
 
       const localCalls: string[] = [];
@@ -2086,23 +2115,22 @@ describe("SettingsModal", () => {
         return undefined;
       });
 
-      usePreferencesStore.setState({ llmOpenaiApiKeySet: true });
+      usePreferencesStore.setState({ llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", apiKeySet: true } });
       let container!: HTMLElement;
       await act(async () => {
         ({ container } = render(<SettingsModal open={true} onClose={vi.fn()} />));
       });
-      const clearBtn = container.querySelector("[data-testid='settings-llmOpenaiApiKeySet-clear']")!;
+      const clearBtn = container.querySelector("[data-testid='settings-llmApiKey-clear']")!;
       await act(async () => {
         fireEvent.click(clearBtn);
       });
       await vi.waitFor(() => {
         expect(localCalls).toContain("delete_api_key");
       });
-      expect(usePreferencesStore.getState().llmOpenaiApiKeySet).toBe(false);
+      expect(usePreferencesStore.getState().llmProvider.apiKeySet).toBe(false);
     });
 
     it("password delete does not call deleteApiKey when store is locked and passphrase is not provided", async () => {
-      // Store exists but is locked; ensureUnlocked will open prompt and block
       useSecretStoreStore.setState({ exists: true, unlocked: false });
 
       const localCalls: string[] = [];
@@ -2114,24 +2142,21 @@ describe("SettingsModal", () => {
         return undefined;
       });
 
-      usePreferencesStore.setState({ llmOpenaiApiKeySet: true });
+      usePreferencesStore.setState({ llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", apiKeySet: true } });
       let container!: HTMLElement;
       await act(async () => {
         ({ container } = render(<SettingsModal open={true} onClose={vi.fn()} />));
       });
-      const clearBtn = container.querySelector("[data-testid='settings-llmOpenaiApiKeySet-clear']")!;
+      const clearBtn = container.querySelector("[data-testid='settings-llmApiKey-clear']")!;
       await act(async () => {
         fireEvent.click(clearBtn);
       });
 
-      // ensureUnlocked opens prompt and blocks — delete_api_key should NOT be called
       expect(localCalls).not.toContain("delete_api_key");
-      // Store should NOT have been optimistically updated either
-      expect(usePreferencesStore.getState().llmOpenaiApiKeySet).toBe(true);
+      expect(usePreferencesStore.getState().llmProvider.apiKeySet).toBe(true);
     });
 
     it("password delete aborts when user cancels passphrase entry", async () => {
-      // Store exists but is locked
       useSecretStoreStore.setState({ exists: true, unlocked: false });
 
       const localCalls: string[] = [];
@@ -2143,25 +2168,22 @@ describe("SettingsModal", () => {
         return undefined;
       });
 
-      usePreferencesStore.setState({ llmOpenaiApiKeySet: true });
+      usePreferencesStore.setState({ llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", apiKeySet: true } });
       let container!: HTMLElement;
       await act(async () => {
         ({ container } = render(<SettingsModal open={true} onClose={vi.fn()} />));
       });
-      const clearBtn = container.querySelector("[data-testid='settings-llmOpenaiApiKeySet-clear']")!;
+      const clearBtn = container.querySelector("[data-testid='settings-llmApiKey-clear']")!;
       await act(async () => {
         fireEvent.click(clearBtn);
       });
 
-      // Simulate user cancelling passphrase prompt
       await act(async () => {
         useSecretStoreStore.getState().settleMigration(false);
       });
 
-      // delete_api_key should NOT have been called
       expect(localCalls).not.toContain("delete_api_key");
-      // Store value should remain true (key still saved)
-      expect(usePreferencesStore.getState().llmOpenaiApiKeySet).toBe(true);
+      expect(usePreferencesStore.getState().llmProvider.apiKeySet).toBe(true);
     });
   });
 });

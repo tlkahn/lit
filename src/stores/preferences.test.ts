@@ -1,5 +1,13 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { usePreferencesStore } from "./preferences";
+import {
+  usePreferencesStore,
+  migrateLlmProvider,
+  addCustomProvider,
+  updateCustomProvider,
+  removeCustomProvider,
+} from "./preferences";
+import type { Preferences } from "../lib/ipc";
+import type { CustomProviderDef } from "../lib/providerRegistry";
 import { mockInvoke, mockListen, emitMockEvent } from "../test/tauri-mock";
 
 describe("PreferencesStore", () => {
@@ -16,6 +24,7 @@ describe("PreferencesStore", () => {
       mediaThumbnails: true,
       experimentalUnlinkedReferences: true,
       neighborsDepth: 1,
+      llmCustomProviders: [],
       loaded: false,
     });
   });
@@ -1173,6 +1182,237 @@ describe("PreferencesStore", () => {
     expect(usePreferencesStore.getState().annotationBuilderDefaults).toEqual(defaults);
   });
 
+  describe("migrateLlmProvider", () => {
+    const base: Preferences = {
+      "workbench.colorTheme": null,
+      "workbench.darkMode": "auto",
+      "workbench.sideBar.location": "left",
+      "editor.folding.enabled": true,
+      "editor.folding.showFoldingControls": "mouseover",
+      "workbench.defaultViewMode": "editor",
+    };
+
+    it("synthesizes anthropic provider from legacy claude model", () => {
+      const result = migrateLlmProvider({ ...base, "llm.model": "claude-sonnet-4-6" });
+      expect(result.providerId).toBe("anthropic");
+      expect(result.model).toBe("claude-sonnet-4-6");
+      expect(result.apiKeySet).toBe(false);
+    });
+
+    it("synthesizes openai provider from legacy gpt model", () => {
+      const result = migrateLlmProvider({ ...base, "llm.model": "gpt-4o" });
+      expect(result.providerId).toBe("openai");
+      expect(result.model).toBe("gpt-4o");
+    });
+
+    it("copies anthropic baseUrl for claude model", () => {
+      const result = migrateLlmProvider({
+        ...base,
+        "llm.model": "claude-sonnet-4-6",
+        "llm.anthropic.baseUrl": "https://custom.anthropic.com",
+      });
+      expect(result.baseUrl).toBe("https://custom.anthropic.com");
+    });
+
+    it("copies openai baseUrl for gpt model", () => {
+      const result = migrateLlmProvider({
+        ...base,
+        "llm.model": "gpt-4o",
+        "llm.openai.baseUrl": "https://custom.openai.com",
+      });
+      expect(result.baseUrl).toBe("https://custom.openai.com");
+    });
+
+    it("normalizes empty baseUrl to undefined", () => {
+      const result = migrateLlmProvider({
+        ...base,
+        "llm.model": "claude-sonnet-4-6",
+        "llm.anthropic.baseUrl": "",
+      });
+      expect(result.baseUrl).toBeUndefined();
+    });
+
+    it("normalizes whitespace-only baseUrl to undefined", () => {
+      const result = migrateLlmProvider({
+        ...base,
+        "llm.model": "gpt-4o",
+        "llm.openai.baseUrl": "  ",
+      });
+      expect(result.baseUrl).toBeUndefined();
+    });
+
+    it("uses post-migration llm.provider object directly", () => {
+      const result = migrateLlmProvider({
+        ...base,
+        "llm.provider": {
+          providerId: "openrouter",
+          model: "meta-llama/llama-3-70b",
+          baseUrl: "https://openrouter.ai/api/v1",
+          apiKeySet: true,
+        },
+      });
+      expect(result.providerId).toBe("openrouter");
+      expect(result.model).toBe("meta-llama/llama-3-70b");
+      expect(result.baseUrl).toBe("https://openrouter.ai/api/v1");
+      expect(result.apiKeySet).toBe(true);
+    });
+
+    it("defaults model when persisted llm.provider model is empty string", () => {
+      const result = migrateLlmProvider({
+        ...base,
+        "llm.provider": {
+          providerId: "anthropic",
+          model: "",
+          apiKeySet: false,
+        },
+      });
+      expect(result.model).toBe("claude-sonnet-4-6");
+    });
+
+    it("defaults to claude-sonnet-4-6 when llm.model is missing", () => {
+      const result = migrateLlmProvider(base);
+      expect(result.model).toBe("claude-sonnet-4-6");
+      expect(result.providerId).toBe("anthropic");
+    });
+  });
+
+  it("loadPreferences integration: legacy gpt model migrates to openai provider", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "llm.model": "gpt-4o",
+          "llm.openai.baseUrl": "https://custom.openai.com",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    const state = usePreferencesStore.getState();
+    expect(state.llmProvider.providerId).toBe("openai");
+    expect(state.llmProvider.model).toBe("gpt-4o");
+    expect(state.llmProvider.baseUrl).toBe("https://custom.openai.com");
+    expect(state.llmProvider.apiKeySet).toBe(false);
+  });
+
+  it("loadPreferences corrects apiKeySet via has_api_key for legacy users with a saved key", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "llm.model": "claude-sonnet-4-6",
+        };
+      }
+      if (cmd === "has_api_key") {
+        return true;
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    // Flush the fire-and-forget has_api_key check that runs after the set().
+    await new Promise((r) => setTimeout(r, 0));
+
+    const state = usePreferencesStore.getState();
+    expect(state.llmProvider.providerId).toBe("anthropic");
+    expect(state.llmProvider.apiKeySet).toBe(true);
+  });
+
+  it("loadPreferences leaves apiKeySet false when has_api_key returns false", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "llm.model": "claude-sonnet-4-6",
+        };
+      }
+      if (cmd === "has_api_key") {
+        return false;
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    await new Promise((r) => setTimeout(r, 0));
+
+    const state = usePreferencesStore.getState();
+    expect(state.llmProvider.providerId).toBe("anthropic");
+    expect(state.llmProvider.apiKeySet).toBe(false);
+  });
+
+  it("loadPreferences persists the migrated llm.provider when none existed on disk", async () => {
+    const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+    mockInvoke((cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "llm.model": "gpt-4o",
+          "llm.openai.baseUrl": "https://custom.openai.com",
+        };
+      }
+      if (cmd === "has_api_key") return false;
+      return undefined;
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    await new Promise((r) => setTimeout(r, 0));
+
+    const providerWrites = calls.filter(
+      (c) => c.cmd === "set_preference" && c.args?.key === "llm.provider",
+    );
+    expect(providerWrites).toHaveLength(1);
+    expect(providerWrites[0]?.args?.value).toEqual({
+      providerId: "openai",
+      model: "gpt-4o",
+      baseUrl: "https://custom.openai.com",
+      apiKeySet: false,
+    });
+  });
+
+  it("loadPreferences does NOT persist llm.provider when it already exists on disk", async () => {
+    const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+    mockInvoke((cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "llm.provider": {
+            providerId: "openrouter",
+            model: "anthropic/claude-3.5-sonnet",
+            apiKeySet: true,
+          },
+        };
+      }
+      if (cmd === "has_api_key") return false;
+      return undefined;
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    await new Promise((r) => setTimeout(r, 0));
+
+    const providerWrites = calls.filter(
+      (c) => c.cmd === "set_preference" && c.args?.key === "llm.provider",
+    );
+    expect(providerWrites).toHaveLength(0);
+  });
+
   it("maps invalid annotations.builderDefaults to null", async () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
@@ -1206,5 +1446,210 @@ describe("PreferencesStore", () => {
 
     await usePreferencesStore.getState().loadPreferences();
     expect(usePreferencesStore.getState().annotationBuilderDefaults).toBeNull();
+  });
+
+  describe("llmCustomProviders", () => {
+    const sampleDef: CustomProviderDef = {
+      id: "custom-vllm",
+      name: "My vLLM",
+      baseUrl: "http://localhost:8000/v1",
+      needsApiKey: true,
+      modelId: "qwen",
+      contextWindow: 32000,
+    };
+
+    const baseGet = {
+      "workbench.colorTheme": null,
+      "workbench.darkMode": "auto",
+      "workbench.sideBar.location": "left",
+    };
+
+    it("defaults to []", () => {
+      expect(usePreferencesStore.getState().llmCustomProviders).toEqual([]);
+    });
+
+    it("parses a valid llm.customProviders array from IPC", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "get_preferences") {
+          return { ...baseGet, "llm.customProviders": [sampleDef] };
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      mockListen();
+
+      await usePreferencesStore.getState().loadPreferences();
+      const state = usePreferencesStore.getState();
+      expect(state.llmCustomProviders).toHaveLength(1);
+      expect(state.llmCustomProviders).toEqual([sampleDef]);
+    });
+
+    it("defaults to [] when llm.customProviders key is missing", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "get_preferences") return { ...baseGet };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      mockListen();
+
+      await usePreferencesStore.getState().loadPreferences();
+      expect(usePreferencesStore.getState().llmCustomProviders).toEqual([]);
+    });
+
+    it("defaults to [] when llm.customProviders is not an array", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "get_preferences") {
+          return { ...baseGet, "llm.customProviders": "not-an-array" };
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      mockListen();
+
+      await usePreferencesStore.getState().loadPreferences();
+      expect(usePreferencesStore.getState().llmCustomProviders).toEqual([]);
+    });
+
+    it("defaults to [] when an entry is malformed", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "get_preferences") {
+          return {
+            ...baseGet,
+            "llm.customProviders": [{ id: "custom-x", name: "X" }],
+          };
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      mockListen();
+
+      await usePreferencesStore.getState().loadPreferences();
+      expect(usePreferencesStore.getState().llmCustomProviders).toEqual([]);
+    });
+
+    it("keeps valid entries and drops only the malformed ones in a mixed array", async () => {
+      const invalidDef = {
+        id: "custom-broken",
+        name: "Broken",
+        baseUrl: "http://localhost:9000/v1",
+        needsApiKey: true,
+        modelId: "m",
+        // contextWindow omitted -> fails isCustomProviderDef
+      };
+      mockInvoke((cmd) => {
+        if (cmd === "get_preferences") {
+          return {
+            ...baseGet,
+            "llm.customProviders": [sampleDef, invalidDef],
+          };
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      mockListen();
+
+      await usePreferencesStore.getState().loadPreferences();
+      const state = usePreferencesStore.getState();
+      expect(state.llmCustomProviders).toHaveLength(1);
+      expect(state.llmCustomProviders).toEqual([sampleDef]);
+    });
+
+    it("updates llmCustomProviders on preferences://changed event", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "get_preferences") return { ...baseGet };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      mockListen();
+
+      await usePreferencesStore.getState().loadPreferences();
+      expect(usePreferencesStore.getState().llmCustomProviders).toEqual([]);
+
+      emitMockEvent("preferences://changed", {
+        ...baseGet,
+        "llm.customProviders": [sampleDef],
+      });
+
+      expect(usePreferencesStore.getState().llmCustomProviders).toEqual([sampleDef]);
+    });
+
+    it("addCustomProvider appends and persists", async () => {
+      usePreferencesStore.setState({ llmCustomProviders: [] });
+      const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+      mockInvoke((cmd, args) => {
+        calls.push({ cmd, args });
+        return undefined;
+      });
+
+      addCustomProvider(sampleDef);
+      await Promise.resolve();
+
+      expect(usePreferencesStore.getState().llmCustomProviders).toEqual([sampleDef]);
+      const setCall = calls.find((c) => c.cmd === "set_preference");
+      expect(setCall).toBeDefined();
+      expect(setCall?.args?.key).toBe("llm.customProviders");
+      expect(setCall?.args?.value).toEqual([sampleDef]);
+    });
+
+    it("updateCustomProvider patches in place and persists", async () => {
+      usePreferencesStore.setState({ llmCustomProviders: [sampleDef] });
+      const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+      mockInvoke((cmd, args) => {
+        calls.push({ cmd, args });
+        return undefined;
+      });
+
+      updateCustomProvider("custom-vllm", { contextWindow: 64000 });
+      await Promise.resolve();
+
+      const updated = usePreferencesStore.getState().llmCustomProviders;
+      expect(updated).toHaveLength(1);
+      expect(updated[0]).toEqual({ ...sampleDef, contextWindow: 64000 });
+
+      const setCall = calls.find((c) => c.cmd === "set_preference");
+      expect(setCall?.args?.value).toEqual([{ ...sampleDef, contextWindow: 64000 }]);
+    });
+
+    it("updateCustomProvider is a no-op when id is not found", async () => {
+      usePreferencesStore.setState({ llmCustomProviders: [sampleDef] });
+      mockInvoke(() => undefined);
+
+      updateCustomProvider("custom-missing", { contextWindow: 99999 });
+      await Promise.resolve();
+
+      expect(usePreferencesStore.getState().llmCustomProviders).toEqual([sampleDef]);
+    });
+
+    it("removeCustomProvider filters, persists, and deletes the api key", async () => {
+      usePreferencesStore.setState({ llmCustomProviders: [sampleDef] });
+      const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+      mockInvoke((cmd, args) => {
+        calls.push({ cmd, args });
+        return undefined;
+      });
+
+      removeCustomProvider("custom-vllm");
+      await Promise.resolve();
+
+      expect(usePreferencesStore.getState().llmCustomProviders).toEqual([]);
+
+      const setCall = calls.find((c) => c.cmd === "set_preference");
+      expect(setCall?.args?.key).toBe("llm.customProviders");
+      expect(setCall?.args?.value).toEqual([]);
+
+      const delCall = calls.find((c) => c.cmd === "delete_api_key");
+      expect(delCall).toBeDefined();
+      expect(delCall?.args?.provider).toBe("custom-vllm");
+    });
+
+    it("addCustomProvider rolls back when persistence rejects", async () => {
+      usePreferencesStore.setState({ llmCustomProviders: [] });
+      mockInvoke((cmd) => {
+        if (cmd === "set_preference") {
+          return Promise.reject(new Error("write failed"));
+        }
+        return undefined;
+      });
+
+      addCustomProvider(sampleDef);
+      // flush the optimistic update + the rejected promise's .catch rollback
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(usePreferencesStore.getState().llmCustomProviders).toEqual([]);
+    });
   });
 });

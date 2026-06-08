@@ -4,9 +4,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 use crate::commands::credential::{self, CredentialStore};
-
-const DEFAULT_OPENAI_URL: &str = "https://api.openai.com";
-const DEFAULT_ANTHROPIC_URL: &str = "https://api.anthropic.com";
+use crate::provider_registry;
 
 #[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
 pub struct ChatMessage {
@@ -59,12 +57,10 @@ pub fn estimate_tokens(text: &str) -> usize {
 
 const DEFAULT_CONTEXT_WINDOW: usize = 128_000;
 
-pub fn context_window(model: &str) -> usize {
-    if model.starts_with("claude-") {
-        200_000
-    } else {
-        DEFAULT_CONTEXT_WINDOW
-    }
+pub fn context_window(provider_id: &str) -> usize {
+    provider_registry::lookup(provider_id)
+        .map(|e| e.default_context_window)
+        .unwrap_or(DEFAULT_CONTEXT_WINDOW)
 }
 
 pub fn estimate_prompt_size(prompt: &Prompt) -> usize {
@@ -106,8 +102,9 @@ pub fn symmetric_trim(text: &str, budget_chars: usize) -> String {
     text[start_byte..end_byte].to_string()
 }
 
-pub fn apply_token_budget(prompt: Prompt, model: &str) -> (Prompt, Option<TruncationInfo>) {
-    let budget = (context_window(model) as f64 * 0.8) as usize;
+pub fn apply_token_budget(prompt: Prompt, provider_id: &str, _model: &str, context_window_override: Option<usize>) -> (Prompt, Option<TruncationInfo>) {
+    let window = context_window_override.unwrap_or_else(|| context_window(provider_id));
+    let budget = (window as f64 * 0.8) as usize;
     let size = estimate_prompt_size(&prompt);
 
     if size <= budget {
@@ -203,15 +200,39 @@ pub async fn collect_stream_text(
     Ok(text)
 }
 
-pub fn create_provider(model: &str, base_url: Option<&str>) -> Box<dyn Provider> {
+pub fn provider_id_for_model(model: &str) -> &'static str {
     if model.starts_with("claude-") {
-        Box::new(llm_anthropic::provider::AnthropicProvider::new(
-            base_url.unwrap_or(DEFAULT_ANTHROPIC_URL),
-        ))
+        "anthropic"
     } else {
-        Box::new(llm_openai::provider::OpenAiProvider::new(
-            base_url.unwrap_or(DEFAULT_OPENAI_URL),
-        ))
+        "openai"
+    }
+}
+
+pub fn create_provider(provider_id: &str, base_url: Option<&str>) -> Box<dyn Provider> {
+    match provider_registry::lookup(provider_id) {
+        Some(entry) => match entry.wire_format {
+            provider_registry::WireFormat::Anthropic => Box::new(
+                llm_anthropic::provider::AnthropicProvider::new(
+                    base_url.unwrap_or(entry.default_base_url),
+                ),
+            ),
+            provider_registry::WireFormat::OpenAi => {
+                let url = base_url.unwrap_or(entry.default_base_url);
+                if entry.extra_headers.is_empty() {
+                    Box::new(llm_openai::provider::OpenAiProvider::new(url))
+                } else {
+                    let headers = entry.extra_headers
+                        .iter()
+                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                        .collect();
+                    Box::new(llm_openai::provider::OpenAiProvider::with_extra_headers(url, headers))
+                }
+            }
+        },
+        // Unknown id → fall back to OpenAI wire format on the OpenAI default URL.
+        None => Box::new(llm_openai::provider::OpenAiProvider::new(
+            base_url.unwrap_or("https://api.openai.com"),
+        )),
     }
 }
 
@@ -229,32 +250,51 @@ mod tests {
 
     #[test]
     fn create_provider_anthropic_sonnet() {
-        let provider = create_provider("claude-sonnet-4-6", None);
+        let provider = create_provider("anthropic", None);
         assert_eq!(provider.id(), "anthropic");
     }
 
     #[test]
     fn create_provider_anthropic_opus() {
-        let provider = create_provider("claude-opus-4-6", None);
+        let provider = create_provider("anthropic", None);
         assert_eq!(provider.id(), "anthropic");
     }
 
     #[test]
     fn create_provider_openai_gpt4o() {
-        let provider = create_provider("gpt-4o", None);
+        let provider = create_provider("openai", None);
         assert_eq!(provider.id(), "openai");
     }
 
     #[test]
     fn create_provider_unknown_defaults_to_openai() {
-        let provider = create_provider("some-custom-model", None);
+        let provider = create_provider("nonexistent", None);
         assert_eq!(provider.id(), "openai");
     }
 
     #[test]
     fn create_provider_with_custom_base_url() {
-        let provider = create_provider("gpt-4o", Some("http://localhost:8080"));
+        let provider = create_provider("openai", Some("http://localhost:8080"));
         assert_eq!(provider.id(), "openai");
+    }
+
+    #[test]
+    fn create_provider_openrouter() {
+        let p = create_provider("openrouter", None);
+        assert_eq!(p.id(), "openai");
+    }
+
+    #[test]
+    fn create_provider_ollama() {
+        let p = create_provider("ollama", None);
+        assert_eq!(p.id(), "openai");
+    }
+
+    #[test]
+    fn provider_id_for_model_maps_claude_to_anthropic() {
+        assert_eq!(provider_id_for_model("claude-sonnet-4-6"), "anthropic");
+        assert_eq!(provider_id_for_model("gpt-4o"), "openai");
+        assert_eq!(provider_id_for_model("llama-3.1-70b"), "openai");
     }
 
     #[test]
@@ -301,17 +341,22 @@ mod tests {
 
     #[test]
     fn context_window_gpt4o() {
-        assert_eq!(context_window("gpt-4o"), 128_000);
+        assert_eq!(context_window("openai"), 128_000);
     }
 
     #[test]
     fn context_window_claude_sonnet() {
-        assert_eq!(context_window("claude-sonnet-4-6"), 200_000);
+        assert_eq!(context_window("anthropic"), 200_000);
     }
 
     #[test]
     fn context_window_unknown() {
-        assert_eq!(context_window("unknown-model"), DEFAULT_CONTEXT_WINDOW);
+        assert_eq!(context_window("nonexistent"), DEFAULT_CONTEXT_WINDOW);
+    }
+
+    #[test]
+    fn context_window_groq() {
+        assert_eq!(context_window("groq"), 128_000);
     }
 
     #[test]
@@ -325,16 +370,46 @@ mod tests {
     #[test]
     fn apply_token_budget_short_text_unchanged() {
         let prompt = Prompt::new("Hello");
-        let (result, trunc) = apply_token_budget(prompt, "gpt-4o");
+        let (result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", None);
         assert_eq!(result.text, "Hello");
         assert!(trunc.is_none());
+    }
+
+    #[test]
+    fn apply_token_budget_override_some_wins() {
+        // Build a prompt that fits comfortably under openai's 128k default
+        // (0.8 * 128000 = 102400 token budget) but exceeds a small 1000-token
+        // override (0.8 * 1000 = 800 token budget). ~2000 tokens of text.
+        let text = "word ".repeat(8_000); // 40000 chars => ~10000 tokens
+        let prompt = Prompt::new(&text);
+        let (_result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", Some(1000));
+        assert!(trunc.is_some(), "override (1000) should force truncation");
+    }
+
+    #[test]
+    fn apply_token_budget_override_none_falls_back() {
+        // Same prompt that fits under the openai default — with None we should
+        // fall back to context_window(provider_id) and NOT truncate.
+        let text = "word ".repeat(8_000);
+        let prompt = Prompt::new(&text);
+        let (_result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", None);
+        assert!(trunc.is_none(), "fallback to openai default should not truncate");
+    }
+
+    #[test]
+    fn apply_token_budget_override_larger_than_default_prevents_truncation() {
+        // Text that WOULD truncate under the 128k default but fits under a huge override.
+        let long_text = "word ".repeat(200_000);
+        let prompt = Prompt::new(&long_text);
+        let (_result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", Some(1_000_000));
+        assert!(trunc.is_none(), "huge override should prevent truncation");
     }
 
     #[test]
     fn apply_token_budget_long_text_truncated() {
         let long_text = "word ".repeat(200_000);
         let prompt = Prompt::new(&long_text);
-        let (result, trunc) = apply_token_budget(prompt, "gpt-4o");
+        let (result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", None);
         assert!(result.text.len() < long_text.len(), "text should be truncated");
         let info = trunc.expect("should have truncation info");
         assert!(info.kept_tokens < info.original_tokens);
@@ -344,7 +419,7 @@ mod tests {
     fn apply_token_budget_symmetric_truncation() {
         let long_text = "word ".repeat(200_000);
         let prompt = Prompt::new(&long_text);
-        let (result, _) = apply_token_budget(prompt, "gpt-4o");
+        let (result, _) = apply_token_budget(prompt, "openai", "gpt-4o", None);
         let center_of_original = long_text.len() / 2;
         let center_region = &long_text[center_of_original - 10..center_of_original + 10];
         assert!(
@@ -470,7 +545,7 @@ data: [DONE]\n\n";
             .mount(&server)
             .await;
 
-        let provider = create_provider("gpt-4o", Some(&server.uri()));
+        let provider = create_provider("openai", Some(&server.uri()));
         let prompt = Prompt::new("Say hello");
         let stream = provider.execute("gpt-4o", &prompt, Some("fake-key"), true).await.unwrap();
 
@@ -479,6 +554,40 @@ data: [DONE]\n\n";
 
         assert!(events.contains(&LlmEvent::Chunk { text: "Hello".into() }));
         assert!(events.contains(&LlmEvent::Chunk { text: " world".into() }));
+        assert!(events.contains(&LlmEvent::Done));
+    }
+
+    #[tokio::test]
+    async fn integration_openrouter_sends_extra_headers() {
+        use wiremock::{MockServer, Mock, ResponseTemplate};
+        use wiremock::matchers::{method, path, header};
+
+        let server = MockServer::start().await;
+        let sse_body = "\
+data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hi\"},\"finish_reason\":null}]}\n\n\
+data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n\
+data: [DONE]\n\n";
+
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .and(header("HTTP-Referer", "https://lit.app"))
+            .and(header("X-Title", "Lit"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(sse_body, "text/event-stream"),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let provider = create_provider("openrouter", Some(&server.uri()));
+        let prompt = Prompt::new("Say hi");
+        let stream = provider.execute("gpt-4o", &prompt, Some("fake-key"), true).await.unwrap();
+
+        let mut events = Vec::new();
+        process_stream(stream, |e| events.push(e)).await;
+
+        assert!(events.contains(&LlmEvent::Chunk { text: "Hi".into() }));
         assert!(events.contains(&LlmEvent::Done));
     }
 
@@ -508,7 +617,7 @@ data: [DONE]\n\n";
             .mount(&server)
             .await;
 
-        let provider = create_provider("claude-sonnet-4-6", Some(&server.uri()));
+        let provider = create_provider("anthropic", Some(&server.uri()));
         let prompt = Prompt::new("Say hello");
         let stream = provider.execute("claude-sonnet-4-6", &prompt, Some("fake-key"), true).await.unwrap();
 
@@ -552,7 +661,7 @@ data: [DONE]\n\n";
     fn apply_token_budget_cjk_no_panic() {
         let cjk_text = "你好".repeat(300_000);
         let prompt = Prompt::new(&cjk_text);
-        let (result, trunc) = apply_token_budget(prompt, "gpt-4o");
+        let (result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", None);
         assert!(result.text.len() < cjk_text.len());
         let info = trunc.expect("should have truncation info");
         assert!(info.kept_tokens < info.original_tokens);
@@ -562,7 +671,7 @@ data: [DONE]\n\n";
     fn apply_token_budget_cjk_preserves_center() {
         let cjk_text = "你好".repeat(300_000);
         let prompt = Prompt::new(&cjk_text);
-        let (result, _) = apply_token_budget(prompt, "gpt-4o");
+        let (result, _) = apply_token_budget(prompt, "openai", "gpt-4o", None);
         let char_count = cjk_text.chars().count();
         let center_char = char_count / 2;
         let check_start: String = cjk_text.chars().skip(center_char - 2).take(4).collect();
@@ -573,7 +682,7 @@ data: [DONE]\n\n";
     fn apply_token_budget_mixed_script_no_panic() {
         let mixed = "Hello你好World世界".repeat(50_000);
         let prompt = Prompt::new(&mixed);
-        let (result, _) = apply_token_budget(prompt, "gpt-4o");
+        let (result, _) = apply_token_budget(prompt, "openai", "gpt-4o", None);
         assert!(result.text.len() < mixed.len());
     }
 
@@ -592,7 +701,7 @@ data: [DONE]\n\n";
             .mount(&server)
             .await;
 
-        let provider = create_provider("gpt-4o", Some(&server.uri()));
+        let provider = create_provider("openai", Some(&server.uri()));
         let prompt = Prompt::new("Hello");
         let result = provider.execute("gpt-4o", &prompt, Some("bad-key"), true).await;
 

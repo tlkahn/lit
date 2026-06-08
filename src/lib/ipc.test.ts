@@ -1460,6 +1460,8 @@ describe("ipc", () => {
         messages: [],
         options: {},
         base_url: null,
+        provider: "",
+        context_window: null,
       },
     });
   });
@@ -1482,6 +1484,46 @@ describe("ipc", () => {
         messages: [{ role: "user", content: "hi" }],
         options: { temperature: 0.5 },
         base_url: "https://api.example.com",
+        provider: "",
+        context_window: null,
+      },
+    });
+  });
+
+  it("llmPromptStreaming sends provider field when specified", async () => {
+    await llmPromptStreaming({
+      model: "claude-sonnet-4-6",
+      text: "hello",
+      provider: "anthropic",
+    });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("llm_prompt_streaming", {
+      args: {
+        model: "claude-sonnet-4-6",
+        text: "hello",
+        system: null,
+        messages: [],
+        options: {},
+        base_url: null,
+        provider: "anthropic",
+        context_window: null,
+      },
+    });
+  });
+
+  it("llmPromptStreaming passes context_window when contextWindow specified", async () => {
+    await llmPromptStreaming({ model: "vllm-model", text: "hello", contextWindow: 32000 });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("llm_prompt_streaming", {
+      args: {
+        model: "vllm-model",
+        text: "hello",
+        system: null,
+        messages: [],
+        options: {},
+        base_url: null,
+        provider: "",
+        context_window: 32000,
       },
     });
   });
@@ -1498,6 +1540,7 @@ describe("ipc", () => {
     expect(invoke).toHaveBeenCalledWith("llm_test_connection", {
       model: "gpt-4o",
       baseUrl: "https://api.example.com",
+      provider: null,
     });
   });
 
@@ -1507,6 +1550,17 @@ describe("ipc", () => {
     expect(invoke).toHaveBeenCalledWith("llm_test_connection", {
       model: "claude-sonnet-4-6",
       baseUrl: null,
+      provider: null,
+    });
+  });
+
+  it("testLlmConnection sends provider parameter", async () => {
+    await testLlmConnection("gpt-4o", "https://api.example.com", "openai");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("llm_test_connection", {
+      model: "gpt-4o",
+      baseUrl: "https://api.example.com",
+      provider: "openai",
     });
   });
 
@@ -1526,6 +1580,8 @@ describe("ipc", () => {
         neighbors_depth: 2,
         model: "claude-sonnet-4-6",
         messages: [{ role: "user", content: "hi" }],
+        provider: "",
+        context_window: null,
       },
     });
   });
@@ -1545,6 +1601,52 @@ describe("ipc", () => {
         neighbors_depth: 0,
         model: "claude-sonnet-4-6",
         messages: [],
+        provider: "",
+        context_window: null,
+      },
+    });
+  });
+
+  it("llmBuildContext sends provider field when specified", async () => {
+    await llmBuildContext({
+      nodeId: "notes/a.md",
+      neighborsDepth: 1,
+      model: "gpt-4o",
+      messages: [],
+      provider: "openai",
+    });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("llm_build_context", {
+      args: {
+        node_id: "notes/a.md",
+        system_prompt: "",
+        neighbors_depth: 1,
+        model: "gpt-4o",
+        messages: [],
+        provider: "openai",
+        context_window: null,
+      },
+    });
+  });
+
+  it("llmBuildContext passes context_window when contextWindow specified", async () => {
+    await llmBuildContext({
+      nodeId: "notes/a.md",
+      neighborsDepth: 1,
+      model: "vllm-model",
+      messages: [],
+      contextWindow: 64000,
+    });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("llm_build_context", {
+      args: {
+        node_id: "notes/a.md",
+        system_prompt: "",
+        neighbors_depth: 1,
+        model: "vllm-model",
+        messages: [],
+        provider: "",
+        context_window: 64000,
       },
     });
   });
@@ -1556,6 +1658,7 @@ describe("ipc", () => {
       neighborsDepth: 1,
       model: "claude-sonnet-4-6",
       messages: [{ role: "user", content: "hello" }],
+      provider: "anthropic",
     });
     expect(result).toHaveProperty("system");
     expect(result).toHaveProperty("messages");

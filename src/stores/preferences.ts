@@ -1,15 +1,24 @@
 import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
 import type { DarkModePref, ViewMode, Preferences } from "../lib/ipc";
-import { getPreferences } from "../lib/ipc";
+import { getPreferences, setPreference, deleteApiKey, hasApiKey } from "../lib/ipc";
 import type { AnnotationBuilderDefaults } from "../lib/annotationBuilderDefaults";
 import { isValidBuilderDefaults } from "../lib/annotationBuilderDefaults";
+import { providerIdForModel } from "../lib/providerRegistry";
+import type { CustomProviderDef } from "../lib/providerRegistry";
 
 export type FoldingShowControls = "mouseover" | "always" | "never";
 
 export type AnnotationDisplayMode = "pill" | "footnote";
 
 export type BottomPanelPosition = "bottom" | "side";
+
+export interface LlmProviderConfig {
+  providerId: string;
+  model: string;
+  baseUrl?: string;
+  apiKeySet: boolean;
+}
 
 export interface PreferencesState {
   darkMode: DarkModePref;
@@ -30,6 +39,8 @@ export interface PreferencesState {
   llmModel: string;
   llmOpenaiBaseUrl: string;
   llmAnthropicBaseUrl: string;
+  llmProvider: LlmProviderConfig;
+  llmCustomProviders: CustomProviderDef[];
   llmSystemPrompt: string;
   llmTemperature: number;
   neighborsDepth: number;
@@ -82,6 +93,59 @@ function applyDarkMode(val: unknown): DarkModePref {
   return "auto";
 }
 
+export function migrateLlmProvider(prefs: Preferences): LlmProviderConfig {
+  const existing = prefs["llm.provider"];
+  if (
+    existing != null &&
+    typeof existing === "object" &&
+    typeof (existing as Record<string, unknown>).providerId === "string"
+  ) {
+    const obj = existing as Record<string, unknown>;
+    return {
+      providerId: obj.providerId as string,
+      model: (obj.model as string) || "claude-sonnet-4-6",
+      baseUrl: obj.baseUrl ? String(obj.baseUrl) : undefined,
+      apiKeySet: (obj.apiKeySet as boolean) ?? false,
+    };
+  }
+
+  const model = (prefs["llm.model"] as string) ?? "claude-sonnet-4-6";
+  const providerId = providerIdForModel(model);
+  const rawBaseUrl =
+    providerId === "anthropic"
+      ? (prefs["llm.anthropic.baseUrl"] as string)
+      : (prefs["llm.openai.baseUrl"] as string);
+  const baseUrl = rawBaseUrl && rawBaseUrl.trim() !== "" ? rawBaseUrl : undefined;
+
+  return { providerId, model, baseUrl, apiKeySet: false };
+}
+
+function isCustomProviderDef(val: unknown): val is CustomProviderDef {
+  if (val == null || typeof val !== "object") return false;
+  const obj = val as Record<string, unknown>;
+  return (
+    typeof obj.id === "string" &&
+    obj.id.startsWith("custom-") &&
+    typeof obj.name === "string" &&
+    typeof obj.baseUrl === "string" &&
+    typeof obj.needsApiKey === "boolean" &&
+    typeof obj.modelId === "string" &&
+    typeof obj.contextWindow === "number"
+  );
+}
+
+function applyCustomProviders(val: unknown): CustomProviderDef[] {
+  if (!Array.isArray(val)) return [];
+  return val.filter(isCustomProviderDef).map((def) => ({
+    id: def.id,
+    name: def.name,
+    baseUrl: def.baseUrl,
+    needsApiKey: def.needsApiKey,
+    modelId: def.modelId,
+    contextWindow: def.contextWindow,
+  }));
+}
+
 function mapPreferences(prefs: Preferences) {
   return {
     darkMode: applyDarkMode(prefs["workbench.darkMode"]),
@@ -104,6 +168,8 @@ function mapPreferences(prefs: Preferences) {
     llmModel: (prefs["llm.model"] as string) ?? "claude-sonnet-4-6",
     llmOpenaiBaseUrl: (prefs["llm.openai.baseUrl"] as string) ?? "",
     llmAnthropicBaseUrl: (prefs["llm.anthropic.baseUrl"] as string) ?? "",
+    llmProvider: migrateLlmProvider(prefs),
+    llmCustomProviders: applyCustomProviders(prefs["llm.customProviders"]),
     llmSystemPrompt: (prefs["llm.systemPrompt"] as string) ?? "",
     llmTemperature: (prefs["llm.temperature"] as number) ?? 0.7,
     neighborsDepth: (prefs["llm.neighborsDepth"] as number) ?? 1,
@@ -119,6 +185,45 @@ function mapPreferences(prefs: Preferences) {
     annotationPrefillLastUsed: (prefs["annotations.prefillLastUsed"] as boolean) ?? false,
     annotationBuilderDefaults: isValidBuilderDefaults(prefs["annotations.builderDefaults"]) ? prefs["annotations.builderDefaults"] : null,
   };
+}
+
+export function setLlmProvider(patch: Partial<LlmProviderConfig>) {
+  const prev = usePreferencesStore.getState().llmProvider;
+  const next = { ...prev, ...patch };
+  usePreferencesStore.setState({ llmProvider: next });
+  setPreference("llm.provider", next).catch(() => {
+    usePreferencesStore.setState({ llmProvider: prev });
+  });
+}
+
+export function addCustomProvider(def: CustomProviderDef) {
+  const prev = usePreferencesStore.getState().llmCustomProviders;
+  const next = [...prev, def];
+  usePreferencesStore.setState({ llmCustomProviders: next });
+  setPreference("llm.customProviders", next).catch(() => {
+    usePreferencesStore.setState({ llmCustomProviders: prev });
+  });
+}
+
+export function updateCustomProvider(id: string, patch: Partial<CustomProviderDef>) {
+  const prev = usePreferencesStore.getState().llmCustomProviders;
+  const next = prev.map((p) => (p.id === id ? { ...p, ...patch } : p));
+  usePreferencesStore.setState({ llmCustomProviders: next });
+  setPreference("llm.customProviders", next).catch(() => {
+    usePreferencesStore.setState({ llmCustomProviders: prev });
+  });
+}
+
+export function removeCustomProvider(id: string) {
+  const prev = usePreferencesStore.getState().llmCustomProviders;
+  const next = prev.filter((p) => p.id !== id);
+  usePreferencesStore.setState({ llmCustomProviders: next });
+  setPreference("llm.customProviders", next).catch(() => {
+    usePreferencesStore.setState({ llmCustomProviders: prev });
+  });
+  // Clean up any stored credential. A custom provider with needsApiKey:false
+  // may have no stored key, so swallow errors and never roll back the array.
+  deleteApiKey(id).catch(() => {});
 }
 
 export const usePreferencesStore = create<PreferencesState>((set) => ({
@@ -142,6 +247,8 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   llmModel: "claude-sonnet-4-6",
   llmOpenaiBaseUrl: "",
   llmAnthropicBaseUrl: "",
+  llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", apiKeySet: false },
+  llmCustomProviders: [],
   llmSystemPrompt: "",
   llmTemperature: 0.7,
   neighborsDepth: 1,
@@ -164,6 +271,45 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
     try {
       const prefs = await getPreferences();
       set({ ...mapPreferences(prefs), loaded: true });
+
+      // Persist the migrated llm.provider exactly once, only when migration
+      // actually synthesized it from legacy flat keys (no valid object on disk).
+      // Otherwise every launch re-runs migration from stale keys and Rust code
+      // paths reading on-disk llm.provider never see the migrated config. Use
+      // the same predicate as migrateLlmProvider so "ran vs passed-through" agree.
+      const existingProvider = prefs["llm.provider"];
+      const hadPersistedProvider =
+        existingProvider != null &&
+        typeof existingProvider === "object" &&
+        typeof (existingProvider as Record<string, unknown>).providerId === "string";
+      if (!hadPersistedProvider) {
+        // Snapshot the migrated config now (apiKeySet:false), before the async
+        // hasApiKey upgrade below mutates the store. The persisted object stays
+        // deterministic; the in-memory upgrade is a UX-only convenience.
+        const migrated = usePreferencesStore.getState().llmProvider;
+        setPreference("llm.provider", migrated).catch(() => {});
+      }
+
+      // Reconcile apiKeySet against the real credential store. migrateLlmProvider
+      // hard-codes apiKeySet:false for legacy users, so upgraded users with a
+      // saved key would otherwise have LLM features disabled until they open
+      // Settings. Fire-and-forget so caller resolution timing is unchanged.
+      const checkedProviderId = usePreferencesStore.getState().llmProvider.providerId;
+      hasApiKey(checkedProviderId)
+        .then((has) => {
+          // Only upgrade to true — never clobber. A locked-but-existing secret
+          // store returns false for every provider; downgrading here would be a
+          // false negative (SettingsModal corrects it once unlocked).
+          if (!has) return;
+          // Skip if the provider changed during the async window (e.g. a
+          // preferences://changed event or user provider switch).
+          set((prev) =>
+            prev.llmProvider.providerId === checkedProviderId
+              ? { llmProvider: { ...prev.llmProvider, apiKeySet: true } }
+              : {},
+          );
+        })
+        .catch(() => {});
     } catch {
       set({ loaded: true });
     }
