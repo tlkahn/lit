@@ -1,10 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, fireEvent, waitFor } from "@testing-library/react";
+import { render, fireEvent } from "@testing-library/react";
 import { mockInvoke } from "../test/tauri-mock";
 import { LicenseGate } from "./LicenseGate";
 import { useLicenseStore } from "../stores/license";
 import type { LicenseState } from "../stores/license";
-import { _resetBuildInfoCacheForTesting } from "../lib/ipc";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(() => Promise.resolve()),
@@ -19,13 +18,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 
 describe("LicenseGate", () => {
   beforeEach(() => {
-    _resetBuildInfoCacheForTesting();
-    // Default build-info mock so the async getBuildInfo() effect resolves to a
-    // direct build (Buy button visible). Individual app_store tests override it.
-    mockInvoke((cmd) => {
-      if (cmd === "get_build_info") return { source: "direct" };
-      return undefined;
-    });
+    mockInvoke(() => undefined);
     useLicenseStore.setState({
       state: "unknown",
       licensedTo: null,
@@ -110,37 +103,6 @@ describe("LicenseGate", () => {
     );
     fireEvent.click(container.querySelector("[data-testid='splash-buy-license']")!);
     expect(openUrl).toHaveBeenCalledWith("https://lit.solar/buy");
-  });
-
-  it("hides Buy License button in app_store builds", async () => {
-    // App Store Review Guideline 3.1.1: in-app affordances that send users to an
-    // external purchase flow are forbidden. get_build_info reports the compile-time
-    // distribution channel, independent of any license key's origin.
-    mockInvoke((cmd) => {
-      if (cmd === "get_build_info") return { source: "app_store" };
-      return undefined;
-    });
-    useLicenseStore.setState({ state: "unlicensed", loading: false });
-    const { queryByTestId } = render(
-      <LicenseGate><div data-testid="child" /></LicenseGate>,
-    );
-    // The other splash actions remain available regardless of channel.
-    await waitFor(() => expect(queryByTestId("splash-enter-key")).toBeTruthy());
-    await waitFor(() => expect(queryByTestId("splash-buy-license")).toBeNull());
-    expect(queryByTestId("splash-enter-key")).toBeTruthy();
-    expect(queryByTestId("splash-export-data")).toBeTruthy();
-  });
-
-  it("shows Buy License button in direct builds", async () => {
-    mockInvoke((cmd) => {
-      if (cmd === "get_build_info") return { source: "direct" };
-      return undefined;
-    });
-    useLicenseStore.setState({ state: "unlicensed", loading: false });
-    const { queryByTestId } = render(
-      <LicenseGate><div data-testid="child" /></LicenseGate>,
-    );
-    await waitFor(() => expect(queryByTestId("splash-buy-license")).toBeTruthy());
   });
 
   it("splash Enter License Key button opens LicenseEntryDialog", () => {

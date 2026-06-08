@@ -6,7 +6,7 @@ export interface AppInfo {
 }
 
 export interface BuildInfo {
-  source: "direct" | "app_store";
+  source: "direct";
 }
 
 export interface PageMeta {
@@ -776,7 +776,7 @@ export async function importLkg(
 export interface LicenseStatusResponse {
   state: "unlicensed" | "licensed" | "license_expired" | "revoked";
   licensed_to?: string;
-  source?: "direct" | "app_store";
+  source?: "direct";
   expires_at?: number;
   expiry_date?: string;
   reason?: string;

@@ -14,11 +14,6 @@ pub fn get_app_info() -> AppInfo {
     }
 }
 
-/// Where this binary was built/distributed for. `app_store` builds must hide
-/// in-app purchase affordances (e.g. the "Buy License" button) to comply with
-/// App Store Review Guideline 3.1.1; `direct` builds may show them. Decided at
-/// compile time via the `app-store` Cargo feature so it is independent of any
-/// license key's origin (which is unknown when unlicensed).
 #[derive(Debug, Serialize)]
 pub struct BuildInfo {
     pub source: String,
@@ -26,17 +21,8 @@ pub struct BuildInfo {
 
 #[tauri::command]
 pub fn get_build_info() -> BuildInfo {
-    #[cfg(feature = "app-store")]
-    {
-        BuildInfo {
-            source: "app_store".to_string(),
-        }
-    }
-    #[cfg(not(feature = "app-store"))]
-    {
-        BuildInfo {
-            source: "direct".to_string(),
-        }
+    BuildInfo {
+        source: "direct".to_string(),
     }
 }
 
@@ -91,7 +77,6 @@ mod tests {
         assert!(json["version"].as_str().map_or(false, |v| !v.is_empty()));
     }
 
-    #[cfg(not(feature = "app-store"))]
     #[test]
     fn get_build_info_default_is_direct() {
         let info = get_build_info();
@@ -99,15 +84,5 @@ mod tests {
 
         let json = serde_json::to_value(&info).unwrap();
         assert_eq!(json["source"], "direct");
-    }
-
-    #[cfg(feature = "app-store")]
-    #[test]
-    fn get_build_info_app_store_under_feature() {
-        let info = get_build_info();
-        assert_eq!(info.source, "app_store");
-
-        let json = serde_json::to_value(&info).unwrap();
-        assert_eq!(json["source"], "app_store");
     }
 }

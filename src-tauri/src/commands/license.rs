@@ -27,7 +27,6 @@ pub struct LicenseStatusResponse {
 fn source_to_string(source: &license::key::LicenseSource) -> String {
     match source {
         license::key::LicenseSource::Direct => "direct".into(),
-        license::key::LicenseSource::AppStore => "app_store".into(),
     }
 }
 
@@ -166,30 +165,10 @@ pub fn activate_license(
     Ok(LicenseStatusResponse::from_status(&status))
 }
 
-/// When built for the App Store, online validation is handled by the platform
-/// receipt and should be skipped. Returns `Some(skipped)` under the `app-store`
-/// feature and `None` otherwise (so direct builds validate normally).
-fn app_store_skip() -> Option<OnlineValidationResult> {
-    #[cfg(feature = "app-store")]
-    {
-        Some(OnlineValidationResult {
-            action: "skipped".into(),
-            reason: Some("app_store".into()),
-        })
-    }
-    #[cfg(not(feature = "app-store"))]
-    {
-        None
-    }
-}
-
 #[tauri::command]
 pub async fn check_online_validation(
     state: State<'_, LicenseManager>,
 ) -> Result<OnlineValidationResult, String> {
-    if let Some(skip) = app_store_skip() {
-        return Ok(skip);
-    }
     let now = now_secs();
     if !online::should_check_today(&state.data_dir, now) {
         return Ok(OnlineValidationResult {
@@ -259,7 +238,7 @@ mod tests {
         let resp = LicenseStatusResponse {
             state: "licensed".into(),
             licensed_to: Some("User".into()),
-            source: Some("app_store".into()),
+            source: Some("direct".into()),
             expires_at: Some(1735603200),
             expiry_date: Some("2024-12-31".into()),
             reason: None,
@@ -267,7 +246,7 @@ mod tests {
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"state\":\"licensed\""));
         assert!(json.contains("\"licensed_to\":\"User\""));
-        assert!(json.contains("\"source\":\"app_store\""));
+        assert!(json.contains("\"source\":\"direct\""));
         assert!(json.contains("\"expires_at\":1735603200"));
         assert!(json.contains("\"expiry_date\":\"2024-12-31\""));
         assert!(!json.contains("days_remaining"));
@@ -363,20 +342,6 @@ mod tests {
         let resp = LicenseStatusResponse::from_status(&license::LicenseStatus::Unlicensed);
         let json = serde_json::to_string(&resp).unwrap();
         assert!(!json.contains("reason"));
-    }
-
-    #[cfg(feature = "app-store")]
-    #[test]
-    fn app_store_skip_returns_skipped_under_feature() {
-        let skip = app_store_skip().expect("app_store_skip should be Some under app-store feature");
-        assert_eq!(skip.action, "skipped");
-        assert_eq!(skip.reason, Some("app_store".into()));
-    }
-
-    #[cfg(not(feature = "app-store"))]
-    #[test]
-    fn app_store_skip_returns_none_by_default() {
-        assert!(app_store_skip().is_none());
     }
 
     #[test]
@@ -485,11 +450,11 @@ mod tests {
     fn from_status_licensed_with_expiry() {
         let status = license::LicenseStatus::Licensed(sample_payload_with_source(
             Some(1735603200),
-            license::key::LicenseSource::AppStore,
+            license::key::LicenseSource::Direct,
         ));
         let resp = LicenseStatusResponse::from_status(&status);
         assert_eq!(resp.state, "licensed");
-        assert_eq!(resp.source, Some("app_store".into()));
+        assert_eq!(resp.source, Some("direct".into()));
         assert_eq!(resp.expires_at, Some(1735603200));
         assert_eq!(resp.expiry_date, Some("2024-12-31".into()));
     }

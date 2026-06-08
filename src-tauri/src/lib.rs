@@ -18,7 +18,6 @@ pub mod preferences;
 pub mod seed;
 pub mod socket;
 pub mod workspace;
-#[cfg(not(feature = "app-store"))]
 mod updater;
 
 use commands::credential::{CredentialStore, EncryptedFileStore};
@@ -111,7 +110,6 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_deep_link::init());
 
-    #[cfg(not(feature = "app-store"))]
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
 
     builder
@@ -187,7 +185,7 @@ pub fn run() {
                 app.manage(watcher);
             }
 
-            #[cfg(all(not(feature = "app-store"), not(debug_assertions)))]
+            #[cfg(not(debug_assertions))]
             {
                 let update_handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {

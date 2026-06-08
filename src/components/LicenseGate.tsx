@@ -2,7 +2,6 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useLicenseStore } from "../stores/license";
 import { LicenseEntryDialog } from "./LicenseEntryDialog";
 import { SpinnerSvg } from "./SpinnerSvg";
-import { getCachedBuildInfo } from "../lib/ipc";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 interface LicenseGateProps {
@@ -28,22 +27,10 @@ export function LicenseGate({ children, entryOpen, onEntryOpenChange }: LicenseG
   // through the gate); otherwise fall back to internal state.
   const dialogOpen = entryOpen ?? internalEntryOpen;
   const setDialogOpen = onEntryOpenChange ?? setInternalEntryOpen;
-  // Compile-time distribution channel. `null` until resolved (or if the call
-  // fails) so the Buy button defaults to visible — only an explicit
-  // "app_store" result hides it (App Store Review Guideline 3.1.1).
-  const [buildSource, setBuildSource] = useState<string | null>(null);
 
   useEffect(() => {
     fetchStatus();
   }, [fetchStatus]);
-
-  useEffect(() => {
-    getCachedBuildInfo()
-      .then((info) => setBuildSource(info.source))
-      .catch(() => {});
-  }, []);
-
-  const isAppStore = buildSource === "app_store";
 
   // "unknown" is exclusively the pre-fetch/initial state and is never a denial.
   // Keep it on the spinner (even if loading already flipped to false) so it
@@ -98,15 +85,13 @@ export function LicenseGate({ children, entryOpen, onEntryOpenChange }: LicenseG
           {subline}
         </p>
         <div className="flex gap-3">
-          {!isAppStore && (
-            <button
-              className="rounded bg-blue-600 px-4 py-2 text-sm text-white hover:opacity-90"
-              onClick={() => openUrl("https://lit.solar/buy")}
-              data-testid="splash-buy-license"
-            >
-              Buy License
-            </button>
-          )}
+          <button
+            className="rounded bg-blue-600 px-4 py-2 text-sm text-white hover:opacity-90"
+            onClick={() => openUrl("https://lit.solar/buy")}
+            data-testid="splash-buy-license"
+          >
+            Buy License
+          </button>
           <button
             className="rounded border border-border-primary px-4 py-2 text-sm text-text-normal hover:bg-bg-secondary"
             onClick={() => setDialogOpen(true)}
