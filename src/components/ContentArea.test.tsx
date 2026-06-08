@@ -742,7 +742,7 @@ describe("ContentArea jump recording on page switch", () => {
 });
 
 describe("ContentArea PDF rendering", () => {
-  it("renders PdfViewer when file_type is pdf", async () => {
+  it("renders the PDF through the pane system (no whole-area bypass)", async () => {
     const pdfPage = {
       title: "Doc",
       relative_path: "doc.pdf",
@@ -760,7 +760,11 @@ describe("ContentArea PDF rendering", () => {
 
     mockInvoke((cmd, args) => {
       if (cmd === "pdf_open") return { page_count: 2, path: (args as Record<string, unknown>)?.path ?? "" };
-      if (cmd === "pdf_render_page") return { page_index: 0, png_base64: "AAAA", width: 100, height: 200 };
+      if (cmd === "pdf_render_page") {
+        const idx = (args as Record<string, unknown>)?.pageIndex ?? 0;
+        return { page_index: idx, png_path: `/tmp/lit-pdf/page_${idx}.png`, width: 100, height: 200 };
+      }
+      if (cmd === "pdf_prefetch") return null;
       if (cmd === "pdf_close") return null;
       if (cmd === "get_keymaps") return [];
       throw new Error(`Unknown command: ${cmd}`);
@@ -768,6 +772,10 @@ describe("ContentArea PDF rendering", () => {
 
     render(<ContentArea />);
 
+    // PDF now flows through the pane tree (PdfViewerPane), not a whole-area short-circuit.
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer-pane")).toBeInTheDocument();
+    });
     await waitFor(() => {
       expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
     });

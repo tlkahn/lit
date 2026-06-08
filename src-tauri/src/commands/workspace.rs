@@ -99,6 +99,30 @@ pub fn try_navigate_existing_window(
     Some(label)
 }
 
+/// Given a workspace-relative path to a markdown or PDF file, return the
+/// relative path of its sibling with the swapped extension (md<->pdf) if that
+/// sibling exists on disk under `root`. Returns `None` for unsupported
+/// extensions or when the companion does not exist. The returned string uses
+/// forward slashes to match `PageMeta.relative_path`.
+pub fn find_companion(relative_path: &str, root: &Path) -> Option<String> {
+    let rel = Path::new(relative_path);
+    let ext = rel.extension()?.to_str()?.to_ascii_lowercase();
+    let target_ext = match ext.as_str() {
+        "md" => "pdf",
+        "pdf" => "md",
+        _ => return None,
+    };
+    let candidate = rel.with_extension(target_ext);
+    let absolute = root.join(&candidate);
+    if !absolute.is_file() {
+        return None;
+    }
+    let candidate_rel = candidate
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/");
+    Some(candidate_rel)
+}
+
 pub fn get_workspace_root(registry: &WorkspaceRegistry, label: &str) -> Result<PathBuf, String> {
     let workspaces = registry.workspaces.lock().unwrap();
     workspaces
@@ -193,6 +217,16 @@ pub fn get_workspace_path(
     Ok(workspaces
         .get(window.label())
         .map(|e| e.root.to_string_lossy().to_string()))
+}
+
+#[tauri::command]
+pub fn find_companion_file(
+    relative_path: String,
+    window: tauri::Window,
+    state: State<WorkspaceRegistry>,
+) -> Result<Option<String>, String> {
+    let root = get_workspace_root(&state, window.label())?;
+    Ok(find_companion(&relative_path, &root))
 }
 
 static WINDOW_COUNTER: AtomicU32 = AtomicU32::new(1);
@@ -524,6 +558,49 @@ mod tests {
         assert_eq!(ctx.file, None);
         assert_eq!(ctx.line, None);
         assert_eq!(ctx.col, None);
+    }
+
+    #[test]
+    fn find_companion_md_to_pdf() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("notes")).unwrap();
+        std::fs::write(root.join("notes/paper.md"), "x").unwrap();
+        std::fs::write(root.join("notes/paper.pdf"), "x").unwrap();
+        assert_eq!(
+            find_companion("notes/paper.md", root),
+            Some("notes/paper.pdf".to_string())
+        );
+    }
+
+    #[test]
+    fn find_companion_pdf_to_md() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("notes")).unwrap();
+        std::fs::write(root.join("notes/paper.md"), "x").unwrap();
+        std::fs::write(root.join("notes/paper.pdf"), "x").unwrap();
+        assert_eq!(
+            find_companion("notes/paper.pdf", root),
+            Some("notes/paper.md".to_string())
+        );
+    }
+
+    #[test]
+    fn find_companion_returns_none_when_sibling_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("notes")).unwrap();
+        std::fs::write(root.join("notes/paper.md"), "x").unwrap();
+        assert_eq!(find_companion("notes/paper.md", root), None);
+    }
+
+    #[test]
+    fn find_companion_returns_none_for_unsupported_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("paper.txt"), "x").unwrap();
+        assert_eq!(find_companion("paper.txt", root), None);
     }
 
     #[test]

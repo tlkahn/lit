@@ -3,7 +3,18 @@ import { listen } from "@tauri-apps/api/event";
 import * as ipc from "../lib/ipc";
 import type { PageMeta, IndexProgress, TrashEntry } from "../lib/ipc";
 import type { Heading } from "../lib/headings";
-import { usePaneStore, createInitialState, startLayoutSync, stopLayoutSync } from "./panes";
+import {
+  usePaneStore,
+  createInitialState,
+  startLayoutSync,
+  stopLayoutSync,
+  collectLeaves,
+} from "./panes";
+import {
+  initPanePdfLinkCleanup,
+  usePanePdfLinkStore,
+  deserializeLinks,
+} from "./panePdfLink";
 import {
   loadLayout,
   validateLayout,
@@ -103,11 +114,20 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         const validViewStates = pruneViewStates(stored.paneViewStates, validRoot);
         usePaneStore.setState({ root: validRoot, focusedPaneId: validFocus });
         set({ paneViewStates: validViewStates });
+        // Restore PDF links, dropping any pair whose endpoints are no longer
+        // live leaves after validation (mirrors pruneViewStates).
+        const liveIds = new Set(collectLeaves(validRoot).map((l) => l.id));
+        const validLinks = stored.pdfLinks.filter(
+          ([x, y]) => liveIds.has(x) && liveIds.has(y),
+        );
+        usePanePdfLinkStore.setState({ links: deserializeLinks(validLinks) });
       } else {
         usePaneStore.setState(createInitialState());
         set({ paneViewStates: {} });
+        usePanePdfLinkStore.setState({ links: new Map() });
       }
       startLayoutSync(path, () => get().paneViewStates);
+      initPanePdfLinkCleanup();
 
       const unlisten = await listen<IndexProgress>("lit:index-progress", (event) => {
         set({ indexProgress: event.payload });

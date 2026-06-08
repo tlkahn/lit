@@ -5,6 +5,7 @@ import { useBottomPanelStore } from "../stores/bottomPanel";
 import { usePreferencesStore } from "../stores/preferences";
 import { useStatusMessageStore } from "../stores/statusMessage";
 import { usePaneStore, findLeaf } from "../stores/panes";
+import { usePanePdfLinkStore } from "../stores/panePdfLink";
 import { getNextUntitledName } from "../lib/naming";
 import { BufferStack } from "./BufferStack";
 import type { TabId } from "../stores/bottomPanel";
@@ -76,6 +77,26 @@ function BottomPanelTabs() {
         </>
       )}
     </div>
+  );
+}
+
+function PdfLinkIndicator() {
+  const focusedPaneId = usePaneStore((s) => s.focusedPaneId);
+  const links = usePanePdfLinkStore((s) => s.links);
+  const currentPage = usePanePdfLinkStore((s) => s.currentPage);
+
+  const partner = links.get(focusedPaneId);
+  if (!partner) return null;
+
+  // The current page may live under either endpoint (whichever is the PDF pane).
+  const pageIdx = currentPage.get(partner) ?? currentPage.get(focusedPaneId);
+  const label =
+    pageIdx != null ? `PDF ↔ MD · Page ${pageIdx + 1}` : "PDF ↔ MD";
+
+  return (
+    <span data-testid="status-bar-pdf-link" className="ml-3 text-text-muted">
+      {label}
+    </span>
   );
 }
 
@@ -182,6 +203,7 @@ export function StatusBar() {
           </span>
         )}
         <BottomPanelTabs />
+        <PdfLinkIndicator />
         {line > 0 && <span data-testid="status-bar-cursor" className="ml-3">Ln {line}, Col {col}</span>}
       </div>
     </div>

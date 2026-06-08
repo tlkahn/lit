@@ -9,6 +9,7 @@ import { useCursorInfoStore } from "../stores/cursorInfo";
 import { useBottomPanelStore, defaultTabMeta } from "../stores/bottomPanel";
 import { usePreferencesStore } from "../stores/preferences";
 import { useStatusMessageStore } from "../stores/statusMessage";
+import { usePanePdfLinkStore } from "../stores/panePdfLink";
 
 beforeEach(() => {
   useWorkspaceStore.setState({
@@ -32,6 +33,7 @@ beforeEach(() => {
     annotationEnabled: true,
   });
   useStatusMessageStore.setState({ message: null, variant: "success" });
+  usePanePdfLinkStore.setState({ links: new Map(), currentPage: new Map() });
 });
 
 describe("StatusBar", () => {
@@ -502,6 +504,87 @@ describe("StatusBar", () => {
       const glyph = btn.querySelector(".nerd-font");
       expect(glyph).toBeTruthy();
       expect(glyph!.textContent).toBe("");
+    });
+  });
+
+  describe("PDF link indicator", () => {
+    it("renders the linked indicator when the focused pane has a linked partner", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      usePaneStore.setState({
+        root: {
+          type: "split",
+          id: "s1",
+          direction: "horizontal",
+          children: [
+            { type: "leaf", id: "md", pagePath: "notes/hello.md" },
+            { type: "leaf", id: "pdf", pagePath: "notes/hello.pdf" },
+          ],
+          sizes: [50, 50],
+        },
+        focusedPaneId: "md",
+      });
+      usePanePdfLinkStore.setState({
+        links: new Map([["md", "pdf"], ["pdf", "md"]]),
+      });
+      render(<StatusBar />);
+      expect(screen.getByTestId("status-bar-pdf-link")).toBeInTheDocument();
+    });
+
+    it("renders nothing when the focused pane is not linked", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "md", pagePath: "notes/hello.md" },
+        focusedPaneId: "md",
+      });
+      usePanePdfLinkStore.setState({ links: new Map() });
+      render(<StatusBar />);
+      expect(screen.queryByTestId("status-bar-pdf-link")).toBeNull();
+    });
+
+    it("shows 'Page N' (1-based) when the linked PDF pane has a current page", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      usePaneStore.setState({
+        root: {
+          type: "split",
+          id: "s1",
+          direction: "horizontal",
+          children: [
+            { type: "leaf", id: "md", pagePath: "notes/hello.md" },
+            { type: "leaf", id: "pdf", pagePath: "notes/hello.pdf" },
+          ],
+          sizes: [50, 50],
+        },
+        focusedPaneId: "md",
+      });
+      usePanePdfLinkStore.setState({
+        links: new Map([["md", "pdf"], ["pdf", "md"]]),
+        currentPage: new Map([["pdf", 4]]),
+      });
+      render(<StatusBar />);
+      expect(screen.getByTestId("status-bar-pdf-link")).toHaveTextContent("Page 5");
+    });
+
+    it("omits 'Page N' when no current page is recorded", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      usePaneStore.setState({
+        root: {
+          type: "split",
+          id: "s1",
+          direction: "horizontal",
+          children: [
+            { type: "leaf", id: "md", pagePath: "notes/hello.md" },
+            { type: "leaf", id: "pdf", pagePath: "notes/hello.pdf" },
+          ],
+          sizes: [50, 50],
+        },
+        focusedPaneId: "md",
+      });
+      usePanePdfLinkStore.setState({
+        links: new Map([["md", "pdf"], ["pdf", "md"]]),
+        currentPage: new Map(),
+      });
+      render(<StatusBar />);
+      expect(screen.getByTestId("status-bar-pdf-link")).not.toHaveTextContent("Page");
     });
   });
 

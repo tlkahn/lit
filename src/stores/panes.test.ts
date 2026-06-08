@@ -18,6 +18,7 @@ import {
 import type { PaneLeaf, PaneSplit, PaneNode } from "./panes";
 import { loadLayout, validateLayout } from "../lib/paneLayout";
 import { useWorkspaceStore } from "./workspace";
+import { usePanePdfLinkStore } from "./panePdfLink";
 
 // ---------------------------------------------------------------------------
 // Section A: Pure Tree Helpers (no store dependency)
@@ -1481,6 +1482,27 @@ describe("Section F: Layout Persistence", () => {
       usePaneStore.getState().resize([], [30, 70]);
       const stored = JSON.parse(localStorage.getItem(key)!);
       expect(stored.root.sizes).toEqual([30, 70]);
+    });
+  });
+
+  describe("persists pdfLinks", () => {
+    afterEach(() => {
+      usePanePdfLinkStore.setState({ links: new Map() });
+    });
+
+    it("flush writes the link store's current links as undirected pairs", () => {
+      usePaneStore.getState().splitPane("solo", "horizontal");
+      const root = usePaneStore.getState().root as PaneSplit;
+      const a = (root.children[0] as PaneLeaf).id;
+      const b = (root.children[1] as PaneLeaf).id;
+      usePanePdfLinkStore.getState().linkPanes(a, b);
+
+      startLayoutSync(WS, () => useWorkspaceStore.getState().paneViewStates);
+      usePaneStore.getState().setPanePage(a, "note.md");
+
+      const stored = JSON.parse(localStorage.getItem(key)!);
+      expect(stored.pdfLinks).toHaveLength(1);
+      expect(new Set(stored.pdfLinks[0])).toEqual(new Set([a, b]));
     });
   });
 

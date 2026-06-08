@@ -299,6 +299,7 @@ pub fn run() {
             commands::workspace::open_workspace,
             commands::workspace::list_pages,
             commands::workspace::get_workspace_path,
+            commands::workspace::find_companion_file,
             commands::workspace::open_workspace_window,
             commands::workspace::get_pending_workspace,
             commands::workspace::get_pending_file,

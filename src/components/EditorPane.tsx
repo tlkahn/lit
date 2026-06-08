@@ -20,6 +20,10 @@ import {
   getPaneView,
   setFocusedPane,
 } from "../lib/editorViewRef";
+import { usePanePdfLinkStore } from "../stores/panePdfLink";
+import { getPdfGoToPage } from "../lib/pdfPaneRef";
+import { parsePageMarkers } from "../lib/pageMarkers";
+import { dispatchForwardSync } from "../lib/forwardSync";
 
 interface EditorPaneProps {
   paneId: string;
@@ -65,7 +69,27 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
 
   const handleSelectionChange = useCallback((line: number, col: number) => {
     useCursorInfoStore.getState().setCursorInfo(line, col);
-  }, []);
+
+    // Forward sync (md -> PDF): if this editor pane is linked to a PDF pane,
+    // jump the PDF to the page whose marker precedes the cursor. The real char
+    // offset is not available from (line, col) — read it from the live view.
+    const linked = usePanePdfLinkStore.getState().getLinkedPane(paneId);
+    if (!linked) return;
+    const view = getPaneView(paneId);
+    if (!view) return;
+    // CodeMirror's doc is the frontmatter-stripped body, so both the markers
+    // and the offset live in the same coordinate space (no FM adjustment).
+    const offset = view.state.selection.main.head;
+    const markers = parsePageMarkers(view.state.doc.toString());
+    dispatchForwardSync({
+      offset,
+      markers,
+      // The lastSyncedPage echo guard lives in dispatchForwardSync's fire path
+      // (it consults the panePdfLink store), so reverse sync (PDF -> md) cannot
+      // bounce back into forward sync. No guard wrapping needed here.
+      goToPage: (pageIndex) => getPdfGoToPage(linked)?.(pageIndex),
+    });
+  }, [paneId]);
 
   const handleFocus = useCallback(() => {
     usePaneStore.getState().focusPane(paneId);

@@ -11,7 +11,6 @@ import { executeCommand } from "../lib/commandRegistry";
 import { getCurrentEditorView } from "../lib/editorViewRef";
 import { extractHeadings } from "../lib/headings";
 import { PaneContainer } from "./PaneContainer";
-import { PdfViewer } from "./PdfViewer";
 import { BottomPanel } from "./BottomPanel";
 import { buildHeadingTree, applyRename, applyMove, insertChild, insertSibling, insertDangling, resolveDeleteFallback, findNode } from "../lib/headingTree";
 import { YamlHighlighter } from "./YamlHighlighter";
@@ -37,7 +36,6 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
   const currentPanePage = focusedLeaf?.pagePath ?? null;
   const isMultiPane = usePaneStore((s) => s.root.type === "split");
 
-  const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const pendingTitleFocus = useWorkspaceStore((s) => s.pendingTitleFocus);
   const clearPendingTitleFocus = useWorkspaceStore((s) => s.clearPendingTitleFocus);
   const renamePageAction = useWorkspaceStore((s) => s.renamePage);
@@ -341,15 +339,6 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
         {renderBottomPanel && <BottomPanel />}
       </main>
     );
-  }
-
-  if (currentPanePage) {
-    const currentPageMeta = useWorkspaceStore.getState().pages.find(
-      (p) => p.relative_path === currentPanePage,
-    );
-    if (currentPageMeta?.file_type === "pdf" && workspacePath) {
-      return <PdfViewer filePath={`${workspacePath}/${currentPanePage}`} />;
-    }
   }
 
   return (

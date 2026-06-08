@@ -7,6 +7,9 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { useCursorInfoStore } from "../stores/cursorInfo";
 import { mockInvoke } from "../test/tauri-mock";
 import * as editorViewRef from "../lib/editorViewRef";
+import * as pdfPaneRef from "../lib/pdfPaneRef";
+import { usePanePdfLinkStore } from "../stores/panePdfLink";
+import { _resetForTesting as resetForwardSync } from "../lib/forwardSync";
 import type { EditorView } from "@codemirror/view";
 
 const mockView = {} as EditorView;
@@ -75,6 +78,9 @@ beforeEach(() => {
     currentPagePath: null,
   });
   editorViewRef._resetForTesting();
+  pdfPaneRef._resetForTesting();
+  resetForwardSync();
+  usePanePdfLinkStore.setState({ links: new Map() });
   useCursorInfoStore.setState({ line: 0, col: 0 });
 
   mockInvoke((cmd) => {
@@ -402,6 +408,90 @@ describe("EditorPane", () => {
         expect(useCursorInfoStore.getState().line).toBe(0);
         expect(useCursorInfoStore.getState().col).toBe(0);
       });
+    });
+  });
+
+  describe("forward sync (md -> PDF)", () => {
+    // Body with two page markers. Marker for "Page 2" starts at index 19.
+    const bodyWithMarkers = "<!-- Page 1 -->\nfoo\n<!-- Page 2 -->\nbar";
+    const page2Offset = bodyWithMarkers.indexOf("<!-- Page 2 -->");
+
+    function fakeViewAt(offset: number, doc: string): EditorView {
+      return {
+        state: {
+          selection: { main: { head: offset } },
+          doc: { toString: () => doc },
+        },
+      } as unknown as EditorView;
+    }
+
+    it("drives the linked PDF pane's goToPage with the page for the cursor offset", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      // Link editor pane-1 <-> pdf pane-pdf
+      usePanePdfLinkStore.getState().linkPanes("pane-1", "pane-pdf");
+      const goToPageSpy = vi.fn();
+      pdfPaneRef.registerPdfGoToPage("pane-pdf", goToPageSpy);
+      // Cursor is at/after the "Page 2" marker -> page index 1.
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(
+        fakeViewAt(page2Offset, bodyWithMarkers),
+      );
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onSelectionChange).toBeDefined();
+      });
+      const onSelectionChange = capturedProps.onSelectionChange as (l: number, c: number) => void;
+      onSelectionChange(3, 0);
+
+      expect(goToPageSpy).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(150);
+      expect(goToPageSpy).toHaveBeenCalledTimes(1);
+      expect(goToPageSpy).toHaveBeenCalledWith(1);
+    });
+
+    it("does nothing when the editor pane is not linked", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      const goToPageSpy = vi.fn();
+      pdfPaneRef.registerPdfGoToPage("pane-pdf", goToPageSpy);
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(
+        fakeViewAt(page2Offset, bodyWithMarkers),
+      );
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onSelectionChange).toBeDefined();
+      });
+      const onSelectionChange = capturedProps.onSelectionChange as (l: number, c: number) => void;
+      onSelectionChange(3, 0);
+      vi.advanceTimersByTime(150);
+      expect(goToPageSpy).not.toHaveBeenCalled();
+    });
+
+    it("still updates cursorInfo even when linked", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      usePanePdfLinkStore.getState().linkPanes("pane-1", "pane-pdf");
+      pdfPaneRef.registerPdfGoToPage("pane-pdf", vi.fn());
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(
+        fakeViewAt(page2Offset, bodyWithMarkers),
+      );
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onSelectionChange).toBeDefined();
+      });
+      const onSelectionChange = capturedProps.onSelectionChange as (l: number, c: number) => void;
+      onSelectionChange(7, 2);
+      expect(useCursorInfoStore.getState().line).toBe(7);
+      expect(useCursorInfoStore.getState().col).toBe(2);
     });
   });
 });

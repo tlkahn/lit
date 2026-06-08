@@ -4,6 +4,7 @@ import { useWorkspaceStore, getRecentWorkspaces, addRecentWorkspace } from "./wo
 import { usePaneStore, createInitialState, collectLeaves, stopLayoutSync } from "./panes";
 import type { PaneLeaf, PaneSplit } from "./panes";
 import { saveLayout, STALE_THRESHOLD_MS } from "../lib/paneLayout";
+import { usePanePdfLinkStore } from "./panePdfLink";
 import { act } from "@testing-library/react";
 
 const samplePages = [
@@ -834,6 +835,60 @@ describe("Layout Persistence", () => {
     expect(ws.paneViewStates["a"]).toEqual({ scrollTop: 100, cursor: 42 });
     expect(ws.paneViewStates["b"]).toEqual({ scrollTop: 200, cursor: 84 });
     expect(ws.paneViewStates["gone"]).toBeUndefined();
+  });
+
+  describe("pdfLinks restore", () => {
+    beforeEach(() => {
+      usePanePdfLinkStore.setState({ links: new Map() });
+    });
+
+    afterEach(() => {
+      usePanePdfLinkStore.setState({ links: new Map() });
+    });
+
+    it("restores pdfLinks whose endpoints survive validation", async () => {
+      const root: PaneSplit = {
+        type: "split",
+        id: "s1",
+        direction: "horizontal",
+        children: [
+          { type: "leaf", id: "a", pagePath: "Page A.md" },
+          { type: "leaf", id: "b", pagePath: "Page B.md" },
+        ],
+        sizes: [50, 50],
+      };
+      saveLayout("/my/workspace", root, "a", {}, [["a", "b"]]);
+
+      await act(async () => {
+        await useWorkspaceStore.getState().openWorkspace("/my/workspace");
+      });
+
+      expect(usePanePdfLinkStore.getState().getLinkedPane("a")).toBe("b");
+      expect(usePanePdfLinkStore.getState().getLinkedPane("b")).toBe("a");
+    });
+
+    it("drops links whose endpoints are not live leaves after validation", async () => {
+      const root: PaneLeaf = { type: "leaf", id: "a", pagePath: "Page A.md" };
+      // "b" is not in the tree at all.
+      saveLayout("/my/workspace", root, "a", {}, [["a", "b"]]);
+
+      await act(async () => {
+        await useWorkspaceStore.getState().openWorkspace("/my/workspace");
+      });
+
+      expect(usePanePdfLinkStore.getState().getLinkedPane("a")).toBeUndefined();
+      expect(usePanePdfLinkStore.getState().getLinkedPane("b")).toBeUndefined();
+    });
+
+    it("clears links to empty when no stored layout exists", async () => {
+      usePanePdfLinkStore.setState({ links: new Map([["x", "y"], ["y", "x"]]) });
+
+      await act(async () => {
+        await useWorkspaceStore.getState().openWorkspace("/my/workspace");
+      });
+
+      expect(usePanePdfLinkStore.getState().links.size).toBe(0);
+    });
   });
 
   it("starts layout sync subscription after restore", async () => {

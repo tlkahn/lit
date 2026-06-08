@@ -2,12 +2,22 @@ import type React from "react";
 import { usePaneStore } from "../stores/panes";
 import type { PaneNode } from "../stores/panes";
 import { EditorPane } from "./EditorPane";
+import { PdfViewerPane } from "./PdfViewerPane";
 import { PaneDivider } from "./PaneDivider";
 import { MIN_PANE_PX } from "../lib/paneConstants";
+import { useLeafFileType } from "../hooks/useLeafFileType";
+
+function PaneLeafRenderer({ paneId }: { paneId: string }) {
+  const fileType = useLeafFileType(paneId);
+  if (fileType === "pdf") {
+    return <PdfViewerPane paneId={paneId} />;
+  }
+  return <EditorPane paneId={paneId} />;
+}
 
 function PaneNodeRenderer({ node, path }: { node: PaneNode; path: number[] }) {
   if (node.type === "leaf") {
-    return <EditorPane paneId={node.id} />;
+    return <PaneLeafRenderer paneId={node.id} />;
   }
 
   const directionClass =

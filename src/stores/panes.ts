@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { ViewState } from "../types";
 import { saveLayout } from "../lib/paneLayout";
+import { usePanePdfLinkStore, serializeLinks } from "./panePdfLink";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -305,7 +306,8 @@ export function startLayoutSync(
   stopLayoutSync();
   const flush = () => {
     const { root, focusedPaneId } = usePaneStore.getState();
-    saveLayout(workspacePath, root, focusedPaneId, getPaneViewStates());
+    const pdfLinks = serializeLinks(usePanePdfLinkStore.getState().links);
+    saveLayout(workspacePath, root, focusedPaneId, getPaneViewStates(), pdfLinks);
   };
   unsub = usePaneStore.subscribe(flush);
   beforeUnloadHandler = flush;

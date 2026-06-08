@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, cleanup, act, fireEvent } from "@testing-library/react";
 import { usePaneStore } from "../stores/panes";
 import type { PaneNode } from "../stores/panes";
+import { useWorkspaceStore } from "../stores/workspace";
+import type { PageMeta } from "../lib/ipc";
 
 vi.mock("./EditorPane", () => ({
   EditorPane: ({ paneId }: { paneId: string }) => (
@@ -9,14 +11,65 @@ vi.mock("./EditorPane", () => ({
   ),
 }));
 
+vi.mock("./PdfViewerPane", () => ({
+  PdfViewerPane: ({ paneId }: { paneId: string }) => (
+    <div data-testid={`pdf-viewer-pane-${paneId}`} />
+  ),
+}));
+
 import { PaneContainer } from "./PaneContainer";
+
+function meta(relative_path: string, file_type: "markdown" | "pdf"): PageMeta {
+  return {
+    title: relative_path,
+    relative_path,
+    frontmatter: {},
+    created_at: null,
+    modified_at: null,
+    file_type,
+  };
+}
 
 beforeEach(() => {
   usePaneStore.setState({
     root: { type: "leaf", id: "solo", pagePath: null },
     focusedPaneId: "solo",
   });
+  useWorkspaceStore.setState({ pages: [] });
   return cleanup;
+});
+
+describe("PaneContainer leaf routing", () => {
+  it("renders PdfViewerPane for a leaf whose page is a pdf", () => {
+    useWorkspaceStore.setState({ pages: [meta("doc.pdf", "pdf")] });
+    usePaneStore.setState({
+      root: { type: "leaf", id: "leaf-pdf", pagePath: "doc.pdf" },
+      focusedPaneId: "leaf-pdf",
+    });
+    const { getByTestId, queryByTestId } = render(<PaneContainer />);
+    expect(getByTestId("pdf-viewer-pane-leaf-pdf")).toBeTruthy();
+    expect(queryByTestId("editor-pane-leaf-pdf")).toBeNull();
+  });
+
+  it("renders EditorPane for a leaf whose page is markdown", () => {
+    useWorkspaceStore.setState({ pages: [meta("note.md", "markdown")] });
+    usePaneStore.setState({
+      root: { type: "leaf", id: "leaf-md", pagePath: "note.md" },
+      focusedPaneId: "leaf-md",
+    });
+    const { getByTestId, queryByTestId } = render(<PaneContainer />);
+    expect(getByTestId("editor-pane-leaf-md")).toBeTruthy();
+    expect(queryByTestId("pdf-viewer-pane-leaf-md")).toBeNull();
+  });
+
+  it("renders EditorPane for a leaf with null pagePath", () => {
+    usePaneStore.setState({
+      root: { type: "leaf", id: "leaf-empty", pagePath: null },
+      focusedPaneId: "leaf-empty",
+    });
+    const { getByTestId } = render(<PaneContainer />);
+    expect(getByTestId("editor-pane-leaf-empty")).toBeTruthy();
+  });
 });
 
 describe("PaneContainer", () => {

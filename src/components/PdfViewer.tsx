@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { pdfOpen, pdfRenderPage, pdfPrefetch, pdfClose } from "../lib/ipc";
 import type { PdfInfo, RenderedPage } from "../lib/ipc";
@@ -35,9 +36,18 @@ function cacheGet(cache: Map<string, RenderedPage>, key: string): RenderedPage |
 
 interface PdfViewerProps {
   filePath: string;
+  paneId: string;
+  page?: number;
+  onPageChange?: (pageIndex: number) => void;
+  /**
+   * Publish this viewer's internal `goToPage` so an external owner (e.g. the
+   * pane, for forward sync) can drive navigation imperatively. Called whenever
+   * the callback identity changes so the always-current closure is registered.
+   */
+  registerGoToPage?: (fn: (pageIndex: number) => void) => void;
 }
 
-export function PdfViewer({ filePath }: PdfViewerProps) {
+export function PdfViewer({ filePath, paneId, page, onPageChange, registerGoToPage }: PdfViewerProps) {
   const [pdfInfo, setPdfInfo] = useState<PdfInfo | null>(null);
   const [currentPage, setCurrentPage] = useState(0);
   const [rendered, setRendered] = useState<RenderedPage | null>(null);
@@ -47,9 +57,9 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
   const cacheRef = useRef(new Map<string, RenderedPage>());
 
   const prefetchAdjacent = useCallback((pageIndex: number, pageCount: number, dpi: number) => {
-    if (pageIndex > 0) pdfPrefetch(pageIndex - 1, dpi).catch(() => {});
-    if (pageIndex < pageCount - 1) pdfPrefetch(pageIndex + 1, dpi).catch(() => {});
-  }, []);
+    if (pageIndex > 0) pdfPrefetch(pageIndex - 1, dpi, paneId).catch(() => {});
+    if (pageIndex < pageCount - 1) pdfPrefetch(pageIndex + 1, dpi, paneId).catch(() => {});
+  }, [paneId]);
 
   useEffect(() => {
     filePathRef.current = filePath;
@@ -58,13 +68,13 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
 
     (async () => {
       try {
-        const info = await pdfOpen(filePath);
+        const info = await pdfOpen(filePath, paneId);
         if (cancelled) return;
         setPdfInfo(info);
         setCurrentPage(0);
 
         const dpi = getEffectiveDpi();
-        const page = await pdfRenderPage(0, dpi);
+        const page = await pdfRenderPage(0, dpi, paneId);
         if (cancelled) return;
         cacheSet(cacheRef.current, cacheKey(0, dpi), page);
         setRendered(page);
@@ -77,9 +87,9 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
 
     return () => {
       cancelled = true;
-      pdfClose().catch(() => {});
+      pdfClose(paneId).catch(() => {});
     };
-  }, [filePath, prefetchAdjacent]);
+  }, [filePath, paneId, prefetchAdjacent]);
 
   const goToPage = useCallback(
     async (index: number) => {
@@ -90,17 +100,19 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
         if (cached && filePathRef.current === filePath) {
           setRendered(cached);
           setCurrentPage(index);
+          onPageChange?.(index);
           prefetchAdjacent(index, pdfInfo?.page_count ?? 0, dpi);
           return;
         }
 
         setPageLoading(true);
         try {
-          const page = await pdfRenderPage(index, dpi);
+          const rp = await pdfRenderPage(index, dpi, paneId);
           if (filePathRef.current === filePath) {
-            cacheSet(cacheRef.current, key, page);
-            setRendered(page);
+            cacheSet(cacheRef.current, key, rp);
+            setRendered(rp);
             setCurrentPage(index);
+            onPageChange?.(index);
             prefetchAdjacent(index, pdfInfo?.page_count ?? 0, dpi);
           }
         } finally {
@@ -110,7 +122,38 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
         setError(err instanceof Error ? err.message : String(err));
       }
     },
-    [filePath, pdfInfo, prefetchAdjacent],
+    [filePath, paneId, pdfInfo, prefetchAdjacent, onPageChange],
+  );
+
+  // Publish the always-current goToPage closure to the external owner.
+  useEffect(() => {
+    registerGoToPage?.(goToPage);
+  }, [goToPage, registerGoToPage]);
+
+  // Controlled page: navigate when the `page` prop changes externally.
+  // The `page !== currentPage` guard prevents an onPageChange/page feedback loop.
+  useEffect(() => {
+    if (page != null && page !== currentPage) {
+      goToPage(page);
+    }
+  }, [page, currentPage, goToPage]);
+
+  const handleKeyDown = useCallback(
+    (e: ReactKeyboardEvent) => {
+      const pageCount = pdfInfo?.page_count ?? 0;
+      if (e.key === "j" || e.key === "ArrowRight") {
+        if (currentPage < pageCount - 1) {
+          e.preventDefault();
+          goToPage(currentPage + 1);
+        }
+      } else if (e.key === "k" || e.key === "ArrowLeft") {
+        if (currentPage > 0) {
+          e.preventDefault();
+          goToPage(currentPage - 1);
+        }
+      }
+    },
+    [currentPage, pdfInfo, goToPage],
   );
 
   if (error) {
@@ -140,8 +183,10 @@ export function PdfViewer({ filePath }: PdfViewerProps) {
 
   return (
     <main
-      className="flex min-h-0 flex-1 flex-col items-center bg-bg-primary-alt"
+      className="flex min-h-0 flex-1 flex-col items-center bg-bg-primary-alt focus:outline-none"
       data-testid="pdf-viewer"
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
     >
       <div className="flex items-center gap-3 py-2">
         <button

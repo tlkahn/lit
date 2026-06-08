@@ -6,9 +6,20 @@ use tauri::Manager;
 
 use crate::pdf::{PdfInfo, PdfRenderThread, RenderedPage};
 
+/// Holds one PDF render thread per open slot.
+///
+/// The slot key is a composite string of the form `"<window_label>:<pane_id>"`
+/// (see [`slot_key`]). Keying by this composite — rather than by window label
+/// alone — lets multiple panes within the same window each hold an independent
+/// open PDF side by side.
 pub struct PdfViewerState {
     threads: Mutex<HashMap<String, PdfRenderThread>>,
     lib_path: String,
+}
+
+/// Compose the [`PdfViewerState`] slot key for a given window + pane.
+pub(crate) fn slot_key(window_label: &str, pane_id: &str) -> String {
+    format!("{window_label}:{pane_id}")
 }
 
 impl PdfViewerState {
@@ -19,33 +30,33 @@ impl PdfViewerState {
         }
     }
 
-    pub fn open_for_window(&self, label: &str, path: &str) -> Result<PdfInfo, String> {
+    pub fn open_for_window(&self, slot: &str, path: &str) -> Result<PdfInfo, String> {
         let mut threads = self.threads.lock().unwrap();
-        if let Some(old) = threads.remove(label) {
+        if let Some(old) = threads.remove(slot) {
             let _ = old.close();
         }
         let thread = PdfRenderThread::new(&self.lib_path)?;
         let info = thread.open(path)?;
-        threads.insert(label.to_string(), thread);
+        threads.insert(slot.to_string(), thread);
         Ok(info)
     }
 
     pub fn render_for_window(
         &self,
-        label: &str,
+        slot: &str,
         page_index: usize,
         dpi: u32,
     ) -> Result<RenderedPage, String> {
         let threads = self.threads.lock().unwrap();
         let thread = threads
-            .get(label)
+            .get(slot)
             .ok_or_else(|| "No PDF open in this window".to_string())?;
         thread.render_page(page_index, dpi)
     }
 
-    pub fn close_for_window(&self, label: &str) -> Result<(), String> {
+    pub fn close_for_window(&self, slot: &str) -> Result<(), String> {
         let mut threads = self.threads.lock().unwrap();
-        if let Some(thread) = threads.remove(label) {
+        if let Some(thread) = threads.remove(slot) {
             thread.close()?;
         }
         Ok(())
@@ -53,32 +64,34 @@ impl PdfViewerState {
 
     pub fn prefetch_for_window(
         &self,
-        label: &str,
+        slot: &str,
         page_index: usize,
         dpi: u32,
     ) -> Result<(), String> {
         let threads = self.threads.lock().unwrap();
-        if let Some(thread) = threads.get(label) {
+        if let Some(thread) = threads.get(slot) {
             thread.prefetch(page_index, dpi)?;
         }
         Ok(())
     }
 
-    pub fn temp_dir_for_window(&self, label: &str) -> Option<PathBuf> {
+    pub fn temp_dir_for_window(&self, slot: &str) -> Option<PathBuf> {
         let threads = self.threads.lock().unwrap();
-        threads.get(label).map(|t| t.temp_dir().to_path_buf())
+        threads.get(slot).map(|t| t.temp_dir().to_path_buf())
     }
 }
 
 #[tauri::command]
 pub fn pdf_open(
     path: String,
+    pane_id: String,
     window: tauri::Window,
     state: tauri::State<'_, PdfViewerState>,
 ) -> Result<PdfInfo, String> {
-    let info = state.open_for_window(window.label(), &path)?;
+    let slot = slot_key(window.label(), &pane_id);
+    let info = state.open_for_window(&slot, &path)?;
 
-    if let Some(temp_dir) = state.temp_dir_for_window(window.label()) {
+    if let Some(temp_dir) = state.temp_dir_for_window(&slot) {
         window
             .app_handle()
             .asset_protocol_scope()
@@ -93,28 +106,31 @@ pub fn pdf_open(
 pub fn pdf_render_page(
     page_index: usize,
     dpi: u32,
+    pane_id: String,
     window: tauri::Window,
     state: tauri::State<'_, PdfViewerState>,
 ) -> Result<RenderedPage, String> {
-    state.render_for_window(window.label(), page_index, dpi)
+    state.render_for_window(&slot_key(window.label(), &pane_id), page_index, dpi)
 }
 
 #[tauri::command]
 pub fn pdf_prefetch(
     page_index: usize,
     dpi: u32,
+    pane_id: String,
     window: tauri::Window,
     state: tauri::State<'_, PdfViewerState>,
 ) -> Result<(), String> {
-    state.prefetch_for_window(window.label(), page_index, dpi)
+    state.prefetch_for_window(&slot_key(window.label(), &pane_id), page_index, dpi)
 }
 
 #[tauri::command]
 pub fn pdf_close(
+    pane_id: String,
     window: tauri::Window,
     state: tauri::State<'_, PdfViewerState>,
 ) -> Result<(), String> {
-    state.close_for_window(window.label())
+    state.close_for_window(&slot_key(window.label(), &pane_id))
 }
 
 #[cfg(test)]
@@ -200,6 +216,29 @@ mod tests {
         let result = state.render_for_window("unknown", 0, 144);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("No PDF open in this window"));
+    }
+
+    #[test]
+    fn test_slots_are_independent_per_pane() {
+        let state = PdfViewerState::new("dummy");
+        let r1 = state.render_for_window("main:pane-1", 0, 144);
+        let r2 = state.render_for_window("main:pane-2", 0, 144);
+        assert!(r1.is_err());
+        assert!(r2.is_err());
+        assert!(r1.unwrap_err().contains("No PDF open in this window"));
+        assert!(r2.unwrap_err().contains("No PDF open in this window"));
+    }
+
+    #[test]
+    fn test_temp_dir_for_unknown_slot_is_none() {
+        let state = PdfViewerState::new("dummy");
+        assert!(state.temp_dir_for_window("main:pane-1").is_none());
+    }
+
+    #[test]
+    fn test_slot_key_composes_window_and_pane() {
+        assert_eq!(slot_key("main", "pane-1"), "main:pane-1");
+        assert_eq!(slot_key("win2", "pane-abc"), "win2:pane-abc");
     }
 
     #[test]

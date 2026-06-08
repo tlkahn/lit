@@ -28,6 +28,7 @@
   { "key": "Mod-\\", "command": "workbench.toggleSideBar" },
   { "key": "Mod-Shift-k", "command": "app.openKeyboardShortcuts" },
   { "key": "Mod-Shift-l", "command": "app.askQuestion" },
+  { "key": "Mod-Shift-y", "command": "companion.toggleSync" },
   { "key": "Mod-Enter", "command": "app.fireAnnotation", "when": "editorFocus" },
   { "key": "Mod-z", "command": "lit.undoOperation", "when": "!editorFocus" }
 ]
