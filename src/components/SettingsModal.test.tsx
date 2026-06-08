@@ -24,11 +24,6 @@ const defaults = {
   annotationScopeHighlight: true,
   annotationDefaultLang: "en",
   annotationDisplayMode: "pill" as const,
-  llmModel: "claude-sonnet-4-6",
-  llmOpenaiApiKeySet: false,
-  llmOpenaiBaseUrl: "",
-  llmAnthropicApiKeySet: false,
-  llmAnthropicBaseUrl: "",
   llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", apiKeySet: false },
   llmSystemPrompt: "",
   llmTemperature: 0.7,
@@ -634,7 +629,7 @@ describe("SettingsModal", () => {
 
   // --- LLM Provider Settings ---
 
-  describe("llmModel", () => {
+  describe("LLM model selection", () => {
     it("LLM Model dropdown reflects store value", () => {
       const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
       const select = container.querySelector("[data-testid='settings-llmModel']") as HTMLSelectElement;

@@ -28,20 +28,10 @@ describe("SETTINGS_REGISTRY", () => {
     expect(entry!.controlType).toBe("dropdown");
   });
 
-  it("llmModel entry was removed (now in LlmProviderSettings)", () => {
-    const entry = SETTINGS_REGISTRY.find((e) => e.storeField === "llmModel");
-    expect(entry).toBeUndefined();
-  });
-
   it("llmTemperature entry has controlType 'slider'", () => {
     const entry = SETTINGS_REGISTRY.find((e) => e.storeField === "llmTemperature");
     expect(entry).toBeDefined();
     expect(entry!.controlType).toBe("slider");
-  });
-
-  it("llmOpenaiApiKeySet entry was removed (now in LlmProviderSettings)", () => {
-    const entry = SETTINGS_REGISTRY.find((e) => e.storeField === "llmOpenaiApiKeySet");
-    expect(entry).toBeUndefined();
   });
 
   it("llmSystemPrompt entry has controlType 'textarea'", () => {
