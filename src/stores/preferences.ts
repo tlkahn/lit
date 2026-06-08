@@ -36,9 +36,6 @@ export interface PreferencesState {
   annotationScopeHighlight: boolean;
   annotationDefaultLang: string;
   annotationDisplayMode: AnnotationDisplayMode;
-  llmModel: string;
-  llmOpenaiBaseUrl: string;
-  llmAnthropicBaseUrl: string;
   llmProvider: LlmProviderConfig;
   llmCustomProviders: CustomProviderDef[];
   llmSystemPrompt: string;
@@ -48,8 +45,6 @@ export interface PreferencesState {
   llmPromptTr: string;
   llmPromptQ: string;
   bottomPanelPosition: BottomPanelPosition;
-  llmOpenaiApiKeySet: boolean;
-  llmAnthropicApiKeySet: boolean;
   academicPandocPath: string;
   academicCrossrefPath: string;
   academicPdfEngine: string;
@@ -165,9 +160,6 @@ function mapPreferences(prefs: Preferences) {
     annotationScopeHighlight: (prefs["annotations.scopeHighlight"] as boolean) ?? true,
     annotationDefaultLang: (prefs["annotations.defaultLang"] as string) ?? "en",
     annotationDisplayMode: applyAnnotationDisplayMode(prefs["annotations.displayMode"]),
-    llmModel: (prefs["llm.model"] as string) ?? "claude-sonnet-4-6",
-    llmOpenaiBaseUrl: (prefs["llm.openai.baseUrl"] as string) ?? "",
-    llmAnthropicBaseUrl: (prefs["llm.anthropic.baseUrl"] as string) ?? "",
     llmProvider: migrateLlmProvider(prefs),
     llmCustomProviders: applyCustomProviders(prefs["llm.customProviders"]),
     llmSystemPrompt: (prefs["llm.systemPrompt"] as string) ?? "",
@@ -244,9 +236,6 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   annotationScopeHighlight: true,
   annotationDefaultLang: "en",
   annotationDisplayMode: "pill",
-  llmModel: "claude-sonnet-4-6",
-  llmOpenaiBaseUrl: "",
-  llmAnthropicBaseUrl: "",
   llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", apiKeySet: false },
   llmCustomProviders: [],
   llmSystemPrompt: "",
@@ -255,8 +244,6 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   llmPromptLlm: "Execute the following instruction using the provided context.",
   llmPromptTr: "Translate the following text. If a hint is provided, follow it.",
   llmPromptQ: "Answer the following question about the provided context.",
-  llmOpenaiApiKeySet: false,
-  llmAnthropicApiKeySet: false,
   academicPandocPath: "",
   academicCrossrefPath: "",
   academicPdfEngine: "",

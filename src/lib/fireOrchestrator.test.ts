@@ -145,7 +145,7 @@ describe("fireAnnotation", () => {
 
     expect(mockStream).toHaveBeenCalledOnce();
     const [streamArgs] = mockStream.mock.calls[0]!;
-    expect(streamArgs.model).toBe(usePreferencesStore.getState().llmModel);
+    expect(streamArgs.model).toBe(usePreferencesStore.getState().llmProvider.model);
     expect(streamArgs.text).toContain("hello");
     expect(streamArgs.text).toContain("explain");
     view.destroy();
@@ -522,7 +522,7 @@ describe("fireAnnotation", () => {
 
     expect(mockStream).toHaveBeenCalledOnce();
     const [streamArgs] = mockStream.mock.calls[0]!;
-    expect(streamArgs.model).toBe(usePreferencesStore.getState().llmModel);
+    expect(streamArgs.model).toBe(usePreferencesStore.getState().llmProvider.model);
     view.destroy();
   });
 
