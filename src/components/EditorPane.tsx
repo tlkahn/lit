@@ -20,6 +20,10 @@ import {
   getPaneView,
   setFocusedPane,
 } from "../lib/editorViewRef";
+import { usePanePdfLinkStore } from "../stores/panePdfLink";
+import { getPdfGoToPage, markForwardSync, clearForwardSync } from "../lib/pdfPaneRef";
+import { getCachedPageMarkers } from "../lib/pageMarkers";
+import { dispatchForwardSync } from "../lib/forwardSync";
 
 interface EditorPaneProps {
   paneId: string;
@@ -65,7 +69,54 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
 
   const handleSelectionChange = useCallback((line: number, col: number) => {
     useCursorInfoStore.getState().setCursorInfo(line, col);
-  }, []);
+
+    // Forward sync (md -> PDF): if this editor pane is linked to a PDF pane,
+    // jump the PDF to the page whose marker precedes the cursor. The real char
+    // offset is not available from (line, col) — read it from the live view.
+    const linked = usePanePdfLinkStore.getState().getLinkedPane(paneId);
+    if (!linked) return;
+    const view = getPaneView(paneId);
+    if (!view) return;
+    dispatchForwardSync({
+      // The offset and markers are read inside this fire-time callback (not at
+      // schedule time) so a document edit during the debounce window — one that
+      // mutates the doc/cursor without re-firing onSelectionChange — cannot make
+      // them stale. Re-read the live view here so the latest state.doc/selection
+      // is used; null if the view disappeared mid-debounce. CodeMirror's doc is
+      // the frontmatter-stripped body, so both the markers and the offset live
+      // in the same coordinate space (no FM adjustment).
+      read: () => {
+        const v = getPaneView(paneId);
+        if (!v) return null;
+        return {
+          offset: v.state.selection.main.head,
+          markers: getCachedPageMarkers(v.state.doc),
+        };
+      },
+      // The lastSyncedPage echo guard lives in dispatchForwardSync's fire path
+      // (it consults the panePdfLink store), so reverse sync (PDF -> md) cannot
+      // bounce back into forward sync. No guard wrapping needed here.
+      goToPage: (pageIndex) => {
+        // Re-read the link at FIRE time, not the schedule-time `linked` capture:
+        // if the user unlinks during the debounce window, syncEnabled stays true
+        // and the echo guard passes, so without this re-check forward sync would
+        // navigate a PDF pane that is no longer linked. Mirrors the fire-time
+        // syncEnabled re-check in forwardSync.ts. Bail out before minting any
+        // token so no clearForwardSync timeout is scheduled.
+        const linkedNow = usePanePdfLinkStore.getState().getLinkedPane(paneId);
+        if (!linkedNow) return;
+        const token = markForwardSync(linkedNow);
+        getPdfGoToPage(linkedNow)?.(pageIndex);
+        // Safety net: if goToPage's same-page guard returned early without
+        // firing onPageChange, the flag would linger. The cleanup is token-
+        // scoped, so it only clears this navigation's flag — and only if no
+        // newer navigation or (slow) onPageChange has already replaced/consumed
+        // it. This makes a late timeout a no-op instead of clobbering a slow
+        // real navigation's in-flight flag (which would cause a cursor bounce).
+        setTimeout(() => clearForwardSync(linkedNow, token), 500);
+      },
+    });
+  }, [paneId]);
 
   const handleFocus = useCallback(() => {
     usePaneStore.getState().focusPane(paneId);

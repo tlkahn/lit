@@ -9,6 +9,8 @@ export interface StoredLayout {
   root: PaneNode;
   focusedPaneId: string;
   paneViewStates: Record<string, ViewState>;
+  /** Undirected editor<->PDF link pairs, each pair stored once. */
+  pdfLinks: [string, string][];
   savedAt: number;
 }
 
@@ -20,8 +22,15 @@ export function serializeLayout(
   root: PaneNode,
   focusedPaneId: string,
   paneViewStates: Record<string, ViewState>,
+  pdfLinks: [string, string][] = [],
 ): string {
-  const stored: StoredLayout = { root, focusedPaneId, paneViewStates, savedAt: Date.now() };
+  const stored: StoredLayout = {
+    root,
+    focusedPaneId,
+    paneViewStates,
+    pdfLinks,
+    savedAt: Date.now(),
+  };
   return JSON.stringify(stored);
 }
 
@@ -36,6 +45,7 @@ export function deserializeLayout(raw: string | null): StoredLayout | null {
       root: parsed.root,
       focusedPaneId: parsed.focusedPaneId,
       paneViewStates: parsed.paneViewStates ?? {},
+      pdfLinks: parsed.pdfLinks ?? [],
       savedAt: parsed.savedAt ?? 0,
     };
   } catch {
@@ -81,10 +91,11 @@ export function saveLayout(
   root: PaneNode,
   focusedPaneId: string,
   paneViewStates: Record<string, ViewState>,
+  pdfLinks: [string, string][] = [],
 ): void {
   localStorage.setItem(
     layoutStorageKey(workspacePath),
-    serializeLayout(root, focusedPaneId, paneViewStates),
+    serializeLayout(root, focusedPaneId, paneViewStates, pdfLinks),
   );
 }
 

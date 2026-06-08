@@ -108,6 +108,18 @@ describe("isFocusInsideContentPane", () => {
     expect(isFocusInsideContentPane()).toBe(true);
   });
 
+  it("returns true when activeElement is inside [data-testid='pdf-viewer-pane'] (PDF pane, not a registered EditorView)", () => {
+    const paneWrapper = document.createElement("div");
+    paneWrapper.setAttribute("data-testid", "pdf-viewer-pane");
+    paneWrapper.setAttribute("tabindex", "-1");
+    document.body.appendChild(paneWrapper);
+
+    // PDF panes never register an EditorView; focus the wrapper itself
+    paneWrapper.focus();
+    expect(document.activeElement).toBe(paneWrapper);
+    expect(isFocusInsideContentPane()).toBe(true);
+  });
+
   it("returns false when activeElement is outside all pane areas (e.g., sidebar)", () => {
     const sidebar = document.createElement("div");
     sidebar.setAttribute("data-testid", "sidebar");

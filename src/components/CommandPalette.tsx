@@ -9,6 +9,7 @@ import { commandProvider } from "../lib/commandProvider";
 import { initCoreCommands } from "../lib/commands/core";
 import { initFuseFractureCommands } from "../lib/commands/fuseFracture";
 import { initAcademicExportCommands } from "../lib/commands/academicExport";
+import { initCompanionCommands } from "../lib/commands/companion";
 import { recordAccess, sortByFrecency } from "../lib/frecency";
 
 const omniContentHintProvider: PaletteProvider = {
@@ -44,6 +45,7 @@ function ensureRegistered(): void {
   initCoreCommands();
   initFuseFractureCommands();
   initAcademicExportCommands();
+  initCompanionCommands();
 }
 
 export function _resetRegistration(): void {

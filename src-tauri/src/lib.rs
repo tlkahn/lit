@@ -300,6 +300,7 @@ pub fn run() {
             commands::workspace::open_workspace,
             commands::workspace::list_pages,
             commands::workspace::get_workspace_path,
+            commands::workspace::find_companion_file,
             commands::workspace::open_workspace_window,
             commands::workspace::get_pending_workspace,
             commands::workspace::get_pending_file,
@@ -428,7 +429,7 @@ pub fn run() {
                     pending.0.lock().unwrap().remove(&label);
                 }
                 if let Some(pdf_state) = window.try_state::<commands::pdf_viewer::PdfViewerState>() {
-                    let _ = pdf_state.close_for_window(&label);
+                    pdf_state.close_all_for_window(&label);
                 }
                 if let Some(llm_state) = window.try_state::<commands::llm::LlmState>() {
                     llm_state.cancel();

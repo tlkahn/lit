@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { ViewState } from "../types";
 import { saveLayout } from "../lib/paneLayout";
+import { usePanePdfLinkStore, serializeLinks } from "./panePdfLink";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -21,7 +22,7 @@ export const MAX_PANES = 6;
 export interface PaneStore {
   root: PaneNode;
   focusedPaneId: string;
-  splitPane(paneId: string, direction: "horizontal" | "vertical"): void;
+  splitPane(paneId: string, direction: "horizontal" | "vertical"): string | null;
   closePane(paneId: string): void;
   focusPane(paneId: string): void;
   focusNext(): void;
@@ -234,8 +235,8 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
   splitPane: (paneId, direction) => {
     const { root } = get();
     const leaf = findLeaf(root, paneId);
-    if (!leaf) return;
-    if (collectLeaves(root).length >= MAX_PANES) return;
+    if (!leaf) return null;
+    if (collectLeaves(root).length >= MAX_PANES) return null;
     const newLeaf: PaneLeaf = { type: "leaf", id: generatePaneId(), pagePath: null };
     const split: PaneSplit = {
       type: "split",
@@ -246,6 +247,7 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
     };
     const newRoot = replaceLeaf(root, paneId, split);
     set({ root: newRoot, focusedPaneId: newLeaf.id });
+    return newLeaf.id;
   },
 
   closePane: (paneId) => {
@@ -296,6 +298,7 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
 // ---------------------------------------------------------------------------
 
 let unsub: (() => void) | null = null;
+let pdfLinkUnsub: (() => void) | null = null;
 let beforeUnloadHandler: (() => void) | null = null;
 
 export function startLayoutSync(
@@ -305,9 +308,22 @@ export function startLayoutSync(
   stopLayoutSync();
   const flush = () => {
     const { root, focusedPaneId } = usePaneStore.getState();
-    saveLayout(workspacePath, root, focusedPaneId, getPaneViewStates());
+    const pdfLinks = serializeLinks(usePanePdfLinkStore.getState().links);
+    saveLayout(workspacePath, root, focusedPaneId, getPaneViewStates(), pdfLinks);
   };
   unsub = usePaneStore.subscribe(flush);
+  // Also persist link changes that don't touch the pane tree (e.g. a standalone
+  // unlink from the command palette). Guard on the `links` reference so the
+  // high-frequency currentPage/lastSyncedPage/syncEnabled updates that share this
+  // store don't spam localStorage on every PDF scroll tick — `links` is replaced
+  // by a new Map only on linkPanes/unlinkPane.
+  let prevLinks = usePanePdfLinkStore.getState().links;
+  pdfLinkUnsub = usePanePdfLinkStore.subscribe((state) => {
+    if (state.links !== prevLinks) {
+      prevLinks = state.links;
+      flush();
+    }
+  });
   beforeUnloadHandler = flush;
   window.addEventListener("beforeunload", beforeUnloadHandler);
 }
@@ -315,6 +331,8 @@ export function startLayoutSync(
 export function stopLayoutSync(): void {
   unsub?.();
   unsub = null;
+  pdfLinkUnsub?.();
+  pdfLinkUnsub = null;
   if (beforeUnloadHandler) {
     window.removeEventListener("beforeunload", beforeUnloadHandler);
     beforeUnloadHandler = null;

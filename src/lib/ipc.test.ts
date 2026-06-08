@@ -39,6 +39,7 @@ import {
   pdfRenderPage,
   pdfPrefetch,
   pdfClose,
+  findCompanionFile,
   openInExternalEditor,
   getUnlinkedMentions,
   linkUnlinkedMention,
@@ -270,6 +271,10 @@ describe("ipc", () => {
           return null;
         case "pdf_close":
           return null;
+        case "find_companion_file":
+          return (args as Record<string, unknown>)?.relativePath === "paper.md"
+            ? "paper.pdf"
+            : null;
         case "open_in_external_editor":
           return null;
         case "parse_annotations": {
@@ -1086,32 +1091,44 @@ describe("ipc", () => {
     expect(positions["page-2"]).toEqual({ x: 3.0, y: 4.0 });
   });
 
-  it("pdfOpen calls pdf_open with path", async () => {
-    const info = await pdfOpen("/path/to/doc.pdf");
+  it("pdfOpen calls pdf_open with path and paneId", async () => {
+    const info = await pdfOpen("/path/to/doc.pdf", "pane-1");
     expect(info.page_count).toBe(3);
     expect(info.path).toBe("/path/to/doc.pdf");
     const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("pdf_open", { path: "/path/to/doc.pdf" });
+    expect(invoke).toHaveBeenCalledWith("pdf_open", { path: "/path/to/doc.pdf", paneId: "pane-1" });
   });
 
-  it("pdfRenderPage calls pdf_render_page", async () => {
-    const page = await pdfRenderPage(1, 288);
+  it("pdfRenderPage calls pdf_render_page with paneId", async () => {
+    const page = await pdfRenderPage(1, 288, "pane-1");
     expect(page.page_index).toBe(1);
     expect(page.width).toBe(612);
     const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("pdf_render_page", { pageIndex: 1, dpi: 288 });
+    expect(invoke).toHaveBeenCalledWith("pdf_render_page", { pageIndex: 1, dpi: 288, paneId: "pane-1" });
   });
 
-  it("pdfPrefetch calls pdf_prefetch", async () => {
-    await pdfPrefetch(1, 288);
+  it("pdfPrefetch calls pdf_prefetch with paneId", async () => {
+    await pdfPrefetch(1, 288, "pane-1");
     const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("pdf_prefetch", { pageIndex: 1, dpi: 288 });
+    expect(invoke).toHaveBeenCalledWith("pdf_prefetch", { pageIndex: 1, dpi: 288, paneId: "pane-1" });
   });
 
-  it("pdfClose calls pdf_close", async () => {
-    await pdfClose();
+  it("pdfClose calls pdf_close with paneId", async () => {
+    await pdfClose("pane-1");
     const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("pdf_close");
+    expect(invoke).toHaveBeenCalledWith("pdf_close", { paneId: "pane-1" });
+  });
+
+  it("findCompanionFile resolves to companion path", async () => {
+    const result = await findCompanionFile("paper.md");
+    expect(result).toBe("paper.pdf");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("find_companion_file", { relativePath: "paper.md" });
+  });
+
+  it("findCompanionFile resolves to null when no companion", async () => {
+    const result = await findCompanionFile("orphan.md");
+    expect(result).toBeNull();
   });
 
   it("searchTags returns tag results", async () => {

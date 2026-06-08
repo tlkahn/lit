@@ -81,6 +81,20 @@ describe("serializeLayout", () => {
     expect(parsed.focusedPaneId).toBe("x");
     expect(parsed.paneViewStates).toEqual({});
   });
+
+  it("includes pdfLinks when passed", () => {
+    const root: PaneLeaf = { type: "leaf", id: "a", pagePath: "note.md" };
+    const json = serializeLayout(root, "a", {}, [["a", "b"]]);
+    const parsed = JSON.parse(json);
+    expect(parsed.pdfLinks).toEqual([["a", "b"]]);
+  });
+
+  it("defaults pdfLinks to [] when not passed", () => {
+    const root: PaneLeaf = { type: "leaf", id: "a", pagePath: null };
+    const json = serializeLayout(root, "a", {});
+    const parsed = JSON.parse(json);
+    expect(parsed.pdfLinks).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -93,6 +107,7 @@ describe("deserializeLayout", () => {
       root: { type: "leaf", id: "a", pagePath: null },
       focusedPaneId: "a",
       paneViewStates: { a: { scrollTop: 0, cursor: 0 } },
+      pdfLinks: [] as [string, string][],
       savedAt: 12345,
     };
     const result = deserializeLayout(JSON.stringify(stored));
@@ -133,6 +148,29 @@ describe("deserializeLayout", () => {
     };
     const result = deserializeLayout(JSON.stringify(data));
     expect(result!.paneViewStates).toEqual({});
+  });
+
+  it("restores pdfLinks from stored data", () => {
+    const data = {
+      root: { type: "leaf", id: "a", pagePath: null },
+      focusedPaneId: "a",
+      paneViewStates: {},
+      pdfLinks: [["a", "b"]],
+      savedAt: 100,
+    };
+    const result = deserializeLayout(JSON.stringify(data));
+    expect(result!.pdfLinks).toEqual([["a", "b"]]);
+  });
+
+  it("defaults pdfLinks to [] for legacy JSON without the field", () => {
+    const data = {
+      root: { type: "leaf", id: "a", pagePath: null },
+      focusedPaneId: "a",
+      paneViewStates: {},
+      savedAt: 100,
+    };
+    const result = deserializeLayout(JSON.stringify(data));
+    expect(result!.pdfLinks).toEqual([]);
   });
 });
 

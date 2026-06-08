@@ -48,7 +48,11 @@ export function isFocusInsideContentPane(): boolean {
     }
   }
 
-  if (active.closest('[data-testid="editor-pane"]') != null) {
+  if (
+    active.closest(
+      '[data-testid="editor-pane"], [data-testid="pdf-viewer-pane"]',
+    ) != null
+  ) {
     return true;
   }
 

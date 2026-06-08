@@ -11,12 +11,12 @@ import { executeCommand } from "../lib/commandRegistry";
 import { getCurrentEditorView } from "../lib/editorViewRef";
 import { extractHeadings } from "../lib/headings";
 import { PaneContainer } from "./PaneContainer";
-import { PdfViewer } from "./PdfViewer";
 import { BottomPanel } from "./BottomPanel";
 import { buildHeadingTree, applyRename, applyMove, insertChild, insertSibling, insertDangling, resolveDeleteFallback, findNode } from "../lib/headingTree";
 import { YamlHighlighter } from "./YamlHighlighter";
 import { globalJumpTracker } from "../editor/jumpTracker";
 import { useGraphViewState } from "../stores/graphViewState";
+import { useLeafFileType } from "../hooks/useLeafFileType";
 
 const LazyMindmapView = lazy(() => import("./MindmapView"));
 const LazyGraphView = lazy(() => import("./GraphView"));
@@ -36,8 +36,8 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
   const focusedLeaf = usePaneStore((s) => findLeaf(s.root, s.focusedPaneId));
   const currentPanePage = focusedLeaf?.pagePath ?? null;
   const isMultiPane = usePaneStore((s) => s.root.type === "split");
+  const focusedFileType = useLeafFileType(focusedPaneId);
 
-  const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const pendingTitleFocus = useWorkspaceStore((s) => s.pendingTitleFocus);
   const clearPendingTitleFocus = useWorkspaceStore((s) => s.clearPendingTitleFocus);
   const renamePageAction = useWorkspaceStore((s) => s.renamePage);
@@ -343,18 +343,9 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
     );
   }
 
-  if (currentPanePage) {
-    const currentPageMeta = useWorkspaceStore.getState().pages.find(
-      (p) => p.relative_path === currentPanePage,
-    );
-    if (currentPageMeta?.file_type === "pdf" && workspacePath) {
-      return <PdfViewer filePath={`${workspacePath}/${currentPanePage}`} />;
-    }
-  }
-
   return (
     <main className="flex min-h-0 flex-1 flex-col bg-bg-primary-alt">
-      {currentPanePage && (<div className="px-6 py-3">
+      {currentPanePage && focusedFileType !== "pdf" && (<div className="px-6 py-3">
         <div className="flex items-center gap-2">
           <input
             ref={titleInputRef}
@@ -446,7 +437,7 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
           )
         )}
       </div>)}
-      <PaneContainer style={viewMode !== "editor" ? { display: "none" } : undefined} />
+      <PaneContainer style={viewMode !== "editor" && focusedFileType !== "pdf" ? { display: "none" } : undefined} />
       {viewMode === "mindmap" && (
         <div
           data-testid="mindmap-view"

@@ -742,7 +742,7 @@ describe("ContentArea jump recording on page switch", () => {
 });
 
 describe("ContentArea PDF rendering", () => {
-  it("renders PdfViewer when file_type is pdf", async () => {
+  it("renders the PDF through the pane system (no whole-area bypass)", async () => {
     const pdfPage = {
       title: "Doc",
       relative_path: "doc.pdf",
@@ -760,7 +760,51 @@ describe("ContentArea PDF rendering", () => {
 
     mockInvoke((cmd, args) => {
       if (cmd === "pdf_open") return { page_count: 2, path: (args as Record<string, unknown>)?.path ?? "" };
-      if (cmd === "pdf_render_page") return { page_index: 0, png_base64: "AAAA", width: 100, height: 200 };
+      if (cmd === "pdf_render_page") {
+        const idx = (args as Record<string, unknown>)?.pageIndex ?? 0;
+        return { page_index: idx, png_path: `/tmp/lit-pdf/page_${idx}.png`, width: 100, height: 200 };
+      }
+      if (cmd === "pdf_prefetch") return null;
+      if (cmd === "pdf_close") return null;
+      if (cmd === "get_keymaps") return [];
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<ContentArea />);
+
+    // PDF now flows through the pane tree (PdfViewerPane), not a whole-area short-circuit.
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer-pane")).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("editor")).not.toBeInTheDocument();
+  });
+
+  it("does not render editor chrome (title input or view-mode tabs) for a focused PDF pane", async () => {
+    const pdfPage = {
+      title: "Doc",
+      relative_path: "doc.pdf",
+      frontmatter: {},
+      created_at: 1000,
+      modified_at: 2000,
+      file_type: "pdf" as const,
+    };
+    useWorkspaceStore.setState({
+      workspacePath: "/test",
+      pages: [pdfPage],
+      currentPagePath: "doc.pdf",
+    });
+    usePaneStore.getState().setPanePage("test-pane", "doc.pdf");
+
+    mockInvoke((cmd, args) => {
+      if (cmd === "pdf_open") return { page_count: 2, path: (args as Record<string, unknown>)?.path ?? "" };
+      if (cmd === "pdf_render_page") {
+        const idx = (args as Record<string, unknown>)?.pageIndex ?? 0;
+        return { page_index: idx, png_path: `/tmp/lit-pdf/page_${idx}.png`, width: 100, height: 200 };
+      }
+      if (cmd === "pdf_prefetch") return null;
       if (cmd === "pdf_close") return null;
       if (cmd === "get_keymaps") return [];
       throw new Error(`Unknown command: ${cmd}`);
@@ -769,9 +813,57 @@ describe("ContentArea PDF rendering", () => {
     render(<ContentArea />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+      expect(screen.getByTestId("pdf-viewer-pane")).toBeInTheDocument();
     });
-    expect(screen.queryByTestId("editor")).not.toBeInTheDocument();
+    // The editor chrome must be suppressed for a PDF: no title input (which
+    // would rename the PDF file) and no view-mode tabs (which would hide the PDF).
+    expect(screen.queryByTestId("page-title")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Mindmap" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the PDF pane visible after a view-mode switch while a PDF is focused", async () => {
+    const pdfPage = {
+      title: "Doc",
+      relative_path: "doc.pdf",
+      frontmatter: {},
+      created_at: 1000,
+      modified_at: 2000,
+      file_type: "pdf" as const,
+    };
+    useWorkspaceStore.setState({
+      workspacePath: "/test",
+      pages: [pdfPage],
+      currentPagePath: "doc.pdf",
+    });
+    usePaneStore.getState().setPanePage("test-pane", "doc.pdf");
+
+    mockInvoke((cmd, args) => {
+      if (cmd === "pdf_open") return { page_count: 2, path: (args as Record<string, unknown>)?.path ?? "" };
+      if (cmd === "pdf_render_page") {
+        const idx = (args as Record<string, unknown>)?.pageIndex ?? 0;
+        return { page_index: idx, png_path: `/tmp/lit-pdf/page_${idx}.png`, width: 100, height: 200 };
+      }
+      if (cmd === "pdf_prefetch") return null;
+      if (cmd === "pdf_close") return null;
+      if (cmd === "get_keymaps") return [];
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer-pane")).toBeInTheDocument();
+    });
+
+    // Simulate Cmd-2 (set view mode to mindmap) while the PDF pane is focused.
+    // The view-mode tabs are hidden for PDFs, so if the PDF also disappears the
+    // user is left with no UI to switch back. The PDF must stay visible.
+    act(() => {
+      window.dispatchEvent(new CustomEvent("lit:set-view-mode", { detail: "mindmap" }));
+    });
+
+    // toBeVisible walks ancestors and fails if PaneContainer has display:none.
+    expect(screen.getByTestId("pdf-viewer-pane")).toBeVisible();
   });
 
   it("does NOT render PdfViewer for markdown files", async () => {

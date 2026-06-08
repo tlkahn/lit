@@ -18,6 +18,7 @@ import {
 import type { PaneLeaf, PaneSplit, PaneNode } from "./panes";
 import { loadLayout, validateLayout } from "../lib/paneLayout";
 import { useWorkspaceStore } from "./workspace";
+import { usePanePdfLinkStore } from "./panePdfLink";
 
 // ---------------------------------------------------------------------------
 // Section A: Pure Tree Helpers (no store dependency)
@@ -844,6 +845,18 @@ describe("Section C: Tree-Mutation Actions", () => {
         expect(root.id).not.toBe(second.id);
       });
 
+      it("returns the new leaf id on success", () => {
+        usePaneStore.setState({
+          root: { type: "leaf", id: "solo", pagePath: "note.md" },
+          focusedPaneId: "solo",
+        });
+        const newId = usePaneStore.getState().splitPane("solo", "horizontal");
+        expect(newId).not.toBeNull();
+        expect(typeof newId).toBe("string");
+        const root = usePaneStore.getState().root as PaneSplit;
+        expect((root.children[1] as PaneLeaf).id).toBe(newId);
+      });
+
       it("nested splits get distinct ids", () => {
         const root = usePaneStore.getState().root as PaneSplit;
         const newLeaf = root.children[1] as PaneLeaf;
@@ -910,11 +923,29 @@ describe("Section C: Tree-Mutation Actions", () => {
         usePaneStore.getState().splitPane("nonexistent", "horizontal");
         expect(usePaneStore.getState().root).toBe(root);
       });
+
+      it("returns null for non-existent pane", () => {
+        const root: PaneLeaf = { type: "leaf", id: "solo", pagePath: null };
+        usePaneStore.setState({ root, focusedPaneId: "solo" });
+        const result = usePaneStore.getState().splitPane("nonexistent", "horizontal");
+        expect(result).toBeNull();
+      });
     });
 
     describe("max-pane cap", () => {
       it("MAX_PANES is exported and equals 6", () => {
         expect(MAX_PANES).toBe(6);
+      });
+
+      it("returns null when already at MAX_PANES", () => {
+        const leaves = Array.from({ length: 6 }, (_, i): PaneLeaf => ({ type: "leaf", id: `l${i}`, pagePath: null }));
+        const root: PaneSplit = {
+          type: "split", id: "s1", direction: "horizontal",
+          children: leaves, sizes: leaves.map(() => 100 / 6),
+        };
+        usePaneStore.setState({ root, focusedPaneId: "l0" });
+        const result = usePaneStore.getState().splitPane("l0", "horizontal");
+        expect(result).toBeNull();
       });
 
       it("splitPane is a no-op when already at MAX_PANES leaves", () => {
@@ -1481,6 +1512,55 @@ describe("Section F: Layout Persistence", () => {
       usePaneStore.getState().resize([], [30, 70]);
       const stored = JSON.parse(localStorage.getItem(key)!);
       expect(stored.root.sizes).toEqual([30, 70]);
+    });
+  });
+
+  describe("persists pdfLinks", () => {
+    afterEach(() => {
+      usePanePdfLinkStore.setState({ links: new Map() });
+    });
+
+    it("flush writes the link store's current links as undirected pairs", () => {
+      usePaneStore.getState().splitPane("solo", "horizontal");
+      const root = usePaneStore.getState().root as PaneSplit;
+      const a = (root.children[0] as PaneLeaf).id;
+      const b = (root.children[1] as PaneLeaf).id;
+      usePanePdfLinkStore.getState().linkPanes(a, b);
+
+      startLayoutSync(WS, () => useWorkspaceStore.getState().paneViewStates);
+      usePaneStore.getState().setPanePage(a, "note.md");
+
+      const stored = JSON.parse(localStorage.getItem(key)!);
+      expect(stored.pdfLinks).toHaveLength(1);
+      expect(new Set(stored.pdfLinks[0])).toEqual(new Set([a, b]));
+    });
+
+    it("persists link-store changes without a pane-tree mutation", () => {
+      usePaneStore.getState().splitPane("solo", "horizontal");
+      const root = usePaneStore.getState().root as PaneSplit;
+      const a = (root.children[0] as PaneLeaf).id;
+      const b = (root.children[1] as PaneLeaf).id;
+      usePanePdfLinkStore.getState().linkPanes(a, b);
+
+      startLayoutSync(WS, () => useWorkspaceStore.getState().paneViewStates);
+      usePaneStore.getState().setPanePage(a, "note.md");
+      localStorage.removeItem(key);
+
+      // Unlink with no accompanying pane-tree mutation.
+      usePanePdfLinkStore.getState().unlinkPane(a);
+
+      const stored = JSON.parse(localStorage.getItem(key)!);
+      expect(stored.pdfLinks).toHaveLength(0);
+    });
+
+    it("does not write on non-link link-store mutations (currentPage churn)", () => {
+      startLayoutSync(WS, () => useWorkspaceStore.getState().paneViewStates);
+      usePaneStore.getState().setPanePage("solo", "note.md");
+      localStorage.removeItem(key);
+
+      // setCurrentPage fires on every PDF scroll tick; it must not flush.
+      usePanePdfLinkStore.getState().setCurrentPage("solo", 3);
+      expect(localStorage.getItem(key)).toBeNull();
     });
   });
 

@@ -7,6 +7,11 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { useCursorInfoStore } from "../stores/cursorInfo";
 import { mockInvoke } from "../test/tauri-mock";
 import * as editorViewRef from "../lib/editorViewRef";
+import * as pdfPaneRef from "../lib/pdfPaneRef";
+import { usePanePdfLinkStore } from "../stores/panePdfLink";
+import { _resetForTesting as resetForwardSync } from "../lib/forwardSync";
+import { _resetMarkerCacheForTesting as resetMarkerCache } from "../lib/pageMarkers";
+import { Text } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 
 const mockView = {} as EditorView;
@@ -75,6 +80,10 @@ beforeEach(() => {
     currentPagePath: null,
   });
   editorViewRef._resetForTesting();
+  pdfPaneRef._resetForTesting();
+  resetForwardSync();
+  resetMarkerCache();
+  usePanePdfLinkStore.setState({ links: new Map() });
   useCursorInfoStore.setState({ line: 0, col: 0 });
 
   mockInvoke((cmd) => {
@@ -402,6 +411,190 @@ describe("EditorPane", () => {
         expect(useCursorInfoStore.getState().line).toBe(0);
         expect(useCursorInfoStore.getState().col).toBe(0);
       });
+    });
+  });
+
+  describe("forward sync (md -> PDF)", () => {
+    // Body with two page markers. Marker for "Page 2" starts at index 19.
+    const bodyWithMarkers = "<!-- Page 1 -->\nfoo\n<!-- Page 2 -->\nbar";
+    const page2Offset = bodyWithMarkers.indexOf("<!-- Page 2 -->");
+
+    function fakeViewAt(offset: number, doc: string): EditorView {
+      return {
+        state: {
+          selection: { main: { head: offset } },
+          doc: Text.of(doc.split("\n")),
+        },
+      } as unknown as EditorView;
+    }
+
+    it("drives the linked PDF pane's goToPage with the page for the cursor offset", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      // Link editor pane-1 <-> pdf pane-pdf
+      usePanePdfLinkStore.getState().linkPanes("pane-1", "pane-pdf");
+      const goToPageSpy = vi.fn();
+      pdfPaneRef.registerPdfGoToPage("pane-pdf", goToPageSpy);
+      // Cursor is at/after the "Page 2" marker -> page index 1.
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(
+        fakeViewAt(page2Offset, bodyWithMarkers),
+      );
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onSelectionChange).toBeDefined();
+      });
+      const onSelectionChange = capturedProps.onSelectionChange as (l: number, c: number) => void;
+      onSelectionChange(3, 0);
+
+      expect(goToPageSpy).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(150);
+      expect(goToPageSpy).toHaveBeenCalledTimes(1);
+      expect(goToPageSpy).toHaveBeenCalledWith(1);
+    });
+
+    it("does nothing when the editor pane is not linked", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      const goToPageSpy = vi.fn();
+      pdfPaneRef.registerPdfGoToPage("pane-pdf", goToPageSpy);
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(
+        fakeViewAt(page2Offset, bodyWithMarkers),
+      );
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onSelectionChange).toBeDefined();
+      });
+      const onSelectionChange = capturedProps.onSelectionChange as (l: number, c: number) => void;
+      onSelectionChange(3, 0);
+      vi.advanceTimersByTime(150);
+      expect(goToPageSpy).not.toHaveBeenCalled();
+    });
+
+    it("marks forward sync on the linked PDF pane before calling goToPage", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      usePanePdfLinkStore.getState().linkPanes("pane-1", "pane-pdf");
+      const goToPageSpy = vi.fn();
+      pdfPaneRef.registerPdfGoToPage("pane-pdf", goToPageSpy);
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(
+        fakeViewAt(page2Offset, bodyWithMarkers),
+      );
+      const markSpy = vi.spyOn(pdfPaneRef, "markForwardSync");
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onSelectionChange).toBeDefined();
+      });
+      const onSelectionChange = capturedProps.onSelectionChange as (l: number, c: number) => void;
+      onSelectionChange(3, 0);
+      vi.advanceTimersByTime(150);
+
+      expect(markSpy).toHaveBeenCalledWith("pane-pdf");
+      // markForwardSync must be called BEFORE goToPage
+      const markOrder = markSpy.mock.invocationCallOrder[0];
+      const goOrder = goToPageSpy.mock.invocationCallOrder[0];
+      expect(markOrder).toBeLessThan(goOrder!);
+    });
+
+    it("an earlier navigation's stale safety-net timeout does not clear a newer navigation's flag", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      usePanePdfLinkStore.getState().linkPanes("pane-1", "pane-pdf");
+      // Slow IPC: goToPage does NOT synchronously fire onPageChange, so the flag
+      // stays in flight until the (late) handlePageChange consumes it.
+      pdfPaneRef.registerPdfGoToPage("pane-pdf", vi.fn());
+      const viewSpy = vi.spyOn(editorViewRef, "getPaneView");
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onSelectionChange).toBeDefined();
+      });
+      const onSelectionChange = capturedProps.onSelectionChange as (l: number, c: number) => void;
+
+      // First navigation -> page 1 (cursor at the "Page 2" marker).
+      viewSpy.mockReturnValue(fakeViewAt(page2Offset, bodyWithMarkers));
+      onSelectionChange(3, 0);
+      // t=150: token1 flag set, token1 safety net scheduled for t=650.
+      vi.advanceTimersByTime(150);
+
+      // Newer navigation -> page 0 (cursor before the "Page 2" marker), still
+      // before token1's safety-net timeout fires.
+      vi.advanceTimersByTime(200); // t=350
+      viewSpy.mockReturnValue(fakeViewAt(0, bodyWithMarkers));
+      onSelectionChange(1, 0);
+      // t=500: token2 flag replaces token1, token2 safety net scheduled for t=1000.
+      vi.advanceTimersByTime(150);
+
+      // Advance past token1's t=650 safety-net timeout but BEFORE token2's
+      // t=1000 one. With a fixed/unscoped clear, token1's late timeout would
+      // clobber token2's in-flight flag; token-scoped, it is a no-op.
+      vi.advanceTimersByTime(200); // t=700
+
+      // token2's flag must survive so the (late) onPageChange suppresses the
+      // reverse-sync echo and the cursor does not bounce.
+      expect(pdfPaneRef.consumeForwardSync("pane-pdf")).toBe(true);
+    });
+
+    it("does not navigate the PDF pane if it is unlinked during the debounce window", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      usePanePdfLinkStore.getState().linkPanes("pane-1", "pane-pdf");
+      const goToPageSpy = vi.fn();
+      pdfPaneRef.registerPdfGoToPage("pane-pdf", goToPageSpy);
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(
+        fakeViewAt(page2Offset, bodyWithMarkers),
+      );
+      const markSpy = vi.spyOn(pdfPaneRef, "markForwardSync");
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onSelectionChange).toBeDefined();
+      });
+      const onSelectionChange = capturedProps.onSelectionChange as (l: number, c: number) => void;
+      // Schedule the sync while linked...
+      onSelectionChange(3, 0);
+      // ...but unlink before the trailing-edge fires.
+      usePanePdfLinkStore.getState().unlinkPane("pane-1");
+      vi.advanceTimersByTime(150);
+
+      // The link is re-validated at fire time, so the unlink is honored and
+      // forward sync is a no-op: no navigation, no flag minted.
+      expect(goToPageSpy).not.toHaveBeenCalled();
+      expect(markSpy).not.toHaveBeenCalledWith("pane-pdf");
+      expect(pdfPaneRef.consumeForwardSync("pane-pdf")).toBe(false);
+    });
+
+    it("still updates cursorInfo even when linked", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      usePanePdfLinkStore.getState().linkPanes("pane-1", "pane-pdf");
+      pdfPaneRef.registerPdfGoToPage("pane-pdf", vi.fn());
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(
+        fakeViewAt(page2Offset, bodyWithMarkers),
+      );
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onSelectionChange).toBeDefined();
+      });
+      const onSelectionChange = capturedProps.onSelectionChange as (l: number, c: number) => void;
+      onSelectionChange(7, 2);
+      expect(useCursorInfoStore.getState().line).toBe(7);
+      expect(useCursorInfoStore.getState().col).toBe(2);
     });
   });
 });
