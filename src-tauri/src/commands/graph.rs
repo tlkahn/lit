@@ -205,9 +205,12 @@ pub(crate) fn load_or_build_graph_sync(
     graph_reg: &GraphRegistry,
     annotations_enabled: bool,
     on_progress: impl Fn(crate::graph::progress::IndexProgress),
+    notes_store: Option<crate::graph::indexer::NotesStoreHandle>,
 ) -> Result<Arc<GraphIndex>, String> {
     match GraphIndex::load_from_store(root.clone()) {
-        Ok(Some(gi)) => {
+        Ok(Some(mut gi)) => {
+            // In DB mode, attach the notes_store so later reindexes read from DB.
+            gi.set_notes_store(notes_store.clone());
             let gi = Arc::new(gi);
             graph_reg.indices.lock().unwrap().insert(root.clone(), Arc::clone(&gi));
             build_state.mark_ready(&root);
@@ -217,7 +220,7 @@ pub(crate) fn load_or_build_graph_sync(
         Err(e) => tracing::warn!(error = %e, "load_from_store failed, falling back to cold start"),
     }
 
-    match GraphIndex::build_with_progress(root.clone(), &on_progress, annotations_enabled) {
+    match GraphIndex::build_with_store(root.clone(), &on_progress, annotations_enabled, notes_store) {
         Ok(gi) => {
             let gi = Arc::new(gi);
             graph_reg.indices.lock().unwrap().insert(root.clone(), Arc::clone(&gi));
@@ -231,6 +234,7 @@ pub(crate) fn load_or_build_graph_sync(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn initialize_graph_index_with_callbacks(
     root: PathBuf,
     build_state: &GraphBuildState,
@@ -239,8 +243,9 @@ pub(crate) fn initialize_graph_index_with_callbacks(
     on_progress: impl Fn(crate::graph::progress::IndexProgress),
     on_graph_updated: impl Fn(&Arc<GraphIndex>),
     on_layout: impl FnOnce(Arc<GraphIndex>),
+    notes_store: Option<crate::graph::indexer::NotesStoreHandle>,
 ) {
-    match load_or_build_graph_sync(root.clone(), build_state, graph_reg, annotations_enabled, on_progress) {
+    match load_or_build_graph_sync(root.clone(), build_state, graph_reg, annotations_enabled, on_progress, notes_store) {
         Ok(gi) => {
             on_graph_updated(&gi);
             match gi.sync_with_disk(annotations_enabled) {
@@ -259,6 +264,7 @@ pub(crate) fn initialize_graph_index(
     build_state: Arc<GraphBuildState>,
     graph_reg: Arc<GraphRegistry>,
     handle: tauri::AppHandle,
+    notes_store: Option<crate::graph::indexer::NotesStoreHandle>,
 ) {
     let ann_enabled = crate::preferences::annotations_enabled(&handle);
     let emit_handle = handle.clone();
@@ -271,6 +277,7 @@ pub(crate) fn initialize_graph_index(
         move |p| { let _ = emit_handle.emit("lit:index-progress", &p); },
         |_gi| { let _ = layout_handle.emit("lit:graph-updated", ()); },
         |gi| spawn_layout(gi, handle),
+        notes_store,
     );
 }
 
@@ -1025,6 +1032,7 @@ mod tests {
             &graph_reg,
             true,
             |_| {},
+            None,
         )
         .unwrap();
         assert_eq!(gi.stats().unwrap().nodes, 2);
@@ -1047,6 +1055,7 @@ mod tests {
             &graph_reg,
             true,
             |_| {},
+            None,
         )
         .unwrap();
         assert_eq!(gi.stats().unwrap().nodes, 2);
@@ -1066,6 +1075,7 @@ mod tests {
             &graph_reg,
             true,
             |_| {},
+            None,
         )
         .unwrap();
         assert!(!build_state.is_in_progress(&dir.path().to_path_buf()));
@@ -1096,6 +1106,7 @@ mod tests {
             move |_gi| {
                 lc.fetch_add(1, Ordering::SeqCst);
             },
+            None,
         );
         assert_eq!(layout_count.load(Ordering::SeqCst), 1);
     }

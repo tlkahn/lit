@@ -18,4 +18,5 @@ pub mod oplog;
 pub mod pdf_viewer;
 pub mod merge_split;
 pub mod workspace;
+pub mod workspace_config;
 pub mod academic_export;

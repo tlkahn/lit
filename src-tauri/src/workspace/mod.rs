@@ -1,7 +1,11 @@
+pub mod backend;
+pub mod config;
 pub mod frontmatter;
 pub mod frontmatter_merge;
 pub mod merge;
+pub mod migration;
 pub mod normalize;
+pub mod notes_store;
 pub mod ops;
 pub mod page;
 pub mod scan;
@@ -25,6 +29,7 @@ pub enum WorkspaceError {
     RestoreConflict(String),
     IoError(String),
     ParseError(String),
+    DbError(String),
 }
 
 impl fmt::Display for WorkspaceError {
@@ -39,6 +44,7 @@ impl fmt::Display for WorkspaceError {
             WorkspaceError::RestoreConflict(p) => write!(f, "Cannot restore, file already exists: {p}"),
             WorkspaceError::IoError(e) => write!(f, "IO error: {e}"),
             WorkspaceError::ParseError(e) => write!(f, "Parse error: {e}"),
+            WorkspaceError::DbError(e) => write!(f, "Database error: {e}"),
         }
     }
 }
@@ -46,5 +52,22 @@ impl fmt::Display for WorkspaceError {
 impl From<std::io::Error> for WorkspaceError {
     fn from(e: std::io::Error) -> Self {
         WorkspaceError::IoError(e.to_string())
+    }
+}
+
+impl From<rusqlite::Error> for WorkspaceError {
+    fn from(e: rusqlite::Error) -> Self {
+        WorkspaceError::DbError(e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn db_error_displays_database_error_prefix() {
+        let err = WorkspaceError::DbError("x".into());
+        assert!(err.to_string().contains("Database error"));
     }
 }

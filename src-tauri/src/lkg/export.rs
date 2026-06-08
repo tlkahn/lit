@@ -117,10 +117,50 @@ pub fn write_lkg_zip<F>(
 where
     F: Fn(usize, usize),
 {
+    // Files-mode content source: read every workspace file from disk into a
+    // `(relative_path, bytes)` list, then delegate to the entries-based core.
     let content_entries = crate::export::collect_export_files(root)?;
+    let mut content: Vec<(String, Vec<u8>)> = Vec::with_capacity(content_entries.len());
+    for entry in &content_entries {
+        let data = std::fs::read(&entry.absolute_path).map_err(|e| e.to_string())?;
+        content.push((entry.relative_path.clone(), data));
+    }
 
+    write_lkg_zip_from_entries(
+        &content,
+        nodes,
+        edges,
+        annotations,
+        positions,
+        title,
+        description,
+        dest,
+        on_progress,
+    )
+}
+
+/// Byte-producing core of [`write_lkg_zip`]. Takes content as an in-memory list
+/// of `(relative_path, bytes)` rather than reading disk, so a DB-backed export
+/// can supply page/asset bytes from a [`NotesStore`]. Entry order and manifest
+/// stats are identical to the disk path (asset_count from the `.md` suffix test,
+/// total_size_bytes from `data.len()`).
+#[allow(clippy::too_many_arguments)]
+fn write_lkg_zip_from_entries<F>(
+    content: &[(String, Vec<u8>)],
+    nodes: &[BundleNode],
+    edges: &[BundleEdge],
+    annotations: &[BundleAnnotation],
+    positions: &HashMap<String, Position>,
+    title: &str,
+    description: Option<&str>,
+    dest: &Path,
+    on_progress: F,
+) -> Result<LkgExportSummary, String>
+where
+    F: Fn(usize, usize),
+{
     // Total write steps: manifest + content files + 3 graph files + annotations.
-    let total = 1 + content_entries.len() + 3 + 1;
+    let total = 1 + content.len() + 3 + 1;
     let mut current = 0usize;
     let mut bump = |on_progress: &F| {
         current += 1;
@@ -132,15 +172,11 @@ where
     let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
     // Compute stats and graph hash for the manifest.
-    let asset_count = content_entries
+    let asset_count = content
         .iter()
-        .filter(|e| !e.relative_path.ends_with(".md"))
+        .filter(|(rel, _)| !rel.ends_with(".md"))
         .count() as u64;
-    let total_size_bytes: u64 = content_entries
-        .iter()
-        .filter_map(|e| std::fs::metadata(&e.absolute_path).ok())
-        .map(|m| m.len())
-        .sum();
+    let total_size_bytes: u64 = content.iter().map(|(_, data)| data.len() as u64).sum();
     let graph_hash = compute_graph_hash(nodes, edges, annotations);
 
     let manifest = LkgManifest {
@@ -165,10 +201,9 @@ where
     bump(&on_progress);
 
     // (2) content/<relative_path> for each workspace file.
-    for entry in &content_entries {
-        let data = std::fs::read(&entry.absolute_path).map_err(|e| e.to_string())?;
-        let name = format!("content/{}", entry.relative_path);
-        write_zip_bytes(&mut zip, &name, &data, options)?;
+    for (rel, data) in content {
+        let name = format!("content/{rel}");
+        write_zip_bytes(&mut zip, &name, data, options)?;
         bump(&on_progress);
     }
 
@@ -187,10 +222,91 @@ where
     zip.finish().map_err(|e| e.to_string())?;
 
     Ok(LkgExportSummary {
-        exported_count: content_entries.len(),
+        exported_count: content.len(),
         destination: dest.to_string_lossy().to_string(),
         graph_hash,
     })
+}
+
+/// Collect a DB-backed workspace's content as a sorted `(relative_path, bytes)`
+/// list for export. Pages are reconstructed via `read_raw_content` (so the
+/// exported `content/<path>.md` round-trips exactly), assets via `read_asset`.
+pub fn collect_export_entries_from_store(
+    store: &crate::workspace::notes_store::NotesStore,
+) -> Result<Vec<(String, Vec<u8>)>, crate::workspace::WorkspaceError> {
+    let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
+    for page in store.list_pages()? {
+        let raw = store.read_raw_content(&page.relative_path)?;
+        entries.push((page.relative_path, raw.into_bytes()));
+    }
+    for rel in store.list_asset_paths()? {
+        let (bytes, _mime) = store.read_asset(&rel)?;
+        entries.push((rel, bytes));
+    }
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(entries)
+}
+
+/// Export the workspace as a `.lkg` bundle, reading page/asset content from the
+/// active [`StorageBackend`]. The graph data (nodes/edges/annotations/positions)
+/// comes from `graph_index` and is mode-independent.
+///
+/// `Files` delegates to [`write_lkg_zip`] (the disk path); `Db` collects content
+/// from the [`NotesStore`] and delegates to the entries-based core.
+#[allow(clippy::too_many_arguments)]
+pub fn export_lkg_with_backend<F>(
+    backend: &crate::workspace::backend::StorageBackend,
+    root: &Path,
+    graph_index: &crate::graph::indexer::GraphIndex,
+    title: &str,
+    description: Option<&str>,
+    dest: &Path,
+    on_progress: F,
+) -> Result<LkgExportSummary, String>
+where
+    F: Fn(usize, usize),
+{
+    use crate::workspace::backend::StorageBackend;
+
+    let (nodes, edges, annotations) = {
+        let store = graph_index.store();
+        let nodes = collect_bundle_nodes(&store).map_err(|e| e.to_string())?;
+        let edges = collect_bundle_edges(&store).map_err(|e| e.to_string())?;
+        let annotations = collect_bundle_annotations(&store).map_err(|e| e.to_string())?;
+        (nodes, edges, annotations)
+    };
+    let positions = graph_index.get_positions();
+
+    match backend {
+        StorageBackend::Files => write_lkg_zip(
+            root,
+            &nodes,
+            &edges,
+            &annotations,
+            &positions,
+            title,
+            description,
+            dest,
+            on_progress,
+        ),
+        StorageBackend::Db(store) => {
+            let content = {
+                let s = store.lock().unwrap();
+                collect_export_entries_from_store(&s).map_err(|e| e.to_string())?
+            };
+            write_lkg_zip_from_entries(
+                &content,
+                &nodes,
+                &edges,
+                &annotations,
+                &positions,
+                title,
+                description,
+                dest,
+                on_progress,
+            )
+        }
+    }
 }
 
 /// Exports the full workspace at `root` (with its indexed graph) as a `.lkg`
@@ -608,6 +724,118 @@ mod tests {
         assert_eq!(manifest.stats.edge_count, read_edges.len() as u64);
         // a.md links to b (real edge).
         assert!(read_edges.iter().any(|e| e.source == "a.md"));
+    }
+
+    // --- Phase 5: DB-backed export ---
+
+    use crate::workspace::backend::StorageBackend;
+    use crate::workspace::notes_store::NotesStore;
+    use std::sync::{Arc, Mutex};
+
+    fn db_backend_with(pages: &[(&str, &str)], assets: &[(&str, &[u8])]) -> StorageBackend {
+        let store = NotesStore::open_memory().unwrap();
+        for (path, body) in pages {
+            store.write_page(path, body, &IndexMap::new()).unwrap();
+        }
+        for (path, data) in assets {
+            store.write_asset(path, data, None).unwrap();
+        }
+        StorageBackend::Db(Arc::new(Mutex::new(store)))
+    }
+
+    use indexmap::IndexMap;
+
+    #[test]
+    fn collect_export_entries_from_store_round_trips() {
+        let store = NotesStore::open_memory().unwrap();
+        let mut fm = IndexMap::new();
+        fm.insert(
+            "title".to_string(),
+            serde_yaml::Value::String("T".to_string()),
+        );
+        store.write_page("fm.md", "# Body\n", &fm).unwrap();
+        store
+            .write_page("plain.md", "just body", &IndexMap::new())
+            .unwrap();
+        store.write_asset("img/a.png", &[1u8, 2, 3], None).unwrap();
+
+        let entries = collect_export_entries_from_store(&store).unwrap();
+        // Sorted by relative_path: fm.md, img/a.png, plain.md.
+        let paths: Vec<&str> = entries.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(paths, vec!["fm.md", "img/a.png", "plain.md"]);
+
+        // fm.md bytes equal read_raw_content reconstruction.
+        let fm_bytes = &entries[0].1;
+        let raw = store.read_raw_content("fm.md").unwrap();
+        assert_eq!(fm_bytes, raw.as_bytes());
+
+        // asset bytes equal stored data.
+        let asset_bytes = &entries[1].1;
+        assert_eq!(asset_bytes, &vec![1u8, 2, 3]);
+    }
+
+    #[test]
+    fn export_lkg_with_backend_db_mode_creates_bundle() {
+        let dir = tempfile::tempdir().unwrap();
+        // Build a graph index over a tiny on-disk workspace to get a GraphIndex
+        // with nodes/edges (the graph store is mode-independent).
+        std::fs::write(dir.path().join("a.md"), "# A\n\n[[b]]").unwrap();
+        std::fs::write(dir.path().join("b.md"), "# B").unwrap();
+        let gi = crate::graph::indexer::GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        // The DB backend carries the page content.
+        let backend = db_backend_with(&[("a.md", "# A\n\n[[b]]"), ("b.md", "# B")], &[]);
+
+        let dest = dir.path().join("out.lkg");
+        export_lkg_with_backend(
+            &backend,
+            dir.path(),
+            &gi,
+            "My Graph",
+            Some("desc"),
+            &dest,
+            |_, _| {},
+        )
+        .unwrap();
+
+        let names = zip_names(&dest);
+        assert_eq!(names[0], "manifest.json");
+        assert!(names.iter().any(|n| n == "content/a.md"));
+        assert!(names.iter().any(|n| n == "content/b.md"));
+        assert!(names.iter().any(|n| n == "graph/nodes.json"));
+        assert!(names.iter().any(|n| n == "graph/edges.json"));
+        assert!(names.iter().any(|n| n == "graph/positions.json"));
+        assert!(names.iter().any(|n| n == "annotations/annotations.json"));
+    }
+
+    #[test]
+    fn export_lkg_with_backend_files_mode_matches_legacy() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "# A\n\n[[b]]").unwrap();
+        std::fs::write(dir.path().join("b.md"), "# B").unwrap();
+        std::fs::write(dir.path().join("img.png"), b"fake png").unwrap();
+        let gi = crate::graph::indexer::GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        let legacy_dest = dir.path().join("legacy.lkg");
+        export_lkg(dir.path(), &gi, "T", None, &legacy_dest, |_, _| {}).unwrap();
+
+        let backend_dest = dir.path().join("backend.lkg");
+        export_lkg_with_backend(
+            &StorageBackend::Files,
+            dir.path(),
+            &gi,
+            "T",
+            None,
+            &backend_dest,
+            |_, _| {},
+        )
+        .unwrap();
+
+        let mut legacy_names = zip_names(&legacy_dest);
+        let mut backend_names = zip_names(&backend_dest);
+        legacy_names.sort();
+        backend_names.sort();
+        assert_eq!(legacy_names, backend_names);
     }
 
     #[test]

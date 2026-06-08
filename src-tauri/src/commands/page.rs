@@ -1,6 +1,7 @@
 use crate::commands::graph::GraphRegistry;
 use crate::commands::oplog::OpLogRegistry;
-use crate::commands::workspace::{get_workspace_root, WorkspaceRegistry};
+use crate::commands::workspace::{get_workspace_backend, get_workspace_root, WorkspaceRegistry};
+use crate::workspace::backend::StorageBackend;
 use crate::graph::indexer::GraphIndex;
 use crate::graph::rewriter::LinkRedirect;
 use crate::oplog::store::Action;
@@ -16,6 +17,20 @@ use tauri::State;
 pub(super) fn lookup_graph_index(registry: &GraphRegistry, root: &PathBuf) -> Option<Arc<GraphIndex>> {
     let indices = registry.indices.lock().unwrap();
     indices.get(root).cloned()
+}
+
+/// Select the oplog `before_content` source for a delete, depending on the
+/// active storage backend. DB mode has no on-disk file, so it reads the raw
+/// content from the store; Files mode reads from disk.
+fn delete_before_content(
+    backend: &StorageBackend,
+    root: &std::path::Path,
+    relative_path: &str,
+) -> Option<String> {
+    match backend {
+        StorageBackend::Db(s) => s.lock().unwrap().read_raw_content(relative_path).ok(),
+        StorageBackend::Files => std::fs::read_to_string(root.join(relative_path)).ok(),
+    }
 }
 
 fn compute_candidate_paths(gi: &GraphIndex, redirects: &[LinkRedirect]) -> HashSet<String> {
@@ -52,8 +67,8 @@ pub fn read_page(
     state: State<WorkspaceRegistry>,
     registry: State<Arc<WriteHashRegistry>>,
 ) -> Result<PageContent, String> {
-    let root = get_workspace_root(&state, window.label())?;
-    ops::read_page(&root, &relative_path, &registry).map_err(|e| e.to_string())
+    let (root, backend) = get_workspace_backend(&state, window.label())?;
+    backend.read_page(&root, &relative_path, &registry).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -67,8 +82,8 @@ pub fn write_page(
     graph_state: State<Arc<GraphRegistry>>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
-    let root = get_workspace_root(&state, window.label())?;
-    ops::write_page(&root, &relative_path, &body, &frontmatter, &registry).map_err(|e| e.to_string())?;
+    let (root, backend) = get_workspace_backend(&state, window.label())?;
+    backend.write_page(&root, &relative_path, &body, &frontmatter, &registry).map_err(|e| e.to_string())?;
 
     reindex_and_emit(&graph_state, &app_handle, &root, |gi, ann| {
         gi.reindex_file(&relative_path, ann)
@@ -88,8 +103,8 @@ pub fn create_page(
     graph_state: State<Arc<GraphRegistry>>,
     app_handle: tauri::AppHandle,
 ) -> Result<PageMeta, String> {
-    let root = get_workspace_root(&state, window.label())?;
-    let meta = ops::create_page(&root, &name, parent_dir.as_deref(), &registry).map_err(|e| e.to_string())?;
+    let (root, backend) = get_workspace_backend(&state, window.label())?;
+    let meta = backend.create_page(&root, &name, parent_dir.as_deref(), &registry).map_err(|e| e.to_string())?;
 
     if let Ok(oplog) = oplog_state.get_oplog(&root) {
         let store = oplog.lock().unwrap();
@@ -125,8 +140,8 @@ pub fn rename_page(
     graph_state: State<Arc<GraphRegistry>>,
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
-    let root = get_workspace_root(&state, window.label())?;
-    let new_path = ops::rename_page(&root, &old_path, &new_name, &registry).map_err(|e| e.to_string())?;
+    let (root, backend) = get_workspace_backend(&state, window.label())?;
+    let new_path = backend.rename_page(&root, &old_path, &new_name, &registry).map_err(|e| e.to_string())?;
 
     if let Ok(oplog) = oplog_state.get_oplog(&root) {
         let store = oplog.lock().unwrap();
@@ -164,12 +179,14 @@ pub fn delete_page(
     graph_state: State<Arc<GraphRegistry>>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
-    let root = get_workspace_root(&state, window.label())?;
+    let (root, backend) = get_workspace_backend(&state, window.label())?;
 
-    let before_content = std::fs::read_to_string(root.join(&relative_path)).ok();
+    // Capture before_content for the oplog from the active backend: in DB mode
+    // there is no file on disk, so read the raw content from the store.
+    let before_content = delete_before_content(&backend, &root, &relative_path);
     let rel = relative_path.clone();
 
-    ops::delete_page(&root, &relative_path, &registry).map_err(|e| e.to_string())?;
+    backend.delete_page(&root, &relative_path, &registry).map_err(|e| e.to_string())?;
 
     if let Ok(oplog) = oplog_state.get_oplog(&root) {
         let store = oplog.lock().unwrap();
@@ -204,14 +221,42 @@ pub fn rewrite_vault_links(
     app_handle: tauri::AppHandle,
     redirects: Vec<crate::graph::rewriter::LinkRedirect>,
 ) -> Result<crate::graph::rewriter::RewriteSummary, String> {
-    let root = get_workspace_root(&workspace_state, window.label())?;
+    let (root, backend) = get_workspace_backend(&workspace_state, window.label())?;
 
-    let planned = {
-        let candidate_paths = lookup_graph_index(&graph_state, &root)
-            .map(|gi| compute_candidate_paths(&gi, &redirects));
-        match candidate_paths {
-            Some(ref paths) => crate::graph::rewriter::plan_vault_rewrites_for_paths(&root, &redirects, paths)?,
-            None => crate::graph::rewriter::plan_vault_rewrites(&root, &redirects)?,
+    let planned = match &backend {
+        StorageBackend::Files => {
+            let candidate_paths = lookup_graph_index(&graph_state, &root)
+                .map(|gi| compute_candidate_paths(&gi, &redirects));
+            match candidate_paths {
+                Some(ref paths) => crate::graph::rewriter::plan_vault_rewrites_for_paths(&root, &redirects, paths)?,
+                None => crate::graph::rewriter::plan_vault_rewrites(&root, &redirects)?,
+            }
+        }
+        StorageBackend::Db(store) => {
+            // Candidate set: DB pages, optionally narrowed by the graph's
+            // affected-sources index. Read content from the store.
+            let db_paths: Vec<String> = store
+                .lock()
+                .unwrap()
+                .list_pages()
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .map(|m| m.relative_path)
+                .collect();
+            let candidate_paths: Vec<String> = match lookup_graph_index(&graph_state, &root) {
+                Some(gi) => {
+                    let affected = compute_candidate_paths(&gi, &redirects);
+                    db_paths
+                        .into_iter()
+                        .filter(|p| affected.contains(p))
+                        .collect()
+                }
+                None => db_paths,
+            };
+            let store = store.clone();
+            crate::graph::rewriter::plan_vault_rewrites_with(&candidate_paths, &redirects, move |rel| {
+                store.lock().unwrap().read_raw_content(rel).map_err(|e| e.to_string())
+            })?
         }
     };
     if planned.rewrites.is_empty() {
@@ -222,7 +267,23 @@ pub fn rewrite_vault_links(
         });
     }
 
-    let summary = crate::graph::rewriter::apply_planned_rewrites(&root, &planned)?;
+    let summary = match &backend {
+        StorageBackend::Files => crate::graph::rewriter::apply_planned_rewrites(&root, &planned)?,
+        StorageBackend::Db(store) => {
+            // The rewriter operates on raw markdown; the DB stores frontmatter
+            // and body separately, so split each rewritten raw string before
+            // writing it back via NotesStore::write_page.
+            let store = store.clone();
+            crate::graph::rewriter::apply_planned_rewrites_with(&planned, move |rel, content| {
+                let parsed = crate::workspace::frontmatter::parse_frontmatter(content);
+                store
+                    .lock()
+                    .unwrap()
+                    .write_page(rel, parsed.body, &parsed.map)
+                    .map_err(|e| e.to_string())
+            })?
+        }
+    };
 
     let gi = lookup_graph_index(&graph_state, &root);
     let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
@@ -230,7 +291,10 @@ pub fn rewrite_vault_links(
     let mut reindex_err: Option<crate::graph::error::GraphError> = None;
     let mut all_removed: Vec<(String, String)> = Vec::new();
     for pr in &planned.rewrites {
-        registry.record(&root.join(&pr.relative_path), &pr.after_content);
+        // WriteHashRegistry is meaningless in DB mode (no files to hash).
+        if let StorageBackend::Files = &backend {
+            registry.record(&root.join(&pr.relative_path), &pr.after_content);
+        }
         if let Some(ref gi) = gi {
             match gi.reindex_file(&pr.relative_path, ann_enabled) {
                 Ok(removed) => all_removed.extend(removed),
@@ -295,6 +359,34 @@ mod tests {
             std::fs::create_dir_all(parent).unwrap();
         }
         std::fs::write(path, content).unwrap();
+    }
+
+    #[test]
+    fn delete_page_db_mode_captures_before_content_from_store() {
+        use super::delete_before_content;
+        use crate::workspace::backend::StorageBackend;
+        use crate::workspace::notes_store::NotesStore;
+        use indexmap::IndexMap;
+        use std::sync::{Arc, Mutex};
+
+        let store = NotesStore::open_memory().unwrap();
+        store.write_page("note.md", "# Body\n", &IndexMap::new()).unwrap();
+        let backend = StorageBackend::Db(Arc::new(Mutex::new(store)));
+
+        // root is ignored in DB mode.
+        let before = delete_before_content(&backend, std::path::Path::new("/ignored"), "note.md");
+        assert_eq!(before, Some("# Body\n".to_string()));
+    }
+
+    #[test]
+    fn delete_page_files_mode_captures_before_content_from_disk() {
+        use super::delete_before_content;
+        use crate::workspace::backend::StorageBackend;
+
+        let tmp = tempfile::tempdir().unwrap();
+        write_file(tmp.path(), "note.md", "disk content");
+        let before = delete_before_content(&StorageBackend::Files, tmp.path(), "note.md");
+        assert_eq!(before, Some("disk content".to_string()));
     }
 
     #[test]

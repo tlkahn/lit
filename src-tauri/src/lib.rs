@@ -215,12 +215,20 @@ pub fn run() {
 
                     build_state.start_build(root.clone());
 
+                    // In DB storage mode, build a NotesStore handle so the graph
+                    // index reads page content from the DB instead of disk.
+                    let notes_store = match commands::workspace::build_backend_for_root(&root) {
+                        Ok(crate::workspace::backend::StorageBackend::Db(s)) => Some(s),
+                        _ => None,
+                    };
+
                     tauri::async_runtime::spawn_blocking(move || {
                         commands::graph::initialize_graph_index(
                             root,
                             build_state,
                             graph_reg,
                             handle,
+                            notes_store,
                         );
                     });
                 }
@@ -356,6 +364,8 @@ pub fn run() {
             commands::graph::reset_graph_layout,
             commands::graph::rewrite_links,
             commands::workspace::get_startup_context,
+            commands::workspace_config::get_workspace_storage_mode,
+            commands::workspace_config::set_workspace_storage_mode,
             commands::pdf_viewer::pdf_open,
             commands::pdf_viewer::pdf_render_page,
             commands::pdf_viewer::pdf_prefetch,

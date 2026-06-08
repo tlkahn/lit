@@ -1138,7 +1138,11 @@ describe("App", () => {
         filters: [{ name: "Lit Knowledge Graph", extensions: ["lkg"] }],
       });
       expect(mockedOpen).toHaveBeenNthCalledWith(2, { directory: true });
-      expect(invokeArgs[0]).toEqual({ source: "/in/graph.lkg", destination: "/dest/folder" });
+      expect(invokeArgs[0]).toEqual({
+        source: "/in/graph.lkg",
+        destination: "/dest/folder",
+        storageMode: "files",
+      });
     });
 
     it("cancelling source file picker does not open folder picker or call import_lkg", async () => {

@@ -149,18 +149,20 @@ pub struct PlannedVaultRewrite {
     pub rewrites: Vec<PlannedRewrite>,
 }
 
-fn scan_files_for_rewrites(
-    root: &Path,
+/// Closure-based scan: reads each candidate path via `read_fn` instead of the
+/// filesystem. `read_fn` returns `Err` for a genuinely missing/unreadable path;
+/// when `skip_missing` is set those paths are skipped silently.
+fn scan_files_for_rewrites_with<R: Fn(&str) -> Result<String, String>>(
     rel_paths: &[String],
     map: &HashMap<String, String>,
     skip_missing: bool,
+    read_fn: R,
 ) -> Result<(usize, Vec<PlannedRewrite>), String> {
     let mut files_scanned = 0;
     let mut rewrites = Vec::new();
 
     for rel_path in rel_paths {
-        let full_path = root.join(rel_path);
-        let original = match std::fs::read_to_string(&full_path) {
+        let original = match read_fn(rel_path) {
             Ok(s) => s,
             Err(_) if skip_missing => continue,
             Err(e) => return Err(format!("Failed to read {}: {}", rel_path, e)),
@@ -178,6 +180,40 @@ fn scan_files_for_rewrites(
     }
 
     Ok((files_scanned, rewrites))
+}
+
+fn scan_files_for_rewrites(
+    root: &Path,
+    rel_paths: &[String],
+    map: &HashMap<String, String>,
+    skip_missing: bool,
+) -> Result<(usize, Vec<PlannedRewrite>), String> {
+    scan_files_for_rewrites_with(rel_paths, map, skip_missing, |rel| {
+        std::fs::read_to_string(root.join(rel)).map_err(|e| e.to_string())
+    })
+}
+
+/// Plan rewrites over an explicit path list, reading content via `read_fn`
+/// (e.g. from a `NotesStore` in DB storage mode). Missing paths are skipped.
+pub fn plan_vault_rewrites_with<R: Fn(&str) -> Result<String, String>>(
+    paths: &[String],
+    redirects: &[LinkRedirect],
+    read_fn: R,
+) -> Result<PlannedVaultRewrite, String> {
+    let map = build_redirect_map(redirects);
+    if map.is_empty() || paths.is_empty() {
+        return Ok(PlannedVaultRewrite {
+            files_scanned: 0,
+            rewrites: vec![],
+        });
+    }
+
+    let (files_scanned, rewrites) = scan_files_for_rewrites_with(paths, &map, true, read_fn)?;
+
+    Ok(PlannedVaultRewrite {
+        files_scanned,
+        rewrites,
+    })
 }
 
 pub fn plan_vault_rewrites(
@@ -223,21 +259,23 @@ pub fn plan_vault_rewrites_for_paths(
     })
 }
 
-pub fn apply_planned_rewrites(
-    root: &Path,
+/// Closure-based apply: writes each rewrite via `write_fn(path, content)`
+/// instead of the filesystem. On a write failure, already-written entries are
+/// rolled back by calling `write_fn(path, before_content)`.
+pub fn apply_planned_rewrites_with<W: Fn(&str, &str) -> Result<(), String>>(
     planned: &PlannedVaultRewrite,
+    write_fn: W,
 ) -> Result<RewriteSummary, String> {
     let mut written: Vec<(&str, &str)> = Vec::new();
 
     for pr in &planned.rewrites {
-        let full_path = root.join(&pr.relative_path);
-        match std::fs::write(&full_path, &pr.after_content) {
+        match write_fn(&pr.relative_path, &pr.after_content) {
             Ok(()) => {
                 written.push((&pr.relative_path, &pr.before_content));
             }
             Err(e) => {
                 for (written_path, orig) in &written {
-                    let _ = std::fs::write(root.join(written_path), orig);
+                    let _ = write_fn(written_path, orig);
                 }
                 return Err(format!("Failed to write {}: {}", pr.relative_path, e));
             }
@@ -258,6 +296,15 @@ pub fn apply_planned_rewrites(
         files_scanned: planned.files_scanned,
         files_modified,
         total_links_changed,
+    })
+}
+
+pub fn apply_planned_rewrites(
+    root: &Path,
+    planned: &PlannedVaultRewrite,
+) -> Result<RewriteSummary, String> {
+    apply_planned_rewrites_with(planned, |rel, content| {
+        std::fs::write(root.join(rel), content).map_err(|e| e.to_string())
     })
 }
 
@@ -1185,5 +1232,125 @@ mod tests {
             plan_vault_rewrites_for_paths(tmp.path(), &redirects, &candidates).unwrap();
         assert_eq!(planned.files_scanned, 2);
         assert!(planned.rewrites.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase H: closure-based plan/apply (Phase 2: StorageBackend dispatch)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn plan_vault_rewrites_with_uses_read_closure() {
+        let contents: HashMap<String, String> = [
+            ("a.md".to_string(), "See [[OldPage]].".to_string()),
+            ("b.md".to_string(), "No links.".to_string()),
+        ]
+        .into_iter()
+        .collect();
+        let redirects = vec![LinkRedirect {
+            old_target: "OldPage".into(),
+            new_target: "NewPage".into(),
+        }];
+        let paths = vec!["a.md".to_string(), "b.md".to_string()];
+
+        let planned = plan_vault_rewrites_with(&paths, &redirects, |rel| {
+            contents
+                .get(rel)
+                .cloned()
+                .ok_or_else(|| "missing".to_string())
+        })
+        .unwrap();
+
+        assert_eq!(planned.files_scanned, 2);
+        assert_eq!(planned.rewrites.len(), 1);
+        assert_eq!(planned.rewrites[0].relative_path, "a.md");
+        assert_eq!(planned.rewrites[0].before_content, "See [[OldPage]].");
+        assert_eq!(planned.rewrites[0].after_content, "See [[NewPage]].");
+    }
+
+    #[test]
+    fn plan_vault_rewrites_with_skips_missing() {
+        let redirects = vec![LinkRedirect {
+            old_target: "OldPage".into(),
+            new_target: "NewPage".into(),
+        }];
+        let paths = vec!["exists.md".to_string(), "ghost.md".to_string()];
+
+        let planned = plan_vault_rewrites_with(&paths, &redirects, |rel| {
+            if rel == "exists.md" {
+                Ok("[[OldPage]]".to_string())
+            } else {
+                Err("missing".to_string())
+            }
+        })
+        .unwrap();
+
+        assert_eq!(planned.files_scanned, 1);
+        assert_eq!(planned.rewrites.len(), 1);
+    }
+
+    #[test]
+    fn apply_planned_rewrites_with_uses_write_closure() {
+        use std::cell::RefCell;
+
+        let planned = PlannedVaultRewrite {
+            files_scanned: 1,
+            rewrites: vec![PlannedRewrite {
+                relative_path: "a.md".into(),
+                before_content: "See [[OldPage]].".into(),
+                after_content: "See [[NewPage]].".into(),
+                links_changed: 1,
+            }],
+        };
+
+        let written: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+        let summary = apply_planned_rewrites_with(&planned, |rel, content| {
+            written.borrow_mut().insert(rel.to_string(), content.to_string());
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(summary.files_modified.len(), 1);
+        assert_eq!(summary.total_links_changed, 1);
+        assert_eq!(
+            written.borrow().get("a.md").unwrap(),
+            "See [[NewPage]]."
+        );
+    }
+
+    #[test]
+    fn apply_planned_rewrites_with_rolls_back_via_write_closure() {
+        use std::cell::RefCell;
+
+        let planned = PlannedVaultRewrite {
+            files_scanned: 2,
+            rewrites: vec![
+                PlannedRewrite {
+                    relative_path: "a.md".into(),
+                    before_content: "[[OldPage]]".into(),
+                    after_content: "[[NewPage]]".into(),
+                    links_changed: 1,
+                },
+                PlannedRewrite {
+                    relative_path: "b.md".into(),
+                    before_content: "[[OldPage]]".into(),
+                    after_content: "[[NewPage]]".into(),
+                    links_changed: 1,
+                },
+            ],
+        };
+
+        let store: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+        let result = apply_planned_rewrites_with(&planned, |rel, content| {
+            if rel == "b.md" && content == "[[NewPage]]" {
+                // Force failure on the forward write of b.md.
+                return Err("forced failure".to_string());
+            }
+            store.borrow_mut().insert(rel.to_string(), content.to_string());
+            Ok(())
+        });
+
+        assert!(result.is_err());
+        // a.md must have been rolled back to its before_content.
+        assert_eq!(store.borrow().get("a.md").unwrap(), "[[OldPage]]");
     }
 }

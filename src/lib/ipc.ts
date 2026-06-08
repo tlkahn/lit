@@ -755,8 +755,13 @@ export interface LkgImportSummary {
 export async function importLkg(
   source: string,
   destination: string,
+  storageMode: StorageMode = "files",
 ): Promise<LkgImportSummary> {
-  return invoke<LkgImportSummary>("import_lkg", { source, destination });
+  return invoke<LkgImportSummary>("import_lkg", {
+    source,
+    destination,
+    storageMode,
+  });
 }
 
 // License
@@ -1114,4 +1119,23 @@ export async function exportDocument(request: ExportRequest): Promise<ExportDocu
       pdf_engine: request.pdfEngine,
     },
   });
+}
+
+// --- Workspace storage mode -------------------------------------------------
+
+export type StorageMode = "files" | "db";
+
+export interface MigrationSummary {
+  from: StorageMode;
+  to: StorageMode;
+  migrated: number;
+  phase: string;
+}
+
+export async function getWorkspaceStorageMode(): Promise<StorageMode> {
+  return invoke<StorageMode>("get_workspace_storage_mode");
+}
+
+export async function setWorkspaceStorageMode(mode: StorageMode): Promise<MigrationSummary> {
+  return invoke<MigrationSummary>("set_workspace_storage_mode", { mode });
 }

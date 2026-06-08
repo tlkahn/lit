@@ -1,6 +1,6 @@
 use crate::commands::graph::GraphRegistry;
-use crate::commands::workspace::{get_workspace_root, WorkspaceRegistry};
-use crate::workspace::trash;
+use crate::commands::workspace::{get_workspace_backend, WorkspaceRegistry};
+use crate::workspace::backend::StorageBackend;
 use crate::workspace::trash::TrashEntry;
 use crate::workspace::write_hash::WriteHashRegistry;
 use std::path::Path;
@@ -22,10 +22,13 @@ pub fn trash_page(
     graph_state: State<Arc<GraphRegistry>>,
     app_handle: tauri::AppHandle,
 ) -> Result<TrashEntry, String> {
-    let root = get_workspace_root(&state, window.label())?;
-    let entry = trash::trash_page(&root, &relative_path).map_err(|e| e.to_string())?;
+    let (root, backend) = get_workspace_backend(&state, window.label())?;
+    let entry = backend.trash_page(&root, &relative_path).map_err(|e| e.to_string())?;
 
-    registry.record_delete(&root.join(&relative_path));
+    // WriteHashRegistry is meaningless in DB mode (no file on disk).
+    if let StorageBackend::Files = &backend {
+        registry.record_delete(&root.join(&relative_path));
+    }
 
     super::page::reindex_and_emit(&graph_state, &app_handle, &root, |gi, ann| {
         gi.remove_file(&relative_path, ann)
@@ -43,11 +46,14 @@ pub fn restore_page(
     graph_state: State<Arc<GraphRegistry>>,
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
-    let root = get_workspace_root(&state, window.label())?;
-    let original_path = trash::restore_page(&root, &trash_name).map_err(|e| e.to_string())?;
+    let (root, backend) = get_workspace_backend(&state, window.label())?;
+    let original_path = backend.restore_page(&root, &trash_name).map_err(|e| e.to_string())?;
 
-    let dest = root.join(&original_path);
-    read_and_record(&dest, &registry)?;
+    // WriteHashRegistry is meaningless in DB mode (no file on disk).
+    if let StorageBackend::Files = &backend {
+        let dest = root.join(&original_path);
+        read_and_record(&dest, &registry)?;
+    }
 
     super::page::reindex_and_emit(&graph_state, &app_handle, &root, |gi, ann| {
         gi.add_file(&original_path, ann)
@@ -62,8 +68,8 @@ pub fn purge_page(
     window: tauri::Window,
     state: State<WorkspaceRegistry>,
 ) -> Result<(), String> {
-    let root = get_workspace_root(&state, window.label())?;
-    trash::purge_page(&root, &trash_name).map_err(|e| e.to_string())
+    let (root, backend) = get_workspace_backend(&state, window.label())?;
+    backend.purge_page(&root, &trash_name).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -71,8 +77,8 @@ pub fn list_trash(
     window: tauri::Window,
     state: State<WorkspaceRegistry>,
 ) -> Result<Vec<TrashEntry>, String> {
-    let root = get_workspace_root(&state, window.label())?;
-    trash::list_trash(&root).map_err(|e| e.to_string())
+    let (root, backend) = get_workspace_backend(&state, window.label())?;
+    backend.list_trash(&root).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -80,8 +86,8 @@ pub fn empty_trash(
     window: tauri::Window,
     state: State<WorkspaceRegistry>,
 ) -> Result<(), String> {
-    let root = get_workspace_root(&state, window.label())?;
-    trash::empty_trash(&root).map_err(|e| e.to_string())
+    let (root, backend) = get_workspace_backend(&state, window.label())?;
+    backend.empty_trash(&root).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

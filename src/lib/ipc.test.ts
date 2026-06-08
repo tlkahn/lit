@@ -106,6 +106,9 @@ import {
   autoUnlockSecretStore,
   migrateSecretStore,
   secretStoreStatus,
+  getWorkspaceStorageMode,
+  setWorkspaceStorageMode,
+  type MigrationSummary,
 } from "./ipc";
 
 const sampleMeta = {
@@ -598,6 +601,10 @@ describe("ipc", () => {
           return null;
         case "secret_store_status":
           return { exists: true, unlocked: true };
+        case "get_workspace_storage_mode":
+          return "db";
+        case "set_workspace_storage_mode":
+          return { from: "files", to: "db", migrated: 5, phase: "config_only" };
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -1369,7 +1376,7 @@ describe("ipc", () => {
     });
   });
 
-  it("importLkg calls import_lkg with source and destination", async () => {
+  it("importLkg sends storageMode default files", async () => {
     const summary: LkgImportSummary = await importLkg("/tmp/graph.lkg", "/dest/vault");
     expect(summary.node_count).toBe(5);
     expect(summary.edge_count).toBe(3);
@@ -1379,6 +1386,17 @@ describe("ipc", () => {
     expect(invoke).toHaveBeenCalledWith("import_lkg", {
       source: "/tmp/graph.lkg",
       destination: "/dest/vault",
+      storageMode: "files",
+    });
+  });
+
+  it("importLkg sends storageMode db", async () => {
+    await importLkg("/tmp/graph.lkg", "/dest/vault", "db");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("import_lkg", {
+      source: "/tmp/graph.lkg",
+      destination: "/dest/vault",
+      storageMode: "db",
     });
   });
 
@@ -1925,6 +1943,20 @@ describe("ipc", () => {
     expect("needsMigration" in status).toBe(false);
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("secret_store_status");
+  });
+
+  it("getWorkspaceStorageMode calls get_workspace_storage_mode and returns the mode", async () => {
+    const mode = await getWorkspaceStorageMode();
+    expect(mode).toBe("db");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("get_workspace_storage_mode");
+  });
+
+  it("setWorkspaceStorageMode calls with { mode } and returns the MigrationSummary", async () => {
+    const summary: MigrationSummary = await setWorkspaceStorageMode("db");
+    expect(summary).toEqual({ from: "files", to: "db", migrated: 5, phase: "config_only" });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("set_workspace_storage_mode", { mode: "db" });
   });
 
 });

@@ -18,6 +18,7 @@ import { useThemeStore } from "../stores/theme";
 import { KeyboardShortcutsPanel } from "./KeyboardShortcutsPanel";
 import { AcademicExportSettings } from "./AcademicExportSettings";
 import { LlmProviderSettings } from "./LlmProviderSettings";
+import { StorageModeSettings } from "./StorageModeSettings";
 import { useSecretStoreStore } from "../stores/secretStore";
 
 interface SettingsModalProps {
@@ -188,11 +189,13 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
 
   useEffect(() => {
     for (const entry of nullableDropdownEntries) {
-      const raw = prefs[entry.storeField];
+      const field = entry.storeField;
+      if (!field) continue;
+      const raw = prefs[field];
       if (raw == null) continue;
-      const opts = dynamicOptions[entry.storeField] ?? [];
+      const opts = dynamicOptions[field] ?? [];
       if (!opts.some((o) => o.value === String(raw))) {
-        setRegistryPref(entry.storeField, entry.jsonKey, null);
+        setRegistryPref(field, entry.jsonKey, null);
       }
     }
   }, [prefs, dynamicOptions]);
@@ -485,6 +488,11 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
                           {cat === "Academic Export" && (
                             <div className="mt-3">
                               <AcademicExportSettings />
+                            </div>
+                          )}
+                          {cat === "Storage" && (
+                            <div className="mb-3">
+                              <StorageModeSettings />
                             </div>
                           )}
                           {Array.from(grouped).map(([groupName, groupResults]) => (

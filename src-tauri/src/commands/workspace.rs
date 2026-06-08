@@ -1,6 +1,8 @@
 use crate::commands::graph::GraphRegistry;
+use crate::workspace::backend::StorageBackend;
+use crate::workspace::config::{read_config, StorageMode};
+use crate::workspace::notes_store::NotesStore;
 use crate::workspace::page::PageMeta;
-use crate::workspace::scan::scan_pages;
 use crate::workspace::watcher::FileWatcher;
 use crate::workspace::write_hash::WriteHashRegistry;
 use crate::{InitialWorkspace, InitialFile, InitialLine, InitialCol};
@@ -14,6 +16,7 @@ pub struct WorkspaceEntry {
     pub root: PathBuf,
     #[allow(dead_code)]
     pub watcher: Option<FileWatcher>,
+    pub backend: StorageBackend,
 }
 
 pub struct WorkspaceRegistry {
@@ -107,6 +110,35 @@ pub fn get_workspace_root(registry: &WorkspaceRegistry, label: &str) -> Result<P
         .ok_or_else(|| format!("No workspace open in window '{label}'"))
 }
 
+/// Fetch both the root and a cloned backend handle under a single lock
+/// acquisition, so commands can extract them atomically and release the lock
+/// before doing I/O (mirrors the lock-release pattern proven in `page.rs`).
+pub fn get_workspace_backend(
+    registry: &WorkspaceRegistry,
+    label: &str,
+) -> Result<(PathBuf, StorageBackend), String> {
+    let workspaces = registry.workspaces.lock().unwrap();
+    workspaces
+        .get(label)
+        .map(|e| (e.root.clone(), e.backend.clone()))
+        .ok_or_else(|| format!("No workspace open in window '{label}'"))
+}
+
+/// Pure helper: construct a `StorageBackend` from a workspace root by reading
+/// `<root>/.lit/config.json`. Factored out of `open_workspace` so the backend
+/// selection logic can be unit-tested without a Tauri `State`.
+pub fn build_backend_for_root(root: &Path) -> Result<StorageBackend, String> {
+    let config = read_config(root);
+    match config.storage_mode {
+        StorageMode::Files => Ok(StorageBackend::Files),
+        StorageMode::Db => {
+            let db_path = root.join(".lit").join("notes.db");
+            let store = NotesStore::open(&db_path).map_err(|e| e.to_string())?;
+            Ok(StorageBackend::Db(Arc::new(Mutex::new(store))))
+        }
+    }
+}
+
 #[tauri::command]
 pub fn open_workspace(
     path: String,
@@ -122,7 +154,9 @@ pub fn open_workspace(
         return Err(format!("Not a valid directory: {path}"));
     }
 
-    let pages = scan_pages(&root).map_err(|e| e.to_string())?;
+    let backend = build_backend_for_root(&root)?;
+
+    let pages = backend.list_pages(&root).map_err(|e| e.to_string())?;
 
     app_handle
         .asset_protocol_scope()
@@ -132,20 +166,32 @@ pub fn open_workspace(
     let initial_paths: HashSet<String> = pages.iter().map(|p| p.relative_path.clone()).collect();
 
     let label = window.label().to_string();
-    let watcher = FileWatcher::new(
-        root.clone(),
-        label.clone(),
-        app_handle.clone(),
-        Arc::clone(&registry),
-        initial_paths,
-    )
-    .ok();
+    // The filesystem watcher only makes sense in Files mode; DB mode has no
+    // file events to react to.
+    let watcher = match backend {
+        StorageBackend::Files => FileWatcher::new(
+            root.clone(),
+            label.clone(),
+            app_handle.clone(),
+            Arc::clone(&registry),
+            initial_paths,
+        )
+        .ok(),
+        StorageBackend::Db(_) => None,
+    };
+
+    // Extract the optional notes_store before moving `backend` into the entry.
+    let notes_store = match &backend {
+        StorageBackend::Db(s) => Some(Arc::clone(s)),
+        StorageBackend::Files => None,
+    };
 
     state.workspaces.lock().unwrap().insert(
         label,
         WorkspaceEntry {
             root: root.clone(),
             watcher,
+            backend,
         },
     );
 
@@ -164,6 +210,7 @@ pub fn open_workspace(
                 build_st,
                 graph_reg,
                 handle,
+                notes_store,
             );
         });
     }
@@ -180,8 +227,8 @@ pub fn list_pages(
     window: tauri::Window,
     state: State<WorkspaceRegistry>,
 ) -> Result<Vec<PageMeta>, String> {
-    let root = get_workspace_root(&state, window.label())?;
-    scan_pages(&root).map_err(|e| e.to_string())
+    let (root, backend) = get_workspace_backend(&state, window.label())?;
+    backend.list_pages(&root).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -323,6 +370,51 @@ pub fn get_startup_context(
 mod tests {
     use super::*;
 
+    use crate::workspace::config::{write_config, StorageMode, WorkspaceConfig};
+
+    #[test]
+    fn build_backend_for_root_defaults_to_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = build_backend_for_root(dir.path()).unwrap();
+        assert!(matches!(backend, StorageBackend::Files));
+    }
+
+    #[test]
+    fn build_backend_for_root_db_mode_yields_db_backend() {
+        let dir = tempfile::tempdir().unwrap();
+        write_config(
+            dir.path(),
+            &WorkspaceConfig {
+                storage_mode: StorageMode::Db,
+            },
+        )
+        .unwrap();
+        let backend = build_backend_for_root(dir.path()).unwrap();
+        assert!(matches!(backend, StorageBackend::Db(_)));
+        // The notes.db file should have been created under .lit/.
+        assert!(dir.path().join(".lit").join("notes.db").exists());
+    }
+
+    #[test]
+    fn open_workspace_db_mode_sets_db_backend_and_no_watcher() {
+        // Exercises the same construction + watcher-decision logic open_workspace
+        // uses, without needing a Tauri State.
+        let dir = tempfile::tempdir().unwrap();
+        write_config(
+            dir.path(),
+            &WorkspaceConfig {
+                storage_mode: StorageMode::Db,
+            },
+        )
+        .unwrap();
+        let backend = build_backend_for_root(dir.path()).unwrap();
+        let watcher: Option<FileWatcher> = match backend {
+            StorageBackend::Files => panic!("expected Db backend"),
+            StorageBackend::Db(_) => None,
+        };
+        assert!(watcher.is_none());
+    }
+
     #[test]
     fn registry_starts_empty() {
         let registry = WorkspaceRegistry {
@@ -349,6 +441,7 @@ mod tests {
             WorkspaceEntry {
                 root: PathBuf::from("/test/workspace"),
                 watcher: None,
+                backend: StorageBackend::Files,
             },
         );
         let registry = WorkspaceRegistry {
@@ -542,6 +635,7 @@ mod tests {
             WorkspaceEntry {
                 root: PathBuf::from("/my/vault"),
                 watcher: None,
+                backend: StorageBackend::Files,
             },
         );
         let registry = WorkspaceRegistry {
@@ -561,6 +655,7 @@ mod tests {
             WorkspaceEntry {
                 root: PathBuf::from("/my/vault"),
                 watcher: None,
+                backend: StorageBackend::Files,
             },
         );
         let registry = WorkspaceRegistry {
@@ -584,6 +679,7 @@ mod tests {
             WorkspaceEntry {
                 root: non_canonical,
                 watcher: None,
+                backend: StorageBackend::Files,
             },
         );
         let registry = WorkspaceRegistry {
@@ -607,6 +703,7 @@ mod tests {
             WorkspaceEntry {
                 root: canonical,
                 watcher: None,
+                backend: StorageBackend::Files,
             },
         );
         let registry = WorkspaceRegistry {
@@ -626,6 +723,7 @@ mod tests {
             WorkspaceEntry {
                 root: PathBuf::from("/nonexistent/path"),
                 watcher: None,
+                backend: StorageBackend::Files,
             },
         );
         let registry = WorkspaceRegistry {

@@ -4,6 +4,9 @@ use crate::graph::types::{IndexableAnnotation, ParsedNode, Position};
 use crate::lkg::types::{
     BundleAnnotation, BundleEdge, BundleNode, LkgImportSummary, LkgManifest,
 };
+use crate::workspace::config::{self, StorageMode, WorkspaceConfig};
+use crate::workspace::frontmatter::parse_frontmatter;
+use crate::workspace::notes_store::{AssetImport, NotesStore, PageImport};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
@@ -131,6 +134,83 @@ fn extract_lkg_content_from_archive(
         written += 1;
     }
     Ok(written)
+}
+
+/// Guess a MIME type from a file extension for an asset stored in the DB.
+/// Mirrors `migration::mime_from_ext` but returns an owned `String`. Returns
+/// `None` for unknown types (mime is advisory).
+fn mime_from_ext(ext: &str) -> Option<String> {
+    let mime = match ext.to_ascii_lowercase().as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "pdf" => "application/pdf",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        _ => return None,
+    };
+    Some(mime.to_string())
+}
+
+/// Collects every `content/<path>` entry of an already-open `archive` into
+/// in-memory [`PageImport`]/[`AssetImport`] vecs (DB mode), stripping the
+/// `content/` prefix. `.md` entries become pages (frontmatter parsed out of the
+/// raw text); everything else becomes an asset. Rejects unsafe (`..`/absolute/
+/// prefix) relative paths to preserve the traversal guarantee in DB mode too.
+fn collect_content_for_db(
+    archive: &mut ZipArchive<File>,
+) -> Result<(Vec<PageImport>, Vec<AssetImport>), String> {
+    let mut pages = Vec::new();
+    let mut assets = Vec::new();
+    for i in 0..archive.len() {
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| format!("cannot read archive entry: {e}"))?;
+        let name = entry.name().to_string();
+        let Some(rel) = name.strip_prefix("content/") else {
+            continue;
+        };
+        if rel.is_empty() || entry.is_dir() {
+            continue;
+        }
+        // Reuse the same path-safety check the disk extractor uses. The target
+        // is a throwaway base; we only care whether the join is rejected.
+        if safe_join(Path::new("x"), rel).is_none() {
+            return Err(format!("unsafe path in bundle: {name}"));
+        }
+        let mut bytes = Vec::new();
+        entry
+            .read_to_end(&mut bytes)
+            .map_err(|e| format!("cannot read entry {name}: {e}"))?;
+
+        let ext = Path::new(rel)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+        if ext.eq_ignore_ascii_case("md") {
+            let raw = String::from_utf8(bytes)
+                .map_err(|e| format!("invalid UTF-8 in markdown entry {name}: {e}"))?;
+            let parsed = parse_frontmatter(&raw);
+            pages.push(PageImport {
+                relative_path: rel.to_string(),
+                body: parsed.body.to_string(),
+                frontmatter: parsed.map,
+                created_at: None,
+                modified_at: None,
+            });
+        } else {
+            assets.push(AssetImport {
+                relative_path: rel.to_string(),
+                data: bytes,
+                mime_type: mime_from_ext(ext),
+            });
+        }
+    }
+    Ok((pages, assets))
 }
 
 /// Reads and deserializes the archive entry named `name` as JSON of type `T`.
@@ -273,7 +353,11 @@ fn destination_has_workspace(destination: &Path) -> bool {
 /// workspace (i.e. `<destination>/.lit/graph.db` exists), to avoid silently
 /// overwriting `.md` files and destroying existing graph data if the user
 /// mistakenly picks their active workspace as the import target.
-pub fn import_lkg(source: &Path, destination: &Path) -> Result<LkgImportSummary, String> {
+pub fn import_lkg(
+    source: &Path,
+    destination: &Path,
+    storage_mode: StorageMode,
+) -> Result<LkgImportSummary, String> {
     // Data-safety guard first, before any destructive operation.
     let db_path = destination.join(".lit").join("graph.db");
     if destination_has_workspace(destination) {
@@ -304,7 +388,21 @@ pub fn import_lkg(source: &Path, destination: &Path) -> Result<LkgImportSummary,
     let staging = tempfile::TempDir::new_in(parent)
         .map_err(|e| format!("cannot create staging dir: {e}"))?;
 
-    let file_count = extract_lkg_content_from_archive(&mut archive, staging.path())?;
+    // IMPORTANT ORDERING: read ALL archive entries (content + graph) BEFORE
+    // opening any Store/NotesStore, because `by_index`/`by_name` borrow the
+    // archive mutably. In DB mode content is collected into memory; in Files
+    // mode it is written straight to the staging dir.
+    let (file_count, db_content) = match storage_mode {
+        StorageMode::Files => {
+            let count = extract_lkg_content_from_archive(&mut archive, staging.path())?;
+            (count, None)
+        }
+        StorageMode::Db => {
+            let (pages, assets) = collect_content_for_db(&mut archive)?;
+            let count = pages.len() + assets.len();
+            (count, Some((pages, assets)))
+        }
+    };
     let (nodes, edges, positions, annotations) = load_lkg_graph_data_from_archive(&mut archive)?;
 
     let expected_hash = &manifest.graph_hash;
@@ -325,6 +423,23 @@ pub fn import_lkg(source: &Path, destination: &Path) -> Result<LkgImportSummary,
         .map_err(|e| e.to_string())?;
 
     drop(store);
+
+    // DB mode: write page/asset content into staging/.lit/notes.db, then write
+    // config.json LAST (so a crash before this leaves no config — consistent
+    // with migration ordering). The NotesStore is dropped before the rename so
+    // its WAL/handle is flushed/closed (mirrors the graph store's drop above).
+    if let Some((pages, assets)) = db_content {
+        let mut notes = NotesStore::open(&staging_lit.join("notes.db")).map_err(|e| e.to_string())?;
+        notes.import_all(&pages, &assets).map_err(|e| e.to_string())?;
+        drop(notes);
+        config::write_config(
+            staging.path(),
+            &WorkspaceConfig {
+                storage_mode: StorageMode::Db,
+            },
+        )
+        .map_err(|e| e.to_string())?;
+    }
 
     // Atomic promotion: single rename of the staging dir to the destination.
     // `into_path()` disarms TempDir's Drop so it won't remove the dir we're
@@ -736,7 +851,7 @@ mod tests {
         let lkg = export_fixture(&dir1.path());
 
         let dir2 = tempfile::tempdir().unwrap();
-        let summary = import_lkg(&lkg, &dir2.path()).unwrap();
+        let summary = import_lkg(&lkg, &dir2.path(), StorageMode::Files).unwrap();
 
         assert!(dir2.path().join("a.md").exists());
         assert!(dir2.path().join("b.md").exists());
@@ -768,7 +883,7 @@ mod tests {
         // thread-local, so a parallel test opening archives on another thread
         // cannot perturb this assertion.
         OPEN_ARCHIVE_COUNT.with(|c| c.set(0));
-        import_lkg(&lkg, &dir2.path()).unwrap();
+        import_lkg(&lkg, &dir2.path(), StorageMode::Files).unwrap();
         let opens = OPEN_ARCHIVE_COUNT.with(|c| c.get());
 
         assert_eq!(
@@ -789,7 +904,7 @@ mod tests {
         std::fs::create_dir_all(dest.path().join(".lit")).unwrap();
         let _ = Store::open(&dest.path().join(".lit").join("graph.db")).unwrap();
 
-        let err = import_lkg(&lkg, &dest.path()).unwrap_err();
+        let err = import_lkg(&lkg, &dest.path(), StorageMode::Files).unwrap_err();
         assert!(
             err.to_lowercase().contains("workspace"),
             "expected error mentioning workspace, got: {err}"
@@ -809,7 +924,7 @@ mod tests {
         std::fs::create_dir_all(dest.path().join(".lit")).unwrap();
         let _ = Store::open(&dest.path().join(".lit").join("graph.db")).unwrap();
 
-        let result = import_lkg(&lkg, &dest.path());
+        let result = import_lkg(&lkg, &dest.path(), StorageMode::Files);
         assert!(result.is_err(), "expected import to be refused, got {result:?}");
 
         // The guard must fire BEFORE extract_lkg_content, so a.md is untouched.
@@ -851,7 +966,7 @@ mod tests {
         );
 
         let dest = tempfile::tempdir().unwrap();
-        let result = import_lkg(&crafted, dest.path());
+        let result = import_lkg(&crafted, dest.path(), StorageMode::Files);
         assert!(result.is_err(), "expected import to fail, got {result:?}");
 
         assert!(
@@ -907,7 +1022,7 @@ mod tests {
         );
 
         let dest = dir.path().join("imported");
-        let err = import_lkg(&crafted, &dest).unwrap_err();
+        let err = import_lkg(&crafted, &dest, StorageMode::Files).unwrap_err();
         assert!(
             err.to_lowercase().contains("hash"),
             "expected error mentioning hash, got: {err}"
@@ -931,7 +1046,7 @@ mod tests {
         );
 
         let dest = dir.path().join("imported");
-        let result = import_lkg(&crafted, &dest);
+        let result = import_lkg(&crafted, &dest, StorageMode::Files);
         assert!(result.is_err());
         assert!(
             !dest.exists(),
@@ -957,12 +1072,162 @@ mod tests {
         );
 
         let dest = dir.path().join("nonexistent_subdir");
-        let result = import_lkg(&crafted, &dest);
+        let result = import_lkg(&crafted, &dest, StorageMode::Files);
         assert!(result.is_err());
         assert!(
             !dest.exists(),
             "destination should not exist after a failed import"
         );
+    }
+
+    // --- Phase 5: DB-mode import ---
+
+    use crate::workspace::config::{read_config, StorageMode};
+    use crate::workspace::notes_store::NotesStore;
+
+    #[test]
+    fn import_lkg_db_mode_creates_notes_db_and_config() {
+        let dir1 = tempfile::tempdir().unwrap();
+        let lkg = export_fixture(&dir1.path());
+
+        let dir2 = tempfile::tempdir().unwrap();
+        let dst = dir2.path().join("imported");
+        import_lkg(&lkg, &dst, StorageMode::Db).unwrap();
+
+        // DB and config land in .lit; markdown is NOT on disk.
+        assert!(dst.join(".lit").join("notes.db").exists());
+        assert!(dst.join(".lit").join("config.json").exists());
+        assert!(dst.join(".lit").join("graph.db").exists());
+        assert!(!dst.join("a.md").exists());
+        assert!(!dst.join("b.md").exists());
+
+        assert_eq!(read_config(&dst).storage_mode, StorageMode::Db);
+
+        let store = NotesStore::open(&dst.join(".lit").join("notes.db")).unwrap();
+        let mut paths: Vec<String> = store
+            .list_pages()
+            .unwrap()
+            .into_iter()
+            .map(|p| p.relative_path)
+            .collect();
+        paths.sort();
+        assert_eq!(paths, vec!["a.md".to_string(), "b.md".to_string()]);
+
+        let a = store.read_page("a.md").unwrap();
+        assert_eq!(a.body, "# A\n\n[[b]]\n\n![](img.png)");
+    }
+
+    #[test]
+    fn import_lkg_db_mode_stores_assets_in_db() {
+        let dir1 = tempfile::tempdir().unwrap();
+        let lkg = export_fixture(&dir1.path());
+
+        let dir2 = tempfile::tempdir().unwrap();
+        let dst = dir2.path().join("imported");
+        import_lkg(&lkg, &dst, StorageMode::Db).unwrap();
+
+        // The png is NOT written to disk at the destination.
+        assert!(!dst.join("img.png").exists());
+
+        // ...but IS readable from the DB.
+        let store = NotesStore::open(&dst.join(".lit").join("notes.db")).unwrap();
+        let (bytes, _mime) = store.read_asset("img.png").unwrap();
+        assert_eq!(bytes, b"fake png");
+    }
+
+    #[test]
+    fn import_lkg_db_mode_summary_counts() {
+        let dir1 = tempfile::tempdir().unwrap();
+        let lkg = export_fixture(&dir1.path());
+
+        let dir2 = tempfile::tempdir().unwrap();
+        let dst = dir2.path().join("imported");
+        let summary = import_lkg(&lkg, &dst, StorageMode::Db).unwrap();
+
+        assert_eq!(summary.node_count, 2);
+        assert_eq!(summary.edge_count, 1);
+        assert_eq!(summary.annotation_count, 0);
+        // 2 pages (a.md, b.md) + 1 asset (img.png).
+        assert_eq!(summary.file_count, 3);
+    }
+
+    #[test]
+    fn import_lkg_db_mode_rejects_path_traversal() {
+        let dir = tempfile::tempdir().unwrap();
+        let crafted = crafted_zip(
+            dir.path(),
+            &[
+                ("manifest.json", &manifest_with_version(1)),
+                ("content/../../evil.md", b"pwned"),
+                ("graph/nodes.json", b"[]"),
+                ("graph/edges.json", b"[]"),
+                ("graph/positions.json", b"{}"),
+                ("annotations/annotations.json", b"[]"),
+            ],
+        );
+
+        let sandbox = tempfile::tempdir().unwrap();
+        let dst = sandbox.path().join("a").join("b").join("imported");
+        let result = import_lkg(&crafted, &dst, StorageMode::Db);
+        assert!(result.is_err(), "expected traversal to be rejected, got {result:?}");
+        let err = result.unwrap_err();
+        assert!(
+            err.to_lowercase().contains("unsafe path"),
+            "expected error mentioning unsafe path, got: {err}"
+        );
+
+        // No file named evil.md should have escaped anywhere in the sandbox.
+        let escaped = walk_files(sandbox.path())
+            .into_iter()
+            .any(|p| p.file_name().map(|n| n == "evil.md").unwrap_or(false));
+        assert!(!escaped, "path traversal escaped target");
+    }
+
+    #[test]
+    fn import_lkg_files_mode_unchanged() {
+        // Explicit Files mode produces the legacy on-disk layout: md files on
+        // disk, no notes.db, no config.json.
+        let dir1 = tempfile::tempdir().unwrap();
+        let lkg = export_fixture(&dir1.path());
+
+        let dir2 = tempfile::tempdir().unwrap();
+        let dst = dir2.path().join("imported");
+        let summary = import_lkg(&lkg, &dst, StorageMode::Files).unwrap();
+
+        assert!(dst.join("a.md").exists());
+        assert!(dst.join("b.md").exists());
+        assert!(dst.join("img.png").exists());
+        assert!(dst.join(".lit").join("graph.db").exists());
+        assert!(!dst.join(".lit").join("notes.db").exists());
+        assert!(!dst.join(".lit").join("config.json").exists());
+
+        assert_eq!(summary.node_count, 2);
+        assert_eq!(summary.edge_count, 1);
+        assert_eq!(summary.file_count, 3);
+    }
+
+    #[test]
+    fn import_lkg_db_mode_failed_import_leaves_no_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        // Valid manifest + content, but malformed graph/nodes.json so the load
+        // fails after content has been collected. Atomic-rename invariant must
+        // hold for DB staging too: the destination must not exist.
+        let crafted = crafted_zip(
+            dir.path(),
+            &[
+                ("manifest.json", &manifest_with_version(1)),
+                ("content/hello.md", b"# Hello"),
+                ("graph/nodes.json", b"{ bad"),
+                ("graph/edges.json", b"[]"),
+                ("graph/positions.json", b"{}"),
+                ("annotations/annotations.json", b"[]"),
+            ],
+        );
+
+        let dest = dir.path().join("nonexistent_subdir");
+        let result = import_lkg(&crafted, &dest, StorageMode::Db);
+        assert!(result.is_err(), "expected import to fail, got {result:?}");
+        assert!(!dest.exists(), "destination should not exist after a failed DB import");
     }
 
     /// Recursively collects every regular file path under `dir`.

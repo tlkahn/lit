@@ -8,6 +8,7 @@ export const CATEGORIES = [
   "Annotations",
   "LLM",
   "Academic Export",
+  "Storage",
   "Experimental",
   "Keyboard Shortcuts",
 ] as const;
@@ -37,8 +38,14 @@ interface DropdownEntry extends SettingEntryBase { controlType: "dropdown"; opti
 interface PasswordEntry extends SettingEntryBase { controlType: "password"; provider: string; }
 interface SliderEntry extends SettingEntryBase { controlType: "slider"; min: number; max: number; step: number; }
 /** Renders nothing itself (a dedicated component owns the UI). Exists purely
- *  to give a section a searchable anchor so search cannot hide it. */
-interface PlaceholderEntry extends SettingEntryBase { controlType: "custom"; }
+ *  to give a section a searchable anchor so search cannot hide it.
+ *  `storeField` is optional here because such an anchor may not map to any
+ *  preference field (e.g. workspace storage mode lives in `.lit/config.json`,
+ *  not preferences). When absent it is excluded from `STORE_FIELDS`. */
+interface PlaceholderEntry extends Omit<SettingEntryBase, "storeField"> {
+  controlType: "custom";
+  storeField?: PreferenceField;
+}
 
 export type SettingEntry = ToggleEntry | SegmentedEntry | TextEntry | TextAreaEntry | DropdownEntry | PasswordEntry | SliderEntry | PlaceholderEntry;
 
@@ -348,6 +355,15 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
     testId: "settings-academicDefaultReferenceDoc",
     nullable: true,
   },
+  // Storage (workspace-level; not a preference — anchor only)
+  {
+    category: "Storage",
+    label: "Storage Mode",
+    jsonKey: "workspace.storageMode",
+    controlType: "custom",
+    testId: "settings-storageModeSearch",
+    keywords: ["sqlite", "database", "files", "notes.db", "migration", "backend"],
+  },
   // Experimental
   {
     category: "Experimental",
@@ -359,7 +375,9 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
 ];
 
-export const STORE_FIELDS: PreferenceField[] = SETTINGS_REGISTRY.map(e => e.storeField);
+export const STORE_FIELDS: PreferenceField[] = SETTINGS_REGISTRY.flatMap((e) =>
+  e.storeField ? [e.storeField] : [],
+);
 
 export interface FilteredSetting {
   entry: SettingEntry;

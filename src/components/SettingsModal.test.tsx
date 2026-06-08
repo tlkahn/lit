@@ -6,6 +6,7 @@ import { usePreferencesStore } from "../stores/preferences";
 import { useThemeStore } from "../stores/theme";
 import { CATEGORIES, SETTINGS_REGISTRY } from "../lib/settingsRegistry";
 import { useSecretStoreStore } from "../stores/secretStore";
+import { useWorkspaceStore } from "../stores/workspace";
 
 const defaults = {
   darkMode: "auto" as const,
@@ -58,6 +59,7 @@ beforeEach(() => {
   usePreferencesStore.setState(defaults);
   useSecretStoreStore.getState()._resetSettler();
   useSecretStoreStore.setState({ exists: false, unlocked: false, loading: false, migrationPromptOpen: false });
+  useWorkspaceStore.setState({ workspacePath: null, pages: [], storageMode: "files" });
   useThemeStore.setState({
     availableThemes: [
       { name: "Dracula", version: "1.0", author: "Dracula Team", directory_name: "dracula" },
@@ -137,16 +139,47 @@ describe("SettingsModal", () => {
 
   // --- Structural tests ---
 
-  it("renders all seven section headings", () => {
+  it("renders all section headings", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
-    expect(headings).toEqual(["Appearance", "Editor", "Cross-references", "Annotations", "LLM", "Academic Export", "Experimental"]);
+    expect(headings).toEqual(["Appearance", "Editor", "Cross-references", "Annotations", "LLM", "Academic Export", "Storage", "Experimental"]);
   });
 
   it("has a scrollable content area", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const content = container.querySelector("[data-testid='settings-modal-content']")!;
     expect(content.className).toContain("overflow-y-auto");
+  });
+
+  // --- Storage category ---
+
+  describe("Storage category", () => {
+    it("renders StorageModeSettings in the Storage section when a workspace is open", async () => {
+      mockInvoke((cmd, args) => {
+        invokeCalls.push({ cmd, args: args ?? {} });
+        if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
+        if (cmd === "has_api_key") return false;
+        if (cmd === "get_workspace_storage_mode") return "files";
+        return undefined;
+      });
+      useWorkspaceStore.setState({ workspacePath: "/vault", pages: [], storageMode: "files" });
+      let container!: HTMLElement;
+      await act(async () => {
+        ({ container } = render(<SettingsModal open={true} onClose={vi.fn()} />));
+      });
+      await act(async () => {});
+      expect(container.querySelector("[data-testid='settings-storageMode-files']")).toBeTruthy();
+    });
+
+    it("surfaces the Storage section when searching 'database'", () => {
+      const { container, getByPlaceholderText } = render(
+        <SettingsModal open={true} onClose={vi.fn()} />,
+      );
+      const search = getByPlaceholderText(/search/i);
+      fireEvent.change(search, { target: { value: "database" } });
+      const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
+      expect(headings).toContain("Storage");
+    });
   });
 
   // --- darkMode (SegmentedControl) ---
@@ -977,10 +1010,10 @@ describe("SettingsModal", () => {
     }
   });
 
-  it("all 7 h3 headings render with correct text", () => {
+  it("all h3 headings render with correct text", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
-    expect(headings).toEqual(["Appearance", "Editor", "Cross-references", "Annotations", "LLM", "Academic Export", "Experimental"]);
+    expect(headings).toEqual(["Appearance", "Editor", "Cross-references", "Annotations", "LLM", "Academic Export", "Storage", "Experimental"]);
   });
 
   // --- Search input ---
@@ -1121,14 +1154,14 @@ describe("SettingsModal", () => {
     expect(headings).toEqual(["Cross-references", "Annotations"]);
   });
 
-  it("clearing search restores all 7 headings", () => {
+  it("clearing search restores all headings", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
     fireEvent.change(search, { target: { value: "fold" } });
     fireEvent.change(search, { target: { value: "" } });
 
     const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
-    expect(headings).toEqual(["Appearance", "Editor", "Cross-references", "Annotations", "LLM", "Academic Export", "Experimental"]);
+    expect(headings).toEqual(["Appearance", "Editor", "Cross-references", "Annotations", "LLM", "Academic Export", "Storage", "Experimental"]);
   });
 
   // Cycle 6.3 — Sidebar highlights categories with matches
@@ -1384,16 +1417,17 @@ describe("SettingsModal", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
     // "mode" matches Appearance (Dark Mode, Default View Mode), Annotations
-    // (Display Mode), and LLM (via the "model" search keyword).
+    // (Display Mode), LLM (via the "model" search keyword), and Storage
+    // (Storage Mode). Storage is now the last matching category.
     fireEvent.change(search, { target: { value: "mode" } });
 
     const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
     const buttons = Array.from(sidebar.querySelectorAll("button"));
-    const llmBtn = buttons.find((b) => b.textContent === "LLM")!;
+    const storageBtn = buttons.find((b) => b.textContent === "Storage")!;
 
-    // Start at LLM (last matching category)
-    fireEvent.click(llmBtn);
-    llmBtn.focus();
+    // Start at Storage (last matching category)
+    fireEvent.click(storageBtn);
+    storageBtn.focus();
 
     // ArrowDown should wrap past remaining non-matching categories to Appearance (first match)
     fireEvent.keyDown(sidebar, { key: "ArrowDown" });

@@ -2,23 +2,27 @@ import { describe, expect, it } from "vitest";
 import {
   SETTINGS_REGISTRY,
   CATEGORIES,
+  STORE_FIELDS,
   groupByCategory,
   filterSettings,
 } from "./settingsRegistry";
 
 describe("SETTINGS_REGISTRY", () => {
-  it("has 31 entries", () => {
-    expect(SETTINGS_REGISTRY).toHaveLength(31);
+  it("has 32 entries", () => {
+    expect(SETTINGS_REGISTRY).toHaveLength(32);
   });
 
   it("every entry has required fields defined", () => {
     for (const entry of SETTINGS_REGISTRY) {
       expect(entry.category).toBeDefined();
       expect(entry.label).toBeDefined();
-      expect(entry.storeField).toBeDefined();
       expect(entry.jsonKey).toBeDefined();
       expect(entry.controlType).toBeDefined();
       expect(entry.testId).toBeDefined();
+      // storeField is required for everything except custom anchor entries.
+      if (entry.controlType !== "custom") {
+        expect(entry.storeField).toBeDefined();
+      }
     }
   });
 
@@ -85,22 +89,38 @@ describe("CATEGORIES", () => {
       "Annotations",
       "LLM",
       "Academic Export",
+      "Storage",
       "Experimental",
       "Keyboard Shortcuts",
     ]);
   });
+
+  it("includes Storage", () => {
+    expect(CATEGORIES).toContain("Storage");
+  });
+});
+
+describe("STORE_FIELDS", () => {
+  it("excludes custom anchor entries that have no storeField", () => {
+    // The Storage Mode anchor has no storeField; it must not leak in.
+    expect(STORE_FIELDS).not.toContain(undefined);
+    expect(STORE_FIELDS.every((f) => typeof f === "string")).toBe(true);
+    // One entry (Storage Mode) is a storeField-less anchor.
+    expect(STORE_FIELDS).toHaveLength(SETTINGS_REGISTRY.length - 1);
+  });
 });
 
 describe("groupByCategory", () => {
-  it("returns Map with 8 keys and correct counts", () => {
+  it("returns Map with 9 keys and correct counts", () => {
     const grouped = groupByCategory(SETTINGS_REGISTRY);
-    expect(grouped.size).toBe(8);
+    expect(grouped.size).toBe(9);
     expect(grouped.get("Appearance")).toHaveLength(6);
     expect(grouped.get("Editor")).toHaveLength(3);
     expect(grouped.get("Cross-references")).toHaveLength(3);
     expect(grouped.get("Annotations")).toHaveLength(5);
     expect(grouped.get("LLM")).toHaveLength(7);
     expect(grouped.get("Academic Export")).toHaveLength(6);
+    expect(grouped.get("Storage")).toHaveLength(1);
     expect(grouped.get("Experimental")).toHaveLength(1);
     expect(grouped.get("Keyboard Shortcuts")).toHaveLength(0);
   });
@@ -124,9 +144,19 @@ describe("filterSettings", () => {
 
   it("returns all entries with empty indices for empty query", () => {
     const results = filterSettings(SETTINGS_REGISTRY, "");
-    expect(results).toHaveLength(31);
+    expect(results).toHaveLength(32);
     for (const r of results) {
       expect(r.indices).toEqual([]);
+    }
+  });
+
+  it("surfaces the Storage anchor for database/sqlite queries via keywords", () => {
+    for (const q of ["database", "sqlite", "notes.db", "migration"]) {
+      const results = filterSettings(SETTINGS_REGISTRY, q);
+      expect(
+        results.some((r) => r.entry.category === "Storage"),
+        `expected a Storage-category match for query "${q}"`,
+      ).toBe(true);
     }
   });
 

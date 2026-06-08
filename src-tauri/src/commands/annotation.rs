@@ -486,6 +486,7 @@ mod tests {
             WorkspaceEntry {
                 root: dir.path().to_path_buf(),
                 watcher: None,
+                backend: crate::workspace::backend::StorageBackend::Files,
             },
         );
         let registry = WorkspaceRegistry {

@@ -1,6 +1,12 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::UNIX_EPOCH;
+
+use crate::workspace::notes_store::NotesStore;
+
+/// Shared handle to a `NotesStore` for DB-backed indexing.
+pub type NotesStoreHandle = Arc<Mutex<NotesStore>>;
 
 use tracing::info;
 use walkdir::WalkDir;
@@ -30,7 +36,30 @@ pub fn parse_md_file(
         path: abs.clone(),
     })?;
 
-    let parsed = parse_frontmatter(&raw);
+    Ok(parse_raw_into_node(relative_path, &raw))
+}
+
+/// Parse a page directly from a `NotesStore` (DB storage mode).
+///
+/// Mirrors [`parse_md_file`] but reads raw content from the store instead of
+/// disk. Both share the [`parse_raw_into_node`] pipeline tail so the resulting
+/// `ParsedNode`/links/body are identical for identical raw content.
+pub fn parse_page_from_db(
+    store: &crate::workspace::notes_store::NotesStore,
+    relative_path: &str,
+) -> Result<(ParsedNode, Vec<WikiLink>, String), GraphError> {
+    let raw = store
+        .read_raw_content(relative_path)
+        .map_err(|e| GraphError::Other(e.to_string()))?;
+    Ok(parse_raw_into_node(relative_path, &raw))
+}
+
+/// Shared parsing pipeline used by both the disk and DB read paths.
+fn parse_raw_into_node(
+    relative_path: &str,
+    raw: &str,
+) -> (ParsedNode, Vec<WikiLink>, String) {
+    let parsed = parse_frontmatter(raw);
     let fm_json = yaml_map_to_json(&parsed.map);
 
     let title = fm_json
@@ -53,7 +82,7 @@ pub fn parse_md_file(
         first_paragraph,
     };
 
-    Ok((node, links, body))
+    (node, links, body)
 }
 
 fn title_from_relative_path(relative_path: &str) -> String {
@@ -171,6 +200,14 @@ fn walk_md_files(root: &Path) -> Result<Vec<(String, i64)>, GraphError> {
     Ok(files)
 }
 
+/// DB-mode equivalent of [`walk_md_files`]: returns `(relative_path, mtime)`
+/// for all active (non-trashed) pages in the store.
+fn walk_pages_from_db(store: &NotesStore) -> Result<Vec<(String, i64)>, GraphError> {
+    store
+        .all_pages_with_mtime()
+        .map_err(|e| GraphError::Other(e.to_string()))
+}
+
 // ---------------------------------------------------------------------------
 // index_workspace (full scan)
 // ---------------------------------------------------------------------------
@@ -197,6 +234,16 @@ pub fn index_workspace_with_progress(
     on_progress: &dyn Fn(super::progress::IndexProgress),
     annotations_enabled: bool,
 ) -> Result<(IndexResult, ReverseStemIndex), GraphError> {
+    index_workspace_with_progress_store(store, root, on_progress, annotations_enabled, None)
+}
+
+pub fn index_workspace_with_progress_store(
+    store: &Store,
+    root: &Path,
+    on_progress: &dyn Fn(super::progress::IndexProgress),
+    annotations_enabled: bool,
+    notes_store: Option<&NotesStoreHandle>,
+) -> Result<(IndexResult, ReverseStemIndex), GraphError> {
     use super::progress::{IndexPhase, IndexProgress};
 
     let lit_dir = root.join(".lit");
@@ -207,7 +254,10 @@ pub fn index_workspace_with_progress(
         })?;
     }
 
-    let files = walk_md_files(root)?;
+    let files = match notes_store {
+        Some(ns) => walk_pages_from_db(&ns.lock().unwrap())?,
+        None => walk_md_files(root)?,
+    };
     let file_count = files.len();
 
     on_progress(IndexProgress {
@@ -224,7 +274,11 @@ pub fn index_workspace_with_progress(
     let mut bodies: HashMap<String, String> = HashMap::new();
 
     for (i, (rel_path, mtime)) in files.iter().enumerate() {
-        match parse_md_file(root, rel_path) {
+        let parsed = match notes_store {
+            Some(ns) => parse_page_from_db(&ns.lock().unwrap(), rel_path),
+            None => parse_md_file(root, rel_path),
+        };
+        match parsed {
             Ok((node, links, body)) => {
                 bodies.insert(rel_path.clone(), body);
                 file_mtimes.insert(rel_path.clone(), *mtime);
@@ -404,7 +458,18 @@ impl DiffResult {
 }
 
 pub fn compute_diff(store: &Store, root: &Path) -> Result<DiffResult, GraphError> {
-    let disk_files = walk_md_files(root)?;
+    compute_diff_store(store, root, None)
+}
+
+pub fn compute_diff_store(
+    store: &Store,
+    root: &Path,
+    notes_store: Option<&NotesStoreHandle>,
+) -> Result<DiffResult, GraphError> {
+    let disk_files = match notes_store {
+        Some(ns) => walk_pages_from_db(&ns.lock().unwrap())?,
+        None => walk_md_files(root)?,
+    };
     let sync_entries = store.all_sync_entries()?;
 
     let sync_map: HashMap<String, i64> = sync_entries.into_iter().collect();
@@ -450,6 +515,45 @@ pub fn incremental_reindex(
     diff: &DiffResult,
     annotations_enabled: bool,
 ) -> Result<IndexResult, GraphError> {
+    incremental_reindex_store(store, root, reverse_stems, diff, annotations_enabled, None)
+}
+
+pub fn incremental_reindex_store(
+    store: &Store,
+    root: &Path,
+    reverse_stems: &mut ReverseStemIndex,
+    diff: &DiffResult,
+    annotations_enabled: bool,
+    notes_store: Option<&NotesStoreHandle>,
+) -> Result<IndexResult, GraphError> {
+    // Parse a page from the active backend (DB store or disk).
+    let parse_page = |path: &str| -> Result<(ParsedNode, Vec<WikiLink>, String), GraphError> {
+        match notes_store {
+            Some(ns) => parse_page_from_db(&ns.lock().unwrap(), path),
+            None => parse_md_file(root, path),
+        }
+    };
+    // Resolve mtime for a page from the active backend.
+    let db_mtimes: Option<HashMap<String, i64>> = match notes_store {
+        Some(ns) => Some(
+            walk_pages_from_db(&ns.lock().unwrap())?
+                .into_iter()
+                .collect(),
+        ),
+        None => None,
+    };
+    let mtime_for = |path: &str| -> i64 {
+        match &db_mtimes {
+            Some(map) => map.get(path).copied().unwrap_or(0),
+            None => std::fs::metadata(root.join(path))
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0),
+        }
+    };
+
     store.begin_transaction()?;
 
     let mut nodes_indexed = 0;
@@ -483,14 +587,9 @@ pub fn incremental_reindex(
     let mut stem_lookup = StemLookup::build(&all_ids, &old_aliases);
 
     for path in diff.new.iter().chain(diff.changed.iter()) {
-        match parse_md_file(root, path) {
+        match parse_page(path) {
             Ok((node, links, body)) => {
-                let mtime = std::fs::metadata(root.join(path))
-                    .ok()
-                    .and_then(|m| m.modified().ok())
-                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                    .map(|d| d.as_millis() as i64)
-                    .unwrap_or(0);
+                let mtime = mtime_for(path);
 
                 // Check if aliases changed
                 let new_aliases = extract_aliases(&node.frontmatter);
@@ -586,7 +685,7 @@ pub fn incremental_reindex(
                 continue; // already handled
             }
 
-            if let Ok((_, links, body)) = parse_md_file(root, source_id) {
+            if let Ok((_, links, body)) = parse_page(source_id) {
                 store.delete_edges_from(source_id)?;
                 reverse_stems.remove_source(source_id);
 
@@ -623,7 +722,6 @@ pub fn incremental_reindex(
 // GraphIndex
 // ---------------------------------------------------------------------------
 
-use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use super::types::Position;
 
@@ -634,6 +732,9 @@ pub struct GraphIndex {
     workspace_root: std::path::PathBuf,
     positions: Mutex<HashMap<String, Position>>,
     layout_in_progress: AtomicBool,
+    /// When `Some`, this index reads page content from a SQLite `NotesStore`
+    /// (DB storage mode) instead of from disk. `None` means filesystem mode.
+    notes_store: Option<NotesStoreHandle>,
 }
 
 impl GraphIndex {
@@ -662,10 +763,22 @@ impl GraphIndex {
             workspace_root,
             positions: Mutex::new(positions),
             layout_in_progress: AtomicBool::new(false),
+            notes_store: None,
         }))
     }
 
+    /// Attach a `NotesStore` handle to a warm-loaded index so subsequent reindex
+    /// operations read from the DB rather than disk.
+    pub fn set_notes_store(&mut self, notes_store: Option<NotesStoreHandle>) {
+        self.notes_store = notes_store;
+    }
+
     pub fn sync_with_disk(&self, annotations_enabled: bool) -> Result<bool, GraphError> {
+        // DB-backed indices never sync with disk (the watcher is disabled in DB
+        // mode and there are no file events to react to).
+        if self.notes_store.is_some() {
+            return Ok(false);
+        }
         let store = self.store.lock().unwrap();
         let diff = compute_diff(&store, &self.workspace_root)?;
         if diff.is_empty() {
@@ -693,6 +806,18 @@ impl GraphIndex {
         on_progress: &dyn Fn(super::progress::IndexProgress),
         annotations_enabled: bool,
     ) -> Result<Self, GraphError> {
+        Self::build_with_store(workspace_root, on_progress, annotations_enabled, None)
+    }
+
+    /// Like [`build_with_progress`] but optionally reads page content from a
+    /// `NotesStore` (DB storage mode). When `notes_store` is `None` this behaves
+    /// identically to `build_with_progress`.
+    pub fn build_with_store(
+        workspace_root: std::path::PathBuf,
+        on_progress: &dyn Fn(super::progress::IndexProgress),
+        annotations_enabled: bool,
+        notes_store: Option<NotesStoreHandle>,
+    ) -> Result<Self, GraphError> {
         use super::progress::{IndexPhase, IndexProgress};
 
         let db_path = workspace_root.join(".lit").join("graph.db");
@@ -705,7 +830,7 @@ impl GraphIndex {
         let store = Store::open(&db_path)?;
 
         let reverse_stems = if store.has_data()? {
-            let diff = compute_diff(&store, &workspace_root)?;
+            let diff = compute_diff_store(&store, &workspace_root, notes_store.as_ref())?;
             if diff.is_empty() {
                 info!("warm start: no changes detected, loading from store");
                 on_progress(IndexProgress { phase: IndexPhase::Diffing, current: 0, total: 0 });
@@ -729,12 +854,25 @@ impl GraphIndex {
                     .map(|(source, _target, raw_target)| (source, raw_target))
                     .collect();
                 let mut reverse = ReverseStemIndex::build_from_edges(&edges);
-                incremental_reindex(&store, &workspace_root, &mut reverse, &diff, annotations_enabled)?;
+                incremental_reindex_store(
+                    &store,
+                    &workspace_root,
+                    &mut reverse,
+                    &diff,
+                    annotations_enabled,
+                    notes_store.as_ref(),
+                )?;
                 reverse
             }
         } else {
             info!("cold start: no existing store data, full index");
-            let (_, reverse_stems) = index_workspace_with_progress(&store, &workspace_root, on_progress, annotations_enabled)?;
+            let (_, reverse_stems) = index_workspace_with_progress_store(
+                &store,
+                &workspace_root,
+                on_progress,
+                annotations_enabled,
+                notes_store.as_ref(),
+            )?;
             reverse_stems
         };
 
@@ -748,6 +886,7 @@ impl GraphIndex {
             workspace_root,
             positions: Mutex::new(positions),
             layout_in_progress: AtomicBool::new(false),
+            notes_store,
         })
     }
 
@@ -757,7 +896,14 @@ impl GraphIndex {
         }
         let store = self.store.lock().unwrap();
         let mut reverse = self.reverse_stems.lock().unwrap();
-        let result = incremental_reindex(&store, &self.workspace_root, &mut reverse, diff, annotations_enabled)?;
+        let result = incremental_reindex_store(
+            &store,
+            &self.workspace_root,
+            &mut reverse,
+            diff,
+            annotations_enabled,
+            self.notes_store.as_ref(),
+        )?;
         let mut knowledge = self.knowledge.lock().unwrap();
         *knowledge = KnowledgeGraph::from_store(&store)?;
         Ok(result.removed_annotation_uuids)
@@ -778,7 +924,13 @@ impl GraphIndex {
 
     pub fn full_rebuild(&self, annotations_enabled: bool) -> Result<IndexResult, GraphError> {
         let store = self.store.lock().unwrap();
-        let (result, new_reverse) = index_workspace(&store, &self.workspace_root, annotations_enabled)?;
+        let (result, new_reverse) = index_workspace_with_progress_store(
+            &store,
+            &self.workspace_root,
+            &super::progress::noop_callback(),
+            annotations_enabled,
+            self.notes_store.as_ref(),
+        )?;
         let mut reverse = self.reverse_stems.lock().unwrap();
         *reverse = new_reverse;
         let mut knowledge = self.knowledge.lock().unwrap();
@@ -1276,6 +1428,116 @@ mod tests {
 
     fn create_workspace() -> TempDir {
         tempfile::tempdir().unwrap()
+    }
+
+    // -----------------------------------------------------------------------
+    // DB read path (Phase 2: StorageBackend dispatch)
+    // -----------------------------------------------------------------------
+
+    fn db_handle() -> NotesStoreHandle {
+        Arc::new(Mutex::new(NotesStore::open_memory().unwrap()))
+    }
+
+    #[test]
+    fn parse_page_from_db_matches_parse_md_file() {
+        let raw = "---\ntitle: My Note\ntags: [x]\n---\n# Heading\n\nSee [[Other]] here.\n";
+        let dir = create_workspace();
+        write_md(dir.path(), "note.md", raw);
+        let (disk_node, disk_links, disk_body) = parse_md_file(dir.path(), "note.md").unwrap();
+
+        let handle = db_handle();
+        {
+            let store = handle.lock().unwrap();
+            let parsed = crate::workspace::frontmatter::parse_frontmatter(raw);
+            store.write_page("note.md", parsed.body, &parsed.map).unwrap();
+        }
+        let (db_node, db_links, db_body) =
+            parse_page_from_db(&handle.lock().unwrap(), "note.md").unwrap();
+
+        assert_eq!(disk_node.id, db_node.id);
+        assert_eq!(disk_node.title, db_node.title);
+        assert_eq!(disk_node.tags, db_node.tags);
+        assert_eq!(disk_node.first_paragraph, db_node.first_paragraph);
+        assert_eq!(disk_body, db_body);
+        assert_eq!(disk_links.len(), db_links.len());
+        assert_eq!(
+            disk_links.iter().map(|l| &l.target).collect::<Vec<_>>(),
+            db_links.iter().map(|l| &l.target).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn build_with_store_indexes_db_pages() {
+        let handle = db_handle();
+        {
+            let store = handle.lock().unwrap();
+            store.write_page("a.md", "Links to [[b]].", &indexmap::IndexMap::new()).unwrap();
+            store.write_page("b.md", "Target page.", &indexmap::IndexMap::new()).unwrap();
+        }
+        let dir = create_workspace();
+        let gi = GraphIndex::build_with_store(
+            dir.path().to_path_buf(),
+            &super::super::progress::noop_callback(),
+            false,
+            Some(Arc::clone(&handle)),
+        )
+        .unwrap();
+
+        let stats = gi.stats().unwrap();
+        assert_eq!(stats.nodes, 2);
+        // a.md -> b.md edge resolved
+        let backlinks = gi.backlinks("b.md").unwrap();
+        assert_eq!(backlinks.len(), 1);
+        assert_eq!(backlinks[0].source_id, "a.md");
+    }
+
+    #[test]
+    fn compute_diff_store_reads_db_mtimes() {
+        let handle = db_handle();
+        {
+            let store = handle.lock().unwrap();
+            store.write_page("a.md", "x", &indexmap::IndexMap::new()).unwrap();
+            store.write_page("b.md", "x", &indexmap::IndexMap::new()).unwrap();
+        }
+        let dir = create_workspace();
+        // Cold build from the DB to populate the graph store's sync entries.
+        let gi = GraphIndex::build_with_store(
+            dir.path().to_path_buf(),
+            &super::super::progress::noop_callback(),
+            false,
+            Some(Arc::clone(&handle)),
+        )
+        .unwrap();
+
+        // Add a new page and trash an existing one in the DB.
+        {
+            let store = handle.lock().unwrap();
+            store.write_page("c.md", "new", &indexmap::IndexMap::new()).unwrap();
+            store.trash_page("a.md").unwrap();
+        }
+
+        let store_guard = gi.store();
+        let diff = compute_diff_store(&store_guard, dir.path(), Some(&handle)).unwrap();
+        assert!(diff.new.contains(&"c.md".to_string()), "new: {:?}", diff.new);
+        assert!(diff.deleted.contains(&"a.md".to_string()), "deleted: {:?}", diff.deleted);
+    }
+
+    #[test]
+    fn sync_with_disk_noops_in_db_mode() {
+        let handle = db_handle();
+        {
+            let store = handle.lock().unwrap();
+            store.write_page("a.md", "x", &indexmap::IndexMap::new()).unwrap();
+        }
+        let dir = create_workspace();
+        let gi = GraphIndex::build_with_store(
+            dir.path().to_path_buf(),
+            &super::super::progress::noop_callback(),
+            false,
+            Some(Arc::clone(&handle)),
+        )
+        .unwrap();
+        assert_eq!(gi.sync_with_disk(false).unwrap(), false);
     }
 
     fn write_md(root: &Path, rel_path: &str, content: &str) {

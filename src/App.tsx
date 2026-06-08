@@ -246,7 +246,7 @@ function App() {
       unlisteners.push(unExportLkg);
 
       const unImportLkg = await win.listen("menu://import-lkg", async () => {
-        const { open } = await import("@tauri-apps/plugin-dialog");
+        const { open, ask } = await import("@tauri-apps/plugin-dialog");
         const src = await open({
           multiple: false,
           filters: [{ name: "Lit Knowledge Graph", extensions: ["lkg"] }],
@@ -254,9 +254,17 @@ function App() {
         if (!src) return;
         const dest = await open({ directory: true });
         if (!dest) return;
+        const useDb = await ask(
+          "Store imported notes in a database (notes.db)?\n\nChoose Cancel to use plain Markdown files.",
+          { title: "Import storage mode", kind: "info" },
+        );
         statusShow("Importing…", "progress", 30000);
         try {
-          const summary = await importLkg(src as string, dest as string);
+          const summary = await importLkg(
+            src as string,
+            dest as string,
+            useDb ? "db" : "files",
+          );
           statusShow(`Imported ${summary.node_count} nodes, ${summary.edge_count} edges, ${summary.annotation_count} annotations, ${summary.file_count} files`, "success");
         } catch (err) {
           statusShow(

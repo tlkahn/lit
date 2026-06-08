@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
 import * as ipc from "../lib/ipc";
-import type { PageMeta, IndexProgress, TrashEntry } from "../lib/ipc";
+import type { PageMeta, IndexProgress, TrashEntry, StorageMode } from "../lib/ipc";
 import type { Heading } from "../lib/headings";
 import { usePaneStore, createInitialState, startLayoutSync, stopLayoutSync } from "./panes";
 import {
@@ -40,8 +40,10 @@ export interface WorkspaceStore {
   indexProgress: IndexProgress | null;
   loading: boolean;
   error: string | null;
+  storageMode: StorageMode;
 
   openWorkspace: (path: string) => Promise<void>;
+  reloadWorkspace: () => Promise<void>;
   refreshPages: () => Promise<void>;
   selectPage: (relativePath: string | null) => void;
   selectPageAtLine: (relativePath: string, line: number, col?: number, fileAbsolute?: boolean) => void;
@@ -85,6 +87,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   indexProgress: null,
   loading: false,
   error: null,
+  storageMode: "files",
 
   openWorkspace: async (path: string) => {
     set({ loading: true, error: null, graphReady: false, indexProgress: null });
@@ -92,6 +95,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       const pages = await ipc.openWorkspace(path);
       set({ workspacePath: path, pages, loading: false });
       addRecentWorkspace(path);
+
+      // Fire-and-forget: never block/break workspace open if this errors.
+      ipc.getWorkspaceStorageMode().then((m) => set({ storageMode: m })).catch(() => {});
 
       stopLayoutSync();
       cleanupStaleLayouts();
@@ -124,6 +130,12 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     } catch (e) {
       set({ loading: false, error: String(e) });
     }
+  },
+
+  reloadWorkspace: async () => {
+    const { workspacePath } = get();
+    if (!workspacePath) return;
+    await get().openWorkspace(workspacePath);
   },
 
   refreshPages: async () => {
