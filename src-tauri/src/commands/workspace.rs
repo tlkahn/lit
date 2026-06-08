@@ -118,16 +118,25 @@ pub fn find_companion(relative_path: &str, root: &Path) -> Option<String> {
         return None;
     }
     // On case-insensitive filesystems (macOS APFS), `is_file()` may match a
-    // file whose on-disk name has different case. Canonicalize both the root
-    // and the candidate to resolve symlinks and recover the real filename, then
-    // strip the root prefix to get the correctly-cased relative path.
-    let canon_root = root.canonicalize().ok()?;
-    let canon_abs = absolute.canonicalize().ok()?;
-    let real_rel = canon_abs.strip_prefix(&canon_root).ok()?;
-    let result = real_rel
-        .to_string_lossy()
-        .replace(std::path::MAIN_SEPARATOR, "/");
-    Some(result)
+    // file whose on-disk name has different case. Canonicalize to recover the
+    // real on-disk filename. If the canonical path escapes the workspace root
+    // (e.g. the companion is a symlink pointing outside), fall back to the
+    // original relative candidate which is still valid for opening.
+    let result = root
+        .canonicalize()
+        .ok()
+        .and_then(|canon_root| {
+            absolute
+                .canonicalize()
+                .ok()
+                .and_then(|canon_abs| canon_abs.strip_prefix(&canon_root).ok().map(|p| p.to_path_buf()))
+        })
+        .unwrap_or_else(|| candidate.clone());
+    Some(
+        result
+            .to_string_lossy()
+            .replace(std::path::MAIN_SEPARATOR, "/"),
+    )
 }
 
 pub fn get_workspace_root(registry: &WorkspaceRegistry, label: &str) -> Result<PathBuf, String> {
@@ -623,6 +632,25 @@ mod tests {
         let root = dir.path();
         std::fs::write(root.join("paper.txt"), "x").unwrap();
         assert_eq!(find_companion("paper.txt", root), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn find_companion_follows_symlink_outside_root() {
+        let workspace = tempfile::tempdir().unwrap();
+        let root = workspace.path();
+        let external = tempfile::tempdir().unwrap();
+        std::fs::write(root.join("paper.md"), "x").unwrap();
+        std::fs::write(external.path().join("paper.pdf"), "x").unwrap();
+        std::os::unix::fs::symlink(
+            external.path().join("paper.pdf"),
+            root.join("paper.pdf"),
+        )
+        .unwrap();
+        assert_eq!(
+            find_companion("paper.md", root),
+            Some("paper.pdf".to_string())
+        );
     }
 
     #[test]
