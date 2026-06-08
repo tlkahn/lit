@@ -11,12 +11,6 @@ default-run = "lit"
 [lib]
 name = "lit_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
-
-[features]
-# When enabled, builds for the Mac App Store: hides the "Buy License" and
-# "Enter License Key" menu items (App Store handles purchase/restore).
-app-store = []
-
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 base64 = "0.22"

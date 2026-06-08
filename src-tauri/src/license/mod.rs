@@ -2,8 +2,6 @@ pub mod error;
 pub mod key;
 pub mod keygen;
 pub mod online;
-#[cfg(feature = "app-store")]
-pub mod receipt;
 pub mod storage;
 
 use ed25519_dalek::VerifyingKey;
@@ -60,12 +58,6 @@ pub fn get_status(
     license_verifying_key: &VerifyingKey,
     now: u64,
 ) -> LicenseStatus {
-    #[cfg(feature = "app-store")]
-    {
-        if let Some(payload) = receipt::validate_app_store_receipt() {
-            return check_expiry(payload, now);
-        }
-    }
     if let Ok(Some(pem)) = storage::read_license_key(dir) {
         if let Ok(payload) = key::verify_license_key(&pem, license_verifying_key) {
             // A valid local key wins over any stale revocation marker, so a
@@ -397,37 +389,6 @@ mod tests {
         match check_expiry(sample_payload(None), u64::MAX) {
             LicenseStatus::Licensed(_) => {}
             other => panic!("expected Licensed, got {:?}", other),
-        }
-    }
-
-    // --- app-store receipt wiring (stub) ---
-
-    #[cfg(feature = "app-store")]
-    #[test]
-    fn get_status_app_store_stub_falls_through_to_local() {
-        // The App Store receipt stub returns None, so get_status must fall
-        // through to the existing local-key path and report Licensed.
-        let dir = tempfile::tempdir().unwrap();
-        let lic_sk = SigningKey::generate(&mut OsRng);
-        let lic_vk = lic_sk.verifying_key();
-        let payload = sample_payload(None);
-        let pem = build_test_pem(&payload, &lic_sk);
-        storage::write_license_key(dir.path(), &pem).unwrap();
-        match get_status(dir.path(), &lic_vk, 200) {
-            LicenseStatus::Licensed(p) => assert_eq!(p.license_id, "lic-1"),
-            other => panic!("expected Licensed, got {:?}", other),
-        }
-    }
-
-    #[cfg(feature = "app-store")]
-    #[test]
-    fn get_status_app_store_stub_no_local_returns_unlicensed() {
-        // With no local key and the stub returning None, status is Unlicensed.
-        let dir = tempfile::tempdir().unwrap();
-        let (_, lic_vk) = test_keys();
-        match get_status(dir.path(), &lic_vk, 200) {
-            LicenseStatus::Unlicensed => {}
-            other => panic!("expected Unlicensed, got {:?}", other),
         }
     }
 
