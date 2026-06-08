@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Local release script — replicates the CI build-release + update-website pipeline.
+# Local release script — builds, signs, notarizes, uploads to S3, and deploys the website.
 # Usage: bash scripts/release.sh [--dry-run] [--skip-website] <tag>
 #
 # Prerequisites:

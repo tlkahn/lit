@@ -52,6 +52,19 @@ See `doc/architecture.md` for full module map, state registry, startup flow, and
 - Local file serving requires: `assetProtocol.enable` + `protocol-asset` Cargo feature + runtime `allow_directory`.
 - Windows are created dynamically in code, not in `tauri.conf.json`'s `windows` array.
 
+## Releasing
+
+Releases run locally — there is no CI pipeline.
+
+```bash
+bash scripts/release.sh <tag>                  # full release
+bash scripts/release.sh --dry-run <tag>        # build only, no upload
+bash scripts/release.sh --skip-website <tag>   # skip website deploy
+```
+
+Required env vars: `LIT_LICENSE_VERIFYING_KEY_B64`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`.
+Optional: `APPLE_SIGNING_IDENTITY`, `OPENAI_API_KEY`, `LLM_DEFAULT_MODEL`.
+
 ## Roadmap
 
 See `doc/roadmap.md`.

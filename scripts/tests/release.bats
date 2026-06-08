@@ -333,12 +333,12 @@ TOML
 }
 
 # ── Cycle 6d: git describe flag agreement ──────────────────────────────────
-# build-release.yml's "Sync version from git tag" step derives the version on
-# non-release runs via `git describe --tags --abbrev=0` (nearest tag, no commit
-# suffix). build.rs's dev fallback must use the SAME flag so that a binary's
-# About dialog (LIT_GIT_VERSION) never shows a `-N-gSHA` suffix that the bundle
-# metadata lacks. Guard both: the nearest-tag describe yields a clean tag, and
-# build.rs uses --abbrev=0 (not --always).
+# release-lib.sh's release_sync_version derives the version via
+# `git describe --tags --abbrev=0` (nearest tag, no commit suffix). build.rs's
+# dev fallback must use the SAME flag so that a binary's About dialog
+# (LIT_GIT_VERSION) never shows a `-N-gSHA` suffix that the bundle metadata
+# lacks. Guard both: the nearest-tag describe yields a clean tag, and build.rs
+# uses --abbrev=0 (not --always).
 
 @test "git describe --tags --abbrev=0 yields a clean tag with no commit-sha suffix" {
   REPO_ROOT="$TEST_TEMP_DIR"
@@ -743,12 +743,6 @@ MOCK_EOF
   run release_upload_checksums v0.9.2
   [ "$status" -eq 0 ]
   [[ "$output" == *"DRY RUN"* ]]
-}
-
-# ── Cycle 18: CI workflow checksum fetch ───────────────────────────────────
-
-@test "update-website.yml: emits warning when checksum fetch fails" {
-  grep -q '::warning::' "$SCRIPT_DIR/../.github/workflows/update-website.yml"
 }
 
 # ── Cycle 19: release_inject_checksum ──────────────────────────────────────
