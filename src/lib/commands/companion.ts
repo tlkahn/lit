@@ -10,6 +10,7 @@ export function initCompanionCommands(): void {
       id: "companion.open",
       label: "Open Companion File",
       keywords: ["pdf", "markdown", "companion", "sibling"],
+      shortcut: "Mod-Shift-o",
       icon: "🔗",
       when: () => {
         const s = usePaneStore.getState();

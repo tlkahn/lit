@@ -103,6 +103,14 @@ describe("keymaps/default.json", () => {
     expect(entry?.key).toBe("Ctrl-`");
   });
 
+  it("contains Mod-Shift-o binding for companion.open", () => {
+    const entry = defaultKeymaps.find(
+      (b: { key: string; command: string }) =>
+        b.key === "Mod-Shift-o" && b.command === "companion.open",
+    );
+    expect(entry).toBeDefined();
+  });
+
   it("contains pane keybindings in default.json", () => {
     const find = (cmd: string) =>
       defaultKeymaps.find((b: { key: string; command: string }) => b.command === cmd);
