@@ -54,6 +54,7 @@ export interface PreferencesState {
   defaultViewMode: ViewMode;
   annotationPrefillLastUsed: boolean;
   annotationBuilderDefaults: AnnotationBuilderDefaults | null;
+  companionSearchPath: string[];
   loaded: boolean;
   loadPreferences: () => Promise<void>;
 }
@@ -141,6 +142,12 @@ function applyCustomProviders(val: unknown): CustomProviderDef[] {
   }));
 }
 
+function applyCompanionSearchPath(val: unknown): string[] {
+  if (!Array.isArray(val)) return ["."];
+  const filtered = val.filter((entry): entry is string => typeof entry === "string");
+  return filtered.length > 0 ? filtered : ["."];
+}
+
 function mapPreferences(prefs: Preferences) {
   return {
     darkMode: applyDarkMode(prefs["workbench.darkMode"]),
@@ -176,6 +183,7 @@ function mapPreferences(prefs: Preferences) {
     academicDefaultReferenceDoc: (prefs["academic.defaultReferenceDoc"] as string) ?? "",
     annotationPrefillLastUsed: (prefs["annotations.prefillLastUsed"] as boolean) ?? false,
     annotationBuilderDefaults: isValidBuilderDefaults(prefs["annotations.builderDefaults"]) ? prefs["annotations.builderDefaults"] : null,
+    companionSearchPath: applyCompanionSearchPath(prefs["companion.searchPath"]),
   };
 }
 
@@ -185,6 +193,14 @@ export function setLlmProvider(patch: Partial<LlmProviderConfig>) {
   usePreferencesStore.setState({ llmProvider: next });
   setPreference("llm.provider", next).catch(() => {
     usePreferencesStore.setState({ llmProvider: prev });
+  });
+}
+
+export function setCompanionSearchPath(paths: string[]) {
+  const prev = usePreferencesStore.getState().companionSearchPath;
+  usePreferencesStore.setState({ companionSearchPath: paths });
+  setPreference("companion.searchPath", paths).catch(() => {
+    usePreferencesStore.setState({ companionSearchPath: prev });
   });
 }
 
@@ -252,6 +268,7 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   academicDefaultReferenceDoc: "",
   annotationPrefillLastUsed: false,
   annotationBuilderDefaults: null,
+  companionSearchPath: ["."],
   loaded: false,
 
   loadPreferences: async () => {

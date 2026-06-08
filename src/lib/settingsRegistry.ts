@@ -141,6 +141,15 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
     controlType: "toggle",
     testId: "settings-mediaThumbnails",
   },
+  {
+    category: "Editor",
+    label: "Companion Search Paths",
+    storeField: "companionSearchPath",
+    jsonKey: "companion.searchPath",
+    controlType: "custom",
+    testId: "settings-companionSearchPath",
+    keywords: ["companion", "pdf", "search path", "sibling", "markdown", "directory"],
+  },
   // Cross-references
   {
     category: "Cross-references",

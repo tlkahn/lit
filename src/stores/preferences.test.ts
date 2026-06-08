@@ -5,6 +5,7 @@ import {
   addCustomProvider,
   updateCustomProvider,
   removeCustomProvider,
+  setCompanionSearchPath,
 } from "./preferences";
 import type { Preferences } from "../lib/ipc";
 import type { CustomProviderDef } from "../lib/providerRegistry";
@@ -880,6 +881,121 @@ describe("PreferencesStore", () => {
   it("defaults academicDefaultReferenceDoc to empty string", () => {
     const state = usePreferencesStore.getState();
     expect(state.academicDefaultReferenceDoc).toBe("");
+  });
+
+  // --- Companion search path ---
+
+  it("defaults companionSearchPath to ['.']", () => {
+    expect(usePreferencesStore.getState().companionSearchPath).toEqual(["."]);
+  });
+
+  it("maps companion.searchPath array from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "companion.searchPath": [".", "pdfs"],
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().companionSearchPath).toEqual([".", "pdfs"]);
+  });
+
+  it("defaults companionSearchPath to ['.'] when key missing from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().companionSearchPath).toEqual(["."]);
+  });
+
+  it("defaults companionSearchPath to ['.'] for non-array value", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "companion.searchPath": "pdfs",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().companionSearchPath).toEqual(["."]);
+  });
+
+  it("updates companionSearchPath on preferences://changed event", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().companionSearchPath).toEqual(["."]);
+
+    emitMockEvent("preferences://changed", {
+      "workbench.colorTheme": null,
+      "workbench.darkMode": "auto",
+      "workbench.sideBar.location": "left",
+      "companion.searchPath": ["pdfs", "."],
+    });
+
+    expect(usePreferencesStore.getState().companionSearchPath).toEqual(["pdfs", "."]);
+  });
+
+  it("setCompanionSearchPath updates store and persists", async () => {
+    usePreferencesStore.setState({ companionSearchPath: ["."] });
+    const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+    mockInvoke((cmd, args) => {
+      calls.push({ cmd, args });
+      return undefined;
+    });
+
+    setCompanionSearchPath([".", "pdfs"]);
+    await Promise.resolve();
+
+    expect(usePreferencesStore.getState().companionSearchPath).toEqual([".", "pdfs"]);
+    const setCall = calls.find((c) => c.cmd === "set_preference");
+    expect(setCall).toBeDefined();
+    expect(setCall?.args?.key).toBe("companion.searchPath");
+    expect(setCall?.args?.value).toEqual([".", "pdfs"]);
+  });
+
+  it("setCompanionSearchPath rolls back when persistence rejects", async () => {
+    usePreferencesStore.setState({ companionSearchPath: ["."] });
+    mockInvoke((cmd) =>
+      cmd === "set_preference" ? Promise.reject(new Error("write failed")) : undefined,
+    );
+
+    setCompanionSearchPath([".", "pdfs"]);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(usePreferencesStore.getState().companionSearchPath).toEqual(["."]);
   });
 
   it("maps academic.pandocPath from IPC", async () => {
