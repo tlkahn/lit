@@ -15,8 +15,9 @@ const markers: PageMarker[] = [
 ];
 
 /** Minimal EditorView stub exposing only what reverseSync touches. */
-function makeFakeView(docLength = 1000): EditorView {
+function makeFakeView(docLength = 1000, hasFocus = false): EditorView {
   return {
+    hasFocus,
     state: {
       doc: { length: docLength },
       selection: { main: { head: 0 } },
@@ -142,5 +143,34 @@ describe("dispatchReverseSync", () => {
 
     const tx = (view.dispatch as ReturnType<typeof vi.fn>).mock.calls[0]![0];
     expect(tx.selection.head).toBe(60);
+  });
+
+  describe("editor focus guard", () => {
+    it("does not dispatch when editor has focus", () => {
+      const view = makeFakeView(1000, true);
+      registerPaneView("ed1", view);
+
+      dispatchReverseSync(2, "ed1", markers);
+
+      expect(view.dispatch).not.toHaveBeenCalled();
+    });
+
+    it("does not record lastSyncedPage when editor has focus", () => {
+      const view = makeFakeView(1000, true);
+      registerPaneView("ed1", view);
+
+      dispatchReverseSync(2, "ed1", markers);
+
+      expect(usePanePdfLinkStore.getState().lastSyncedPage).toBeNull();
+    });
+
+    it("dispatches normally when editor does not have focus", () => {
+      const view = makeFakeView(1000, false);
+      registerPaneView("ed1", view);
+
+      dispatchReverseSync(2, "ed1", markers);
+
+      expect(view.dispatch).toHaveBeenCalledTimes(1);
+    });
   });
 });
