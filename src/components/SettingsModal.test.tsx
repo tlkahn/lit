@@ -37,6 +37,7 @@ const defaults = {
   academicDefaultCsl: "",
   academicDefaultTemplate: "",
   academicDefaultReferenceDoc: "",
+  companionSearchPath: ["."],
   loaded: true,
 };
 
@@ -810,6 +811,20 @@ describe("SettingsModal", () => {
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
     fireEvent.change(search, { target: { value: "model" } });
     expect(container.querySelector("[data-testid='llm-provider-settings']")).toBeTruthy();
+  });
+
+  // --- companion search path ---
+
+  it("renders the companion search-path settings under the Editor section", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    expect(container.querySelector("[data-testid='companion-search-path-settings']")).toBeTruthy();
+  });
+
+  it("search 'companion' keeps the companion search-path UI reachable", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "companion" } });
+    expect(container.querySelector("[data-testid='companion-search-path-settings']")).toBeTruthy();
   });
 
   // --- experimentalUnlinkedReferences (ToggleSwitch) ---

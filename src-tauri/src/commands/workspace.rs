@@ -99,29 +99,13 @@ pub fn try_navigate_existing_window(
     Some(label)
 }
 
-/// Given a workspace-relative path to a markdown or PDF file, return the
-/// relative path of its sibling with the swapped extension (md<->pdf) if that
-/// sibling exists on disk under `root`. Returns `None` for unsupported
-/// extensions or when the companion does not exist. The returned string uses
-/// forward slashes to match `PageMeta.relative_path`.
-pub fn find_companion(relative_path: &str, root: &Path) -> Option<String> {
-    let rel = Path::new(relative_path);
-    let ext = rel.extension()?.to_str()?.to_ascii_lowercase();
-    let target_ext = match ext.as_str() {
-        "md" => "pdf",
-        "pdf" => "md",
-        _ => return None,
-    };
-    let candidate = rel.with_extension(target_ext);
-    let absolute = root.join(&candidate);
-    if !absolute.is_file() {
-        return None;
-    }
-    // On case-insensitive filesystems (macOS APFS), `is_file()` may match a
-    // file whose on-disk name has different case. Canonicalize to recover the
-    // real on-disk filename. If the canonical path escapes the workspace root
-    // (e.g. the companion is a symlink pointing outside), fall back to the
-    // original relative candidate which is still valid for opening.
+/// Canonicalize `absolute` (a file known to exist under `root`) and return its
+/// workspace-relative path as a forward-slash string. On case-insensitive
+/// filesystems (macOS APFS) this recovers the real on-disk filename casing.
+/// If the canonical path escapes `root` (e.g. the file is a symlink pointing
+/// outside), fall back to `candidate` — the original relative path, which is
+/// still valid for opening.
+fn canonicalize_within_root(root: &Path, absolute: &Path, candidate: &Path) -> String {
     let result = root
         .canonicalize()
         .ok()
@@ -131,12 +115,43 @@ pub fn find_companion(relative_path: &str, root: &Path) -> Option<String> {
                 .ok()
                 .and_then(|canon_abs| canon_abs.strip_prefix(&canon_root).ok().map(|p| p.to_path_buf()))
         })
-        .unwrap_or_else(|| candidate.clone());
-    Some(
-        result
-            .to_string_lossy()
-            .replace(std::path::MAIN_SEPARATOR, "/"),
-    )
+        .unwrap_or_else(|| candidate.to_path_buf());
+    result
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/")
+}
+
+/// Given a workspace-relative path to a markdown or PDF file, return the
+/// relative path of its sibling with the swapped extension (md<->pdf) if that
+/// sibling exists on disk under `root`. Looks first in the same directory, then
+/// in each of `search_paths` (workspace-relative directories) for a file with
+/// the same name and the swapped extension. Returns `None` for unsupported
+/// extensions or when no companion exists. The returned string uses forward
+/// slashes to match `PageMeta.relative_path`.
+pub fn find_companion(relative_path: &str, root: &Path, search_paths: &[String]) -> Option<String> {
+    let rel = Path::new(relative_path);
+    let ext = rel.extension()?.to_str()?.to_ascii_lowercase();
+    let target_ext = match ext.as_str() {
+        "md" => "pdf",
+        "pdf" => "md",
+        _ => return None,
+    };
+    let candidate = rel.with_extension(target_ext);
+    let absolute = root.join(&candidate);
+    if absolute.is_file() {
+        return Some(canonicalize_within_root(root, &absolute, &candidate));
+    }
+    // Same-directory sibling missing — search the configured directories for a
+    // file with the same name and the swapped extension.
+    let file_name = candidate.file_name()?;
+    for entry in search_paths {
+        let cand = Path::new(entry).join(file_name);
+        let abs = root.join(&cand);
+        if abs.is_file() {
+            return Some(canonicalize_within_root(root, &abs, &cand));
+        }
+    }
+    None
 }
 
 pub fn get_workspace_root(registry: &WorkspaceRegistry, label: &str) -> Result<PathBuf, String> {
@@ -240,9 +255,12 @@ pub fn find_companion_file(
     relative_path: String,
     window: tauri::Window,
     state: State<WorkspaceRegistry>,
+    app_handle: tauri::AppHandle,
 ) -> Result<Option<String>, String> {
     let root = get_workspace_root(&state, window.label())?;
-    Ok(find_companion(&relative_path, &root))
+    let prefs = crate::preferences::read_preferences(&app_handle);
+    let search_paths = crate::preferences::companion_search_paths(&prefs);
+    Ok(find_companion(&relative_path, &root, &search_paths))
 }
 
 static WINDOW_COUNTER: AtomicU32 = AtomicU32::new(1);
@@ -577,6 +595,151 @@ mod tests {
     }
 
     #[test]
+    fn canonicalize_within_root_returns_relative_for_path_inside_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("notes")).unwrap();
+        std::fs::write(root.join("notes/paper.pdf"), "x").unwrap();
+        let absolute = root.join("notes/paper.pdf");
+        let candidate = Path::new("notes/paper.pdf");
+        assert_eq!(
+            canonicalize_within_root(root, &absolute, candidate),
+            "notes/paper.pdf".to_string()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn canonicalize_within_root_falls_back_to_candidate_when_escaping_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let external = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(external.path().join("external")).unwrap();
+        std::fs::write(external.path().join("external/real.pdf"), "x").unwrap();
+        std::os::unix::fs::symlink(
+            external.path().join("external/real.pdf"),
+            root.join("paper.pdf"),
+        )
+        .unwrap();
+        let absolute = root.join("paper.pdf");
+        let candidate = Path::new("paper.pdf");
+        assert_eq!(
+            canonicalize_within_root(root, &absolute, candidate),
+            "paper.pdf".to_string()
+        );
+    }
+
+    #[test]
+    fn find_companion_empty_search_paths_still_finds_sibling() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("notes")).unwrap();
+        std::fs::write(root.join("notes/paper.md"), "x").unwrap();
+        std::fs::write(root.join("notes/paper.pdf"), "x").unwrap();
+        assert_eq!(
+            find_companion("notes/paper.md", root, &[]),
+            Some("notes/paper.pdf".to_string())
+        );
+    }
+
+    #[test]
+    fn find_companion_resolves_via_search_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("notes")).unwrap();
+        std::fs::create_dir_all(root.join("pdfs")).unwrap();
+        std::fs::write(root.join("notes/paper.md"), "x").unwrap();
+        std::fs::write(root.join("pdfs/paper.pdf"), "x").unwrap();
+        assert_eq!(
+            find_companion("notes/paper.md", root, &["pdfs".to_string()]),
+            Some("pdfs/paper.pdf".to_string())
+        );
+    }
+
+    #[test]
+    fn find_companion_sibling_wins_over_search_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("notes")).unwrap();
+        std::fs::create_dir_all(root.join("pdfs")).unwrap();
+        std::fs::write(root.join("notes/paper.md"), "x").unwrap();
+        std::fs::write(root.join("notes/paper.pdf"), "x").unwrap();
+        std::fs::write(root.join("pdfs/paper.pdf"), "x").unwrap();
+        assert_eq!(
+            find_companion("notes/paper.md", root, &["pdfs".to_string()]),
+            Some("notes/paper.pdf".to_string())
+        );
+    }
+
+    #[test]
+    fn find_companion_first_search_path_hit_wins() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("a")).unwrap();
+        std::fs::create_dir_all(root.join("b")).unwrap();
+        std::fs::write(root.join("paper.md"), "x").unwrap();
+        std::fs::write(root.join("a/paper.pdf"), "x").unwrap();
+        std::fs::write(root.join("b/paper.pdf"), "x").unwrap();
+        assert_eq!(
+            find_companion("paper.md", root, &["a".to_string(), "b".to_string()]),
+            Some("a/paper.pdf".to_string())
+        );
+    }
+
+    #[test]
+    fn find_companion_reverse_via_search_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("pdfs")).unwrap();
+        std::fs::create_dir_all(root.join("markdown")).unwrap();
+        std::fs::write(root.join("pdfs/paper.pdf"), "x").unwrap();
+        std::fs::write(root.join("markdown/paper.md"), "x").unwrap();
+        assert_eq!(
+            find_companion("pdfs/paper.pdf", root, &["markdown".to_string()]),
+            Some("markdown/paper.md".to_string())
+        );
+    }
+
+    #[test]
+    fn find_companion_dot_search_path_checks_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("notes")).unwrap();
+        std::fs::write(root.join("notes/paper.md"), "x").unwrap();
+        std::fs::write(root.join("paper.pdf"), "x").unwrap();
+        assert_eq!(
+            find_companion("notes/paper.md", root, &[".".to_string()]),
+            Some("paper.pdf".to_string())
+        );
+    }
+
+    #[test]
+    fn find_companion_no_match_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("a")).unwrap();
+        std::fs::create_dir_all(root.join("b")).unwrap();
+        std::fs::create_dir_all(root.join("notes")).unwrap();
+        std::fs::write(root.join("notes/paper.md"), "x").unwrap();
+        assert_eq!(
+            find_companion("notes/paper.md", root, &["a".to_string(), "b".to_string()]),
+            None
+        );
+    }
+
+    #[test]
+    fn find_companion_nonexistent_search_path_is_harmless() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("notes")).unwrap();
+        std::fs::write(root.join("notes/paper.md"), "x").unwrap();
+        assert_eq!(
+            find_companion("notes/paper.md", root, &["nonexistent".to_string()]),
+            None
+        );
+    }
+
+    #[test]
     fn find_companion_md_to_pdf() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
@@ -584,7 +747,7 @@ mod tests {
         std::fs::write(root.join("notes/paper.md"), "x").unwrap();
         std::fs::write(root.join("notes/paper.pdf"), "x").unwrap();
         assert_eq!(
-            find_companion("notes/paper.md", root),
+            find_companion("notes/paper.md", root, &[]),
             Some("notes/paper.pdf".to_string())
         );
     }
@@ -597,7 +760,7 @@ mod tests {
         std::fs::write(root.join("notes/paper.md"), "x").unwrap();
         std::fs::write(root.join("notes/paper.pdf"), "x").unwrap();
         assert_eq!(
-            find_companion("notes/paper.pdf", root),
+            find_companion("notes/paper.pdf", root, &[]),
             Some("notes/paper.md".to_string())
         );
     }
@@ -608,7 +771,7 @@ mod tests {
         let root = dir.path();
         std::fs::create_dir_all(root.join("notes")).unwrap();
         std::fs::write(root.join("notes/paper.md"), "x").unwrap();
-        assert_eq!(find_companion("notes/paper.md", root), None);
+        assert_eq!(find_companion("notes/paper.md", root, &[]), None);
     }
 
     #[test]
@@ -622,7 +785,7 @@ mod tests {
         std::fs::write(root.join("notes/Paper.pdf"), "x").unwrap();
         // Ask for the companion of Paper.md — the result should have the exact
         // on-disk case (Paper.pdf), not a fabricated variant.
-        let result = find_companion("notes/Paper.md", root);
+        let result = find_companion("notes/Paper.md", root, &[]);
         assert_eq!(result, Some("notes/Paper.pdf".to_string()));
     }
 
@@ -631,7 +794,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         std::fs::write(root.join("paper.txt"), "x").unwrap();
-        assert_eq!(find_companion("paper.txt", root), None);
+        assert_eq!(find_companion("paper.txt", root, &[]), None);
     }
 
     #[cfg(unix)]
@@ -648,7 +811,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            find_companion("paper.md", root),
+            find_companion("paper.md", root, &[]),
             Some("paper.pdf".to_string())
         );
     }

@@ -18,6 +18,7 @@ import { useThemeStore } from "../stores/theme";
 import { KeyboardShortcutsPanel } from "./KeyboardShortcutsPanel";
 import { AcademicExportSettings } from "./AcademicExportSettings";
 import { LlmProviderSettings } from "./LlmProviderSettings";
+import { CompanionSearchPathSettings } from "./CompanionSearchPathSettings";
 import { useSecretStoreStore } from "../stores/secretStore";
 
 interface SettingsModalProps {
@@ -485,6 +486,11 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
                           {cat === "Academic Export" && (
                             <div className="mt-3">
                               <AcademicExportSettings />
+                            </div>
+                          )}
+                          {cat === "Editor" && (
+                            <div className="mt-3">
+                              <CompanionSearchPathSettings />
                             </div>
                           )}
                           {Array.from(grouped).map(([groupName, groupResults]) => (

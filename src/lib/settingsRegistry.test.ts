@@ -7,8 +7,8 @@ import {
 } from "./settingsRegistry";
 
 describe("SETTINGS_REGISTRY", () => {
-  it("has 31 entries", () => {
-    expect(SETTINGS_REGISTRY).toHaveLength(31);
+  it("has 32 entries", () => {
+    expect(SETTINGS_REGISTRY).toHaveLength(32);
   });
 
   it("every entry has required fields defined", () => {
@@ -54,6 +54,14 @@ describe("SETTINGS_REGISTRY", () => {
     expect(entry!.controlType).toBe("segmented");
   });
 
+  it("companionSearchPath entry exists with controlType 'custom' in Editor category", () => {
+    const entry = SETTINGS_REGISTRY.find((e) => e.storeField === "companionSearchPath");
+    expect(entry).toBeDefined();
+    expect(entry!.controlType).toBe("custom");
+    expect(entry!.category).toBe("Editor");
+    expect(entry!.jsonKey).toBe("companion.searchPath");
+  });
+
   it("all 3 type-specific prompt entries exist", () => {
     const promptFields = [
       "llmPromptLlm", "llmPromptTr", "llmPromptQ",
@@ -86,7 +94,7 @@ describe("groupByCategory", () => {
     const grouped = groupByCategory(SETTINGS_REGISTRY);
     expect(grouped.size).toBe(8);
     expect(grouped.get("Appearance")).toHaveLength(6);
-    expect(grouped.get("Editor")).toHaveLength(3);
+    expect(grouped.get("Editor")).toHaveLength(4);
     expect(grouped.get("Cross-references")).toHaveLength(3);
     expect(grouped.get("Annotations")).toHaveLength(5);
     expect(grouped.get("LLM")).toHaveLength(7);
@@ -114,7 +122,7 @@ describe("filterSettings", () => {
 
   it("returns all entries with empty indices for empty query", () => {
     const results = filterSettings(SETTINGS_REGISTRY, "");
-    expect(results).toHaveLength(31);
+    expect(results).toHaveLength(32);
     for (const r of results) {
       expect(r.indices).toEqual([]);
     }
@@ -131,6 +139,16 @@ describe("filterSettings", () => {
       expect(
         results.some((r) => r.entry.category === "LLM"),
         `expected an LLM-category match for query "${q}"`,
+      ).toBe(true);
+    }
+  });
+
+  it("matches the companion search-path entry for related queries via keywords", () => {
+    for (const q of ["companion", "pdf", "search path", "sibling"]) {
+      const results = filterSettings(SETTINGS_REGISTRY, q);
+      expect(
+        results.some((r) => r.entry.storeField === "companionSearchPath"),
+        `expected a companionSearchPath match for query "${q}"`,
       ).toBe(true);
     }
   });
