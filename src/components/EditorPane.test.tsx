@@ -269,6 +269,18 @@ describe("EditorPane", () => {
       });
     });
 
+    it("computes noteDir for absolute pagePath", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "/external/dir/hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      useWorkspaceStore.setState({ workspacePath: "/ws" });
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(screen.getByTestId("mock-editor")).toHaveAttribute("data-note-dir", "/external/dir");
+      });
+    });
+
     it("returns empty string when workspacePath is null", async () => {
       usePaneStore.setState({
         root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
@@ -295,6 +307,20 @@ describe("EditorPane", () => {
       });
       const resolve = capturedProps.resolveImageSrc as (src: string) => string;
       expect(resolve("img.png")).toBe("asset://localhost//ws/sub/img.png");
+    });
+
+    it("resolves relative path for absolute pagePath", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "/external/dir/hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      useWorkspaceStore.setState({ workspacePath: "/ws" });
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.resolveImageSrc).toBeDefined();
+      });
+      const resolve = capturedProps.resolveImageSrc as (src: string) => string;
+      expect(resolve("img.png")).toBe("asset://localhost//external/dir/img.png");
     });
 
     it("passes through absolute URLs", async () => {

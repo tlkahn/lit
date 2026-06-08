@@ -71,6 +71,15 @@ describe("PdfViewerPane", () => {
     expect(getByTestId("pdf-viewer-/ws/doc.pdf-p1")).toBeTruthy();
   });
 
+  it("does not prepend workspacePath for absolute pagePath", () => {
+    usePaneStore.setState({
+      root: { type: "leaf", id: "p1", pagePath: "/external/dir/doc.pdf" },
+      focusedPaneId: "p1",
+    });
+    const { getByTestId } = render(<PdfViewerPane paneId="p1" />);
+    expect(getByTestId("pdf-viewer-/external/dir/doc.pdf-p1")).toBeTruthy();
+  });
+
   it("shows empty state when pagePath is null", () => {
     usePaneStore.setState({
       root: { type: "leaf", id: "p1", pagePath: null },

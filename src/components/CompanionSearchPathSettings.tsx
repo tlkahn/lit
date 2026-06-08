@@ -87,7 +87,7 @@ export function CompanionSearchPathSettings() {
   return (
     <div data-testid="companion-search-path-settings" className="space-y-2">
       <p className="text-xs text-text-muted">
-        Directories to search for a note's PDF/Markdown companion. <code>.</code> is the workspace root.
+        Directories to search for a note's PDF/Markdown companion. Supports relative paths (from workspace root), absolute paths, and ~ for home directory.
       </p>
       {paths.map((p, i) => (
         <div key={ids[i]} className="flex items-center gap-1.5">

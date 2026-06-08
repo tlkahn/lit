@@ -130,29 +130,30 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
   }, [paneId]);
 
   const noteDir = useMemo(() => {
-    if (!workspacePath || !pagePath) return "";
+    if (!pagePath) return "";
+    if (pagePath.startsWith("/")) {
+      const dir = getFileDir(pagePath)!;
+      return dir || "/";
+    }
+    if (!workspacePath) return "";
     const fileDir = getFileDir(pagePath)!;
     return fileDir ? workspacePath + "/" + fileDir : workspacePath;
   }, [workspacePath, pagePath]);
 
   const resolveImageSrc = useCallback((src: string): string => {
     if (/^(https?:|data:|blob:)/.test(src)) return src;
-    if (!workspacePath || !pagePath) return src;
-    const fileDir = getFileDir(pagePath)!;
-    const absolutePath = workspacePath + "/" + resolveRelativePath(fileDir, src);
-    return convertFileSrc(absolutePath);
-  }, [workspacePath, pagePath]);
+    if (!noteDir) return src;
+    return convertFileSrc("/" + resolveRelativePath(noteDir, src));
+  }, [noteDir]);
 
   const openFilePath = useCallback((path: string) => {
     if (path.startsWith("/")) {
       openPath(path);
       return;
     }
-    if (!workspacePath || !pagePath) return;
-    const fileDir = getFileDir(pagePath)!;
-    const absolutePath = workspacePath + "/" + resolveRelativePath(fileDir, path);
-    openPath(absolutePath);
-  }, [workspacePath, pagePath]);
+    if (!noteDir) return;
+    openPath("/" + resolveRelativePath(noteDir, path));
+  }, [noteDir]);
 
   const navigateToPage = useCallback((target: string, section?: string, departurePos?: number) => {
     navigateWikilink(target, section, {

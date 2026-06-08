@@ -152,7 +152,7 @@ pub fn companion_search_paths(prefs: &Preferences) -> Vec<String> {
                 .filter_map(|x| x.as_str())
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
-                .map(String::from)
+                .map(|s| crate::cli::expand_tilde(s))
                 .collect::<Vec<String>>()
         })
         .filter(|v| !v.is_empty())
@@ -774,6 +774,37 @@ mod tests {
         assert_eq!(
             super::companion_search_paths(&prefs),
             vec![".".to_string(), "pdfs".to_string()]
+        );
+    }
+
+    #[test]
+    fn companion_search_paths_expands_tilde() {
+        let prefs: Preferences =
+            serde_json::from_str(r#"{"companion.searchPath": ["~/pdfs"]}"#).unwrap();
+        let home = std::env::var("HOME").unwrap();
+        assert_eq!(
+            super::companion_search_paths(&prefs),
+            vec![format!("{home}/pdfs")]
+        );
+    }
+
+    #[test]
+    fn companion_search_paths_preserves_absolute() {
+        let prefs: Preferences =
+            serde_json::from_str(r#"{"companion.searchPath": ["/abs/path"]}"#).unwrap();
+        assert_eq!(
+            super::companion_search_paths(&prefs),
+            vec!["/abs/path".to_string()]
+        );
+    }
+
+    #[test]
+    fn companion_search_paths_does_not_expand_mid_tilde() {
+        let prefs: Preferences =
+            serde_json::from_str(r#"{"companion.searchPath": ["foo/~bar"]}"#).unwrap();
+        assert_eq!(
+            super::companion_search_paths(&prefs),
+            vec!["foo/~bar".to_string()]
         );
     }
 

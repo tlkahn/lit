@@ -122,12 +122,13 @@ fn canonicalize_within_root(root: &Path, absolute: &Path, candidate: &Path) -> S
 }
 
 /// Given a workspace-relative path to a markdown or PDF file, return the
-/// relative path of its sibling with the swapped extension (md<->pdf) if that
-/// sibling exists on disk under `root`. Looks first in the same directory, then
-/// in each of `search_paths` (workspace-relative directories) for a file with
-/// the same name and the swapped extension. Returns `None` for unsupported
-/// extensions or when no companion exists. The returned string uses forward
-/// slashes to match `PageMeta.relative_path`.
+/// path of its sibling with the swapped extension (md<->pdf) if that sibling
+/// exists on disk. Looks first in the same directory under `root`, then in
+/// each of `search_paths` (workspace-relative or absolute directories) for a
+/// file with the same name and the swapped extension. Returns `None` for
+/// unsupported extensions or when no companion exists. The returned string
+/// uses forward slashes; it is workspace-relative when the companion is under
+/// `root`, or absolute when found via an absolute search path outside `root`.
 pub fn find_companion(relative_path: &str, root: &Path, search_paths: &[String]) -> Option<String> {
     let rel = Path::new(relative_path);
     let ext = rel.extension()?.to_str()?.to_ascii_lowercase();
@@ -814,6 +815,21 @@ mod tests {
             find_companion("paper.md", root, &[]),
             Some("paper.pdf".to_string())
         );
+    }
+
+    #[test]
+    fn find_companion_via_absolute_search_path() {
+        let workspace = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        let root = workspace.path();
+        std::fs::write(root.join("paper.md"), "x").unwrap();
+        std::fs::write(external.path().join("paper.pdf"), "x").unwrap();
+        let ext_str = external.path().to_str().unwrap().to_string();
+        let result = find_companion("paper.md", root, &[ext_str]);
+        assert!(result.is_some());
+        let path = result.unwrap();
+        assert!(path.starts_with('/'), "expected absolute path, got: {path}");
+        assert!(path.ends_with("paper.pdf"));
     }
 
     #[test]
