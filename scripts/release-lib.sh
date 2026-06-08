@@ -263,6 +263,42 @@ release_upload_dmg() {
   aws s3 cp "$REPO_ROOT/Lit_${tag}_aarch64.dmg" "s3://${S3_BUCKET}/releases/Lit_${tag}_aarch64.dmg"
 }
 
+release_compute_checksums() {
+  local tag="$1"
+  local dmg="$REPO_ROOT/Lit_${tag}_aarch64.dmg"
+  if [[ ! -f "$dmg" ]]; then
+    echo "Error: DMG not found at $dmg" >&2
+    return 1
+  fi
+  echo "── Computing SHA-256 checksums..."
+  RELEASE_DMG_SHA256="$(shasum -a 256 "$dmg" | awk '{print $1}')"
+  export RELEASE_DMG_SHA256
+  (cd "$REPO_ROOT" && shasum -a 256 "Lit_${tag}_aarch64.dmg") > "$dmg.sha256"
+  echo "DMG SHA-256: $RELEASE_DMG_SHA256"
+
+  if [[ -n "${RELEASE_UPDATE_TARBALL:-}" && -f "$RELEASE_UPDATE_TARBALL" ]]; then
+    RELEASE_TARBALL_SHA256="$(shasum -a 256 "$RELEASE_UPDATE_TARBALL" | awk '{print $1}')"
+    export RELEASE_TARBALL_SHA256
+    local tarball_basename
+    tarball_basename="$(basename "$RELEASE_UPDATE_TARBALL")"
+    (cd "$(dirname "$RELEASE_UPDATE_TARBALL")" && shasum -a 256 "$tarball_basename") > "${RELEASE_UPDATE_TARBALL}.sha256"
+    echo "Tarball SHA-256: $RELEASE_TARBALL_SHA256"
+  fi
+}
+
+release_upload_checksums() {
+  local tag="$1"
+  if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
+    echo "── [DRY RUN] Would upload .sha256 checksum files to S3"
+    return 0
+  fi
+  echo "── Uploading checksums to S3..."
+  aws s3 cp "$REPO_ROOT/Lit_${tag}_aarch64.dmg.sha256" "s3://${S3_BUCKET}/releases/Lit_${tag}_aarch64.dmg.sha256"
+  if [[ -n "${RELEASE_UPDATE_TARBALL:-}" && -f "${RELEASE_UPDATE_TARBALL}.sha256" ]]; then
+    aws s3 cp "${RELEASE_UPDATE_TARBALL}.sha256" "s3://${S3_BUCKET}/releases/$(basename "${RELEASE_UPDATE_TARBALL}").sha256"
+  fi
+}
+
 release_deploy_website() {
   local tag="$1"
   if [[ "${DRY_RUN:-0}" -eq 1 ]]; then

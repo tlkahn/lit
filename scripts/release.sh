@@ -57,8 +57,10 @@ release_codesign_pdfium
 release_tauri_build
 release_copy_dmg "$TAG"
 release_generate_update_manifest "$TAG"
+release_compute_checksums "$TAG"
 release_upload_update_artifacts "$TAG"
 release_upload_dmg "$TAG"
+release_upload_checksums "$TAG"
 release_deploy_website "$TAG"
 
 echo ""

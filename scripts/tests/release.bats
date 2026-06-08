@@ -646,11 +646,160 @@ EOF
 
 # ── Cycle 14: Orchestrator integration ───────────────────────────────────────
 
+# ── Cycle 15: Checksum computation ─────────────────────────────────────────
+
+@test "release_compute_checksums: computes DMG SHA-256 and exports it" {
+  source_lib
+  REPO_ROOT="$TEST_TEMP_DIR"
+  echo "fake-dmg-content" > "$TEST_TEMP_DIR/Lit_v0.9.2_aarch64.dmg"
+  local expected
+  expected="$(shasum -a 256 "$TEST_TEMP_DIR/Lit_v0.9.2_aarch64.dmg" | awk '{print $1}')"
+  release_compute_checksums v0.9.2
+  [ "$RELEASE_DMG_SHA256" = "$expected" ]
+}
+
+@test "release_compute_checksums: writes sidecar file in shasum -c format" {
+  source_lib
+  REPO_ROOT="$TEST_TEMP_DIR"
+  echo "fake-dmg-content" > "$TEST_TEMP_DIR/Lit_v0.9.2_aarch64.dmg"
+  release_compute_checksums v0.9.2
+  [ -f "$TEST_TEMP_DIR/Lit_v0.9.2_aarch64.dmg.sha256" ]
+  # Verify the sidecar is in shasum -c compatible format
+  (cd "$TEST_TEMP_DIR" && shasum -c "Lit_v0.9.2_aarch64.dmg.sha256")
+}
+
+@test "release_compute_checksums: fails when DMG not found" {
+  source_lib
+  REPO_ROOT="$TEST_TEMP_DIR"
+  run release_compute_checksums v0.9.2
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"not found"* ]] || [[ "$output" == *"No DMG"* ]]
+}
+
+# ── Cycle 16: Tarball checksum ─────────────────────────────────────────────
+
+@test "release_compute_checksums: computes tarball SHA-256 when RELEASE_UPDATE_TARBALL is set" {
+  source_lib
+  REPO_ROOT="$TEST_TEMP_DIR"
+  echo "fake-dmg-content" > "$TEST_TEMP_DIR/Lit_v0.9.2_aarch64.dmg"
+  echo "fake-tarball-content" > "$TEST_TEMP_DIR/update.app.tar.gz"
+  export RELEASE_UPDATE_TARBALL="$TEST_TEMP_DIR/update.app.tar.gz"
+  local expected
+  expected="$(shasum -a 256 "$TEST_TEMP_DIR/update.app.tar.gz" | awk '{print $1}')"
+  release_compute_checksums v0.9.2
+  [ "$RELEASE_TARBALL_SHA256" = "$expected" ]
+  [ -f "$TEST_TEMP_DIR/update.app.tar.gz.sha256" ]
+}
+
+# ── Cycle 17: Checksum upload ──────────────────────────────────────────────
+
+@test "release_upload_checksums: uploads .sha256 files via aws s3 cp" {
+  source_lib
+  mock_command aws
+  REPO_ROOT="$TEST_TEMP_DIR"
+  S3_BUCKET="my-bucket"
+  echo "abc123  Lit_v0.9.2_aarch64.dmg" > "$TEST_TEMP_DIR/Lit_v0.9.2_aarch64.dmg.sha256"
+  release_upload_checksums v0.9.2
+  assert_mock_called_with "aws s3 cp"
+  assert_mock_called_with "Lit_v0.9.2_aarch64.dmg.sha256"
+}
+
+@test "release_upload_checksums: uploads tarball sidecar when present" {
+  source_lib
+  mock_command aws
+  REPO_ROOT="$TEST_TEMP_DIR"
+  S3_BUCKET="my-bucket"
+  echo "abc123  Lit_v0.9.2_aarch64.dmg" > "$TEST_TEMP_DIR/Lit_v0.9.2_aarch64.dmg.sha256"
+  echo "def456  update.app.tar.gz" > "$TEST_TEMP_DIR/update.app.tar.gz.sha256"
+  export RELEASE_UPDATE_TARBALL="$TEST_TEMP_DIR/update.app.tar.gz"
+  release_upload_checksums v0.9.2
+  assert_mock_called_with "update.app.tar.gz.sha256"
+}
+
+@test "release_upload_checksums: skipped when DRY_RUN=1" {
+  source_lib
+  export DRY_RUN=1
+  export REPO_ROOT="$TEST_TEMP_DIR"
+  run release_upload_checksums v0.9.2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"DRY RUN"* ]]
+}
+
+# ── Cycle 18: deploy-website.sh checksum injection ─────────────────────────
+
+@test "deploy-website.sh: injects RELEASE_DMG_SHA256 into _index.md and hugo.toml" {
+  local INDEX="$TEST_TEMP_DIR/_index.md"
+  local TOML="$TEST_TEMP_DIR/hugo.toml"
+  cat > "$INDEX" <<'EOF'
+---
+download_sha256: ""
+---
+EOF
+  cat > "$TOML" <<'EOF'
+[params]
+  downloadSHA256 = ''
+EOF
+
+  RELEASE_DMG_SHA256="abc123def456"
+  if [[ -n "${RELEASE_DMG_SHA256:-}" ]]; then
+    sed "s|^download_sha256:.*|download_sha256: \"$RELEASE_DMG_SHA256\"|" "$INDEX" > "$INDEX.tmp" && mv "$INDEX.tmp" "$INDEX"
+    sed "s|^  downloadSHA256 = .*|  downloadSHA256 = '$RELEASE_DMG_SHA256'|" "$TOML" > "$TOML.tmp" && mv "$TOML.tmp" "$TOML"
+  fi
+
+  grep -q 'download_sha256: "abc123def456"' "$INDEX"
+  grep -q "downloadSHA256 = 'abc123def456'" "$TOML"
+}
+
+@test "deploy-website.sh: checksum injection is no-op when RELEASE_DMG_SHA256 is empty" {
+  local INDEX="$TEST_TEMP_DIR/_index.md"
+  local TOML="$TEST_TEMP_DIR/hugo.toml"
+  cat > "$INDEX" <<'EOF'
+---
+download_sha256: ""
+---
+EOF
+  cat > "$TOML" <<'EOF'
+[params]
+  downloadSHA256 = ''
+EOF
+
+  RELEASE_DMG_SHA256=""
+  if [[ -n "${RELEASE_DMG_SHA256:-}" ]]; then
+    sed "s|^download_sha256:.*|download_sha256: \"$RELEASE_DMG_SHA256\"|" "$INDEX" > "$INDEX.tmp" && mv "$INDEX.tmp" "$INDEX"
+    sed "s|^  downloadSHA256 = .*|  downloadSHA256 = '$RELEASE_DMG_SHA256'|" "$TOML" > "$TOML.tmp" && mv "$TOML.tmp" "$TOML"
+  fi
+
+  grep -q 'download_sha256: ""' "$INDEX"
+  grep -q "downloadSHA256 = ''" "$TOML"
+}
+
+# ── Cycle 14: Orchestrator integration ───────────────────────────────────────
+
 @test "release.sh: dry-run calls stages in order" {
   # Mock all external tools
-  for tool in bun cargo codesign aws hugo gh jq git security; do
+  for tool in bun cargo codesign aws hugo gh jq git security shasum; do
     mock_command "$tool"
   done
+
+  # bun tauri build must recreate the DMG that release_tauri_build deletes
+  cat > "$MOCK_BIN/bun" <<BUNEOF
+#!/usr/bin/env bash
+echo "bun \$@" >> "$MOCK_LOG"
+if [[ "\$*" == *"tauri build"* ]]; then
+  mkdir -p "$TEST_TEMP_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg"
+  touch "$TEST_TEMP_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Lit_0.1.0_aarch64.dmg"
+fi
+exit 0
+BUNEOF
+  chmod +x "$MOCK_BIN/bun"
+
+  # shasum must produce realistic output for release_compute_checksums
+  cat > "$MOCK_BIN/shasum" <<'SHASUMEOF'
+#!/usr/bin/env bash
+echo "shasum $@" >> "$MOCK_LOG"
+echo "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  $3"
+SHASUMEOF
+  chmod +x "$MOCK_BIN/shasum"
 
   # git tag verification needs to succeed
   cat > "$MOCK_BIN/git" <<'EOF'
@@ -684,8 +833,11 @@ EOF
   mkdir -p "$TEST_TEMP_DIR/src-tauri/binaries"
   mkdir -p "$TEST_TEMP_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg"
   mkdir -p "$TEST_TEMP_DIR/src-tauri/libs"
+  mkdir -p "$TEST_TEMP_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
   touch "$TEST_TEMP_DIR/src-tauri/target/aarch64-apple-darwin/release/lit-cli"
   touch "$TEST_TEMP_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Lit_0.1.0_aarch64.dmg"
+  touch "$TEST_TEMP_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Lit.app.tar.gz"
+  echo "SIGDATA" > "$TEST_TEMP_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Lit.app.tar.gz.sig"
   cp "$SCRIPT_DIR/release-lib.sh" "$TEST_TEMP_DIR/scripts/"
   cp "$SCRIPT_DIR/release.sh" "$TEST_TEMP_DIR/scripts/"
   cp "$SCRIPT_DIR/set-version.sh" "$TEST_TEMP_DIR/scripts/"
@@ -708,4 +860,6 @@ TOML
   assert_mock_called_with "bun install --frozen-lockfile"
   assert_mock_called_with "cargo build --release --bin lit-cli --target aarch64-apple-darwin"
   assert_mock_called_with "bun tauri build"
+  [[ "$output" == *"Computing SHA-256"* ]]
+  [[ "$output" == *"Would upload .sha256"* ]]
 }
