@@ -27,6 +27,7 @@ pub struct LicenseStatusResponse {
 fn source_to_string(source: &license::key::LicenseSource) -> String {
     match source {
         license::key::LicenseSource::Direct => "direct".into(),
+        license::key::LicenseSource::Other => "other".into(),
     }
 }
 
@@ -457,6 +458,20 @@ mod tests {
         assert_eq!(resp.source, Some("direct".into()));
         assert_eq!(resp.expires_at, Some(1735603200));
         assert_eq!(resp.expiry_date, Some("2024-12-31".into()));
+    }
+
+    #[test]
+    fn from_status_licensed_with_legacy_other_source() {
+        // A validly-signed legacy key whose `source` is now unrecognized
+        // (e.g. the removed `app_store` channel) deserializes to `Other`
+        // and surfaces as "other" in the status response.
+        let status = license::LicenseStatus::Licensed(sample_payload_with_source(
+            None,
+            license::key::LicenseSource::Other,
+        ));
+        let resp = LicenseStatusResponse::from_status(&status);
+        assert_eq!(resp.state, "licensed");
+        assert_eq!(resp.source, Some("other".into()));
     }
 
     #[test]

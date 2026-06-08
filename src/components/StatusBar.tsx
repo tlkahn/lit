@@ -95,7 +95,10 @@ function PdfPageNav() {
       <button
         data-testid="pdf-prev"
         disabled={pageIdx <= 0}
-        onClick={() => getPdfGoToPage(focusedPaneId)?.(pageIdx - 1)}
+        onClick={() => {
+          const current = usePanePdfLinkStore.getState().currentPage.get(focusedPaneId) ?? 0;
+          getPdfGoToPage(focusedPaneId)?.(current - 1);
+        }}
         className="px-0.5 disabled:opacity-30 disabled:cursor-not-allowed"
       >
         ‹
@@ -106,7 +109,10 @@ function PdfPageNav() {
       <button
         data-testid="pdf-next"
         disabled={pageIdx >= totalPages - 1}
-        onClick={() => getPdfGoToPage(focusedPaneId)?.(pageIdx + 1)}
+        onClick={() => {
+          const current = usePanePdfLinkStore.getState().currentPage.get(focusedPaneId) ?? 0;
+          getPdfGoToPage(focusedPaneId)?.(current + 1);
+        }}
         className="px-0.5 disabled:opacity-30 disabled:cursor-not-allowed"
       >
         ›

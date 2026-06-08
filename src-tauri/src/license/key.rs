@@ -11,6 +11,11 @@ const END_MARKER: &str = "-----END LICENSE KEY-----";
 #[serde(rename_all = "snake_case")]
 pub enum LicenseSource {
     Direct,
+    /// Catch-all for unrecognized/legacy source values (e.g. the removed
+    /// `app_store` channel). Ensures previously-issued, validly-signed keys
+    /// still deserialize instead of failing with an unknown-variant error.
+    #[serde(other)]
+    Other,
 }
 
 fn default_source() -> LicenseSource {
@@ -309,5 +314,28 @@ mod tests {
         let decoded = decode_payload(&b64).unwrap();
         assert_eq!(decoded.expires_at, None);
         assert_eq!(decoded.source, LicenseSource::Direct);
+    }
+
+    #[test]
+    fn decode_payload_unknown_source_falls_back_to_other() {
+        // Legacy keys minted before the app_store channel was removed carried
+        // "source":"app_store". They must still deserialize, not error.
+        let json = r#"{"license_id":"lic-as","name":"User","email":"u@example.com","issued_at":100,"type":"personal","source":"app_store"}"#;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(json.as_bytes());
+        let decoded = decode_payload(&b64).unwrap();
+        assert_eq!(decoded.source, LicenseSource::Other);
+    }
+
+    #[test]
+    fn verify_license_key_legacy_app_store_source_still_valid() {
+        let sk = SigningKey::generate(&mut OsRng);
+        let vk = sk.verifying_key();
+        let json = r#"{"license_id":"lic-as","name":"User","email":"u@example.com","issued_at":100,"type":"personal","source":"app_store"}"#;
+        let payload_b64 = base64::engine::general_purpose::STANDARD.encode(json.as_bytes());
+        let sig = sk.sign(payload_b64.as_bytes());
+        let sig_b64 = base64::engine::general_purpose::STANDARD.encode(sig.to_bytes());
+        let pem = format!("{}\n{}.{}\n{}", BEGIN_MARKER, payload_b64, sig_b64, END_MARKER);
+        let result = verify_license_key(&pem, &vk).unwrap();
+        assert_eq!(result.source, LicenseSource::Other);
     }
 }

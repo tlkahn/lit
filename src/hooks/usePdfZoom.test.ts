@@ -210,11 +210,43 @@ describe("usePdfZoom", () => {
     expect(result.current.zoomLevel).toBe(1);
   });
 
+  it("debounce does NOT call renderSharp while not ready (pdfOpen may still be in flight)", () => {
+    vi.useFakeTimers();
+    const renderSharp = vi.fn();
+    renderHook(() =>
+      usePdfZoom({ ready: false, scrollContainerRef: { current: null }, renderSharp }),
+    );
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    expect(renderSharp).not.toHaveBeenCalled();
+  });
+
+  it("debounce re-arms and fires renderSharp(1) once ready flips true", () => {
+    vi.useFakeTimers();
+    const renderSharp = vi.fn();
+    const { rerender } = renderHook(
+      ({ ready }: { ready: boolean }) =>
+        usePdfZoom({ ready, scrollContainerRef: { current: null }, renderSharp }),
+      { initialProps: { ready: false } },
+    );
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    expect(renderSharp).not.toHaveBeenCalled();
+
+    rerender({ ready: true });
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    expect(renderSharp).toHaveBeenCalledWith(1);
+  });
+
   it("debounce calls renderSharp with final zoom after DEBOUNCE_MS", () => {
     vi.useFakeTimers();
     const renderSharp = vi.fn();
     const { result } = renderHook(() =>
-      usePdfZoom({ ready: false, scrollContainerRef: { current: null }, renderSharp }),
+      usePdfZoom({ ready: true, scrollContainerRef: { current: null }, renderSharp }),
     );
     // Fires on mount with renderSharp(1).
     act(() => {
@@ -237,7 +269,7 @@ describe("usePdfZoom", () => {
     vi.useFakeTimers();
     const renderSharp = vi.fn();
     const { result } = renderHook(() =>
-      usePdfZoom({ ready: false, scrollContainerRef: { current: null }, renderSharp }),
+      usePdfZoom({ ready: true, scrollContainerRef: { current: null }, renderSharp }),
     );
     act(() => {
       vi.advanceTimersByTime(300); // drain mount renderSharp(1)

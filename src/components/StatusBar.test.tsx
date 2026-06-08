@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { mockInvoke } from "../test/tauri-mock";
 import { StatusBar } from "./StatusBar";
@@ -607,6 +607,61 @@ describe("StatusBar", () => {
       render(<StatusBar />);
       await userEvent.click(screen.getByTestId("pdf-next"));
       expect(goToPage).toHaveBeenCalledWith(4);
+      pdfPaneRef.unregisterPdfGoToPage("pdf");
+    });
+
+    it("rapid double-click on next advances two pages", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true, pages: [{ title: "doc", relative_path: "doc.pdf", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "pdf" as const }] });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pdf", pagePath: "doc.pdf" },
+        focusedPaneId: "pdf",
+      });
+      usePanePdfLinkStore.setState({
+        currentPage: new Map([["pdf", 3]]),
+        pageCount: new Map([["pdf", 10]]),
+      });
+      const goToPage = vi.fn((idx: number) => {
+        usePanePdfLinkStore.getState().setCurrentPage("pdf", idx);
+      });
+      pdfPaneRef.registerPdfGoToPage("pdf", goToPage);
+      render(<StatusBar />);
+      // Two synchronous native clicks before React commits a re-render
+      // (rapid double-click). The component does not re-render between the
+      // two handler invocations, so a stale-closure read of pageIdx would
+      // produce the same target page twice.
+      const next = screen.getByTestId("pdf-next");
+      act(() => {
+        next.click();
+        next.click();
+      });
+      expect(goToPage).toHaveBeenNthCalledWith(1, 4);
+      expect(goToPage).toHaveBeenNthCalledWith(2, 5);
+      pdfPaneRef.unregisterPdfGoToPage("pdf");
+    });
+
+    it("rapid double-click on prev retreats two pages", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true, pages: [{ title: "doc", relative_path: "doc.pdf", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "pdf" as const }] });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pdf", pagePath: "doc.pdf" },
+        focusedPaneId: "pdf",
+      });
+      usePanePdfLinkStore.setState({
+        currentPage: new Map([["pdf", 5]]),
+        pageCount: new Map([["pdf", 10]]),
+      });
+      const goToPage = vi.fn((idx: number) => {
+        usePanePdfLinkStore.getState().setCurrentPage("pdf", idx);
+      });
+      pdfPaneRef.registerPdfGoToPage("pdf", goToPage);
+      render(<StatusBar />);
+      // Two synchronous native clicks before React commits a re-render.
+      const prev = screen.getByTestId("pdf-prev");
+      act(() => {
+        prev.click();
+        prev.click();
+      });
+      expect(goToPage).toHaveBeenNthCalledWith(1, 4);
+      expect(goToPage).toHaveBeenNthCalledWith(2, 3);
       pdfPaneRef.unregisterPdfGoToPage("pdf");
     });
   });

@@ -49,9 +49,15 @@ export function usePdfZoom({
   }, [zoomLevel]);
 
   // Debounce sharp re-renders so rapid zoom gestures only render the final DPI.
-  // Fires on mount too (zoomLevel=1 → renderSharp(1), a cache hit, cheap). The
-  // cleanup-clear resets the timer on every zoomLevel change.
+  // Gated on `ready`: the effect must not fire until the PDF is open and page 0
+  // is cached (PdfViewer sets `rendered` only after `pdfOpen` resolves). Without
+  // this gate, a slow `pdfOpen` (large file / slow disk) could let the 300ms
+  // timer fire renderSharp against a not-yet-open PDF, whose rejection sets a
+  // permanent error. Re-arms when `ready` flips true; that first fire is
+  // zoomLevel=1 → renderSharp(1), a cheap cache hit. The cleanup-clear resets
+  // the timer on every zoomLevel change.
   useEffect(() => {
+    if (!ready) return;
     if (zoomDebounceRef.current) clearTimeout(zoomDebounceRef.current);
     zoomDebounceRef.current = setTimeout(() => {
       void renderSharp(zoomLevel);
@@ -59,7 +65,7 @@ export function usePdfZoom({
     return () => {
       if (zoomDebounceRef.current) clearTimeout(zoomDebounceRef.current);
     };
-  }, [zoomLevel, renderSharp]);
+  }, [ready, zoomLevel, renderSharp]);
 
   // Apply a zoom change computed from the current logical zoom, preserving the
   // viewport center across the instant CSS-zoom resize. Scroll must be adjusted

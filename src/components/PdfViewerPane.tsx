@@ -41,24 +41,19 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
 
   const handlePageChange = useCallback(
     (pageIndex: number) => {
-      console.log("[sync:rev:pdf] onPageChange page=%d pane=%s", pageIndex, paneId);
       usePanePdfLinkStore.getState().setCurrentPage(paneId, pageIndex);
       if (consumeForwardSync(paneId)) {
-        console.log("[sync:rev:pdf] SKIP — forward-sync initiated this page change");
         return;
       }
       const linked = usePanePdfLinkStore.getState().getLinkedPane(paneId);
       if (!linked) {
-        console.log("[sync:rev:pdf] no linked editor pane for %s", paneId);
         return;
       }
       const view = getPaneView(linked);
       if (!view) {
-        console.log("[sync:rev:pdf] no EditorView for linked pane %s", linked);
         return;
       }
       const markers = getCachedPageMarkers(view.state.doc);
-      console.log("[sync:rev:pdf] dispatching reverse sync: page=%d, markers=%d, editor=%s", pageIndex, markers.length, linked);
       dispatchReverseSync(pageIndex, linked, markers);
     },
     [paneId],

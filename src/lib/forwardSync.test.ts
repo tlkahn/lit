@@ -118,6 +118,53 @@ describe("dispatchForwardSync", () => {
     });
   });
 
+  describe("logging hygiene", () => {
+    let logSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      logSpy.mockRestore();
+    });
+
+    it("does not log when scheduling or on the fire path", () => {
+      const goToPage = vi.fn();
+      dispatchForwardSync({ read: () => ({ offset: 60, markers }), goToPage });
+      // Schedule log would fire synchronously at call time.
+      expect(logSpy).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(DEBOUNCE_MS);
+      expect(goToPage).toHaveBeenCalledTimes(1);
+      expect(logSpy).not.toHaveBeenCalled();
+    });
+
+    it("does not log on the syncEnabled=false bail", () => {
+      const goToPage = vi.fn();
+      usePanePdfLinkStore.setState({ syncEnabled: false });
+      dispatchForwardSync({ read: () => ({ offset: 60, markers }), goToPage });
+      vi.advanceTimersByTime(DEBOUNCE_MS);
+      expect(logSpy).not.toHaveBeenCalled();
+    });
+
+    it("does not log on the read()=null bail", () => {
+      const goToPage = vi.fn();
+      dispatchForwardSync({ read: () => null, goToPage });
+      vi.advanceTimersByTime(DEBOUNCE_MS);
+      expect(logSpy).not.toHaveBeenCalled();
+    });
+
+    it("does not log on the echo-guard SUPPRESSED path", () => {
+      const goToPage = vi.fn();
+      usePanePdfLinkStore.getState().setLastSyncedPage(1);
+      dispatchForwardSync({ read: () => ({ offset: 60, markers }), goToPage });
+      vi.advanceTimersByTime(DEBOUNCE_MS);
+      expect(goToPage).not.toHaveBeenCalled();
+      expect(logSpy).not.toHaveBeenCalled();
+    });
+  });
+
   describe("echo guard", () => {
     it("ECHO_GUARD_MS comfortably exceeds DEBOUNCE_MS", () => {
       expect(ECHO_GUARD_MS).toBeGreaterThan(DEBOUNCE_MS);
