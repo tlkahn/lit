@@ -10,7 +10,6 @@ const END_MARKER: &str = "-----END LICENSE KEY-----";
 #[serde(rename_all = "snake_case")]
 pub enum LicenseSource {
     Direct,
-    AppStore,
 }
 
 fn default_source() -> LicenseSource {

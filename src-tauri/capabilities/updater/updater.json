@@ -1,7 +1,7 @@
 {
   "$schema": "../../gen/schemas/capabilities.json",
   "identifier": "updater",
-  "description": "In-app updater. Gated out of app-store builds via build.rs (the updater plugin is only registered under #[cfg(not(feature = \"app-store\"))]).",
+  "description": "In-app updater capability.",
   "windows": ["main", "workspace-*"],
   "permissions": ["updater:default"]
 }
