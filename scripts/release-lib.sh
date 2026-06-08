@@ -263,6 +263,59 @@ release_upload_dmg() {
   aws s3 cp "$REPO_ROOT/Lit_${tag}_aarch64.dmg" "s3://${S3_BUCKET}/releases/Lit_${tag}_aarch64.dmg"
 }
 
+release_compute_checksums() {
+  local tag="$1"
+  local dmg="$REPO_ROOT/Lit_${tag}_aarch64.dmg"
+  if [[ ! -f "$dmg" ]]; then
+    echo "Error: DMG not found at $dmg" >&2
+    return 1
+  fi
+  echo "── Computing SHA-256 checksums..."
+  RELEASE_DMG_SHA256="$(shasum -a 256 "$dmg" | awk '{print $1}')"
+  export RELEASE_DMG_SHA256
+  printf '%s  Lit_%s_aarch64.dmg\n' "$RELEASE_DMG_SHA256" "$tag" > "$dmg.sha256"
+  echo "DMG SHA-256: $RELEASE_DMG_SHA256"
+
+  if [[ -n "${RELEASE_UPDATE_TARBALL:-}" && -f "$RELEASE_UPDATE_TARBALL" ]]; then
+    RELEASE_TARBALL_SHA256="$(shasum -a 256 "$RELEASE_UPDATE_TARBALL" | awk '{print $1}')"
+    export RELEASE_TARBALL_SHA256
+    local tarball_basename
+    tarball_basename="$(basename "$RELEASE_UPDATE_TARBALL")"
+    printf '%s  %s\n' "$RELEASE_TARBALL_SHA256" "$tarball_basename" > "${RELEASE_UPDATE_TARBALL}.sha256"
+    echo "Tarball SHA-256: $RELEASE_TARBALL_SHA256"
+  fi
+}
+
+release_upload_checksums() {
+  local tag="$1"
+  if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
+    echo "── [DRY RUN] Would upload .sha256 checksum files to S3"
+    return 0
+  fi
+  echo "── Uploading checksums to S3..."
+  aws s3 cp "$REPO_ROOT/Lit_${tag}_aarch64.dmg.sha256" "s3://${S3_BUCKET}/releases/Lit_${tag}_aarch64.dmg.sha256"
+  if [[ -n "${RELEASE_UPDATE_TARBALL:-}" && -f "${RELEASE_UPDATE_TARBALL}.sha256" ]]; then
+    aws s3 cp "${RELEASE_UPDATE_TARBALL}.sha256" "s3://${S3_BUCKET}/releases/$(basename "${RELEASE_UPDATE_TARBALL}").sha256"
+  fi
+}
+
+release_inject_checksum() {
+  local index_file="$1"
+  local toml_file="$2"
+  if [[ -z "${RELEASE_DMG_SHA256:-}" ]]; then
+    return 0
+  fi
+  echo "==> Injecting DMG checksum"
+  sed "s|^download_sha256:.*|download_sha256: \"$RELEASE_DMG_SHA256\"|" "$index_file" > "$index_file.tmp" && mv "$index_file.tmp" "$index_file"
+  if ! grep -q "download_sha256: \"$RELEASE_DMG_SHA256\"" "$index_file"; then
+    echo "Warning: download_sha256 placeholder not found in $index_file — checksum not injected" >&2
+  fi
+  sed "s|^  downloadSHA256 = .*|  downloadSHA256 = '$RELEASE_DMG_SHA256'|" "$toml_file" > "$toml_file.tmp" && mv "$toml_file.tmp" "$toml_file"
+  if ! grep -q "downloadSHA256 = '$RELEASE_DMG_SHA256'" "$toml_file"; then
+    echo "Warning: downloadSHA256 placeholder not found in $toml_file — checksum not injected" >&2
+  fi
+}
+
 release_deploy_website() {
   local tag="$1"
   if [[ "${DRY_RUN:-0}" -eq 1 ]]; then

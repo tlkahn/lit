@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/release-lib.sh"
 cd "$SCRIPT_DIR/.."
 
 AWS_REGION="us-east-1"
@@ -50,6 +51,8 @@ if [ -n "$TAG" ]; then
   sed "s|^download_label:.*|download_label: \"$LABEL\"|" "$INDEX" > "$INDEX.tmp" && mv "$INDEX.tmp" "$INDEX"
   sed "s|^  downloadURL = .*|  downloadURL = '$URL'|" "$TOML" > "$TOML.tmp" && mv "$TOML.tmp" "$TOML"
   sed "s|^  version = .*|  version = '$VERSION'|" "$TOML" > "$TOML.tmp" && mv "$TOML.tmp" "$TOML"
+
+  release_inject_checksum "$INDEX" "$TOML"
 
   echo "==> Pushing content update to website repo"
   (cd "$WEBSITE_DIR" &&

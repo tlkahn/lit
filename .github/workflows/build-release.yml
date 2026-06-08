@@ -140,4 +140,6 @@ jobs:
           # manifest schema and S3 key layout live in one place (the lib).
           source scripts/release-lib.sh
           release_generate_update_manifest "$TAG"
+          release_compute_checksums "$TAG"
           release_upload_update_artifacts "$TAG"
+          release_upload_checksums "$TAG"
