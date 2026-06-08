@@ -57,6 +57,13 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
   const currentPageRef = useRef(currentPage);
   const cacheRef = useRef(new Map<string, RenderedPage>());
   const navSeqRef = useRef(0);
+  // Monotonic zoom-render token, the zoom analog of navSeqRef. Each renderSharp
+  // call claims the next token at entry; after its (possibly slow) IPC awaits it
+  // commits only if still the latest. This prevents an out-of-order stale
+  // resolution (e.g. a slow renderSharp(1.5) finishing after a fast cache-hit
+  // renderSharp(2)) from overwriting renderedZoomRef + the bitmap with the wrong
+  // zoom. The file+page guards below do not cover the zoom dimension.
+  const zoomSeqRef = useRef(0);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   // The logical zoom the *current* `rendered` image was produced at. The mount
   // render uses plain effectiveDpi (logical zoom = 1). cssScale (the visual
@@ -83,6 +90,10 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
   // so resetting to 100% returns renderedZoomRef — and thus cssScale — to 1.
   const renderSharp = useCallback(
     async (zoom: number) => {
+      // Claim a monotonic token synchronously at entry. A newer renderSharp (a
+      // further zoom whose debounce already fired) supersedes this one even if
+      // it resolves first, so a slow stale resolution here cannot revert us.
+      const mySeq = ++zoomSeqRef.current;
       const dpi = Math.round(getEffectiveDpi() * zoom);
       const page = currentPageRef.current;
       const key = cacheKey(page, dpi);
@@ -92,6 +103,9 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
         if (filePathRef.current !== filePath) return;
         // The page may have changed while an awaited render was in flight.
         if (currentPageRef.current !== page) return;
+        // A newer renderSharp superseded this one (out-of-order resolution):
+        // bail so a stale lower/higher zoom does not overwrite renderedZoomRef.
+        if (zoomSeqRef.current !== mySeq) return;
         if (!cached) cacheSet(cacheRef.current, key, rp);
         renderedZoomRef.current = zoom;
         setRendered(rp);
@@ -107,7 +121,7 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
   // they are coupled to page + IPC state; the hook receives renderSharp as an
   // injected (stable) callback and drives the debounced re-render through it.
   const ready = rendered !== null;
-  const { zoomLevel, resetZoom, handleZoomKey } = usePdfZoom({
+  const { zoomLevel, zoomLevelRef, resetZoom, handleZoomKey } = usePdfZoom({
     ready,
     scrollContainerRef,
     renderSharp,
@@ -162,6 +176,14 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
       // awaited render commits) derives the *next* target instead of recomputing
       // this same one and getting dropped by the same-page guard above.
       currentPageRef.current = index;
+      // goToPage always renders the target at base DPI (getEffectiveDpi(),
+      // logical zoom = 1). Reset renderedZoomRef so cssScale = zoomLevel /
+      // renderedZoom = zoomLevel: the freshly navigated base-DPI bitmap shows as
+      // a pure CSS upscale at the current zoom instead of snapping to 100% (which
+      // would happen if renderedZoom were left at the previous sharp value). A
+      // corrective sharp re-render is scheduled below on each committed branch
+      // since the usePdfZoom debounce does NOT re-fire on page navigation.
+      renderedZoomRef.current = 1;
       try {
         const dpi = getEffectiveDpi();
         const key = cacheKey(index, dpi);
@@ -172,6 +194,10 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
           // currentPageRef already set to index synchronously above.
           onPageChange?.(index);
           prefetchAdjacent(index, pdfInfo?.page_count ?? 0, dpi);
+          // The debounce in usePdfZoom does not re-fire on navigation, so if the
+          // user is zoomed, schedule a corrective sharp re-render for this page.
+          // Read the live zoom via the ref to keep it out of the dep array.
+          if (zoomLevelRef.current !== 1) void renderSharp(zoomLevelRef.current);
           return;
         }
 
@@ -185,6 +211,9 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
             currentPageRef.current = index;
             onPageChange?.(index);
             prefetchAdjacent(index, pdfInfo?.page_count ?? 0, dpi);
+            // See cache-hit branch: schedule a corrective sharp re-render when
+            // zoomed since the debounce does not re-fire on navigation.
+            if (zoomLevelRef.current !== 1) void renderSharp(zoomLevelRef.current);
           }
         } finally {
           // Only tear down the spinner if this navigation is still current. A
@@ -197,7 +226,7 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
         setError(err instanceof Error ? err.message : String(err));
       }
     },
-    [filePath, paneId, pdfInfo, prefetchAdjacent, onPageChange],
+    [filePath, paneId, pdfInfo, prefetchAdjacent, onPageChange, renderSharp],
   );
 
   // Publish the always-current goToPage closure to the external owner.
@@ -315,7 +344,11 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
             className="shadow-lg"
             style={{
               width: `${baseW}px`,
-              maxWidth: "none",
+              // At/below 100% (cssScale <= 1) keep the shrink-to-fit constraint
+              // so wide/landscape PDFs don't overflow the container. Once the
+              // user zooms in (cssScale > 1) lift it so the scale() transform
+              // can size the bitmap freely beyond the container.
+              maxWidth: cssScale > 1 ? "none" : "100%",
               transform: `scale(${cssScale})`,
               transformOrigin: "top left",
             }}

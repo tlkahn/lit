@@ -76,6 +76,13 @@ describe("usePdfZoom", () => {
   });
 
   it("applyZoom preserves viewport center", () => {
+    const rafCbs: FrameRequestCallback[] = [];
+    const rafSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((cb: FrameRequestCallback) => {
+        rafCbs.push(cb);
+        return rafCbs.length;
+      });
     const el = mockContainer({ scrollTop: 100, scrollLeft: 50, clientWidth: 800, clientHeight: 600 });
     const { result } = renderHook(() =>
       usePdfZoom({ ready: false, scrollContainerRef: { current: el }, renderSharp: vi.fn() }),
@@ -83,10 +90,80 @@ describe("usePdfZoom", () => {
     act(() => {
       result.current.applyZoom((z) => z * 1.25);
     });
+    // The scroll write is deferred to after React commits (rAF). Flush it.
+    act(() => {
+      rafCbs.forEach((cb) => cb(0));
+    });
     // top:  (100 + 300) * 1.25 - 300 = 200
     // left: (50  + 400) * 1.25 - 400 = 162.5
     expect(el.scrollTop).toBeCloseTo(200, 1);
     expect(el.scrollLeft).toBeCloseTo(162.5, 1);
+    rafSpy.mockRestore();
+  });
+
+  it("applyZoom defers scroll write so it survives the wrapper growing on zoom-in (no clamp)", () => {
+    // Model the real browser: a container whose scrollTop/scrollLeft setters
+    // clamp to [0, scrollHeight - clientHeight] / [0, scrollWidth - clientWidth]
+    // at assignment time, with a MUTABLE scroll size that React grows on commit.
+    const el = document.createElement("div");
+    let scrollTop = 300; // at the old max (scrollHeight 900 - clientHeight 600)
+    let scrollLeft = 200; // at the old max (scrollWidth 1200 - clientWidth 800)
+    let scrollHeight = 900;
+    let scrollWidth = 1200;
+    Object.defineProperty(el, "clientWidth", { configurable: true, get: () => 800 });
+    Object.defineProperty(el, "clientHeight", { configurable: true, get: () => 600 });
+    Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => scrollHeight });
+    Object.defineProperty(el, "scrollWidth", { configurable: true, get: () => scrollWidth });
+    Object.defineProperty(el, "scrollTop", {
+      configurable: true,
+      get: () => scrollTop,
+      set: (v: number) => {
+        scrollTop = Math.max(0, Math.min(v, scrollHeight - 600));
+      },
+    });
+    Object.defineProperty(el, "scrollLeft", {
+      configurable: true,
+      get: () => scrollLeft,
+      set: (v: number) => {
+        scrollLeft = Math.max(0, Math.min(v, scrollWidth - 800));
+      },
+    });
+
+    const rafCbs: FrameRequestCallback[] = [];
+    const rafSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((cb: FrameRequestCallback) => {
+        rafCbs.push(cb);
+        return rafCbs.length;
+      });
+
+    const { result } = renderHook(() =>
+      usePdfZoom({ ready: false, scrollContainerRef: { current: el }, renderSharp: vi.fn() }),
+    );
+
+    act(() => {
+      result.current.applyZoom((z) => z * 2);
+    });
+
+    // The deferral mechanism must be used: a synchronous write would be clamped.
+    expect(rafSpy).toHaveBeenCalled();
+
+    // Simulate React committing the larger (2x) wrapper before the rAF fires.
+    scrollHeight = 1800; // new max scroll: 1200
+    scrollWidth = 2400; // new max scroll: 1600
+
+    act(() => {
+      rafCbs.forEach((cb) => cb(0));
+    });
+
+    // Intended center-preserving targets:
+    // top:  (300 + 300) * 2 - 300 = 900  (a sync write clamps to old max 300)
+    // left: (200 + 400) * 2 - 400 = 800  (a sync write clamps to old max 400)
+    // Both fit the new (2x) wrapper: max scroll top 1200, left 1600.
+    expect(el.scrollTop).toBeCloseTo(900, 1);
+    expect(el.scrollLeft).toBeCloseTo(800, 1);
+
+    rafSpy.mockRestore();
   });
 
   it("handleZoomKey handles ctrl+= : returns true, prevents default, zooms by 1.25", () => {

@@ -72,12 +72,27 @@ export function usePdfZoom({
       const next = clampZoom(compute(old));
       if (next === old) return;
       const el = scrollContainerRef.current;
-      if (el) {
-        el.scrollTop = (el.scrollTop + el.clientHeight / 2) * (next / old) - el.clientHeight / 2;
-        el.scrollLeft = (el.scrollLeft + el.clientWidth / 2) * (next / old) - el.clientWidth / 2;
-      }
+      // Capture the center-preserving scroll target from the CURRENT (old)
+      // layout, but DEFER the DOM write to after React commits the new zoom.
+      // The wrapper's pixel size is driven by zoomLevel state; writing scrollTop
+      // before the larger wrapper is committed would let the browser clamp it to
+      // the old (smaller) max scroll on zoom-in (CSSOM View clamps at assignment
+      // time), losing the position. requestAnimationFrame runs after the paint
+      // of the committed wrapper, so the new max scroll is in effect.
+      const target = el
+        ? {
+            top: (el.scrollTop + el.clientHeight / 2) * (next / old) - el.clientHeight / 2,
+            left: (el.scrollLeft + el.clientWidth / 2) * (next / old) - el.clientWidth / 2,
+          }
+        : null;
       zoomLevelRef.current = next;
       setZoomLevel(next);
+      if (el && target) {
+        requestAnimationFrame(() => {
+          el.scrollTop = target.top;
+          el.scrollLeft = target.left;
+        });
+      }
     },
     [scrollContainerRef],
   );

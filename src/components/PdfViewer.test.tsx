@@ -834,6 +834,26 @@ describe("PdfViewer", () => {
     expect(screen.getByTestId("pdf-zoom-indicator").textContent).toBe("100%");
   });
 
+  it("constrains image to container at default zoom but not when zoomed in", async () => {
+    Object.defineProperty(window, "devicePixelRatio", { value: 2 });
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument());
+    // Phase 1: at default zoom (cssScale = 1) the image must shrink to fit the
+    // container so wide/landscape PDFs don't overflow at 100%.
+    const img = screen.getByTestId("pdf-page-image") as HTMLImageElement;
+    expect(img.style.maxWidth).toBe("100%");
+
+    // Phase 2: once the user zooms in (cssScale > 1) the constraint must lift so
+    // the scale() transform can size the bitmap freely beyond the container.
+    const container = screen.getByTestId("pdf-scroll-container");
+    fireEvent.wheel(container, { ctrlKey: true, deltaY: -100 });
+    await waitFor(() => {
+      const zoomedImg = screen.getByTestId("pdf-page-image") as HTMLImageElement;
+      expect(parseInt(screen.getByTestId("pdf-zoom-indicator").textContent!)).toBeGreaterThan(100);
+      expect(zoomedImg.style.maxWidth).toBe("none");
+    });
+  });
+
   it("ctrl+scroll up zooms in", async () => {
     render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
     await waitFor(() => expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument());
@@ -1036,6 +1056,199 @@ describe("PdfViewer", () => {
       (screen.getByTestId("pdf-zoom-wrapper") as HTMLElement).style.width,
     );
     expect(wrapperWidthAfter).toBeGreaterThan(wrapperWidthBefore);
+  });
+
+  it("keeps CSS upscale (cssScale = zoomLevel) when navigating to another page while zoomed", async () => {
+    // Vary png_path and dimensions by the requested dpi so cssScale is
+    // observable via img.style.transform and the bitmap's source DPI is visible.
+    let goToPage: ((i: number) => void) | null = null;
+    mockInvoke((cmd, args) => {
+      switch (cmd) {
+        case "pdf_open":
+          return mockPdfInfo;
+        case "pdf_render_page": {
+          const a = args as Record<string, unknown>;
+          const idx = (a?.pageIndex ?? 0) as number;
+          const dpi = (a?.dpi ?? 144) as number;
+          return {
+            page_index: idx,
+            png_path: `/tmp/lit-pdf-test/page_${idx}_dpi${dpi}.png`,
+            width: Math.round(1224 * (dpi / 144)),
+            height: Math.round(1584 * (dpi / 144)),
+          };
+        }
+        case "pdf_prefetch":
+          return null;
+        case "pdf_close":
+          return null;
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        registerGoToPage={(fn) => {
+          goToPage = fn;
+        }}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+    });
+    expect(goToPage).not.toBeNull();
+
+    const viewer = screen.getByTestId("pdf-viewer");
+
+    // Zoom to ~156% and let the debounce fire a sharp re-render so the bitmap is
+    // rendered at the zoomed DPI and renderedZoomRef == zoomLevel (cssScale=1).
+    vi.useFakeTimers();
+    try {
+      act(() => {
+        fireEvent.keyDown(viewer, { key: "=", ctrlKey: true });
+        fireEvent.keyDown(viewer, { key: "=", ctrlKey: true });
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(300);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(screen.getByTestId("pdf-zoom-indicator").textContent).toBe("156%");
+    await waitFor(() => {
+      const img = screen.getByTestId("pdf-page-image") as HTMLImageElement;
+      expect(img.style.transform).toBe("scale(1)");
+      expect(img.src).toContain("dpi225");
+    });
+
+    // Navigate to page 2 while zoomed. The freshly committed base-DPI bitmap for
+    // the new page must be shown as a pure CSS upscale (cssScale = zoomLevel),
+    // NOT snapped to 100%. Assert this intermediate state before any corrective
+    // sharp re-render lands.
+    let scaleAtBaseCommit: number | null = null;
+    act(() => {
+      goToPage!(1);
+    });
+    // Capture cssScale at the render where the new page's base-DPI (dpi144)
+    // bitmap is first committed, before any corrective sharp re-render swaps it.
+    await waitFor(() => {
+      const img = screen.getByTestId("pdf-page-image") as HTMLImageElement;
+      expect(img.src).toContain("page_1_dpi144");
+      const m = img.style.transform.match(/scale\(([0-9.]+)\)/);
+      expect(m?.[1]).toBeDefined();
+      scaleAtBaseCommit = parseFloat(m![1]!);
+    });
+
+    // The bug: renderedZoomRef stays at ~1.5625 → cssScale = 1.5625/1.5625 = 1
+    // (page snaps to 100% while indicator reads 156%). The fix resets
+    // renderedZoomRef to 1 → cssScale = zoomLevel = 1.5625 (pure CSS upscale).
+    expect(scaleAtBaseCommit).toBeCloseTo(1.5625, 2);
+    expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 2 / 3");
+    expect(screen.getByTestId("pdf-zoom-indicator").textContent).toBe("156%");
+  });
+
+  it("ignores a stale lower-zoom sharp render that resolves after a newer higher-zoom one", async () => {
+    // Two sequential debounced renderSharp calls can be in flight at once:
+    // renderSharp(lower) starts (debounce A fired), then a further zoom fires
+    // debounce B -> renderSharp(higher). If the HIGHER render resolves first and
+    // commits, then the LOWER render resolves late, it must NOT overwrite the
+    // committed higher-zoom bitmap/scale. Without a zoom-generation guard the
+    // stale lower render passes the file+page guards and reverts renderedZoomRef.
+    let resolveLow!: (v: unknown) => void;
+    let resolveHigh!: (v: unknown) => void;
+    const lowPromise = new Promise((r) => { resolveLow = r; });
+    const highPromise = new Promise((r) => { resolveHigh = r; });
+    // DPIs: zoom 1.5625 -> dpi 225; zoom ~1.953 -> dpi 281. Keyed by dpi so we
+    // can defer each independently and resolve them out of order.
+    const LOW_DPI = 225;
+    const HIGH_DPI = 281;
+    mockInvoke((cmd, args) => {
+      switch (cmd) {
+        case "pdf_open":
+          return mockPdfInfo;
+        case "pdf_render_page": {
+          const a = args as Record<string, unknown>;
+          const idx = (a?.pageIndex ?? 0) as number;
+          const dpi = (a?.dpi ?? 144) as number;
+          const page = {
+            page_index: idx,
+            png_path: `/tmp/lit-pdf-test/page_${idx}_dpi${dpi}.png`,
+            width: Math.round(1224 * (dpi / 144)),
+            height: Math.round(1584 * (dpi / 144)),
+          };
+          if (dpi === LOW_DPI) return lowPromise.then(() => page);
+          if (dpi === HIGH_DPI) return highPromise.then(() => page);
+          return page;
+        }
+        case "pdf_prefetch":
+          return null;
+        case "pdf_close":
+          return null;
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument());
+
+    const viewer = screen.getByTestId("pdf-viewer");
+
+    vi.useFakeTimers();
+    try {
+      // Zoom to 1.5625 (156%) and let debounce A fire -> renderSharp(1.5625)
+      // which awaits lowPromise (in flight, uncommitted).
+      act(() => {
+        fireEvent.keyDown(viewer, { key: "=", ctrlKey: true });
+        fireEvent.keyDown(viewer, { key: "=", ctrlKey: true });
+      });
+      expect(screen.getByTestId("pdf-zoom-indicator").textContent).toBe("156%");
+      await act(async () => {
+        vi.advanceTimersByTime(300);
+      });
+
+      // Zoom further to ~1.953 (195%) and let debounce B fire ->
+      // renderSharp(1.953) which awaits highPromise (also in flight).
+      act(() => {
+        fireEvent.keyDown(viewer, { key: "=", ctrlKey: true });
+      });
+      expect(screen.getByTestId("pdf-zoom-indicator").textContent).toBe("195%");
+      await act(async () => {
+        vi.advanceTimersByTime(300);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    // Resolve the HIGHER render first: it commits the 281-dpi bitmap and sets
+    // renderedZoomRef = 1.953, so cssScale collapses to 1.
+    await act(async () => {
+      resolveHigh(null);
+      await highPromise;
+    });
+
+    await waitFor(() => {
+      const img = screen.getByTestId("pdf-page-image") as HTMLImageElement;
+      expect(img.src).toContain(`dpi${HIGH_DPI}`);
+      expect(img.style.transform).toBe("scale(1)");
+    });
+
+    // Now resolve the STALE lower render. It is superseded and must NOT revert
+    // the bitmap or scale. Before the fix it overwrites renderedZoomRef = 1.5625
+    // and swaps in the 225-dpi bitmap, giving cssScale = 1.953/1.5625 = 1.25.
+    await act(async () => {
+      resolveLow(null);
+      await lowPromise;
+    });
+
+    const img = screen.getByTestId("pdf-page-image") as HTMLImageElement;
+    expect(img.src).toContain(`dpi${HIGH_DPI}`);
+    expect(img.src).not.toContain(`dpi${LOW_DPI}`);
+    expect(img.style.transform).toBe("scale(1)");
+    expect(screen.getByTestId("pdf-zoom-indicator").textContent).toBe("195%");
   });
 
   it("preserves viewport center when zooming", async () => {
