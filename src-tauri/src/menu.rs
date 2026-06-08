@@ -147,13 +147,13 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
                         dialog
                             .message("Command line tool installed at /usr/local/bin/lit")
                             .title("Success")
-                            .blocking_show();
+                            .show(|_| {});
                     }
                     Err(e) => {
                         dialog
                             .message(format!("Failed to install: {e}"))
                             .title("Error")
-                            .blocking_show();
+                            .show(|_| {});
                     }
                 }
             });
@@ -181,7 +181,7 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
                     .dialog()
                     .message(format!("Lit v{}", env!("LIT_GIT_VERSION")))
                     .title("About Lit")
-                    .blocking_show();
+                    .show(|_| {});
             });
         }
         MenuAction::ExportMarkdown => {
@@ -201,7 +201,7 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
                                 let root = match crate::commands::workspace::get_workspace_root(&state, window.label()) {
                                     Ok(r) => r,
                                     Err(e) => {
-                                        handle.dialog().message(format!("Export failed: {e}")).title("Export Error").blocking_show();
+                                        handle.dialog().message(format!("Export failed: {e}")).title("Export Error").show(|_| {});
                                         return;
                                     }
                                 };
@@ -215,7 +215,7 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
                                             let _ = window.emit_to(window.label(), "lit:export-complete", summary);
                                         }
                                         Err(e) => {
-                                            dialog_handle.dialog().message(format!("Export failed: {e}")).title("Export Error").blocking_show();
+                                            dialog_handle.dialog().message(format!("Export failed: {e}")).title("Export Error").show(|_| {});
                                         }
                                     }
                                 });
