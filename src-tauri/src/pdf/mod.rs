@@ -13,7 +13,10 @@ use serde::Serialize;
 
 pub mod disk_cache;
 
-use disk_cache::{read_manifest, write_manifest, CacheManifest};
+use disk_cache::{
+    dims_key, read_dims_index, read_manifest, write_dims_index, write_manifest, CacheManifest,
+    DimsIndex,
+};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -70,6 +73,88 @@ enum PdfCommand {
     Shutdown,
 }
 
+/// Decision for how the `'precache` drain loop should treat a command it pulled
+/// off the channel while a precache spiral is running.
+///
+/// The important variant is [`DrainAction::StashPrecache`]: a nested
+/// `PreCacheAll` (e.g. from a re-anchored seek) must NOT be silently dropped,
+/// because dropping it also drops its `progress_tx`, which strands the
+/// progress-forwarding thread with zero events. Instead it is stashed and
+/// re-processed once the current (now superseded) spiral abandons.
+enum DrainAction {
+    /// A nested `PreCacheAll` that supersedes the running spiral. Carries the
+    /// command (and its live `progress_tx`) so the loop can re-enter with it.
+    StashPrecache(PdfCommand),
+    /// Any other command — handle it inline with the existing logic.
+    Handle(PdfCommand),
+}
+
+/// Result of running a command through the shared `handle_command` logic. Both
+/// the main render loop and the `'precache` drain loop dispatch commands through
+/// the same handler so the two states can never diverge; this enum tells the
+/// caller what to do next.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CmdOutcome {
+    /// The command was handled; keep going (RenderPage, PreRender).
+    Continue,
+    /// The command replaced or tore down the document (Open, Close). A running
+    /// precache spiral must abandon promptly because its document/cache is gone.
+    AbandonPrecache,
+    /// Shutdown: the render thread must terminate.
+    Shutdown,
+}
+
+/// Pure decision: what outcome does a command imply for the precache spiral,
+/// independent of its side effects? Kept side-effect free so it can be
+/// unit-tested without pdfium. The actual document/cache mutation happens in
+/// `handle_command`; this only classifies control flow. `PreCacheAll` never
+/// reaches here — it is intercepted by [`classify_drain_command`].
+fn command_outcome(cmd: &PdfCommand) -> CmdOutcome {
+    match cmd {
+        PdfCommand::Open { .. } | PdfCommand::Close { .. } => CmdOutcome::AbandonPrecache,
+        PdfCommand::Shutdown => CmdOutcome::Shutdown,
+        PdfCommand::RenderPage { .. } | PdfCommand::PreRender { .. } => CmdOutcome::Continue,
+        // PreCacheAll is handled separately (re-entry / stash), never here.
+        PdfCommand::PreCacheAll { .. } => CmdOutcome::Continue,
+    }
+}
+
+/// Pure classification of a drained command. Kept side-effect free so it can be
+/// unit-tested without pdfium: it only decides whether a command supersedes the
+/// active precache spiral (stash) or should be handled inline.
+fn classify_drain_command(cmd: PdfCommand) -> DrainAction {
+    match cmd {
+        PdfCommand::PreCacheAll { .. } => DrainAction::StashPrecache(cmd),
+        other => DrainAction::Handle(other),
+    }
+}
+
+/// Decide whether a finished precache spiral should emit the final
+/// (total, total) completion on its progress channel. Only a spiral that
+/// exhausted its order normally (`completed_normally == true`) may emit it.
+/// Any aborted exit (cancel flag, Open/Close/Shutdown, no-document, or a
+/// superseding PreCacheAll) must NOT, because the progress forwarder treats
+/// `current >= total` as `done: true` and would flash a false 100% to the UI.
+fn should_emit_completion(completed_normally: bool) -> bool {
+    completed_normally
+}
+
+/// Decide whether a throttled intermediate progress event should be sent after
+/// a page was *actually rendered*. `rendered_count` counts real renders, not
+/// visited spiral positions: cache hits must contribute zero so the caller must
+/// only invoke this after a successful render+insert. Returns `Some((rendered,
+/// total))` on every 5th render, else `None`. It never reports `current ==
+/// total`; the authoritative final completion is sent separately, gated by
+/// `should_emit_completion`. This keeps a warm disk cache (all hits, no renders)
+/// from racing the counter to `total` and flashing a false 100% in the UI.
+fn precache_progress_event(rendered_count: usize, total: usize) -> Option<(usize, usize)> {
+    if rendered_count > 0 && rendered_count % 5 == 0 {
+        Some((rendered_count, total))
+    } else {
+        None
+    }
+}
+
 pub fn spiral_order(anchor: usize, page_count: usize) -> Vec<usize> {
     if page_count == 0 {
         return Vec::new();
@@ -107,8 +192,18 @@ pub fn cleanup_pdf_temp_dir(dir: &std::path::Path) {
 
 /// Scans a persistent cache directory for previously rendered page PNGs and
 /// rebuilds the in-memory render cache from them. Files are expected to be named
-/// `page_{idx}_{dpi}.png`; anything else (including `manifest.json`) is skipped.
-fn scan_cache_dir(dir: &std::path::Path) -> HashMap<(usize, u32), RenderedPage> {
+/// `page_{idx}_{dpi}.png`; anything else (including `manifest.json` and
+/// `dims.json`) is skipped.
+///
+/// For each PNG, the pixel dimensions are recovered from `dims` (the sidecar
+/// index, keyed by [`dims_key`]) when present, avoiding a file-open +
+/// PNG-header-parse per page on the open path. Only PNGs absent from the index
+/// (e.g. legacy caches written before the sidecar existed) fall back to
+/// [`image::image_dimensions`].
+fn scan_cache_dir(
+    dir: &std::path::Path,
+    dims: &DimsIndex,
+) -> HashMap<(usize, u32), RenderedPage> {
     let mut cache = HashMap::new();
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
@@ -138,9 +233,12 @@ fn scan_cache_dir(dir: &std::path::Path) -> HashMap<(usize, u32), RenderedPage> 
             Some(d) => d,
             None => continue,
         };
-        let (width, height) = match image::image_dimensions(&path) {
-            Ok(dims) => dims,
-            Err(_) => continue,
+        let (width, height) = match dims.get(&dims_key(idx, dpi)) {
+            Some(&dims) => dims,
+            None => match image::image_dimensions(&path) {
+                Ok(dims) => dims,
+                Err(_) => continue,
+            },
         };
         cache.insert(
             (idx, dpi),
@@ -153,6 +251,25 @@ fn scan_cache_dir(dir: &std::path::Path) -> HashMap<(usize, u32), RenderedPage> 
         );
     }
     cache
+}
+
+/// Records a freshly rendered page's pixel dimensions into the in-memory `dims`
+/// index and, when a persistent cache dir is active, flushes the full index to
+/// its `dims.json` sidecar. The write is best-effort (errors ignored), matching
+/// the surrounding cache code; persisting per render keeps the sidecar
+/// crash-consistent with whatever PNGs are already on disk.
+fn record_dims(
+    dims: &mut DimsIndex,
+    cache_dir: Option<&std::path::Path>,
+    page_index: usize,
+    dpi: u32,
+    width: u32,
+    height: u32,
+) {
+    dims.insert(dims_key(page_index, dpi), (width, height));
+    if let Some(dir) = cache_dir {
+        let _ = write_dims_index(dir, dims);
+    }
 }
 
 /// Refreshes the `last_accessed` timestamp in `dir`'s manifest, if one exists.
@@ -202,6 +319,10 @@ impl PdfRenderThread {
             let mut document: Option<lmpdf::Document> = None;
             let mut cache: HashMap<(usize, u32), RenderedPage> = HashMap::new();
             let mut active_cache_dir: Option<PathBuf> = None;
+            // Per-page rendered dimensions for the active cache dir, persisted to
+            // `dims.json` so a later warm-cache scan recovers (width,height)
+            // without re-parsing every PNG header. Mirrors `cache`'s lifecycle.
+            let mut dims: DimsIndex = DimsIndex::new();
 
             let render_page = |doc: &lmpdf::Document,
                                page_index: usize,
@@ -240,32 +361,51 @@ impl PdfRenderThread {
                 })
             };
 
-            while let Ok(cmd) = cmd_rx.recv() {
+            // Single source of truth for command side effects, shared by the
+            // main loop and the `'precache` drain loop so the two states cannot
+            // diverge. State is passed by mutable reference (not captured) to
+            // avoid aliasing borrows; `render_page` is borrowed shared. The
+            // returned `CmdOutcome` matches `command_outcome(&cmd)` and drives
+            // the precache loop's break/flag handling. `PreCacheAll` is never
+            // routed here — it is intercepted by `classify_drain_command`.
+            let handle_command = |cmd: PdfCommand,
+                                  document: &mut Option<lmpdf::Document>,
+                                  cache: &mut HashMap<(usize, u32), RenderedPage>,
+                                  active_cache_dir: &mut Option<PathBuf>,
+                                  dims: &mut DimsIndex|
+             -> CmdOutcome {
+                // The control-flow outcome is decided by the pure
+                // `command_outcome`; this closure only performs the side
+                // effects. Tying them together here keeps the single source of
+                // truth for precache abort/continue/shutdown decisions.
+                let outcome = command_outcome(&cmd);
                 match cmd {
                     PdfCommand::Open {
                         path,
                         disk_cache,
                         reply,
-                    } => {
-                        match pdfium.open_document(&path, None) {
-                            Ok(doc) => {
-                                let info = PdfInfo {
-                                    page_count: doc.page_count(),
-                                    path: path.clone(),
-                                };
-                                document = Some(doc);
-                                active_cache_dir = disk_cache.map(|c| c.cache_dir);
-                                cache = active_cache_dir
-                                    .as_deref()
-                                    .map(scan_cache_dir)
-                                    .unwrap_or_default();
-                                let _ = reply.send(Ok(info));
-                            }
-                            Err(e) => {
-                                let _ = reply.send(Err(format!("Failed to open PDF: {e}")));
-                            }
+                    } => match pdfium.open_document(&path, None) {
+                        Ok(doc) => {
+                            let info = PdfInfo {
+                                page_count: doc.page_count(),
+                                path: path.clone(),
+                            };
+                            *document = Some(doc);
+                            *active_cache_dir = disk_cache.map(|c| c.cache_dir);
+                            *dims = active_cache_dir
+                                .as_deref()
+                                .map(read_dims_index)
+                                .unwrap_or_default();
+                            *cache = active_cache_dir
+                                .as_deref()
+                                .map(|d| scan_cache_dir(d, dims))
+                                .unwrap_or_default();
+                            let _ = reply.send(Ok(info));
                         }
-                    }
+                        Err(e) => {
+                            let _ = reply.send(Err(format!("Failed to open PDF: {e}")));
+                        }
+                    },
                     PdfCommand::RenderPage {
                         page_index,
                         dpi,
@@ -273,196 +413,229 @@ impl PdfRenderThread {
                     } => {
                         if let Some(cached) = cache.get(&(page_index, dpi)) {
                             let _ = reply.send(Ok(cached.clone()));
-                            continue;
+                        } else {
+                            let result = (|| -> Result<RenderedPage, String> {
+                                let doc = document
+                                    .as_ref()
+                                    .ok_or_else(|| "No document open".to_string())?;
+                                render_page(
+                                    doc,
+                                    page_index,
+                                    dpi,
+                                    active_cache_dir.as_deref().unwrap_or(&thread_temp_dir),
+                                )
+                            })();
+                            if let Ok(ref rendered) = result {
+                                cache.insert((page_index, dpi), rendered.clone());
+                                record_dims(
+                                    dims,
+                                    active_cache_dir.as_deref(),
+                                    page_index,
+                                    dpi,
+                                    rendered.width,
+                                    rendered.height,
+                                );
+                            }
+                            let _ = reply.send(result);
                         }
-                        let result = (|| -> Result<RenderedPage, String> {
-                            let doc = document
-                                .as_ref()
-                                .ok_or_else(|| "No document open".to_string())?;
-                            render_page(
-                                doc,
-                                page_index,
-                                dpi,
-                                active_cache_dir.as_deref().unwrap_or(&thread_temp_dir),
-                            )
-                        })();
-                        if let Ok(ref rendered) = result {
-                            cache.insert((page_index, dpi), rendered.clone());
-                        }
-                        let _ = reply.send(result);
                     }
                     PdfCommand::Close { reply } => {
                         if let Some(dir) = active_cache_dir.as_ref() {
                             touch_manifest_last_accessed(dir);
                         }
-                        document = None;
+                        *document = None;
                         cache.clear();
+                        dims.clear();
                         cleanup_pdf_temp_dir(&thread_temp_dir);
-                        active_cache_dir = None;
+                        *active_cache_dir = None;
                         let _ = reply.send(Ok(()));
                     }
                     PdfCommand::PreRender { page_index, dpi } => {
-                        if cache.contains_key(&(page_index, dpi)) {
-                            continue;
-                        }
-                        if let Some(doc) = document.as_ref() {
-                            if let Ok(rendered) = render_page(
-                                doc,
-                                page_index,
-                                dpi,
-                                active_cache_dir.as_deref().unwrap_or(&thread_temp_dir),
-                            ) {
-                                cache.insert((page_index, dpi), rendered);
+                        if !cache.contains_key(&(page_index, dpi)) {
+                            if let Some(doc) = document.as_ref() {
+                                if let Ok(rendered) = render_page(
+                                    doc,
+                                    page_index,
+                                    dpi,
+                                    active_cache_dir.as_deref().unwrap_or(&thread_temp_dir),
+                                ) {
+                                    record_dims(
+                                        dims,
+                                        active_cache_dir.as_deref(),
+                                        page_index,
+                                        dpi,
+                                        rendered.width,
+                                        rendered.height,
+                                    );
+                                    cache.insert((page_index, dpi), rendered);
+                                }
                             }
                         }
                     }
-                    PdfCommand::PreCacheAll {
-                        dpi,
-                        anchor_page,
-                        cancel,
-                        progress_tx,
-                    } => {
-                        let page_count = match document.as_ref() {
-                            Some(doc) => doc.page_count(),
-                            None => continue, // no document; nothing to do
-                        };
-                        let total = page_count;
+                    PdfCommand::Shutdown => {}
+                    // PreCacheAll has its own re-entry handling; it is never
+                    // dispatched through this closure.
+                    PdfCommand::PreCacheAll { .. } => unreachable!(),
+                }
+                outcome
+            };
+
+            while let Ok(cmd) = cmd_rx.recv() {
+                match cmd {
+                    cmd @ PdfCommand::PreCacheAll { .. } => {
+                        // Re-entry loop: a nested PreCacheAll drained mid-spiral
+                        // (e.g. a re-anchored seek) is stashed in `next` rather
+                        // than dropped, then processed here with its own anchor,
+                        // cancel token, and progress_tx. Dropping it would strand
+                        // the progress-forwarding thread with zero events.
+                        let mut next = Some(cmd);
                         let mut shutdown = false;
-                        let order = spiral_order(anchor_page, page_count);
-                        let mut rendered_count = 0usize;
-                        'precache: for page_index in order {
+                        while let Some(PdfCommand::PreCacheAll {
+                            dpi,
+                            anchor_page,
+                            cancel,
+                            progress_tx,
+                        }) = next.take()
+                        {
+                            let page_count = match document.as_ref() {
+                                Some(doc) => doc.page_count(),
+                                None => break, // no document; nothing to do
+                            };
+                            let total = page_count;
+                            // Holds a superseding PreCacheAll to process next.
+                            let mut pending_precache: Option<PdfCommand> = None;
+                            let order = spiral_order(anchor_page, page_count);
+                            let mut rendered_count = 0usize;
+                            // True only if the spiral exhausts `order` without
+                            // any early break. Gates the final completion send.
+                            let mut completed_normally = true;
+                            'precache: for page_index in order {
                             // 1. cancel check
-                            if cancel.load(Ordering::Relaxed) {
+                            if cancel.load(Ordering::Acquire) {
+                                completed_normally = false;
                                 break 'precache;
                             }
                             // 2. drain & handle any pending priority commands so
                             //    navigation stays responsive during precaching
                             while let Ok(pending) = cmd_rx.try_recv() {
-                                match pending {
-                                    PdfCommand::RenderPage {
-                                        page_index: pi,
-                                        dpi: pd,
-                                        reply,
-                                    } => {
-                                        if let Some(cached) = cache.get(&(pi, pd)) {
-                                            let _ = reply.send(Ok(cached.clone()));
-                                        } else {
-                                            let result = (|| -> Result<RenderedPage, String> {
-                                                let doc = document.as_ref().ok_or_else(|| {
-                                                    "No document open".to_string()
-                                                })?;
-                                                render_page(
-                                                    doc,
-                                                    pi,
-                                                    pd,
-                                                    active_cache_dir
-                                                        .as_deref()
-                                                        .unwrap_or(&thread_temp_dir),
-                                                )
-                                            })();
-                                            if let Ok(ref r) = result {
-                                                cache.insert((pi, pd), r.clone());
-                                            }
-                                            let _ = reply.send(result);
-                                        }
-                                    }
-                                    PdfCommand::Open {
-                                        path,
-                                        disk_cache,
-                                        reply,
-                                    } => {
-                                        // a new document supersedes precache
-                                        match pdfium.open_document(&path, None) {
-                                            Ok(doc) => {
-                                                let info = PdfInfo {
-                                                    page_count: doc.page_count(),
-                                                    path: path.clone(),
-                                                };
-                                                document = Some(doc);
-                                                active_cache_dir =
-                                                    disk_cache.map(|c| c.cache_dir);
-                                                cache = active_cache_dir
-                                                    .as_deref()
-                                                    .map(scan_cache_dir)
-                                                    .unwrap_or_default();
-                                                let _ = reply.send(Ok(info));
-                                            }
-                                            Err(e) => {
-                                                let _ = reply
-                                                    .send(Err(format!("Failed to open PDF: {e}")));
-                                            }
-                                        }
-                                        break 'precache; // abandon precache for the old doc
-                                    }
-                                    PdfCommand::Close { reply } => {
-                                        if let Some(dir) = active_cache_dir.as_ref() {
-                                            touch_manifest_last_accessed(dir);
-                                        }
-                                        document = None;
-                                        cache.clear();
-                                        cleanup_pdf_temp_dir(&thread_temp_dir);
-                                        active_cache_dir = None;
-                                        let _ = reply.send(Ok(()));
-                                        break 'precache; // document gone; stop precaching
-                                    }
-                                    PdfCommand::PreRender {
-                                        page_index: pi,
-                                        dpi: pd,
-                                    } => {
-                                        if cache.contains_key(&(pi, pd)) {
-                                            continue;
-                                        }
-                                        if let Some(doc) = document.as_ref() {
-                                            if let Ok(r) = render_page(
-                                                doc,
-                                                pi,
-                                                pd,
-                                                active_cache_dir
-                                                    .as_deref()
-                                                    .unwrap_or(&thread_temp_dir),
-                                            ) {
-                                                cache.insert((pi, pd), r);
-                                            }
-                                        }
-                                    }
-                                    PdfCommand::Shutdown => {
-                                        shutdown = true;
+                                let pending = match classify_drain_command(pending) {
+                                    DrainAction::StashPrecache(cmd) => {
+                                        // A re-anchored seek supersedes this
+                                        // spiral. Stash it (overwriting any older
+                                        // stashed one — the newest seek wins) and
+                                        // abandon the current spiral promptly.
+                                        pending_precache = Some(cmd);
+                                        completed_normally = false;
                                         break 'precache;
                                     }
-                                    PdfCommand::PreCacheAll { .. } => { /* ignore nested */ }
+                                    DrainAction::Handle(cmd) => cmd,
+                                };
+                                // Same handler as the main loop — no duplicated
+                                // command logic. Map its outcome onto the spiral's
+                                // break/flag control flow.
+                                match handle_command(
+                                    pending,
+                                    &mut document,
+                                    &mut cache,
+                                    &mut active_cache_dir,
+                                    &mut dims,
+                                ) {
+                                    CmdOutcome::Continue => {}
+                                    CmdOutcome::AbandonPrecache => {
+                                        // Open replaced the doc, or Close tore it
+                                        // down: abandon this spiral and suppress
+                                        // its completion event.
+                                        completed_normally = false;
+                                        break 'precache;
+                                    }
+                                    CmdOutcome::Shutdown => {
+                                        shutdown = true;
+                                        completed_normally = false;
+                                        break 'precache;
+                                    }
                                 }
                             }
-                            // 3. skip if already cached
-                            if !cache.contains_key(&(page_index, dpi)) {
-                                // 4. render + insert (document still present?)
-                                match document.as_ref() {
-                                    Some(doc) => {
-                                        if let Ok(r) = render_page(
-                                            doc,
+                            // 3. skip if already cached. A cache HIT is zero
+                            //    work: it must NOT advance `rendered_count` or
+                            //    emit a throttled event, otherwise a warm disk
+                            //    cache races the counter to `total` and flashes
+                            //    a false 100% in the UI.
+                            if cache.contains_key(&(page_index, dpi)) {
+                                continue 'precache;
+                            }
+                            // 4. render + insert (document still present?)
+                            match document.as_ref() {
+                                Some(doc) => {
+                                    if let Ok(r) = render_page(
+                                        doc,
+                                        page_index,
+                                        dpi,
+                                        active_cache_dir.as_deref().unwrap_or(&thread_temp_dir),
+                                    ) {
+                                        record_dims(
+                                            &mut dims,
+                                            active_cache_dir.as_deref(),
                                             page_index,
                                             dpi,
-                                            active_cache_dir.as_deref().unwrap_or(&thread_temp_dir),
-                                        ) {
-                                            cache.insert((page_index, dpi), r);
+                                            r.width,
+                                            r.height,
+                                        );
+                                        cache.insert((page_index, dpi), r);
+                                        // 5. count only real renders, then emit a
+                                        //    throttled progress event. The final
+                                        //    (total, total) completion is sent
+                                        //    separately at end-of-spiral.
+                                        rendered_count += 1;
+                                        if let Some(ev) =
+                                            precache_progress_event(rendered_count, total)
+                                        {
+                                            let _ = progress_tx.send(ev);
                                         }
                                     }
-                                    None => break 'precache,
+                                }
+                                None => {
+                                    completed_normally = false;
+                                    break 'precache;
                                 }
                             }
-                            // 5. throttled progress: every 5 pages and on the final page
-                            rendered_count += 1;
-                            if rendered_count % 5 == 0 || rendered_count == total {
-                                let _ = progress_tx.send((rendered_count, total));
+                            }
+                            // A spiral superseded by a stashed PreCacheAll must
+                            // NOT emit a (total,total) completion on its old
+                            // progress_tx — that would tell the UI the abandoned
+                            // spiral finished. Its progress channel is replaced
+                            // by the new spiral, which emits its own completion.
+                            if let Some(p) = pending_precache.take() {
+                                next = Some(p);
+                                continue;
+                            }
+                            // Only a spiral that exhausted its order normally may
+                            // emit the final completion. ANY non-normal exit
+                            // (cancel flag, Open, Close, Shutdown, no-document, or
+                            // a superseding PreCacheAll) must NOT send
+                            // (total, total): the progress forwarder treats
+                            // current >= total as done:true and would flash a
+                            // false 100% to the UI for an aborted precache.
+                            if should_emit_completion(completed_normally) {
+                                let _ = progress_tx.send((total, total));
                             }
                         }
-                        // Always send a final completion so consumers see (total, total).
-                        let _ = progress_tx.send((total, total));
                         if shutdown {
                             break; // terminate the render thread
                         }
                     }
-                    PdfCommand::Shutdown => {
-                        break;
+                    // Open, RenderPage, Close, PreRender, Shutdown all share the
+                    // one handler. A Shutdown outcome terminates the thread.
+                    other => {
+                        if handle_command(
+                            other,
+                            &mut document,
+                            &mut cache,
+                            &mut active_cache_dir,
+                            &mut dims,
+                        ) == CmdOutcome::Shutdown
+                        {
+                            break;
+                        }
                     }
                 }
             }
@@ -635,6 +808,40 @@ mod tests {
         assert!(dir.exists());
         cleanup_pdf_temp_dir(&dir);
         assert!(!dir.exists());
+    }
+
+    #[test]
+    fn test_scan_cache_dir_uses_dims_index_without_reading_png() {
+        use disk_cache::{dims_key, read_dims_index, write_dims_index, DimsIndex};
+        let dir = tempfile::TempDir::new().unwrap();
+        // A cataloged page whose PNG bytes are intentionally NOT a valid PNG.
+        // If scan_cache_dir consulted the index, it never needs to parse these
+        // bytes; if it fell back to image::image_dimensions, it would error and
+        // drop the entry.
+        fs::write(dir.path().join("page_0_144.png"), b"not a real png").unwrap();
+        let mut idx: DimsIndex = std::collections::HashMap::new();
+        idx.insert(dims_key(0, 144), (612, 792));
+        write_dims_index(dir.path(), &idx).unwrap();
+
+        let cache = scan_cache_dir(dir.path(), &read_dims_index(dir.path()));
+        let page = cache.get(&(0, 144)).expect("entry should be present from index");
+        assert_eq!(page.width, 612);
+        assert_eq!(page.height, 792);
+    }
+
+    #[test]
+    fn test_scan_cache_dir_falls_back_for_uncatalogued_png() {
+        use disk_cache::read_dims_index;
+        let dir = tempfile::TempDir::new().unwrap();
+        // A real 2x3 RGBA PNG with NO dims.json entry: the legacy fallback must
+        // recover its dimensions by parsing the header.
+        let img = image::RgbaImage::new(2, 3);
+        img.save(dir.path().join("page_5_144.png")).unwrap();
+
+        let cache = scan_cache_dir(dir.path(), &read_dims_index(dir.path()));
+        let page = cache.get(&(5, 144)).expect("legacy PNG should still be scanned");
+        assert_eq!(page.width, 2);
+        assert_eq!(page.height, 3);
     }
 
     #[test]
@@ -1017,6 +1224,99 @@ mod tests {
     }
 
     #[test]
+    fn test_nested_precache_is_stashed_not_dropped() {
+        // A nested PreCacheAll drained while a spiral runs must be classified as
+        // StashPrecache (carrying the command), NOT silently handled/dropped.
+        let (tx, rx) = mpsc::channel::<(usize, usize)>();
+        let cmd = PdfCommand::PreCacheAll {
+            dpi: 144,
+            anchor_page: 7,
+            cancel: Arc::new(AtomicBool::new(false)),
+            progress_tx: tx,
+        };
+
+        match classify_drain_command(cmd) {
+            DrainAction::StashPrecache(PdfCommand::PreCacheAll {
+                anchor_page,
+                progress_tx,
+                ..
+            }) => {
+                assert_eq!(anchor_page, 7, "stashed command must retain its anchor");
+                // The progress channel must NOT have been dropped: a send must
+                // succeed and the receiver must observe it. This is the crux of
+                // the bug — dropping progress_tx strands the forwarding thread.
+                progress_tx
+                    .send((1, 10))
+                    .expect("stashed progress_tx must still be live");
+                assert_eq!(rx.recv().unwrap(), (1, 10));
+            }
+            DrainAction::StashPrecache(_) => panic!("stashed wrong command variant"),
+            DrainAction::Handle(_) => panic!("nested PreCacheAll was not stashed"),
+        }
+    }
+
+    #[test]
+    fn test_command_outcome_open_abandons_precache() {
+        let (tx, _rx) = mpsc::channel::<Result<PdfInfo, String>>();
+        let cmd = PdfCommand::Open {
+            path: String::new(),
+            disk_cache: None,
+            reply: tx,
+        };
+        assert_eq!(command_outcome(&cmd), CmdOutcome::AbandonPrecache);
+    }
+
+    #[test]
+    fn test_command_outcome_close_abandons_precache() {
+        let (tx, _rx) = mpsc::channel::<Result<(), String>>();
+        let cmd = PdfCommand::Close { reply: tx };
+        assert_eq!(command_outcome(&cmd), CmdOutcome::AbandonPrecache);
+    }
+
+    #[test]
+    fn test_command_outcome_shutdown_is_shutdown() {
+        let cmd = PdfCommand::Shutdown;
+        assert_eq!(command_outcome(&cmd), CmdOutcome::Shutdown);
+    }
+
+    #[test]
+    fn test_command_outcome_render_page_continues() {
+        let (tx, _rx) = mpsc::channel::<Result<RenderedPage, String>>();
+        let cmd = PdfCommand::RenderPage {
+            page_index: 0,
+            dpi: 144,
+            reply: tx,
+        };
+        assert_eq!(command_outcome(&cmd), CmdOutcome::Continue);
+    }
+
+    #[test]
+    fn test_command_outcome_pre_render_continues() {
+        let cmd = PdfCommand::PreRender {
+            page_index: 0,
+            dpi: 144,
+        };
+        assert_eq!(command_outcome(&cmd), CmdOutcome::Continue);
+    }
+
+    #[test]
+    fn test_non_precache_command_is_handled_not_stashed() {
+        let (tx, _rx) = mpsc::channel::<(usize, usize)>();
+        let _ = tx;
+        let cmd = PdfCommand::PreRender {
+            page_index: 2,
+            dpi: 144,
+        };
+        match classify_drain_command(cmd) {
+            DrainAction::Handle(PdfCommand::PreRender { page_index, .. }) => {
+                assert_eq!(page_index, 2);
+            }
+            DrainAction::Handle(_) => panic!("handled wrong command variant"),
+            DrainAction::StashPrecache(_) => panic!("non-precache must not be stashed"),
+        }
+    }
+
+    #[test]
     fn test_spiral_order_at_start() {
         assert_eq!(spiral_order(0, 5), vec![0usize, 1, 2, 3, 4]);
     }
@@ -1040,6 +1340,81 @@ mod tests {
     fn test_spiral_order_empty() {
         let empty: Vec<usize> = vec![];
         assert_eq!(spiral_order(0, 0), empty);
+    }
+
+    #[test]
+    fn test_no_completion_send_on_abort() {
+        // Any non-normal spiral exit (cancel, Open, Close, Shutdown,
+        // no-document, superseded) must NOT emit a (total, total)
+        // completion, since the forwarder treats current >= total as done.
+        assert!(!should_emit_completion(false));
+    }
+
+    #[test]
+    fn test_completion_send_on_normal_finish() {
+        // A spiral that exhausts its order normally must emit completion.
+        assert!(should_emit_completion(true));
+    }
+
+    #[test]
+    fn test_precache_progress_event_throttles_every_5() {
+        // A throttled intermediate progress event fires only on multiples of 5
+        // renders, never at 0.
+        assert_eq!(precache_progress_event(5, 20), Some((5, 20)));
+        assert_eq!(precache_progress_event(4, 20), None);
+        assert_eq!(precache_progress_event(0, 20), None);
+        assert_eq!(precache_progress_event(10, 20), Some((10, 20)));
+    }
+
+    #[test]
+    fn test_precache_progress_counts_only_renders() {
+        // Simulate the spiral's progress accounting: a cache HIT must contribute
+        // zero — neither an increment nor an intermediate event. Only a real
+        // render advances `rendered_count` and may emit a throttled event.
+        //
+        // This mirrors the production loop's step 3/4/5 without touching pdfium.
+        fn run(total: usize, cached: &[bool]) -> (usize, Vec<(usize, usize)>) {
+            let mut rendered_count = 0usize;
+            let mut events = Vec::new();
+            for &is_cached in cached {
+                if is_cached {
+                    // cache hit: zero work, no counter change, no event
+                    continue;
+                }
+                rendered_count += 1;
+                if let Some(ev) = precache_progress_event(rendered_count, total) {
+                    events.push(ev);
+                }
+            }
+            (rendered_count, events)
+        }
+
+        // Fully warm cache: every page already cached. No renders, so no
+        // intermediate events, and crucially NO event with current == total
+        // (the false-100% regression this finding fixes).
+        let warm = vec![true; 12];
+        let (rendered, events) = run(12, &warm);
+        assert_eq!(rendered, 0, "warm cache renders nothing");
+        assert!(events.is_empty(), "warm cache emits no intermediate events");
+        assert!(
+            !events.iter().any(|&(cur, tot)| cur == tot),
+            "warm cache must not flash a false 100%"
+        );
+
+        // Fully cold cache: every page rendered, counter reaches total.
+        let cold = vec![false; 12];
+        let (rendered, _events) = run(12, &cold);
+        assert_eq!(rendered, 12, "cold cache renders every page");
+
+        // Partially warm: 7 cached, 5 rendered. Counter reflects only renders.
+        let partial = vec![
+            true, false, true, false, true, false, true, false, true, false, true, true,
+        ];
+        let (rendered, events) = run(12, &partial);
+        assert_eq!(rendered, 5, "partial cache counts only the 5 renders");
+        // The single throttled event at render #5 reports (5, 12), never (12, 12).
+        assert_eq!(events, vec![(5, 12)]);
+        assert!(!events.iter().any(|&(cur, tot)| cur == tot));
     }
 
     #[test]
@@ -1076,6 +1451,44 @@ mod tests {
 
     #[test]
     #[ignore]
+    fn test_seek_precache_during_active_precache_emits_progress() {
+        // A re-anchored seek issues a second PreCacheAll while the first spiral
+        // is still running. The second command (with a fresh cancel + new
+        // progress channel) must NOT be silently dropped: its progress channel
+        // must receive a final (total, total). Regression for the ARM
+        // weak-memory race that discarded the nested PreCacheAll.
+        let _guard = lock_pdfium();
+        let lib = require_pdfium();
+        let thread = PdfRenderThread::new(&lib).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap(), None).unwrap();
+
+        // First spiral.
+        let cancel1 = Arc::new(AtomicBool::new(false));
+        let (tx1, _rx1) = mpsc::channel::<(usize, usize)>();
+        thread.precache_all(144, 0, Arc::clone(&cancel1), tx1).unwrap();
+
+        // Re-anchored seek: cancel the first, send a second with a new channel.
+        cancel1.store(true, Ordering::Release);
+        let cancel2 = Arc::new(AtomicBool::new(false));
+        let (tx2, rx2) = mpsc::channel::<(usize, usize)>();
+        thread.precache_all(144, 1, cancel2, tx2).unwrap();
+
+        // The SECOND channel must observe a final completion.
+        let mut last = None;
+        while let Ok(msg) = rx2.recv_timeout(std::time::Duration::from_millis(500)) {
+            last = Some(msg);
+        }
+        assert_eq!(
+            last,
+            Some((2, 2)),
+            "the re-anchored seek's progress channel must receive (total, total)"
+        );
+
+        thread.close().unwrap();
+    }
+
+    #[test]
+    #[ignore]
     fn test_precache_all_emits_final_progress() {
         let _guard = lock_pdfium();
         let lib = require_pdfium();
@@ -1091,6 +1504,44 @@ mod tests {
             last = Some(msg);
         }
         assert_eq!(last, Some((2, 2)), "final progress should be (page_count, page_count)");
+
+        thread.close().unwrap();
+    }
+
+    #[test]
+    #[ignore]
+    fn test_precache_warm_cache_does_not_flash_false_completion() {
+        // Warm-cache regression: with every page already rendered to disk, the
+        // spiral does zero rendering work. Intermediate progress events count
+        // only real renders, so the channel must NOT emit (total, total) until
+        // the deliberate end-of-spiral completion. Before the fix, the counter
+        // raced from 0 to total on cache hits and flashed an instant 100%.
+        let _guard = lock_pdfium();
+        let lib = require_pdfium();
+        let thread = PdfRenderThread::new(&lib).unwrap();
+        thread.open(fixture_path("sample.pdf").to_str().unwrap(), None).unwrap();
+
+        // Pre-render every page so the upcoming precache is all cache hits.
+        thread.render_page(0, 144).unwrap();
+        thread.render_page(1, 144).unwrap();
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = mpsc::channel::<(usize, usize)>();
+        thread.precache_all(144, 0, cancel, tx).unwrap();
+
+        // Collect every event in order.
+        let mut events = Vec::new();
+        while let Ok(msg) = rx.recv_timeout(std::time::Duration::from_millis(500)) {
+            events.push(msg);
+        }
+
+        // Exactly one event — the authoritative completion — and no
+        // intermediate event reaches (total, total).
+        assert_eq!(
+            events,
+            vec![(2, 2)],
+            "warm cache must emit only the final completion, never an inflated intermediate 100%"
+        );
 
         thread.close().unwrap();
     }
@@ -1156,7 +1607,7 @@ mod tests {
         let (tx, rx) = mpsc::channel::<(usize, usize)>();
         thread.precache_all(144, 0, cancel, tx).unwrap();
 
-        // Drain progress; the only message should be the final completion send.
+        // Drain any progress; a cancelled spiral emits no completion send.
         while rx.recv_timeout(std::time::Duration::from_millis(300)).is_ok() {}
 
         assert!(
@@ -1166,6 +1617,35 @@ mod tests {
         assert!(
             !thread.temp_dir().join("page_1_144.png").exists(),
             "cancelled precache should not render pages"
+        );
+
+        thread.close().unwrap();
+    }
+
+    #[test]
+    #[ignore]
+    fn test_precache_cancel_does_not_emit_false_completion() {
+        // A pre-cancelled precache must not deliver a (total, total)
+        // completion, which the forwarder would interpret as done:true and
+        // flash a false 100% to the UI.
+        let _guard = lock_pdfium();
+        let lib = require_pdfium();
+        let thread = PdfRenderThread::new(&lib).unwrap();
+        let info = thread.open(fixture_path("sample.pdf").to_str().unwrap(), None).unwrap();
+        let total = info.page_count;
+
+        let cancel = Arc::new(AtomicBool::new(true));
+        let (tx, rx) = mpsc::channel::<(usize, usize)>();
+        thread.precache_all(144, 0, cancel, tx).unwrap();
+
+        let mut last: Option<(usize, usize)> = None;
+        while let Ok(msg) = rx.recv_timeout(std::time::Duration::from_millis(300)) {
+            last = Some(msg);
+        }
+        assert_ne!(
+            last,
+            Some((total, total)),
+            "cancelled precache must not emit (total, total) completion"
         );
 
         thread.close().unwrap();

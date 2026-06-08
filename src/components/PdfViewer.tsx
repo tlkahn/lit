@@ -17,7 +17,7 @@ function getEffectiveDpi(): number {
   return Math.round(BASE_DPI * (window.devicePixelRatio || 1));
 }
 
-function cacheKey(pageIndex: number, dpi: number): string {
+export function cacheKey(pageIndex: number, dpi: number): string {
   return `${pageIndex}_${dpi}`;
 }
 
@@ -25,18 +25,12 @@ function cacheKey(pageIndex: number, dpi: number): string {
 // map only avoids redundant IPC for pages already fetched, so it is uncapped.
 // Entries are small metadata ({page_index, png_path, width, height}); png_path is
 // a file path, not image data, so the map stays trivially small even for large PDFs.
-function cacheSet(cache: Map<string, RenderedPage>, key: string, value: RenderedPage) {
-  cache.delete(key);
+export function cacheSet(cache: Map<string, RenderedPage>, key: string, value: RenderedPage) {
   cache.set(key, value);
 }
 
-function cacheGet(cache: Map<string, RenderedPage>, key: string): RenderedPage | undefined {
-  const val = cache.get(key);
-  if (val !== undefined) {
-    cache.delete(key);
-    cache.set(key, val);
-  }
-  return val;
+export function cacheGet(cache: Map<string, RenderedPage>, key: string): RenderedPage | undefined {
+  return cache.get(key);
 }
 
 interface PdfViewerProps {

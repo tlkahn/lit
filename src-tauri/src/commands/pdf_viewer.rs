@@ -10,10 +10,20 @@ use tauri::{Emitter, Manager};
 use crate::pdf::disk_cache::{cache_key, read_manifest, write_manifest, CacheManifest};
 use crate::pdf::{DiskCacheConfig, PdfInfo, PdfRenderThread, RenderedPage};
 
-/// Cap eager precaching at this many pages. Beyond this, pages render on demand.
-const MAX_PRECACHE_PAGES: usize = 200;
 /// Number of pages rendered synchronously before returning from `pdf_open`.
 const INITIAL_SYNC_PAGES: usize = 10;
+
+/// Whether to kick off background precaching when a document is opened.
+///
+/// Precache runs whenever there is at least one page beyond the synchronously
+/// rendered initial batch. There is intentionally no upper page-count cap here:
+/// the spiral precache loop in `crate::pdf` checks for cancellation and drains
+/// priority commands on every iteration, so large documents are bounded by that
+/// machinery (and disk-cache eviction) rather than a start-side numeric cliff.
+/// This keeps the open path consistent with the seek path, which has no cap.
+fn should_precache_on_open(initial_count: usize, page_count: usize) -> bool {
+    initial_count < page_count
+}
 /// Default TTL for persistent render-cache entries, in days. Entries whose
 /// `last_accessed` is older than this are evicted by [`evict_stale_cache`].
 pub const CACHE_MAX_AGE_DAYS: u32 = 30;
@@ -31,7 +41,10 @@ pub const CACHE_MAX_SIZE_MB: u64 = 500;
 pub struct PdfViewerState {
     threads: Mutex<HashMap<String, PdfRenderThread>>,
     /// One cancel token per slot with an in-flight background precache.
-    cancel_tokens: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    ///
+    /// Wrapped in `Arc` so the progress-forwarding task (spawned on the async
+    /// runtime) can hold a shared handle to evict its own token on completion.
+    cancel_tokens: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
     lib_path: String,
     /// Root under which the persistent render cache lives
     /// (`<cache_root>/pdf-render-cache/<key>/`). `None` disables disk caching;
@@ -75,7 +88,7 @@ impl PdfViewerState {
     pub fn new_with_cache_root(lib_path: &str, cache_root: Option<PathBuf>) -> Self {
         Self {
             threads: Mutex::new(HashMap::new()),
-            cancel_tokens: Mutex::new(HashMap::new()),
+            cancel_tokens: Arc::new(Mutex::new(HashMap::new())),
             lib_path: lib_path.to_string(),
             cache_root,
         }
@@ -85,11 +98,14 @@ impl PdfViewerState {
     /// PDF at `pdf_path` rendered at `dpi`.
     ///
     /// The cache directory is `<cache_root>/pdf-render-cache/<key>/`, where
-    /// `<key>` is [`cache_key`] over the file's canonical path, byte size, and
-    /// whole-second mtime. Because the key folds in size+mtime, any edit to the
-    /// source file yields a *different* key (a fresh dir); "invalidation" here
-    /// means deleting any sibling cache dir whose manifest names the same
-    /// `source_path` under a now-stale key.
+    /// `<key>` is [`cache_key`] over the file's canonical path, byte size,
+    /// whole-second mtime, and `dpi`. Because the key folds in size+mtime, any
+    /// edit to the source file yields a *different* key (a fresh dir); because it
+    /// also folds in `dpi`, the same unchanged file rendered at another DPI gets
+    /// its own dir. Editing a file therefore leaves its old dir orphaned; those
+    /// stale same-source dirs are reclaimed by the startup `evict_stale_cache`
+    /// sweep (phase 0), not on this hot open path — so a key never resolves to a
+    /// stale sibling and no per-open directory scan is performed here.
     ///
     /// Returns `None` when no `cache_root` is configured, or when the file
     /// cannot be canonicalized / stat-ed.
@@ -109,24 +125,8 @@ impl PdfViewerState {
             .ok()?
             .as_secs();
 
-        let key = cache_key(&canonical_str, file_size, mtime_secs);
+        let key = cache_key(&canonical_str, file_size, mtime_secs, dpi);
         let cache_dir = base.join(&key);
-
-        // Invalidate stale siblings: any other cache dir whose manifest names
-        // the same source file (but a now-outdated key) is deleted.
-        if let Ok(entries) = std::fs::read_dir(&base) {
-            for entry in entries.flatten() {
-                let entry_dir = entry.path();
-                if entry.file_name() == std::ffi::OsStr::new(&key) {
-                    continue;
-                }
-                if let Some(m) = read_manifest(&entry_dir) {
-                    if m.source_path == canonical_str {
-                        let _ = std::fs::remove_dir_all(&entry_dir);
-                    }
-                }
-            }
-        }
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -170,22 +170,50 @@ impl PdfViewerState {
     pub fn cancel_precache(&self, slot: &str) {
         let mut tokens = self.cancel_tokens.lock().unwrap();
         if let Some(flag) = tokens.remove(slot) {
-            flag.store(true, Ordering::Relaxed);
+            // Release pairs with the render thread's Acquire load of the flag.
+            flag.store(true, Ordering::Release);
+        }
+    }
+
+    /// Remove `slot`'s cancel token from `tokens`, but only if it is still the
+    /// exact token the caller installed (`Arc::ptr_eq`). This makes precache
+    /// completion cleanup idempotent and race-safe: a concurrent reopen/seek may
+    /// have already replaced the slot's token with a newer in-flight one, and we
+    /// must never evict that newer token. Absent slots are a no-op.
+    ///
+    /// Static (takes the map handle, not `&self`) so the progress-forwarding
+    /// task can call it after moving an `Arc::clone` of the map into its closure.
+    fn clear_token_if_current(
+        tokens: &Mutex<HashMap<String, Arc<AtomicBool>>>,
+        slot: &str,
+        token: &Arc<AtomicBool>,
+    ) {
+        let mut map = tokens.lock().unwrap();
+        if let Some(current) = map.get(slot) {
+            if Arc::ptr_eq(current, token) {
+                map.remove(slot);
+            }
         }
     }
 
     /// Begins background precaching in spiral order around `anchor_page`.
     /// Creates a fresh cancel token (cancelling/replacing any prior one for this
-    /// slot), sends `PreCacheAll` to the render thread, and spawns a thread that
-    /// drains progress and emits `"lit:pdf-cache-progress"` to the originating
-    /// window.
+    /// slot), sends `PreCacheAll` to the render thread, and spawns a task on the
+    /// async runtime's blocking pool that drains progress and emits
+    /// `"lit:pdf-cache-progress"` to the originating window. On loop exit (both
+    /// natural completion and channel close) it evicts its own token via
+    /// [`clear_token_if_current`](PdfViewerState::clear_token_if_current) so a
+    /// run-to-completion precache does not leak its token in `cancel_tokens`.
     pub fn start_precache(&self, window: &tauri::Window, slot: &str, anchor_page: usize, dpi: u32) {
         // Cancel + replace any prior token for this slot (reopen case).
         let cancel = Arc::new(AtomicBool::new(false));
         {
             let mut tokens = self.cancel_tokens.lock().unwrap();
             if let Some(old) = tokens.insert(slot.to_string(), Arc::clone(&cancel)) {
-                old.store(true, Ordering::Relaxed);
+                // Release pairs with the render thread's Acquire load of the
+                // cancel flag, making the cancel visible-before-send ordering
+                // explicit (the new PreCacheAll is sent right after this).
+                old.store(true, Ordering::Release);
             }
         }
 
@@ -215,10 +243,14 @@ impl PdfViewerState {
             }
         }
 
-        // Progress-forwarding thread: read (current,total) and emit to the window.
+        // Progress-forwarding task: read (current,total) and emit to the window.
+        // Runs on the async runtime's blocking pool (the `recv()` is a blocking
+        // std-mpsc call) instead of a hand-rolled OS thread per invocation.
         let window = window.clone(); // tauri::Window is Clone + Send
         let slot_string = slot.to_string();
-        std::thread::spawn(move || {
+        let tokens = Arc::clone(&self.cancel_tokens);
+        let this_token = Arc::clone(&cancel);
+        tauri::async_runtime::spawn_blocking(move || {
             let label = window.label().to_string();
             while let Ok((current, total)) = progress_rx.recv() {
                 let done = current >= total;
@@ -233,6 +265,10 @@ impl PdfViewerState {
                     break; // final (total,total) send terminates the loop
                 }
             }
+            // On both exit paths (natural completion and channel close), evict
+            // this invocation's token — but only if a concurrent reopen/seek has
+            // not already installed a newer one (ptr_eq guard inside).
+            Self::clear_token_if_current(&tokens, &slot_string, &this_token);
         });
     }
 
@@ -325,7 +361,8 @@ impl PdfViewerState {
                 .collect();
             for k in keys {
                 if let Some(flag) = tokens.remove(&k) {
-                    flag.store(true, Ordering::Relaxed);
+                    // Release pairs with the render thread's Acquire load.
+                    flag.store(true, Ordering::Release);
                 }
             }
         }
@@ -432,11 +469,12 @@ pub fn pdf_open(
     let initial_count = info.page_count.min(INITIAL_SYNC_PAGES);
     let initial_pages = state.render_initial_for_window(&slot, anchor, initial_count, dpi);
 
-    // Kick off background precache for the remainder. The Phase-1 precache loop
-    // runs `start_page..page_count` with no internal cap, so we enforce
-    // MAX_PRECACHE_PAGES on the start side: only precache when the whole
-    // document fits under the cap. Larger PDFs rely on on-demand rendering.
-    if initial_count < info.page_count && info.page_count <= MAX_PRECACHE_PAGES {
+    // Kick off background precache for the remainder of the document. Precache
+    // runs for documents of any size: the spiral loop in `crate::pdf` checks for
+    // cancellation and drains priority commands (render/open/close/seek) on every
+    // iteration, so large PDFs stay responsive and bounded without a start-side
+    // page-count cap. This matches the seek path, which is also uncapped.
+    if should_precache_on_open(initial_count, info.page_count) {
         state.start_precache(&window, &slot, anchor, dpi);
     }
 
@@ -516,8 +554,16 @@ fn dir_size_bytes(dir: &std::path::Path) -> u64 {
 /// `cache_root`.
 ///
 /// Each immediate subdirectory of `cache_root` is a per-PDF cache dir holding a
-/// `manifest.json` plus page PNGs. Eviction runs in two phases:
+/// `manifest.json` plus page PNGs. Eviction runs in three phases:
 ///
+/// 0. **Same-source staleness** — dirs are grouped by `manifest.source_path`.
+///    For each group whose live source file can be stat-ed, any dir whose
+///    recorded `(file_size, mtime_epoch_secs)` no longer matches the live
+///    file's current identity is deleted (it was rendered from a now-superseded
+///    version of that file). Dirs whose source file is missing/unstattable are
+///    left for the TTL/LRU phases. This phase reclaims orphaned dirs left by
+///    repeated edits of the same file; it is the GC role formerly performed by
+///    a per-`pdf_open` sibling scan (moved here off the hot open path).
 /// 1. **TTL** — any entry whose `last_accessed` is older than `max_age_days`
 ///    (relative to now) is deleted.
 /// 2. **LRU size cap** — if the surviving entries' total on-disk footprint
@@ -535,8 +581,18 @@ pub fn evict_stale_cache(cache_root: &std::path::Path, max_age_days: u32, max_si
         Err(_) => return,
     };
 
-    // Collect (dir, last_accessed, size_bytes) for every valid cache dir.
-    let mut records: Vec<(PathBuf, u64, u64)> = Vec::new();
+    // Collect (dir, last_accessed, size_bytes, source_path, file_size,
+    // mtime_epoch_secs) for every valid cache dir. The manifest is read exactly
+    // once per dir here — phases 0/1/2 all reuse this single read.
+    struct Record {
+        dir: PathBuf,
+        last_accessed: u64,
+        size: u64,
+        source_path: String,
+        file_size: u64,
+        mtime_epoch_secs: u64,
+    }
+    let mut records: Vec<Record> = Vec::new();
     for entry in entries.flatten() {
         let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
         if !is_dir {
@@ -548,7 +604,52 @@ pub fn evict_stale_cache(cache_root: &std::path::Path, max_age_days: u32, max_si
             None => continue, // not a cache dir — leave untouched
         };
         let size = dir_size_bytes(&dir);
-        records.push((dir, manifest.last_accessed, size));
+        records.push(Record {
+            dir,
+            last_accessed: manifest.last_accessed,
+            size,
+            source_path: manifest.source_path,
+            file_size: manifest.file_size,
+            mtime_epoch_secs: manifest.mtime_epoch_secs,
+        });
+    }
+
+    // Phase 0: same-source staleness. For each source_path that maps to a live,
+    // stat-able file, delete any dir whose recorded (file_size, mtime) does not
+    // match the live file's current identity. Dirs whose source is missing or
+    // unstattable are left for the TTL/LRU phases (no aggressive delete on a
+    // transient stat failure). Deleted dirs are dropped from `records` so the
+    // later phases never double-process a removed path.
+    {
+        use std::collections::HashMap;
+        // source_path -> Some((len, mtime_secs)) if live & stattable, None if
+        // missing/unstattable (cached so we stat each distinct source once).
+        let mut live: HashMap<String, Option<(u64, u64)>> = HashMap::new();
+        records.retain(|r| {
+            let identity = live.entry(r.source_path.clone()).or_insert_with(|| {
+                let meta = std::fs::metadata(&r.source_path).ok()?;
+                let mtime = meta
+                    .modified()
+                    .ok()?
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .ok()?
+                    .as_secs();
+                Some((meta.len(), mtime))
+            });
+            match identity {
+                Some((len, mtime)) => {
+                    let stale = r.file_size != *len || r.mtime_epoch_secs != *mtime;
+                    if stale {
+                        let _ = std::fs::remove_dir_all(&r.dir);
+                        false // drop from working set
+                    } else {
+                        true
+                    }
+                }
+                // Source missing/unstattable: leave for TTL/LRU.
+                None => true,
+            }
+        });
     }
 
     let now = std::time::SystemTime::now()
@@ -559,11 +660,11 @@ pub fn evict_stale_cache(cache_root: &std::path::Path, max_age_days: u32, max_si
     // Phase 1: TTL eviction.
     let max_age_secs = max_age_days as u64 * 86_400;
     let mut survivors: Vec<(PathBuf, u64, u64)> = Vec::with_capacity(records.len());
-    for (dir, last_accessed, size) in records {
-        if now.saturating_sub(last_accessed) > max_age_secs {
-            let _ = std::fs::remove_dir_all(&dir);
+    for r in records {
+        if now.saturating_sub(r.last_accessed) > max_age_secs {
+            let _ = std::fs::remove_dir_all(&r.dir);
         } else {
-            survivors.push((dir, last_accessed, size));
+            survivors.push((r.dir, r.last_accessed, r.size));
         }
     }
 
@@ -945,6 +1046,59 @@ mod tests {
     }
 
     #[test]
+    fn test_natural_precache_completion_removes_cancel_token() {
+        // Leak reproducer: on natural precache completion the forwarder calls
+        // clear_token_if_current, which must remove the slot's token from the
+        // cancel_tokens map (no stale Arc<AtomicBool> left behind).
+        let state = PdfViewerState::new("dummy");
+        let slot = "main:pane-1";
+        let tok = Arc::new(AtomicBool::new(false));
+
+        // (a) Insert this invocation's token, then clear it -> map drops it.
+        state
+            .cancel_tokens
+            .lock()
+            .unwrap()
+            .insert(slot.to_string(), Arc::clone(&tok));
+        PdfViewerState::clear_token_if_current(&state.cancel_tokens, slot, &tok);
+        assert!(
+            !state.cancel_tokens.lock().unwrap().contains_key(slot),
+            "completing precache must remove its own token (leak fixed)"
+        );
+
+        // (b) A newer token replaced ours (reopen): clearing with the OLD token
+        // must NOT evict the newer in-flight token.
+        let newer = Arc::new(AtomicBool::new(false));
+        {
+            let mut map = state.cancel_tokens.lock().unwrap();
+            map.insert(slot.to_string(), Arc::clone(&tok));
+            map.insert(slot.to_string(), Arc::clone(&newer));
+        }
+        PdfViewerState::clear_token_if_current(&state.cancel_tokens, slot, &tok);
+        {
+            let map = state.cancel_tokens.lock().unwrap();
+            let present = map.get(slot).expect("newer token must remain");
+            assert!(
+                Arc::ptr_eq(present, &newer),
+                "ptr_eq guard must keep the newer in-flight token"
+            );
+        }
+
+        // (c) Clearing an absent slot is a harmless no-op (no panic).
+        let other = Arc::new(AtomicBool::new(false));
+        PdfViewerState::clear_token_if_current(&state.cancel_tokens, "absent:slot", &other);
+    }
+
+    #[test]
+    fn test_cancel_tokens_is_arc_shareable() {
+        // The forwarder runs on the async runtime and must move a shared handle
+        // to the cancel_tokens map. This compiles only once the field is
+        // Arc<Mutex<..>>.
+        let state = PdfViewerState::new("dummy");
+        let _c = Arc::clone(&state.cancel_tokens);
+    }
+
+    #[test]
     fn test_close_all_for_window_clears_cancel_tokens() {
         let state = PdfViewerState::new("dummy");
         // The new token-draining block must handle the empty-map path cleanly.
@@ -971,10 +1125,25 @@ mod tests {
     }
 
     #[test]
-    fn test_max_precache_and_initial_constants() {
-        assert_eq!(MAX_PRECACHE_PAGES, 200);
+    fn test_initial_sync_pages_constant() {
         assert_eq!(INITIAL_SYNC_PAGES, 10);
-        assert!(INITIAL_SYNC_PAGES <= MAX_PRECACHE_PAGES);
+    }
+
+    #[test]
+    fn test_should_precache_on_open_covers_large_docs() {
+        // A 201-page PDF (just over the old 200 cap) must still precache:
+        // the initial batch leaves remaining pages, so precache runs. This is
+        // the bug reproducer for the behavioral cliff at 200 pages.
+        assert!(should_precache_on_open(10, 201));
+        // The old cliff page count (200) also precaches.
+        assert!(should_precache_on_open(10, 200));
+        // No remaining pages beyond the synchronous batch -> no precache.
+        assert!(!should_precache_on_open(2, 2));
+        assert!(!should_precache_on_open(5, 5));
+        // A single-page doc fully covered by the initial batch -> no precache.
+        assert!(!should_precache_on_open(1, 1));
+        // There is no upper cliff: a huge doc still precaches.
+        assert!(should_precache_on_open(INITIAL_SYNC_PAGES, 10_000));
     }
 
     #[test]
@@ -1070,6 +1239,73 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_different_dpi_yields_distinct_dirs() {
+        let cache_root = tempfile::TempDir::new().unwrap();
+        let pdf_dir = tempfile::TempDir::new().unwrap();
+        let foo_path = pdf_dir.path().join("foo.pdf");
+        std::fs::write(&foo_path, b"%PDF-1.4 fake").unwrap();
+        let foo_str = foo_path.to_str().unwrap();
+
+        let state =
+            PdfViewerState::new_with_cache_root("dummy", Some(cache_root.path().to_path_buf()));
+
+        let a = state.resolve_disk_cache(foo_str, 144).expect("resolve 144");
+        let b = state.resolve_disk_cache(foo_str, 288).expect("resolve 288");
+
+        // Different DPI -> distinct dirs, and resolving b must NOT delete a's dir.
+        assert_ne!(a.cache_dir, b.cache_dir);
+        assert!(a.cache_dir.exists(), "144 dir survives a 288 resolve");
+        assert!(b.cache_dir.exists());
+
+        let ma = crate::pdf::disk_cache::read_manifest(&a.cache_dir).expect("manifest a");
+        let mb = crate::pdf::disk_cache::read_manifest(&b.cache_dir).expect("manifest b");
+        assert_eq!(ma.dpi, 144);
+        assert_eq!(mb.dpi, 288);
+    }
+
+    #[test]
+    fn test_resolve_invalidation_preserves_other_dpi_but_removes_stale() {
+        let cache_root = tempfile::TempDir::new().unwrap();
+        let pdf_dir = tempfile::TempDir::new().unwrap();
+        let foo_path = pdf_dir.path().join("foo.pdf");
+        std::fs::write(&foo_path, b"%PDF-1.4 fake").unwrap();
+        let foo_str = foo_path.to_str().unwrap();
+
+        let state =
+            PdfViewerState::new_with_cache_root("dummy", Some(cache_root.path().to_path_buf()));
+
+        let a = state.resolve_disk_cache(foo_str, 144).expect("resolve 144");
+        let b = state.resolve_disk_cache(foo_str, 288).expect("resolve 288");
+        let old_144 = a.cache_dir.clone();
+        assert!(old_144.exists());
+        assert!(b.cache_dir.exists());
+
+        // Rewrite the file so size (and thus the key) changes for every DPI.
+        std::fs::write(&foo_path, b"different longer contents that change file size").unwrap();
+
+        let a2 = state
+            .resolve_disk_cache(foo_str, 144)
+            .expect("re-resolve 144 after change");
+
+        // Re-resolving yields a fresh dir (key folds in the new size), distinct
+        // from the old one. The old dir is NOT deleted on this hot path anymore;
+        // it is reclaimed by the startup sweep.
+        assert_ne!(a2.cache_dir, old_144);
+        assert!(a2.cache_dir.exists());
+        assert!(
+            old_144.exists(),
+            "stale 144 dir is left in place by resolve (swept at startup, not here)"
+        );
+
+        // The startup sweep reclaims the stale same-source dir. The live file
+        // now matches a2's identity, so a2 survives while old_144 is removed.
+        let base = a2.cache_dir.parent().unwrap();
+        evict_stale_cache(base, 30, 500);
+        assert!(!old_144.exists(), "sweep evicts stale same-source dir");
+        assert!(a2.cache_dir.exists(), "current dir survives sweep");
+    }
+
+    #[test]
     fn test_resolve_invalidates_on_mtime_change() {
         let cache_root = tempfile::TempDir::new().unwrap();
         let pdf_dir = tempfile::TempDir::new().unwrap();
@@ -1094,7 +1330,17 @@ mod tests {
             .expect("second resolve after change");
         assert_ne!(cfg2.cache_dir, old_dir);
         assert!(cfg2.cache_dir.exists());
-        assert!(!old_dir.exists(), "stale dir for same source_path deleted");
+        // resolve no longer deletes the stale dir on the hot path; the startup
+        // sweep does. It is left in place until then.
+        assert!(
+            old_dir.exists(),
+            "stale dir left by resolve (reclaimed by startup sweep)"
+        );
+
+        let base = cfg2.cache_dir.parent().unwrap();
+        evict_stale_cache(base, 30, 500);
+        assert!(!old_dir.exists(), "sweep evicts stale dir for same source_path");
+        assert!(cfg2.cache_dir.exists());
     }
 
     #[test]
@@ -1248,6 +1494,168 @@ mod tests {
         assert!(!missing.exists());
         // Must not panic.
         evict_stale_cache(&missing, 30, 500);
+    }
+
+    /// Build a cache dir under `root/name` with a manifest whose
+    /// `source_path`, `file_size`, `mtime_epoch_secs`, and `dpi` are explicitly
+    /// controlled (unlike [`make_cache_dir`], which hardcodes them). Used to
+    /// exercise the same-source staleness phase of [`evict_stale_cache`].
+    #[allow(clippy::too_many_arguments)]
+    fn make_cache_dir_full(
+        root: &std::path::Path,
+        name: &str,
+        source_path: &str,
+        file_size: u64,
+        mtime_epoch_secs: u64,
+        dpi: u32,
+        last_accessed: u64,
+    ) -> PathBuf {
+        let dir = root.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifest = CacheManifest {
+            source_path: source_path.to_string(),
+            file_size,
+            mtime_epoch_secs,
+            dpi,
+            page_count: 1,
+            created_at: last_accessed,
+            last_accessed,
+            version: 1,
+        };
+        write_manifest(&dir, &manifest).unwrap();
+        std::fs::write(dir.join("0.png"), vec![0u8; 64]).unwrap();
+        dir
+    }
+
+    #[test]
+    fn test_evict_removes_stale_same_source_siblings() {
+        let cache_root = tempfile::TempDir::new().unwrap();
+        let sweep_dir = cache_root.path().join("pdf-render-cache");
+        std::fs::create_dir_all(&sweep_dir).unwrap();
+
+        // A real live source file.
+        let pdf_dir = tempfile::TempDir::new().unwrap();
+        let foo_path = pdf_dir.path().join("foo.pdf");
+        std::fs::write(&foo_path, b"current contents of the file").unwrap();
+        let canonical = std::fs::canonicalize(&foo_path).unwrap();
+        let canonical_str = canonical.to_string_lossy().to_string();
+        let live_meta = std::fs::metadata(&canonical).unwrap();
+        let live_size = live_meta.len();
+        let live_mtime = live_meta
+            .modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let now = now_secs();
+        // Dir A: same source, PAST identity (different size) -> stale.
+        let stale = make_cache_dir_full(
+            &sweep_dir,
+            "stale",
+            &canonical_str,
+            live_size + 12_345,
+            live_mtime.saturating_sub(500),
+            144,
+            now,
+        );
+        // Dir B: same source, identity matching the LIVE file -> survives.
+        let fresh = make_cache_dir_full(
+            &sweep_dir,
+            "fresh",
+            &canonical_str,
+            live_size,
+            live_mtime,
+            144,
+            now,
+        );
+
+        evict_stale_cache(&sweep_dir, 30, 500);
+
+        assert!(
+            !stale.exists(),
+            "stale same-source dir (outdated identity) should be evicted"
+        );
+        assert!(
+            fresh.exists(),
+            "dir matching the live source file should survive"
+        );
+    }
+
+    #[test]
+    fn test_evict_keeps_dirs_when_source_missing() {
+        let cache_root = tempfile::TempDir::new().unwrap();
+        let sweep_dir = cache_root.path().join("pdf-render-cache");
+        std::fs::create_dir_all(&sweep_dir).unwrap();
+
+        let now = now_secs();
+        // source_path points at a file that does not exist; identity is
+        // irrelevant because we cannot stat the live file. Must survive the
+        // same-source phase (only TTL/LRU may reclaim it).
+        let dir = make_cache_dir_full(
+            &sweep_dir,
+            "orphan",
+            "/no/such/file/anywhere.pdf",
+            1024,
+            1_700_000_000,
+            144,
+            now,
+        );
+
+        evict_stale_cache(&sweep_dir, 30, 500);
+
+        assert!(
+            dir.exists(),
+            "dir whose source file is missing must survive same-source phase"
+        );
+    }
+
+    #[test]
+    fn test_evict_keeps_other_dpi_same_identity() {
+        let cache_root = tempfile::TempDir::new().unwrap();
+        let sweep_dir = cache_root.path().join("pdf-render-cache");
+        std::fs::create_dir_all(&sweep_dir).unwrap();
+
+        let pdf_dir = tempfile::TempDir::new().unwrap();
+        let foo_path = pdf_dir.path().join("foo.pdf");
+        std::fs::write(&foo_path, b"current contents of the file").unwrap();
+        let canonical = std::fs::canonicalize(&foo_path).unwrap();
+        let canonical_str = canonical.to_string_lossy().to_string();
+        let live_meta = std::fs::metadata(&canonical).unwrap();
+        let live_size = live_meta.len();
+        let live_mtime = live_meta
+            .modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let now = now_secs();
+        // Two dirs, same source, same live identity, different DPI -> both
+        // valid (size/mtime match the live file), neither is stale.
+        let d144 = make_cache_dir_full(
+            &sweep_dir,
+            "d144",
+            &canonical_str,
+            live_size,
+            live_mtime,
+            144,
+            now,
+        );
+        let d288 = make_cache_dir_full(
+            &sweep_dir,
+            "d288",
+            &canonical_str,
+            live_size,
+            live_mtime,
+            288,
+            now,
+        );
+
+        evict_stale_cache(&sweep_dir, 30, 500);
+
+        assert!(d144.exists(), "144 dir matching live identity survives");
+        assert!(d288.exists(), "288 dir matching live identity survives");
     }
 
     #[test]
