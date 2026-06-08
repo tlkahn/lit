@@ -72,12 +72,15 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
 
     const linked = usePanePdfLinkStore.getState().getLinkedPane(paneId);
     if (!linked) {
+      console.log("[sync:fwd:editor] no linked pane for %s", paneId);
       return;
     }
     const view = getPaneView(paneId);
     if (!view) {
+      console.log("[sync:fwd:editor] no EditorView for %s", paneId);
       return;
     }
+    console.log("[sync:fwd:editor] selection changed L%d:C%d, linked=%s", line, col, linked);
     dispatchForwardSync({
       // The offset and markers are read inside this fire-time callback (not at
       // schedule time) so a document edit during the debounce window — one that
@@ -100,12 +103,15 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
       goToPage: (pageIndex) => {
         const linkedNow = usePanePdfLinkStore.getState().getLinkedPane(paneId);
         if (!linkedNow) {
+          console.log("[sync:fwd:goToPage] BAIL — link gone at fire time");
           return;
         }
         const goFn = getPdfGoToPage(linkedNow);
         if (!goFn) {
+          console.log("[sync:fwd:goToPage] BAIL — no goToPage registered for pane %s", linkedNow);
           return;
         }
+        console.log("[sync:fwd:goToPage] driving PDF pane %s to page %d", linkedNow, pageIndex);
         const token = markForwardSync(linkedNow);
         goFn(pageIndex);
         setTimeout(() => clearForwardSync(linkedNow, token), 500);

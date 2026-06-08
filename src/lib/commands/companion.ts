@@ -44,6 +44,7 @@ export function initCompanionCommands(): void {
             }
             store.focusPane(newId);
             store.setPanePage(newId, companion);
+            console.log("[sync:link] linkPanes(%s, %s) — %s ↔ %s", sourceId, newId, pagePath, companion);
             usePanePdfLinkStore.getState().linkPanes(sourceId, newId);
             useStatusMessageStore
               .getState()

@@ -174,8 +174,10 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
   const goToPage = useCallback(
     async (index: number) => {
       if (index === currentPageRef.current) {
+        console.log("[sync:pdf] goToPage(%d) BAIL — same page (currentPageRef=%d)", index, currentPageRef.current);
         return;
       }
+      console.log("[sync:pdf] goToPage(%d) (was %d)", index, currentPageRef.current);
       // Monotonic navigation token: any newer navigation (even a synchronous
       // cache hit) supersedes an in-flight slow render so it cannot revert us.
       const mySeq = ++navSeqRef.current;
@@ -238,6 +240,7 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
   );
 
   useEffect(() => {
+    console.log("[sync:pdf] registerGoToPage for pane=%s", paneId);
     registerGoToPage?.(goToPage);
   }, [goToPage, registerGoToPage, paneId]);
 

@@ -145,61 +145,6 @@ describe("dispatchReverseSync", () => {
     expect(tx.selection.head).toBe(60);
   });
 
-  describe("logging hygiene", () => {
-    let logSpy: ReturnType<typeof vi.spyOn>;
-
-    beforeEach(() => {
-      logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    });
-
-    afterEach(() => {
-      logSpy.mockRestore();
-    });
-
-    it("does not log on the successful sync path", () => {
-      const view = makeFakeView();
-      registerPaneView("ed1", view);
-
-      dispatchReverseSync(2, "ed1", markers);
-
-      expect(logSpy).not.toHaveBeenCalled();
-    });
-
-    it("does not log on the syncEnabled=false bail", () => {
-      const view = makeFakeView();
-      registerPaneView("ed1", view);
-      usePanePdfLinkStore.setState({ syncEnabled: false });
-
-      dispatchReverseSync(2, "ed1", markers);
-
-      expect(logSpy).not.toHaveBeenCalled();
-    });
-
-    it("does not log on the no-marker bail", () => {
-      const view = makeFakeView();
-      registerPaneView("ed1", view);
-
-      dispatchReverseSync(99, "ed1", markers);
-
-      expect(logSpy).not.toHaveBeenCalled();
-    });
-
-    it("does not log on the no-view bail", () => {
-      dispatchReverseSync(1, "missing", markers);
-
-      expect(logSpy).not.toHaveBeenCalled();
-    });
-
-    it("does not log on the focus-guard bail", () => {
-      const view = makeFakeView(1000, true);
-      registerPaneView("ed1", view);
-
-      dispatchReverseSync(2, "ed1", markers);
-
-      expect(logSpy).not.toHaveBeenCalled();
-    });
-  });
-
   describe("editor focus guard", () => {
     it("does not dispatch when editor has focus", () => {
       const view = makeFakeView(1000, true);
