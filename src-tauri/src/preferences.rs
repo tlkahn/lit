@@ -142,6 +142,23 @@ pub fn auto_update_enabled(app_handle: &AppHandle) -> bool {
         .unwrap_or(true)
 }
 
+pub fn companion_search_paths(prefs: &Preferences) -> Vec<String> {
+    prefs
+        .extra
+        .get("companion.searchPath")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect::<Vec<String>>()
+        })
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| vec![".".to_string()])
+}
+
 pub fn set_preference_at_path(
     path: &std::path::Path,
     key: &str,
@@ -725,6 +742,39 @@ mod tests {
         let json = r#"{"app.autoUpdate": true}"#;
         let prefs: Preferences = serde_json::from_str(json).unwrap();
         assert!(auto_update_enabled_from_prefs(&prefs));
+    }
+
+    #[test]
+    fn companion_search_paths_defaults_to_dot() {
+        let prefs = Preferences::default();
+        assert_eq!(super::companion_search_paths(&prefs), vec![".".to_string()]);
+    }
+
+    #[test]
+    fn companion_search_paths_parses_array() {
+        let prefs: Preferences =
+            serde_json::from_str(r#"{"companion.searchPath": [".", "pdfs"]}"#).unwrap();
+        assert_eq!(
+            super::companion_search_paths(&prefs),
+            vec![".".to_string(), "pdfs".to_string()]
+        );
+    }
+
+    #[test]
+    fn companion_search_paths_non_array_returns_default() {
+        let prefs: Preferences =
+            serde_json::from_str(r#"{"companion.searchPath": "pdfs"}"#).unwrap();
+        assert_eq!(super::companion_search_paths(&prefs), vec![".".to_string()]);
+    }
+
+    #[test]
+    fn companion_search_paths_filters_empty_and_whitespace_entries() {
+        let prefs: Preferences =
+            serde_json::from_str(r#"{"companion.searchPath": [".", "", "  ", "pdfs"]}"#).unwrap();
+        assert_eq!(
+            super::companion_search_paths(&prefs),
+            vec![".".to_string(), "pdfs".to_string()]
+        );
     }
 
     #[test]
