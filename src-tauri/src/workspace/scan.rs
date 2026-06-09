@@ -1,6 +1,7 @@
 use super::normalize::{filename_to_page_name, normalize_to_nfc};
 use super::page::{FileType, PageMeta};
 use super::WorkspaceError;
+use crate::util::is_hidden;
 use indexmap::IndexMap;
 use std::path::Path;
 use std::time::UNIX_EPOCH;
@@ -61,17 +62,6 @@ pub fn scan_pages(root: &Path) -> Result<Vec<PageMeta>, WorkspaceError> {
 
     pages.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
     Ok(pages)
-}
-
-fn is_hidden(entry: &walkdir::DirEntry) -> bool {
-    if entry.depth() == 0 {
-        return false;
-    }
-    entry
-        .file_name()
-        .to_str()
-        .map(|s| s.starts_with('.'))
-        .unwrap_or(false)
 }
 
 #[cfg(test)]

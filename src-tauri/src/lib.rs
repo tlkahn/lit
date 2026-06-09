@@ -17,6 +17,7 @@ mod menu;
 pub mod preferences;
 pub mod seed;
 pub mod socket;
+pub mod util;
 pub mod workspace;
 mod updater;
 

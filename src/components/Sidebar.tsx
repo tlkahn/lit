@@ -275,11 +275,15 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
         </>
       ) : tab === "outline" ? (
         <Outline />
-      ) : tab === "references" ? (
-        <ReferenceLibrary />
-      ) : (
+      ) : tab === "trash" ? (
         <TrashPanel />
-      )}
+      ) : null}
+      <div
+        className="flex flex-1 flex-col overflow-hidden"
+        style={{ display: tab === "references" ? "flex" : "none" }}
+      >
+        <ReferenceLibrary />
+      </div>
     </aside>
   );
 }

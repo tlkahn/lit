@@ -7,9 +7,10 @@ import {
   useCallback,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { listen } from "@tauri-apps/api/event";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useStatusMessageStore } from "../stores/statusMessage";
-import { listBibEntries, type BibEntry } from "../lib/ipc";
+import { listBibEntries, type BibEntry, type FileEvent } from "../lib/ipc";
 import { localeFilter } from "../lib/localeSearch";
 
 function lastName(entry: BibEntry): string {
@@ -33,6 +34,10 @@ function doiHref(doi: string): string {
   return /^https?:\/\//i.test(doi) ? doi : `https://doi.org/${doi}`;
 }
 
+function urlHref(url: string): string {
+  return /^https?:\/\//i.test(url) ? url : "#";
+}
+
 export function ReferenceLibrary() {
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const show = useStatusMessageStore((s) => s.show);
@@ -41,23 +46,57 @@ export function ReferenceLibrary() {
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const deferredSearch = useDeferredValue(search);
 
-  useEffect(() => {
+  const loadEntries = useCallback(() => {
     if (!workspacePath) {
       setEntries([]);
       return;
     }
-    let cancelled = false;
     listBibEntries(workspacePath)
-      .then((result) => {
-        if (!cancelled) setEntries(result);
-      })
-      .catch(() => {
-        if (!cancelled) setEntries([]);
-      });
+      .then(setEntries)
+      .catch(() => setEntries([]));
+  }, [workspacePath]);
+
+  useEffect(() => {
+    loadEntries();
+  }, [loadEntries]);
+
+  useEffect(() => {
+    if (!workspacePath) return;
+
+    let cancelled = false;
+    const unlisteners: (() => void)[] = [];
+
+    const onBibEvent = (event: { payload: FileEvent }) => {
+      if (cancelled) return;
+      if (event.payload.path.toLowerCase().endsWith(".bib")) {
+        loadEntries();
+      }
+    };
+
+    const setup = async () => {
+      for (const name of [
+        "workspace://file-created",
+        "workspace://file-modified",
+        "workspace://file-deleted",
+      ]) {
+        const unlisten = await listen<FileEvent>(name, onBibEvent);
+        if (cancelled) {
+          unlisten();
+          return;
+        }
+        unlisteners.push(unlisten);
+      }
+    };
+
+    setup();
+
     return () => {
       cancelled = true;
+      for (const unlisten of unlisteners) {
+        unlisten();
+      }
     };
-  }, [workspacePath]);
+  }, [workspacePath, loadEntries]);
 
   const sorted = useMemo(() => {
     return [...entries].sort((a, b) => {
@@ -90,7 +129,10 @@ export function ReferenceLibrary() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const expandedIndex = useMemo(
-    () => filtered.findIndex((e) => e.key === expandedKey),
+    () =>
+      filtered.findIndex(
+        (e) => `${e.bib_file ?? ""}:${e.key}` === expandedKey,
+      ),
     [filtered, expandedKey],
   );
   const virtualizer = useVirtualizer({
@@ -133,11 +175,12 @@ export function ReferenceLibrary() {
         <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
           {virtualizer.getVirtualItems().map((virtualRow) => {
             const entry = filtered[virtualRow.index]!;
-            const isExpanded = expandedKey === entry.key;
+            const entryId = `${entry.bib_file ?? ""}:${entry.key}`;
+            const isExpanded = expandedKey === entryId;
             const tags = entry.tags ?? [];
             return (
               <div
-                key={entry.key}
+                key={entryId}
                 data-index={virtualRow.index}
                 ref={virtualizer.measureElement}
                 style={{
@@ -149,7 +192,7 @@ export function ReferenceLibrary() {
                 }}
               >
                 <button
-                  onClick={() => toggleExpand(entry.key)}
+                  onClick={() => toggleExpand(entryId)}
                   className="flex w-full min-w-0 flex-col items-start gap-0.5 rounded px-2 py-1 text-start hover:bg-bg-hover"
                 >
                   <span
@@ -192,7 +235,7 @@ export function ReferenceLibrary() {
                     {entry.url ? (
                       <div className="mt-1">
                         <a
-                          href={entry.url}
+                          href={urlHref(entry.url)}
                           target="_blank"
                           rel="noreferrer"
                           className="break-all text-interactive-accent hover:underline"
@@ -206,9 +249,9 @@ export function ReferenceLibrary() {
                     ) : null}
                     {tags.length > 0 ? (
                       <div className="mt-2 flex flex-wrap gap-1">
-                        {tags.map((t) => (
+                        {tags.map((t, i) => (
                           <span
-                            key={t}
+                            key={`${t}-${i}`}
                             className="rounded bg-bg-hover px-1.5 py-0.5 text-xs text-text-muted"
                           >
                             {t}

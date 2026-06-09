@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { mockInvoke, mockListen, resetListenMock } from "../test/tauri-mock";
+import {
+  mockInvoke,
+  mockListen,
+  resetListenMock,
+  emitMockEvent,
+} from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useStatusMessageStore } from "../stores/statusMessage";
 import { ReferenceLibrary } from "./ReferenceLibrary";
@@ -252,6 +257,173 @@ describe("ReferenceLibrary", () => {
     await waitFor(() =>
       expect(screen.queryByText("Aardvark")).not.toBeInTheDocument(),
     );
+  });
+
+  it("renders a javascript: url as an inert href", async () => {
+    const user = userEvent.setup();
+    fixture = [
+      {
+        key: "evil2020",
+        authors: ["Hacker, H."],
+        title: "Untrusted Entry",
+        year: "2020",
+        entry_type: "article",
+        line_number: 1,
+        bib_file: "/workspace/evil.bib",
+        url: "javascript:alert(document.cookie)",
+      },
+    ];
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("Untrusted Entry")).toBeInTheDocument());
+
+    await user.click(screen.getByText("Untrusted Entry"));
+
+    screen.queryAllByRole("link").forEach((l) => {
+      expect(l.getAttribute("href")).not.toMatch(/^javascript:/i);
+    });
+    const urlLink = screen.getByRole("link", {
+      name: /javascript:alert/i,
+    });
+    expect(urlLink).toHaveAttribute("href", "#");
+  });
+
+  it("renders duplicate citation keys from different .bib files without collision", async () => {
+    const user = userEvent.setup();
+    fixture = [
+      {
+        key: "smith2020",
+        authors: ["Smith, Alice"],
+        title: "Smith Paper One",
+        year: "2020",
+        entry_type: "article",
+        line_number: 1,
+        bib_file: "/ws/a.bib",
+        abstract_text: "ALPHA-UNIQUE-ABSTRACT",
+      },
+      {
+        key: "smith2020",
+        authors: ["Smith, Bob"],
+        title: "Smith Paper Two",
+        year: "2021",
+        entry_type: "article",
+        line_number: 1,
+        bib_file: "/ws/b.bib",
+        abstract_text: "BETA-UNIQUE-ABSTRACT",
+      },
+    ];
+    render(<ReferenceLibrary />);
+    await waitFor(() =>
+      expect(screen.getByText("Smith Paper One")).toBeInTheDocument(),
+    );
+    expect(screen.getAllByTestId("reference-entry-title")).toHaveLength(2);
+
+    await user.click(screen.getByText("Smith Paper One"));
+
+    expect(screen.getByText("ALPHA-UNIQUE-ABSTRACT")).toBeInTheDocument();
+    expect(screen.queryByText("BETA-UNIQUE-ABSTRACT")).not.toBeInTheDocument();
+  });
+
+  it("renders duplicate tags without React key collision", async () => {
+    const user = userEvent.setup();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    fixture = [
+      {
+        key: "dups2020",
+        authors: ["Dup, D."],
+        title: "Duplicate Tags Entry",
+        year: "2020",
+        entry_type: "article",
+        line_number: 1,
+        bib_file: "/workspace/dups.bib",
+        tags: ["ml", "nlp", "ml"],
+      },
+    ];
+    render(<ReferenceLibrary />);
+    await waitFor(() =>
+      expect(screen.getByText("Duplicate Tags Entry")).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByText("Duplicate Tags Entry"));
+
+    expect(screen.getAllByText("ml")).toHaveLength(2);
+    expect(screen.getAllByText("nlp")).toHaveLength(1);
+    expect(errSpy.mock.calls.flat().join(" ")).not.toMatch(
+      /Encountered two children with the same key/,
+    );
+    errSpy.mockRestore();
+  });
+
+  it("re-fetches when a .bib file is modified", async () => {
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    const before = invokedCommands.filter((c) => c.cmd === "list_bib_entries").length;
+    fixture = [
+      { ...sanderson, title: "The Saiva Age (edited)" },
+      flood,
+      abrams,
+    ];
+    emitMockEvent("workspace://file-modified", { path: "refs.bib" });
+
+    await waitFor(() =>
+      expect(screen.getByText("The Saiva Age (edited)")).toBeInTheDocument(),
+    );
+    const after = invokedCommands.filter((c) => c.cmd === "list_bib_entries").length;
+    expect(after).toBeGreaterThan(before);
+  });
+
+  it("re-fetches when a .bib file is created (starting empty)", async () => {
+    fixture = [];
+    render(<ReferenceLibrary />);
+    await waitFor(() =>
+      expect(screen.getByText(/No references found/i)).toBeInTheDocument(),
+    );
+
+    fixture = [sanderson];
+    emitMockEvent("workspace://file-created", { path: "new.bib" });
+
+    await waitFor(() =>
+      expect(screen.getByText("The Saiva Age")).toBeInTheDocument(),
+    );
+  });
+
+  it("re-fetches when a .bib file is deleted", async () => {
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    fixture = [];
+    emitMockEvent("workspace://file-deleted", { path: "refs.bib" });
+
+    await waitFor(() =>
+      expect(screen.getByText(/No references found/i)).toBeInTheDocument(),
+    );
+  });
+
+  it("ignores non-.bib file events", async () => {
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    const before = invokedCommands.filter((c) => c.cmd === "list_bib_entries").length;
+    emitMockEvent("workspace://file-modified", { path: "note.md" });
+    emitMockEvent("workspace://file-created", { path: "paper.pdf" });
+
+    // Give any erroneous re-fetch a chance to fire.
+    await new Promise((r) => setTimeout(r, 20));
+    const after = invokedCommands.filter((c) => c.cmd === "list_bib_entries").length;
+    expect(after).toBe(before);
+  });
+
+  it("unsubscribes from file events on unmount", async () => {
+    const { unmount } = render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    unmount();
+
+    const before = invokedCommands.filter((c) => c.cmd === "list_bib_entries").length;
+    emitMockEvent("workspace://file-modified", { path: "refs.bib" });
+    await new Promise((r) => setTimeout(r, 20));
+    const after = invokedCommands.filter((c) => c.cmd === "list_bib_entries").length;
+    expect(after).toBe(before);
   });
 
   it("copy citation failure shows an error status", async () => {

@@ -3,17 +3,7 @@ use std::path::Path;
 
 use crate::bib::cache::BibCache;
 use crate::bib::types::BibEntry;
-
-fn is_hidden(entry: &walkdir::DirEntry) -> bool {
-    if entry.depth() == 0 {
-        return false;
-    }
-    entry
-        .file_name()
-        .to_str()
-        .map(|s| s.starts_with('.'))
-        .unwrap_or(false)
-}
+use crate::util::is_hidden;
 
 /// Walk `root`, parse every `.bib` file (skipping hidden directories), and
 /// return all entries with `bib_file` set to the file's absolute path.
@@ -36,16 +26,19 @@ pub fn scan_workspace_bibs(root: &Path, cache: &BibCache) -> Vec<BibEntry> {
             continue;
         }
 
-        let content = match fs::read_to_string(path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        let mtime = fs::metadata(path)
-            .and_then(|m| m.modified())
+        // Reuse the metadata walkdir already cached during traversal (no second
+        // stat syscall) instead of issuing a fresh `fs::metadata(path)`.
+        let mtime = entry
+            .metadata()
+            .ok()
+            .and_then(|m| m.modified().ok())
             .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
 
         let path_buf = path.to_path_buf();
-        let mut entries = cache.get_or_parse(&path_buf, &content, mtime);
+        // Read the file ONLY on a cache miss: the closure is invoked lazily and
+        // is skipped entirely on a warm-cache hit (mtime match).
+        let mut entries =
+            cache.get_or_parse_with(&path_buf, mtime, || fs::read_to_string(path).ok());
         let path_str = path.to_string_lossy().to_string();
         for e in &mut entries {
             e.bib_file = Some(path_str.clone());
@@ -188,6 +181,40 @@ mod tests {
         let entries = scan_workspace_bibs(dir.path(), &BibCache::new());
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].key, "smith2020");
+    }
+
+    #[test]
+    fn warm_cache_skips_file_read() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("refs.bib");
+        fs::write(&path, sample_bib()).unwrap();
+
+        let cache = BibCache::new();
+
+        // First scan populates the cache.
+        let entries1 = scan_workspace_bibs(dir.path(), &cache);
+        assert_eq!(entries1.len(), 1);
+        assert_eq!(entries1[0].key, "smith2020");
+
+        // Capture the original mtime, then overwrite the file with DIFFERENT
+        // content while restoring the original mtime. A correct warm-cache path
+        // must not read the new bytes.
+        let orig_mtime = filetime::FileTime::from_last_modification_time(
+            &fs::metadata(&path).unwrap(),
+        );
+        fs::write(
+            &path,
+            "@article{changed9999,\n  author = {New, Author},\n  title = {Changed},\n  year = {2099}\n}",
+        )
+        .unwrap();
+        filetime::set_file_mtime(&path, orig_mtime).unwrap();
+
+        let entries2 = scan_workspace_bibs(dir.path(), &cache);
+        assert_eq!(entries2.len(), 1);
+        assert_eq!(
+            entries2[0].key, "smith2020",
+            "warm cache must return original entry; new file content must not be read"
+        );
     }
 
     #[test]

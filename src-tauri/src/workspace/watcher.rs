@@ -209,7 +209,7 @@ pub(crate) fn accumulate_diff(events: &[(&str, FileChangeKind)]) -> crate::graph
 
 fn is_relevant_file(path: &Path, _root: &Path) -> bool {
     let extension = path.extension().and_then(|e| e.to_str());
-    if !matches!(extension, Some("md") | Some("pdf")) {
+    if !matches!(extension, Some("md") | Some("pdf") | Some("bib")) {
         return false;
     }
 
@@ -300,6 +300,24 @@ mod tests {
         assert!(is_relevant_file(Path::new("/workspace/paper.pdf"), root));
         assert!(!is_relevant_file(
             Path::new("/workspace/.hidden.pdf"),
+            root
+        ));
+    }
+
+    #[test]
+    fn relevant_file_accepts_bib() {
+        let root = Path::new("/workspace");
+        assert!(is_relevant_file(Path::new("/workspace/refs.bib"), root));
+        assert!(is_relevant_file(
+            Path::new("/workspace/sub/refs.bib"),
+            root
+        ));
+        assert!(!is_relevant_file(
+            Path::new("/workspace/.hidden.bib"),
+            root
+        ));
+        assert!(!is_relevant_file(
+            Path::new("/workspace/.obsidian/config.bib"),
             root
         ));
     }
