@@ -851,16 +851,17 @@ describe("EditableTableWidget", () => {
       view.destroy();
     });
 
-    it("falls back to this.from when posAtCoords returns null", () => {
+    it("falls back to posAtDOM when posAtCoords returns null", () => {
       const nav = vi.fn();
       const view = makeTableViewWithFacet(nav);
       vi.spyOn(view, "posAtCoords").mockReturnValue(null);
+      vi.spyOn(view, "posAtDOM").mockReturnValue(7);
       const widget = new EditableTableWidget(wikiTable, 42);
       const el = widget.toDOM(view);
       document.body.appendChild(el);
       const span = el.querySelector(".cm-preview-wikilink")!;
       clickOn(span);
-      expect(nav).toHaveBeenCalledWith("Target", undefined, 42);
+      expect(nav).toHaveBeenCalledWith("Target", undefined, 7);
       el.remove();
       view.destroy();
     });
@@ -932,10 +933,11 @@ describe("EditableTableWidget", () => {
   });
 
   describe("non-wikilink mousedown dispatches widgetSync selection", () => {
-    it("dispatches selection at widget.from with widgetSync annotation", () => {
+    it("dispatches selection at posAtDOM position with widgetSync annotation", () => {
       const doc = "prefix\n| a | b |\n| --- | --- |\n| 1 | 2 |";
       const state = EditorState.create({ doc });
       const view = new EditorView({ state, parent: document.createElement("div") });
+      vi.spyOn(view, "posAtDOM").mockReturnValue(10);
       const dispatchSpy = vi.spyOn(view, "dispatch");
       const widget = new EditableTableWidget(basicTable, 10);
       const el = widget.toDOM(view);
@@ -956,6 +958,33 @@ describe("EditableTableWidget", () => {
       });
       expect(syncCall).toBeDefined();
       el.remove();
+      view.destroy();
+    });
+
+    it("uses posAtDOM at event time, not stale constructor from", () => {
+      const doc = "some prefix text\n| a | b |\n| --- | --- |\n| 1 | 2 |";
+      const state = EditorState.create({ doc });
+      const view = new EditorView({ state, parent: document.createElement("div") });
+      const posAtDOMSpy = vi.spyOn(view, "posAtDOM");
+
+      posAtDOMSpy.mockReturnValue(10);
+      const oldWidget = new EditableTableWidget(basicTable, 10);
+      const dom = oldWidget.toDOM(view);
+      document.body.appendChild(dom);
+
+      posAtDOMSpy.mockReturnValue(20);
+      const newWidget = new EditableTableWidget(basicTable, 20);
+      newWidget.updateDOM(dom, view);
+
+      const th = dom.querySelector("thead th")!;
+      th.dispatchEvent(new MouseEvent("mousedown", {
+        button: 0,
+        bubbles: true,
+        cancelable: true,
+      }));
+
+      expect(view.state.selection.main.head).toBe(20);
+      dom.remove();
       view.destroy();
     });
 

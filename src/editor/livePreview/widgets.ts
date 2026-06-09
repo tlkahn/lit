@@ -383,7 +383,7 @@ export class EditableTableWidget extends WidgetType {
       const span = (e.target as HTMLElement).closest?.(".cm-preview-wikilink");
       if (!span) {
         view.dispatch({
-          selection: { anchor: this.from },
+          selection: { anchor: view.posAtDOM(container) },
           annotations: widgetSync.of(true),
         });
         return;
@@ -395,7 +395,7 @@ export class EditableTableWidget extends WidgetType {
       if (!navigateToPage) return;
       e.preventDefault();
       e.stopPropagation();
-      const departurePos = view.posAtCoords({ x: e.clientX, y: e.clientY }) ?? this.from;
+      const departurePos = view.posAtCoords({ x: e.clientX, y: e.clientY }) ?? view.posAtDOM(container);
       navigateToPage(target, section, departurePos);
     }, true);
 
