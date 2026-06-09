@@ -91,6 +91,7 @@ export function createSharedDocRegistry<Content extends HasBody>(
 ): SharedDocRegistry<Content> {
   // Each registry owns its OWN Map so the two stacks stay fully isolated.
   const docs = new Map<string, SharedDocOf<Content>>();
+  let epoch = 0;
 
   function acquire(pagePath: string, paneId: string): void {
     let doc = docs.get(pagePath);
@@ -175,7 +176,9 @@ export function createSharedDocRegistry<Content extends HasBody>(
       // - pane guard (`panes.size === 0`): never delete a re-acquired doc.
       // - in-flight guard (`saveInFlightGen === 0`): never delete while a save
       //   is still pending (a setBody during the window may have queued one).
+      const releaseEpoch = epoch;
       const maybeDelete = (): void => {
+        if (releaseEpoch !== epoch) return;
         const live = docs.get(pagePath);
         if (
           live === doc &&
@@ -315,6 +318,7 @@ export function createSharedDocRegistry<Content extends HasBody>(
       if (doc.saveTimer) clearTimeout(doc.saveTimer);
     }
     docs.clear();
+    epoch++;
   }
 
   return {

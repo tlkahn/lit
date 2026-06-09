@@ -48,6 +48,7 @@ function eatQuoted(stream: StringStream): void {
 function eatBracedInto(stream: StringStream, state: BibState): void {
   while (!stream.eol()) {
     const ch = stream.next();
+    if (ch === "\\") { stream.next(); continue; }
     if (ch === "{") state.braceDepth++;
     else if (ch === "}") {
       state.braceDepth--;
@@ -67,6 +68,7 @@ const parser: StreamParser<BibState> = {
     // indentation is part of the value, not a comment or skippable space.
     if (state.braceDepth > 0) {
       eatBracedInto(stream, state);
+      if (state.braceDepth === 0) state.inValue = false;
       return "string";
     }
 
@@ -123,6 +125,7 @@ const parser: StreamParser<BibState> = {
     // Braced string value.
     if (ch === "{") {
       eatBracedInto(stream, state);
+      if (state.braceDepth === 0) state.inValue = false;
       return "string";
     }
 

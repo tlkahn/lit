@@ -80,6 +80,26 @@ describe("bibtex StreamLanguage", () => {
     expect(hasNode(nodes, "punctuation", "{")).toBe(true);
   });
 
+  it("resets inValue after a complete single-line braced value", () => {
+    const nodes = parseNodes("@book{k,\ntitle = {Foo}\nyear = {2024},\n}");
+    expect(hasNode(nodes, "fieldName", "year")).toBe(true);
+  });
+
+  it("resets inValue after a multi-line braced value completes", () => {
+    const nodes = parseNodes("@book{k,\ntitle = {Hello\nWorld}\nyear = {2024},\n}");
+    expect(hasNode(nodes, "fieldName", "year")).toBe(true);
+  });
+
+  it("treats escaped closing brace inside a value as literal", () => {
+    const nodes = parseNodes("@book{k,\ntitle = {A \\} problem},\n}");
+    expect(hasNode(nodes, "string", "{A \\} problem}")).toBe(true);
+  });
+
+  it("treats escaped opening brace inside a value as literal", () => {
+    const nodes = parseNodes("@book{k,\ntitle = {A \\{ B},\n}");
+    expect(hasNode(nodes, "string", "{A \\{ B}")).toBe(true);
+  });
+
   it("keeps a multi-line braced value typed as string across lines", () => {
     const nodes = parseNodes("@book{k,\ntitle = {Hello\nWorld},\n}");
     expect(hasNode(nodes, "fieldName", "title")).toBe(true);

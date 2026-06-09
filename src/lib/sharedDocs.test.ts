@@ -360,6 +360,58 @@ describe("SharedDocRegistry", () => {
       expect(getDoc("notes.md")!.body).toBe("edited");
     });
 
+    it("release with in-flight save (no new edits since save started) defers delete until save settles", async () => {
+      acquire("notes.md", "p1");
+      setContent("notes.md", { body: "old", title: "T", frontmatter: {}, rawYaml: "" });
+      setBody("notes.md", "edited", "p1");
+
+      let resolveWrite!: () => void;
+      vi.mocked(writePage).mockImplementationOnce(
+        () => new Promise<void>((r) => { resolveWrite = r; }),
+      );
+
+      // Fire the debounce timer — starts the save (saveInFlightGen becomes 1).
+      vi.advanceTimersByTime(300);
+      expect(writePage).toHaveBeenCalledOnce();
+
+      // Release with no new edits since the save started (Branch 2).
+      release("notes.md", "p1");
+      // Doc must NOT be deleted while the save is still in flight.
+      expect(getDoc("notes.md")).not.toBeNull();
+
+      // Settle the write — now the deferred maybeDelete runs.
+      resolveWrite();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(getDoc("notes.md")).toBeNull();
+    });
+
+    it("release with in-flight save (no new edits) allows re-acquire to reuse in-memory doc", async () => {
+      acquire("notes.md", "p1");
+      setContent("notes.md", { body: "old", title: "T", frontmatter: {}, rawYaml: "" });
+      setBody("notes.md", "edited", "p1");
+
+      let resolveWrite!: () => void;
+      vi.mocked(writePage).mockImplementationOnce(
+        () => new Promise<void>((r) => { resolveWrite = r; }),
+      );
+
+      vi.advanceTimersByTime(300);
+      release("notes.md", "p1");
+
+      // Re-acquire before the save settles.
+      acquire("notes.md", "p2");
+      const doc = getDoc("notes.md");
+      expect(doc).not.toBeNull();
+      expect(doc!.loaded).toBe(true);
+      expect(doc!.body).toBe("edited");
+
+      // Settle the write — doc survives because p2 holds it.
+      resolveWrite();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(getDoc("notes.md")).not.toBeNull();
+      expect(getDoc("notes.md")!.body).toBe("edited");
+    });
+
     it("deferred delete still collects the entry once truly idle (reopen then close)", async () => {
       acquire("notes.md", "p1");
       setContent("notes.md", { body: "old", title: "T", frontmatter: {}, rawYaml: "" });
@@ -387,6 +439,35 @@ describe("SharedDocRegistry", () => {
   });
 
   describe("misc", () => {
+    it("_resetForTesting prevents stale maybeDelete from deleting a re-acquired doc", async () => {
+      acquire("notes.md", "p1");
+      setContent("notes.md", { body: "old", title: "T", frontmatter: {}, rawYaml: "" });
+      setBody("notes.md", "edited", "p1");
+
+      let resolveWrite!: () => void;
+      vi.mocked(writePage).mockImplementationOnce(
+        () => new Promise<void>((r) => { resolveWrite = r; }),
+      );
+
+      // Release queues a save + maybeDelete chain.
+      release("notes.md", "p1");
+
+      // Full reset — simulates a test boundary.
+      _resetForTesting();
+
+      // Re-acquire the same path with fresh content.
+      acquire("notes.md", "p2");
+      setContent("notes.md", { body: "fresh", title: "T2", frontmatter: {}, rawYaml: "" });
+
+      // Settle the old write — stale maybeDelete must NOT delete the new doc.
+      resolveWrite();
+      await vi.advanceTimersByTimeAsync(0);
+
+      const doc = getDoc("notes.md");
+      expect(doc).not.toBeNull();
+      expect(doc!.body).toBe("fresh");
+    });
+
     it("_resetForTesting clears all state", () => {
       acquire("a.md", "p1");
       acquire("b.md", "p2");
