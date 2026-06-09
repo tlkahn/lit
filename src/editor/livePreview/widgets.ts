@@ -4,6 +4,7 @@ import { parseTable, renderInlineMarkdown, serializeTable, type Alignment, type 
 import { renderMermaid, getMermaidCached } from "./mermaid";
 import { showMediaLightbox } from "./lightbox";
 import { navigateToPageFacet } from "./navigateToPageFacet";
+import { widgetSync } from "./widgetSyncAnnotation";
 import { getKatexSync, loadKatex } from "./katexLoader";
 import "katex/dist/katex.min.css";
 
@@ -380,7 +381,13 @@ export class EditableTableWidget extends WidgetType {
       if (e.button !== 0) return;
       if (e.metaKey || e.ctrlKey) return;
       const span = (e.target as HTMLElement).closest?.(".cm-preview-wikilink");
-      if (!span) return;
+      if (!span) {
+        view.dispatch({
+          selection: { anchor: this.from },
+          annotations: widgetSync.of(true),
+        });
+        return;
+      }
       const target = span.getAttribute("data-wikilink-target");
       if (target === null) return;
       const section = span.getAttribute("data-wikilink-section") ?? undefined;

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
+import { widgetSync } from "./widgetSyncAnnotation";
 import {
   ImageWidget,
   CalloutHeaderWidget,
@@ -925,6 +926,65 @@ describe("EditableTableWidget", () => {
           cancelable: true,
         }));
       }).not.toThrow();
+      el.remove();
+      view.destroy();
+    });
+  });
+
+  describe("non-wikilink mousedown dispatches widgetSync selection", () => {
+    it("dispatches selection at widget.from with widgetSync annotation", () => {
+      const doc = "prefix\n| a | b |\n| --- | --- |\n| 1 | 2 |";
+      const state = EditorState.create({ doc });
+      const view = new EditorView({ state, parent: document.createElement("div") });
+      const dispatchSpy = vi.spyOn(view, "dispatch");
+      const widget = new EditableTableWidget(basicTable, 10);
+      const el = widget.toDOM(view);
+      document.body.appendChild(el);
+
+      const th = el.querySelector("thead th")!;
+      th.dispatchEvent(new MouseEvent("mousedown", {
+        button: 0,
+        bubbles: true,
+        cancelable: true,
+      }));
+
+      expect(view.state.selection.main.head).toBe(10);
+      const syncCall = dispatchSpy.mock.calls.find((args) => {
+        const spec = args[0] as Record<string, unknown>;
+        const ann = spec?.annotations as { type?: unknown } | undefined;
+        return ann?.type === widgetSync;
+      });
+      expect(syncCall).toBeDefined();
+      el.remove();
+      view.destroy();
+    });
+
+    it("wikilink click does NOT dispatch widgetSync selection", () => {
+      const wikiTable = "| link |\n| --- |\n| [[Target]] |";
+      const nav = vi.fn();
+      const state = EditorState.create({
+        doc: wikiTable,
+        extensions: [navigateToPageFacet.of(nav)],
+      });
+      const view = new EditorView({ state, parent: document.createElement("div") });
+      const dispatchSpy = vi.spyOn(view, "dispatch");
+      const widget = new EditableTableWidget(wikiTable, 0);
+      const el = widget.toDOM(view);
+      document.body.appendChild(el);
+
+      const span = el.querySelector(".cm-preview-wikilink")!;
+      span.dispatchEvent(new MouseEvent("mousedown", {
+        button: 0,
+        bubbles: true,
+        cancelable: true,
+      }));
+
+      const hasWidgetSync = dispatchSpy.mock.calls.some((args) => {
+        const spec = args[0] as Record<string, unknown>;
+        const ann = spec?.annotations as { type?: unknown } | undefined;
+        return ann?.type === widgetSync;
+      });
+      expect(hasWidgetSync).toBe(false);
       el.remove();
       view.destroy();
     });
