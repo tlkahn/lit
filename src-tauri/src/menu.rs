@@ -33,7 +33,6 @@ pub const MENU_SHORTCUTS: &[MenuShortcutDef] = &[
     MenuShortcutDef { menu_id: MENU_ID_OPEN_PREFERENCES, command_id: "core.settings.open", accelerator: "cmdOrCtrl+,", label: "Settings" },
     MenuShortcutDef { menu_id: MENU_ID_EXPORT_MARKDOWN, command_id: "app.exportMarkdown", accelerator: "cmdOrCtrl+shift+s", label: "Export as Markdown Archive" },
     MenuShortcutDef { menu_id: MENU_ID_OPEN_IN_EXTERNAL_EDITOR, command_id: "editor.openInExternalEditor", accelerator: "cmdOrCtrl+shift+e", label: "Open in External Editor" },
-    MenuShortcutDef { menu_id: MENU_ID_CLOSE, command_id: "pane.close", accelerator: "cmdOrCtrl+w", label: "Close" },
 ];
 
 pub const EVENT_CLOSE_PANE: &str = "menu://close-pane";
@@ -334,7 +333,7 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, MENU_ID_OPEN_IN_EXTERNAL_EDITOR, "Open in External Editor", true, Some("cmdOrCtrl+shift+e"))?,
             &PredefinedMenuItem::separator(app)?,
-            &MenuItem::with_id(app, MENU_ID_CLOSE, "Close", true, Some("cmdOrCtrl+w"))?,
+            &MenuItem::with_id(app, MENU_ID_CLOSE, "Close", true, None::<&str>)?,
         ],
     )?;
 

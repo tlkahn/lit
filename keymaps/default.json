@@ -19,6 +19,7 @@
   { "key": "Mod-2", "command": "app.showMindmapView" },
   { "key": "Mod-3", "command": "app.showGraphView" },
   { "key": "Ctrl-g", "command": "editor.selectNextOccurrence", "when": "editorFocus" },
+  { "key": "Mod-w", "command": "pane.close" },
   { "key": "Mod-d", "command": "pane.splitRight" },
   { "key": "Mod-Shift-d", "command": "pane.splitDown" },
   { "key": "Mod-Alt-ArrowRight", "command": "pane.focusNext" },

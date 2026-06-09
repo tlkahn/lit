@@ -395,8 +395,8 @@ mod tests {
     // --- Cycle 4: menu shortcut extraction ---
 
     #[test]
-    fn test_menu_shortcuts_returns_four_entries() {
-        assert_eq!(get_menu_shortcut_bindings().len(), 4);
+    fn test_menu_shortcuts_returns_three_entries() {
+        assert_eq!(get_menu_shortcut_bindings().len(), 3);
     }
 
     #[test]
@@ -422,14 +422,6 @@ mod tests {
         assert!(cmds.contains(&"core.settings.open"));
         assert!(cmds.contains(&"app.exportMarkdown"));
         assert!(cmds.contains(&"editor.openInExternalEditor"));
-    }
-
-    #[test]
-    fn test_menu_shortcuts_includes_pane_close() {
-        let bindings = get_menu_shortcut_bindings();
-        let close = bindings.iter().find(|b| b.command == "pane.close");
-        assert!(close.is_some());
-        assert_eq!(close.unwrap().key, "Mod-w");
     }
 
     // --- Cycle 5: save strips source ---
