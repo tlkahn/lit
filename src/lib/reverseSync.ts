@@ -16,25 +16,10 @@ import type { PageMarker } from "./pageMarkers";
 //
 // The module is kept dependency-light like forwardSync.ts.
 
-/**
- * Options that adapt the shared dispatch body for the initial-sync site (when a
- * companion editor is explicitly opened/focused) versus the live PDF -> md
- * reverse-sync site.
- */
 export interface ReverseSyncOptions {
-  /**
-   * Bypass the `syncEnabled` and `view.hasFocus` guards. Used by the
-   * companion.open initial-sync path: opening a companion is an explicit user
-   * action and the editor pane may already be focused at dispatch time, so
-   * neither guard should suppress the scroll.
-   */
+  /** Bypass the `syncEnabled` and `view.hasFocus` guards (for explicit actions like companion.open). */
   skipGuards?: boolean;
-  /**
-   * Map an out-of-bounds `pageIndex` onto the last marker (when the PDF has more
-   * pages than the markdown has `<!-- Page N -->` markers). With empty markers
-   * this stays a no-op. Off by default so the live reverse-sync path keeps its
-   * strict "no marker -> no-op" behavior.
-   */
+  /** Map an out-of-bounds `pageIndex` onto the last marker. Off by default for strict live-sync. */
   clampIndex?: boolean;
 }
 
@@ -54,9 +39,8 @@ export function dispatchReverseSync(
 
   if (markers.length === 0) return;
 
-  // Resolve the effective marker index. clampIndex maps an out-of-bounds page
-  // onto the last marker; without it an out-of-bounds index simply has no
-  // marker and falls through to the no-op below.
+  // Clamping is intentionally pre-guard: it's cheap and avoids double resolution.
+  // setLastSyncedPage only fires if guards pass, so a clamped-but-guarded call is harmless.
   const index = clampIndex
     ? Math.min(pageIndex, markers.length - 1)
     : pageIndex;
@@ -71,8 +55,6 @@ export function dispatchReverseSync(
 
   if (!skipGuards && view.hasFocus) return;
 
-  // Record the EFFECTIVE (possibly clamped) index BEFORE dispatch so the
-  // forward-sync echo guard compares against a page that has a real marker.
   usePanePdfLinkStore.getState().setLastSyncedPage(index);
 
   const pos = Math.min(marker.charOffset, view.state.doc.length);

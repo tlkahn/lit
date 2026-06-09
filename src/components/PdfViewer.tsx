@@ -40,15 +40,8 @@ interface PdfViewerProps {
   onPageChange?: (pageIndex: number) => void;
   onPageCount?: (count: number) => void;
   /**
-   * Publish this viewer's internal `goToPage` so an external owner (e.g. the
-   * pane, for forward sync) can drive navigation imperatively. Called whenever
-   * the callback identity changes so the always-current closure is registered.
-   *
-   * `ready` reflects whether the backend has the doc open (pdfInfo set): it is
-   * `false` on the initial mount registration (before pdfOpen resolves, when
-   * goToPage would call pdfRenderPage against an unopened doc) and `true` once
-   * pdfInfo is set. The owner registers the live closure on every call but only
-   * consumes/fires a pending initial sync on a ready registration (Finding 2).
+   * Publish this viewer's `goToPage`. `ready` is false before the backend doc
+   * is open; the owner should only consume a pending sync on a ready call.
    */
   registerGoToPage?: (fn: (pageIndex: number) => void, ready: boolean) => void;
   /**

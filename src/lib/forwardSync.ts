@@ -20,25 +20,10 @@ export const DEBOUNCE_MS = 150;
 export const ECHO_GUARD_MS = 300;
 
 /**
- * Safety-net lifetime for the in-flight forward-sync flag (markForwardSync ->
- * clearForwardSync). When forward sync drives the PDF, it sets the flag so the
- * resulting onPageChange is recognized as self-induced and does NOT trigger a
- * reverse sync back into the editor.
- *
- * This timeout is ONLY a safety net. The real flag consumption happens
- * synchronously in PdfViewerPane.handlePageChange via consumeForwardSync the
- * moment the PDF settles on the target page. The timeout merely guarantees the
- * flag is eventually cleared if onPageChange never arrives (e.g. the nav was a
- * no-op because the PDF was already on that page).
- *
- * The value is chosen comfortably larger than a realistic worst-case PDF render
- * (large page, cold cache, slow machine) so the timeout cannot fire BEFORE a
- * slow onPageChange settles — which would clear the flag early, make
- * consumeForwardSync return false, and bounce the editor cursor with a spurious
- * reverse sync (Finding 5). clearForwardSync is token-guarded, so even a late
- * same-nav onPageChange that already consumed/replaced the flag is unaffected
- * by this stale timer. Residual edge: a render slower than this value would
- * still reintroduce the race, but 2000ms comfortably exceeds expected renders.
+ * Safety-net lifetime for the in-flight forward-sync flag. The real consumption
+ * is synchronous (consumeForwardSync in PdfViewerPane.handlePageChange); this
+ * timeout only clears the flag if onPageChange never fires (e.g. same-page
+ * no-op). 2000ms exceeds worst-case PDF renders so it never fires prematurely.
  */
 export const FORWARD_SYNC_GUARD_MS = 2000;
 

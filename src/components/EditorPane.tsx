@@ -177,11 +177,7 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
       if (!view) return;
       const pendingSync = usePanePdfLinkStore.getState().consumePendingEditorSync(paneId);
       if (pendingSync !== null) {
-        // Initial companion sync: scroll to the page marker. Reuse the shared
-        // reverse-sync dispatch, but skip the syncEnabled/hasFocus guards
-        // (companion.open is explicit and the pane may already be focused) and
-        // clamp an out-of-bounds page index onto the last marker so a PDF with
-        // more pages than the markdown has markers still scrolls.
+        // Initial companion sync: scroll to the page marker, bypassing guards and clamping.
         const markers = getCachedPageMarkers(view.state.doc);
         dispatchReverseSync(pendingSync, paneId, markers, {
           skipGuards: true,

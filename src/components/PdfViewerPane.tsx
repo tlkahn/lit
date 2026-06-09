@@ -24,16 +24,13 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
 
   const handleRegisterGoToPage = useCallback(
     (fn: (pageIndex: number) => void, ready: boolean) => {
-      // Always keep the registry pointing at the live closure so StatusBar /
-      // keyboard nav work even before the PDF is ready.
       registerPdfGoToPage(paneId, fn);
-      // Only consume + fire the pending initial sync once the PDF is actually
-      // ready (pdfInfo set on the backend). The first registration fires with
-      // ready=false against a stale pdfInfo=null closure; consuming there would
-      // navigate before the doc is open AND drop the pending state before the
-      // live closure registers (Finding 2).
+      // Only consume the pending sync once the PDF is ready (pdfInfo set).
       if (!ready) return;
       const pending = usePanePdfLinkStore.getState().consumePendingPdfSync(paneId);
+      // Skip page 0: PDF viewers start there by default, so navigating is a
+      // no-op. The editor side has no such guard because its cursor may not be
+      // at the first marker.
       if (pending !== null && pending !== 0) {
         const token = markForwardSync(paneId);
         fn(pending);

@@ -222,9 +222,11 @@ export function initPanePdfLinkCleanup(): void {
         pendingEditorChanged = true;
       }
     }
-    if (pendingPdfChanged) usePanePdfLinkStore.setState({ pendingPdfSync: nextPendingPdfSync });
-    if (pendingEditorChanged) usePanePdfLinkStore.setState({ pendingEditorSync: nextPendingEditorSync });
-    if (changed) usePanePdfLinkStore.setState({ currentPage: nextCurrentPage, pageCount: nextPageCount });
+    const patch: Record<string, unknown> = {};
+    if (pendingPdfChanged) patch.pendingPdfSync = nextPendingPdfSync;
+    if (pendingEditorChanged) patch.pendingEditorSync = nextPendingEditorSync;
+    if (changed) { patch.currentPage = nextCurrentPage; patch.pageCount = nextPageCount; }
+    if (Object.keys(patch).length > 0) usePanePdfLinkStore.setState(patch);
   });
 }
 
