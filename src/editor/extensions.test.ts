@@ -18,6 +18,7 @@ import {
 import { createExtensions } from "./extensions";
 import { livePreviewPlugin } from "./livePreview/plugin";
 import { mediaThumbnailsFacet } from "./livePreview";
+import { widgetSync } from "./livePreview/widgetSyncAnnotation";
 import { _clear, registerHandler, executeCommand } from "../lib/commandRegistry";
 import { resolveKeymaps } from "../lib/keymapResolver";
 
@@ -31,7 +32,7 @@ vi.mock("katex", () => ({
 
 vi.mock("katex/dist/katex.min.css", () => ({}));
 
-function makeConfig(overrides?: { onChange?: (content: string) => void; editorLocked?: boolean }) {
+function makeConfig(overrides?: { onChange?: (content: string) => void; onSelectionChange?: (line: number, col: number) => void; editorLocked?: boolean }) {
   return {
     theme: "light" as const,
     themeCompartment: new Compartment(),
@@ -608,5 +609,34 @@ describe("search & replace", () => {
     _clear();
     view.destroy();
     parent.remove();
+  });
+});
+
+describe("widgetSync annotation bypasses hasFocus guard", () => {
+  it("fires onSelectionChange for widgetSync-annotated transaction without focus", () => {
+    const onSelectionChange = vi.fn();
+    const exts = createExtensions(makeConfig({ onSelectionChange }));
+    const state = EditorState.create({ doc: "hello world", extensions: exts });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    view.dispatch({
+      selection: { anchor: 5 },
+      annotations: widgetSync.of(true),
+    });
+
+    expect(onSelectionChange).toHaveBeenCalledWith(1, 6);
+    view.destroy();
+  });
+
+  it("does NOT fire onSelectionChange for regular selection without focus", () => {
+    const onSelectionChange = vi.fn();
+    const exts = createExtensions(makeConfig({ onSelectionChange }));
+    const state = EditorState.create({ doc: "hello world", extensions: exts });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    view.dispatch({ selection: { anchor: 5 } });
+
+    expect(onSelectionChange).not.toHaveBeenCalled();
+    view.destroy();
   });
 });

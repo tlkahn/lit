@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
+import { widgetSync } from "./widgetSyncAnnotation";
 import {
   ImageWidget,
   CalloutHeaderWidget,
@@ -850,16 +851,17 @@ describe("EditableTableWidget", () => {
       view.destroy();
     });
 
-    it("falls back to this.from when posAtCoords returns null", () => {
+    it("falls back to posAtDOM when posAtCoords returns null", () => {
       const nav = vi.fn();
       const view = makeTableViewWithFacet(nav);
       vi.spyOn(view, "posAtCoords").mockReturnValue(null);
+      vi.spyOn(view, "posAtDOM").mockReturnValue(7);
       const widget = new EditableTableWidget(wikiTable, 42);
       const el = widget.toDOM(view);
       document.body.appendChild(el);
       const span = el.querySelector(".cm-preview-wikilink")!;
       clickOn(span);
-      expect(nav).toHaveBeenCalledWith("Target", undefined, 42);
+      expect(nav).toHaveBeenCalledWith("Target", undefined, 7);
       el.remove();
       view.destroy();
     });
@@ -925,6 +927,93 @@ describe("EditableTableWidget", () => {
           cancelable: true,
         }));
       }).not.toThrow();
+      el.remove();
+      view.destroy();
+    });
+  });
+
+  describe("non-wikilink mousedown dispatches widgetSync selection", () => {
+    it("dispatches selection at posAtDOM position with widgetSync annotation", () => {
+      const doc = "prefix\n| a | b |\n| --- | --- |\n| 1 | 2 |";
+      const state = EditorState.create({ doc });
+      const view = new EditorView({ state, parent: document.createElement("div") });
+      vi.spyOn(view, "posAtDOM").mockReturnValue(10);
+      const dispatchSpy = vi.spyOn(view, "dispatch");
+      const widget = new EditableTableWidget(basicTable, 10);
+      const el = widget.toDOM(view);
+      document.body.appendChild(el);
+
+      const th = el.querySelector("thead th")!;
+      th.dispatchEvent(new MouseEvent("mousedown", {
+        button: 0,
+        bubbles: true,
+        cancelable: true,
+      }));
+
+      expect(view.state.selection.main.head).toBe(10);
+      const syncCall = dispatchSpy.mock.calls.find((args) => {
+        const spec = args[0] as Record<string, unknown>;
+        const ann = spec?.annotations as { type?: unknown } | undefined;
+        return ann?.type === widgetSync;
+      });
+      expect(syncCall).toBeDefined();
+      el.remove();
+      view.destroy();
+    });
+
+    it("uses posAtDOM at event time, not stale constructor from", () => {
+      const doc = "some prefix text\n| a | b |\n| --- | --- |\n| 1 | 2 |";
+      const state = EditorState.create({ doc });
+      const view = new EditorView({ state, parent: document.createElement("div") });
+      const posAtDOMSpy = vi.spyOn(view, "posAtDOM");
+
+      posAtDOMSpy.mockReturnValue(10);
+      const oldWidget = new EditableTableWidget(basicTable, 10);
+      const dom = oldWidget.toDOM(view);
+      document.body.appendChild(dom);
+
+      posAtDOMSpy.mockReturnValue(20);
+      const newWidget = new EditableTableWidget(basicTable, 20);
+      newWidget.updateDOM(dom, view);
+
+      const th = dom.querySelector("thead th")!;
+      th.dispatchEvent(new MouseEvent("mousedown", {
+        button: 0,
+        bubbles: true,
+        cancelable: true,
+      }));
+
+      expect(view.state.selection.main.head).toBe(20);
+      dom.remove();
+      view.destroy();
+    });
+
+    it("wikilink click does NOT dispatch widgetSync selection", () => {
+      const wikiTable = "| link |\n| --- |\n| [[Target]] |";
+      const nav = vi.fn();
+      const state = EditorState.create({
+        doc: wikiTable,
+        extensions: [navigateToPageFacet.of(nav)],
+      });
+      const view = new EditorView({ state, parent: document.createElement("div") });
+      const dispatchSpy = vi.spyOn(view, "dispatch");
+      const widget = new EditableTableWidget(wikiTable, 0);
+      const el = widget.toDOM(view);
+      document.body.appendChild(el);
+
+      const span = el.querySelector(".cm-preview-wikilink")!;
+      span.dispatchEvent(new MouseEvent("mousedown", {
+        button: 0,
+        bubbles: true,
+        cancelable: true,
+      }));
+
+      const hasWidgetSync = dispatchSpy.mock.calls.some((args) => {
+        const spec = args[0] as Record<string, unknown>;
+        const ann = spec?.annotations as { type?: unknown } | undefined;
+        return ann?.type === widgetSync;
+      });
+      expect(hasWidgetSync).toBe(false);
       el.remove();
       view.destroy();
     });

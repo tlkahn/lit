@@ -12,6 +12,7 @@ import { foldExtension, type FoldConfig } from "./fold";
 import { focusModeExtension } from "./focusMode";
 import { annotationExtension } from "./livePreview/annotationState";
 import { jumpHistoryExtension } from "./jumpHistory";
+import { widgetSync } from "./livePreview/widgetSyncAnnotation";
 import { WikiLink } from "./markdown/wikilink";
 import { Frontmatter, FrontmatterYamlWrap } from "./markdown/frontmatter";
 import { Math } from "./markdown/math";
@@ -83,7 +84,8 @@ export function createExtensions(config: ExtensionConfig): Extension[] {
       if (update.docChanged && config.onChange) {
         config.onChange(update.state.doc.toString());
       }
-      if (update.view.hasFocus && (update.selectionSet || update.focusChanged) && config.onSelectionChange) {
+      const fromWidget = update.transactions.some(tr => tr.annotation(widgetSync));
+      if ((update.view.hasFocus || fromWidget) && (update.selectionSet || update.focusChanged) && config.onSelectionChange) {
         const pos = update.state.selection.main.head;
         const line = update.state.doc.lineAt(pos);
         config.onSelectionChange(line.number, pos - line.from + 1);
