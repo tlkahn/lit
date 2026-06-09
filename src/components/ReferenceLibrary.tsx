@@ -46,14 +46,22 @@ export function ReferenceLibrary() {
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const deferredSearch = useDeferredValue(search);
 
+  const requestIdRef = useRef(0);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const loadEntries = useCallback(() => {
     if (!workspacePath) {
       setEntries([]);
       return;
     }
+    const id = ++requestIdRef.current;
     listBibEntries(workspacePath)
-      .then(setEntries)
-      .catch(() => setEntries([]));
+      .then((result) => {
+        if (id === requestIdRef.current) setEntries(result);
+      })
+      .catch(() => {
+        if (id === requestIdRef.current) setEntries([]);
+      });
   }, [workspacePath]);
 
   useEffect(() => {
@@ -69,7 +77,11 @@ export function ReferenceLibrary() {
     const onBibEvent = (event: { payload: FileEvent }) => {
       if (cancelled) return;
       if (event.payload.path.toLowerCase().endsWith(".bib")) {
-        loadEntries();
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        debounceRef.current = setTimeout(() => {
+          debounceRef.current = null;
+          loadEntries();
+        }, 200);
       }
     };
 
@@ -92,6 +104,8 @@ export function ReferenceLibrary() {
 
     return () => {
       cancelled = true;
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = null;
       for (const unlisten of unlisteners) {
         unlisten();
       }

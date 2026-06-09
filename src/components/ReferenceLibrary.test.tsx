@@ -426,6 +426,69 @@ describe("ReferenceLibrary", () => {
     expect(after).toBe(before);
   });
 
+  it("discards stale IPC results after a workspace switch", async () => {
+    let resolveA!: (value: BibEntry[]) => void;
+    const deferredA = new Promise<BibEntry[]>((r) => {
+      resolveA = r;
+    });
+
+    let callCount = 0;
+    mockInvoke((cmd) => {
+      invokedCommands.push({ cmd, args: undefined });
+      if (cmd === "list_bib_entries") {
+        callCount++;
+        if (callCount === 1) return deferredA;
+        return [{ ...flood, title: "Fresh from B" }];
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<ReferenceLibrary />);
+
+    useWorkspaceStore.setState({ workspacePath: "/workspace-b" });
+    await waitFor(() =>
+      expect(screen.getByText("Fresh from B")).toBeInTheDocument(),
+    );
+
+    resolveA([{ ...sanderson, title: "Stale from A" }]);
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(screen.queryByText("Stale from A")).not.toBeInTheDocument();
+    expect(screen.getByText("Fresh from B")).toBeInTheDocument();
+  });
+
+  describe("debounce", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("collapses rapid .bib events into a single IPC call", async () => {
+      render(<ReferenceLibrary />);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(screen.getByText("The Saiva Age")).toBeInTheDocument();
+
+      const before = invokedCommands.filter(
+        (c) => c.cmd === "list_bib_entries",
+      ).length;
+
+      for (let i = 0; i < 5; i++) {
+        emitMockEvent("workspace://file-modified", {
+          path: `ref${i}.bib`,
+        });
+      }
+
+      await vi.advanceTimersByTimeAsync(250);
+
+      const after = invokedCommands.filter(
+        (c) => c.cmd === "list_bib_entries",
+      ).length;
+      expect(after - before).toBe(1);
+    });
+  });
+
   it("copy citation failure shows an error status", async () => {
     const user = userEvent.setup();
     const writeText = vi.fn().mockRejectedValue(new Error("denied"));
