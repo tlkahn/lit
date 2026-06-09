@@ -165,33 +165,39 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
       <div className="flex items-center border-b border-border">
         <button
           onClick={() => setTab("files")}
+          title="Files"
+          aria-label="Files"
           className={`flex-1 px-3 py-2 text-sm font-medium ${
             tab === "files"
               ? "border-b-2 border-interactive-accent text-text-normal"
               : "text-text-faint hover:text-text-muted"
           }`}
         >
-          Files
+          <span className="nerd-font text-base" aria-hidden="true">{'󰈙'}</span>
         </button>
         <button
           onClick={() => setTab("outline")}
+          title="Outline"
+          aria-label="Outline"
           className={`flex-1 px-3 py-2 text-sm font-medium ${
             tab === "outline"
               ? "border-b-2 border-interactive-accent text-text-normal"
               : "text-text-faint hover:text-text-muted"
           }`}
         >
-          Outline
+          <span className="nerd-font text-base" aria-hidden="true">{'󰲞'}</span>
         </button>
         <button
           onClick={() => setTab("trash")}
+          title="Trash"
+          aria-label="Trash"
           className={`flex-1 px-3 py-2 text-sm font-medium ${
             tab === "trash"
               ? "border-b-2 border-interactive-accent text-text-normal"
               : "text-text-faint hover:text-text-muted"
           }`}
         >
-          Trash
+          <span className="nerd-font text-base" aria-hidden="true">{'󰆴'}</span>
         </button>
       </div>
       {tab === "files" ? (
