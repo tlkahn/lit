@@ -207,9 +207,24 @@ pub(crate) fn accumulate_diff(events: &[(&str, FileChangeKind)]) -> crate::graph
     }
 }
 
+/// Source-code file extensions that the app can open and edit.
+///
+/// This is the single canonical list of code extensions on the Rust side.
+/// scan::scan_pages (src/workspace/scan.rs) calls this helper rather than
+/// holding its own copy, so the watcher and the scanner can never diverge.
+pub(crate) fn is_code_extension(ext: &str) -> bool {
+    matches!(
+        ext,
+        "bib" | "js" | "mjs" | "cjs" | "jsx" | "ts" | "mts" | "cts" | "tsx" | "py" | "rs"
+            | "json" | "yaml" | "yml" | "toml" | "html" | "htm" | "css" | "sh" | "bash" | "zsh"
+    )
+}
+
 fn is_relevant_file(path: &Path, _root: &Path) -> bool {
     let extension = path.extension().and_then(|e| e.to_str());
-    if !matches!(extension, Some("md") | Some("pdf")) {
+    let relevant = matches!(extension, Some("md") | Some("pdf"))
+        || extension.map(is_code_extension).unwrap_or(false);
+    if !relevant {
         return false;
     }
 
@@ -302,6 +317,27 @@ mod tests {
             Path::new("/workspace/.hidden.pdf"),
             root
         ));
+    }
+
+    #[test]
+    fn relevant_file_accepts_code() {
+        let root = Path::new("/workspace");
+        assert!(is_relevant_file(Path::new("/workspace/refs.bib"), root));
+        assert!(is_relevant_file(Path::new("/workspace/main.rs"), root));
+        assert!(is_relevant_file(Path::new("/workspace/app.ts"), root));
+        assert!(is_relevant_file(Path::new("/workspace/sub/script.py"), root));
+        assert!(!is_relevant_file(Path::new("/workspace/.hidden.rs"), root));
+        assert!(!is_relevant_file(Path::new("/workspace/notes.txt"), root));
+    }
+
+    #[test]
+    fn is_code_extension_matches_expected_set() {
+        assert!(is_code_extension("bib"));
+        assert!(is_code_extension("rs"));
+        assert!(is_code_extension("tsx"));
+        assert!(!is_code_extension("txt"));
+        assert!(!is_code_extension("md"));
+        assert!(!is_code_extension("pdf"));
     }
 
     #[test]

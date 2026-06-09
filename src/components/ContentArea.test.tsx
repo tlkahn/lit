@@ -1310,3 +1310,69 @@ describe("ContentArea export network wiring", () => {
     });
   });
 });
+
+describe("ContentArea code file rendering", () => {
+  const codePage = {
+    title: "main",
+    relative_path: "main.rs",
+    frontmatter: {},
+    created_at: 1000,
+    modified_at: 2000,
+    file_type: "code" as const,
+  };
+
+  function setupCodePane() {
+    useWorkspaceStore.setState({
+      workspacePath: "/test",
+      pages: [codePage],
+      currentPagePath: "main.rs",
+    });
+    usePaneStore.getState().setPanePage("test-pane", "main.rs");
+  }
+
+  function mockCodeInvoke() {
+    mockInvoke((cmd, args) => {
+      if (cmd === "read_code_file") {
+        return {
+          title: "main",
+          relative_path: (args as Record<string, unknown>)?.relativePath ?? "main.rs",
+          body: "fn main() {}\n",
+        };
+      }
+      if (cmd === "acknowledge_file_hash") return null;
+      if (cmd === "get_keymaps") return [];
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+  }
+
+  it("does not render editor chrome (title input or view-mode tabs) for a focused code pane", async () => {
+    setupCodePane();
+    mockCodeInvoke();
+
+    render(<ContentArea />);
+
+    // CodeEditorPane is lazy-loaded; await its mount.
+    await screen.findByTestId("code-editor-pane-test-pane");
+
+    // The markdown editor chrome must be suppressed for a code file: no title
+    // input (which would rename main.rs -> main.md) and no view-mode tabs
+    // (which are nonfunctional for code panes).
+    expect(screen.queryByTestId("page-title")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Mindmap" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Graph" })).not.toBeInTheDocument();
+  });
+
+  it("title input is absent so a code file cannot be renamed to .md", async () => {
+    const renamePageSpy = vi.fn();
+    setupCodePane();
+    useWorkspaceStore.setState({ renamePage: renamePageSpy });
+    mockCodeInvoke();
+
+    render(<ContentArea />);
+
+    await screen.findByTestId("code-editor-pane-test-pane");
+
+    expect(screen.queryByTestId("page-title")).not.toBeInTheDocument();
+    expect(renamePageSpy).not.toHaveBeenCalled();
+  });
+});

@@ -1,24 +1,23 @@
-import { writePage } from "./ipc";
+import { writeCodeFile } from "./ipc";
 import {
   createSharedDocRegistry,
   type SharedDocOf,
 } from "./sharedDocRegistry";
 
-export interface SharedDocContent {
+export interface SharedCodeContent {
   body: string;
   title: string;
-  frontmatter: Record<string, unknown>;
-  rawYaml: string;
 }
 
-export type SharedDoc = SharedDocOf<SharedDocContent>;
+export type SharedCodeDoc = SharedDocOf<SharedCodeContent>;
 
-// Separate registry instance (its own docs Map) from the source-code stack so
-// the two are fully isolated. The only module-specific bits are the content
-// shape (frontmatter + rawYaml) and the writePage IPC call.
-const registry = createSharedDocRegistry<SharedDocContent>({
-  write: (pagePath, doc) => writePage(pagePath, doc.body, doc.frontmatter),
-  initContent: () => ({ body: "", title: "", frontmatter: {}, rawYaml: "" }),
+// Separate registry instance from the markdown sharedDocs so the two stacks are
+// fully isolated. file_type routing prevents the same path opening in both. The
+// only module-specific bits are the content shape (no frontmatter) and the
+// writeCodeFile IPC call (exactly two args — no frontmatter).
+const registry = createSharedDocRegistry<SharedCodeContent>({
+  write: (pagePath, doc) => writeCodeFile(pagePath, doc.body),
+  initContent: () => ({ body: "", title: "" }),
 });
 
 export const acquire = registry.acquire;

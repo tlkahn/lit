@@ -345,7 +345,7 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
 
   return (
     <main className="flex min-h-0 flex-1 flex-col bg-bg-primary-alt">
-      {currentPanePage && focusedFileType !== "pdf" && (<div className="px-6 py-3">
+      {currentPanePage && focusedFileType === "markdown" && (<div className="px-6 py-3">
         <div className="flex items-center gap-2">
           <input
             ref={titleInputRef}
@@ -437,7 +437,7 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
           )
         )}
       </div>)}
-      <PaneContainer style={viewMode !== "editor" && focusedFileType !== "pdf" ? { display: "none" } : undefined} />
+      <PaneContainer style={viewMode !== "editor" && focusedFileType === "markdown" ? { display: "none" } : undefined} />
       {viewMode === "mindmap" && (
         <div
           data-testid="mindmap-view"

@@ -7,6 +7,9 @@ import {
   getWorkspacePath,
   readPage,
   writePage,
+  readCodeFile,
+  writeCodeFile,
+  type CodeFileContent,
   createPage,
   renamePage,
   deletePage,
@@ -130,6 +133,15 @@ describe("ipc", () => {
         case "read_page":
           return { meta: sampleMeta, body: "# Hello", raw_yaml: "" };
         case "write_page":
+          return null;
+        case "read_code_file":
+          return {
+            title: "refs",
+            relative_path:
+              (args as Record<string, unknown>)?.relativePath ?? "refs.bib",
+            body: "@article{key, title={X}}",
+          };
+        case "write_code_file":
           return null;
         case "create_page":
           return { ...sampleMeta, title: (args as Record<string, unknown>)?.name };
@@ -642,6 +654,25 @@ describe("ipc", () => {
       relativePath: "Test.md",
       body: "# Updated",
       frontmatter: { title: "Test" },
+    });
+  });
+
+  it("readCodeFile calls read_code_file with relativePath", async () => {
+    const content: CodeFileContent = await readCodeFile("refs.bib");
+    expect(content.body).toBe("@article{key, title={X}}");
+    expect(content.title).toBe("refs");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("read_code_file", {
+      relativePath: "refs.bib",
+    });
+  });
+
+  it("writeCodeFile calls write_code_file with relativePath and body", async () => {
+    await writeCodeFile("a.rs", "fn main(){}");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("write_code_file", {
+      relativePath: "a.rs",
+      body: "fn main(){}",
     });
   });
 

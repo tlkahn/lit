@@ -6,6 +6,7 @@ use indexmap::IndexMap;
 pub enum FileType {
     Markdown,
     Pdf,
+    Code,
 }
 
 impl Default for FileType {
@@ -32,6 +33,13 @@ pub struct PageContent {
     pub raw_yaml: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodeFileContent {
+    pub title: String,
+    pub relative_path: String,
+    pub body: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -44,6 +52,29 @@ mod tests {
         assert_eq!(rt, FileType::Pdf);
         let rt2: FileType = serde_json::from_str("\"markdown\"").unwrap();
         assert_eq!(rt2, FileType::Markdown);
+    }
+
+    #[test]
+    fn file_type_code_serializes_to_lowercase() {
+        assert_eq!(serde_json::to_string(&FileType::Code).unwrap(), "\"code\"");
+        let rt: FileType = serde_json::from_str("\"code\"").unwrap();
+        assert_eq!(rt, FileType::Code);
+    }
+
+    #[test]
+    fn code_file_content_serializes() {
+        let content = CodeFileContent {
+            title: "refs".to_string(),
+            relative_path: "refs.bib".to_string(),
+            body: "@article{key}".to_string(),
+        };
+        let json = serde_json::to_string(&content).unwrap();
+        assert!(json.contains("\"body\""));
+        assert!(json.contains("\"relative_path\""));
+        assert!(json.contains("\"title\""));
+        assert!(!json.contains("\"frontmatter\""));
+        assert!(!json.contains("\"raw_yaml\""));
+        assert!(!json.contains("\"file_type\""));
     }
 
     #[test]

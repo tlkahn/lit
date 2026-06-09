@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, cleanup, act, fireEvent } from "@testing-library/react";
+import { render, cleanup, act, fireEvent, screen } from "@testing-library/react";
 import { usePaneStore } from "../stores/panes";
 import type { PaneNode } from "../stores/panes";
 import { useWorkspaceStore } from "../stores/workspace";
@@ -17,9 +17,18 @@ vi.mock("./PdfViewerPane", () => ({
   ),
 }));
 
+vi.mock("./CodeEditorPane", () => ({
+  default: ({ paneId }: { paneId: string }) => (
+    <div data-testid={`code-editor-pane-${paneId}`} />
+  ),
+}));
+
 import { PaneContainer } from "./PaneContainer";
 
-function meta(relative_path: string, file_type: "markdown" | "pdf"): PageMeta {
+function meta(
+  relative_path: string,
+  file_type: "markdown" | "pdf" | "code",
+): PageMeta {
   return {
     title: relative_path,
     relative_path,
@@ -84,6 +93,31 @@ describe("PaneContainer leaf routing", () => {
     const { getByTestId, queryByTestId } = render(<PaneContainer />);
     expect(queryByTestId("editor-pane-leaf-loading")).toBeNull();
     expect(getByTestId("pdf-viewer-pane-leaf-loading")).toBeTruthy();
+  });
+
+  it("renders CodeEditorPane for a leaf whose page is code", async () => {
+    useWorkspaceStore.setState({ pages: [meta("refs.bib", "code")] });
+    usePaneStore.setState({
+      root: { type: "leaf", id: "leaf-code", pagePath: "refs.bib" },
+      focusedPaneId: "leaf-code",
+    });
+    render(<PaneContainer />);
+    expect(await screen.findByTestId("code-editor-pane-leaf-code")).toBeTruthy();
+    expect(screen.queryByTestId("editor-pane-leaf-code")).toBeNull();
+    expect(screen.queryByTestId("pdf-viewer-pane-leaf-code")).toBeNull();
+  });
+
+  it("routes a restored .bib leaf to CodeEditorPane while pages list is empty", async () => {
+    usePaneStore.setState({
+      root: { type: "leaf", id: "leaf-bib-loading", pagePath: "refs.bib" },
+      focusedPaneId: "leaf-bib-loading",
+    });
+    useWorkspaceStore.setState({ pages: [] });
+    render(<PaneContainer />);
+    expect(
+      await screen.findByTestId("code-editor-pane-leaf-bib-loading"),
+    ).toBeTruthy();
+    expect(screen.queryByTestId("editor-pane-leaf-bib-loading")).toBeNull();
   });
 
   it("routes a restored .md leaf to EditorPane while pages list is empty", () => {
