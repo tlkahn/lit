@@ -4,11 +4,14 @@ import userEvent from "@testing-library/user-event";
 import { mockInvoke, mockListen, emitMockEvent, resetListenMock } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
 import { Sidebar, SIDEBAR_WIDTH_PX } from "./Sidebar";
+import type { BibEntry } from "../lib/ipc";
 
 let invokedCommands: { cmd: string; args: unknown }[] = [];
+let referenceFixture: BibEntry[] = [];
 
 beforeEach(() => {
   invokedCommands = [];
+  referenceFixture = [];
   resetListenMock();
   mockListen();
   useWorkspaceStore.setState({
@@ -38,6 +41,9 @@ beforeEach(() => {
     }
     if (cmd === "show_sidebar_context_menu") {
       return null;
+    }
+    if (cmd === "list_bib_entries") {
+      return referenceFixture;
     }
     throw new Error(`Unknown command: ${cmd}`);
   });
@@ -71,6 +77,30 @@ describe("Sidebar tabs", () => {
 
     await user.click(screen.getByRole("button", { name: "Files" }));
     expect(screen.getByLabelText("Search pages")).toBeInTheDocument();
+  });
+
+  it("renders a References tab button", () => {
+    render(<Sidebar />);
+    expect(screen.getByRole("button", { name: "References" })).toBeInTheDocument();
+  });
+
+  it("clicking References switches to the references panel", async () => {
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByRole("button", { name: "References" }));
+    expect(screen.queryByLabelText("Search pages")).not.toBeInTheDocument();
+    expect(await screen.findByText(/No references found/i)).toBeInTheDocument();
+  });
+
+  it("clicking References persists the tab to localStorage", async () => {
+    localStorage.removeItem("lit-sidebar-tab");
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByRole("button", { name: "References" }));
+    expect(localStorage.getItem("lit-sidebar-tab")).toBe("references");
+    localStorage.removeItem("lit-sidebar-tab");
   });
 
   it("Files tab shows search + tree; Outline tab shows Outline component", async () => {
@@ -462,5 +492,108 @@ describe("Sidebar sorting", () => {
     const items = Array.from(list.querySelectorAll("[data-index]"));
     const titles = items.map((el) => el.textContent);
     expect(titles).toEqual(["Zebra", "Apple"]);
+  });
+});
+
+function makeBibEntry(overrides: Partial<BibEntry> = {}): BibEntry {
+  return {
+    key: "k1",
+    authors: ["Doe, Jane"],
+    title: "Persisted Ref",
+    year: "2020",
+    entry_type: "article",
+    line_number: 1,
+    bib_file: "/workspace/r.bib",
+    ...overrides,
+  };
+}
+
+function countBibScans(): number {
+  return invokedCommands.filter((c) => c.cmd === "list_bib_entries").length;
+}
+
+describe("Sidebar references panel persistence", () => {
+  it("does not re-scan bib entries when switching away and back to References", async () => {
+    referenceFixture = [makeBibEntry()];
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByRole("button", { name: "References" }));
+    await screen.findByText("Persisted Ref");
+    const before = countBibScans();
+    expect(before).toBe(1);
+
+    await user.click(screen.getByRole("button", { name: "Files" }));
+    expect(screen.getByLabelText("Search pages")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "References" }));
+    expect(countBibScans()).toBe(before);
+  });
+
+  it("preserves expanded entry state across tab switches", async () => {
+    referenceFixture = [makeBibEntry({ year: "2020" })];
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByRole("button", { name: "References" }));
+    const title = await screen.findByText("Persisted Ref");
+    await user.click(title);
+    // expanded detail card shows the year as its own row
+    expect(screen.getByText("2020")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Files" }));
+    expect(screen.getByLabelText("Search pages")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "References" }));
+    // still expanded after returning
+    expect(screen.getByText("2020")).toBeInTheDocument();
+  });
+
+  it("keeps the .bib watcher live while another tab is shown", async () => {
+    referenceFixture = [makeBibEntry({ title: "Original Title" })];
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByRole("button", { name: "References" }));
+    await screen.findByText("Original Title");
+
+    await user.click(screen.getByRole("button", { name: "Files" }));
+    expect(screen.getByLabelText("Search pages")).toBeInTheDocument();
+
+    // mutate fixture and fire a file event while References is hidden
+    referenceFixture = [makeBibEntry({ title: "Updated Title" })];
+    act(() => {
+      emitMockEvent("workspace://file-modified", { path: "/workspace/r.bib" });
+    });
+
+    await user.click(screen.getByRole("button", { name: "References" }));
+    expect(await screen.findByText("Updated Title")).toBeInTheDocument();
+  });
+
+  it("keeps ReferenceLibrary mounted but hidden when on another tab", async () => {
+    referenceFixture = [makeBibEntry()];
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByRole("button", { name: "References" }));
+    await screen.findByText("Persisted Ref");
+
+    await user.click(screen.getByRole("button", { name: "Files" }));
+
+    const input = screen.queryByLabelText("Search references");
+    expect(input).toBeInTheDocument();
+
+    // walk up from the input to the visibility-toggled wrapper
+    let node: HTMLElement | null = input as HTMLElement;
+    let hiddenWrapper: HTMLElement | null = null;
+    while (node) {
+      if (node.style.display === "none") {
+        hiddenWrapper = node;
+        break;
+      }
+      node = node.parentElement;
+    }
+    expect(hiddenWrapper).not.toBeNull();
+    expect(hiddenWrapper!.style.display).toBe("none");
   });
 });

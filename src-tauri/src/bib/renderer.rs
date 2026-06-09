@@ -104,6 +104,11 @@ mod tests {
             entry_type: "article".to_string(),
             line_number: 0,
             bib_file: None,
+            abstract_text: None,
+            doi: None,
+            journal: None,
+            url: None,
+            tags: Vec::new(),
         }
     }
 

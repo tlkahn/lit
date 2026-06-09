@@ -99,6 +99,21 @@ pub fn parse_bibtex(input: &str) -> Vec<BibEntry> {
             year: fields.get("year").cloned().unwrap_or_default(),
             line_number: entry_start_line,
             bib_file: None,
+            abstract_text: fields.get("abstract").cloned(),
+            doi: fields.get("doi").cloned(),
+            journal: fields
+                .get("journal")
+                .or_else(|| fields.get("booktitle"))
+                .cloned(),
+            url: fields.get("url").cloned(),
+            tags: match fields.get("keywords") {
+                Some(kw) => kw
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect(),
+                None => Vec::new(),
+            },
         });
     }
 
@@ -399,5 +414,79 @@ mod tests {
         let input = "@article{bare2020,\n  author = {Smith, John},\n  title = {Bare Year},\n  year = 2020\n}";
         let entries = parse_bibtex(input);
         assert_eq!(entries[0].year, "2020");
+    }
+
+    #[test]
+    fn extracts_abstract_field() {
+        let input = "@article{a2020,\n  author = {Smith, John},\n  title = {T},\n  year = {2020},\n  abstract = {This is a summary.}\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].abstract_text, Some("This is a summary.".to_string()));
+    }
+
+    #[test]
+    fn extracts_doi_field() {
+        let input = "@article{a2020,\n  author = {Smith, John},\n  title = {T},\n  year = {2020},\n  doi = {10.1000/xyz123}\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].doi, Some("10.1000/xyz123".to_string()));
+    }
+
+    #[test]
+    fn extracts_journal_field() {
+        let input = "@article{a2020,\n  author = {Smith, John},\n  title = {T},\n  year = {2020},\n  journal = {Journal of Things}\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].journal, Some("Journal of Things".to_string()));
+    }
+
+    #[test]
+    fn journal_falls_back_to_booktitle() {
+        let input = "@inproceedings{a2020,\n  author = {Smith, John},\n  title = {T},\n  year = {2020},\n  booktitle = {Proceedings of X}\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].journal, Some("Proceedings of X".to_string()));
+    }
+
+    #[test]
+    fn journal_prefers_journal_over_booktitle() {
+        let input = "@article{a2020,\n  author = {Smith, John},\n  title = {T},\n  year = {2020},\n  journal = {Real Journal},\n  booktitle = {Some Book}\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].journal, Some("Real Journal".to_string()));
+    }
+
+    #[test]
+    fn extracts_url_field() {
+        let input = "@article{a2020,\n  author = {Smith, John},\n  title = {T},\n  year = {2020},\n  url = {https://example.com/paper}\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].url, Some("https://example.com/paper".to_string()));
+    }
+
+    #[test]
+    fn extracts_keywords_as_tags() {
+        let input = "@article{a2020,\n  author = {Smith, John},\n  title = {T},\n  year = {2020},\n  keywords = {tantra, śaivism, history}\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].tags, vec!["tantra", "śaivism", "history"]);
+    }
+
+    #[test]
+    fn missing_optional_fields_are_none_and_empty() {
+        let input = "@article{a2020,\n  author = {Smith, John},\n  title = {T},\n  year = {2020}\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].abstract_text, None);
+        assert_eq!(entries[0].doi, None);
+        assert_eq!(entries[0].journal, None);
+        assert_eq!(entries[0].url, None);
+        assert!(entries[0].tags.is_empty());
+    }
+
+    #[test]
+    fn empty_keywords_yields_no_tags() {
+        let input = "@article{a2020,\n  author = {Smith, John},\n  title = {T},\n  year = {2020},\n  keywords = {}\n}";
+        let entries = parse_bibtex(input);
+        assert!(entries[0].tags.is_empty());
+    }
+
+    #[test]
+    fn keywords_with_trailing_comma() {
+        let input = "@article{a2020,\n  author = {Smith, John},\n  title = {T},\n  year = {2020},\n  keywords = {a, b, }\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].tags, vec!["a", "b"]);
     }
 }

@@ -9,6 +9,7 @@ import { useFlatTree, type FolderNode } from "../hooks/useFlatTree";
 import { useSidebarSort } from "../hooks/useSidebarSort";
 import { Outline } from "./Outline";
 import { TrashPanel } from "./TrashPanel";
+import { ReferenceLibrary } from "./ReferenceLibrary";
 import { SortDropdown } from "./SortDropdown";
 import type { PageMeta } from "../lib/ipc";
 
@@ -199,6 +200,18 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
         >
           <span className="nerd-font text-base" aria-hidden="true">{'󰆴'}</span>
         </button>
+        <button
+          onClick={() => setTab("references")}
+          title="References"
+          aria-label="References"
+          className={`flex-1 px-3 py-2 text-sm font-medium ${
+            tab === "references"
+              ? "border-b-2 border-interactive-accent text-text-normal"
+              : "text-text-faint hover:text-text-muted"
+          }`}
+        >
+          <span className="nerd-font text-base" aria-hidden="true">{'󱉟'}</span>
+        </button>
       </div>
       {tab === "files" ? (
         <>
@@ -262,9 +275,15 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
         </>
       ) : tab === "outline" ? (
         <Outline />
-      ) : (
+      ) : tab === "trash" ? (
         <TrashPanel />
-      )}
+      ) : null}
+      <div
+        className="flex flex-1 flex-col overflow-hidden"
+        style={{ display: tab === "references" ? "flex" : "none" }}
+      >
+        <ReferenceLibrary />
+      </div>
     </aside>
   );
 }

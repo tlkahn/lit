@@ -1,3 +1,4 @@
+use crate::util::is_hidden;
 use crate::workspace::normalize::normalize_to_nfc;
 use regex::Regex;
 use serde::Serialize;
@@ -41,17 +42,6 @@ pub fn extract_asset_references(content: &str) -> Vec<String> {
 pub struct ExportEntry {
     pub relative_path: String,
     pub absolute_path: PathBuf,
-}
-
-fn is_hidden(entry: &walkdir::DirEntry) -> bool {
-    if entry.depth() == 0 {
-        return false;
-    }
-    entry
-        .file_name()
-        .to_str()
-        .map(|s| s.starts_with('.'))
-        .unwrap_or(false)
 }
 
 pub fn collect_export_files(root: &Path) -> Result<Vec<ExportEntry>, String> {

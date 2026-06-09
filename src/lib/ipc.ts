@@ -382,6 +382,11 @@ export interface BibEntry {
   entry_type: string;
   line_number: number;
   bib_file?: string;
+  abstract_text?: string;
+  doi?: string;
+  journal?: string;
+  url?: string;
+  tags?: string[];
 }
 
 export async function resolveAllDecorations(
@@ -429,6 +434,10 @@ export async function renderBibCitations(
   entries: BibEntry[],
 ): Promise<Record<string, string>> {
   return invoke<Record<string, string>>("render_bib_citations", { entries });
+}
+
+export async function listBibEntries(workspacePath: string): Promise<BibEntry[]> {
+  return invoke<BibEntry[]>("list_bib_entries", { workspacePath });
 }
 
 // Graph

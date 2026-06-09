@@ -37,6 +37,7 @@ import {
   expandTemplate,
   resolveBibEntries,
   renderBibCitations,
+  listBibEntries,
   pdfOpen,
   pdfRenderPage,
   pdfPrefetch,
@@ -249,10 +250,28 @@ describe("ipc", () => {
               entry_type: "article",
               line_number: 0,
               bib_file: "/path/refs.bib",
+              doi: "10.1/x",
+              journal: "Nature",
+              tags: ["physics"],
             },
           ];
         case "render_bib_citations":
           return { smith2020: "Smith 2020" };
+        case "list_bib_entries":
+          return [
+            {
+              key: "smith2020",
+              authors: ["Smith, John"],
+              title: "A Study",
+              year: "2020",
+              entry_type: "article",
+              line_number: 0,
+              bib_file: "/path/refs.bib",
+              doi: "10.1/x",
+              journal: "Nature",
+              tags: ["physics"],
+            },
+          ];
         case "get_unlinked_mentions":
           return [
             {
@@ -851,6 +870,13 @@ describe("ipc", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]!.key).toBe("smith2020");
     expect(entries[0]!.authors).toEqual(["Smith, John"]);
+  });
+
+  it("listBibEntries calls list_bib_entries with workspacePath", async () => {
+    const entries = await listBibEntries("/workspace");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("list_bib_entries", { workspacePath: "/workspace" });
+    expect(entries[0]!.tags).toEqual(["physics"]);
   });
 
   it("renderBibCitations returns rendered map", async () => {

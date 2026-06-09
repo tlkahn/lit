@@ -26,4 +26,17 @@ describe("useSidebarTab", () => {
     const { result } = renderHook(() => useSidebarTab());
     expect(result.current.tab).toBe("files");
   });
+
+  it("reads stored 'references' tab from localStorage", () => {
+    localStorage.setItem("lit-sidebar-tab", "references");
+    const { result } = renderHook(() => useSidebarTab());
+    expect(result.current.tab).toBe("references");
+  });
+
+  it("setTab('references') switches and persists", () => {
+    const { result } = renderHook(() => useSidebarTab());
+    act(() => result.current.setTab("references"));
+    expect(result.current.tab).toBe("references");
+    expect(localStorage.getItem("lit-sidebar-tab")).toBe("references");
+  });
 });
