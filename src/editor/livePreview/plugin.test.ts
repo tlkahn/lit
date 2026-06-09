@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { Compartment, EditorState, StateEffect } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { markdown } from "@codemirror/lang-markdown";
+import { ensureSyntaxTree } from "@codemirror/language";
 import { GFM } from "@lezer/markdown";
 import { livePreviewPlugin, blockReplacementField } from "./plugin";
 import { WikiLink } from "../markdown/wikilink";
@@ -28,6 +29,8 @@ vi.mock("./mermaid", () => ({
   getMermaidCached: vi.fn(() => undefined),
 }));
 
+const flushTree = StateEffect.define<null>();
+
 function makeView(doc: string, cursor = 0): EditorView {
   const state = EditorState.create({
     doc,
@@ -39,7 +42,11 @@ function makeView(doc: string, cursor = 0): EditorView {
       blockReplacementField,
     ],
   });
-  return new EditorView({ state, parent: document.createElement("div") });
+  const view = new EditorView({ state, parent: document.createElement("div") });
+  // Force full tree parse and rebuild state fields so block ranges are populated
+  ensureSyntaxTree(view.state, view.state.doc.length);
+  view.dispatch({ effects: flushTree.of(null) });
+  return view;
 }
 
 function getBlockState(view: EditorView): BlockReplacementState {
