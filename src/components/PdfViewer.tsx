@@ -43,8 +43,14 @@ interface PdfViewerProps {
    * Publish this viewer's internal `goToPage` so an external owner (e.g. the
    * pane, for forward sync) can drive navigation imperatively. Called whenever
    * the callback identity changes so the always-current closure is registered.
+   *
+   * `ready` reflects whether the backend has the doc open (pdfInfo set): it is
+   * `false` on the initial mount registration (before pdfOpen resolves, when
+   * goToPage would call pdfRenderPage against an unopened doc) and `true` once
+   * pdfInfo is set. The owner registers the live closure on every call but only
+   * consumes/fires a pending initial sync on a ready registration (Finding 2).
    */
-  registerGoToPage?: (fn: (pageIndex: number) => void) => void;
+  registerGoToPage?: (fn: (pageIndex: number) => void, ready: boolean) => void;
   /**
    * Publish a getter for this viewer's SYNCHRONOUS current page (currentPageRef)
    * so an external owner (e.g. the status bar) can derive a navigation target
@@ -167,8 +173,8 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
   );
 
   useEffect(() => {
-    registerGoToPage?.(goToPage);
-  }, [goToPage, registerGoToPage, paneId]);
+    registerGoToPage?.(goToPage, pdfInfo !== null);
+  }, [goToPage, registerGoToPage, paneId, pdfInfo]);
 
   // Publish a stable getter that reads currentPageRef.current at call time, so
   // the status bar always sees the synchronous navigation target (set in

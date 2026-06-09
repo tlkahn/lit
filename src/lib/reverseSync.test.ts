@@ -171,6 +171,70 @@ describe("dispatchReverseSync", () => {
     }
   });
 
+  describe("skipGuards + clampIndex options", () => {
+    it("dispatches even when syncEnabled is false (skipGuards)", () => {
+      const view = makeFakeView();
+      registerPaneView("ed1", view);
+      usePanePdfLinkStore.setState({ syncEnabled: false });
+
+      dispatchReverseSync(2, "ed1", markers, { skipGuards: true });
+
+      expect(view.dispatch).toHaveBeenCalledTimes(1);
+    });
+
+    it("dispatches even when the editor has focus (skipGuards)", () => {
+      const view = makeFakeView(1000, true);
+      registerPaneView("ed1", view);
+
+      dispatchReverseSync(2, "ed1", markers, { skipGuards: true });
+
+      expect(view.dispatch).toHaveBeenCalledTimes(1);
+    });
+
+    it("clamps an out-of-bounds pageIndex to the last marker (clampIndex)", () => {
+      const view = makeFakeView();
+      registerPaneView("ed1", view);
+
+      dispatchReverseSync(99, "ed1", markers, { clampIndex: true });
+
+      expect(view.dispatch).toHaveBeenCalledTimes(1);
+      const tx = (view.dispatch as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+      // markers[2].charOffset === 120 (the last marker).
+      expect(tx.selection.head).toBe(120);
+    });
+
+    it("records the CLAMPED index via setLastSyncedPage (clampIndex)", () => {
+      const view = makeFakeView();
+      registerPaneView("ed1", view);
+
+      dispatchReverseSync(99, "ed1", markers, { clampIndex: true });
+
+      // setLastSyncedPage records the effective (clamped) ARRAY index, which is
+      // markers.length - 1 === 2 here, matching the existing page=index store
+      // convention (see the "records lastSyncedPage BEFORE dispatch" test).
+      expect(usePanePdfLinkStore.getState().lastSyncedPage?.page).toBe(2);
+    });
+
+    it("is a no-op with clampIndex when markers is empty", () => {
+      const view = makeFakeView();
+      registerPaneView("ed1", view);
+
+      dispatchReverseSync(99, "ed1", [], { clampIndex: true });
+
+      expect(view.dispatch).not.toHaveBeenCalled();
+      expect(usePanePdfLinkStore.getState().lastSyncedPage).toBeNull();
+    });
+
+    it("remains a no-op for an out-of-bounds pageIndex WITHOUT clampIndex", () => {
+      const view = makeFakeView();
+      registerPaneView("ed1", view);
+
+      dispatchReverseSync(99, "ed1", markers);
+
+      expect(view.dispatch).not.toHaveBeenCalled();
+    });
+  });
+
   describe("editor focus guard", () => {
     it("does not dispatch when editor has focus", () => {
       const view = makeFakeView(1000, true);

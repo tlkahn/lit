@@ -15,8 +15,8 @@ describe("usePanePdfLinkStore", () => {
       lastSyncedPage: null,
       syncEnabled: true,
       currentPage: new Map(),
-      pendingPdfSync: null,
-      pendingEditorSync: null,
+      pendingPdfSync: new Map(),
+      pendingEditorSync: new Map(),
     });
   });
 
@@ -173,20 +173,20 @@ describe("usePanePdfLinkStore", () => {
   });
 
   describe("pendingPdfSync", () => {
-    it("starts null", () => {
-      expect(usePanePdfLinkStore.getState().pendingPdfSync).toBeNull();
+    it("starts empty", () => {
+      expect(usePanePdfLinkStore.getState().pendingPdfSync.size).toBe(0);
     });
 
     it("setPendingPdfSync stores paneId and pageIndex", () => {
       usePanePdfLinkStore.getState().setPendingPdfSync("pdf1", 5);
-      expect(usePanePdfLinkStore.getState().pendingPdfSync).toEqual({ paneId: "pdf1", pageIndex: 5 });
+      expect(usePanePdfLinkStore.getState().pendingPdfSync.get("pdf1")).toBe(5);
     });
 
     it("consumePendingPdfSync returns pageIndex and clears it", () => {
       usePanePdfLinkStore.getState().setPendingPdfSync("pdf1", 3);
       const result = usePanePdfLinkStore.getState().consumePendingPdfSync("pdf1");
       expect(result).toBe(3);
-      expect(usePanePdfLinkStore.getState().pendingPdfSync).toBeNull();
+      expect(usePanePdfLinkStore.getState().pendingPdfSync.has("pdf1")).toBe(false);
     });
 
     it("consumePendingPdfSync returns null for wrong paneId", () => {
@@ -194,40 +194,54 @@ describe("usePanePdfLinkStore", () => {
       const result = usePanePdfLinkStore.getState().consumePendingPdfSync("other");
       expect(result).toBeNull();
       // Original entry is NOT consumed
-      expect(usePanePdfLinkStore.getState().pendingPdfSync).toEqual({ paneId: "pdf1", pageIndex: 3 });
+      expect(usePanePdfLinkStore.getState().pendingPdfSync.get("pdf1")).toBe(3);
     });
 
     it("consumePendingPdfSync returns null when nothing pending", () => {
       expect(usePanePdfLinkStore.getState().consumePendingPdfSync("pdf1")).toBeNull();
     });
+
+    it("retains independent pending entries for multiple panes (no overwrite)", () => {
+      usePanePdfLinkStore.getState().setPendingPdfSync("p1", 3);
+      usePanePdfLinkStore.getState().setPendingPdfSync("p2", 7);
+      expect(usePanePdfLinkStore.getState().consumePendingPdfSync("p1")).toBe(3);
+      expect(usePanePdfLinkStore.getState().consumePendingPdfSync("p2")).toBe(7);
+    });
   });
 
   describe("pendingEditorSync", () => {
-    it("starts null", () => {
-      expect(usePanePdfLinkStore.getState().pendingEditorSync).toBeNull();
+    it("starts empty", () => {
+      expect(usePanePdfLinkStore.getState().pendingEditorSync.size).toBe(0);
     });
 
     it("setPendingEditorSync stores paneId and pageIndex", () => {
       usePanePdfLinkStore.getState().setPendingEditorSync("ed1", 7);
-      expect(usePanePdfLinkStore.getState().pendingEditorSync).toEqual({ paneId: "ed1", pageIndex: 7 });
+      expect(usePanePdfLinkStore.getState().pendingEditorSync.get("ed1")).toBe(7);
     });
 
     it("consumePendingEditorSync returns pageIndex and clears it", () => {
       usePanePdfLinkStore.getState().setPendingEditorSync("ed1", 4);
       const result = usePanePdfLinkStore.getState().consumePendingEditorSync("ed1");
       expect(result).toBe(4);
-      expect(usePanePdfLinkStore.getState().pendingEditorSync).toBeNull();
+      expect(usePanePdfLinkStore.getState().pendingEditorSync.has("ed1")).toBe(false);
     });
 
     it("consumePendingEditorSync returns null for wrong paneId", () => {
       usePanePdfLinkStore.getState().setPendingEditorSync("ed1", 4);
       const result = usePanePdfLinkStore.getState().consumePendingEditorSync("other");
       expect(result).toBeNull();
-      expect(usePanePdfLinkStore.getState().pendingEditorSync).toEqual({ paneId: "ed1", pageIndex: 4 });
+      expect(usePanePdfLinkStore.getState().pendingEditorSync.get("ed1")).toBe(4);
     });
 
     it("consumePendingEditorSync returns null when nothing pending", () => {
       expect(usePanePdfLinkStore.getState().consumePendingEditorSync("ed1")).toBeNull();
+    });
+
+    it("retains independent pending entries for multiple panes (no overwrite)", () => {
+      usePanePdfLinkStore.getState().setPendingEditorSync("ed1", 4);
+      usePanePdfLinkStore.getState().setPendingEditorSync("ed2", 8);
+      expect(usePanePdfLinkStore.getState().consumePendingEditorSync("ed1")).toBe(4);
+      expect(usePanePdfLinkStore.getState().consumePendingEditorSync("ed2")).toBe(8);
     });
   });
 
@@ -248,13 +262,17 @@ describe("usePanePdfLinkStore", () => {
       };
       usePaneStore.setState({ root: split, focusedPaneId: "a" });
       usePanePdfLinkStore.getState().setPendingPdfSync("b", 5);
+      // Seed a second pending entry for a pane that remains in the tree.
+      usePanePdfLinkStore.getState().setPendingPdfSync("a", 2);
 
       initPanePdfLinkCleanup();
 
       // Remove pane b from the tree
       usePaneStore.setState({ root: a, focusedPaneId: "a" });
 
-      expect(usePanePdfLinkStore.getState().pendingPdfSync).toBeNull();
+      // Orphaned entry for b is pruned; the entry for the surviving pane a remains.
+      expect(usePanePdfLinkStore.getState().pendingPdfSync.has("b")).toBe(false);
+      expect(usePanePdfLinkStore.getState().pendingPdfSync.get("a")).toBe(2);
     });
 
     it("clears pendingEditorSync when its target pane leaves the tree", () => {
@@ -275,7 +293,7 @@ describe("usePanePdfLinkStore", () => {
       // Remove pane b from the tree
       usePaneStore.setState({ root: a, focusedPaneId: "a" });
 
-      expect(usePanePdfLinkStore.getState().pendingEditorSync).toBeNull();
+      expect(usePanePdfLinkStore.getState().pendingEditorSync.has("b")).toBe(false);
     });
   });
 });

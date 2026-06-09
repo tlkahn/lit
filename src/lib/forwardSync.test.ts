@@ -3,6 +3,7 @@ import {
   dispatchForwardSync,
   DEBOUNCE_MS,
   ECHO_GUARD_MS,
+  FORWARD_SYNC_GUARD_MS,
   _resetForTesting,
 } from "./forwardSync";
 import { usePanePdfLinkStore } from "../stores/panePdfLink";
@@ -142,6 +143,24 @@ describe("dispatchForwardSync", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  describe("forward-sync guard constant (Finding 4/5)", () => {
+    it("FORWARD_SYNC_GUARD_MS exceeds DEBOUNCE_MS", () => {
+      expect(FORWARD_SYNC_GUARD_MS).toBeGreaterThan(DEBOUNCE_MS);
+    });
+
+    // Must exceed a realistic slow PDF render so the safety-net timeout does
+    // not fire before a slow onPageChange settles (Finding 5).
+    it("FORWARD_SYNC_GUARD_MS is large enough to outlast a slow render", () => {
+      expect(FORWARD_SYNC_GUARD_MS).toBeGreaterThanOrEqual(2000);
+    });
+
+    // FORWARD_SYNC_GUARD_MS governs the in-flight forward-sync flag lifetime;
+    // ECHO_GUARD_MS governs echo suppression. They are independent.
+    it("is independent of ECHO_GUARD_MS", () => {
+      expect(FORWARD_SYNC_GUARD_MS).not.toBe(ECHO_GUARD_MS);
+    });
   });
 
   describe("echo guard", () => {

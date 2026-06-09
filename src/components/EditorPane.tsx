@@ -23,7 +23,8 @@ import {
 import { usePanePdfLinkStore } from "../stores/panePdfLink";
 import { getPdfGoToPage, markForwardSync, clearForwardSync } from "../lib/pdfPaneRef";
 import { getCachedPageMarkers } from "../lib/pageMarkers";
-import { dispatchForwardSync } from "../lib/forwardSync";
+import { dispatchForwardSync, FORWARD_SYNC_GUARD_MS } from "../lib/forwardSync";
+import { dispatchReverseSync } from "../lib/reverseSync";
 
 interface EditorPaneProps {
   paneId: string;
@@ -100,7 +101,7 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
         if (!goFn) return;
         const token = markForwardSync(linkedNow);
         goFn(pageIndex);
-        setTimeout(() => clearForwardSync(linkedNow, token), 500);
+        setTimeout(() => clearForwardSync(linkedNow, token), FORWARD_SYNC_GUARD_MS);
       },
     });
   }, [paneId]);
@@ -176,16 +177,16 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
       if (!view) return;
       const pendingSync = usePanePdfLinkStore.getState().consumePendingEditorSync(paneId);
       if (pendingSync !== null) {
+        // Initial companion sync: scroll to the page marker. Reuse the shared
+        // reverse-sync dispatch, but skip the syncEnabled/hasFocus guards
+        // (companion.open is explicit and the pane may already be focused) and
+        // clamp an out-of-bounds page index onto the last marker so a PDF with
+        // more pages than the markdown has markers still scrolls.
         const markers = getCachedPageMarkers(view.state.doc);
-        const marker = markers[pendingSync];
-        if (marker) {
-          const pos = Math.min(marker.charOffset, view.state.doc.length);
-          view.dispatch({
-            selection: EditorSelection.cursor(pos),
-            effects: EditorView.scrollIntoView(pos, { y: "start" }),
-          });
-          usePanePdfLinkStore.getState().setLastSyncedPage(pendingSync);
-        }
+        dispatchReverseSync(pendingSync, paneId, markers, {
+          skipGuards: true,
+          clampIndex: true,
+        });
       } else if (storeState.pendingCursorLine != null) {
         let adjustedLine = storeState.pendingCursorLine;
         if (storeState.pendingCursorFileAbsolute && rawYamlRef.current) {

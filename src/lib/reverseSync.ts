@@ -17,6 +17,28 @@ import type { PageMarker } from "./pageMarkers";
 // The module is kept dependency-light like forwardSync.ts.
 
 /**
+ * Options that adapt the shared dispatch body for the initial-sync site (when a
+ * companion editor is explicitly opened/focused) versus the live PDF -> md
+ * reverse-sync site.
+ */
+export interface ReverseSyncOptions {
+  /**
+   * Bypass the `syncEnabled` and `view.hasFocus` guards. Used by the
+   * companion.open initial-sync path: opening a companion is an explicit user
+   * action and the editor pane may already be focused at dispatch time, so
+   * neither guard should suppress the scroll.
+   */
+  skipGuards?: boolean;
+  /**
+   * Map an out-of-bounds `pageIndex` onto the last marker (when the PDF has more
+   * pages than the markdown has `<!-- Page N -->` markers). With empty markers
+   * this stays a no-op. Off by default so the live reverse-sync path keeps its
+   * strict "no marker -> no-op" behavior.
+   */
+  clampIndex?: boolean;
+}
+
+/**
  * Scroll the linked editor pane so the marker for `pageIndex` (0-based PDF page
  * index) is at the top. No-op when there is no marker for that index or no
  * editor view registered for `linkedEditorPaneId`.
@@ -25,18 +47,33 @@ export function dispatchReverseSync(
   pageIndex: number,
   linkedEditorPaneId: string,
   markers: PageMarker[],
+  options?: ReverseSyncOptions,
 ): void {
-  if (!usePanePdfLinkStore.getState().syncEnabled) return;
+  const skipGuards = options?.skipGuards ?? false;
+  const clampIndex = options?.clampIndex ?? false;
 
-  const marker = markers[pageIndex];
+  if (markers.length === 0) return;
+
+  // Resolve the effective marker index. clampIndex maps an out-of-bounds page
+  // onto the last marker; without it an out-of-bounds index simply has no
+  // marker and falls through to the no-op below.
+  const index = clampIndex
+    ? Math.min(pageIndex, markers.length - 1)
+    : pageIndex;
+
+  const marker = markers[index];
   if (!marker) return;
+
+  if (!skipGuards && !usePanePdfLinkStore.getState().syncEnabled) return;
 
   const view = getPaneView(linkedEditorPaneId);
   if (!view) return;
 
-  if (view.hasFocus) return;
+  if (!skipGuards && view.hasFocus) return;
 
-  usePanePdfLinkStore.getState().setLastSyncedPage(pageIndex);
+  // Record the EFFECTIVE (possibly clamped) index BEFORE dispatch so the
+  // forward-sync echo guard compares against a page that has a real marker.
+  usePanePdfLinkStore.getState().setLastSyncedPage(index);
 
   const pos = Math.min(marker.charOffset, view.state.doc.length);
   view.dispatch({

@@ -83,7 +83,7 @@ beforeEach(() => {
   pdfPaneRef._resetForTesting();
   resetForwardSync();
   resetMarkerCache();
-  usePanePdfLinkStore.setState({ links: new Map(), lastSyncedPage: null, pendingPdfSync: null, pendingEditorSync: null });
+  usePanePdfLinkStore.setState({ links: new Map(), lastSyncedPage: null, pendingPdfSync: new Map(), pendingEditorSync: new Map() });
   useCursorInfoStore.setState({ line: 0, col: 0 });
 
   mockInvoke((cmd) => {
@@ -496,7 +496,7 @@ describe("EditorPane", () => {
       (capturedProps.onDocReplaced as () => void)();
       vi.advanceTimersByTime(16);
 
-      expect(usePanePdfLinkStore.getState().pendingEditorSync).toBeNull();
+      expect(usePanePdfLinkStore.getState().pendingEditorSync.has("pane-1")).toBe(false);
     });
 
     it("sets lastSyncedPage to suppress forward-sync echo", async () => {
@@ -518,6 +518,80 @@ describe("EditorPane", () => {
 
       expect(usePanePdfLinkStore.getState().lastSyncedPage).not.toBeNull();
       expect(usePanePdfLinkStore.getState().lastSyncedPage!.page).toBe(1);
+    });
+
+    it("clamps to the last marker when pendingEditorSync exceeds marker count", async () => {
+      // bodyWithMarkers has 3 markers (indices 0..2). A pending index of 5 is
+      // out of bounds: it must clamp to the LAST marker rather than no-op at 0.
+      const page3MarkerOffset = bodyWithMarkers.indexOf("<!-- Page 3 -->");
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      usePanePdfLinkStore.getState().setPendingEditorSync("pane-1", 5);
+
+      const view = fakeViewWithDoc(bodyWithMarkers);
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onDocReplaced).toBeDefined();
+      });
+      (capturedProps.onDocReplaced as () => void)();
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(view.dispatch).toHaveBeenCalledTimes(1);
+      const tx = (view.dispatch as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+      expect(tx.selection.head).toBe(page3MarkerOffset);
+      expect(usePanePdfLinkStore.getState().lastSyncedPage).not.toBeNull();
+    });
+
+    it("does not throw and does not dispatch a sync when body has no markers", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      usePanePdfLinkStore.getState().setPendingEditorSync("pane-1", 2);
+
+      const view = fakeViewWithDoc("no markers here\njust text");
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onDocReplaced).toBeDefined();
+      });
+      expect(() => {
+        (capturedProps.onDocReplaced as () => void)();
+        vi.advanceTimersByTime(16);
+      }).not.toThrow();
+
+      // Empty markers -> the sync path is a no-op. The pending entry was already
+      // consumed, so no fallback fires either: no dispatch from the sync path.
+      expect(view.dispatch).not.toHaveBeenCalled();
+      expect(usePanePdfLinkStore.getState().lastSyncedPage).toBeNull();
+    });
+
+    it("fires the initial sync even when the editor has focus (skipGuards)", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      usePanePdfLinkStore.getState().setPendingEditorSync("pane-1", 1);
+
+      const view = fakeViewWithDoc(bodyWithMarkers);
+      (view as unknown as { hasFocus: boolean }).hasFocus = true;
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onDocReplaced).toBeDefined();
+      });
+      (capturedProps.onDocReplaced as () => void)();
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(view.dispatch).toHaveBeenCalledTimes(1);
+      const tx = (view.dispatch as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+      expect(tx.selection.head).toBe(page2MarkerOffset);
     });
 
     it("falls through to pendingCursorLine when no pendingEditorSync", async () => {

@@ -6,6 +6,7 @@ import { registerPdfGoToPage, unregisterPdfGoToPage, registerPdfCurrentPage, unr
 import { getPaneView } from "../lib/editorViewRef";
 import { getCachedPageMarkers } from "../lib/pageMarkers";
 import { dispatchReverseSync } from "../lib/reverseSync";
+import { FORWARD_SYNC_GUARD_MS } from "../lib/forwardSync";
 import { PdfViewer } from "./PdfViewer";
 
 interface PdfViewerPaneProps {
@@ -22,13 +23,21 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
   }, [paneId]);
 
   const handleRegisterGoToPage = useCallback(
-    (fn: (pageIndex: number) => void) => {
+    (fn: (pageIndex: number) => void, ready: boolean) => {
+      // Always keep the registry pointing at the live closure so StatusBar /
+      // keyboard nav work even before the PDF is ready.
       registerPdfGoToPage(paneId, fn);
+      // Only consume + fire the pending initial sync once the PDF is actually
+      // ready (pdfInfo set on the backend). The first registration fires with
+      // ready=false against a stale pdfInfo=null closure; consuming there would
+      // navigate before the doc is open AND drop the pending state before the
+      // live closure registers (Finding 2).
+      if (!ready) return;
       const pending = usePanePdfLinkStore.getState().consumePendingPdfSync(paneId);
       if (pending !== null && pending !== 0) {
         const token = markForwardSync(paneId);
         fn(pending);
-        setTimeout(() => clearForwardSync(paneId, token), 500);
+        setTimeout(() => clearForwardSync(paneId, token), FORWARD_SYNC_GUARD_MS);
       }
     },
     [paneId],
