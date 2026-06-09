@@ -2,7 +2,7 @@ import React, { useCallback, useEffect } from "react";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePanePdfLinkStore } from "../stores/panePdfLink";
-import { registerPdfGoToPage, unregisterPdfGoToPage, consumeForwardSync } from "../lib/pdfPaneRef";
+import { registerPdfGoToPage, unregisterPdfGoToPage, registerPdfCurrentPage, unregisterPdfCurrentPage, consumeForwardSync } from "../lib/pdfPaneRef";
 import { getPaneView } from "../lib/editorViewRef";
 import { getCachedPageMarkers } from "../lib/pageMarkers";
 import { dispatchReverseSync } from "../lib/reverseSync";
@@ -26,6 +26,11 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
     [paneId],
   );
 
+  const handleRegisterGetCurrentPage = useCallback(
+    (fn: () => number) => registerPdfCurrentPage(paneId, fn),
+    [paneId],
+  );
+
   // Reverse sync (PDF -> md): when this PDF pane changes page, scroll the LINKED
   // editor to the matching page marker. Symmetric to EditorPane forward sync,
   // which reads its OWN view+markers; here we read the linked editor's view and
@@ -34,25 +39,21 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
   // so this does not loop.
   const handlePageChange = useCallback(
     (pageIndex: number) => {
-      console.log("[sync:rev:pdf] onPageChange page=%d pane=%s", pageIndex, paneId);
       usePanePdfLinkStore.getState().setCurrentPage(paneId, pageIndex);
-      if (consumeForwardSync(paneId)) {
-        console.log("[sync:rev:pdf] SKIP — forward-sync initiated this page change");
-        return;
-      }
+      if (consumeForwardSync(paneId)) return;
       const linked = usePanePdfLinkStore.getState().getLinkedPane(paneId);
-      if (!linked) {
-        console.log("[sync:rev:pdf] no linked editor pane for %s", paneId);
-        return;
-      }
+      if (!linked) return;
       const view = getPaneView(linked);
-      if (!view) {
-        console.log("[sync:rev:pdf] no EditorView for linked pane %s", linked);
-        return;
-      }
+      if (!view) return;
       const markers = getCachedPageMarkers(view.state.doc);
-      console.log("[sync:rev:pdf] dispatching reverse sync: page=%d, markers=%d, editor=%s", pageIndex, markers.length, linked);
       dispatchReverseSync(pageIndex, linked, markers);
+    },
+    [paneId],
+  );
+
+  const handlePageCount = useCallback(
+    (count: number) => {
+      usePanePdfLinkStore.getState().setPageCount(paneId, count);
     },
     [paneId],
   );
@@ -60,7 +61,10 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
   // Drop the registry entry when this pane unmounts so forward sync from a
   // linked editor pane never drives a stale/closed PDF viewer.
   useEffect(() => {
-    return () => unregisterPdfGoToPage(paneId);
+    return () => {
+      unregisterPdfGoToPage(paneId);
+      unregisterPdfCurrentPage(paneId);
+    };
   }, [paneId]);
 
   const borderClass = isFocused ? "border-interactive-accent" : "border-transparent";
@@ -93,7 +97,9 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
         filePath={absolutePath}
         paneId={paneId}
         registerGoToPage={handleRegisterGoToPage}
+        registerGetCurrentPage={handleRegisterGetCurrentPage}
         onPageChange={handlePageChange}
+        onPageCount={handlePageCount}
       />
     </div>
   );

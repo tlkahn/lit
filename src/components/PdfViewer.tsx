@@ -38,15 +38,23 @@ interface PdfViewerProps {
   filePath: string;
   paneId: string;
   onPageChange?: (pageIndex: number) => void;
+  onPageCount?: (count: number) => void;
   /**
    * Publish this viewer's internal `goToPage` so an external owner (e.g. the
    * pane, for forward sync) can drive navigation imperatively. Called whenever
    * the callback identity changes so the always-current closure is registered.
    */
   registerGoToPage?: (fn: (pageIndex: number) => void) => void;
+  /**
+   * Publish a getter for this viewer's SYNCHRONOUS current page (currentPageRef)
+   * so an external owner (e.g. the status bar) can derive a navigation target
+   * from the live ref rather than the lagging pane store, mirroring how the
+   * keyboard handler reads currentPageRef directly.
+   */
+  registerGetCurrentPage?: (fn: () => number) => void;
 }
 
-export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: PdfViewerProps) {
+export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registerGoToPage, registerGetCurrentPage }: PdfViewerProps) {
   const [pdfInfo, setPdfInfo] = useState<PdfInfo | null>(null);
   const [currentPage, setCurrentPage] = useState(0);
   const [rendered, setRendered] = useState<RenderedPage | null>(null);
@@ -63,6 +71,10 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
   useEffect(() => {
     onPageChangeRef.current = onPageChange;
   }, [onPageChange]);
+  const onPageCountRef = useRef(onPageCount);
+  useEffect(() => {
+    onPageCountRef.current = onPageCount;
+  }, [onPageCount]);
 
   const prefetchAdjacent = useCallback((pageIndex: number, pageCount: number, dpi: number) => {
     if (pageIndex > 0) pdfPrefetch(pageIndex - 1, dpi, paneId).catch(() => {});
@@ -81,6 +93,7 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
         setPdfInfo(info);
         setCurrentPage(0);
         currentPageRef.current = 0;
+        onPageCountRef.current?.(info.page_count);
 
         const dpi = getEffectiveDpi();
         const page = await pdfRenderPage(0, dpi, paneId);
@@ -106,11 +119,7 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
 
   const goToPage = useCallback(
     async (index: number) => {
-      if (index === currentPageRef.current) {
-        console.log("[sync:pdf] goToPage(%d) BAIL — same page (currentPageRef=%d)", index, currentPageRef.current);
-        return;
-      }
-      console.log("[sync:pdf] goToPage(%d) (was %d)", index, currentPageRef.current);
+      if (index === currentPageRef.current) return;
       // Monotonic navigation token: any newer navigation (even a synchronous
       // cache hit) supersedes an in-flight slow render so it cannot revert us.
       const mySeq = ++navSeqRef.current;
@@ -158,9 +167,15 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
   );
 
   useEffect(() => {
-    console.log("[sync:pdf] registerGoToPage for pane=%s", paneId);
     registerGoToPage?.(goToPage);
   }, [goToPage, registerGoToPage, paneId]);
+
+  // Publish a stable getter that reads currentPageRef.current at call time, so
+  // the status bar always sees the synchronous navigation target (set in
+  // goToPage above) even while an async render is still in flight.
+  useEffect(() => {
+    registerGetCurrentPage?.(() => currentPageRef.current);
+  }, [registerGetCurrentPage]);
 
   const handleKeyDown = useCallback(
     (e: ReactKeyboardEvent) => {
@@ -209,8 +224,6 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
     );
   }
 
-  const pageCount = pdfInfo?.page_count ?? 0;
-
   return (
     <main
       className="flex min-h-0 flex-1 flex-col items-center bg-bg-primary-alt focus:outline-none"
@@ -218,27 +231,6 @@ export function PdfViewer({ filePath, paneId, onPageChange, registerGoToPage }: 
       tabIndex={0}
       onKeyDown={handleKeyDown}
     >
-      <div className="flex items-center gap-3 py-2">
-        <button
-          data-testid="pdf-prev"
-          disabled={currentPage <= 0}
-          onClick={() => goToPage(currentPageRef.current - 1)}
-          className="rounded px-2 py-1 text-sm text-text-normal hover:bg-bg-secondary disabled:opacity-30 disabled:cursor-not-allowed"
-        >
-          ← Prev
-        </button>
-        <span data-testid="pdf-page-indicator" className="text-sm text-text-muted">
-          Page {currentPage + 1} / {pageCount}
-        </span>
-        <button
-          data-testid="pdf-next"
-          disabled={currentPage >= pageCount - 1}
-          onClick={() => goToPage(currentPageRef.current + 1)}
-          className="rounded px-2 py-1 text-sm text-text-normal hover:bg-bg-secondary disabled:opacity-30 disabled:cursor-not-allowed"
-        >
-          Next →
-        </button>
-      </div>
       <div className="relative flex-1 overflow-auto px-4 pb-4">
         <img
           data-testid="pdf-page-image"

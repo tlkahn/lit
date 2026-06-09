@@ -11,6 +11,8 @@ const END_MARKER: &str = "-----END LICENSE KEY-----";
 #[serde(rename_all = "snake_case")]
 pub enum LicenseSource {
     Direct,
+    #[serde(other)]
+    Other,
 }
 
 fn default_source() -> LicenseSource {
@@ -274,6 +276,12 @@ mod tests {
     fn license_source_serializes_snake_case() {
         let direct = serde_json::to_string(&LicenseSource::Direct).unwrap();
         assert_eq!(direct, "\"direct\"");
+    }
+
+    #[test]
+    fn license_source_app_store_deserializes_to_other() {
+        let source: LicenseSource = serde_json::from_str("\"app_store\"").unwrap();
+        assert_eq!(source, LicenseSource::Other);
     }
 
     // --- is_expired ---

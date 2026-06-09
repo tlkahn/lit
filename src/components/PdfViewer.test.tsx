@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { PdfViewer } from "./PdfViewer";
 import { mockInvoke } from "../test/tauri-mock";
 
@@ -47,51 +46,14 @@ describe("PdfViewer", () => {
     });
   });
 
-  it("shows page indicator", async () => {
-    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+  it("calls onPageCount with the page count on initial load", async () => {
+    const onPageCount = vi.fn();
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" onPageCount={onPageCount} />);
 
     await waitFor(() => {
-      const indicator = screen.getByTestId("pdf-page-indicator");
-      expect(indicator.textContent).toBe("Page 1 / 3");
+      expect(onPageCount).toHaveBeenCalledWith(3);
     });
-  });
-
-  it("next button navigates to page 2", async () => {
-    const user = userEvent.setup();
-    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
-    });
-
-    await user.click(screen.getByTestId("pdf-next"));
-
-    await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 2 / 3");
-    });
-  });
-
-  it("prev disabled on page 1, next disabled on last page", async () => {
-    const user = userEvent.setup();
-    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator")).toBeInTheDocument();
-    });
-
-    expect(screen.getByTestId("pdf-prev")).toBeDisabled();
-    expect(screen.getByTestId("pdf-next")).not.toBeDisabled();
-
-    // Navigate to last page
-    await user.click(screen.getByTestId("pdf-next"));
-    await user.click(screen.getByTestId("pdf-next"));
-
-    await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 3 / 3");
-    });
-
-    expect(screen.getByTestId("pdf-next")).toBeDisabled();
-    expect(screen.getByTestId("pdf-prev")).not.toBeDisabled();
+    expect(onPageCount).toHaveBeenCalledTimes(1);
   });
 
   it("calls pdfOpen on mount and pdfClose on unmount", async () => {
@@ -157,26 +119,35 @@ describe("PdfViewer", () => {
   });
 
   it("serves cached page without re-invoking pdf_render_page", async () => {
-    const user = userEvent.setup();
-    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    const onPageChange = vi.fn();
+    let goToPage: ((i: number) => void) | null = null;
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        onPageChange={onPageChange}
+        registerGoToPage={(fn) => { goToPage = fn; }}
+      />,
+    );
 
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
     });
+    expect(goToPage).not.toBeNull();
 
     const { invoke } = await import("@tauri-apps/api/core");
 
-    await user.click(screen.getByTestId("pdf-next"));
+    goToPage!(1);
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 2 / 3");
+      expect(onPageChange).toHaveBeenCalledWith(1);
     });
 
     const callsBefore = (invoke as unknown as ReturnType<typeof import("vitest").vi.fn>).mock.calls
       .filter((c: unknown[]) => c[0] === "pdf_render_page").length;
 
-    await user.click(screen.getByTestId("pdf-prev"));
+    goToPage!(0);
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+      expect(onPageChange).toHaveBeenCalledWith(0);
     });
 
     const callsAfter = (invoke as unknown as ReturnType<typeof import("vitest").vi.fn>).mock.calls
@@ -238,12 +209,21 @@ describe("PdfViewer", () => {
   });
 
   it("prefetches both neighbors on middle page", async () => {
-    const user = userEvent.setup();
-    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    const onPageChange = vi.fn();
+    let goToPage: ((i: number) => void) | null = null;
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        onPageChange={onPageChange}
+        registerGoToPage={(fn) => { goToPage = fn; }}
+      />,
+    );
 
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
     });
+    expect(goToPage).not.toBeNull();
 
     const { invoke } = await import("@tauri-apps/api/core");
     (invoke as unknown as ReturnType<typeof import("vitest").vi.fn>).mockClear();
@@ -262,9 +242,9 @@ describe("PdfViewer", () => {
       }
     });
 
-    await user.click(screen.getByTestId("pdf-next"));
+    goToPage!(1);
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 2 / 3");
+      expect(onPageChange).toHaveBeenCalledWith(1);
     });
 
     const prefetchCalls = (invoke as unknown as ReturnType<typeof import("vitest").vi.fn>).mock.calls
@@ -285,12 +265,19 @@ describe("PdfViewer", () => {
   });
 
   it("shows spinner overlay during page navigation (cache miss)", async () => {
-    const user = userEvent.setup();
-    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    let goToPage: ((i: number) => void) | null = null;
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        registerGoToPage={(fn) => { goToPage = fn; }}
+      />,
+    );
 
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
     });
+    expect(goToPage).not.toBeNull();
 
     let resolveRender!: (v: unknown) => void;
     const deferred = new Promise((r) => {
@@ -302,7 +289,7 @@ describe("PdfViewer", () => {
       throw new Error(`Unknown command: ${cmd}`);
     });
 
-    await user.click(screen.getByTestId("pdf-next"));
+    goToPage!(1);
 
     await waitFor(() => {
       expect(screen.getByTestId("pdf-page-loading")).toBeInTheDocument();
@@ -317,33 +304,50 @@ describe("PdfViewer", () => {
   });
 
   it("does not show spinner overlay on cache hit", async () => {
-    const user = userEvent.setup();
-    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    let goToPage: ((i: number) => void) | null = null;
+    const onPageChange = vi.fn();
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        onPageChange={onPageChange}
+        registerGoToPage={(fn) => { goToPage = fn; }}
+      />,
+    );
 
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+    });
+    expect(goToPage).not.toBeNull();
+
+    goToPage!(1);
+    await waitFor(() => {
+      expect(onPageChange).toHaveBeenCalledWith(1);
     });
 
-    await user.click(screen.getByTestId("pdf-next"));
+    goToPage!(0);
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 2 / 3");
-    });
-
-    await user.click(screen.getByTestId("pdf-prev"));
-    await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+      const calls = onPageChange.mock.calls.map((c) => c[0]);
+      expect(calls.filter((c: number) => c === 0).length).toBeGreaterThanOrEqual(2);
     });
 
     expect(screen.queryByTestId("pdf-page-loading")).not.toBeInTheDocument();
   });
 
   it("hides spinner overlay when page render fails", async () => {
-    const user = userEvent.setup();
-    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    let goToPage: ((i: number) => void) | null = null;
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        registerGoToPage={(fn) => { goToPage = fn; }}
+      />,
+    );
 
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
     });
+    expect(goToPage).not.toBeNull();
 
     mockInvoke((cmd) => {
       if (cmd === "pdf_render_page") throw new Error("render failed");
@@ -351,7 +355,7 @@ describe("PdfViewer", () => {
       throw new Error(`Unknown command: ${cmd}`);
     });
 
-    await user.click(screen.getByTestId("pdf-next"));
+    goToPage!(1);
 
     await waitFor(() => {
       expect(screen.getByTestId("pdf-error")).toBeInTheDocument();
@@ -379,17 +383,26 @@ describe("PdfViewer", () => {
       }
     });
 
-    const user = userEvent.setup();
-    render(<PdfViewer filePath="/test/big.pdf" paneId="pane-1" />);
+    const onPageChange = vi.fn();
+    let goToPage: ((i: number) => void) | null = null;
+    render(
+      <PdfViewer
+        filePath="/test/big.pdf"
+        paneId="pane-1"
+        onPageChange={onPageChange}
+        registerGoToPage={(fn) => { goToPage = fn; }}
+      />,
+    );
 
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 8");
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
     });
+    expect(goToPage).not.toBeNull();
 
     for (let i = 0; i < 6; i++) {
-      await user.click(screen.getByTestId("pdf-next"));
+      goToPage!(i + 1);
       await waitFor(() => {
-        expect(screen.getByTestId("pdf-page-indicator").textContent).toBe(`Page ${i + 2} / 8`);
+        expect(onPageChange).toHaveBeenCalledWith(i + 1);
       });
     }
 
@@ -411,9 +424,9 @@ describe("PdfViewer", () => {
     });
 
     for (let i = 5; i >= 0; i--) {
-      await user.click(screen.getByTestId("pdf-prev"));
+      goToPage!(i);
       await waitFor(() => {
-        expect(screen.getByTestId("pdf-page-indicator").textContent).toBe(`Page ${i + 1} / 8`);
+        expect(onPageChange).toHaveBeenCalledWith(i);
       });
     }
 
@@ -423,15 +436,16 @@ describe("PdfViewer", () => {
   });
 
   it("J navigates to the next page", async () => {
-    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    const onPageChange = vi.fn();
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" onPageChange={onPageChange} />);
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
     });
 
     fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "j" });
 
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 2 / 3");
+      expect(onPageChange).toHaveBeenCalledWith(1);
     });
   });
 
@@ -439,75 +453,38 @@ describe("PdfViewer", () => {
     const onPageChange = vi.fn();
     render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" onPageChange={onPageChange} />);
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
     });
 
-    // Fire two keydown events back-to-back WITHOUT awaiting a re-render between
-    // them. The default mock resolves renders synchronously, so currentPageRef
-    // updates synchronously while the React `currentPage` state commit is
-    // batched — the exact condition that drops every other press when the
-    // handler reads stale state instead of the ref.
     const viewer = screen.getByTestId("pdf-viewer");
     fireEvent.keyDown(viewer, { key: "j" });
     fireEvent.keyDown(viewer, { key: "j" });
 
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 3 / 3");
+      const pageChanges = onPageChange.mock.calls.map((c) => c[0]);
+      expect(pageChanges).toContain(2);
     });
-
-    // The two presses must net to a two-page advance: onPageChange fires with
-    // the final target (2). Before the fix the second press was dropped by the
-    // ref guard and the viewer stalled on Page 2 / 3 (index 1).
-    const pageChanges = onPageChange.mock.calls.map((c) => c[0]);
-    expect(pageChanges).toContain(2);
-  });
-
-  it("advances two pages on a rapid Next-button double-click without dropping one", async () => {
-    const onPageChange = vi.fn();
-    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" onPageChange={onPageChange} />);
-    await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
-    });
-
-    // Fire two clicks back-to-back WITHOUT awaiting a re-render between them
-    // (userEvent.click would await microtasks and let the batched state commit
-    // flush, masking the bug). The default mock resolves renders synchronously,
-    // so currentPageRef updates synchronously while the React `currentPage`
-    // state commit is batched — the exact condition that drops every other
-    // click when the handler reads stale state instead of the ref.
-    const next = screen.getByTestId("pdf-next");
-    fireEvent.click(next);
-    fireEvent.click(next);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 3 / 3");
-    });
-
-    // The two clicks must net to a two-page advance: onPageChange fires with the
-    // final target (2). Before the fix the second click read stale currentPage
-    // and recomputed the same target the first click already advanced the ref
-    // to, so the ref guard dropped it and the viewer stalled on Page 2 / 3.
-    const pageChanges = onPageChange.mock.calls.map((c) => c[0]);
-    expect(pageChanges).toContain(2);
   });
 
   it("ArrowRight navigates to the next page", async () => {
-    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    const onPageChange = vi.fn();
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" onPageChange={onPageChange} />);
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
     });
 
     fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "ArrowRight" });
 
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 2 / 3");
+      expect(onPageChange).toHaveBeenCalledWith(1);
     });
   });
 
   it("K on the first page is a no-op", async () => {
-    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    const onPageChange = vi.fn();
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" onPageChange={onPageChange} />);
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
     });
 
     const { invoke } = await import("@tauri-apps/api/core");
@@ -516,27 +493,37 @@ describe("PdfViewer", () => {
 
     fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "k" });
 
-    expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
     const after = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
       .filter((c: unknown[]) => c[0] === "pdf_render_page").length;
     expect(after).toBe(before);
   });
 
   it("J on the last page is a no-op", async () => {
-    const user = userEvent.setup();
-    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    const onPageChange = vi.fn();
+    let goToPage: ((i: number) => void) | null = null;
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        onPageChange={onPageChange}
+        registerGoToPage={(fn) => { goToPage = fn; }}
+      />,
+    );
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+    });
+    expect(goToPage).not.toBeNull();
+
+    goToPage!(2);
+    await waitFor(() => {
+      expect(onPageChange).toHaveBeenCalledWith(2);
     });
 
-    await user.click(screen.getByTestId("pdf-next"));
-    await user.click(screen.getByTestId("pdf-next"));
-    await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 3 / 3");
-    });
-
+    onPageChange.mockClear();
     fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "j" });
-    expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 3 / 3");
+
+    await Promise.resolve();
+    expect(onPageChange).not.toHaveBeenCalled();
   });
 
   it("fires onPageChange(0) exactly once after the initial page renders", async () => {
@@ -544,18 +531,13 @@ describe("PdfViewer", () => {
     render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" onPageChange={onPageChange} />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
     });
 
-    // The mount effect must publish the initial page so the parent's status bar
-    // and reverse sync are seeded. Before the fix it was never called with 0,
-    // and the goToPage same-page guard prevented it from ever firing for page 0.
     await waitFor(() => {
       expect(onPageChange).toHaveBeenCalledWith(0);
     });
 
-    // Pin the once-only contract: a regression where the mount effect re-runs
-    // would fire onPageChange(0) more than once.
     const zeroCalls = onPageChange.mock.calls.filter((c) => c[0] === 0);
     expect(zeroCalls).toHaveLength(1);
   });
@@ -564,7 +546,7 @@ describe("PdfViewer", () => {
     const onPageChange = vi.fn();
     render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" onPageChange={onPageChange} />);
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
     });
 
     fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "j" });
@@ -575,17 +557,13 @@ describe("PdfViewer", () => {
   });
 
   it("ignores a `page` prop and does not navigate from it (imperative-only navigation)", async () => {
-    // The controlled `page` prop was removed; navigation is driven exclusively
-    // through the imperative registerGoToPage channel. A stray `page` prop must
-    // be inert — it must not navigate the viewer.
     render(
       <PdfViewer filePath="/test/doc.pdf" paneId="pane-1" {...({ page: 2 } as unknown as Record<string, never>)} />,
     );
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
     });
 
-    // Give any (now-removed) controlled effect a chance to misbehave.
     await Promise.resolve();
 
     const { invoke } = await import("@tauri-apps/api/core");
@@ -594,7 +572,6 @@ describe("PdfViewer", () => {
       .some((c: unknown[]) => (c[1] as { pageIndex?: number })?.pageIndex === 2);
 
     expect(renderedPage2).toBe(false);
-    expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
   });
 
   it("goToPage does not fire onPageChange for same-page navigation", async () => {
@@ -609,7 +586,7 @@ describe("PdfViewer", () => {
       />,
     );
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
     });
     expect(goToPage).not.toBeNull();
 
@@ -634,20 +611,15 @@ describe("PdfViewer", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
     });
     expect(goToPage).not.toBeNull();
 
-    // Pre-warm the cache for page index 2 by jumping straight there (skipping
-    // page index 1), so page 2 is cached but page 1 is NOT. Page 0 is already
-    // cached from the initial load.
     goToPage!(2);
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 3 / 3");
+      expect(onPageChange).toHaveBeenCalledWith(2);
     });
 
-    // Install a mock where page index 1 renders slowly (deferred), so a
-    // navigation to page 1 is an awaiting cache miss.
     let resolveSlow!: (v: unknown) => void;
     const slow = new Promise((r) => { resolveSlow = r; });
     mockInvoke((cmd, args) => {
@@ -663,25 +635,16 @@ describe("PdfViewer", () => {
 
     onPageChange.mockClear();
 
-    // Start a slow navigation to page index 1 (cache miss -> awaits IPC).
     goToPage!(1);
-    // Immediately navigate to page index 0 (cache hit -> commits synchronously,
-    // shows Page 1 / 3).
     goToPage!(0);
 
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+      expect(onPageChange).toHaveBeenCalledWith(0);
     });
 
-    // Now resolve the slow page-1 render. It is stale and must NOT revert us.
     resolveSlow({ ...mockRenderedPage, page_index: 1, png_path: "/tmp/lit-pdf-test/page_1.png" });
 
-    // Give the resolved promise a chance to (incorrectly) commit.
     await Promise.resolve();
-    await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
-    });
-    expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
 
     const pageChanges = onPageChange.mock.calls.map((c) => c[0]);
     expect(pageChanges[pageChanges.length - 1]).toBe(0);
@@ -690,22 +653,21 @@ describe("PdfViewer", () => {
 
   it("keeps spinner while a superseding cache-miss navigation is still rendering after a stale render resolves", async () => {
     let goToPage: ((i: number) => void) | null = null;
+    const onPageChange = vi.fn();
     render(
       <PdfViewer
         filePath="/test/doc.pdf"
         paneId="pane-1"
+        onPageChange={onPageChange}
         registerGoToPage={(fn) => { goToPage = fn; }}
       />,
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 1 / 3");
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
     });
     expect(goToPage).not.toBeNull();
 
-    // Two distinct deferred renders: page index 1 (navigation A) and page index
-    // 2 (navigation B). Both are cache misses — page 0 is cached from mount,
-    // pages 1 and 2 were never pre-warmed.
     let resolveA!: (v: unknown) => void;
     let resolveB!: (v: unknown) => void;
     const renderA = new Promise((r) => { resolveA = r; });
@@ -723,8 +685,6 @@ describe("PdfViewer", () => {
       throw new Error(`Unknown command: ${cmd}`);
     });
 
-    // Navigation A to page index 1 (spinner on, mySeq = N), then immediately
-    // navigation B to page index 2 (supersedes A, mySeq = N+1, spinner stays on).
     goToPage!(1);
     goToPage!(2);
 
@@ -732,26 +692,20 @@ describe("PdfViewer", () => {
       expect(screen.getByTestId("pdf-page-loading")).toBeInTheDocument();
     });
 
-    // Resolve the STALE older render A. Its finally must NOT tear down the
-    // spinner, because the superseding navigation B is still in flight. Wrap in
-    // act so A's full continuation chain (await body -> finally -> setState) is
-    // flushed and any (buggy) unconditional setPageLoading(false) is committed
-    // to the DOM before we assert.
     await act(async () => {
       resolveA({ ...mockRenderedPage, page_index: 1, png_path: "/tmp/lit-pdf-test/page_1.png" });
       await renderA;
     });
 
-    // Spinner MUST still be present: the current navigation B is still
-    // rendering. On the buggy unconditional finally this is null (RED).
     expect(screen.queryByTestId("pdf-page-loading")).toBeInTheDocument();
 
-    // Now resolve the current render B — it owns spinner teardown and commits.
     resolveB({ ...mockRenderedPage, page_index: 2, png_path: "/tmp/lit-pdf-test/page_2.png" });
 
     await waitFor(() => {
       expect(screen.queryByTestId("pdf-page-loading")).not.toBeInTheDocument();
     });
-    expect(screen.getByTestId("pdf-page-indicator").textContent).toBe("Page 3 / 3");
+    await waitFor(() => {
+      expect(onPageChange).toHaveBeenCalledWith(2);
+    });
   });
 });

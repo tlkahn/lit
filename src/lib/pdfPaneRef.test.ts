@@ -3,6 +3,9 @@ import {
   registerPdfGoToPage,
   getPdfGoToPage,
   unregisterPdfGoToPage,
+  registerPdfCurrentPage,
+  getPdfCurrentPage,
+  unregisterPdfCurrentPage,
   markForwardSync,
   consumeForwardSync,
   clearForwardSync,
@@ -33,6 +36,31 @@ describe("pdfPaneRef", () => {
     _resetForTesting();
     expect(getPdfGoToPage("p1")).toBeNull();
     expect(getPdfGoToPage("p2")).toBeNull();
+  });
+
+  describe("currentPage registry", () => {
+    it("registerPdfCurrentPage stores and getPdfCurrentPage retrieves the value", () => {
+      registerPdfCurrentPage("p1", () => 7);
+      expect(getPdfCurrentPage("p1")).toBe(7);
+    });
+
+    it("getPdfCurrentPage returns null for an unknown pane", () => {
+      expect(getPdfCurrentPage("unknown")).toBeNull();
+    });
+
+    it("unregisterPdfCurrentPage removes the entry", () => {
+      registerPdfCurrentPage("p1", () => 7);
+      unregisterPdfCurrentPage("p1");
+      expect(getPdfCurrentPage("p1")).toBeNull();
+    });
+
+    it("_resetForTesting clears the currentPage map", () => {
+      registerPdfCurrentPage("p1", () => 1);
+      registerPdfCurrentPage("p2", () => 2);
+      _resetForTesting();
+      expect(getPdfCurrentPage("p1")).toBeNull();
+      expect(getPdfCurrentPage("p2")).toBeNull();
+    });
   });
 
   describe("forward-sync flag", () => {

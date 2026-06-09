@@ -145,6 +145,32 @@ describe("dispatchReverseSync", () => {
     expect(tx.selection.head).toBe(60);
   });
 
+  it("does not call console.log on any code path", () => {
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      // Path 1: syncEnabled=false
+      usePanePdfLinkStore.setState({ syncEnabled: false });
+      dispatchReverseSync(2, "ed1", markers);
+      // Path 2: no marker
+      usePanePdfLinkStore.setState({ syncEnabled: true });
+      dispatchReverseSync(99, "missing", markers);
+      // Path 3: no view
+      dispatchReverseSync(0, "missing", markers);
+      // Path 4: editor has focus
+      const focusView = makeFakeView(1000, true);
+      registerPaneView("ed1", focusView);
+      dispatchReverseSync(2, "ed1", markers);
+      // Path 5: normal dispatch
+      const view = makeFakeView(1000, false);
+      registerPaneView("ed2", view);
+      dispatchReverseSync(1, "ed2", markers);
+
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   describe("editor focus guard", () => {
     it("does not dispatch when editor has focus", () => {
       const view = makeFakeView(1000, true);
