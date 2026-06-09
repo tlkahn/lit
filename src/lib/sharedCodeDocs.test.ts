@@ -68,7 +68,7 @@ describe("SharedCodeDocRegistry", () => {
     expect(writeCodeFile).toHaveBeenCalledWith("refs.bib", "second");
   });
 
-  it("release of the last pane with pending edits flushes immediately", () => {
+  it("release of the last pane with pending edits flushes immediately", async () => {
     acquire("refs.bib", "p1");
     setContent("refs.bib", { body: "", title: "T" });
     setBody("refs.bib", "unsaved", "p1");
@@ -77,6 +77,71 @@ describe("SharedCodeDocRegistry", () => {
     release("refs.bib", "p1");
     expect(writeCodeFile).toHaveBeenCalledOnce();
     expect(writeCodeFile).toHaveBeenCalledWith("refs.bib", "unsaved");
+
+    // Happy path with the default immediately-resolving mock: once the
+    // in-flight save settles, the abandoned doc is GC'd from the registry.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getDoc("refs.bib")).toBeNull();
+  });
+
+  it("release with in-flight save defers delete; re-acquire reuses the edited in-memory body", async () => {
+    acquire("refs.bib", "p1");
+    setContent("refs.bib", { body: "old", title: "T" });
+    setBody("refs.bib", "edited", "p1");
+
+    // Manually-controlled deferred write so we can observe the in-flight window.
+    let resolveWrite!: () => void;
+    vi.mocked(writeCodeFile).mockImplementationOnce(
+      () =>
+        new Promise<void>((r) => {
+          resolveWrite = () => r();
+        }),
+    );
+
+    release("refs.bib", "p1");
+    expect(writeCodeFile).toHaveBeenCalledWith("refs.bib", "edited");
+
+    // Doc must NOT be deleted while the save is still in flight.
+    expect(getDoc("refs.bib")).not.toBeNull();
+
+    // Re-open the same file before the write lands.
+    acquire("refs.bib", "p2");
+    const doc = getDoc("refs.bib");
+    expect(doc).not.toBeNull();
+    // Reused in-memory doc, not a fresh empty one.
+    expect(doc!.loaded).toBe(true);
+    expect(doc!.body).toBe("edited");
+
+    // Let the save .then run; doc stays because p2 holds it.
+    resolveWrite();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getDoc("refs.bib")).not.toBeNull();
+    expect(getDoc("refs.bib")!.body).toBe("edited");
+  });
+
+  it("deferred delete still collects the entry once truly idle (reopen then close)", async () => {
+    acquire("refs.bib", "p1");
+    setContent("refs.bib", { body: "old", title: "T" });
+    setBody("refs.bib", "edited", "p1");
+
+    let resolveWrite!: () => void;
+    vi.mocked(writeCodeFile).mockImplementationOnce(
+      () =>
+        new Promise<void>((r) => {
+          resolveWrite = () => r();
+        }),
+    );
+
+    release("refs.bib", "p1");
+    acquire("refs.bib", "p2");
+    resolveWrite();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getDoc("refs.bib")).not.toBeNull();
+
+    // Close p2 with no new edits — entry should be collected.
+    release("refs.bib", "p2");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getDoc("refs.bib")).toBeNull();
   });
 
   it("setBody notifies sibling panes but not the originating pane", () => {

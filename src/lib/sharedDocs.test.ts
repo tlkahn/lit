@@ -324,6 +324,66 @@ describe("SharedDocRegistry", () => {
       vi.advanceTimersByTime(300);
       expect(writePage).toHaveBeenCalledOnce();
     });
+
+    it("release with in-flight save defers delete; re-acquire reuses the edited in-memory body", async () => {
+      acquire("notes.md", "p1");
+      setContent("notes.md", { body: "old", title: "T", frontmatter: {}, rawYaml: "" });
+      setBody("notes.md", "edited", "p1");
+
+      // Manually-controlled deferred write so we can observe the in-flight window.
+      let resolveWrite!: () => void;
+      vi.mocked(writePage).mockImplementationOnce(
+        () =>
+          new Promise<void>((r) => {
+            resolveWrite = () => r();
+          }),
+      );
+
+      release("notes.md", "p1");
+      expect(writePage).toHaveBeenCalledWith("notes.md", "edited", {});
+
+      // Doc must NOT be deleted while the save is still in flight.
+      expect(getDoc("notes.md")).not.toBeNull();
+
+      // Re-open the same file before the write lands.
+      acquire("notes.md", "p2");
+      const doc = getDoc("notes.md");
+      expect(doc).not.toBeNull();
+      // Reused in-memory doc, not a fresh empty one.
+      expect(doc!.loaded).toBe(true);
+      expect(doc!.body).toBe("edited");
+
+      // Let the save .then run; doc stays because p2 holds it.
+      resolveWrite();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(getDoc("notes.md")).not.toBeNull();
+      expect(getDoc("notes.md")!.body).toBe("edited");
+    });
+
+    it("deferred delete still collects the entry once truly idle (reopen then close)", async () => {
+      acquire("notes.md", "p1");
+      setContent("notes.md", { body: "old", title: "T", frontmatter: {}, rawYaml: "" });
+      setBody("notes.md", "edited", "p1");
+
+      let resolveWrite!: () => void;
+      vi.mocked(writePage).mockImplementationOnce(
+        () =>
+          new Promise<void>((r) => {
+            resolveWrite = () => r();
+          }),
+      );
+
+      release("notes.md", "p1");
+      acquire("notes.md", "p2");
+      resolveWrite();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(getDoc("notes.md")).not.toBeNull();
+
+      // Close p2 with no new edits — entry should be collected.
+      release("notes.md", "p2");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(getDoc("notes.md")).toBeNull();
+    });
   });
 
   describe("misc", () => {

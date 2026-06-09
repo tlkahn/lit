@@ -4,6 +4,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { mockInvoke, resetInvokeMock } from "../test/tauri-mock";
 import { _resetForTesting as resetSharedCodeDocs, getPaneIds } from "../lib/sharedCodeDocs";
 import { useWorkspaceStore } from "../stores/workspace";
+import {
+  setCurrentEditorView,
+  _resetForTesting as resetEditorViewRef,
+} from "../lib/editorViewRef";
+import type { EditorView } from "@codemirror/view";
 import { useCodeFileContent } from "./useCodeFileContent";
 
 const mockCodeFile = {
@@ -27,6 +32,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  resetEditorViewRef();
 });
 
 describe("useCodeFileContent", () => {
@@ -82,6 +88,32 @@ describe("useCodeFileContent", () => {
     const cmds = vi.mocked(invoke).mock.calls.map((c) => c[0]);
     expect(cmds).not.toContain("read_page");
     expect(cmds).not.toContain("write_page");
+  });
+
+  it("does not write to workspace viewStates when a clean code file is reloaded", async () => {
+    const { result } = renderHook(() => useCodeFileContent("p1", "refs.bib"));
+    await waitFor(() => {
+      expect(result.current.body).toBe("@article{key, title = {Hi}}");
+    });
+
+    useWorkspaceStore.setState({ isDirty: false, viewStates: {} });
+
+    // Register a stub editor view so that any view-state capture during reload
+    // would actually run (and populate viewStates) if the dead code existed.
+    setCurrentEditorView({
+      scrollDOM: { scrollTop: 42 },
+      state: { selection: { main: { head: 7 } } },
+    } as unknown as EditorView);
+
+    act(() => {
+      useWorkspaceStore.setState({ reloadTrigger: 1 });
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(useWorkspaceStore.getState().viewStates).toEqual({});
+    expect(result.current.body).toBe("@article{key, title = {Hi}}");
   });
 
   it("releases the shared doc on unmount", async () => {

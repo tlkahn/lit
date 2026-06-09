@@ -208,8 +208,10 @@ pub(crate) fn accumulate_diff(events: &[(&str, FileChangeKind)]) -> crate::graph
 }
 
 /// Source-code file extensions that the app can open and edit.
-/// Keep this list in sync with the code-extension arm in
-/// scan::scan_pages (src/workspace/scan.rs).
+///
+/// This is the single canonical list of code extensions on the Rust side.
+/// scan::scan_pages (src/workspace/scan.rs) calls this helper rather than
+/// holding its own copy, so the watcher and the scanner can never diverge.
 pub(crate) fn is_code_extension(ext: &str) -> bool {
     matches!(
         ext,

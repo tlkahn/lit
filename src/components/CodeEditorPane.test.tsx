@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, waitFor } from "@testing-library/react";
+import { render, waitFor, fireEvent } from "@testing-library/react";
 import { usePaneStore } from "../stores/panes";
 import { useCursorInfoStore } from "../stores/cursorInfo";
 import CodeEditorPane from "./CodeEditorPane";
@@ -77,5 +77,14 @@ describe("CodeEditorPane", () => {
     const paneId = seedLeaf(null);
     const { getByTestId } = render(<CodeEditorPane paneId={paneId} />);
     expect(getByTestId(`code-editor-pane-${paneId}`)).toBeInTheDocument();
+  });
+
+  it("focuses the pane on the focus event", () => {
+    const paneId = seedLeaf("refs.bib");
+    // Make the assertion meaningful: another pane currently holds focus.
+    usePaneStore.setState({ focusedPaneId: "other-pane" });
+    const { getByTestId } = render(<CodeEditorPane paneId={paneId} />);
+    fireEvent.focus(getByTestId(`code-editor-pane-${paneId}`));
+    expect(usePaneStore.getState().focusedPaneId).toBe(paneId);
   });
 });

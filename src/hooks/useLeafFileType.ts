@@ -12,7 +12,7 @@ export type LeafFileType = "pdf" | "markdown" | "code";
 // scanner/watcher match extensions case-sensitively), so uppercase variants
 // like `.RS`/`.BIB` are intentionally NOT recognized as code. (.txt is
 // intentionally excluded.)
-const CODE_EXTENSIONS = new Set([
+export const CODE_EXTENSIONS = new Set([
   "bib",
   "js",
   "mjs",

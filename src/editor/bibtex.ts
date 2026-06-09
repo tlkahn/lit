@@ -9,6 +9,13 @@ import { tags } from "@lezer/highlight";
 interface BibState {
   /** Set true after an `=` until the value ends (`,` or entry close). */
   inValue: boolean;
+  /**
+   * Open-brace depth of an in-progress braced value. 0 when not inside a
+   * braced value. Persisted across line boundaries so multi-line braced
+   * values resume correctly (StreamLanguage re-invokes token() per line and
+   * only state placed in BibState survives the EOL).
+   */
+  braceDepth: number;
 }
 
 /**
@@ -25,18 +32,26 @@ function eatQuoted(stream: StringStream): void {
 }
 
 /**
- * Consume a braced value `{...}` with balanced nesting (the opening brace is at
- * the stream head). Always advances at least one character; on an unterminated
- * brace it consumes to EOL and returns so the tokenizer cannot loop forever.
+ * Consume (part of) a braced value `{...}` with balanced nesting, tracking the
+ * open-brace depth in `state.braceDepth` so the value can span multiple lines.
+ *
+ * - When starting a fresh value the opening brace is at the stream head and
+ *   `state.braceDepth` is 0; the leading `{` pushes depth to 1.
+ * - When resuming after a newline `state.braceDepth` is already > 0 and the
+ *   stream head is mid-value.
+ *
+ * Returns when the matching close brace drops depth back to 0, or — on an
+ * unterminated value — when EOL is reached. In the latter case `braceDepth` is
+ * left > 0 so the next line resumes with the same nesting. Always advances at
+ * least one character so the tokenizer can never stall.
  */
-function eatBraced(stream: StringStream): void {
-  let depth = 0;
+function eatBracedInto(stream: StringStream, state: BibState): void {
   while (!stream.eol()) {
     const ch = stream.next();
-    if (ch === "{") depth++;
+    if (ch === "{") state.braceDepth++;
     else if (ch === "}") {
-      depth--;
-      if (depth === 0) return;
+      state.braceDepth--;
+      if (state.braceDepth === 0) return;
     }
   }
 }
@@ -44,9 +59,17 @@ function eatBraced(stream: StringStream): void {
 const parser: StreamParser<BibState> = {
   name: "bibtex",
   startState() {
-    return { inValue: false };
+    return { inValue: false, braceDepth: 0 };
   },
   token(stream, state) {
+    // Resume a braced value that started on an earlier line. This must run
+    // BEFORE comment/space handling: inside a braced value a leading `%` or
+    // indentation is part of the value, not a comment or skippable space.
+    if (state.braceDepth > 0) {
+      eatBracedInto(stream, state);
+      return "string";
+    }
+
     // Comments: a `%` runs to end of line.
     if (stream.peek() === "%") {
       stream.skipToEnd();
@@ -89,9 +112,17 @@ const parser: StreamParser<BibState> = {
       return "string";
     }
 
+    // Entry-opening (structural) brace: a `{` outside a value. Consume just the
+    // one char as punctuation so the cite key that follows is tokenized on its
+    // own instead of being swallowed into a runaway "string" token.
+    if (ch === "{" && !state.inValue) {
+      stream.next();
+      return "punctuation";
+    }
+
     // Braced string value.
     if (ch === "{") {
-      eatBraced(stream);
+      eatBracedInto(stream, state);
       return "string";
     }
 
@@ -115,6 +146,7 @@ const parser: StreamParser<BibState> = {
     string: tags.string,
     lineComment: tags.lineComment,
     op: tags.operator,
+    punctuation: tags.brace,
   },
 };
 

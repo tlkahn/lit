@@ -69,4 +69,25 @@ describe("bibtex StreamLanguage", () => {
   it("does not hang or throw on an unterminated quote to EOF", () => {
     expect(() => parseNodes('@book{k,\nauthor = "unterminated')).not.toThrow();
   });
+
+  it("does not swallow the cite key into the entry-opening brace", () => {
+    const nodes = parseNodes("@article{key,");
+    // The entry-opening `{` must NOT be tokenized together with the key.
+    expect(hasNode(nodes, "string", "{key,")).toBe(false);
+    // The cite key is now visible to the highlighter as a field name.
+    expect(hasNode(nodes, "fieldName", "key")).toBe(true);
+    // The entry-opening brace surfaces as punctuation.
+    expect(hasNode(nodes, "punctuation", "{")).toBe(true);
+  });
+
+  it("keeps a multi-line braced value typed as string across lines", () => {
+    const nodes = parseNodes("@book{k,\ntitle = {Hello\nWorld},\n}");
+    expect(hasNode(nodes, "fieldName", "title")).toBe(true);
+    expect(hasNode(nodes, "defOp", "=")).toBe(true);
+    // Each line's slice of the braced value is typed "string".
+    expect(hasNode(nodes, "string", "{Hello")).toBe(true);
+    expect(hasNode(nodes, "string", "World}")).toBe(true);
+    // The continuation line must NOT be re-tokenized as a field name.
+    expect(hasNode(nodes, "fieldName", "World")).toBe(false);
+  });
 });

@@ -14,7 +14,6 @@ import {
   cancelReload,
 } from "../lib/sharedCodeDocs";
 import { useWorkspaceStore } from "../stores/workspace";
-import { getCurrentEditorView } from "../lib/editorViewRef";
 
 export interface CodeFileContentState {
   body: string;
@@ -100,7 +99,6 @@ export function useCodeFileContent(
 
   const reloadTrigger = useWorkspaceStore((s) => s.reloadTrigger);
   const wsIsDirty = useWorkspaceStore((s) => s.isDirty);
-  const saveViewState = useWorkspaceStore((s) => s.saveViewState);
 
   useEffect(() => {
     if (reloadTrigger === 0 || !pagePath) return;
@@ -108,10 +106,6 @@ export function useCodeFileContent(
       acknowledgeFileHash(pagePath);
     } else {
       if (!startReload(pagePath)) return;
-      const view = getCurrentEditorView();
-      if (view) {
-        saveViewState(pagePath, view.scrollDOM.scrollTop, view.state.selection.main.head);
-      }
       readCodeFile(pagePath)
         .then((content) => {
           if (currentPathRef.current !== pagePath) {
@@ -126,7 +120,7 @@ export function useCodeFileContent(
           cancelReload(pagePath);
         });
     }
-  }, [reloadTrigger, pagePath, wsIsDirty, paneId, saveViewState]);
+  }, [reloadTrigger, pagePath, wsIsDirty, paneId]);
 
   const handleChange = useCallback(
     (newBody: string) => {
