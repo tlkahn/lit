@@ -23,7 +23,8 @@ import {
 import { usePanePdfLinkStore } from "../stores/panePdfLink";
 import { getPdfGoToPage, markForwardSync, clearForwardSync } from "../lib/pdfPaneRef";
 import { getCachedPageMarkers } from "../lib/pageMarkers";
-import { dispatchForwardSync } from "../lib/forwardSync";
+import { dispatchForwardSync, FORWARD_SYNC_GUARD_MS } from "../lib/forwardSync";
+import { dispatchReverseSync } from "../lib/reverseSync";
 
 interface EditorPaneProps {
   paneId: string;
@@ -100,7 +101,7 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
         if (!goFn) return;
         const token = markForwardSync(linkedNow);
         goFn(pageIndex);
-        setTimeout(() => clearForwardSync(linkedNow, token), 500);
+        setTimeout(() => clearForwardSync(linkedNow, token), FORWARD_SYNC_GUARD_MS);
       },
     });
   }, [paneId]);
@@ -174,7 +175,15 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
     requestAnimationFrame(() => {
       const view = getPaneView(paneId);
       if (!view) return;
-      if (storeState.pendingCursorLine != null) {
+      const pendingSync = usePanePdfLinkStore.getState().consumePendingEditorSync(paneId);
+      if (pendingSync !== null) {
+        // Initial companion sync: scroll to the page marker, bypassing guards and clamping.
+        const markers = getCachedPageMarkers(view.state.doc);
+        dispatchReverseSync(pendingSync, paneId, markers, {
+          skipGuards: true,
+          clampIndex: true,
+        });
+      } else if (storeState.pendingCursorLine != null) {
         let adjustedLine = storeState.pendingCursorLine;
         if (storeState.pendingCursorFileAbsolute && rawYamlRef.current) {
           adjustedLine = Math.max(1, adjustedLine - frontmatterLineCount(rawYamlRef.current));

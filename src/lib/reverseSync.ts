@@ -16,6 +16,13 @@ import type { PageMarker } from "./pageMarkers";
 //
 // The module is kept dependency-light like forwardSync.ts.
 
+export interface ReverseSyncOptions {
+  /** Bypass the `syncEnabled` and `view.hasFocus` guards (for explicit actions like companion.open). */
+  skipGuards?: boolean;
+  /** Map an out-of-bounds `pageIndex` onto the last marker. Off by default for strict live-sync. */
+  clampIndex?: boolean;
+}
+
 /**
  * Scroll the linked editor pane so the marker for `pageIndex` (0-based PDF page
  * index) is at the top. No-op when there is no marker for that index or no
@@ -25,18 +32,30 @@ export function dispatchReverseSync(
   pageIndex: number,
   linkedEditorPaneId: string,
   markers: PageMarker[],
+  options?: ReverseSyncOptions,
 ): void {
-  if (!usePanePdfLinkStore.getState().syncEnabled) return;
+  const skipGuards = options?.skipGuards ?? false;
+  const clampIndex = options?.clampIndex ?? false;
 
-  const marker = markers[pageIndex];
+  if (markers.length === 0) return;
+
+  // Clamping is intentionally pre-guard: it's cheap and avoids double resolution.
+  // setLastSyncedPage only fires if guards pass, so a clamped-but-guarded call is harmless.
+  const index = clampIndex
+    ? Math.min(pageIndex, markers.length - 1)
+    : pageIndex;
+
+  const marker = markers[index];
   if (!marker) return;
+
+  if (!skipGuards && !usePanePdfLinkStore.getState().syncEnabled) return;
 
   const view = getPaneView(linkedEditorPaneId);
   if (!view) return;
 
-  if (view.hasFocus) return;
+  if (!skipGuards && view.hasFocus) return;
 
-  usePanePdfLinkStore.getState().setLastSyncedPage(pageIndex);
+  usePanePdfLinkStore.getState().setLastSyncedPage(index);
 
   const pos = Math.min(marker.charOffset, view.state.doc.length);
   view.dispatch({

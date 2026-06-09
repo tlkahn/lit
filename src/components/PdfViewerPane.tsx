@@ -2,10 +2,11 @@ import React, { useCallback, useEffect } from "react";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePanePdfLinkStore } from "../stores/panePdfLink";
-import { registerPdfGoToPage, unregisterPdfGoToPage, registerPdfCurrentPage, unregisterPdfCurrentPage, consumeForwardSync } from "../lib/pdfPaneRef";
+import { registerPdfGoToPage, unregisterPdfGoToPage, registerPdfCurrentPage, unregisterPdfCurrentPage, consumeForwardSync, markForwardSync, clearForwardSync } from "../lib/pdfPaneRef";
 import { getPaneView } from "../lib/editorViewRef";
 import { getCachedPageMarkers } from "../lib/pageMarkers";
 import { dispatchReverseSync } from "../lib/reverseSync";
+import { FORWARD_SYNC_GUARD_MS } from "../lib/forwardSync";
 import { PdfViewer } from "./PdfViewer";
 
 interface PdfViewerPaneProps {
@@ -22,7 +23,20 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
   }, [paneId]);
 
   const handleRegisterGoToPage = useCallback(
-    (fn: (pageIndex: number) => void) => registerPdfGoToPage(paneId, fn),
+    (fn: (pageIndex: number) => void, ready: boolean) => {
+      registerPdfGoToPage(paneId, fn);
+      // Only consume the pending sync once the PDF is ready (pdfInfo set).
+      if (!ready) return;
+      const pending = usePanePdfLinkStore.getState().consumePendingPdfSync(paneId);
+      // Skip page 0: PDF viewers start there by default, so navigating is a
+      // no-op. The editor side has no such guard because its cursor may not be
+      // at the first marker.
+      if (pending !== null && pending !== 0) {
+        const token = markForwardSync(paneId);
+        fn(pending);
+        setTimeout(() => clearForwardSync(paneId, token), FORWARD_SYNC_GUARD_MS);
+      }
+    },
     [paneId],
   );
 

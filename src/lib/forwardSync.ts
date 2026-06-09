@@ -19,6 +19,14 @@ export const DEBOUNCE_MS = 150;
  */
 export const ECHO_GUARD_MS = 300;
 
+/**
+ * Safety-net lifetime for the in-flight forward-sync flag. The real consumption
+ * is synchronous (consumeForwardSync in PdfViewerPane.handlePageChange); this
+ * timeout only clears the flag if onPageChange never fires (e.g. same-page
+ * no-op). 2000ms exceeds worst-case PDF renders so it never fires prematurely.
+ */
+export const FORWARD_SYNC_GUARD_MS = 2000;
+
 export interface ForwardSyncArgs {
   /**
    * Reads the cursor offset and page markers at FIRE time (inside the
