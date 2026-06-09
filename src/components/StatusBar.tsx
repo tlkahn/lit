@@ -7,7 +7,7 @@ import { useStatusMessageStore } from "../stores/statusMessage";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import { usePanePdfLinkStore } from "../stores/panePdfLink";
 import { useLeafFileType } from "../hooks/useLeafFileType";
-import { getPdfGoToPage } from "../lib/pdfPaneRef";
+import { getPdfGoToPage, getPdfCurrentPage } from "../lib/pdfPaneRef";
 import { getNextUntitledName } from "../lib/naming";
 import { BufferStack } from "./BufferStack";
 import type { TabId } from "../stores/bottomPanel";
@@ -85,22 +85,43 @@ function BottomPanelTabs() {
 function PdfPageNav() {
   const focusedPaneId = usePaneStore((s) => s.focusedPaneId);
   const fileType = useLeafFileType(focusedPaneId);
-  const currentPage = usePanePdfLinkStore((s) => s.currentPage.get(focusedPaneId) ?? null);
-  const pageCount = usePanePdfLinkStore((s) => s.pageCount.get(focusedPaneId) ?? null);
+  // When the focused pane is not itself a PDF (the common companion workflow:
+  // markdown editor focused, linked PDF visible in a split), resolve the linked
+  // PDF pane so the status bar still drives page navigation. The selector returns
+  // a primitive string|null, so it stays render-stable.
+  const linkedPaneId = usePanePdfLinkStore((s) => s.getLinkedPane(focusedPaneId) ?? null);
+  const pdfPaneId = fileType === "pdf" ? focusedPaneId : linkedPaneId;
+  // Confirm the resolved partner is actually a PDF (links are editor<->PDF, but
+  // guard defensively against a stray non-PDF link).
+  const linkedFileType = useLeafFileType(pdfPaneId);
+  const currentPage = usePanePdfLinkStore((s) => (pdfPaneId ? s.currentPage.get(pdfPaneId) ?? null : null));
+  const pageCount = usePanePdfLinkStore((s) => (pdfPaneId ? s.pageCount.get(pdfPaneId) ?? null : null));
 
-  if (fileType !== "pdf" || currentPage == null || pageCount == null) return null;
+  if (
+    (fileType !== "pdf" && linkedFileType !== "pdf") ||
+    pdfPaneId == null ||
+    currentPage == null ||
+    pageCount == null
+  )
+    return null;
 
   const handlePrev = () => {
-    const live = usePanePdfLinkStore.getState().currentPage.get(focusedPaneId) ?? 0;
+    // Prefer the viewer's synchronous current page (currentPageRef). On a rapid
+    // second click during an in-flight cache-miss render, the pane store is
+    // still stale; the live getter reflects the page the prior click already
+    // advanced to. Fall back to the store when no viewer is registered.
+    const live = getPdfCurrentPage(pdfPaneId)
+      ?? (usePanePdfLinkStore.getState().currentPage.get(pdfPaneId) ?? 0);
     if (live <= 0) return;
-    getPdfGoToPage(focusedPaneId)?.(live - 1);
+    getPdfGoToPage(pdfPaneId)?.(live - 1);
   };
 
   const handleNext = () => {
-    const live = usePanePdfLinkStore.getState().currentPage.get(focusedPaneId) ?? 0;
-    const total = usePanePdfLinkStore.getState().pageCount.get(focusedPaneId) ?? 0;
+    const live = getPdfCurrentPage(pdfPaneId)
+      ?? (usePanePdfLinkStore.getState().currentPage.get(pdfPaneId) ?? 0);
+    const total = usePanePdfLinkStore.getState().pageCount.get(pdfPaneId) ?? 0;
     if (live >= total - 1) return;
-    getPdfGoToPage(focusedPaneId)?.(live + 1);
+    getPdfGoToPage(pdfPaneId)?.(live + 1);
   };
 
   return (

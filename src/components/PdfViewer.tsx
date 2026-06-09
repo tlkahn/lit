@@ -45,9 +45,16 @@ interface PdfViewerProps {
    * the callback identity changes so the always-current closure is registered.
    */
   registerGoToPage?: (fn: (pageIndex: number) => void) => void;
+  /**
+   * Publish a getter for this viewer's SYNCHRONOUS current page (currentPageRef)
+   * so an external owner (e.g. the status bar) can derive a navigation target
+   * from the live ref rather than the lagging pane store, mirroring how the
+   * keyboard handler reads currentPageRef directly.
+   */
+  registerGetCurrentPage?: (fn: () => number) => void;
 }
 
-export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registerGoToPage }: PdfViewerProps) {
+export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registerGoToPage, registerGetCurrentPage }: PdfViewerProps) {
   const [pdfInfo, setPdfInfo] = useState<PdfInfo | null>(null);
   const [currentPage, setCurrentPage] = useState(0);
   const [rendered, setRendered] = useState<RenderedPage | null>(null);
@@ -162,6 +169,13 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
   useEffect(() => {
     registerGoToPage?.(goToPage);
   }, [goToPage, registerGoToPage, paneId]);
+
+  // Publish a stable getter that reads currentPageRef.current at call time, so
+  // the status bar always sees the synchronous navigation target (set in
+  // goToPage above) even while an async render is still in flight.
+  useEffect(() => {
+    registerGetCurrentPage?.(() => currentPageRef.current);
+  }, [registerGetCurrentPage]);
 
   const handleKeyDown = useCallback(
     (e: ReactKeyboardEvent) => {

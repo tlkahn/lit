@@ -26,8 +26,10 @@ export function getFileType(
   return pagePath.toLowerCase().endsWith(".pdf") ? "pdf" : "markdown";
 }
 
-export function useLeafFileType(paneId: string): LeafFileType | null {
-  const pagePath = usePaneStore((s) => findLeaf(s.root, paneId)?.pagePath ?? null);
+export function useLeafFileType(paneId: string | null): LeafFileType | null {
+  const pagePath = usePaneStore((s) =>
+    paneId == null ? null : findLeaf(s.root, paneId)?.pagePath ?? null,
+  );
   const pages = useWorkspaceStore((s) => s.pages);
   return getFileType(pagePath, pages);
 }

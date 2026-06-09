@@ -2,7 +2,7 @@ import React, { useCallback, useEffect } from "react";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePanePdfLinkStore } from "../stores/panePdfLink";
-import { registerPdfGoToPage, unregisterPdfGoToPage, consumeForwardSync } from "../lib/pdfPaneRef";
+import { registerPdfGoToPage, unregisterPdfGoToPage, registerPdfCurrentPage, unregisterPdfCurrentPage, consumeForwardSync } from "../lib/pdfPaneRef";
 import { getPaneView } from "../lib/editorViewRef";
 import { getCachedPageMarkers } from "../lib/pageMarkers";
 import { dispatchReverseSync } from "../lib/reverseSync";
@@ -23,6 +23,11 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
 
   const handleRegisterGoToPage = useCallback(
     (fn: (pageIndex: number) => void) => registerPdfGoToPage(paneId, fn),
+    [paneId],
+  );
+
+  const handleRegisterGetCurrentPage = useCallback(
+    (fn: () => number) => registerPdfCurrentPage(paneId, fn),
     [paneId],
   );
 
@@ -56,7 +61,10 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
   // Drop the registry entry when this pane unmounts so forward sync from a
   // linked editor pane never drives a stale/closed PDF viewer.
   useEffect(() => {
-    return () => unregisterPdfGoToPage(paneId);
+    return () => {
+      unregisterPdfGoToPage(paneId);
+      unregisterPdfCurrentPage(paneId);
+    };
   }, [paneId]);
 
   const borderClass = isFocused ? "border-interactive-accent" : "border-transparent";
@@ -89,6 +97,7 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
         filePath={absolutePath}
         paneId={paneId}
         registerGoToPage={handleRegisterGoToPage}
+        registerGetCurrentPage={handleRegisterGetCurrentPage}
         onPageChange={handlePageChange}
         onPageCount={handlePageCount}
       />

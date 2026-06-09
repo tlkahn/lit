@@ -7,6 +7,15 @@ type GoToPage = (pageIndex: number) => void;
 
 const goToPageFns = new Map<string, GoToPage>();
 
+// Parallel registry exposing each PDF pane's SYNCHRONOUS current page (the
+// viewer's currentPageRef). The pane store's currentPage only updates after the
+// async render resolves, so a rapid second StatusBar click would read a stale
+// value and recompute the same target (dropped by goToPage's same-page guard).
+// Reading this live getter mirrors the keyboard handler's proven approach.
+type GetCurrentPage = () => number;
+
+const currentPageFns = new Map<string, GetCurrentPage>();
+
 // Tracks which PDF panes are currently in a forward-sync-initiated page change.
 // Maps paneId -> a monotonic per-navigation token. Set before calling goToPage,
 // consumed inside handlePageChange to suppress the reverse-sync echo that would
@@ -25,6 +34,19 @@ export function unregisterPdfGoToPage(paneId: string): void {
 
 export function getPdfGoToPage(paneId: string): GoToPage | null {
   return goToPageFns.get(paneId) ?? null;
+}
+
+export function registerPdfCurrentPage(paneId: string, fn: GetCurrentPage): void {
+  currentPageFns.set(paneId, fn);
+}
+
+export function unregisterPdfCurrentPage(paneId: string): void {
+  currentPageFns.delete(paneId);
+}
+
+export function getPdfCurrentPage(paneId: string): number | null {
+  const fn = currentPageFns.get(paneId);
+  return fn ? fn() : null;
 }
 
 /** Marks a forward-sync navigation in flight; returns its token. */
@@ -53,6 +75,7 @@ export function clearForwardSync(paneId: string, token: number): void {
 
 export function _resetForTesting(): void {
   goToPageFns.clear();
+  currentPageFns.clear();
   forwardSyncInFlight.clear();
   nextToken = 1;
 }
