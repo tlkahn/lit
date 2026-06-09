@@ -1,5 +1,6 @@
 pub mod annotation;
 pub mod app_info;
+pub mod bib;
 pub mod cli;
 pub mod credential;
 pub mod crossref;

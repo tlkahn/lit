@@ -332,6 +332,7 @@ pub fn run() {
             commands::crossref::expand_template,
             commands::crossref::resolve_bib_entries,
             commands::crossref::render_bib_citations,
+            commands::bib::list_bib_entries,
             commands::external_editor::open_in_external_editor,
             commands::graph::rebuild_graph_index,
             commands::graph::get_pagerank,

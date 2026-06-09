@@ -39,6 +39,9 @@ beforeEach(() => {
     if (cmd === "show_sidebar_context_menu") {
       return null;
     }
+    if (cmd === "list_bib_entries") {
+      return [];
+    }
     throw new Error(`Unknown command: ${cmd}`);
   });
 });
@@ -71,6 +74,30 @@ describe("Sidebar tabs", () => {
 
     await user.click(screen.getByRole("button", { name: "Files" }));
     expect(screen.getByLabelText("Search pages")).toBeInTheDocument();
+  });
+
+  it("renders a References tab button", () => {
+    render(<Sidebar />);
+    expect(screen.getByRole("button", { name: "References" })).toBeInTheDocument();
+  });
+
+  it("clicking References switches to the references panel", async () => {
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByRole("button", { name: "References" }));
+    expect(screen.queryByLabelText("Search pages")).not.toBeInTheDocument();
+    expect(await screen.findByText(/No references found/i)).toBeInTheDocument();
+  });
+
+  it("clicking References persists the tab to localStorage", async () => {
+    localStorage.removeItem("lit-sidebar-tab");
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByRole("button", { name: "References" }));
+    expect(localStorage.getItem("lit-sidebar-tab")).toBe("references");
+    localStorage.removeItem("lit-sidebar-tab");
   });
 
   it("Files tab shows search + tree; Outline tab shows Outline component", async () => {
