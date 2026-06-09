@@ -73,9 +73,11 @@ pub fn page_name_to_filename(name: &str) -> String {
 }
 
 pub fn filename_to_page_name(filename: &str) -> String {
-    let name = filename
-        .strip_suffix(".md")
-        .or_else(|| filename.strip_suffix(".pdf"))
+    // Strip the final extension (e.g. ".md", ".pdf", ".bib", ".rs") to derive
+    // the display title. Files with no extension keep their full name.
+    let name = std::path::Path::new(filename)
+        .file_stem()
+        .and_then(|s| s.to_str())
         .unwrap_or(filename);
     normalize_to_nfc(name)
 }

@@ -1,6 +1,6 @@
 use super::frontmatter::{parse_frontmatter, serialize_frontmatter};
 use super::normalize::{filename_to_page_name, normalize_to_nfc, page_name_to_filename, validate_page_name};
-use super::page::{FileType, PageContent, PageMeta};
+use super::page::{CodeFileContent, FileType, PageContent, PageMeta};
 use super::write_hash::WriteHashRegistry;
 use super::WorkspaceError;
 use indexmap::IndexMap;
@@ -47,6 +47,46 @@ pub fn read_page(root: &Path, relative_path: &str, registry: &WriteHashRegistry)
         body: parsed.body.to_string(),
         raw_yaml: parsed.raw_yaml,
     })
+}
+
+pub fn read_code_file(
+    root: &Path,
+    relative_path: &str,
+    registry: &WriteHashRegistry,
+) -> Result<CodeFileContent, WorkspaceError> {
+    let full_path = root.join(relative_path);
+    if !full_path.exists() {
+        return Err(WorkspaceError::PageNotFound(relative_path.to_string()));
+    }
+    let raw = fs::read_to_string(&full_path)?;
+    registry.record(&full_path, &raw);
+
+    let file_name = full_path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let title = filename_to_page_name(&file_name);
+
+    Ok(CodeFileContent {
+        title,
+        relative_path: normalize_to_nfc(relative_path),
+        body: raw,
+    })
+}
+
+pub fn write_code_file(
+    root: &Path,
+    relative_path: &str,
+    body: &str,
+    registry: &WriteHashRegistry,
+) -> Result<(), WorkspaceError> {
+    let full_path = root.join(relative_path);
+    if let Some(parent) = full_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&full_path, body)?;
+    registry.record(&full_path, body);
+    Ok(())
 }
 
 pub fn write_page(
@@ -426,6 +466,97 @@ mod tests {
         let registry = WriteHashRegistry::new();
         let result = acknowledge_file_hash(dir.path(), "missing.md", &registry);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn read_code_file_returns_raw_body() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        let content = "@article{key,\n  title = {X}\n}";
+        fs::write(dir.path().join("refs.bib"), content).unwrap();
+
+        let code = read_code_file(dir.path(), "refs.bib", &registry).unwrap();
+        assert_eq!(code.body, content);
+        assert_eq!(code.title, "refs");
+        assert_eq!(code.relative_path, "refs.bib");
+    }
+
+    #[test]
+    fn read_code_file_does_not_strip_leading_dashes() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        let content = "---\nfoo: bar\n";
+        fs::write(dir.path().join("conf.yaml"), content).unwrap();
+
+        let code = read_code_file(dir.path(), "conf.yaml", &registry).unwrap();
+        assert_eq!(code.body, content);
+    }
+
+    #[test]
+    fn read_code_file_records_hash() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        let content = "let x = 1;\n";
+        fs::write(dir.path().join("a.rs"), content).unwrap();
+
+        read_code_file(dir.path(), "a.rs", &registry).unwrap();
+
+        let full_path = dir.path().join("a.rs");
+        assert!(registry.check(&full_path, content));
+    }
+
+    #[test]
+    fn read_nonexistent_code_file() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        let result = read_code_file(dir.path(), "nope.rs", &registry);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn write_code_file_writes_verbatim() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        let body = "let x = 1;\n";
+
+        write_code_file(dir.path(), "a.rs", body, &registry).unwrap();
+
+        let content = fs::read_to_string(dir.path().join("a.rs")).unwrap();
+        assert_eq!(content, body);
+        assert!(!content.contains("---"));
+    }
+
+    #[test]
+    fn write_code_file_records_hash() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        let body = "print(1)\n";
+
+        write_code_file(dir.path(), "b.py", body, &registry).unwrap();
+
+        let full_path = dir.path().join("b.py");
+        assert!(registry.check(&full_path, body));
+    }
+
+    #[test]
+    fn write_code_file_creates_parent_dirs() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+
+        write_code_file(dir.path(), "src/lib.rs", "fn x() {}\n", &registry).unwrap();
+
+        assert!(dir.path().join("src/lib.rs").exists());
+    }
+
+    #[test]
+    fn write_then_read_code_file_roundtrip() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        let body = "---\nnot frontmatter\n@article{k}\n";
+
+        write_code_file(dir.path(), "round.bib", body, &registry).unwrap();
+        let code = read_code_file(dir.path(), "round.bib", &registry).unwrap();
+        assert_eq!(code.body, body);
     }
 
     #[test]

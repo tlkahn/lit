@@ -23,6 +23,12 @@ pub fn scan_pages(root: &Path) -> Result<Vec<PageMeta>, WorkspaceError> {
         let file_type = match extension {
             Some("md") => FileType::Markdown,
             Some("pdf") => FileType::Pdf,
+            // Code extensions. Keep this list in sync with
+            // watcher::is_code_extension (src/workspace/watcher.rs).
+            Some("bib") | Some("js") | Some("mjs") | Some("cjs") | Some("jsx") | Some("ts")
+            | Some("mts") | Some("cts") | Some("tsx") | Some("py") | Some("rs") | Some("json")
+            | Some("yaml") | Some("yml") | Some("toml") | Some("html") | Some("htm")
+            | Some("css") | Some("sh") | Some("bash") | Some("zsh") => FileType::Code,
             _ => continue,
         };
 
@@ -125,6 +131,60 @@ mod tests {
         let pages = scan_pages(dir.path()).unwrap();
         assert_eq!(pages.len(), 1);
         assert_eq!(pages[0].title, "page");
+    }
+
+    #[test]
+    fn finds_bib_files() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("refs.bib"), "@article{key, title = {X}}").unwrap();
+
+        let pages = scan_pages(dir.path()).unwrap();
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0].title, "refs");
+    }
+
+    #[test]
+    fn bib_pages_have_code_file_type() {
+        use super::super::page::FileType;
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("refs.bib"), "@article{key}").unwrap();
+        fs::write(dir.path().join("note.md"), "# note").unwrap();
+
+        let pages = scan_pages(dir.path()).unwrap();
+        assert_eq!(pages.len(), 2);
+        let bib = pages.iter().find(|p| p.relative_path == "refs.bib").unwrap();
+        let md = pages.iter().find(|p| p.relative_path == "note.md").unwrap();
+        assert_eq!(bib.file_type, FileType::Code);
+        assert_eq!(md.file_type, FileType::Markdown);
+    }
+
+    #[test]
+    fn finds_assorted_code_extensions() {
+        use super::super::page::FileType;
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("main.rs"), "fn main() {}").unwrap();
+        fs::write(dir.path().join("app.ts"), "const x = 1;").unwrap();
+        fs::write(dir.path().join("script.py"), "print(1)").unwrap();
+        fs::write(dir.path().join("config.toml"), "[a]\nb = 1").unwrap();
+        fs::write(dir.path().join("data.json"), "{}").unwrap();
+
+        let pages = scan_pages(dir.path()).unwrap();
+        assert_eq!(pages.len(), 5);
+        for p in &pages {
+            assert_eq!(p.file_type, FileType::Code);
+        }
+    }
+
+    #[test]
+    fn code_pages_have_empty_frontmatter() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("x.rs"), "fn main() {}").unwrap();
+
+        let pages = scan_pages(dir.path()).unwrap();
+        assert_eq!(pages.len(), 1);
+        assert!(pages[0].frontmatter.is_empty());
+        assert!(pages[0].created_at.is_some());
+        assert!(pages[0].modified_at.is_some());
     }
 
     #[test]
