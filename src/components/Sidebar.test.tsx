@@ -46,8 +46,8 @@ beforeEach(() => {
 describe("Sidebar tabs", () => {
   it("renders Files and Outline tab buttons", () => {
     render(<Sidebar />);
-    expect(screen.getByText("Files")).toBeInTheDocument();
-    expect(screen.getByText("Outline")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Files" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Outline" })).toBeInTheDocument();
   });
 
   it("Files tab is active by default", () => {
@@ -65,11 +65,11 @@ describe("Sidebar tabs", () => {
     const user = userEvent.setup();
     render(<Sidebar />);
 
-    await user.click(screen.getByText("Outline"));
+    await user.click(screen.getByRole("button", { name: "Outline" }));
     expect(screen.getByText("No page selected")).toBeInTheDocument();
     expect(screen.queryByLabelText("Search pages")).not.toBeInTheDocument();
 
-    await user.click(screen.getByText("Files"));
+    await user.click(screen.getByRole("button", { name: "Files" }));
     expect(screen.getByLabelText("Search pages")).toBeInTheDocument();
   });
 
@@ -83,7 +83,7 @@ describe("Sidebar tabs", () => {
 
     expect(screen.getByLabelText("Search pages")).toBeInTheDocument();
 
-    await user.click(screen.getByText("Outline"));
+    await user.click(screen.getByRole("button", { name: "Outline" }));
     expect(screen.queryByLabelText("Search pages")).not.toBeInTheDocument();
     expect(screen.getByText("Hello")).toBeInTheDocument();
   });
