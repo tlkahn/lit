@@ -311,6 +311,8 @@ pub fn run() {
             commands::page::delete_page,
             commands::page::rewrite_vault_links,
             commands::page::acknowledge_file_hash,
+            commands::page::read_code_file,
+            commands::page::write_code_file,
             commands::page::parse_raw_yaml,
             commands::theme::list_themes,
             commands::theme::read_theme_css,

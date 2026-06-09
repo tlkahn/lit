@@ -11,13 +11,19 @@ export interface PageMeta {
   frontmatter: Record<string, unknown>;
   created_at: number | null;
   modified_at: number | null;
-  file_type: 'markdown' | 'pdf';
+  file_type: 'markdown' | 'pdf' | 'code';
 }
 
 export interface PageContent {
   meta: PageMeta;
   body: string;
   raw_yaml: string;
+}
+
+export interface CodeFileContent {
+  title: string;
+  relative_path: string;
+  body: string;
 }
 
 export interface FileEvent {
@@ -50,6 +56,14 @@ export async function writePage(
   frontmatter: Record<string, unknown>,
 ): Promise<void> {
   return invoke<void>("write_page", { relativePath, body, frontmatter });
+}
+
+export async function readCodeFile(relativePath: string): Promise<CodeFileContent> {
+  return invoke<CodeFileContent>("read_code_file", { relativePath });
+}
+
+export async function writeCodeFile(relativePath: string, body: string): Promise<void> {
+  return invoke<void>("write_code_file", { relativePath, body });
 }
 
 export async function createPage(name: string, parentDir?: string): Promise<PageMeta> {

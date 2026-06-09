@@ -7,6 +7,7 @@ import { useStatusMessageStore } from "../stores/statusMessage";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import { usePanePdfLinkStore } from "../stores/panePdfLink";
 import { useLeafFileType } from "../hooks/useLeafFileType";
+import { resolveLanguage } from "../editor/codeLanguages";
 import { getPdfGoToPage, getPdfCurrentPage } from "../lib/pdfPaneRef";
 import { getNextUntitledName } from "../lib/naming";
 import { BufferStack } from "./BufferStack";
@@ -23,6 +24,8 @@ const phaseLabels: Record<IndexPhase, string> = {
 function BottomPanelTabs() {
   const focusedLeaf = usePaneStore((s) => findLeaf(s.root, s.focusedPaneId));
   const hasPage = focusedLeaf?.pagePath != null;
+  const focusedPaneId = usePaneStore((s) => s.focusedPaneId);
+  const fileType = useLeafFileType(focusedPaneId);
 
   const activeTab = useBottomPanelStore((s) => s.activeTab);
   const unfolded = useBottomPanelStore((s) => s.unfolded);
@@ -36,6 +39,11 @@ function BottomPanelTabs() {
     (s) => s.experimentalUnlinkedReferences,
   );
   const annotationEnabled = usePreferencesStore((s) => s.annotationEnabled);
+
+  // Linked refs / outgoing links / unlinked mentions / annotations are
+  // markdown-only concepts; hide the entire group for code files.
+  if (fileType === "code") return null;
+
   return (
     <div className="flex items-center" data-testid="bottom-panel-tabs">
       {hasPage && (
@@ -194,6 +202,15 @@ export function StatusBar() {
   const col = useCursorInfoStore((s) => s.col);
   const statusMessage = useStatusMessageStore((s) => s.message);
   const statusVariant = useStatusMessageStore((s) => s.variant);
+  const focusedPaneId = usePaneStore((s) => s.focusedPaneId);
+  const focusedFileType = useLeafFileType(focusedPaneId);
+  const focusedPagePath = usePaneStore(
+    (s) => findLeaf(s.root, s.focusedPaneId)?.pagePath ?? null,
+  );
+  const langName =
+    focusedFileType === "code" && focusedPagePath
+      ? resolveLanguage(focusedPagePath)?.name ?? null
+      : null;
 
   const handleNewPage = () => {
     const name = getNextUntitledName(pages);
@@ -251,6 +268,7 @@ export function StatusBar() {
         )}
         <BottomPanelTabs />
         <PdfPageNav />
+        {langName && <span data-testid="status-bar-language" className="ml-3 text-text-muted">{langName}</span>}
         {line > 0 && <span data-testid="status-bar-cursor" className="ml-3">Ln {line}, Col {col}</span>}
       </div>
     </div>

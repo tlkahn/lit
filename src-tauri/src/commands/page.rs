@@ -5,7 +5,7 @@ use crate::graph::indexer::GraphIndex;
 use crate::graph::rewriter::LinkRedirect;
 use crate::oplog::store::Action;
 use crate::workspace::ops;
-use crate::workspace::page::{PageContent, PageMeta};
+use crate::workspace::page::{CodeFileContent, PageContent, PageMeta};
 use crate::workspace::write_hash::WriteHashRegistry;
 use indexmap::IndexMap;
 use std::collections::HashSet;
@@ -282,6 +282,29 @@ pub fn acknowledge_file_hash(
 ) -> Result<(), String> {
     let root = get_workspace_root(&state, window.label())?;
     ops::acknowledge_file_hash(&root, &relative_path, &registry).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn read_code_file(
+    relative_path: String,
+    window: tauri::Window,
+    state: State<WorkspaceRegistry>,
+    registry: State<Arc<WriteHashRegistry>>,
+) -> Result<CodeFileContent, String> {
+    let root = get_workspace_root(&state, window.label())?;
+    ops::read_code_file(&root, &relative_path, &registry).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn write_code_file(
+    relative_path: String,
+    body: String,
+    window: tauri::Window,
+    state: State<WorkspaceRegistry>,
+    registry: State<Arc<WriteHashRegistry>>,
+) -> Result<(), String> {
+    let root = get_workspace_root(&state, window.label())?;
+    ops::write_code_file(&root, &relative_path, &body, &registry).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

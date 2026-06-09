@@ -419,6 +419,91 @@ describe("StatusBar", () => {
     });
   });
 
+  describe("BottomPanelTabs hidden for code files", () => {
+    it("hides bottom panel tabs when focused pane is a code file", () => {
+      useWorkspaceStore.setState({
+        workspacePath: "/test",
+        graphReady: true,
+        pages: [
+          { title: "refs", relative_path: "lib/refs.bib", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "code" as const },
+        ],
+      });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "c1", pagePath: "lib/refs.bib" },
+        focusedPaneId: "c1",
+      });
+      render(<StatusBar />);
+      expect(screen.queryByTestId("bottom-panel-tabs")).toBeNull();
+      expect(screen.queryByTestId("tab-linked")).toBeNull();
+    });
+
+    it("still shows bottom panel tabs for markdown files", () => {
+      useWorkspaceStore.setState({
+        workspacePath: "/test",
+        graphReady: true,
+        pages: [
+          { title: "hello", relative_path: "notes/hello.md", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "markdown" as const },
+        ],
+      });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
+        focusedPaneId: "p1",
+      });
+      render(<StatusBar />);
+      expect(screen.getByTestId("bottom-panel-tabs")).toBeInTheDocument();
+      expect(screen.getByTestId("tab-linked")).toBeInTheDocument();
+    });
+
+    it("shows language name for code files", () => {
+      useWorkspaceStore.setState({
+        workspacePath: "/test",
+        graphReady: true,
+        pages: [
+          { title: "refs", relative_path: "lib/refs.bib", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "code" as const },
+        ],
+      });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "c1", pagePath: "lib/refs.bib" },
+        focusedPaneId: "c1",
+      });
+      render(<StatusBar />);
+      expect(screen.getByTestId("status-bar-language")).toHaveTextContent("BibTeX");
+    });
+
+    it("does not show language name for markdown files", () => {
+      useWorkspaceStore.setState({
+        workspacePath: "/test",
+        graphReady: true,
+        pages: [
+          { title: "hello", relative_path: "notes/hello.md", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "markdown" as const },
+        ],
+      });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
+        focusedPaneId: "p1",
+      });
+      render(<StatusBar />);
+      expect(screen.queryByTestId("status-bar-language")).toBeNull();
+    });
+
+    it("shows cursor position for a focused code pane", () => {
+      useWorkspaceStore.setState({
+        workspacePath: "/test",
+        graphReady: true,
+        pages: [
+          { title: "refs", relative_path: "lib/refs.bib", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "code" as const },
+        ],
+      });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "c1", pagePath: "lib/refs.bib" },
+        focusedPaneId: "c1",
+      });
+      useCursorInfoStore.setState({ line: 3, col: 7 });
+      render(<StatusBar />);
+      expect(screen.getByTestId("status-bar-cursor")).toHaveTextContent("Ln 3, Col 7");
+    });
+  });
+
   describe("StatusBar new page button", () => {
     beforeEach(() => {
       mockInvoke((cmd, args) => {

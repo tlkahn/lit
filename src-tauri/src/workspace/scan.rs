@@ -1,5 +1,6 @@
 use super::normalize::{filename_to_page_name, normalize_to_nfc};
 use super::page::{FileType, PageMeta};
+use super::watcher::is_code_extension;
 use super::WorkspaceError;
 use crate::util::is_hidden;
 use indexmap::IndexMap;
@@ -24,6 +25,9 @@ pub fn scan_pages(root: &Path) -> Result<Vec<PageMeta>, WorkspaceError> {
         let file_type = match extension {
             Some("md") => FileType::Markdown,
             Some("pdf") => FileType::Pdf,
+            // Source-code files share a single canonical extension list:
+            // watcher::is_code_extension (src/workspace/watcher.rs).
+            Some(ext) if is_code_extension(ext) => FileType::Code,
             _ => continue,
         };
 
@@ -115,6 +119,98 @@ mod tests {
         let pages = scan_pages(dir.path()).unwrap();
         assert_eq!(pages.len(), 1);
         assert_eq!(pages[0].title, "page");
+    }
+
+    #[test]
+    fn finds_bib_files() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("refs.bib"), "@article{key, title = {X}}").unwrap();
+
+        let pages = scan_pages(dir.path()).unwrap();
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0].title, "refs");
+    }
+
+    #[test]
+    fn bib_pages_have_code_file_type() {
+        use super::super::page::FileType;
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("refs.bib"), "@article{key}").unwrap();
+        fs::write(dir.path().join("note.md"), "# note").unwrap();
+
+        let pages = scan_pages(dir.path()).unwrap();
+        assert_eq!(pages.len(), 2);
+        let bib = pages.iter().find(|p| p.relative_path == "refs.bib").unwrap();
+        let md = pages.iter().find(|p| p.relative_path == "note.md").unwrap();
+        assert_eq!(bib.file_type, FileType::Code);
+        assert_eq!(md.file_type, FileType::Markdown);
+    }
+
+    #[test]
+    fn finds_assorted_code_extensions() {
+        use super::super::page::FileType;
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("main.rs"), "fn main() {}").unwrap();
+        fs::write(dir.path().join("app.ts"), "const x = 1;").unwrap();
+        fs::write(dir.path().join("script.py"), "print(1)").unwrap();
+        fs::write(dir.path().join("config.toml"), "[a]\nb = 1").unwrap();
+        fs::write(dir.path().join("data.json"), "{}").unwrap();
+
+        let pages = scan_pages(dir.path()).unwrap();
+        assert_eq!(pages.len(), 5);
+        for p in &pages {
+            assert_eq!(p.file_type, FileType::Code);
+        }
+    }
+
+    #[test]
+    fn scan_code_classification_uses_is_code_extension() {
+        use super::super::page::FileType;
+        let dir = TempDir::new().unwrap();
+
+        // Code extensions — including the less common ones that are easy to
+        // miss when manually keeping two lists in sync.
+        let code_exts = ["mjs", "cjs", "mts", "cts", "zsh", "bash", "htm"];
+        for ext in code_exts {
+            fs::write(dir.path().join(format!("f.{ext}")), "x").unwrap();
+        }
+        // Non-code / type-specific extensions.
+        fs::write(dir.path().join("doc.md"), "# md").unwrap();
+        fs::write(dir.path().join("paper.pdf"), b"%PDF").unwrap();
+        fs::write(dir.path().join("notes.txt"), "plain").unwrap();
+
+        let pages = scan_pages(dir.path()).unwrap();
+
+        // Every code extension is classified as Code, consistent with the
+        // canonical watcher::is_code_extension helper.
+        for ext in code_exts {
+            let p = pages
+                .iter()
+                .find(|p| p.relative_path == format!("f.{ext}"))
+                .unwrap_or_else(|| panic!("expected f.{ext} to be scanned"));
+            assert_eq!(p.file_type, FileType::Code, "ext {ext} should be Code");
+            assert!(super::super::watcher::is_code_extension(ext));
+        }
+
+        let md = pages.iter().find(|p| p.relative_path == "doc.md").unwrap();
+        assert_eq!(md.file_type, FileType::Markdown);
+        let pdf = pages.iter().find(|p| p.relative_path == "paper.pdf").unwrap();
+        assert_eq!(pdf.file_type, FileType::Pdf);
+        // .txt is not code, must be skipped entirely.
+        assert!(pages.iter().all(|p| p.relative_path != "notes.txt"));
+        assert!(!super::super::watcher::is_code_extension("txt"));
+    }
+
+    #[test]
+    fn code_pages_have_empty_frontmatter() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("x.rs"), "fn main() {}").unwrap();
+
+        let pages = scan_pages(dir.path()).unwrap();
+        assert_eq!(pages.len(), 1);
+        assert!(pages[0].frontmatter.is_empty());
+        assert!(pages[0].created_at.is_some());
+        assert!(pages[0].modified_at.is_some());
     }
 
     #[test]
