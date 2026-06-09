@@ -15,6 +15,8 @@ describe("usePanePdfLinkStore", () => {
       lastSyncedPage: null,
       syncEnabled: true,
       currentPage: new Map(),
+      pendingPdfSync: null,
+      pendingEditorSync: null,
     });
   });
 
@@ -167,6 +169,113 @@ describe("usePanePdfLinkStore", () => {
       usePaneStore.setState({ root: a, focusedPaneId: "a" });
       expect(usePanePdfLinkStore.getState().getLinkedPane("a")).toBeUndefined();
       expect(usePanePdfLinkStore.getState().currentPage.has("ghost")).toBe(false);
+    });
+  });
+
+  describe("pendingPdfSync", () => {
+    it("starts null", () => {
+      expect(usePanePdfLinkStore.getState().pendingPdfSync).toBeNull();
+    });
+
+    it("setPendingPdfSync stores paneId and pageIndex", () => {
+      usePanePdfLinkStore.getState().setPendingPdfSync("pdf1", 5);
+      expect(usePanePdfLinkStore.getState().pendingPdfSync).toEqual({ paneId: "pdf1", pageIndex: 5 });
+    });
+
+    it("consumePendingPdfSync returns pageIndex and clears it", () => {
+      usePanePdfLinkStore.getState().setPendingPdfSync("pdf1", 3);
+      const result = usePanePdfLinkStore.getState().consumePendingPdfSync("pdf1");
+      expect(result).toBe(3);
+      expect(usePanePdfLinkStore.getState().pendingPdfSync).toBeNull();
+    });
+
+    it("consumePendingPdfSync returns null for wrong paneId", () => {
+      usePanePdfLinkStore.getState().setPendingPdfSync("pdf1", 3);
+      const result = usePanePdfLinkStore.getState().consumePendingPdfSync("other");
+      expect(result).toBeNull();
+      // Original entry is NOT consumed
+      expect(usePanePdfLinkStore.getState().pendingPdfSync).toEqual({ paneId: "pdf1", pageIndex: 3 });
+    });
+
+    it("consumePendingPdfSync returns null when nothing pending", () => {
+      expect(usePanePdfLinkStore.getState().consumePendingPdfSync("pdf1")).toBeNull();
+    });
+  });
+
+  describe("pendingEditorSync", () => {
+    it("starts null", () => {
+      expect(usePanePdfLinkStore.getState().pendingEditorSync).toBeNull();
+    });
+
+    it("setPendingEditorSync stores paneId and pageIndex", () => {
+      usePanePdfLinkStore.getState().setPendingEditorSync("ed1", 7);
+      expect(usePanePdfLinkStore.getState().pendingEditorSync).toEqual({ paneId: "ed1", pageIndex: 7 });
+    });
+
+    it("consumePendingEditorSync returns pageIndex and clears it", () => {
+      usePanePdfLinkStore.getState().setPendingEditorSync("ed1", 4);
+      const result = usePanePdfLinkStore.getState().consumePendingEditorSync("ed1");
+      expect(result).toBe(4);
+      expect(usePanePdfLinkStore.getState().pendingEditorSync).toBeNull();
+    });
+
+    it("consumePendingEditorSync returns null for wrong paneId", () => {
+      usePanePdfLinkStore.getState().setPendingEditorSync("ed1", 4);
+      const result = usePanePdfLinkStore.getState().consumePendingEditorSync("other");
+      expect(result).toBeNull();
+      expect(usePanePdfLinkStore.getState().pendingEditorSync).toEqual({ paneId: "ed1", pageIndex: 4 });
+    });
+
+    it("consumePendingEditorSync returns null when nothing pending", () => {
+      expect(usePanePdfLinkStore.getState().consumePendingEditorSync("ed1")).toBeNull();
+    });
+  });
+
+  describe("auto-cleanup clears orphaned pending entries", () => {
+    afterEach(() => {
+      stopPanePdfLinkCleanup();
+    });
+
+    it("clears pendingPdfSync when its target pane leaves the tree", () => {
+      const a: PaneLeaf = { type: "leaf", id: "a", pagePath: "paper.md" };
+      const b: PaneLeaf = { type: "leaf", id: "b", pagePath: "paper.pdf" };
+      const split: PaneSplit = {
+        type: "split",
+        id: "split-1",
+        direction: "horizontal",
+        children: [a, b],
+        sizes: [50, 50],
+      };
+      usePaneStore.setState({ root: split, focusedPaneId: "a" });
+      usePanePdfLinkStore.getState().setPendingPdfSync("b", 5);
+
+      initPanePdfLinkCleanup();
+
+      // Remove pane b from the tree
+      usePaneStore.setState({ root: a, focusedPaneId: "a" });
+
+      expect(usePanePdfLinkStore.getState().pendingPdfSync).toBeNull();
+    });
+
+    it("clears pendingEditorSync when its target pane leaves the tree", () => {
+      const a: PaneLeaf = { type: "leaf", id: "a", pagePath: "paper.pdf" };
+      const b: PaneLeaf = { type: "leaf", id: "b", pagePath: "paper.md" };
+      const split: PaneSplit = {
+        type: "split",
+        id: "split-1",
+        direction: "horizontal",
+        children: [a, b],
+        sizes: [50, 50],
+      };
+      usePaneStore.setState({ root: split, focusedPaneId: "a" });
+      usePanePdfLinkStore.getState().setPendingEditorSync("b", 3);
+
+      initPanePdfLinkCleanup();
+
+      // Remove pane b from the tree
+      usePaneStore.setState({ root: a, focusedPaneId: "a" });
+
+      expect(usePanePdfLinkStore.getState().pendingEditorSync).toBeNull();
     });
   });
 });

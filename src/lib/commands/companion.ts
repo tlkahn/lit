@@ -3,6 +3,9 @@ import { usePaneStore, findLeaf, collectLeaves } from "../../stores/panes";
 import { usePanePdfLinkStore } from "../../stores/panePdfLink";
 import { useStatusMessageStore } from "../../stores/statusMessage";
 import { findCompanionFile } from "../ipc";
+import { getPaneView } from "../editorViewRef";
+import { getCachedPageMarkers, pageForOffset } from "../pageMarkers";
+import { getPdfCurrentPage } from "../pdfPaneRef";
 
 export function initCompanionCommands(): void {
   registerOnce("companion", [
@@ -45,7 +48,22 @@ export function initCompanionCommands(): void {
             }
             store.focusPane(newId);
             store.setPanePage(newId, companion);
-            usePanePdfLinkStore.getState().linkPanes(sourceId, newId);
+            const linkStore = usePanePdfLinkStore.getState();
+            linkStore.linkPanes(sourceId, newId);
+
+            if (!pagePath.toLowerCase().endsWith(".pdf")) {
+              const view = getPaneView(sourceId);
+              if (view) {
+                const offset = view.state.selection.main.head;
+                const markers = getCachedPageMarkers(view.state.doc);
+                const pageIndex = pageForOffset(markers, offset);
+                linkStore.setPendingPdfSync(newId, pageIndex);
+              }
+            } else {
+              const page = getPdfCurrentPage(sourceId) ?? linkStore.currentPage.get(sourceId) ?? 0;
+              linkStore.setPendingEditorSync(newId, page);
+            }
+
             useStatusMessageStore
               .getState()
               .show(`Linked ${pagePath} ↔ ${companion}`, "success");

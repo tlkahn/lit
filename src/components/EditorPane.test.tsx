@@ -83,7 +83,7 @@ beforeEach(() => {
   pdfPaneRef._resetForTesting();
   resetForwardSync();
   resetMarkerCache();
-  usePanePdfLinkStore.setState({ links: new Map() });
+  usePanePdfLinkStore.setState({ links: new Map(), lastSyncedPage: null, pendingPdfSync: null, pendingEditorSync: null });
   useCursorInfoStore.setState({ line: 0, col: 0 });
 
   mockInvoke((cmd) => {
@@ -437,6 +437,111 @@ describe("EditorPane", () => {
         expect(useCursorInfoStore.getState().line).toBe(0);
         expect(useCursorInfoStore.getState().col).toBe(0);
       });
+    });
+  });
+
+  describe("pending initial editor sync", () => {
+    const bodyWithMarkers = "<!-- Page 1 -->\nintro\n<!-- Page 2 -->\nbody\n<!-- Page 3 -->\nend";
+    const page2MarkerOffset = bodyWithMarkers.indexOf("<!-- Page 2 -->");
+
+    function fakeViewWithDoc(doc: string): EditorView {
+      return {
+        state: {
+          doc: Text.of(doc.split("\n")),
+          selection: { main: { head: 0 } },
+        },
+        dispatch: vi.fn(),
+        scrollDOM: { scrollTop: 0 },
+        focus: vi.fn(),
+      } as unknown as EditorView;
+    }
+
+    it("scrolls to the page marker when pendingEditorSync is set", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      usePanePdfLinkStore.getState().setPendingEditorSync("pane-1", 1);
+
+      const view = fakeViewWithDoc(bodyWithMarkers);
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onDocReplaced).toBeDefined();
+      });
+      const onDocReplaced = capturedProps.onDocReplaced as () => void;
+      onDocReplaced();
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(view.dispatch).toHaveBeenCalledTimes(1);
+      const tx = (view.dispatch as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+      expect(tx.selection.head).toBe(page2MarkerOffset);
+    });
+
+    it("consumes the pending entry so it does not fire again", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      usePanePdfLinkStore.getState().setPendingEditorSync("pane-1", 1);
+
+      const view = fakeViewWithDoc(bodyWithMarkers);
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onDocReplaced).toBeDefined();
+      });
+      (capturedProps.onDocReplaced as () => void)();
+      vi.advanceTimersByTime(16);
+
+      expect(usePanePdfLinkStore.getState().pendingEditorSync).toBeNull();
+    });
+
+    it("sets lastSyncedPage to suppress forward-sync echo", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      usePanePdfLinkStore.getState().setPendingEditorSync("pane-1", 1);
+
+      const view = fakeViewWithDoc(bodyWithMarkers);
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onDocReplaced).toBeDefined();
+      });
+      (capturedProps.onDocReplaced as () => void)();
+      vi.advanceTimersByTime(16);
+
+      expect(usePanePdfLinkStore.getState().lastSyncedPage).not.toBeNull();
+      expect(usePanePdfLinkStore.getState().lastSyncedPage!.page).toBe(1);
+    });
+
+    it("falls through to pendingCursorLine when no pendingEditorSync", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      useWorkspaceStore.setState({ pendingCursorLine: 2 });
+
+      const view = fakeViewWithDoc(bodyWithMarkers);
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onDocReplaced).toBeDefined();
+      });
+      (capturedProps.onDocReplaced as () => void)();
+      vi.advanceTimersByTime(16);
+
+      expect(view.dispatch).toHaveBeenCalledTimes(1);
+      const tx = (view.dispatch as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+      // Line 2 in the body = "intro\n" -> line 2 starts at offset 16
+      const expectedPos = Text.of(bodyWithMarkers.split("\n")).line(2).from;
+      expect(tx.selection.head).toBe(expectedPos);
     });
   });
 

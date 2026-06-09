@@ -37,6 +37,9 @@ const mockLinkState = vi.hoisted(() => ({
   linkPanes: vi.fn(),
   toggleSync: vi.fn(),
   syncEnabled: true,
+  setPendingPdfSync: vi.fn(),
+  setPendingEditorSync: vi.fn(),
+  currentPage: new Map<string, number>(),
 }));
 
 vi.mock("../../stores/panePdfLink", () => ({
@@ -63,6 +66,29 @@ const mockFindCompanionFile = vi.hoisted(() => vi.fn());
 
 vi.mock("../ipc", () => ({
   findCompanionFile: mockFindCompanionFile,
+}));
+
+// --- editorViewRef mock ----------------------------------------------------
+const mockGetPaneView = vi.hoisted(() => vi.fn());
+
+vi.mock("../editorViewRef", () => ({
+  getPaneView: mockGetPaneView,
+}));
+
+// --- pdfPaneRef mock -------------------------------------------------------
+const mockGetPdfCurrentPage = vi.hoisted(() => vi.fn());
+
+vi.mock("../pdfPaneRef", () => ({
+  getPdfCurrentPage: mockGetPdfCurrentPage,
+}));
+
+// --- pageMarkers mock ------------------------------------------------------
+const mockGetCachedPageMarkers = vi.hoisted(() => vi.fn());
+const mockPageForOffset = vi.hoisted(() => vi.fn());
+
+vi.mock("../pageMarkers", () => ({
+  getCachedPageMarkers: mockGetCachedPageMarkers,
+  pageForOffset: mockPageForOffset,
 }));
 
 import { initCompanionCommands } from "./companion";
@@ -257,5 +283,80 @@ describe("initCompanionCommands", () => {
       expect.stringContaining("Sync disabled"),
       "success",
     );
+  });
+
+  describe("initial sync on companion.open", () => {
+    beforeEach(() => {
+      mockPaneState.splitPane.mockImplementation((_paneId: string, _direction: string): string | null => {
+        mockPaneState.focusedPaneId = "new-pane";
+        return "new-pane";
+      });
+    });
+
+    it("sets pendingPdfSync when source is markdown", async () => {
+      resetPaneState("paper.md");
+      const fakeView = {
+        state: {
+          doc: {},
+          selection: { main: { head: 42 } },
+        },
+      };
+      mockGetPaneView.mockReturnValue(fakeView);
+      const fakeMarkers = [{ page: 1, charOffset: 0 }, { page: 2, charOffset: 30 }];
+      mockGetCachedPageMarkers.mockReturnValue(fakeMarkers);
+      mockPageForOffset.mockReturnValue(1);
+
+      initCompanionCommands();
+      executeCommand("companion.open");
+
+      await vi.waitFor(() => {
+        expect(mockLinkState.linkPanes).toHaveBeenCalledWith("src-pane", "new-pane");
+      });
+      expect(mockLinkState.setPendingPdfSync).toHaveBeenCalledWith("new-pane", 1);
+      expect(mockLinkState.setPendingEditorSync).not.toHaveBeenCalled();
+    });
+
+    it("sets pendingEditorSync when source is PDF", async () => {
+      resetPaneState("paper.pdf");
+      mockFindCompanionFile.mockResolvedValue("paper.md");
+      mockGetPdfCurrentPage.mockReturnValue(3);
+
+      initCompanionCommands();
+      executeCommand("companion.open");
+
+      await vi.waitFor(() => {
+        expect(mockLinkState.linkPanes).toHaveBeenCalledWith("src-pane", "new-pane");
+      });
+      expect(mockLinkState.setPendingEditorSync).toHaveBeenCalledWith("new-pane", 3);
+      expect(mockLinkState.setPendingPdfSync).not.toHaveBeenCalled();
+    });
+
+    it("falls back to store currentPage when getPdfCurrentPage returns null", async () => {
+      resetPaneState("paper.pdf");
+      mockFindCompanionFile.mockResolvedValue("paper.md");
+      mockGetPdfCurrentPage.mockReturnValue(null);
+      mockLinkState.currentPage.set("src-pane", 5);
+
+      initCompanionCommands();
+      executeCommand("companion.open");
+
+      await vi.waitFor(() => {
+        expect(mockLinkState.linkPanes).toHaveBeenCalledWith("src-pane", "new-pane");
+      });
+      expect(mockLinkState.setPendingEditorSync).toHaveBeenCalledWith("new-pane", 5);
+    });
+
+    it("does not set pendingPdfSync when source editor has no view", async () => {
+      resetPaneState("paper.md");
+      mockGetPaneView.mockReturnValue(null);
+
+      initCompanionCommands();
+      executeCommand("companion.open");
+
+      await vi.waitFor(() => {
+        expect(mockLinkState.linkPanes).toHaveBeenCalledWith("src-pane", "new-pane");
+      });
+      expect(mockLinkState.setPendingPdfSync).not.toHaveBeenCalled();
+    });
   });
 });

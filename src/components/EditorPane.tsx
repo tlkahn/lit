@@ -174,7 +174,19 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
     requestAnimationFrame(() => {
       const view = getPaneView(paneId);
       if (!view) return;
-      if (storeState.pendingCursorLine != null) {
+      const pendingSync = usePanePdfLinkStore.getState().consumePendingEditorSync(paneId);
+      if (pendingSync !== null) {
+        const markers = getCachedPageMarkers(view.state.doc);
+        const marker = markers[pendingSync];
+        if (marker) {
+          const pos = Math.min(marker.charOffset, view.state.doc.length);
+          view.dispatch({
+            selection: EditorSelection.cursor(pos),
+            effects: EditorView.scrollIntoView(pos, { y: "start" }),
+          });
+          usePanePdfLinkStore.getState().setLastSyncedPage(pendingSync);
+        }
+      } else if (storeState.pendingCursorLine != null) {
         let adjustedLine = storeState.pendingCursorLine;
         if (storeState.pendingCursorFileAbsolute && rawYamlRef.current) {
           adjustedLine = Math.max(1, adjustedLine - frontmatterLineCount(rawYamlRef.current));

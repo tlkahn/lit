@@ -38,6 +38,14 @@ export interface PanePdfLinkStore {
   pageCount: Map<string, number>;
   /** Record `count` as the total page count for `paneId`. */
   setPageCount(paneId: string, count: number): void;
+
+  pendingPdfSync: { paneId: string; pageIndex: number } | null;
+  setPendingPdfSync(paneId: string, pageIndex: number): void;
+  consumePendingPdfSync(paneId: string): number | null;
+
+  pendingEditorSync: { paneId: string; pageIndex: number } | null;
+  setPendingEditorSync(paneId: string, pageIndex: number): void;
+  consumePendingEditorSync(paneId: string): number | null;
 }
 
 export const usePanePdfLinkStore = create<PanePdfLinkStore>((set, get) => ({
@@ -64,6 +72,29 @@ export const usePanePdfLinkStore = create<PanePdfLinkStore>((set, get) => ({
     const pageCount = new Map(get().pageCount);
     pageCount.set(paneId, count);
     set({ pageCount });
+  },
+
+  pendingPdfSync: null,
+  pendingEditorSync: null,
+
+  setPendingPdfSync: (paneId, pageIndex) => set({ pendingPdfSync: { paneId, pageIndex } }),
+  consumePendingPdfSync: (paneId) => {
+    const pending = get().pendingPdfSync;
+    if (pending && pending.paneId === paneId) {
+      set({ pendingPdfSync: null });
+      return pending.pageIndex;
+    }
+    return null;
+  },
+
+  setPendingEditorSync: (paneId, pageIndex) => set({ pendingEditorSync: { paneId, pageIndex } }),
+  consumePendingEditorSync: (paneId) => {
+    const pending = get().pendingEditorSync;
+    if (pending && pending.paneId === paneId) {
+      set({ pendingEditorSync: null });
+      return pending.pageIndex;
+    }
+    return null;
   },
 
   linkPanes: (a, b) => {
@@ -156,6 +187,13 @@ export function initPanePdfLinkCleanup(): void {
         nextPageCount.delete(id);
         changed = true;
       }
+    }
+    const { pendingPdfSync, pendingEditorSync } = usePanePdfLinkStore.getState();
+    if (pendingPdfSync && !live.has(pendingPdfSync.paneId)) {
+      usePanePdfLinkStore.setState({ pendingPdfSync: null });
+    }
+    if (pendingEditorSync && !live.has(pendingEditorSync.paneId)) {
+      usePanePdfLinkStore.setState({ pendingEditorSync: null });
     }
     if (changed) usePanePdfLinkStore.setState({ currentPage: nextCurrentPage, pageCount: nextPageCount });
   });

@@ -13,6 +13,8 @@ import {
 } from "../lib/editorViewRef";
 import { _resetMarkerCacheForTesting as resetMarkerCache } from "../lib/pageMarkers";
 
+const mockGoToPage = vi.fn();
+
 vi.mock("./PdfViewer", () => ({
   PdfViewer: ({
     filePath,
@@ -29,7 +31,7 @@ vi.mock("./PdfViewer", () => ({
   }) => {
     // Simulate PdfViewer publishing its internal goToPage on mount.
     useEffect(() => {
-      registerGoToPage?.(() => {});
+      registerGoToPage?.(mockGoToPage);
     }, [registerGoToPage]);
     // Expose buttons the test can click to drive callbacks.
     return (
@@ -65,6 +67,7 @@ beforeEach(() => {
   pdfPaneRef._resetForTesting();
   resetEditorViewRef();
   resetMarkerCache();
+  mockGoToPage.mockClear();
   return cleanup;
 });
 
@@ -189,6 +192,38 @@ describe("PdfViewerPane", () => {
       // Second click with no flag: reverse sync fires normally.
       fireEvent.click(getByTestId("fire-page-change"));
       expect(view.dispatch).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("pending initial PDF sync", () => {
+    it("calls goToPage with pending page index when PdfViewer registers", () => {
+      usePanePdfLinkStore.getState().setPendingPdfSync("p1", 5);
+      render(<PdfViewerPane paneId="p1" />);
+      expect(mockGoToPage).toHaveBeenCalledWith(5);
+    });
+
+    it("consumes the pending entry so it does not fire again", () => {
+      usePanePdfLinkStore.getState().setPendingPdfSync("p1", 5);
+      render(<PdfViewerPane paneId="p1" />);
+      expect(usePanePdfLinkStore.getState().pendingPdfSync).toBeNull();
+    });
+
+    it("skips goToPage when pending page is 0 (already the default)", () => {
+      usePanePdfLinkStore.getState().setPendingPdfSync("p1", 0);
+      render(<PdfViewerPane paneId="p1" />);
+      expect(mockGoToPage).not.toHaveBeenCalled();
+    });
+
+    it("marks forward sync to suppress the reverse-sync echo", () => {
+      usePanePdfLinkStore.getState().setPendingPdfSync("p1", 3);
+      render(<PdfViewerPane paneId="p1" />);
+      // The forward-sync flag should have been set (and not yet cleared by the 500ms timer)
+      expect(pdfPaneRef.consumeForwardSync("p1")).toBe(true);
+    });
+
+    it("does not call goToPage when there is no pending sync", () => {
+      render(<PdfViewerPane paneId="p1" />);
+      expect(mockGoToPage).not.toHaveBeenCalled();
     });
   });
 });
