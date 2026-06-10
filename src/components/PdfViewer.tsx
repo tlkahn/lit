@@ -7,6 +7,9 @@ import { SpinnerSvg } from "./SpinnerSvg";
 
 const BASE_DPI = 144;
 const MAX_CACHE = 5;
+// Delay before the page-transition spinner becomes visible, so fast
+// transitions (prefetched j/k flips) don't flash it on every keypress.
+const SPINNER_GRACE_MS = 150;
 
 function getEffectiveDpi(): number {
   return Math.round(BASE_DPI * (window.devicePixelRatio || 1));
@@ -59,6 +62,12 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
   const [rendered, setRendered] = useState<RenderedPage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pageLoading, setPageLoading] = useState(false);
+  // The src of the last image that actually finished painting. The IPC render
+  // resolving (pageLoading → false) only means the PNG exists on disk; the
+  // user-visible stale window is the browser fetching/decoding the new PNG
+  // after the <img src> swap. Tracking the painted src lets the spinner cover
+  // that window too (issue #456).
+  const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
   const filePathRef = useRef(filePath);
   const currentPageRef = useRef(currentPage);
   const cacheRef = useRef(new Map<string, RenderedPage>());
@@ -176,6 +185,21 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
     registerGetCurrentPage?.(() => currentPageRef.current);
   }, [registerGetCurrentPage]);
 
+  const src = rendered ? convertFileSrc(rendered.png_path) : null;
+  const transitioning = pageLoading || (src !== null && loadedSrc !== src);
+
+  // Grace period: only surface the spinner if the transition outlives
+  // SPINNER_GRACE_MS, so cache-hit/prefetched flips never flash it.
+  const [spinnerVisible, setSpinnerVisible] = useState(false);
+  useEffect(() => {
+    if (!transitioning) {
+      setSpinnerVisible(false);
+      return;
+    }
+    const t = setTimeout(() => setSpinnerVisible(true), SPINNER_GRACE_MS);
+    return () => clearTimeout(t);
+  }, [transitioning]);
+
   const handleKeyDown = useCallback(
     (e: ReactKeyboardEvent) => {
       const pageCount = pdfInfo?.page_count ?? 0;
@@ -225,30 +249,36 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
 
   return (
     <main
-      className="flex min-h-0 flex-1 flex-col items-center bg-bg-primary-alt focus:outline-none"
+      className="relative flex min-h-0 flex-1 flex-col items-center bg-bg-primary-alt focus:outline-none"
       data-testid="pdf-viewer"
       tabIndex={0}
       onKeyDown={handleKeyDown}
     >
-      <div className="relative flex-1 overflow-auto px-4 pb-4">
+      <div className="flex-1 overflow-auto px-4 pb-4">
         <img
           data-testid="pdf-page-image"
-          src={convertFileSrc(rendered.png_path)}
+          src={src ?? undefined}
           alt={`Page ${currentPage + 1}`}
           className="mx-auto shadow-lg"
           style={{ maxWidth: "100%", width: `${rendered.width / (window.devicePixelRatio || 1)}px` }}
+          onLoad={(e) => setLoadedSrc(e.currentTarget.getAttribute("src"))}
+          // A failed image load must not strand the spinner — the IPC render
+          // already succeeded, so just end the transition.
+          onError={(e) => setLoadedSrc(e.currentTarget.getAttribute("src"))}
         />
-        {pageLoading && (
-          <div
-            data-testid="pdf-page-loading"
-            className="absolute inset-0 flex items-center justify-center pointer-events-none"
-          >
-            <div className="rounded-full bg-bg-primary-alt/80 p-3 shadow">
-              <SpinnerSvg className="h-6 w-6 text-text-faint" />
-            </div>
-          </div>
-        )}
       </div>
+      {/* Sibling of the scroll container (not inside it) so the overlay pins
+          to the visible pane instead of scrolling away with a tall page. */}
+      {spinnerVisible && (
+        <div
+          data-testid="pdf-page-loading"
+          className="absolute inset-0 flex items-center justify-center pointer-events-none"
+        >
+          <div className="rounded-full bg-bg-primary-alt/80 p-3 shadow">
+            <SpinnerSvg className="h-6 w-6 text-text-faint" />
+          </div>
+        </div>
+      )}
     </main>
   );
 }
