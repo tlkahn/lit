@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   mockInvoke,
@@ -10,7 +10,9 @@ import {
 import { useWorkspaceStore } from "../stores/workspace";
 import { useStatusMessageStore } from "../stores/statusMessage";
 import { ReferenceLibrary } from "./ReferenceLibrary";
-import type { BibEntry } from "../lib/ipc";
+import { globalJumpTracker } from "../editor/jumpTracker";
+import { setCurrentEditorView } from "../lib/editorViewRef";
+import type { BibEntry, BacklinkEntry } from "../lib/ipc";
 
 const sanderson: BibEntry = {
   key: "sanderson2009",
@@ -50,8 +52,19 @@ const abrams: BibEntry = {
 
 let invokedCommands: { cmd: string; args: unknown }[] = [];
 let fixture: BibEntry[] = [];
+let citingFixture: BacklinkEntry[] = [];
 let clipboardOverridden = false;
 const origClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+
+function makeCiting(overrides: Partial<BacklinkEntry> = {}): BacklinkEntry {
+  return {
+    source_id: "notes/a.md",
+    source_title: "Note A",
+    context: "see [@sanderson2009]",
+    source_line: 4,
+    ...overrides,
+  };
+}
 
 function setClipboardMock(writeText: ReturnType<typeof vi.fn>) {
   Object.defineProperty(navigator, "clipboard", {
@@ -64,6 +77,7 @@ function setClipboardMock(writeText: ReturnType<typeof vi.fn>) {
 beforeEach(() => {
   invokedCommands = [];
   fixture = [sanderson, flood, abrams];
+  citingFixture = [];
   resetListenMock();
   mockListen();
   useWorkspaceStore.setState({
@@ -73,12 +87,14 @@ beforeEach(() => {
     currentPageHeadings: [],
     loading: false,
     error: null,
+    graphReady: true,
   });
   useStatusMessageStore.setState({ message: null, variant: "success" });
 
   mockInvoke((cmd, args) => {
     invokedCommands.push({ cmd, args });
     if (cmd === "list_bib_entries") return fixture;
+    if (cmd === "get_citing_pages") return citingFixture;
     throw new Error(`Unknown command: ${cmd}`);
   });
 });
@@ -507,5 +523,148 @@ describe("ReferenceLibrary", () => {
       expect(useStatusMessageStore.getState().message).toMatch(/Failed to copy/i),
     );
     expect(useStatusMessageStore.getState().variant).toBe("error");
+  });
+
+  it("expanding an entry fetches citing pages and shows the count", async () => {
+    const user = userEvent.setup();
+    citingFixture = [
+      makeCiting(),
+      makeCiting({ source_id: "notes/b.md", source_title: "Note B", source_line: 9 }),
+    ];
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+
+    expect(
+      await screen.findByRole("button", { name: /Cited by \(2\)/ }),
+    ).toBeInTheDocument();
+    const call = invokedCommands.find((c) => c.cmd === "get_citing_pages");
+    expect(call).toBeTruthy();
+    expect(call!.args).toEqual({ bibKey: "sanderson2009" });
+  });
+
+  it('shows "Not cited" when the entry has no citations', async () => {
+    const user = userEvent.setup();
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+
+    expect(await screen.findByText("Not cited")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Cited by/ })).not.toBeInTheDocument();
+  });
+
+  it("cited-by list is collapsed by default and toggles", async () => {
+    const user = userEvent.setup();
+    citingFixture = [
+      makeCiting(),
+      makeCiting({ source_id: "notes/b.md", source_title: "Note B", source_line: 9 }),
+    ];
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+    await user.click(screen.getByText("The Saiva Age"));
+
+    const toggle = await screen.findByRole("button", { name: /Cited by \(2\)/ });
+    expect(screen.queryByText("Note A")).not.toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(screen.getByText("Note A")).toBeInTheDocument();
+    expect(screen.getByText("Note B")).toBeInTheDocument();
+    expect(screen.getByTestId("citing-context-0").textContent).toContain(
+      "see [@sanderson2009]",
+    );
+    expect(screen.getByText(/line 4/)).toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(screen.queryByText("Note A")).not.toBeInTheDocument();
+  });
+
+  it("clicking a citing page title navigates to the citation line", async () => {
+    const user = userEvent.setup();
+    const selectPageAtLine = vi.fn();
+    useWorkspaceStore.setState({ selectPageAtLine });
+    citingFixture = [makeCiting()];
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+    await user.click(screen.getByText("The Saiva Age"));
+    await user.click(await screen.findByRole("button", { name: /Cited by \(1\)/ }));
+
+    await user.click(screen.getByText("Note A"));
+    expect(selectPageAtLine).toHaveBeenCalledWith("notes/a.md", 4);
+
+    await user.click(screen.getByTestId("citing-context-0"));
+    expect(selectPageAtLine).toHaveBeenCalledTimes(2);
+    expect(selectPageAtLine).toHaveBeenLastCalledWith("notes/a.md", 4);
+  });
+
+  it("citing pages fetch failure shows Not cited", async () => {
+    const user = userEvent.setup();
+    mockInvoke((cmd, args) => {
+      invokedCommands.push({ cmd, args });
+      if (cmd === "list_bib_entries") return fixture;
+      if (cmd === "get_citing_pages") throw new Error("graph not ready");
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+
+    expect(await screen.findByText("Not cited")).toBeInTheDocument();
+  });
+
+  it("waits for graphReady before fetching citing pages", async () => {
+    const user = userEvent.setup();
+    useWorkspaceStore.setState({ graphReady: false });
+    citingFixture = [makeCiting()];
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+
+    // Give any erroneous fetch a chance to fire.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(invokedCommands.filter((c) => c.cmd === "get_citing_pages")).toHaveLength(0);
+    expect(screen.queryByText(/Cited by|Not cited/)).not.toBeInTheDocument();
+
+    act(() => {
+      useWorkspaceStore.setState({ graphReady: true });
+    });
+
+    expect(
+      await screen.findByRole("button", { name: /Cited by \(1\)/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("records a jump before navigating from a citing page", async () => {
+    const user = userEvent.setup();
+    const fakeEditorView = {
+      state: {
+        selection: { main: { head: 10 } },
+        doc: { lineAt: () => ({ number: 3, from: 8 }) },
+      },
+    };
+    useWorkspaceStore.setState({
+      currentPagePath: "current.md",
+      selectPageAtLine: vi.fn(),
+    });
+    setCurrentEditorView(fakeEditorView as never);
+    const spy = vi.spyOn(globalJumpTracker, "recordJump");
+    citingFixture = [makeCiting()];
+
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+    await user.click(screen.getByText("The Saiva Age"));
+    await user.click(await screen.findByRole("button", { name: /Cited by \(1\)/ }));
+
+    await user.click(screen.getByText("Note A"));
+
+    expect(spy).toHaveBeenCalledWith(
+      { notePath: "current.md", line: 3, col: 2 },
+      { notePath: "", line: 0, col: 0 },
+    );
+    spy.mockRestore();
+    setCurrentEditorView(null);
   });
 });

@@ -10,8 +10,15 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { listen } from "@tauri-apps/api/event";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useStatusMessageStore } from "../stores/statusMessage";
-import { listBibEntries, type BibEntry, type FileEvent } from "../lib/ipc";
+import {
+  listBibEntries,
+  getCitingPages,
+  type BibEntry,
+  type BacklinkEntry,
+  type FileEvent,
+} from "../lib/ipc";
 import { localeFilter } from "../lib/localeSearch";
+import { useRecordDeparture } from "../hooks/useRecordDeparture";
 
 function lastName(entry: BibEntry): string {
   const first = entry.authors[0] ?? "";
@@ -36,6 +43,77 @@ function doiHref(doi: string): string {
 
 function urlHref(url: string): string {
   return /^https?:\/\//i.test(url) ? url : "#";
+}
+
+function CitedBySection({ bibKey }: { bibKey: string }) {
+  const graphReady = useWorkspaceStore((s) => s.graphReady);
+  const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
+  const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
+  const currentPageRef = useRef(currentPagePath ?? "");
+  currentPageRef.current = currentPagePath ?? "";
+  const recordDeparture = useRecordDeparture(currentPageRef);
+  const [citing, setCiting] = useState<BacklinkEntry[] | null>(null);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!graphReady) return;
+    let cancelled = false;
+    getCitingPages(bibKey)
+      .then((result) => {
+        if (!cancelled) setCiting(result);
+      })
+      .catch(() => {
+        if (!cancelled) setCiting([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [bibKey, graphReady]);
+
+  if (!graphReady || citing === null) return null;
+  if (citing.length === 0) {
+    return <div className="mt-2 text-xs text-text-faint">Not cited</div>;
+  }
+  return (
+    <div className="mt-2" data-testid="cited-by-section">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover"
+      >
+        Cited by ({citing.length})
+      </button>
+      {open ? (
+        <div className="mt-1">
+          {citing.map((e, i) => (
+            <div key={`${e.source_id}-${i}`} className="mt-1 text-xs">
+              <button
+                className="font-medium text-interactive-accent hover:underline"
+                onClick={() => {
+                  recordDeparture();
+                  selectPageAtLine(e.source_id, e.source_line);
+                }}
+              >
+                {e.source_title || e.source_id}
+              </button>
+              {e.context ? (
+                <p
+                  data-testid={`citing-context-${i}`}
+                  className="mt-0.5 cursor-pointer text-text-muted hover:text-text-normal"
+                  onClick={() => {
+                    recordDeparture();
+                    selectPageAtLine(e.source_id, e.source_line);
+                  }}
+                >
+                  {e.context}
+                  <span className="ml-1 text-text-faint">line {e.source_line}</span>
+                </p>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export function ReferenceLibrary() {
@@ -281,6 +359,7 @@ export function ReferenceLibrary() {
                         Copy citation
                       </button>
                     </div>
+                    <CitedBySection bibKey={entry.key} />
                   </div>
                 ) : null}
               </div>

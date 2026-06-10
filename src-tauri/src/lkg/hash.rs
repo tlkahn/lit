@@ -73,6 +73,7 @@ mod tests {
             context: "".into(),
             raw_target: "".into(),
             source_line: 0,
+            edge_kind: "wikilink".into(),
         }
     }
 
@@ -135,6 +136,22 @@ mod tests {
         ann2.char_end = 99;
         let anns2 = vec![ann2];
         assert_ne!(base, compute_graph_hash(&nodes, &edges, &anns2));
+    }
+
+    #[test]
+    fn edge_kind_affects_hash() {
+        let nodes = vec![node("a.md", "A")];
+        let anns: Vec<BundleAnnotation> = vec![];
+
+        let wiki_edges = vec![edge("a.md", "b.md")];
+        let mut cite = edge("a.md", "b.md");
+        cite.edge_kind = "citation".into();
+        let cite_edges = vec![cite];
+
+        assert_ne!(
+            compute_graph_hash(&nodes, &wiki_edges, &anns),
+            compute_graph_hash(&nodes, &cite_edges, &anns),
+        );
     }
 
     #[test]

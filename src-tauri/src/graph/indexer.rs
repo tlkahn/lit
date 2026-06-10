@@ -9,10 +9,11 @@ use super::error::GraphError;
 use super::extract::{extract_first_paragraph, extract_headings, extract_sentence_context};
 use super::types::HeadingInfo;
 use super::knowledge::{GraphNode, KnowledgeGraph, SubgraphBundle, SubgraphResult};
+use super::citations::extract_citations;
 use super::links::{extract_wikilinks, WikiLink};
 use super::resolve::StemLookup;
 use super::store::Store;
-use super::types::{extract_aliases, extract_tags, BacklinkEntry, LinkEntry, ParsedNode, SearchResult, Stats, UnlinkedMention};
+use super::types::{extract_aliases, extract_tags, BacklinkEntry, EdgeKind, LinkEntry, ParsedNode, SearchResult, Stats, UnlinkedMention};
 use crate::workspace::frontmatter::parse_frontmatter;
 use crate::workspace::normalize::filename_to_page_name;
 
@@ -312,10 +313,17 @@ pub fn index_workspace_with_progress(
                         stub_id
                     }
                 };
-                store.insert_edge(&node.id, &target_id, &context, &link.target, source_line)?;
+                store.insert_edge(&node.id, &target_id, &context, &link.target, source_line, EdgeKind::Wikilink)?;
                 reverse_stems.add(&node.id, &link.target);
                 edges_resolved += 1;
             }
+        }
+
+        // Citation edges target bib keys, not pages: no stub, no reverse-stem
+        // entry, and not counted in edges_resolved (resolved wikilinks only).
+        let body = bodies.get(&node.id).map(|s| s.as_str()).unwrap_or("");
+        for cite in extract_citations(body) {
+            store.insert_edge(&node.id, &cite.bib_key, &cite.context, &cite.bib_key, cite.source_line, EdgeKind::Citation)?;
         }
 
         on_progress(IndexProgress {
@@ -538,9 +546,15 @@ pub fn incremental_reindex(
                             link.target.clone()
                         }
                     };
-                    store.insert_edge(&node.id, &target_id, &context, &link.target, source_line)?;
+                    store.insert_edge(&node.id, &target_id, &context, &link.target, source_line, EdgeKind::Wikilink)?;
                     reverse_stems.add(&node.id, &link.target);
                     edges_resolved += 1;
+                }
+
+                // Citation edges target bib keys, not pages: no stub, no
+                // reverse-stem entry, not counted in edges_resolved.
+                for cite in extract_citations(&body) {
+                    store.insert_edge(&node.id, &cite.bib_key, &cite.context, &cite.bib_key, cite.source_line, EdgeKind::Citation)?;
                 }
             }
             Err(e) => {
@@ -601,9 +615,15 @@ pub fn incremental_reindex(
                             link.target.clone()
                         }
                     };
-                    store.insert_edge(source_id, &target_id, &context, &link.target, source_line)?;
+                    store.insert_edge(source_id, &target_id, &context, &link.target, source_line, EdgeKind::Wikilink)?;
                     reverse_stems.add(source_id, &link.target);
                     edges_resolved += 1;
+                }
+
+                // delete_edges_from above removed citation edges too — re-insert
+                // them or stub promotion would silently destroy them.
+                for cite in extract_citations(&body) {
+                    store.insert_edge(source_id, &cite.bib_key, &cite.context, &cite.bib_key, cite.source_line, EdgeKind::Citation)?;
                 }
             }
         }
@@ -892,6 +912,14 @@ impl GraphIndex {
             Err(GraphError::NodeNotFound { .. }) => Ok(vec![]),
             Err(e) => Err(e),
         }
+    }
+
+    /// Pages citing `bib_key` via `[@bib_key]` citation edges. Citation edges
+    /// live only in the DB (targets are bib keys, not page ids), so this
+    /// queries the store directly rather than the in-memory knowledge graph.
+    pub fn citing_pages(&self, bib_key: &str) -> Result<Vec<BacklinkEntry>, GraphError> {
+        let store = self.store.lock().unwrap();
+        store.citing_pages(bib_key)
     }
 
     pub fn get_first_paragraphs(&self, ids: &[String]) -> Result<std::collections::HashMap<String, String>, GraphError> {
@@ -1997,6 +2025,167 @@ mod tests {
         };
         let merged = a.merge(&empty);
         assert_eq!(merged, a);
+    }
+
+    // --- citation edges ---
+
+    #[test]
+    fn index_workspace_extracts_citation_edges() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "As shown in [@smith2024].");
+        let store = Store::open_memory().unwrap();
+        index_workspace(&store, dir.path(), true).unwrap();
+
+        let citing = store.citing_pages("smith2024").unwrap();
+        assert_eq!(citing.len(), 1);
+        assert_eq!(citing[0].source_id, "a.md");
+        assert_eq!(citing[0].context, "As shown in [@smith2024].");
+        assert_eq!(citing[0].source_line, 1);
+    }
+
+    #[test]
+    fn citation_targets_do_not_create_stubs() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "As shown in [@smith2024].");
+        let store = Store::open_memory().unwrap();
+        let (result, _) = index_workspace(&store, dir.path(), true).unwrap();
+
+        let meta = store.all_nodes_metadata().unwrap();
+        assert!(
+            !meta.iter().any(|(id, _)| id == "smith2024"),
+            "bib key must not become a node, nodes: {:?}",
+            meta
+        );
+        assert_eq!(result.stubs_created, 0);
+    }
+
+    #[test]
+    fn incremental_reindex_updates_citation_edges() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Cites [@old2020].");
+        let store = Store::open_memory().unwrap();
+        let (_, mut reverse) = index_workspace(&store, dir.path(), true).unwrap();
+        assert_eq!(store.citing_pages("old2020").unwrap().len(), 1);
+
+        write_md(dir.path(), "a.md", "Cites [@new2021].");
+        let diff = DiffResult {
+            new: vec![],
+            changed: vec!["a.md".to_string()],
+            deleted: vec![],
+        };
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
+
+        assert!(store.citing_pages("old2020").unwrap().is_empty());
+        assert_eq!(store.citing_pages("new2021").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn reresolve_preserves_citation_edges() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "See [[Ghost]] and [@smith2024].");
+        let store = Store::open_memory().unwrap();
+        let (_, mut reverse) = index_workspace(&store, dir.path(), true).unwrap();
+        assert_eq!(store.citing_pages("smith2024").unwrap().len(), 1);
+
+        // Creating ghost.md triggers the changed-stems re-resolve path, which
+        // deletes ALL of a.md's edges and re-inserts them.
+        write_md(dir.path(), "ghost.md", "I exist now.");
+        let diff = DiffResult {
+            new: vec!["ghost.md".to_string()],
+            changed: vec![],
+            deleted: vec![],
+        };
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
+
+        let citing = store.citing_pages("smith2024").unwrap();
+        assert_eq!(citing.len(), 1, "re-resolve must not drop citation edges");
+        assert_eq!(citing[0].source_id, "a.md");
+    }
+
+    #[test]
+    fn incremental_reindex_deleted_file_removes_citation_edges() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Cites [@smith2024].");
+        let store = Store::open_memory().unwrap();
+        let (_, mut reverse) = index_workspace(&store, dir.path(), true).unwrap();
+        assert_eq!(store.citing_pages("smith2024").unwrap().len(), 1);
+
+        fs::remove_file(dir.path().join("a.md")).unwrap();
+        let diff = DiffResult {
+            new: vec![],
+            changed: vec![],
+            deleted: vec!["a.md".to_string()],
+        };
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
+
+        assert!(
+            store.citing_pages("smith2024").unwrap().is_empty(),
+            "deleting a page must remove its citation edges"
+        );
+    }
+
+    #[test]
+    fn index_workspace_multi_cite_creates_edge_per_key() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "See [@alpha2020; @beta2021, pp. 10-12].");
+        let store = Store::open_memory().unwrap();
+        index_workspace(&store, dir.path(), true).unwrap();
+
+        let alpha = store.citing_pages("alpha2020").unwrap();
+        assert_eq!(alpha.len(), 1);
+        assert_eq!(alpha[0].source_id, "a.md");
+        assert_eq!(alpha[0].source_line, 1);
+        assert_eq!(store.citing_pages("beta2021").unwrap().len(), 1);
+
+        let meta = store.all_nodes_metadata().unwrap();
+        assert!(
+            !meta.iter().any(|(id, _)| id == "alpha2020" || id == "beta2021"),
+            "multi-cite keys must not become nodes, nodes: {:?}",
+            meta
+        );
+    }
+
+    #[test]
+    fn graph_index_citing_pages_queries_citation_edges() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "As shown in [@smith2024].");
+        write_md(dir.path(), "b.md", "Links [[a]] but cites nothing.");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        let citing = gi.citing_pages("smith2024").unwrap();
+        assert_eq!(citing.len(), 1);
+        assert_eq!(citing[0].source_id, "a.md");
+        assert_eq!(citing[0].context, "As shown in [@smith2024].");
+        assert_eq!(citing[0].source_line, 1);
+
+        // Unknown bib key → empty, not an error.
+        assert!(gi.citing_pages("nope").unwrap().is_empty());
+    }
+
+    #[test]
+    fn citation_edges_stay_out_of_knowledge_graph() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "As shown in [@smith2024].");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        let result = gi.neighbors("a.md", 1, false).unwrap();
+        assert!(
+            !result.nodes.iter().any(|n| n.id == "smith2024"),
+            "citation target must not enter petgraph, nodes: {:?}",
+            result.nodes
+        );
+    }
+
+    #[test]
+    fn citation_edges_not_counted_in_edges_resolved() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Link [[B]] and cite [@smith2024].");
+        write_md(dir.path(), "b.md", "Target.");
+        let store = Store::open_memory().unwrap();
+        let (result, _) = index_workspace(&store, dir.path(), true).unwrap();
+
+        assert_eq!(result.edges_resolved, 1, "only the wikilink counts as resolved");
+        assert_eq!(store.citing_pages("smith2024").unwrap().len(), 1);
     }
 
     // --- incremental_reindex ---

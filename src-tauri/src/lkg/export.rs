@@ -47,12 +47,13 @@ pub fn collect_bundle_edges(store: &Store) -> Result<Vec<BundleEdge>, GraphError
     let edges = store
         .all_edges_full()?
         .into_iter()
-        .map(|(source, target, context, raw_target, source_line)| BundleEdge {
+        .map(|(source, target, context, raw_target, source_line, edge_kind)| BundleEdge {
             source,
             target,
             context,
             raw_target,
             source_line,
+            edge_kind: edge_kind.as_str().to_string(),
         })
         .collect();
     Ok(edges)
@@ -232,7 +233,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::types::{IndexableAnnotation, ParsedNode, Position};
+    use crate::graph::types::{EdgeKind, IndexableAnnotation, ParsedNode, Position};
     use serde_json::json;
     use std::collections::HashMap;
 
@@ -290,7 +291,7 @@ mod tests {
         seed_node(&store, "a.md");
         seed_node(&store, "b.md");
         store
-            .replace_all_edges(&[("a.md", "b.md", "see [[b]]", "b", 5)])
+            .replace_all_edges(&[("a.md", "b.md", "see [[b]]", "b", 5, EdgeKind::Wikilink)])
             .unwrap();
 
         let edges = collect_bundle_edges(&store).unwrap();
@@ -302,8 +303,23 @@ mod tests {
                 context: "see [[b]]".into(),
                 raw_target: "b".into(),
                 source_line: 5,
+                edge_kind: "wikilink".into(),
             }]
         );
+    }
+
+    #[test]
+    fn collect_bundle_edges_preserves_citation_kind() {
+        let store = mem_store();
+        seed_node(&store, "a.md");
+        seed_node(&store, "b.md");
+        store
+            .insert_edge("a.md", "smith2024", "[@smith2024]", "smith2024", 3, EdgeKind::Citation)
+            .unwrap();
+
+        let edges = collect_bundle_edges(&store).unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].edge_kind, "citation");
     }
 
     // --- D3: collect_bundle_annotations ---
@@ -447,6 +463,7 @@ mod tests {
             context: "".into(),
             raw_target: "b".into(),
             source_line: 1,
+            edge_kind: "wikilink".into(),
         }];
         let mut positions = HashMap::new();
         positions.insert("a.md".to_string(), Position { x: 1.0, y: 2.0 });

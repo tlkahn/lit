@@ -39,6 +39,18 @@ pub struct BundleEdge {
     pub context: String,
     pub raw_target: String,
     pub source_line: u32,
+    /// Omitted from JSON when "wikilink" so legacy bundles' graph hashes
+    /// (computed before this field existed) still verify on import.
+    #[serde(default = "default_edge_kind", skip_serializing_if = "is_default_edge_kind")]
+    pub edge_kind: String,
+}
+
+fn default_edge_kind() -> String {
+    "wikilink".to_string()
+}
+
+fn is_default_edge_kind(kind: &str) -> bool {
+    kind == "wikilink"
 }
 
 /// An annotation row carried inside a `.lkg` bundle.
@@ -181,6 +193,7 @@ mod tests {
             context: "see [[b]]".into(),
             raw_target: "b".into(),
             source_line: 5u32,
+            edge_kind: "citation".into(),
         };
         let s = serde_json::to_string(&e).expect("serialize");
         let back: BundleEdge = serde_json::from_str(&s).expect("deserialize");
@@ -188,6 +201,36 @@ mod tests {
 
         let v = serde_json::to_value(&e).expect("to_value");
         assert_eq!(v["source_line"], 5);
+        assert_eq!(v["edge_kind"], "citation");
+    }
+
+    #[test]
+    fn bundle_edge_legacy_json_defaults_to_wikilink() {
+        // Edges from pre-edge_kind bundles must deserialize with the default.
+        let legacy = r#"{"source":"a.md","target":"b.md","context":"","raw_target":"b","source_line":5}"#;
+        let e: BundleEdge = serde_json::from_str(legacy).expect("deserialize legacy");
+        assert_eq!(e.edge_kind, "wikilink");
+    }
+
+    #[test]
+    fn bundle_edge_wikilink_kind_omitted_citation_kind_serialized() {
+        // Wikilink edges must serialize WITHOUT the edge_kind key so legacy
+        // bundles' graph hashes (computed before the field existed) still
+        // verify on import.
+        let wiki = BundleEdge {
+            source: "a.md".into(),
+            target: "b.md".into(),
+            context: "".into(),
+            raw_target: "b".into(),
+            source_line: 1u32,
+            edge_kind: "wikilink".into(),
+        };
+        let v = serde_json::to_value(&wiki).expect("to_value");
+        assert!(v.get("edge_kind").is_none());
+
+        let cite = BundleEdge { edge_kind: "citation".into(), ..wiki };
+        let v = serde_json::to_value(&cite).expect("to_value");
+        assert_eq!(v["edge_kind"], "citation");
     }
 
     #[test]

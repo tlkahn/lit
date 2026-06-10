@@ -3,6 +3,7 @@ pub mod layout;
 pub mod extract;
 pub mod indexer;
 pub mod knowledge;
+pub mod citations;
 pub mod links;
 pub mod progress;
 pub mod resolve;
