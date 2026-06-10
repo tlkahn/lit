@@ -7,7 +7,7 @@ use tracing::{debug, info};
 use super::error::GraphError;
 use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, EdgeKind, FullAnnotationRecord, IndexableAnnotation, LinkEntry, Materialization, ParsedNode, Stats, TagPageResult, TagSearchResult};
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 16;
+pub const CURRENT_SCHEMA_VERSION: i64 = 17;
 
 fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rusqlite::Error> {
     Ok(AnnotationSearchResult {
@@ -436,6 +436,31 @@ impl Store {
                  UPDATE nodes SET materialization = 'stub' WHERE is_stub = 1;
                  UPDATE sync SET mtime = 0;
                  UPDATE meta SET value = '16' WHERE key = 'schema_version';"
+            )?;
+        }
+
+        if version < 17 {
+            info!(from = version, to = 17, "migrating schema: adding is_stub/materialization consistency triggers");
+            self.conn.execute_batch(
+                "CREATE TRIGGER IF NOT EXISTS trg_nodes_is_stub_insert
+                 BEFORE INSERT ON nodes
+                 FOR EACH ROW
+                 WHEN NEW.materialization IS NOT NULL
+                   AND NEW.is_stub != (NEW.materialization = 'stub')
+                 BEGIN
+                     SELECT RAISE(ABORT, 'is_stub inconsistent with materialization');
+                 END;
+
+                 CREATE TRIGGER IF NOT EXISTS trg_nodes_is_stub_update
+                 BEFORE UPDATE ON nodes
+                 FOR EACH ROW
+                 WHEN NEW.materialization IS NOT NULL
+                   AND NEW.is_stub != (NEW.materialization = 'stub')
+                 BEGIN
+                     SELECT RAISE(ABORT, 'is_stub inconsistent with materialization');
+                 END;
+
+                 UPDATE meta SET value = '17' WHERE key = 'schema_version';"
             )?;
         }
 
@@ -3028,8 +3053,8 @@ mod tests {
     // --- Cycle 2: Schema v6 ---
 
     #[test]
-    fn schema_version_is_sixteen() {
-        assert_eq!(CURRENT_SCHEMA_VERSION, 16);
+    fn schema_version_is_seventeen() {
+        assert_eq!(CURRENT_SCHEMA_VERSION, 17);
     }
 
     #[test]
@@ -4855,5 +4880,64 @@ mod tests {
         let results = store.citing_pages("smith2024").unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].source_id, "a.md");
+    }
+
+    // --- is_stub / materialization consistency triggers ---
+
+    #[test]
+    fn check_constraint_rejects_inconsistent_is_stub_materialized() {
+        let store = Store::open_memory().unwrap();
+        // is_stub=1 but materialization='materialized' is inconsistent
+        let result = store.conn.execute(
+            "INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub, materialization)
+             VALUES ('bad1', '', '', '{}', 0, 1, 'materialized')",
+            [],
+        );
+        assert!(result.is_err(), "trigger should reject is_stub=1 with materialization='materialized'");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("is_stub inconsistent with materialization"),
+            "unexpected error message: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn check_constraint_rejects_inconsistent_is_stub_stub() {
+        let store = Store::open_memory().unwrap();
+        // is_stub=0 but materialization='stub' is inconsistent
+        let result = store.conn.execute(
+            "INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub, materialization)
+             VALUES ('bad2', '', '', '{}', 0, 0, 'stub')",
+            [],
+        );
+        assert!(result.is_err(), "trigger should reject is_stub=0 with materialization='stub'");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("is_stub inconsistent with materialization"),
+            "unexpected error message: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn check_constraint_rejects_update_inconsistency() {
+        let store = Store::open_memory().unwrap();
+        // Insert a consistent row first
+        store.conn.execute(
+            "INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub, materialization)
+             VALUES ('upd1', '', '', '{}', 0, 1, 'stub')",
+            [],
+        ).unwrap();
+
+        // Now update materialization without updating is_stub — should be rejected
+        let result = store.conn.execute(
+            "UPDATE nodes SET materialization = 'materialized' WHERE id = 'upd1'",
+            [],
+        );
+        assert!(result.is_err(), "trigger should reject update that makes is_stub inconsistent with materialization");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("is_stub inconsistent with materialization"),
+            "unexpected error message: {err_msg}"
+        );
     }
 }
