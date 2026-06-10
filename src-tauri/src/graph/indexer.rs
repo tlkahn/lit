@@ -1159,23 +1159,30 @@ impl GraphIndex {
     /// Returns true if anything changed.
     pub fn refresh_shadows(&self) -> Result<bool, GraphError> {
         let store = self.store.lock().unwrap();
-        let before_count: i64 = store.conn.query_row(
-            "SELECT COUNT(*) FROM nodes WHERE materialization IN ('shadow', 'partial')",
-            [],
-            |row| row.get(0),
-        ).map_err(GraphError::from)?;
+        let before_snapshot = Self::shadow_snapshot(&store)?;
         resolve_shadows_tx(&store, &self.workspace_root, &self.bib_cache)?;
-        let after_count: i64 = store.conn.query_row(
-            "SELECT COUNT(*) FROM nodes WHERE materialization IN ('shadow', 'partial')",
-            [],
-            |row| row.get(0),
-        ).map_err(GraphError::from)?;
-        let changed = before_count != after_count;
+        let after_snapshot = Self::shadow_snapshot(&store)?;
+        let changed = before_snapshot != after_snapshot;
         if changed {
             let mut knowledge = self.knowledge.lock().unwrap();
             *knowledge = KnowledgeGraph::from_store(&store)?;
         }
         Ok(changed)
+    }
+
+    /// Returns a sorted snapshot of (id, title, materialization) for all shadow/partial nodes.
+    fn shadow_snapshot(store: &Store) -> Result<Vec<(String, String, String)>, GraphError> {
+        let mut stmt = store.conn.prepare(
+            "SELECT id, title, materialization FROM nodes WHERE materialization IN ('shadow', 'partial') ORDER BY id"
+        ).map_err(GraphError::from)?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        }).map_err(GraphError::from)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(GraphError::from)
     }
 
     pub fn compute_layout_background(&self, settings: &super::layout::LayoutSettings) {
@@ -5496,6 +5503,128 @@ mod tests {
         // No author -> "Unknown (2024) Title"
         let entry = make_entry(vec![], "2024", "Some Title");
         assert_eq!(shadow_title(&entry), "Unknown (2024) Some Title");
+    }
+
+    #[test]
+    fn refresh_shadows_detects_title_change() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "As shown in [@smith2024].");
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
+        );
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        // Verify shadow exists with title containing "Alpha"
+        {
+            let titles = gi.store.lock().unwrap().node_titles().unwrap();
+            let title = titles.get("bib:smith2024").expect("shadow must exist");
+            assert!(
+                title.contains("Alpha"),
+                "initial title should contain 'Alpha', got: {title}"
+            );
+        }
+
+        // Overwrite bib with changed title (count stays at 1 shadow/partial node)
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Beta},\n  year = {2024}\n}",
+        );
+        let changed = gi.refresh_shadows().unwrap();
+        assert!(changed, "refresh_shadows must detect title change even when count is unchanged");
+
+        // Verify title updated in store
+        {
+            let titles = gi.store.lock().unwrap().node_titles().unwrap();
+            let title = titles.get("bib:smith2024").expect("shadow must still exist");
+            assert!(
+                title.contains("Beta"),
+                "title should now contain 'Beta', got: {title}"
+            );
+        }
+
+        // Verify in-memory KnowledgeGraph was rebuilt
+        {
+            let kg = gi.knowledge.lock().unwrap();
+            let subgraph = kg.full_subgraph_filtered(true);
+            let node = subgraph
+                .nodes
+                .iter()
+                .find(|n| n.id == "bib:smith2024")
+                .expect("shadow must be in KnowledgeGraph");
+            assert!(
+                node.title.contains("Beta"),
+                "KnowledgeGraph title should contain 'Beta', got: {}",
+                node.title
+            );
+        }
+    }
+
+    #[test]
+    fn refresh_shadows_detects_materialization_promotion() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "As shown in [@jones2023].");
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{jones2023,\n  author = {Jones},\n  title = {Gamma},\n  year = {2023}\n}",
+        );
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        // Verify initial materialization is Shadow (no abstract)
+        {
+            let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
+            let (_, _, mat) = meta
+                .iter()
+                .find(|(id, _, _)| id == "bib:jones2023")
+                .expect("shadow must exist");
+            assert_eq!(
+                *mat,
+                super::super::types::Materialization::Shadow,
+                "without abstract, materialization should be Shadow"
+            );
+        }
+
+        // Add abstract (promotes shadow -> partial, count stays at 1)
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{jones2023,\n  author = {Jones},\n  title = {Gamma},\n  year = {2023},\n  abstract = {Some interesting text}\n}",
+        );
+        let changed = gi.refresh_shadows().unwrap();
+        assert!(changed, "refresh_shadows must detect materialization promotion even when count is unchanged");
+
+        // Verify materialization is now Partial
+        {
+            let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
+            let (_, _, mat) = meta
+                .iter()
+                .find(|(id, _, _)| id == "bib:jones2023")
+                .expect("shadow must still exist");
+            assert_eq!(
+                *mat,
+                super::super::types::Materialization::Partial,
+                "with abstract, materialization should be Partial"
+            );
+        }
+
+        // Verify in-memory KnowledgeGraph was rebuilt
+        {
+            let kg = gi.knowledge.lock().unwrap();
+            let subgraph = kg.full_subgraph_filtered(true);
+            let node = subgraph
+                .nodes
+                .iter()
+                .find(|n| n.id == "bib:jones2023")
+                .expect("shadow must be in KnowledgeGraph");
+            assert_eq!(
+                node.materialization,
+                super::super::types::Materialization::Partial,
+                "KnowledgeGraph should reflect Partial materialization"
+            );
+        }
     }
 
     #[test]
