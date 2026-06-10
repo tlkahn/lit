@@ -955,6 +955,101 @@ describe("ReferenceLibrary", () => {
     expect(call).toBeTruthy();
   });
 
+  it("shows 'Create note' button in expanded card when state exists but page_id is null", async () => {
+    const user = userEvent.setup();
+    bibKeyStatesFixture = { sanderson2009: { materialization: "shadow", page_id: null } };
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+
+    const btn = screen.getByTestId("create-note-btn");
+    expect(btn).toBeInTheDocument();
+    expect(btn.textContent).toBe("Create note");
+  });
+
+  it("shows 'Create note' button with 'Enriched' badge for partial entries", async () => {
+    const user = userEvent.setup();
+    bibKeyStatesFixture = { sanderson2009: { materialization: "partial", page_id: null } };
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+
+    expect(screen.getByTestId("create-note-btn")).toBeInTheDocument();
+    const badges = screen.getAllByTestId("badge-enriched");
+    expect(badges.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("shows 'Open note' link in expanded card when state.page_id is set", async () => {
+    const user = userEvent.setup();
+    bibKeyStatesFixture = { sanderson2009: { materialization: "materialized", page_id: "notes/sanderson.md" } };
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+
+    const link = screen.getByTestId("has-note-link");
+    expect(link.textContent).toContain("Open note:");
+    expect(link.textContent).toContain("notes/sanderson.md");
+  });
+
+  it("clicking 'Create note' calls materializeCitation and navigates to the new page", async () => {
+    const user = userEvent.setup();
+    const selectPage = vi.fn();
+    useWorkspaceStore.setState({ selectPage });
+    bibKeyStatesFixture = { sanderson2009: { materialization: "shadow", page_id: null } };
+
+    mockInvoke((cmd, args) => {
+      invokedCommands.push({ cmd, args });
+      if (cmd === "list_bib_entries") return fixture;
+      if (cmd === "get_citing_pages") return citingFixture;
+      if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+      if (cmd === "materialize_citation") return "notes/sanderson2009.md";
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+    await user.click(screen.getByTestId("create-note-btn"));
+
+    await waitFor(() => {
+      const call = invokedCommands.find((c) => c.cmd === "materialize_citation");
+      expect(call).toBeTruthy();
+      expect(call!.args).toEqual({ bibKey: "sanderson2009" });
+    });
+    await waitFor(() => {
+      expect(selectPage).toHaveBeenCalledWith("notes/sanderson2009.md");
+    });
+  });
+
+  it("clicking 'Create note' shows error status on failure", async () => {
+    const user = userEvent.setup();
+    bibKeyStatesFixture = { sanderson2009: { materialization: "shadow", page_id: null } };
+
+    mockInvoke((cmd, args) => {
+      invokedCommands.push({ cmd, args });
+      if (cmd === "list_bib_entries") return fixture;
+      if (cmd === "get_citing_pages") return citingFixture;
+      if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+      if (cmd === "materialize_citation") throw new Error("disk full");
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+    await user.click(screen.getByTestId("create-note-btn"));
+
+    await waitFor(() =>
+      expect(useStatusMessageStore.getState().message).toMatch(/Failed to create note/i),
+    );
+    expect(useStatusMessageStore.getState().variant).toBe("error");
+  });
+
   it("discards stale bib key states after rapid graph updates", async () => {
     // Start with no badges
     bibKeyStatesFixture = {};

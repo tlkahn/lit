@@ -476,6 +476,10 @@ export async function listBibFiles(workspacePath: string): Promise<string[]> {
   return invoke<string[]>("list_bib_files", { workspacePath });
 }
 
+export async function materializeCitation(bibKey: string): Promise<string> {
+  return invoke<string>("materialize_citation", { bibKey });
+}
+
 // Graph
 
 export const NODE_NOT_FOUND_PREFIX = "node not found:";

@@ -336,6 +336,7 @@ pub fn run() {
             commands::crossref::resolve_bib_entries,
             commands::crossref::render_bib_citations,
             commands::bib::list_bib_entries,
+            commands::bib::materialize_citation,
             commands::bib_import::lookup_doi,
             commands::bib_import::save_bib_entry,
             commands::bib_import::parse_csl_json,

@@ -43,6 +43,7 @@ import {
   parseCslJson,
   saveBibEntries,
   listBibFiles,
+  materializeCitation,
   type SaveOutcome,
   pdfOpen,
   pdfRenderPage,
@@ -677,6 +678,8 @@ describe("ipc", () => {
           ];
         case "list_bib_files":
           return ["/workspace/refs.bib", "/workspace/papers/extra.bib"];
+        case "materialize_citation":
+          return `citations/${(args as Record<string, unknown>)?.bibKey}.md`;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -1005,6 +1008,13 @@ describe("ipc", () => {
     expect(files).toEqual(["/workspace/refs.bib", "/workspace/papers/extra.bib"]);
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("list_bib_files", { workspacePath: "/workspace" });
+  });
+
+  it("materializeCitation invokes materialize_citation with bibKey", async () => {
+    const path = await materializeCitation("smith2020");
+    expect(path).toBe("citations/smith2020.md");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("materialize_citation", { bibKey: "smith2020" });
   });
 
   it("openInExternalEditor calls with correct args", async () => {

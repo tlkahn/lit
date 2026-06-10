@@ -7,8 +7,8 @@ import {
 } from "./settingsRegistry";
 
 describe("SETTINGS_REGISTRY", () => {
-  it("has 32 entries", () => {
-    expect(SETTINGS_REGISTRY).toHaveLength(32);
+  it("has 33 entries", () => {
+    expect(SETTINGS_REGISTRY).toHaveLength(33);
   });
 
   it("every entry has required fields defined", () => {
@@ -94,7 +94,7 @@ describe("groupByCategory", () => {
     const grouped = groupByCategory(SETTINGS_REGISTRY);
     expect(grouped.size).toBe(8);
     expect(grouped.get("Appearance")).toHaveLength(6);
-    expect(grouped.get("Editor")).toHaveLength(4);
+    expect(grouped.get("Editor")).toHaveLength(5);
     expect(grouped.get("Cross-references")).toHaveLength(3);
     expect(grouped.get("Annotations")).toHaveLength(5);
     expect(grouped.get("LLM")).toHaveLength(7);
@@ -122,7 +122,7 @@ describe("filterSettings", () => {
 
   it("returns all entries with empty indices for empty query", () => {
     const results = filterSettings(SETTINGS_REGISTRY, "");
-    expect(results).toHaveLength(32);
+    expect(results).toHaveLength(33);
     for (const r of results) {
       expect(r.indices).toEqual([]);
     }

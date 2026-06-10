@@ -1,9 +1,21 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
+
+use indexmap::IndexMap;
+use tauri::State;
 
 use crate::bib::cache::BibCache;
 use crate::bib::types::BibEntry;
+use crate::commands::graph::GraphRegistry;
+use crate::commands::oplog::OpLogRegistry;
+use crate::commands::page::{lookup_graph_index, reindex_and_emit};
+use crate::commands::workspace::{get_workspace_root, WorkspaceRegistry};
+use crate::graph::indexer::shadow_title;
+use crate::oplog::store::Action;
+use crate::workspace::ops;
+use crate::workspace::write_hash::WriteHashRegistry;
 use crate::util::is_hidden;
 
 /// Walk `root`, parse every `.bib` file (skipping hidden directories), and
@@ -99,6 +111,152 @@ pub fn list_bib_entries(
     cache: tauri::State<BibCache>,
 ) -> Vec<BibEntry> {
     scan_workspace_bibs(Path::new(&workspace_path), &cache)
+}
+
+/// Build frontmatter for a citation note from a BibEntry.
+fn build_citation_frontmatter(entry: &BibEntry) -> IndexMap<String, serde_yaml::Value> {
+    use serde_yaml::Value;
+
+    let mut fm = IndexMap::new();
+    fm.insert(
+        "title".to_string(),
+        Value::String(shadow_title(entry)),
+    );
+    fm.insert(
+        "citekey".to_string(),
+        Value::String(entry.key.clone()),
+    );
+    if !entry.authors.is_empty() {
+        fm.insert(
+            "authors".to_string(),
+            Value::Sequence(
+                entry
+                    .authors
+                    .iter()
+                    .map(|a| Value::String(a.clone()))
+                    .collect(),
+            ),
+        );
+    }
+    if !entry.year.is_empty() {
+        fm.insert("year".to_string(), Value::String(entry.year.clone()));
+    }
+    if let Some(doi) = &entry.doi {
+        fm.insert("doi".to_string(), Value::String(doi.clone()));
+    }
+    if let Some(journal) = &entry.journal {
+        fm.insert("journal".to_string(), Value::String(journal.clone()));
+    }
+    if let Some(url) = &entry.url {
+        fm.insert("url".to_string(), Value::String(url.clone()));
+    }
+    if !entry.tags.is_empty() {
+        fm.insert(
+            "tags".to_string(),
+            Value::Sequence(
+                entry
+                    .tags
+                    .iter()
+                    .map(|t| Value::String(t.clone()))
+                    .collect(),
+            ),
+        );
+    }
+    fm
+}
+
+/// Build the markdown body for a citation note from a BibEntry.
+fn build_citation_body(entry: &BibEntry) -> String {
+    let mut body = String::new();
+    if let Some(abstract_text) = &entry.abstract_text {
+        body.push_str("## Abstract\n\n");
+        body.push_str(abstract_text);
+        body.push_str("\n\n");
+    }
+    body.push_str("## Notes\n");
+    body
+}
+
+#[tauri::command]
+pub fn materialize_citation(
+    bib_key: String,
+    window: tauri::Window,
+    state: State<WorkspaceRegistry>,
+    cache: State<BibCache>,
+    registry: State<Arc<WriteHashRegistry>>,
+    oplog_state: State<Arc<OpLogRegistry>>,
+    graph_state: State<Arc<GraphRegistry>>,
+    app_handle: tauri::AppHandle,
+) -> Result<String, String> {
+    // 1. Resolve workspace root
+    let root = get_workspace_root(&state, window.label())?;
+
+    // 2. Look up BibEntry
+    let bib_index = build_bib_index(&root, &cache);
+    let entry = bib_index
+        .get(&bib_key)
+        .ok_or_else(|| format!("Bib key '{bib_key}' not found"))?
+        .clone();
+
+    // 3. Check no citekey page already exists
+    let gi = lookup_graph_index(&graph_state, &root)
+        .ok_or_else(|| "Graph index not ready".to_string())?;
+    {
+        let store = gi.store();
+        let citekey_pages = store.citekey_pages().map_err(|e| e.to_string())?;
+        for (ck, page_id) in &citekey_pages {
+            if ck == &bib_key {
+                return Err(format!(
+                    "A page with citekey '{bib_key}' already exists: {page_id}"
+                ));
+            }
+        }
+    }
+
+    // 4. Read citation.notesDir from preferences
+    let prefs = crate::preferences::read_preferences(&app_handle);
+    let notes_dir = crate::preferences::citation_notes_dir(&prefs);
+
+    // 5. Build relative path
+    let relative_path = format!("{notes_dir}/{bib_key}.md");
+
+    // 6. Check the file doesn't already exist on disk
+    if root.join(&relative_path).exists() {
+        return Err(format!("File already exists: {relative_path}"));
+    }
+
+    // 7. Build frontmatter and body
+    let frontmatter = build_citation_frontmatter(&entry);
+    let body = build_citation_body(&entry);
+
+    // 8. Write the file
+    ops::write_page(&root, &relative_path, &body, &frontmatter, &registry)
+        .map_err(|e| e.to_string())?;
+
+    // 9. Record oplog action
+    if let Ok(oplog) = oplog_state.get_oplog(&root) {
+        let store = oplog.lock().unwrap();
+        let _ = store.record_operation(
+            "create_page",
+            &format!("Create citation note '{bib_key}'"),
+            &[Action {
+                seq: 0,
+                action_type: "create_file".into(),
+                path: relative_path.clone(),
+                old_path: None,
+                before_content: None,
+                after_content: Some(String::new()),
+            }],
+        );
+    }
+
+    // 10. Reindex
+    reindex_and_emit(&graph_state, &app_handle, &root, |gi, ann| {
+        gi.add_file(&relative_path, ann)
+    });
+
+    // 11. Return the relative path
+    Ok(relative_path)
 }
 
 #[cfg(test)]
@@ -287,6 +445,185 @@ mod tests {
         let index2 = build_bib_index(dir.path(), &cache);
         assert_eq!(index2.len(), 1, "cached result should be returned even though .bib file is gone");
         assert!(index2.contains_key("smith2020"));
+    }
+
+    // --- build_citation_frontmatter ---
+
+    fn sample_citation_entry() -> BibEntry {
+        BibEntry {
+            key: "smith2020".to_string(),
+            authors: vec!["Smith, John".to_string(), "Doe, Jane".to_string()],
+            title: "Alpha".to_string(),
+            year: "2020".to_string(),
+            entry_type: "article".to_string(),
+            line_number: 1,
+            bib_file: None,
+            abstract_text: Some("This paper studies...".to_string()),
+            doi: Some("10.1/x".to_string()),
+            journal: Some("Nature".to_string()),
+            url: Some("https://example.com".to_string()),
+            tags: vec!["ml".to_string(), "nlp".to_string()],
+        }
+    }
+
+    #[test]
+    fn frontmatter_includes_title_from_shadow_title() {
+        let entry = sample_citation_entry();
+        let fm = super::build_citation_frontmatter(&entry);
+        let title = fm.get("title").unwrap();
+        assert_eq!(
+            title,
+            &serde_yaml::Value::String("Smith (2020) Alpha".to_string())
+        );
+    }
+
+    #[test]
+    fn frontmatter_includes_citekey() {
+        let entry = sample_citation_entry();
+        let fm = super::build_citation_frontmatter(&entry);
+        assert_eq!(
+            fm.get("citekey").unwrap(),
+            &serde_yaml::Value::String("smith2020".to_string())
+        );
+    }
+
+    #[test]
+    fn frontmatter_includes_authors_sequence() {
+        let entry = sample_citation_entry();
+        let fm = super::build_citation_frontmatter(&entry);
+        let authors = fm.get("authors").unwrap();
+        match authors {
+            serde_yaml::Value::Sequence(seq) => {
+                assert_eq!(seq.len(), 2);
+                assert_eq!(seq[0], serde_yaml::Value::String("Smith, John".to_string()));
+                assert_eq!(seq[1], serde_yaml::Value::String("Doe, Jane".to_string()));
+            }
+            _ => panic!("expected Sequence"),
+        }
+    }
+
+    #[test]
+    fn frontmatter_includes_optional_fields() {
+        let entry = sample_citation_entry();
+        let fm = super::build_citation_frontmatter(&entry);
+        assert_eq!(
+            fm.get("doi").unwrap(),
+            &serde_yaml::Value::String("10.1/x".to_string())
+        );
+        assert_eq!(
+            fm.get("journal").unwrap(),
+            &serde_yaml::Value::String("Nature".to_string())
+        );
+        assert_eq!(
+            fm.get("url").unwrap(),
+            &serde_yaml::Value::String("https://example.com".to_string())
+        );
+        assert_eq!(
+            fm.get("year").unwrap(),
+            &serde_yaml::Value::String("2020".to_string())
+        );
+    }
+
+    #[test]
+    fn frontmatter_omits_absent_optional_fields() {
+        let entry = BibEntry {
+            key: "doe2021".to_string(),
+            authors: vec!["Doe, Jane".to_string()],
+            title: "Beta".to_string(),
+            year: "2021".to_string(),
+            entry_type: "book".to_string(),
+            line_number: 1,
+            bib_file: None,
+            abstract_text: None,
+            doi: None,
+            journal: None,
+            url: None,
+            tags: vec![],
+        };
+        let fm = super::build_citation_frontmatter(&entry);
+        assert!(fm.get("doi").is_none());
+        assert!(fm.get("journal").is_none());
+        assert!(fm.get("url").is_none());
+        assert!(fm.get("tags").is_none());
+        // citekey, title, authors, year should still be present
+        assert!(fm.get("citekey").is_some());
+        assert!(fm.get("title").is_some());
+        assert!(fm.get("authors").is_some());
+        assert!(fm.get("year").is_some());
+    }
+
+    #[test]
+    fn frontmatter_omits_empty_authors() {
+        let entry = BibEntry {
+            key: "anon2021".to_string(),
+            authors: vec![],
+            title: "No Author".to_string(),
+            year: "2021".to_string(),
+            entry_type: "misc".to_string(),
+            line_number: 1,
+            bib_file: None,
+            abstract_text: None,
+            doi: None,
+            journal: None,
+            url: None,
+            tags: vec![],
+        };
+        let fm = super::build_citation_frontmatter(&entry);
+        assert!(fm.get("authors").is_none());
+    }
+
+    #[test]
+    fn frontmatter_includes_tags_sequence() {
+        let entry = sample_citation_entry();
+        let fm = super::build_citation_frontmatter(&entry);
+        let tags = fm.get("tags").unwrap();
+        match tags {
+            serde_yaml::Value::Sequence(seq) => {
+                assert_eq!(seq.len(), 2);
+                assert_eq!(seq[0], serde_yaml::Value::String("ml".to_string()));
+                assert_eq!(seq[1], serde_yaml::Value::String("nlp".to_string()));
+            }
+            _ => panic!("expected Sequence"),
+        }
+    }
+
+    // --- build_citation_body ---
+
+    #[test]
+    fn body_includes_abstract_when_present() {
+        let entry = sample_citation_entry();
+        let body = super::build_citation_body(&entry);
+        assert!(body.contains("## Abstract"));
+        assert!(body.contains("This paper studies..."));
+        assert!(body.contains("## Notes"));
+    }
+
+    #[test]
+    fn body_omits_abstract_when_absent() {
+        let entry = BibEntry {
+            key: "doe2021".to_string(),
+            authors: vec!["Doe, Jane".to_string()],
+            title: "Beta".to_string(),
+            year: "2021".to_string(),
+            entry_type: "book".to_string(),
+            line_number: 1,
+            bib_file: None,
+            abstract_text: None,
+            doi: None,
+            journal: None,
+            url: None,
+            tags: vec![],
+        };
+        let body = super::build_citation_body(&entry);
+        assert!(!body.contains("## Abstract"));
+        assert!(body.contains("## Notes"));
+    }
+
+    #[test]
+    fn body_always_has_notes_section() {
+        let entry = sample_citation_entry();
+        let body = super::build_citation_body(&entry);
+        assert!(body.ends_with("## Notes\n"));
     }
 
     #[test]

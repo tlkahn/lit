@@ -55,6 +55,7 @@ export interface PreferencesState {
   annotationPrefillLastUsed: boolean;
   annotationBuilderDefaults: AnnotationBuilderDefaults | null;
   companionSearchPath: string[];
+  citationNotesDir: string;
   loaded: boolean;
   loadPreferences: () => Promise<void>;
 }
@@ -184,6 +185,7 @@ function mapPreferences(prefs: Preferences) {
     annotationPrefillLastUsed: (prefs["annotations.prefillLastUsed"] as boolean) ?? false,
     annotationBuilderDefaults: isValidBuilderDefaults(prefs["annotations.builderDefaults"]) ? prefs["annotations.builderDefaults"] : null,
     companionSearchPath: applyCompanionSearchPath(prefs["companion.searchPath"]),
+    citationNotesDir: (prefs["citation.notesDir"] as string) ?? "references",
   };
 }
 
@@ -203,6 +205,17 @@ export function setCompanionSearchPath(paths: string[]) {
   setPreference("companion.searchPath", next).catch(() => {
     usePreferencesStore.setState((state) =>
       state.companionSearchPath === next ? { companionSearchPath: prev } : {},
+    );
+  });
+}
+
+export function setCitationNotesDir(dir: string) {
+  const prev = usePreferencesStore.getState().citationNotesDir;
+  const next = dir.trim() || "references";
+  usePreferencesStore.setState({ citationNotesDir: next });
+  setPreference("citation.notesDir", next).catch(() => {
+    usePreferencesStore.setState((state) =>
+      state.citationNotesDir === next ? { citationNotesDir: prev } : {},
     );
   });
 }
@@ -272,6 +285,7 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   annotationPrefillLastUsed: false,
   annotationBuilderDefaults: null,
   companionSearchPath: ["."],
+  citationNotesDir: "references",
   loaded: false,
 
   loadPreferences: async () => {

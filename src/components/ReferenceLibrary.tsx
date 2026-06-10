@@ -14,6 +14,7 @@ import {
   listBibEntries,
   getCitingPages,
   getBibKeyStates,
+  materializeCitation,
   type BibEntry,
   type BibKeyState,
   type BacklinkEntry,
@@ -278,6 +279,20 @@ export function ReferenceLibrary() {
     [show],
   );
 
+  const materializeNote = useCallback(
+    async (bibKey: string) => {
+      try {
+        const relativePath = await materializeCitation(bibKey);
+        loadBibKeyStates();
+        recordDeparture();
+        selectPage(relativePath);
+      } catch {
+        show("Failed to create note", "error");
+      }
+    },
+    [loadBibKeyStates, recordDeparture, selectPage, show],
+  );
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const expandedIndex = useMemo(
     () =>
@@ -461,17 +476,26 @@ export function ReferenceLibrary() {
                           }}
                           className="rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent hover:underline"
                         >
-                          Has note: {state.page_id}
+                          Open note: {state.page_id}
                         </button>
                       </div>
-                    ) : state?.materialization === "partial" ? (
-                      <div className="mt-2">
-                        <span
-                          data-testid="badge-enriched"
-                          className="rounded bg-bg-hover px-1.5 py-0.5 text-xs text-text-muted"
+                    ) : state ? (
+                      <div className="mt-2 flex items-center gap-2">
+                        <button
+                          data-testid="create-note-btn"
+                          onClick={() => materializeNote(entry.key)}
+                          className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover"
                         >
-                          Enriched
-                        </span>
+                          Create note
+                        </button>
+                        {state.materialization === "partial" ? (
+                          <span
+                            data-testid="badge-enriched"
+                            className="rounded bg-bg-hover px-1.5 py-0.5 text-xs text-text-muted"
+                          >
+                            Enriched
+                          </span>
+                        ) : null}
                       </div>
                     ) : null}
                     <div className="mt-2">

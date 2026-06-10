@@ -159,6 +159,15 @@ pub fn companion_search_paths(prefs: &Preferences) -> Vec<String> {
         .unwrap_or_else(|| vec![".".to_string()])
 }
 
+pub fn citation_notes_dir(prefs: &Preferences) -> String {
+    prefs
+        .extra
+        .get("citation.notesDir")
+        .and_then(|v| v.as_str())
+        .unwrap_or("references")
+        .to_string()
+}
+
 pub fn set_preference_at_path(
     path: &std::path::Path,
     key: &str,
@@ -915,5 +924,25 @@ mod tests {
 
         let content = fs::read_to_string(&path).unwrap();
         assert_eq!(content, json);
+    }
+
+    #[test]
+    fn citation_notes_dir_defaults_to_references() {
+        let prefs = Preferences::default();
+        assert_eq!(super::citation_notes_dir(&prefs), "references");
+    }
+
+    #[test]
+    fn citation_notes_dir_reads_custom_value() {
+        let json = r#"{"citation.notesDir": "notes/refs"}"#;
+        let prefs: Preferences = serde_json::from_str(json).unwrap();
+        assert_eq!(super::citation_notes_dir(&prefs), "notes/refs");
+    }
+
+    #[test]
+    fn citation_notes_dir_non_string_falls_back_to_default() {
+        let json = r#"{"citation.notesDir": 42}"#;
+        let prefs: Preferences = serde_json::from_str(json).unwrap();
+        assert_eq!(super::citation_notes_dir(&prefs), "references");
     }
 }
