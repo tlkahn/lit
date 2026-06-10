@@ -53,6 +53,15 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
   ".cm-callout.cm-list-item": {
     paddingLeft: "calc(8px + var(--li-indent, 0px))",
   },
+  ".cm-list-item-continuation": {
+    paddingLeft: "var(--li-indent, 0px)",
+  },
+  ".cm-blockquote.cm-list-item-continuation": {
+    paddingLeft: "calc(8px + var(--li-indent, 0px))",
+  },
+  ".cm-callout.cm-list-item-continuation": {
+    paddingLeft: "calc(8px + var(--li-indent, 0px))",
+  },
 
   // Blockquotes
   ".cm-blockquote": {

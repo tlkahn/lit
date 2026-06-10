@@ -51,6 +51,7 @@ type DecoInfo = {
   class?: string;
   widget?: boolean;
   url?: string;
+  style?: string;
 };
 
 function collectDecos(view: EditorView): DecoInfo[] {
@@ -67,6 +68,7 @@ function collectDecos(view: EditorView): DecoInfo[] {
     if (spec.widget) info.widget = true;
     if (spec.class) info.class = spec.class;
     if (spec.attributes?.["data-url"]) info.url = spec.attributes["data-url"];
+    if (spec.attributes?.style) info.style = spec.attributes.style;
     result.push(info);
     iter.next();
   }
@@ -1518,6 +1520,144 @@ describe("filterContainedDecorations", () => {
     expect(starHide1).toBeDefined();
     const starHide2 = decos.find((d) => d.type === "replace" && !d.widget && d.from === 17 && d.to === 19);
     expect(starHide2).toBeDefined();
+    view.destroy();
+  });
+});
+
+describe("buildDecorations — list items", () => {
+  it("applies cm-list-item to a single-line bullet list item", () => {
+    const doc = "- Item\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const li = decos.find((d) => d.class === "cm-list-item");
+    expect(li).toBeDefined();
+    expect(li!.from).toBe(0);
+    expect(li!.to).toBe(0); // line decoration: from === to
+    expect(li!.style).toContain("--li-indent");
+    view.destroy();
+  });
+
+  it("applies cm-list-item-continuation to continuation lines of a bullet list item", () => {
+    const doc = "- First line\n  continuation\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const firstLine = decos.find((d) => d.class === "cm-list-item");
+    expect(firstLine).toBeDefined();
+    expect(firstLine!.from).toBe(0);
+    expect(firstLine!.style).toContain("--li-indent");
+    const contLine = decos.find((d) => d.class === "cm-list-item-continuation");
+    expect(contLine).toBeDefined();
+    // continuation is on line 2 (starts at position 13)
+    expect(contLine!.from).toBe(13);
+    expect(contLine!.to).toBe(13); // line decoration
+    expect(contLine!.style).toContain("--li-indent");
+    view.destroy();
+  });
+
+  it("handles ordered list with continuation lines", () => {
+    const doc = "1. Item\n   continuation\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const firstLine = decos.find((d) => d.class === "cm-list-item");
+    expect(firstLine).toBeDefined();
+    expect(firstLine!.style).toContain("--li-indent");
+    const contLine = decos.find((d) => d.class === "cm-list-item-continuation");
+    expect(contLine).toBeDefined();
+    expect(contLine!.style).toContain("--li-indent");
+    view.destroy();
+  });
+
+  it("blockquote list item indent matches standalone list item", () => {
+    // Standalone: "- Item\n\nother" — marker is "- " → 2 prefix chars
+    const standaloneDoc = "- Item\n\nother";
+    const standaloneView = makeView(standaloneDoc, standaloneDoc.length - 1);
+    const standaloneDecos = collectDecos(standaloneView);
+    const standaloneLi = standaloneDecos.find((d) => d.class === "cm-list-item");
+    expect(standaloneLi).toBeDefined();
+    const standaloneIndent = standaloneLi!.style;
+
+    // Blockquote: "> - Item\n\nother" — marker is still "- " → should be same indent
+    const bqDoc = "> - Item\n\nother";
+    const bqView = makeView(bqDoc, bqDoc.length - 1); // cursor on "other", away from blockquote
+    const bqDecos = collectDecos(bqView);
+    const bqLi = bqDecos.find((d) => d.class === "cm-list-item");
+    expect(bqLi).toBeDefined();
+    const bqIndent = bqLi!.style;
+
+    // Both use "- " as the marker, so --li-indent must be identical
+    expect(bqIndent).toBe(standaloneIndent);
+
+    standaloneView.destroy();
+    bqView.destroy();
+  });
+
+  it("uses coordsAtPos when available for indent calculation", () => {
+    const doc = "- Item\n\nother";
+    const view = makeView(doc, doc.length - 1);
+
+    // Spy on coordsAtPos to return mock pixel coordinates.
+    // listMark.from = 0, markerEnd = 1 (ListMark "-" ends at 1), markerEnd + 1 = 2
+    // So coordsAtPos will be called with positions 0 and 2.
+    const origCoordsAtPos = view.coordsAtPos.bind(view);
+    vi.spyOn(view, "coordsAtPos").mockImplementation((pos: number) => {
+      if (pos === 0) return { top: 0, bottom: 20, left: 100, right: 100 };
+      if (pos === 2) return { top: 0, bottom: 20, left: 116, right: 116 };
+      return origCoordsAtPos(pos);
+    });
+
+    const decos = collectDecos(view);
+    const li = decos.find((d) => d.class === "cm-list-item");
+    expect(li).toBeDefined();
+    // Indent should be 116 - 100 = 16px (not defaultCharacterWidth-based)
+    expect(li!.style).toBe("--li-indent: 16px");
+
+    view.destroy();
+  });
+
+  it("falls back to defaultCharacterWidth when coordsAtPos returns null", () => {
+    const doc = "- Item\n\nother";
+    const view = makeView(doc, doc.length - 1);
+
+    // In jsdom, coordsAtPos already returns null, so no mocking needed.
+    // "- " is 2 chars (markerEnd + 1 - listMark.from = 1 + 1 - 0 = 2)
+    const expectedIndent = Math.round(2 * view.defaultCharacterWidth);
+    const decos = collectDecos(view);
+    const li = decos.find((d) => d.class === "cm-list-item");
+    expect(li).toBeDefined();
+    expect(li!.style).toBe(`--li-indent: ${expectedIndent}px`);
+
+    view.destroy();
+  });
+
+  it("suppresses list item decoration when cursor is on a blockquote list item", () => {
+    const doc = "> - Item\n\nother";
+    // Cursor on position 4 ("I" in "Item"), which is on line 1 (the blockquote list item line)
+    const view = makeView(doc, 4);
+    const decos = collectDecos(view);
+    const listDecos = decos.filter(
+      (d) => d.class === "cm-list-item" || d.class === "cm-list-item-continuation",
+    );
+    expect(listDecos).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("keeps list item decoration when cursor is on a standalone list item", () => {
+    const doc = "- Item\n\nother";
+    // Cursor on position 2 ("I" in "Item"), which is on the list item line
+    const view = makeView(doc, 2);
+    const decos = collectDecos(view);
+    const li = decos.find((d) => d.class === "cm-list-item");
+    expect(li).toBeDefined();
+    view.destroy();
+  });
+
+  it("keeps list item decoration when cursor is on a callout list item", () => {
+    const doc = "> [!note]\n> - Item\n\nother";
+    // Cursor on position 14 ("I" in "Item" on line 2), which is on the callout list item line
+    const view = makeView(doc, 14);
+    const decos = collectDecos(view);
+    const li = decos.find((d) => d.class === "cm-list-item");
+    expect(li).toBeDefined();
     view.destroy();
   });
 });
