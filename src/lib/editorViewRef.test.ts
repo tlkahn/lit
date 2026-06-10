@@ -95,9 +95,9 @@ describe("isFocusInsideContentPane", () => {
     expect(isFocusInsideContentPane()).toBe(true);
   });
 
-  it("returns true when activeElement is inside [data-testid='editor-pane'] but NOT inside any registered EditorView", () => {
+  it("returns true when activeElement is inside [data-pane-id] container without registered EditorView", () => {
     const paneWrapper = document.createElement("div");
-    paneWrapper.setAttribute("data-testid", "editor-pane");
+    paneWrapper.setAttribute("data-pane-id", "editor-pane");
     const inner = document.createElement("input");
     paneWrapper.appendChild(inner);
     document.body.appendChild(paneWrapper);
@@ -108,13 +108,24 @@ describe("isFocusInsideContentPane", () => {
     expect(isFocusInsideContentPane()).toBe(true);
   });
 
-  it("returns true when activeElement is inside [data-testid='pdf-viewer-pane'] (PDF pane, not a registered EditorView)", () => {
+  it("returns true when activeElement is inside [data-pane-id] container (PDF pane, not a registered EditorView)", () => {
     const paneWrapper = document.createElement("div");
-    paneWrapper.setAttribute("data-testid", "pdf-viewer-pane");
+    paneWrapper.setAttribute("data-pane-id", "pdf-viewer");
     paneWrapper.setAttribute("tabindex", "-1");
     document.body.appendChild(paneWrapper);
 
     // PDF panes never register an EditorView; focus the wrapper itself
+    paneWrapper.focus();
+    expect(document.activeElement).toBe(paneWrapper);
+    expect(isFocusInsideContentPane()).toBe(true);
+  });
+
+  it("returns true when focus is on [data-pane-id] wrapper itself (empty pane with no content)", () => {
+    const paneWrapper = document.createElement("div");
+    paneWrapper.setAttribute("data-pane-id", "empty-pane");
+    paneWrapper.setAttribute("tabindex", "0");
+    document.body.appendChild(paneWrapper);
+
     paneWrapper.focus();
     expect(document.activeElement).toBe(paneWrapper);
     expect(isFocusInsideContentPane()).toBe(true);
@@ -140,7 +151,7 @@ describe("isFocusInsideContentPane", () => {
 
   it("returns true when focus is on pane wrapper div itself", () => {
     const paneWrapper = document.createElement("div");
-    paneWrapper.setAttribute("data-testid", "editor-pane");
+    paneWrapper.setAttribute("data-pane-id", "some-pane");
     paneWrapper.setAttribute("tabindex", "0");
     document.body.appendChild(paneWrapper);
 
@@ -187,7 +198,7 @@ describe("isEditorFocused", () => {
 
   it("returns false when focus is inside content pane but no editor view is current", () => {
     const paneWrapper = document.createElement("div");
-    paneWrapper.setAttribute("data-testid", "editor-pane");
+    paneWrapper.setAttribute("data-pane-id", "orphan-pane");
     const inner = document.createElement("input");
     paneWrapper.appendChild(inner);
     document.body.appendChild(paneWrapper);

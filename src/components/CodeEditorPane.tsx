@@ -6,6 +6,7 @@ import { useCodeFileContent } from "../hooks/useCodeFileContent";
 import { useKeymaps } from "../hooks/useKeymaps";
 import { useCodeMirrorCode } from "../editor/useCodeMirrorCode";
 import { loadLanguage } from "../editor/codeLanguages";
+import { useEmptyPaneFocus } from "../hooks/useEmptyPaneFocus";
 import {
   registerPaneView,
   unregisterPaneView,
@@ -76,12 +77,7 @@ function CodeEditorPaneInner({ paneId }: { paneId: string }) {
     setFocusedPane(paneId);
   }, [paneId]);
 
-  const emptyContainerRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (isFocused && !pagePath) {
-      emptyContainerRef.current?.focus();
-    }
-  }, [isFocused, pagePath]);
+  const emptyContainerRef = useEmptyPaneFocus(isFocused, pagePath);
 
   if (!pagePath) {
     return (

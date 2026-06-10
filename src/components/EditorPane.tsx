@@ -8,6 +8,7 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { useCursorInfoStore } from "../stores/cursorInfo";
 import { usePageContent } from "../hooks/usePageContent";
 import { useKeymaps } from "../hooks/useKeymaps";
+import { useEmptyPaneFocus } from "../hooks/useEmptyPaneFocus";
 import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
 import { resolveRelativePath, getFileDir, frontmatterLineCount } from "../lib/pathUtils";
 import { navigateWikilink } from "../lib/wikilinkNavigation";
@@ -228,12 +229,7 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
     });
   }, [paneId]);
 
-  const emptyContainerRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (isFocused && !pagePath) {
-      emptyContainerRef.current?.focus();
-    }
-  }, [isFocused, pagePath]);
+  const emptyContainerRef = useEmptyPaneFocus(isFocused, pagePath);
 
   if (!pagePath) {
     return (

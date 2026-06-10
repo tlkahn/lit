@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, fireEvent, cleanup } from "@testing-library/react";
+import { render, fireEvent, cleanup, act } from "@testing-library/react";
 import { useEffect } from "react";
 import type { EditorView } from "@codemirror/view";
 import { Text } from "@codemirror/state";
@@ -9,6 +9,8 @@ import { usePanePdfLinkStore } from "../stores/panePdfLink";
 import * as pdfPaneRef from "../lib/pdfPaneRef";
 import {
   registerPaneView,
+  setFocusedPane,
+  getCurrentEditorView,
   _resetForTesting as resetEditorViewRef,
 } from "../lib/editorViewRef";
 import { _resetMarkerCacheForTesting as resetMarkerCache } from "../lib/pageMarkers";
@@ -287,6 +289,48 @@ describe("PdfViewerPane", () => {
         // regardless of readiness.
         expect(pdfPaneRef.getPdfGoToPage("p1")).toBeTypeOf("function");
       });
+    });
+  });
+
+  describe("focusedPaneId bookkeeping", () => {
+    it("handleFocus calls setFocusedPane so getCurrentEditorView does not return a stale view", () => {
+      // Simulate a prior editor pane having focus at the module level
+      const staleView = makeFakeEditorView("stale doc");
+      registerPaneView("editor1", staleView);
+      setFocusedPane("editor1");
+      expect(getCurrentEditorView()).toBe(staleView);
+
+      // Render the PDF pane and simulate a click (mousedown fires handleFocus)
+      const { getByTestId } = render(<PdfViewerPane paneId="p1" />);
+      fireEvent.mouseDown(getByTestId("pdf-viewer-pane"));
+
+      // After clicking the PDF pane, focusedPaneId should be "p1" (a PDF pane with
+      // no registered EditorView), so getCurrentEditorView should return null --
+      // NOT the stale editor's view.
+      expect(getCurrentEditorView()).toBeNull();
+    });
+
+    it("syncs module-level focusedPaneId when isFocused becomes true via store", () => {
+      // Start with another pane focused
+      const staleView = makeFakeEditorView("stale doc");
+      registerPaneView("editor1", staleView);
+      setFocusedPane("editor1");
+
+      // PDF pane not focused initially
+      usePaneStore.setState({
+        root: { type: "leaf", id: "p1", pagePath: "doc.pdf" },
+        focusedPaneId: "editor1",
+      });
+      render(<PdfViewerPane paneId="p1" />);
+      expect(getCurrentEditorView()).toBe(staleView);
+
+      // Programmatically focus the PDF pane via store (e.g., closing the other pane)
+      act(() => {
+        usePaneStore.setState({ focusedPaneId: "p1" });
+      });
+
+      // The effect should call setFocusedPane("p1"), clearing the stale pointer
+      expect(getCurrentEditorView()).toBeNull();
     });
   });
 });
