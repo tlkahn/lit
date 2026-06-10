@@ -1088,20 +1088,43 @@ impl GraphIndex {
         let fingerprint = store.graph_fingerprint()?;
         let cached_fp = store.get_meta("pagerank_fingerprint")?;
 
-        if cached_fp.as_deref() == Some(fingerprint.as_str()) {
-            if let Some(json) = store.get_meta("pagerank_scores")? {
-                if let Ok(scores) = serde_json::from_str::<HashMap<String, f64>>(&json) {
-                    return Ok(scores);
-                }
+        let scores = if cached_fp.as_deref() == Some(fingerprint.as_str()) {
+            store.get_meta("pagerank_scores")?
+                .and_then(|json| serde_json::from_str::<HashMap<String, f64>>(&json).ok())
+        } else {
+            None
+        };
+
+        let scores = match scores {
+            Some(s) => s,
+            None => {
+                let knowledge = self.knowledge.lock().unwrap();
+                let s = knowledge.pagerank(0.85);
+                let json = serde_json::to_string(&s).map_err(|e| GraphError::Other(e.to_string()))?;
+                store.set_meta("pagerank_scores", &json)?;
+                store.set_meta("pagerank_fingerprint", &fingerprint)?;
+                s
+            }
+        };
+
+        // Exclude non-materialized nodes (shadow, stub, partial) and re-normalize
+        let meta = store.all_nodes_metadata()?;
+        let materialized_ids: std::collections::HashSet<String> = meta
+            .into_iter()
+            .filter(|(_, _, m)| *m == super::types::Materialization::Materialized)
+            .map(|(id, _, _)| id)
+            .collect();
+        let mut filtered: HashMap<String, f64> = scores
+            .into_iter()
+            .filter(|(k, _)| materialized_ids.contains(k))
+            .collect();
+        let total: f64 = filtered.values().sum();
+        if total > 0.0 {
+            for v in filtered.values_mut() {
+                *v /= total;
             }
         }
-
-        let knowledge = self.knowledge.lock().unwrap();
-        let scores = knowledge.pagerank(0.85);
-        let json = serde_json::to_string(&scores).map_err(|e| GraphError::Other(e.to_string()))?;
-        store.set_meta("pagerank_scores", &json)?;
-        store.set_meta("pagerank_fingerprint", &fingerprint)?;
-        Ok(scores)
+        Ok(filtered)
     }
 
     pub fn search_tags(&self, query: &str, limit: i64) -> Result<Vec<super::types::TagSearchResult>, GraphError> {
@@ -3373,6 +3396,59 @@ mod tests {
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let top = gi.top_by_pagerank(100).unwrap();
         assert_eq!(top.len(), 2);
+    }
+
+    #[test]
+    fn pagerank_excludes_shadow_nodes() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "As shown in [@smith2024].");
+        write_md(dir.path(), "b.md", "[[a]]");
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
+        );
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let scores = gi.pagerank().unwrap();
+        for key in scores.keys() {
+            assert!(!key.starts_with("bib:"), "shadow node {key} should not appear in pagerank");
+        }
+        // Scores still sum to 1
+        let sum: f64 = scores.values().sum();
+        assert!((sum - 1.0).abs() < 1e-9, "sum was {sum}");
+    }
+
+    #[test]
+    fn top_by_pagerank_excludes_shadow_nodes() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "As shown in [@smith2024].");
+        write_md(dir.path(), "b.md", "[[a]]");
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
+        );
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let top = gi.top_by_pagerank(100).unwrap();
+        for (key, _) in &top {
+            assert!(!key.starts_with("bib:"), "shadow node {key} should not appear in top_by_pagerank");
+        }
+    }
+
+    #[test]
+    fn subgraph_bundle_pagerank_excludes_shadows() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "As shown in [@smith2024].");
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
+        );
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let bundle = gi.subgraph_bundle(&[], 0, false, false).unwrap();
+        for key in bundle.pagerank.keys() {
+            assert!(!key.starts_with("bib:"), "shadow node {key} in pagerank with include_citations=false");
+        }
     }
 
     // --- GraphIndex unlinked_mentions ---
