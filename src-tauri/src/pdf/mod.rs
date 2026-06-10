@@ -198,7 +198,10 @@ impl PdfRenderThread {
                             let extract_count = max_pages.min(total_pages);
                             let mut pages = Vec::with_capacity(extract_count);
                             for i in 0..extract_count {
-                                let text = doc.page_text(i).unwrap_or_default();
+                                let text = doc.page_text(i).unwrap_or_else(|e| {
+                                    eprintln!("[pdf] page {i} text extraction failed: {e}");
+                                    String::new()
+                                });
                                 pages.push(text);
                             }
                             let info = doc
@@ -775,6 +778,19 @@ mod tests {
             result.unwrap_err().contains("No document open"),
             "error should mention 'No document open'"
         );
+    }
+
+    #[test]
+    fn test_page_text_error_is_displayable_for_logging() {
+        // Verify that lmpdf text errors format correctly for our eprintln! log line.
+        // This documents the contract that page_text errors are logged, not swallowed.
+        let err = lmpdf::Error::Text(lmpdf::error::TextError::LoadFailed);
+        let page_index: usize = 3;
+        let msg = format!("[pdf] page {page_index} text extraction failed: {err}");
+        assert!(msg.contains("[pdf]"));
+        assert!(msg.contains("page 3"));
+        assert!(msg.contains("text extraction failed"));
+        assert!(msg.contains("text page load failed"));
     }
 
     #[test]
