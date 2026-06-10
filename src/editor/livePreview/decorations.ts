@@ -344,15 +344,8 @@ function addListItemDecos(
   const task = node.getChild("Task");
   const taskMarker = task?.getChild("TaskMarker");
   const markerEnd = taskMarker?.to ?? listMark.to;
-  const startCoords = view.coordsAtPos(listMark.from);
-  const endCoords = view.coordsAtPos(markerEnd + 1);
-  let indent: number;
-  if (startCoords && endCoords) {
-    indent = Math.round(endCoords.left - startCoords.left);
-  } else {
-    const prefixChars = markerEnd + 1 - listMark.from;
-    indent = Math.round(prefixChars * view.defaultCharacterWidth);
-  }
+  const prefixChars = markerEnd + 1 - listMark.from;
+  const indent = Math.round(prefixChars * view.defaultCharacterWidth);
 
   const firstLineNum = line.number;
   const lastLineNum = state.doc.lineAt(node.to).number;

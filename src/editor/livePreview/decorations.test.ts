@@ -1667,30 +1667,7 @@ describe("buildDecorations — list items", () => {
     bqView.destroy();
   });
 
-  it("uses coordsAtPos when available for indent calculation", () => {
-    const doc = "- Item\n\nother";
-    const view = makeView(doc, doc.length - 1);
-
-    // Spy on coordsAtPos to return mock pixel coordinates.
-    // listMark.from = 0, markerEnd = 1 (ListMark "-" ends at 1), markerEnd + 1 = 2
-    // So coordsAtPos will be called with positions 0 and 2.
-    const origCoordsAtPos = view.coordsAtPos.bind(view);
-    vi.spyOn(view, "coordsAtPos").mockImplementation((pos: number) => {
-      if (pos === 0) return { top: 0, bottom: 20, left: 100, right: 100 };
-      if (pos === 2) return { top: 0, bottom: 20, left: 116, right: 116 };
-      return origCoordsAtPos(pos);
-    });
-
-    const decos = collectDecos(view);
-    const li = decos.find((d) => d.class === "cm-list-item");
-    expect(li).toBeDefined();
-    // Indent should be 116 - 100 = 16px (not defaultCharacterWidth-based)
-    expect(li!.style).toBe("--li-indent: 16px");
-
-    view.destroy();
-  });
-
-  it("falls back to defaultCharacterWidth when coordsAtPos returns null", () => {
+  it("computes indent from defaultCharacterWidth", () => {
     const doc = "- Item\n\nother";
     const view = makeView(doc, doc.length - 1);
 
@@ -1702,6 +1679,16 @@ describe("buildDecorations — list items", () => {
     expect(li).toBeDefined();
     expect(li!.style).toBe(`--li-indent: ${expectedIndent}px`);
 
+    view.destroy();
+  });
+
+  it("does not call coordsAtPos during buildDecorations (would crash CM6 update cycle)", () => {
+    const doc = "- Item\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const spy = vi.spyOn(view, "coordsAtPos");
+    collectDecos(view);
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
     view.destroy();
   });
 
