@@ -3,11 +3,12 @@ import { usePaneStore, findLeaf } from "../stores/panes";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePanePdfLinkStore } from "../stores/panePdfLink";
 import { registerPdfGoToPage, unregisterPdfGoToPage, registerPdfCurrentPage, unregisterPdfCurrentPage, consumeForwardSync, markForwardSync, clearForwardSync } from "../lib/pdfPaneRef";
-import { getPaneView } from "../lib/editorViewRef";
+import { getPaneView, setFocusedPane } from "../lib/editorViewRef";
 import { getCachedPageMarkers } from "../lib/pageMarkers";
 import { dispatchReverseSync } from "../lib/reverseSync";
 import { FORWARD_SYNC_GUARD_MS } from "../lib/forwardSync";
 import { PdfViewer } from "./PdfViewer";
+import { useEmptyPaneFocus } from "../hooks/useEmptyPaneFocus";
 
 interface PdfViewerPaneProps {
   paneId: string;
@@ -20,6 +21,7 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
 
   const handleFocus = useCallback(() => {
     usePaneStore.getState().focusPane(paneId);
+    setFocusedPane(paneId);
   }, [paneId]);
 
   const handleRegisterGoToPage = useCallback(
@@ -81,12 +83,23 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
     };
   }, [paneId]);
 
+  // Keep the module-level focusedPaneId in sync when this pane becomes focused
+  // programmatically (e.g., closing a sibling pane causes fallback focus via the
+  // store). Mirrors the same effect in CodeEditorPane and EditorPane.
+  useEffect(() => {
+    if (isFocused) setFocusedPane(paneId);
+  }, [isFocused, paneId]);
+
+  const emptyContainerRef = useEmptyPaneFocus(isFocused, pagePath);
+
   const borderClass = isFocused ? "border-interactive-accent" : "border-transparent";
 
   if (!pagePath || !workspacePath) {
     return (
       <div
+        ref={emptyContainerRef}
         data-testid="pdf-viewer-pane"
+        data-pane-id={paneId}
         className={`flex min-h-0 flex-1 items-center justify-center border-t-2 ${borderClass}`}
         onMouseDownCapture={handleFocus}
         onFocus={handleFocus}
@@ -102,6 +115,7 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
   return (
     <div
       data-testid="pdf-viewer-pane"
+      data-pane-id={paneId}
       className={`flex min-h-0 flex-1 flex-col border-t-2 ${borderClass}`}
       onMouseDownCapture={handleFocus}
       onFocus={handleFocus}

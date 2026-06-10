@@ -8,6 +8,7 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { useCursorInfoStore } from "../stores/cursorInfo";
 import { usePageContent } from "../hooks/usePageContent";
 import { useKeymaps } from "../hooks/useKeymaps";
+import { useEmptyPaneFocus } from "../hooks/useEmptyPaneFocus";
 import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
 import { resolveRelativePath, getFileDir, frontmatterLineCount } from "../lib/pathUtils";
 import { navigateWikilink } from "../lib/wikilinkNavigation";
@@ -228,10 +229,14 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
     });
   }, [paneId]);
 
+  const emptyContainerRef = useEmptyPaneFocus(isFocused, pagePath);
+
   if (!pagePath) {
     return (
       <div
+        ref={emptyContainerRef}
         data-testid="editor-pane"
+        data-pane-id={paneId}
         className={`flex min-h-0 flex-1 items-center justify-center border-t-2 ${isFocused ? "border-interactive-accent" : "border-transparent"}`}
         onMouseDownCapture={handleFocus}
         onFocus={handleFocus}
@@ -245,6 +250,7 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
   return (
     <div
       data-testid="editor-pane"
+      data-pane-id={paneId}
       className={`flex min-h-0 flex-1 flex-col border-t-2 ${isFocused ? "border-interactive-accent" : "border-transparent"}`}
       onMouseDownCapture={handleFocus}
       onFocus={handleFocus}
