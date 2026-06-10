@@ -424,6 +424,7 @@ impl Store {
             self.conn.execute_batch(
                 "ALTER TABLE edges ADD COLUMN edge_kind TEXT NOT NULL DEFAULT 'wikilink';
                  CREATE INDEX IF NOT EXISTS idx_edges_kind ON edges(edge_kind);
+                 UPDATE sync SET mtime = 0;
                  UPDATE meta SET value = '15' WHERE key = 'schema_version';"
             )?;
         }
@@ -3114,6 +3115,45 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_edges_kind'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(idx, 1);
+    }
+
+    #[test]
+    fn v14_to_v15_migration_resets_sync_mtimes() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE nodes (
+                    id TEXT PRIMARY KEY, title TEXT, first_paragraph TEXT,
+                    frontmatter JSON, mtime INTEGER, is_stub INTEGER DEFAULT 0, tags_text TEXT DEFAULT ''
+                );
+                CREATE TABLE tags (node_id TEXT, tag TEXT);
+                CREATE TABLE aliases (node_id TEXT, alias TEXT);
+                CREATE TABLE edges (source TEXT, target TEXT, context TEXT, raw_target TEXT DEFAULT '', source_line INTEGER DEFAULT 0);
+                CREATE TABLE sync (path TEXT PRIMARY KEY, mtime INTEGER);
+                CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+                INSERT INTO meta(key, value) VALUES ('schema_version', '14');
+                INSERT INTO sync(path, mtime) VALUES ('notes/a.md', 1700000000);
+                INSERT INTO sync(path, mtime) VALUES ('notes/b.md', 1700000001);
+                INSERT INTO sync(path, mtime) VALUES ('notes/c.md', 1700000002);",
+            ).unwrap();
+        }
+
+        let store = Store::open(&db_path).unwrap();
+
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+
+        let max_mtime: i64 = store.conn
+            .query_row("SELECT MAX(mtime) FROM sync", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(max_mtime, 0, "all sync mtimes should be reset to 0 after v15 migration");
+
+        let count: i64 = store.conn
+            .query_row("SELECT COUNT(*) FROM sync", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 3, "sync rows should be preserved, only mtimes reset");
     }
 
     #[test]
