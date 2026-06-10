@@ -234,35 +234,35 @@ impl PdfRenderThread {
         })
     }
 
-    pub fn open(&self, path: &str) -> Result<PdfInfo, String> {
+    /// Send a command that carries a reply channel, wait for the response.
+    /// Centralizes the channel send+recv error handling for all request-reply methods.
+    fn request<T>(
+        &self,
+        make: impl FnOnce(mpsc::Sender<Result<T, String>>) -> PdfCommand,
+    ) -> Result<T, String> {
         let (tx, rx) = mpsc::channel();
         self.cmd_tx
-            .send(PdfCommand::Open {
-                path: path.to_string(),
-                reply: tx,
-            })
+            .send(make(tx))
             .map_err(|_| "Render thread died".to_string())?;
-        rx.recv().map_err(|_| "Render thread died".to_string())?
+        rx.recv()
+            .map_err(|_| "Render thread died".to_string())?
+    }
+
+    pub fn open(&self, path: &str) -> Result<PdfInfo, String> {
+        let path = path.to_string();
+        self.request(|tx| PdfCommand::Open { path, reply: tx })
     }
 
     pub fn render_page(&self, page_index: usize, dpi: u32) -> Result<RenderedPage, String> {
-        let (tx, rx) = mpsc::channel();
-        self.cmd_tx
-            .send(PdfCommand::RenderPage {
-                page_index,
-                dpi,
-                reply: tx,
-            })
-            .map_err(|_| "Render thread died".to_string())?;
-        rx.recv().map_err(|_| "Render thread died".to_string())?
+        self.request(|tx| PdfCommand::RenderPage {
+            page_index,
+            dpi,
+            reply: tx,
+        })
     }
 
     pub fn close(&self) -> Result<(), String> {
-        let (tx, rx) = mpsc::channel();
-        self.cmd_tx
-            .send(PdfCommand::Close { reply: tx })
-            .map_err(|_| "Render thread died".to_string())?;
-        rx.recv().map_err(|_| "Render thread died".to_string())?
+        self.request(|tx| PdfCommand::Close { reply: tx })
     }
 
     pub fn prefetch(&self, page_index: usize, dpi: u32) -> Result<(), String> {
@@ -272,14 +272,10 @@ impl PdfRenderThread {
     }
 
     pub fn extract_recognizer_data(&self, max_pages: usize) -> Result<PdfRecognizerData, String> {
-        let (tx, rx) = mpsc::channel();
-        self.cmd_tx
-            .send(PdfCommand::ExtractRecognizerData {
-                max_pages,
-                reply: tx,
-            })
-            .map_err(|_| "Render thread died".to_string())?;
-        rx.recv().map_err(|_| "Render thread died".to_string())?
+        self.request(|tx| PdfCommand::ExtractRecognizerData {
+            max_pages,
+            reply: tx,
+        })
     }
 
     pub fn temp_dir(&self) -> &std::path::Path {
