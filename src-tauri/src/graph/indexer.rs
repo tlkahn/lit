@@ -809,6 +809,8 @@ impl GraphIndex {
     }
 
     pub fn full_rebuild(&self, annotations_enabled: bool) -> Result<IndexResult, GraphError> {
+        // Full rebuild should re-scan everything, so invalidate the bib index cache.
+        self.bib_cache.mark_index_dirty();
         let store = self.store.lock().unwrap();
         let (result, new_reverse) = index_workspace(&store, &self.workspace_root, annotations_enabled)?;
         resolve_shadows_tx(&store, &self.workspace_root, &self.bib_cache)?;
@@ -1178,9 +1180,18 @@ impl GraphIndex {
         })?.clear_positions()
     }
 
+    /// Invalidate the cached bib index so the next `resolve_shadows` call
+    /// re-walks the filesystem for `.bib` files.
+    pub fn mark_bib_dirty(&self) {
+        self.bib_cache.mark_index_dirty();
+    }
+
     /// Re-scan bibs, upsert/prune shadows, rebuild in-memory graph.
     /// Returns true if anything changed.
     pub fn refresh_shadows(&self) -> Result<bool, GraphError> {
+        // refresh_shadows is called when .bib files changed, so invalidate the
+        // bib index cache to force a fresh walk.
+        self.bib_cache.mark_index_dirty();
         let store = self.store.lock().unwrap();
         let before_snapshot = Self::shadow_snapshot(&store)?;
         resolve_shadows_tx(&store, &self.workspace_root, &self.bib_cache)?;
@@ -5851,6 +5862,52 @@ mod tests {
             resolved_after.tier,
             super::super::resolve::ResolutionTier::Unresolved,
             "bib:smith2024 must remain unresolved in StemLookup after incremental reindex"
+        );
+    }
+
+    // --- bib index caching integration test ---
+
+    #[test]
+    fn batch_reindex_skips_bib_walk_on_md_only_change() {
+        // Setup: workspace with a.md citing [@smith2024] and refs.bib
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "As shown in [@smith2024].");
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
+        );
+
+        // Build the graph index (populates bib index cache)
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        // Verify shadow node exists
+        let store = gi.store();
+        let meta = store.all_nodes_metadata().unwrap();
+        assert!(
+            meta.iter().any(|(id, _, _)| id == "bib:smith2024"),
+            "shadow node bib:smith2024 must exist after build"
+        );
+        drop(store);
+
+        // Delete refs.bib from disk (simulate the test) but do NOT call mark_bib_dirty
+        fs::remove_file(dir.path().join("refs.bib")).unwrap();
+
+        // Change a.md and call batch_reindex with the changed diff
+        write_md(dir.path(), "a.md", "As shown in [@smith2024]. Updated.");
+        let diff = DiffResult {
+            new: vec![],
+            changed: vec!["a.md".to_string()],
+            deleted: vec![],
+        };
+        gi.batch_reindex(&diff, true).unwrap();
+
+        // Assert the shadow node bib:smith2024 still exists (cache was used, WalkDir was skipped)
+        let store = gi.store();
+        let meta = store.all_nodes_metadata().unwrap();
+        assert!(
+            meta.iter().any(|(id, _, _)| id == "bib:smith2024"),
+            "shadow node bib:smith2024 must still exist after md-only reindex (bib index cached)"
         );
     }
 }

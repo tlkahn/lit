@@ -169,6 +169,12 @@ impl FileWatcher {
                     if let Some(graph_reg) = app_handle.try_state::<std::sync::Arc<GraphRegistry>>() {
                         let indices = graph_reg.indices.lock().unwrap();
                         if let Some(gi) = indices.get(&root_clone) {
+                            // When .bib files changed in the same debounce window,
+                            // invalidate the bib index cache BEFORE batch_reindex
+                            // so resolve_shadows re-walks for fresh bib data.
+                            if bib_changed {
+                                gi.mark_bib_dirty();
+                            }
                             let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
                             let result = gi.batch_reindex(&diff, ann_enabled);
                             drop(indices);

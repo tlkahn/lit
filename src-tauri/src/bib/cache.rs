@@ -12,13 +12,27 @@ struct CacheEntry {
 
 pub struct BibCache {
     store: Mutex<HashMap<PathBuf, CacheEntry>>,
+    index_cache: Mutex<Option<HashMap<String, crate::bib::types::BibEntry>>>,
 }
 
 impl BibCache {
     pub fn new() -> Self {
         Self {
             store: Mutex::new(HashMap::new()),
+            index_cache: Mutex::new(None),
         }
+    }
+
+    pub fn mark_index_dirty(&self) {
+        *self.index_cache.lock().unwrap() = None;
+    }
+
+    pub fn get_cached_index(&self) -> Option<HashMap<String, crate::bib::types::BibEntry>> {
+        self.index_cache.lock().unwrap().clone()
+    }
+
+    pub fn set_cached_index(&self, index: HashMap<String, crate::bib::types::BibEntry>) {
+        *self.index_cache.lock().unwrap() = Some(index);
     }
 
     pub fn get_or_parse(
@@ -68,6 +82,7 @@ impl BibCache {
 
     pub fn invalidate(&self, path: &PathBuf) {
         self.store.lock().unwrap().remove(path);
+        self.mark_index_dirty();
     }
 }
 
@@ -173,5 +188,94 @@ mod tests {
 
         let result = cache.get_or_parse(&path, "", mtime);
         assert!(result.is_empty(), "should re-parse after invalidation");
+    }
+
+    // --- index_cache tests ---
+
+    #[test]
+    fn index_cache_starts_empty() {
+        let cache = BibCache::new();
+        assert!(cache.get_cached_index().is_none(), "fresh BibCache must have no cached index");
+    }
+
+    #[test]
+    fn index_cache_returns_cached_result() {
+        let cache = BibCache::new();
+        let mut index = HashMap::new();
+        index.insert("smith2024".to_string(), BibEntry {
+            key: "smith2024".to_string(),
+            entry_type: "article".to_string(),
+            title: "Alpha".to_string(),
+            authors: vec!["Smith, John".to_string()],
+            year: "2024".to_string(),
+            line_number: 0,
+            bib_file: None,
+            abstract_text: None,
+            doi: None,
+            journal: None,
+            url: None,
+            tags: vec![]
+        });
+        cache.set_cached_index(index.clone());
+        let cached = cache.get_cached_index();
+        assert!(cached.is_some(), "should return cached index");
+        let cached = cached.unwrap();
+        assert_eq!(cached.len(), 1);
+        assert!(cached.contains_key("smith2024"));
+    }
+
+    #[test]
+    fn mark_index_dirty_clears_cache() {
+        let cache = BibCache::new();
+        let mut index = HashMap::new();
+        index.insert("smith2024".to_string(), BibEntry {
+            key: "smith2024".to_string(),
+            entry_type: "article".to_string(),
+            title: "Alpha".to_string(),
+            authors: vec!["Smith, John".to_string()],
+            year: "2024".to_string(),
+            line_number: 0,
+            bib_file: None,
+            abstract_text: None,
+            doi: None,
+            journal: None,
+            url: None,
+            tags: vec![]
+        });
+        cache.set_cached_index(index);
+        cache.mark_index_dirty();
+        assert!(cache.get_cached_index().is_none(), "cache should be None after mark_index_dirty");
+    }
+
+    #[test]
+    fn invalidate_also_clears_index_cache() {
+        let cache = BibCache::new();
+        let path = PathBuf::from("/tmp/test.bib");
+        let mtime = SystemTime::UNIX_EPOCH;
+
+        // Populate per-file cache
+        cache.get_or_parse(&path, sample_bib(), mtime);
+
+        // Populate index cache
+        let mut index = HashMap::new();
+        index.insert("test2020".to_string(), BibEntry {
+            key: "test2020".to_string(),
+            entry_type: "article".to_string(),
+            title: "Test".to_string(),
+            authors: vec!["Smith, John".to_string()],
+            year: "2020".to_string(),
+            line_number: 0,
+            bib_file: None,
+            abstract_text: None,
+            doi: None,
+            journal: None,
+            url: None,
+            tags: vec![]
+        });
+        cache.set_cached_index(index);
+
+        // invalidate a file should also clear the index cache
+        cache.invalidate(&path);
+        assert!(cache.get_cached_index().is_none(), "invalidate must also clear index cache");
     }
 }
