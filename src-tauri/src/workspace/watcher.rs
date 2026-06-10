@@ -42,6 +42,27 @@ pub struct FileEvent {
     pub path: String,
 }
 
+fn try_refresh_shadows(app_handle: &AppHandle, root: &PathBuf) {
+    if let Some(graph_reg) = app_handle.try_state::<std::sync::Arc<GraphRegistry>>() {
+        let indices = graph_reg.indices.lock().unwrap();
+        if let Some(gi) = indices.get(root) {
+            let gi = Arc::clone(gi);
+            drop(indices);
+            match gi.refresh_shadows() {
+                Ok(true) => {
+                    let _ = app_handle.emit("lit:graph-updated", ());
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    eprintln!("[watcher] bib shadow refresh failed: {e}");
+                }
+            }
+        } else {
+            drop(indices);
+        }
+    }
+}
+
 impl FileWatcher {
     pub fn new(
         root: PathBuf,
@@ -141,24 +162,7 @@ impl FileWatcher {
                     if diff.is_empty() {
                         // md events cancelled out; still check bib
                         if bib_changed {
-                            if let Some(graph_reg) = app_handle.try_state::<std::sync::Arc<GraphRegistry>>() {
-                                let indices = graph_reg.indices.lock().unwrap();
-                                if let Some(gi) = indices.get(&root_clone) {
-                                    let gi = Arc::clone(gi);
-                                    drop(indices);
-                                    match gi.refresh_shadows() {
-                                        Ok(true) => {
-                                            let _ = app_handle.emit("lit:graph-updated", ());
-                                        }
-                                        Ok(false) => {}
-                                        Err(e) => {
-                                            eprintln!("[watcher] bib shadow refresh failed: {e}");
-                                        }
-                                    }
-                                } else {
-                                    drop(indices);
-                                }
-                            }
+                            try_refresh_shadows(&app_handle, &root_clone);
                         }
                         continue;
                     }
@@ -175,24 +179,7 @@ impl FileWatcher {
                     }
                 } else if bib_changed {
                     // Only .bib files changed — refresh shadow nodes without a full reindex
-                    if let Some(graph_reg) = app_handle.try_state::<std::sync::Arc<GraphRegistry>>() {
-                        let indices = graph_reg.indices.lock().unwrap();
-                        if let Some(gi) = indices.get(&root_clone) {
-                            let gi = Arc::clone(gi);
-                            drop(indices);
-                            match gi.refresh_shadows() {
-                                Ok(true) => {
-                                    let _ = app_handle.emit("lit:graph-updated", ());
-                                }
-                                Ok(false) => {}
-                                Err(e) => {
-                                    eprintln!("[watcher] bib shadow refresh failed: {e}");
-                                }
-                            }
-                        } else {
-                            drop(indices);
-                        }
-                    }
+                    try_refresh_shadows(&app_handle, &root_clone);
                 }
             }
         });
