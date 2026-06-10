@@ -291,8 +291,15 @@ export function ReferenceLibrary() {
         const parts: string[] = [];
         if (result.fields_added.length > 0)
           parts.push(`added ${result.fields_added.join(", ")}`);
-        if (result.references_found > 0)
-          parts.push(`${result.references_found} references found`);
+        if (result.references_appended > 0) {
+          const qualifier =
+            result.references_found > result.references_appended
+              ? ` of ${result.references_found}`
+              : "";
+          parts.push(
+            `${result.references_appended}${qualifier} references added`,
+          );
+        }
         if (result.shadow_nodes_created > 0)
           parts.push(`${result.shadow_nodes_created} shadow nodes created`);
         show(

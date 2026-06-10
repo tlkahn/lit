@@ -3,10 +3,10 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-static ENTRY_RE: LazyLock<Regex> =
+pub(crate) static ENTRY_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*@(\w+)\s*\{(.+)").unwrap());
 
-static FIELD_RE: LazyLock<Regex> =
+pub(crate) static FIELD_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(\w+)\s*=\s*").unwrap());
 
 const SKIP_TYPES: &[&str] = &["comment", "string", "preamble"];
@@ -158,6 +158,53 @@ fn parse_fields(body: &str) -> HashMap<String, String> {
     fields
 }
 
+/// Find the byte offset just past the end of a BibTeX field value starting at `start`.
+/// Handles `{...}` (brace-delimited), `"..."` (quote-delimited), and bare values.
+/// Returns `None` if the value is unterminated.
+pub(crate) fn find_value_end(text: &str, start: usize) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let mut i = start;
+    while i < bytes.len() && (bytes[i] as char).is_whitespace() {
+        i += 1;
+    }
+    if i >= bytes.len() {
+        return None;
+    }
+    match bytes[i] as char {
+        '{' => {
+            let mut depth: i32 = 0;
+            for j in i..bytes.len() {
+                if bytes[j] == b'{' {
+                    depth += 1;
+                } else if bytes[j] == b'}' {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(j + 1);
+                    }
+                }
+            }
+            None
+        }
+        '"' => {
+            let mut j = i + 1;
+            while j < bytes.len() {
+                if bytes[j] == b'"' && (j == i + 1 || bytes[j - 1] != b'\\') {
+                    return Some(j + 1);
+                }
+                j += 1;
+            }
+            None
+        }
+        _ => {
+            let remaining = &text[i..];
+            let end = remaining
+                .find(|c: char| c == ',' || c == '}' || c.is_whitespace())
+                .unwrap_or(remaining.len());
+            Some(i + end)
+        }
+    }
+}
+
 struct ExtractedValue {
     text: String,
     end: usize,
@@ -179,16 +226,12 @@ fn extract_field_value(body: &str, start: usize) -> Option<ExtractedValue> {
         '{' => extract_braced(body, i),
         '"' => extract_quoted(body, i),
         _ => {
-            let remaining = &body[i..];
-            let end = remaining.find(|c: char| c == ',' || c == '}' || c.is_whitespace())
-                .unwrap_or(remaining.len());
-            if end == 0 {
+            let end = find_value_end(body, start)?;
+            let text = body[i..end].trim().to_string();
+            if text.is_empty() {
                 return None;
             }
-            Some(ExtractedValue {
-                text: remaining[..end].trim().to_string(),
-                end: i + end,
-            })
+            Some(ExtractedValue { text, end })
         }
     }
 }
@@ -551,5 +594,40 @@ mod tests {
         assert_eq!(entries[0].pages, Some("50--75".to_string()));
         assert_eq!(entries[0].publisher, Some("Springer".to_string()));
         assert_eq!(entries[0].issn, Some("1234-5678".to_string()));
+    }
+
+    #[test]
+    fn find_value_end_braced() {
+        assert_eq!(find_value_end("{hello}", 0), Some(7));
+    }
+
+    #[test]
+    fn find_value_end_quoted() {
+        assert_eq!(find_value_end("\"hello\"", 0), Some(7));
+    }
+
+    #[test]
+    fn find_value_end_bare() {
+        assert_eq!(find_value_end("2020 ,", 0), Some(4));
+        assert_eq!(find_value_end("2020,", 0), Some(4));
+        assert_eq!(find_value_end("2020}", 0), Some(4));
+    }
+
+    #[test]
+    fn find_value_end_nested_braces() {
+        assert_eq!(find_value_end("{The {LaTeX} Way}", 0), Some(17));
+    }
+
+    #[test]
+    fn find_value_end_skips_leading_whitespace() {
+        assert_eq!(find_value_end("  {hello}", 0), Some(9));
+        assert_eq!(find_value_end("  2020,", 0), Some(6));
+    }
+
+    #[test]
+    fn find_value_end_unterminated() {
+        assert_eq!(find_value_end("{unclosed", 0), None);
+        assert_eq!(find_value_end("\"unclosed", 0), None);
+        assert_eq!(find_value_end("", 0), None);
     }
 }

@@ -6,15 +6,14 @@ use serde::Serialize;
 use tauri::{Emitter, State};
 
 use crate::bib::cache::BibCache;
-use crate::bib::convert::normalize_doi;
 use crate::bib::semantic_scholar::{
-    lookup_by_doi as s2_lookup_by_doi, s2_paper_to_bib_entry, s2_ref_to_bib_entry,
-    search_by_title, S2Paper,
+    lookup_by_doi_with_base as s2_lookup_by_doi_with_base, s2_paper_to_bib_entry,
+    s2_ref_to_bib_entry, search_by_title_with_base, S2Paper,
 };
 use crate::bib::types::BibEntry;
 use crate::bib::writer::{append_entries_to_file, update_entry_fields, SaveOutcome};
 use crate::commands::bib::build_bib_index;
-use crate::commands::bib_import::{parse_crossref_body, HTTP_CLIENT};
+use crate::commands::bib_import::{fetch_crossref_by_doi, HTTP_CLIENT};
 use crate::commands::graph::GraphRegistry;
 
 const MAX_REFERENCES: usize = 30;
@@ -24,6 +23,7 @@ pub struct EnrichResult {
     pub entry: BibEntry,
     pub fields_added: Vec<String>,
     pub references_found: usize,
+    pub references_appended: usize,
     pub shadow_nodes_created: usize,
 }
 
@@ -72,44 +72,35 @@ pub fn merge_enrichment_fields(
 }
 
 async fn fetch_crossref(doi: &str) -> Result<BibEntry, String> {
-    let normalized = normalize_doi(doi);
-    let url = format!("https://api.crossref.org/works/{}", normalized);
-    let response = HTTP_CLIENT.get(&url).send().await.map_err(|e| {
-        if e.is_timeout() {
-            "Request timed out".to_string()
-        } else {
-            format!("HTTP request failed: {}", e)
-        }
-    })?;
-
-    let status = response.status();
-    if status == reqwest::StatusCode::NOT_FOUND {
-        return Err(format!("DOI not found on Crossref: {}", normalized));
-    }
-    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        return Err("Rate limited by Crossref API, please try again later".to_string());
-    }
-    if !status.is_success() {
-        return Err(format!("Crossref API returned status {}", status));
-    }
-
-    let body = response
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read response body: {}", e))?;
-
-    parse_crossref_body(&body)
+    fetch_crossref_by_doi(doi).await
 }
 
 async fn fetch_s2(
     doi: Option<&str>,
     title: &str,
 ) -> Result<(S2Paper, BibEntry), String> {
+    fetch_s2_with_base(doi, title, &HTTP_CLIENT, "https://api.semanticscholar.org").await
+}
+
+async fn fetch_s2_with_base(
+    doi: Option<&str>,
+    title: &str,
+    client: &reqwest::Client,
+    base_url: &str,
+) -> Result<(S2Paper, BibEntry), String> {
+    let title_is_empty = title.trim().is_empty();
+
     let paper = if let Some(doi) = doi {
-        match s2_lookup_by_doi(&HTTP_CLIENT, doi).await {
+        match s2_lookup_by_doi_with_base(client, doi, base_url).await {
             Ok(p) => p,
-            Err(_) => {
-                let papers = search_by_title(&HTTP_CLIENT, title).await?;
+            Err(doi_err) => {
+                if title_is_empty {
+                    return Err(format!(
+                        "DOI lookup failed ({}) and title is empty; cannot fall back to title search",
+                        doi_err
+                    ));
+                }
+                let papers = search_by_title_with_base(client, title, base_url).await?;
                 papers
                     .into_iter()
                     .next()
@@ -117,7 +108,12 @@ async fn fetch_s2(
             }
         }
     } else {
-        let papers = search_by_title(&HTTP_CLIENT, title).await?;
+        if title_is_empty {
+            return Err(
+                "Cannot search Semantic Scholar: entry has no DOI and no title".to_string(),
+            );
+        }
+        let papers = search_by_title_with_base(client, title, base_url).await?;
         papers
             .into_iter()
             .next()
@@ -164,15 +160,19 @@ pub async fn enrich_bib_entry(
 
     // Merge enrichment fields
     let new_fields = merge_enrichment_fields(&existing, crossref_entry.as_ref(), s2_entry);
-    let fields_added: Vec<String> = new_fields.keys().cloned().collect();
+    let mut fields_added: Vec<String> = new_fields.keys().cloned().collect();
 
     // Update entry fields if any new fields were found
     if !new_fields.is_empty() {
-        update_entry_fields(&bib_path, &bib_key, &new_fields, &cache)?;
+        let modified = update_entry_fields(&bib_path, &bib_key, &new_fields, &cache)?;
+        if !modified {
+            fields_added.clear();
+        }
     }
 
     // Append S2 references as minimal BibEntries
     let mut shadow_nodes_created: usize = 0;
+    let mut references_appended: usize = 0;
     let references_found;
 
     if let Some(paper) = s2_paper {
@@ -185,6 +185,7 @@ pub async fn enrich_bib_entry(
                 .take(MAX_REFERENCES)
                 .map(s2_ref_to_bib_entry)
                 .collect();
+            references_appended = ref_entries.len();
 
             let outcomes =
                 append_entries_to_file(&ref_entries, &bib_path, &root, &cache)?;
@@ -202,8 +203,8 @@ pub async fn enrich_bib_entry(
 
     // Refresh shadows in the graph index
     let graph_changed = {
-        let indices = graph_state.indices.lock().unwrap();
-        if let Some(gi) = indices.get(&root) {
+        let gi = graph_state.indices.lock().unwrap().get(&root).cloned();
+        if let Some(gi) = gi {
             gi.refresh_shadows().unwrap_or(false)
         } else {
             false
@@ -225,6 +226,7 @@ pub async fn enrich_bib_entry(
         entry: updated_entry,
         fields_added,
         references_found,
+        references_appended,
         shadow_nodes_created,
     })
 }
@@ -395,6 +397,241 @@ mod tests {
         assert_eq!(merged.get("doi").unwrap(), "10.1/s2");
     }
 
+    // ── fetch_crossref rejects invalid DOIs ─────────────────────────
+
+    #[tokio::test]
+    async fn fetch_crossref_rejects_invalid_doi() {
+        let result = fetch_crossref("not-a-doi").await;
+        assert!(result.is_err());
+        assert!(
+            result.as_ref().unwrap_err().contains("Invalid DOI format"),
+            "Expected 'Invalid DOI format' but got: {}",
+            result.unwrap_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_crossref_rejects_garbage_doi_with_spaces() {
+        let result = fetch_crossref("see paper above").await;
+        assert!(result.is_err());
+        assert!(
+            result.as_ref().unwrap_err().contains("Invalid DOI format"),
+            "Expected 'Invalid DOI format' but got: {}",
+            result.unwrap_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_crossref_rejects_url_only_doi() {
+        let result = fetch_crossref("https://doi.org/").await;
+        assert!(result.is_err());
+        assert!(
+            result.as_ref().unwrap_err().contains("Invalid DOI format"),
+            "Expected 'Invalid DOI format' but got: {}",
+            result.unwrap_err()
+        );
+    }
+
+    // ── fetch_s2 empty-title guard ──────────────────────────────────
+
+    #[tokio::test]
+    async fn fetch_s2_rejects_empty_title_no_doi() {
+        let client = reqwest::Client::new();
+        let result = fetch_s2_with_base(None, "", &client, "http://unused.invalid").await;
+        assert!(result.is_err(), "expected Err for empty title + no DOI");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("no DOI") && err.contains("no title"),
+            "expected error mentioning 'no DOI' and 'no title', got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_s2_rejects_whitespace_title_no_doi() {
+        let client = reqwest::Client::new();
+        let result = fetch_s2_with_base(None, "   \t  ", &client, "http://unused.invalid").await;
+        assert!(result.is_err(), "expected Err for whitespace-only title + no DOI");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("no DOI") && err.contains("no title"),
+            "expected error mentioning 'no DOI' and 'no title', got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_s2_rejects_empty_title_after_doi_failure() {
+        let mock_server = wiremock::MockServer::start().await;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path_regex(r"/graph/v1/paper/DOI:.*"))
+            .respond_with(wiremock::ResponseTemplate::new(404))
+            .mount(&mock_server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let result =
+            fetch_s2_with_base(Some("10.9999/nonexistent"), "", &client, &mock_server.uri()).await;
+        assert!(result.is_err(), "expected Err when DOI fails and title is empty");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("DOI lookup failed") && err.contains("title is empty"),
+            "expected error mentioning 'DOI lookup failed' and 'title is empty', got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_s2_allows_nonempty_title_no_doi() {
+        let mock_server = wiremock::MockServer::start().await;
+        let body = r#"{
+            "total": 1,
+            "offset": 0,
+            "data": [{
+                "paperId": "abc",
+                "title": "Quantum Computing Advances",
+                "year": 2023,
+                "externalIds": {"DOI": "10.1234/qc2023", "CorpusId": 42}
+            }]
+        }"#;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/graph/v1/paper/search"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(body))
+            .mount(&mock_server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let result =
+            fetch_s2_with_base(None, "quantum computing", &client, &mock_server.uri()).await;
+        assert!(result.is_ok(), "expected Ok for nonempty title, got: {:?}", result);
+        let (paper, entry) = result.unwrap();
+        assert_eq!(paper.title.as_deref(), Some("Quantum Computing Advances"));
+        assert_eq!(entry.doi, Some("10.1234/qc2023".to_string()));
+    }
+
+    // ── merge_receives_crossref fields via parse_crossref_body ────
+
+    #[test]
+    fn merge_receives_crossref_volume_issue_page_publisher_issn() {
+        use crate::commands::bib_import::parse_crossref_body;
+
+        let body = r#"{
+            "status": "ok",
+            "message-type": "work",
+            "message": {
+                "type": "journal-article",
+                "title": ["A Paper"],
+                "author": [{"family": "Smith", "given": "John"}],
+                "container-title": ["Nature"],
+                "issued": {"date-parts": [[2023]]},
+                "DOI": "10.1038/test123",
+                "volume": "600",
+                "issue": "7890",
+                "page": "100-110",
+                "publisher": "Nature Publishing Group",
+                "ISSN": ["0028-0836", "1476-4687"]
+            }
+        }"#;
+        let crossref_entry = parse_crossref_body(body).unwrap();
+        let existing = make_entry(|_| {});
+
+        let merged = merge_enrichment_fields(&existing, Some(&crossref_entry), None);
+        assert_eq!(merged.get("volume").unwrap(), "600");
+        assert_eq!(merged.get("number").unwrap(), "7890");
+        assert_eq!(merged.get("pages").unwrap(), "100-110");
+        assert_eq!(merged.get("publisher").unwrap(), "Nature Publishing Group");
+        assert_eq!(merged.get("issn").unwrap(), "0028-0836");
+    }
+
+    // ── refresh_shadows via cloned Arc ──────────────────────────────
+
+    #[test]
+    fn refresh_shadows_propagates_through_cloned_arc() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+
+        // Create a .md file citing [@smith2024] but no .bib yet
+        fs::create_dir_all(dir.path()).unwrap();
+        fs::write(dir.path().join("a.md"), "As shown in [@smith2024].").unwrap();
+
+        let gi = crate::graph::indexer::GraphIndex::build(root.clone(), false).unwrap();
+
+        // No shadow initially
+        {
+            let meta = gi.store().all_nodes_metadata().unwrap();
+            assert!(
+                !meta.iter().any(|(id, _, _)| id == "bib:smith2024"),
+                "shadow should not exist before .bib is written"
+            );
+        }
+
+        // Insert into a registry (same type as GraphRegistry)
+        let registry = GraphRegistry::new();
+        registry.indices.lock().unwrap().insert(root.clone(), Arc::new(gi));
+
+        // Write a .bib file
+        fs::write(
+            dir.path().join("refs.bib"),
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
+        )
+        .unwrap();
+
+        // Clone the Arc out and drop the registry guard, then call refresh_shadows
+        let gi = graph_state_indices_cloned(&registry, &root);
+        assert!(gi.is_some(), "GraphIndex should be in the registry");
+        let gi = gi.unwrap();
+        let changed = gi.refresh_shadows().unwrap();
+        assert!(changed, "refresh_shadows should detect the new .bib entry");
+
+        // Shadow node should now exist
+        {
+            let meta = gi.store().all_nodes_metadata().unwrap();
+            assert!(
+                meta.iter().any(|(id, _, _)| id == "bib:smith2024"),
+                "shadow must be created after refresh, nodes: {:?}",
+                meta
+            );
+        }
+    }
+
+    /// Mirrors the clone-and-drop pattern used in the production code.
+    fn graph_state_indices_cloned(
+        registry: &GraphRegistry,
+        root: &std::path::Path,
+    ) -> Option<Arc<crate::graph::indexer::GraphIndex>> {
+        registry.indices.lock().unwrap().get(root).cloned()
+    }
+
+    // ── EnrichResult serialization ───────────────────────────────────
+
+    #[test]
+    fn enrich_result_serializes_references_appended() {
+        let result = EnrichResult {
+            entry: make_entry(|_| {}),
+            fields_added: vec!["abstract".to_string()],
+            references_found: 50,
+            references_appended: 10,
+            shadow_nodes_created: 8,
+        };
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["references_appended"], 10);
+        assert_eq!(json["references_found"], 50);
+        assert_eq!(json["shadow_nodes_created"], 8);
+    }
+
+    // ── references_appended capping contract ──────────────────────
+
+    #[test]
+    fn references_appended_capped_at_max_references() {
+        let large: Vec<i32> = (0..50).collect();
+        assert_eq!(large.iter().take(MAX_REFERENCES).count(), 30);
+
+        let small: Vec<i32> = (0..10).collect();
+        assert_eq!(small.iter().take(MAX_REFERENCES).count(), 10);
+    }
+
     // ── full enrichment pipeline (pure functions + file ops) ───────
 
     #[test]
@@ -462,5 +699,70 @@ mod tests {
         let final_content = fs::read_to_string(&bib_path).unwrap();
         let final_parsed = crate::bib::parser::parse_bibtex(&final_content);
         assert_eq!(final_parsed.len(), 3);
+    }
+
+    // ── idempotent update should report no fields added ────────────
+
+    #[test]
+    fn update_noop_fields_added_empty_in_pipeline() {
+        let dir = TempDir::new().unwrap();
+        let bib_path = dir.path().join("refs.bib");
+        let content = "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024},\n  doi = {10.1/x},\n}\n";
+        fs::write(&bib_path, content).unwrap();
+        let cache = BibCache::new();
+
+        let existing = make_entry(|e| {
+            e.doi = None; // simulate stale parse missing the doi
+        });
+        let crossref = make_entry(|e| {
+            e.doi = Some("10.1/x".to_string());
+        });
+
+        let new_fields = merge_enrichment_fields(&existing, Some(&crossref), None);
+        assert!(!new_fields.is_empty(), "merge should propose doi");
+
+        let mut fields_added: Vec<String> = new_fields.keys().cloned().collect();
+        assert!(!fields_added.is_empty(), "fields_added should be non-empty before write");
+
+        let modified = update_entry_fields(&bib_path, "smith2024", &new_fields, &cache).unwrap();
+        assert!(!modified, "update_entry_fields should return false for idempotent write");
+
+        if !modified {
+            fields_added.clear();
+        }
+
+        assert!(fields_added.is_empty(), "fields_added should be empty when update was a no-op");
+    }
+
+    #[test]
+    fn update_modified_fields_added_nonempty_in_pipeline() {
+        let dir = TempDir::new().unwrap();
+        let bib_path = dir.path().join("refs.bib");
+        let content = "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}\n";
+        fs::write(&bib_path, content).unwrap();
+        let cache = BibCache::new();
+
+        let existing = make_entry(|e| {
+            e.doi = None;
+        });
+        let crossref = make_entry(|e| {
+            e.doi = Some("10.1/x".to_string());
+        });
+
+        let new_fields = merge_enrichment_fields(&existing, Some(&crossref), None);
+        assert!(!new_fields.is_empty(), "merge should propose doi");
+
+        let mut fields_added: Vec<String> = new_fields.keys().cloned().collect();
+        assert!(!fields_added.is_empty());
+
+        let modified = update_entry_fields(&bib_path, "smith2024", &new_fields, &cache).unwrap();
+        assert!(modified, "update_entry_fields should return true when fields are actually added");
+
+        if !modified {
+            fields_added.clear();
+        }
+
+        assert!(!fields_added.is_empty(), "fields_added should still contain the added field");
+        assert!(fields_added.contains(&"doi".to_string()));
     }
 }

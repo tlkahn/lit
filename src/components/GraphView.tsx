@@ -2,6 +2,7 @@ import { useRef, useState, useCallback } from "react";
 import type { PageContent, MergePlan, SplitPlan } from "../lib/ipc";
 import { readPage, enrichBibEntry } from "../lib/ipc";
 import { useWorkspaceStore } from "../stores/workspace";
+import { useStatusMessageStore } from "../stores/statusMessage";
 import { showGraphContextMenu, useGraphContextMenu } from "../lib/contextMenuIpc";
 import { useGraphSelectionStore } from "../stores/graphSelection";
 import { useGraphViewState } from "../stores/graphViewState";
@@ -51,6 +52,7 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
   const setShowCitations = useGraphViewState((s) => s.setShowCitations);
   const selectionCount = useGraphSelectionStore((s) => s.selectedNodes.length);
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
+  const show = useStatusMessageStore((s) => s.show);
   const llmEnabled = usePreferencesStore((s) =>
     s.llmProvider.apiKeySet ||
     !providerNeedsApiKey(s.llmProvider.providerId, s.llmCustomProviders)
@@ -126,10 +128,34 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
     onExportNetwork: (nodeId) => {
       onExportNetworkRef.current?.(nodeId);
     },
-    onFetchDetails: (nodeId) => {
+    onFetchDetails: async (nodeId) => {
       if (!workspacePath) return;
       const bibKey = nodeId.replace("bib:", "");
-      enrichBibEntry(bibKey, workspacePath);
+      try {
+        const result = await enrichBibEntry(bibKey, workspacePath);
+        const parts: string[] = [];
+        if (result.fields_added.length > 0)
+          parts.push(`added ${result.fields_added.join(", ")}`);
+        if (result.references_appended > 0) {
+          const qualifier =
+            result.references_found > result.references_appended
+              ? ` of ${result.references_found}`
+              : "";
+          parts.push(
+            `${result.references_appended}${qualifier} references added`,
+          );
+        }
+        if (result.shadow_nodes_created > 0)
+          parts.push(`${result.shadow_nodes_created} shadow nodes created`);
+        show(
+          `Enriched ${bibKey}${parts.length > 0 ? ": " + parts.join(". ") : ""}`,
+        );
+      } catch (err) {
+        show(
+          err instanceof Error ? err.message : String(err),
+          "error",
+        );
+      }
     },
     getNodeLabel: (nodeId) => {
       try {

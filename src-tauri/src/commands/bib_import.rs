@@ -53,9 +53,8 @@ pub(crate) static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
         .expect("failed to build reqwest client")
 });
 
-#[tauri::command]
-pub async fn lookup_doi(doi: String) -> Result<BibEntry, String> {
-    let normalized = normalize_doi(&doi);
+pub(crate) async fn fetch_crossref_by_doi(doi: &str) -> Result<BibEntry, String> {
+    let normalized = normalize_doi(doi);
     if !is_valid_doi(&normalized) {
         return Err(format!("Invalid DOI format: {}", doi));
     }
@@ -90,6 +89,11 @@ pub async fn lookup_doi(doi: String) -> Result<BibEntry, String> {
         .map_err(|e| format!("Failed to read response body: {}", e))?;
 
     parse_crossref_body(&body)
+}
+
+#[tauri::command]
+pub async fn lookup_doi(doi: String) -> Result<BibEntry, String> {
+    fetch_crossref_by_doi(&doi).await
 }
 
 #[tauri::command]
@@ -166,7 +170,12 @@ mod tests {
                 "DOI": "10.1038/nature12373",
                 "URL": "https://doi.org/10.1038/nature12373",
                 "abstract": "<jats:p>Summary of the paper</jats:p>",
-                "subject": ["Physics", "Quantum"]
+                "subject": ["Physics", "Quantum"],
+                "volume": "500",
+                "issue": "7460",
+                "page": "54-58",
+                "publisher": "Springer Science and Business Media LLC",
+                "ISSN": ["0028-0836", "1476-4687"]
             }
         }"#;
         let entry = parse_crossref_body(body).unwrap();
@@ -186,6 +195,11 @@ mod tests {
             Some("Summary of the paper".to_string())
         );
         assert_eq!(entry.tags, vec!["Physics", "Quantum"]);
+        assert_eq!(entry.volume, Some("500".to_string()));
+        assert_eq!(entry.number, Some("7460".to_string()));
+        assert_eq!(entry.pages, Some("54-58".to_string()));
+        assert_eq!(entry.publisher, Some("Springer Science and Business Media LLC".to_string()));
+        assert_eq!(entry.issn, Some("0028-0836".to_string()));
     }
 
     #[test]
@@ -575,5 +589,36 @@ mod tests {
         let normalized = normalize_doi(doi);
         assert_eq!(normalized, "10.1038/nature12373");
         assert!(is_valid_doi(&normalized));
+    }
+
+    // ── Group 7: CrossRef body with volume/issue/page/publisher/ISSN ─
+
+    #[test]
+    fn parse_crossref_body_extracts_volume_issue_page_publisher_issn() {
+        let body = r#"{
+            "status": "ok",
+            "message-type": "work",
+            "message": {
+                "type": "journal-article",
+                "title": ["Probing condensed matter physics"],
+                "author": [
+                    {"family": "Kucsko", "given": "Georg"}
+                ],
+                "container-title": ["Nature"],
+                "issued": {"date-parts": [[2013, 7, 31]]},
+                "DOI": "10.1038/nature12373",
+                "volume": "500",
+                "issue": "7460",
+                "page": "54-58",
+                "publisher": "Springer Science and Business Media LLC",
+                "ISSN": ["0028-0836", "1476-4687"]
+            }
+        }"#;
+        let entry = parse_crossref_body(body).unwrap();
+        assert_eq!(entry.volume, Some("500".to_string()));
+        assert_eq!(entry.number, Some("7460".to_string()));
+        assert_eq!(entry.pages, Some("54-58".to_string()));
+        assert_eq!(entry.publisher, Some("Springer Science and Business Media LLC".to_string()));
+        assert_eq!(entry.issn, Some("0028-0836".to_string()));
     }
 }

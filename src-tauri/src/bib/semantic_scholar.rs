@@ -233,7 +233,7 @@ pub async fn lookup_by_doi(client: &reqwest::Client, doi: &str) -> Result<S2Pape
     lookup_by_doi_with_base(client, doi, S2_BASE_URL).await
 }
 
-async fn lookup_by_doi_with_base(
+pub(crate) async fn lookup_by_doi_with_base(
     client: &reqwest::Client,
     doi: &str,
     base_url: &str,
@@ -284,7 +284,7 @@ pub async fn search_by_title(
     search_by_title_with_base(client, title, S2_BASE_URL).await
 }
 
-async fn search_by_title_with_base(
+pub(crate) async fn search_by_title_with_base(
     client: &reqwest::Client,
     title: &str,
     base_url: &str,

@@ -695,6 +695,7 @@ describe("ipc", () => {
             },
             fields_added: ["abstract", "journal"],
             references_found: 5,
+            references_appended: 5,
             shadow_nodes_created: 3,
           };
         default:
@@ -2122,6 +2123,7 @@ describe("ipc", () => {
     expect(result.entry.key).toBe("smith2020");
     expect(result.fields_added).toEqual(["abstract", "journal"]);
     expect(result.references_found).toBe(5);
+    expect(result.references_appended).toBe(5);
     expect(result.shadow_nodes_created).toBe(3);
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("enrich_bib_entry", {

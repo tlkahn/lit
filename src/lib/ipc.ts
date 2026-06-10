@@ -487,6 +487,7 @@ export interface EnrichResult {
   entry: BibEntry;
   fields_added: string[];
   references_found: number;
+  references_appended: number;
   shadow_nodes_created: number;
 }
 
