@@ -76,10 +76,19 @@ function CodeEditorPaneInner({ paneId }: { paneId: string }) {
     setFocusedPane(paneId);
   }, [paneId]);
 
+  const emptyContainerRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (isFocused && !pagePath) {
+      emptyContainerRef.current?.focus();
+    }
+  }, [isFocused, pagePath]);
+
   if (!pagePath) {
     return (
       <div
+        ref={emptyContainerRef}
         data-testid={`code-editor-pane-${paneId}`}
+        data-pane-id={paneId}
         className={`flex min-h-0 flex-1 items-center justify-center border-t-2 ${isFocused ? "border-interactive-accent" : "border-transparent"}`}
         onMouseDownCapture={handleFocus}
         onFocus={handleFocus}
@@ -93,6 +102,7 @@ function CodeEditorPaneInner({ paneId }: { paneId: string }) {
   return (
     <div
       data-testid={`code-editor-pane-${paneId}`}
+      data-pane-id={paneId}
       className={`flex min-h-0 flex-1 flex-col border-t-2 ${isFocused ? "border-interactive-accent" : "border-transparent"}`}
       onMouseDownCapture={handleFocus}
       onFocus={handleFocus}

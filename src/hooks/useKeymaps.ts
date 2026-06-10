@@ -22,7 +22,13 @@ import type { EditorView } from "@codemirror/view";
 function transferDomFocus() {
   const id = usePaneStore.getState().focusedPaneId;
   setFocusedPane(id);
-  getPaneView(id)?.focus();
+  const view = getPaneView(id);
+  if (view) {
+    view.focus();
+  } else {
+    const el = document.querySelector<HTMLElement>(`[data-pane-id="${id}"]`);
+    el?.focus();
+  }
 }
 
 export function ensureCommandsRegistered() {

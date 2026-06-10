@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect } from "react";
+import React, { useCallback, useEffect, useRef } from "react";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePanePdfLinkStore } from "../stores/panePdfLink";
@@ -81,12 +81,21 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
     };
   }, [paneId]);
 
+  const emptyContainerRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (isFocused && !pagePath) {
+      emptyContainerRef.current?.focus();
+    }
+  }, [isFocused, pagePath]);
+
   const borderClass = isFocused ? "border-interactive-accent" : "border-transparent";
 
   if (!pagePath || !workspacePath) {
     return (
       <div
+        ref={emptyContainerRef}
         data-testid="pdf-viewer-pane"
+        data-pane-id={paneId}
         className={`flex min-h-0 flex-1 items-center justify-center border-t-2 ${borderClass}`}
         onMouseDownCapture={handleFocus}
         onFocus={handleFocus}
@@ -102,6 +111,7 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
   return (
     <div
       data-testid="pdf-viewer-pane"
+      data-pane-id={paneId}
       className={`flex min-h-0 flex-1 flex-col border-t-2 ${borderClass}`}
       onMouseDownCapture={handleFocus}
       onFocus={handleFocus}
