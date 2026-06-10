@@ -2,7 +2,8 @@ import { type EditorState, RangeSet } from "@codemirror/state";
 import { Decoration, type DecorationSet, type EditorView } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { isCursorOnLine, isCursorInRange } from "./proximity";
-import { ImageWidget, CalloutHeaderWidget, InlineMathWidget, DisplayMathWidget, EditableTableWidget, MermaidWidget, HorizontalRuleWidget } from "./widgets";
+import { ImageWidget, CalloutHeaderWidget, InlineMathWidget, DisplayMathWidget, EditableTableWidget, MermaidWidget, HorizontalRuleWidget, PageBreakWidget } from "./widgets";
+import { PAGE_MARKER_REGEX_SOURCE } from "../../lib/pageMarkers";
 import { FootnoteRefWidget } from "./footnoteWidgets";
 import { buildFootnoteMap, type FootnoteMap } from "./footnoteNumbering";
 import { imageResolverFacet } from "./imageResolver";
@@ -28,7 +29,7 @@ const cursorSensitiveNodeNames = new Set([
   "StrongEmphasis", "Emphasis", "Image", "Link", "WikiLink",
   "FencedCode", "Blockquote", "InlineCode", "InlineMath",
   "InlineComment", "BlockComment", "HorizontalRule", "DisplayMath",
-  "Strikethrough", "FootnoteRef", "FootnoteDef",
+  "Strikethrough", "FootnoteRef", "FootnoteDef", "CommentBlock",
 ]);
 
 export function buildDecorations(view: EditorView): BuildDecorationsResult {
@@ -109,6 +110,10 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
         }
         if (node.name === "HorizontalRule") {
           addHorizontalRuleDecos(state, node.from, node.to, decos);
+          return false;
+        }
+        if (node.name === "CommentBlock") {
+          addPageBreakDecos(state, node.from, node.to, decos);
           return false;
         }
         if (node.name === "FootnoteRef") {
@@ -787,5 +792,25 @@ function addBlockCommentDecos(
 ) {
   if (isCursorOnLine(state, from, to)) return;
   decos.push({ from, to, deco: Decoration.mark({ class: "cm-preview-comment" }) });
+}
+
+const pageBreakRegex = new RegExp(`^${PAGE_MARKER_REGEX_SOURCE}$`);
+
+function addPageBreakDecos(
+  state: EditorState,
+  from: number,
+  to: number,
+  decos: { from: number; to: number; deco: Decoration }[],
+) {
+  const text = state.doc.sliceString(from, to).trim();
+  const match = pageBreakRegex.exec(text);
+  if (!match) return;
+  if (isCursorOnLine(state, from, to)) return;
+  const pageNum = parseInt(match[1]!, 10);
+  decos.push({
+    from,
+    to,
+    deco: Decoration.replace({ widget: new PageBreakWidget(pageNum) }),
+  });
 }
 

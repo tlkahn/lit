@@ -331,6 +331,27 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
     backgroundRepeat: "no-repeat",
   },
 
+  // Page break dividers
+  ".cm-preview-page-break": {
+    display: "flex",
+    alignItems: "center",
+    height: "1lh",
+    boxSizing: "border-box",
+    gap: "8px",
+  },
+  ".cm-preview-page-break-rule": {
+    flex: "1",
+    height: "0",
+    borderTop: "1px solid var(--text-faint)",
+  },
+  ".cm-preview-page-break-label": {
+    fontSize: "12px",
+    fontWeight: "400",
+    color: "var(--text-faint)",
+    whiteSpace: "nowrap",
+    lineHeight: "1",
+  },
+
   // Footnotes
   ".cm-footnote-ref": {
     color: "var(--text-accent)",

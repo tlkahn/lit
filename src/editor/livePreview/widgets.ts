@@ -664,6 +664,44 @@ export class HorizontalRuleWidget extends WidgetType {
   }
 }
 
+export class PageBreakWidget extends WidgetType {
+  constructor(readonly pageNumber: number) {
+    super();
+  }
+
+  toDOM(): HTMLElement {
+    const container = document.createElement("div");
+    container.className = "cm-preview-page-break";
+
+    const leftRule = document.createElement("span");
+    leftRule.className = "cm-preview-page-break-rule";
+
+    const label = document.createElement("span");
+    label.className = "cm-preview-page-break-label";
+    label.textContent = `Page ${this.pageNumber}`;
+
+    const rightRule = document.createElement("span");
+    rightRule.className = "cm-preview-page-break-rule";
+
+    container.appendChild(leftRule);
+    container.appendChild(label);
+    container.appendChild(rightRule);
+    return container;
+  }
+
+  eq(other: PageBreakWidget): boolean {
+    return this.pageNumber === other.pageNumber;
+  }
+
+  ignoreEvent(): boolean {
+    return false;
+  }
+
+  get estimatedHeight(): number {
+    return 20;
+  }
+}
+
 function applyAlignment(el: HTMLElement, alignment: Alignment | undefined) {
   if (alignment && alignment !== "default") {
     el.style.textAlign = alignment;

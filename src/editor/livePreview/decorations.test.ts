@@ -1001,6 +1001,62 @@ describe("buildDecorations — horizontal rules", () => {
   });
 });
 
+describe("buildDecorations — page break comments", () => {
+  it("replaces <!-- Page 2 --> with widget when cursor is elsewhere", () => {
+    const doc = "text\n\n<!-- Page 2 -->\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const pb = decos.find((d) => d.widget && d.from === 6 && d.to === 21);
+    expect(pb).toBeDefined();
+    view.destroy();
+  });
+
+  it("shows raw comment when cursor is on line", () => {
+    const doc = "text\n\n<!-- Page 2 -->\n\nother";
+    const view = makeView(doc, 10);
+    const decos = collectDecos(view);
+    const pb = decos.find((d) => d.widget && d.from === 6 && d.to === 21);
+    expect(pb).toBeUndefined();
+    view.destroy();
+  });
+
+  it("handles metadata variant <!-- Page 3 - 2 images -->", () => {
+    const doc = "text\n\n<!-- Page 3 - 2 images -->\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const pb = decos.find((d) => d.widget && d.from === 6);
+    expect(pb).toBeDefined();
+    view.destroy();
+  });
+
+  it("does NOT decorate non-page-break HTML comments", () => {
+    const doc = "text\n\n<!-- just a comment -->\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const pb = decos.find((d) => d.widget && d.from === 6);
+    expect(pb).toBeUndefined();
+    view.destroy();
+  });
+
+  it("decorates multiple page breaks", () => {
+    const doc = "text\n\n<!-- Page 1 -->\n\nmiddle\n\n<!-- Page 2 -->\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const pbs = decos.filter((d) => d.widget);
+    expect(pbs).toHaveLength(2);
+    view.destroy();
+  });
+
+  it("adds CommentBlock lines to cursorSensitiveLines", () => {
+    const doc = "text\n\n<!-- Page 2 -->\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const { cursorSensitiveLines } = buildDecorations(view);
+    const commentLine = view.state.doc.lineAt(6).number;
+    expect(cursorSensitiveLines.has(commentLine)).toBe(true);
+    view.destroy();
+  });
+});
+
 describe("buildDecorations — inline comments", () => {
   it("marks %%hidden%% as faded when cursor is elsewhere", () => {
     const doc = "text %%hidden%% more\n\nother";

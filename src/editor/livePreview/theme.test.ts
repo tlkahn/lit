@@ -67,6 +67,31 @@ describe("horizontal rule theme spec", () => {
   });
 });
 
+describe("page break theme spec", () => {
+  it("livePreviewThemeSpec contains .cm-preview-page-break key", () => {
+    expect(livePreviewThemeSpec[".cm-preview-page-break"]).toBeDefined();
+  });
+
+  it(".cm-preview-page-break has height 1lh", () => {
+    const rule = livePreviewThemeSpec[".cm-preview-page-break"] as Record<string, string>;
+    expect(rule.height).toBe("1lh");
+  });
+
+  it(".cm-preview-page-break has display flex", () => {
+    const rule = livePreviewThemeSpec[".cm-preview-page-break"] as Record<string, string>;
+    expect(rule.display).toBe("flex");
+  });
+
+  it(".cm-preview-page-break-label has fontSize 12px", () => {
+    const rule = livePreviewThemeSpec[".cm-preview-page-break-label"] as Record<string, string>;
+    expect(rule.fontSize).toBe("12px");
+  });
+
+  it(".cm-preview-page-break-rule key exists", () => {
+    expect(livePreviewThemeSpec[".cm-preview-page-break-rule"]).toBeDefined();
+  });
+});
+
 describe("inline code theme spec", () => {
   it(".cm-preview-code-inline has no fontSize to avoid size changes on toggle", () => {
     const rule = livePreviewThemeSpec[".cm-preview-code-inline"] as Record<string, string>;

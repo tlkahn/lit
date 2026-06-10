@@ -10,6 +10,7 @@ import {
   EditableTableWidget,
   MermaidWidget,
   HorizontalRuleWidget,
+  PageBreakWidget,
   clearFailedImageCache,
 } from "./widgets";
 import { calloutFoldField } from "./callout";
@@ -1046,6 +1047,40 @@ describe("HorizontalRuleWidget", () => {
 
   it("estimatedHeight returns 20", () => {
     expect(new HorizontalRuleWidget().estimatedHeight).toBe(20);
+  });
+});
+
+describe("PageBreakWidget", () => {
+  it("toDOM returns a div with correct structure", () => {
+    const widget = new PageBreakWidget(5);
+    const el = widget.toDOM();
+    expect(el.tagName).toBe("DIV");
+    expect(el.className).toBe("cm-preview-page-break");
+    expect(el.children).toHaveLength(3);
+    expect(el.children[0]!.className).toBe("cm-preview-page-break-rule");
+    expect(el.children[1]!.className).toBe("cm-preview-page-break-label");
+    expect(el.children[1]!.textContent).toBe("Page 5");
+    expect(el.children[2]!.className).toBe("cm-preview-page-break-rule");
+  });
+
+  it("eq returns true for same page number", () => {
+    const a = new PageBreakWidget(3);
+    const b = new PageBreakWidget(3);
+    expect(a.eq(b)).toBe(true);
+  });
+
+  it("eq returns false for different page numbers", () => {
+    const a = new PageBreakWidget(1);
+    const b = new PageBreakWidget(2);
+    expect(a.eq(b)).toBe(false);
+  });
+
+  it("ignoreEvent returns false", () => {
+    expect(new PageBreakWidget(1).ignoreEvent()).toBe(false);
+  });
+
+  it("estimatedHeight returns 20", () => {
+    expect(new PageBreakWidget(1).estimatedHeight).toBe(20);
   });
 });
 
