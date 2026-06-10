@@ -743,6 +743,19 @@ impl Store {
         Ok(ids)
     }
 
+    /// Returns node IDs eligible for wikilink resolution (StemLookup).
+    /// Excludes shadow and partial nodes so that wikilinks never resolve
+    /// to citation-only nodes, preserving the citation-only invariant.
+    pub fn resolvable_node_ids(&self) -> Result<Vec<String>, GraphError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id FROM nodes WHERE materialization NOT IN ('shadow', 'partial') ORDER BY id"
+        )?;
+        let ids = stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<Vec<String>, _>>()?;
+        Ok(ids)
+    }
+
     pub fn all_edges(&self) -> Result<Vec<(String, String)>, GraphError> {
         let mut stmt = self
             .conn
@@ -2249,6 +2262,36 @@ mod tests {
 
         let ids = store.all_node_ids().unwrap();
         assert_eq!(ids, vec!["a.md", "b.md"]);
+    }
+
+    #[test]
+    fn resolvable_node_ids_excludes_shadows() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.upsert_stub("Ghost").unwrap();
+        store.upsert_shadow("bib:smith2024", "Smith 2024", Materialization::Shadow).unwrap();
+
+        let resolvable = store.resolvable_node_ids().unwrap();
+        assert_eq!(resolvable, vec!["Ghost", "a.md"], "shadow nodes must be excluded from resolvable IDs");
+
+        let all = store.all_node_ids().unwrap();
+        assert_eq!(all, vec!["Ghost", "a.md", "bib:smith2024"], "all_node_ids must still return every node");
+    }
+
+    #[test]
+    fn resolvable_node_ids_excludes_partial() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.upsert_stub("Ghost").unwrap();
+        store.upsert_shadow("bib:jones2023", "Jones 2023", Materialization::Partial).unwrap();
+
+        let resolvable = store.resolvable_node_ids().unwrap();
+        assert_eq!(resolvable, vec!["Ghost", "a.md"], "partial nodes must be excluded from resolvable IDs");
+
+        let all = store.all_node_ids().unwrap();
+        assert_eq!(all, vec!["Ghost", "a.md", "bib:jones2023"], "all_node_ids must still return every node");
     }
 
     #[test]

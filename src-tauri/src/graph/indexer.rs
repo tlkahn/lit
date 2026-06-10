@@ -491,7 +491,7 @@ pub fn incremental_reindex(
     // Handle new + changed files — track old aliases to detect alias changes
     let old_aliases = store.all_aliases()?;
 
-    let all_ids = store.all_node_ids()?;
+    let all_ids = store.resolvable_node_ids()?;
     let mut stem_lookup = StemLookup::build(&all_ids, &old_aliases);
 
     for path in diff.new.iter().chain(diff.changed.iter()) {
@@ -592,7 +592,7 @@ pub fn incremental_reindex(
     // Re-resolve other files affected by changed stems
     if !changed_stems.is_empty() {
         let affected = reverse_stems.affected_sources(&changed_stems);
-        let all_ids = store.all_node_ids()?;
+        let all_ids = store.resolvable_node_ids()?;
         let aliases = store.all_aliases()?;
         let stem_lookup = StemLookup::build(&all_ids, &aliases);
 
@@ -894,7 +894,7 @@ impl GraphIndex {
 
     pub fn resolve_wikilink(&self, target: &str) -> Result<super::resolve::ResolvedLink, GraphError> {
         let store = self.store.lock().unwrap();
-        let all_ids = store.all_node_ids()?;
+        let all_ids = store.resolvable_node_ids()?;
         let aliases = store.all_aliases()?;
         let lookup = StemLookup::build(&all_ids, &aliases);
         Ok(lookup.resolve(target))
@@ -5734,5 +5734,84 @@ mod tests {
         // Transaction should be committed -- verify by successfully beginning a new one
         store.begin_transaction().unwrap();
         store.commit().unwrap();
+    }
+
+    #[test]
+    fn incremental_reindex_shadow_not_in_stem_lookup() {
+        // Step 1: create workspace with a citation and a bib file so
+        // resolve_shadows_tx creates `bib:smith2024` as a shadow node.
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "As shown in [@smith2024].");
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
+        );
+
+        fs::create_dir_all(dir.path().join(".lit")).unwrap();
+        let store = Store::open(&dir.path().join(".lit/graph.db")).unwrap();
+        let (_, mut reverse) = index_workspace(&store, dir.path(), true).unwrap();
+
+        let bib_cache = crate::bib::cache::BibCache::new();
+        resolve_shadows_tx(&store, dir.path(), &bib_cache).unwrap();
+
+        // Verify the shadow node exists
+        let meta = store.all_nodes_metadata().unwrap();
+        assert!(
+            meta.iter().any(|(id, _, _)| id == "bib:smith2024"),
+            "shadow node bib:smith2024 must exist after resolve_shadows_tx"
+        );
+
+        // Step 2: verify the StemLookup built during incremental reindex
+        // excludes the shadow node.  `resolvable_node_ids` should not
+        // contain bib:smith2024.
+        let resolvable = store.resolvable_node_ids().unwrap();
+        assert!(
+            !resolvable.contains(&"bib:smith2024".to_string()),
+            "resolvable_node_ids must exclude shadow bib:smith2024, got: {:?}",
+            resolvable
+        );
+
+        // all_node_ids still contains it (for completeness)
+        let all = store.all_node_ids().unwrap();
+        assert!(
+            all.contains(&"bib:smith2024".to_string()),
+            "all_node_ids must still include shadow bib:smith2024"
+        );
+
+        // Step 3: verify StemLookup.resolve returns Unresolved for the shadow
+        let aliases = store.all_aliases().unwrap();
+        let lookup = super::super::resolve::StemLookup::build(&resolvable, &aliases);
+        let resolved = lookup.resolve("bib:smith2024");
+        assert_eq!(
+            resolved.tier,
+            super::super::resolve::ResolutionTier::Unresolved,
+            "bib:smith2024 shadow must not appear in StemLookup"
+        );
+
+        // Step 4: add a new file that tries to wikilink to the shadow node
+        // and run incremental reindex.
+        write_md(dir.path(), "b.md", "See [[bib:smith2024]].");
+        let diff = DiffResult {
+            new: vec!["b.md".to_string()],
+            changed: vec![],
+            deleted: vec![],
+        };
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
+
+        // The wikilink edge target is the raw string "bib:smith2024" (since
+        // StemLookup returns Unresolved, the code falls through to
+        // upsert_stub).  The key guarantee: StemLookup did NOT match the
+        // shadow as an ExactPath/Stem hit, so no legitimate wikilink
+        // resolution occurred.  Verify via a fresh StemLookup:
+        let resolvable_after = store.resolvable_node_ids().unwrap();
+        let aliases_after = store.all_aliases().unwrap();
+        let lookup_after = super::super::resolve::StemLookup::build(&resolvable_after, &aliases_after);
+        let resolved_after = lookup_after.resolve("bib:smith2024");
+        assert_eq!(
+            resolved_after.tier,
+            super::super::resolve::ResolutionTier::Unresolved,
+            "bib:smith2024 must remain unresolved in StemLookup after incremental reindex"
+        );
     }
 }
