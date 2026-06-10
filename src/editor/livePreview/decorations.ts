@@ -90,6 +90,9 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
             addBlockquoteDecos(state, node.from, node.to, decos);
           }
         }
+        if (node.name === "ListItem") {
+          addListItemDecos(view, state, node.from, node.node, decos);
+        }
         if (node.name === "InlineCode") {
           addInlineCodeDecos(state, node.from, node.to, node.node, decos);
           return false;
@@ -315,6 +318,56 @@ function addBlockquoteDecos(
         deco: Decoration.replace({}),
       });
     }
+  }
+}
+
+function addListItemDecos(
+  view: EditorView,
+  state: EditorState,
+  from: number,
+  node: ReturnType<typeof syntaxTree>["topNode"],
+  decos: { from: number; to: number; deco: Decoration }[],
+) {
+  const listMark = node.getChild("ListMark");
+  if (!listMark) return;
+
+  // Suppress list-item decorations when cursor is on a non-callout blockquote
+  // list item, matching addBlockquoteDecos' bail behavior to avoid horizontal jump.
+  let bq = node.parent;
+  while (bq && bq.name !== "Blockquote") bq = bq.parent;
+  if (bq) {
+    const isCallout = !!parseCalloutType(state.doc.lineAt(bq.from).text);
+    if (!isCallout && isCursorOnLine(state, from, node.to)) return;
+  }
+
+  const line = state.doc.lineAt(from);
+  const task = node.getChild("Task");
+  const taskMarker = task?.getChild("TaskMarker");
+  const markerEnd = taskMarker?.to ?? listMark.to;
+  const startCoords = view.coordsAtPos(listMark.from);
+  const endCoords = view.coordsAtPos(markerEnd + 1);
+  let indent: number;
+  if (startCoords && endCoords) {
+    indent = Math.round(endCoords.left - startCoords.left);
+  } else {
+    const prefixChars = markerEnd + 1 - listMark.from;
+    indent = Math.round(prefixChars * view.defaultCharacterWidth);
+  }
+
+  const firstLineNum = line.number;
+  const lastLineNum = state.doc.lineAt(node.to).number;
+
+  for (let lineNum = firstLineNum; lineNum <= lastLineNum; lineNum++) {
+    const l = state.doc.line(lineNum);
+    const cls = lineNum === firstLineNum ? "cm-list-item" : "cm-list-item-continuation";
+    decos.push({
+      from: l.from,
+      to: l.from,
+      deco: Decoration.line({
+        class: cls,
+        attributes: { style: `--li-indent: ${indent}px` },
+      }),
+    });
   }
 }
 

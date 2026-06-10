@@ -184,3 +184,25 @@ describe("crossref theme spec", () => {
     expect(citeproc.color).not.toBe(citation.color);
   });
 });
+
+describe("list item continuation theme spec", () => {
+  it("defines .cm-list-item-continuation with paddingLeft", () => {
+    const rule = livePreviewThemeSpec[".cm-list-item-continuation"] as Record<string, string>;
+    expect(rule).toBeDefined();
+    expect(rule.paddingLeft).toContain("--li-indent");
+  });
+
+  it("defines .cm-blockquote.cm-list-item-continuation with compound paddingLeft", () => {
+    const rule = livePreviewThemeSpec[".cm-blockquote.cm-list-item-continuation"] as Record<string, string>;
+    expect(rule).toBeDefined();
+    expect(rule.paddingLeft).toContain("--li-indent");
+    expect(rule.paddingLeft).toContain("8px");
+  });
+
+  it("defines .cm-callout.cm-list-item-continuation with compound paddingLeft", () => {
+    const rule = livePreviewThemeSpec[".cm-callout.cm-list-item-continuation"] as Record<string, string>;
+    expect(rule).toBeDefined();
+    expect(rule.paddingLeft).toContain("--li-indent");
+    expect(rule.paddingLeft).toContain("8px");
+  });
+});
