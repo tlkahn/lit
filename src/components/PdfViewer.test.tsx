@@ -193,6 +193,41 @@ describe("PdfViewer", () => {
     expect(invoke).toHaveBeenCalledWith("pdf_render_page", expect.objectContaining({ pageIndex: 0 }));
   });
 
+  it("shows loading state immediately when filePath changes (no stale page visible)", async () => {
+    const { rerender } = render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+
+    // Wait for the initial load to complete.
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+    });
+    // Seed loadedSrc so the old image is considered "painted".
+    fireEvent.load(screen.getByTestId("pdf-page-image"));
+
+    // Set up a new mock where pdf_open returns a deferred (unresolved) promise
+    // so the new file's load hangs — simulating a slow backend open.
+    let resolvePdfOpen!: (v: unknown) => void;
+    const deferredOpen = new Promise((r) => { resolvePdfOpen = r; });
+    mockInvoke((cmd) => {
+      if (cmd === "pdf_open") return deferredOpen;
+      if (cmd === "pdf_close") return null;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    // Switch to a different PDF file.
+    rerender(<PdfViewer filePath="/test/other.pdf" paneId="pane-1" />);
+
+    // The full "Loading PDF…" screen should appear immediately — not the old
+    // page with no spinner.
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-loading")).toBeInTheDocument();
+    });
+    // The old page image must be gone.
+    expect(screen.queryByTestId("pdf-page-image")).not.toBeInTheDocument();
+
+    // Clean up: resolve the deferred open so the effect's async block settles.
+    resolvePdfOpen({ page_count: 2, path: "/test/other.pdf" });
+  });
+
   it("prefetches adjacent pages after rendering current page", async () => {
     render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
 
@@ -299,11 +334,16 @@ describe("PdfViewer", () => {
     resolveRender({ ...mockRenderedPage, page_index: 1, png_path: "/tmp/lit-pdf-test/page_1.png" });
 
     await waitFor(() => {
+      expect((screen.getByTestId("pdf-page-image") as HTMLImageElement).src).toContain("page_1.png");
+    });
+    fireEvent.load(screen.getByTestId("pdf-page-image"));
+
+    await waitFor(() => {
       expect(screen.queryByTestId("pdf-page-loading")).not.toBeInTheDocument();
     });
   });
 
-  it("does not show spinner overlay on cache hit", async () => {
+  it("does not show spinner overlay once a cache-hit page has painted", async () => {
     let goToPage: ((i: number) => void) | null = null;
     const onPageChange = vi.fn();
     render(
@@ -319,18 +359,26 @@ describe("PdfViewer", () => {
       expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
     });
     expect(goToPage).not.toBeNull();
+    fireEvent.load(screen.getByTestId("pdf-page-image"));
 
     goToPage!(1);
     await waitFor(() => {
       expect(onPageChange).toHaveBeenCalledWith(1);
     });
+    fireEvent.load(screen.getByTestId("pdf-page-image"));
 
     goToPage!(0);
     await waitFor(() => {
       const calls = onPageChange.mock.calls.map((c) => c[0]);
       expect(calls.filter((c: number) => c === 0).length).toBeGreaterThanOrEqual(2);
     });
+    fireEvent.load(screen.getByTestId("pdf-page-image"));
 
+    // Outlast the spinner grace period to prove it never appears for a
+    // painted cache hit.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 250));
+    });
     expect(screen.queryByTestId("pdf-page-loading")).not.toBeInTheDocument();
   });
 
@@ -702,10 +750,219 @@ describe("PdfViewer", () => {
     resolveB({ ...mockRenderedPage, page_index: 2, png_path: "/tmp/lit-pdf-test/page_2.png" });
 
     await waitFor(() => {
+      expect((screen.getByTestId("pdf-page-image") as HTMLImageElement).src).toContain("page_2.png");
+    });
+    fireEvent.load(screen.getByTestId("pdf-page-image"));
+
+    await waitFor(() => {
       expect(screen.queryByTestId("pdf-page-loading")).not.toBeInTheDocument();
     });
     await waitFor(() => {
       expect(onPageChange).toHaveBeenCalledWith(2);
     });
+  });
+
+  it("keeps the spinner after the render IPC resolves until the new image paints (#456)", async () => {
+    let goToPage: ((i: number) => void) | null = null;
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        registerGoToPage={(fn) => { goToPage = fn; }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+    });
+    expect(goToPage).not.toBeNull();
+    fireEvent.load(screen.getByTestId("pdf-page-image"));
+
+    // Default mock resolves pdf_render_page immediately — the spinner must
+    // still appear, because the swapped-in image has not painted yet.
+    goToPage!(1);
+
+    await waitFor(() => {
+      expect((screen.getByTestId("pdf-page-image") as HTMLImageElement).src).toContain("page_1.png");
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-loading")).toBeInTheDocument();
+    });
+
+    fireEvent.load(screen.getByTestId("pdf-page-image"));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("pdf-page-loading")).not.toBeInTheDocument();
+    });
+  });
+
+  it("does not show the spinner before the grace period elapses", async () => {
+    let goToPage: ((i: number) => void) | null = null;
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        registerGoToPage={(fn) => { goToPage = fn; }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+    });
+    expect(goToPage).not.toBeNull();
+    fireEvent.load(screen.getByTestId("pdf-page-image"));
+
+    let resolveRender!: (v: unknown) => void;
+    const deferred = new Promise((r) => { resolveRender = r; });
+    mockInvoke((cmd) => {
+      if (cmd === "pdf_render_page") return deferred;
+      if (cmd === "pdf_prefetch") return null;
+      if (cmd === "pdf_close") return null;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    await act(async () => {
+      goToPage!(1);
+    });
+
+    // Transition started, but the grace timer has not fired yet.
+    expect(screen.queryByTestId("pdf-page-loading")).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-loading")).toBeInTheDocument();
+    });
+
+    resolveRender({ ...mockRenderedPage, page_index: 1, png_path: "/tmp/lit-pdf-test/page_1.png" });
+  });
+
+  it("clears the spinner when the new image fails to load", async () => {
+    let goToPage: ((i: number) => void) | null = null;
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        registerGoToPage={(fn) => { goToPage = fn; }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+    });
+    expect(goToPage).not.toBeNull();
+    fireEvent.load(screen.getByTestId("pdf-page-image"));
+
+    goToPage!(1);
+
+    await waitFor(() => {
+      expect((screen.getByTestId("pdf-page-image") as HTMLImageElement).src).toContain("page_1.png");
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-loading")).toBeInTheDocument();
+    });
+
+    fireEvent.error(screen.getByTestId("pdf-page-image"));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("pdf-page-loading")).not.toBeInTheDocument();
+    });
+  });
+
+  it("renders the spinner overlay outside the scroll container, pinned to the pane", async () => {
+    let goToPage: ((i: number) => void) | null = null;
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        registerGoToPage={(fn) => { goToPage = fn; }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+    });
+    expect(goToPage).not.toBeNull();
+    fireEvent.load(screen.getByTestId("pdf-page-image"));
+
+    goToPage!(1);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-loading")).toBeInTheDocument();
+    });
+
+    const overlay = screen.getByTestId("pdf-page-loading");
+    expect(overlay.parentElement).toBe(screen.getByTestId("pdf-viewer"));
+    expect(overlay.parentElement!.className).not.toContain("overflow-auto");
+  });
+
+  it("does not flash the overlay spinner after the initial Loading PDF screen disappears", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+
+    // Wait for the initial render to complete (exits the "Loading PDF…" screen).
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+    });
+
+    // Do NOT fire onLoad — simulates a slow browser decode of the first PNG.
+    // Wait well past the spinner grace period (150ms) with real timers.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 250));
+    });
+
+    // The overlay spinner must NOT appear — this is the first decode after the
+    // "Loading PDF…" screen, not a page-to-page navigation.
+    expect(screen.queryByTestId("pdf-page-loading")).not.toBeInTheDocument();
+
+    // Now let the image paint.
+    fireEvent.load(screen.getByTestId("pdf-page-image"));
+  });
+
+  it("does not flash the overlay spinner after a file-change Loading PDF screen disappears", async () => {
+    const { rerender } = render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+
+    // Wait for the initial load, then paint.
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+    });
+    fireEvent.load(screen.getByTestId("pdf-page-image"));
+
+    // Switch to a new file. The mock resolves immediately so the new file's
+    // first page will render right away.
+    mockInvoke((cmd, args) => {
+      switch (cmd) {
+        case "pdf_open":
+          return { page_count: 2, path: "/test/other.pdf" };
+        case "pdf_render_page": {
+          const a = args as Record<string, unknown>;
+          const idx = a?.pageIndex ?? 0;
+          return { ...mockRenderedPage, page_index: idx, png_path: `/tmp/lit-pdf-test/other_page_${idx}.png` };
+        }
+        case "pdf_prefetch":
+          return null;
+        case "pdf_close":
+          return null;
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    rerender(<PdfViewer filePath="/test/other.pdf" paneId="pane-1" />);
+
+    // Wait for the new file's image to appear.
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+      expect((screen.getByTestId("pdf-page-image") as HTMLImageElement).src).toContain("other_page_0");
+    });
+
+    // Do NOT fire onLoad — simulates slow decode of the new file's first PNG.
+    // Wait well past the spinner grace period (150ms) with real timers.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 250));
+    });
+
+    // The overlay spinner must NOT appear — this is the first decode after a
+    // file-change "Loading PDF…" screen, not a page navigation.
+    expect(screen.queryByTestId("pdf-page-loading")).not.toBeInTheDocument();
+
+    fireEvent.load(screen.getByTestId("pdf-page-image"));
   });
 });
