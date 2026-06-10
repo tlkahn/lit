@@ -6,7 +6,7 @@ import {
   lookupDoi,
   saveBibEntry,
   parseCslJson,
-  importCslJson,
+  saveBibEntries,
   listBibFiles,
   type BibEntry,
   type SaveOutcome,
@@ -176,10 +176,10 @@ export function AddReferenceDialog({ open, onClose, onSaved }: AddReferenceDialo
 
   // Import: save
   async function handleImport() {
-    if (!importFile || !effectiveBibPath || !workspacePath || importEntries.length === 0) return;
+    if (!effectiveBibPath || !workspacePath || importEntries.length === 0) return;
     setSaving(true);
     try {
-      const outcomes = await importCslJson(importFile, effectiveBibPath, workspacePath);
+      const outcomes = await saveBibEntries(importEntries, effectiveBibPath, workspacePath);
       const saved = outcomes.filter((o) => isSaved(o) || isSavedNoDoi(o)).length;
       const duplicates = outcomes.filter((o) => isDuplicateDoi(o)).length;
       const parts: string[] = [];

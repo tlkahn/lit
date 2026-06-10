@@ -47,7 +47,7 @@ beforeEach(() => {
     if (cmd === "lookup_doi") return sampleEntry;
     if (cmd === "save_bib_entry") return [{ Saved: { key: "smith2020" } }];
     if (cmd === "parse_csl_json") return [sampleEntry, sampleEntry2];
-    if (cmd === "import_csl_json")
+    if (cmd === "save_bib_entries")
       return [
         { Saved: { key: "smith2020" } },
         { Saved: { key: "jones2021" } },
@@ -476,7 +476,7 @@ describe("AddReferenceDialog", () => {
     expect(parseCall).toBeTruthy();
   });
 
-  it("import button calls importCslJson", async () => {
+  it("import button calls saveBibEntries", async () => {
     const { open } = await import("@tauri-apps/plugin-dialog");
     (open as ReturnType<typeof vi.fn>).mockResolvedValueOnce("/workspace/export.json");
 
@@ -512,13 +512,13 @@ describe("AddReferenceDialog", () => {
       fireEvent.click(container.querySelector("[data-testid='add-reference-save-btn']")!);
     });
 
-    const call = invokedCommands.find((c) => c.cmd === "import_csl_json");
+    const call = invokedCommands.find((c) => c.cmd === "save_bib_entries");
     expect(call).toBeTruthy();
     expect(call!.args).toMatchObject({
-      jsonPath: "/workspace/export.json",
       bibPath: "/workspace/refs.bib",
       workspacePath: "/workspace",
     });
+    expect((call!.args as { entries: unknown[] }).entries).toHaveLength(2);
   });
 
   it("import success shows summary toast", async () => {
@@ -529,7 +529,7 @@ describe("AddReferenceDialog", () => {
       invokedCommands.push({ cmd, args: args ?? {} });
       if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
       if (cmd === "parse_csl_json") return [sampleEntry, sampleEntry2];
-      if (cmd === "import_csl_json")
+      if (cmd === "save_bib_entries")
         return [
           { Saved: { key: "smith2020" } },
           { DuplicateDoi: { doi: "10.1000/xyz", existing_key: "old" } },

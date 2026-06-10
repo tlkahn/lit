@@ -41,7 +41,7 @@ import {
   lookupDoi,
   saveBibEntry,
   parseCslJson,
-  importCslJson,
+  saveBibEntries,
   listBibFiles,
   type SaveOutcome,
   pdfOpen,
@@ -659,7 +659,7 @@ describe("ipc", () => {
               line_number: 0,
             },
           ];
-        case "import_csl_json":
+        case "save_bib_entries":
           return [
             { Saved: { key: "doe2021" } },
             { DuplicateDoi: { doi: "10.1000/dup", existing_key: "old2019" } },
@@ -969,9 +969,12 @@ describe("ipc", () => {
     });
   });
 
-  it("importCslJson invokes import_csl_json and returns mixed outcomes", async () => {
-    const result = await importCslJson(
-      "/workspace/export.json",
+  it("saveBibEntries invokes save_bib_entries and returns mixed outcomes", async () => {
+    const entries = [
+      { key: "doe2021", authors: ["Doe, Jane"], title: "Parsed Paper", year: "2021", entry_type: "article", line_number: 0 },
+    ];
+    const result = await saveBibEntries(
+      entries,
       "/workspace/refs.bib",
       "/workspace",
     );
@@ -979,8 +982,8 @@ describe("ipc", () => {
     expect(result[0]).toEqual({ Saved: { key: "doe2021" } });
     expect(result[1]).toEqual({ DuplicateDoi: { doi: "10.1000/dup", existing_key: "old2019" } });
     const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("import_csl_json", {
-      jsonPath: "/workspace/export.json",
+    expect(invoke).toHaveBeenCalledWith("save_bib_entries", {
+      entries,
       bibPath: "/workspace/refs.bib",
       workspacePath: "/workspace",
     });

@@ -54,6 +54,26 @@ pub fn scan_workspace_bibs(root: &Path, cache: &BibCache) -> Vec<BibEntry> {
     all
 }
 
+pub fn scan_workspace_bib_paths(root: &Path) -> Vec<String> {
+    let mut paths = Vec::new();
+    for entry in walkdir::WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|e| !is_hidden(e))
+    {
+        let Ok(entry) = entry else { continue };
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("bib") {
+            continue;
+        }
+        paths.push(path.to_string_lossy().to_string());
+    }
+    paths.sort();
+    paths
+}
+
 #[tauri::command]
 pub fn list_bib_entries(
     workspace_path: String,

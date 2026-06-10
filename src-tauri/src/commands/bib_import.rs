@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::LazyLock;
 
@@ -8,7 +7,7 @@ use crate::bib::cache::BibCache;
 use crate::bib::convert::{csl_to_bib_entry, is_valid_doi, normalize_doi, CslItem};
 use crate::bib::types::BibEntry;
 use crate::bib::writer::{append_entries_to_file, SaveOutcome};
-use crate::commands::bib::scan_workspace_bibs;
+use crate::commands::bib::scan_workspace_bib_paths;
 
 /// Wrapper for the Crossref API JSON envelope.
 #[derive(Deserialize)]
@@ -37,14 +36,8 @@ fn parse_csl_json_inner(json_str: &str) -> Result<Vec<BibEntry>, String> {
     Err("Failed to parse CSL-JSON: expected an array or single CSL-JSON item".to_string())
 }
 
-/// Collect unique bib file paths from a workspace.
-fn list_bib_files_inner(workspace_path: &Path, cache: &BibCache) -> Vec<String> {
-    let entries = scan_workspace_bibs(workspace_path, cache);
-    let unique: BTreeSet<String> = entries
-        .into_iter()
-        .filter_map(|e| e.bib_file)
-        .collect();
-    unique.into_iter().collect()
+fn list_bib_files_inner(workspace_path: &Path) -> Vec<String> {
+    scan_workspace_bib_paths(workspace_path)
 }
 
 // ── Tauri commands ──────────────────────────────────────────────────
@@ -52,7 +45,10 @@ fn list_bib_files_inner(workspace_path: &Path, cache: &BibCache) -> Vec<String> 
 static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
-        .user_agent("lit-app/0.1 (mailto:guoyong206@gmail.com)")
+        .user_agent(format!(
+            "lit/{} (https://github.com/tlkahn/lit)",
+            env!("LIT_GIT_VERSION")
+        ))
         .build()
         .expect("failed to build reqwest client")
 });
@@ -122,13 +118,12 @@ pub fn parse_csl_json(json_path: String) -> Result<Vec<BibEntry>, String> {
 }
 
 #[tauri::command]
-pub fn import_csl_json(
-    json_path: String,
+pub fn save_bib_entries(
+    entries: Vec<BibEntry>,
     bib_path: String,
     workspace_path: String,
     cache: tauri::State<BibCache>,
 ) -> Result<Vec<SaveOutcome>, String> {
-    let entries = parse_csl_json_inner(&read_csl_file(&json_path)?)?;
     append_entries_to_file(
         &entries,
         Path::new(&bib_path),
@@ -140,9 +135,9 @@ pub fn import_csl_json(
 #[tauri::command]
 pub fn list_bib_files(
     workspace_path: String,
-    cache: tauri::State<BibCache>,
+    _cache: tauri::State<BibCache>,
 ) -> Vec<String> {
-    list_bib_files_inner(Path::new(&workspace_path), &cache)
+    list_bib_files_inner(Path::new(&workspace_path))
 }
 
 #[cfg(test)]
@@ -325,8 +320,7 @@ mod tests {
     #[test]
     fn list_bib_files_empty_workspace() {
         let dir = TempDir::new().unwrap();
-        let cache = BibCache::new();
-        let files = list_bib_files_inner(dir.path(), &cache);
+        let files = list_bib_files_inner(dir.path());
         assert!(files.is_empty());
     }
 
@@ -345,8 +339,7 @@ mod tests {
             "@book{b,\n  author = {B},\n  title = {B},\n  year = {2021}\n}",
         )
         .unwrap();
-        let cache = BibCache::new();
-        let files = list_bib_files_inner(dir.path(), &cache);
+        let files = list_bib_files_inner(dir.path());
         assert_eq!(files.len(), 2);
         assert!(files.iter().any(|f| f.ends_with("root.bib")));
         assert!(files.iter().any(|f| f.ends_with("nested.bib")));
@@ -361,8 +354,7 @@ mod tests {
             "@article{a,\n  author={A},\n  title={A},\n  year={2020}\n}\n\n@book{b,\n  author={B},\n  title={B},\n  year={2021}\n}",
         )
         .unwrap();
-        let cache = BibCache::new();
-        let files = list_bib_files_inner(dir.path(), &cache);
+        let files = list_bib_files_inner(dir.path());
         assert_eq!(files.len(), 1);
     }
 
@@ -381,8 +373,7 @@ mod tests {
             "@article{v,\n  author={V},\n  title={V},\n  year={2020}\n}",
         )
         .unwrap();
-        let cache = BibCache::new();
-        let files = list_bib_files_inner(dir.path(), &cache);
+        let files = list_bib_files_inner(dir.path());
         assert_eq!(files.len(), 1);
         assert!(files[0].ends_with("visible.bib"));
     }
@@ -493,10 +484,10 @@ mod tests {
         assert!(matches!(&results[0], SaveOutcome::DuplicateDoi { .. }));
     }
 
-    // ── Group 5: import_csl_json (filesystem) ───────────────────────
+    // ── Group 5: save_bib_entries (parse + append) ───────────────────
 
     #[test]
-    fn import_csl_json_multiple_entries() {
+    fn save_bib_entries_multiple_entries() {
         let dir = TempDir::new().unwrap();
         let bib_path = dir.path().join("refs.bib");
         let cache = BibCache::new();
@@ -521,7 +512,7 @@ mod tests {
     }
 
     #[test]
-    fn import_csl_json_mixed_outcomes() {
+    fn save_bib_entries_mixed_outcomes() {
         let dir = TempDir::new().unwrap();
         let bib_path = dir.path().join("refs.bib");
         fs::write(
@@ -548,7 +539,7 @@ mod tests {
     }
 
     #[test]
-    fn import_csl_json_invalid_json() {
+    fn save_bib_entries_invalid_json() {
         let result = parse_csl_json_inner("not valid json");
         assert!(result.is_err());
     }

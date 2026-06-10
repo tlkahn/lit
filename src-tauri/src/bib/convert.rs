@@ -1,6 +1,8 @@
 use crate::bib::types::BibEntry;
+use crate::bib::writer::generate_key;
 use regex::Regex;
 use serde::Deserialize;
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// A single author/editor name in CSL-JSON.
@@ -149,7 +151,7 @@ pub fn csl_to_bib_entry(item: &CslItem) -> BibEntry {
         .map(map_entry_type)
         .unwrap_or_else(|| "misc".to_string());
 
-    let key = generate_key(&authors, &year);
+    let key = generate_key(&authors, &year, &HashSet::new());
 
     BibEntry {
         key,
@@ -164,32 +166,6 @@ pub fn csl_to_bib_entry(item: &CslItem) -> BibEntry {
         journal: item.container_title.clone().and_then(|ct| ct.into_first()),
         url: item.url.clone(),
         tags: item.subject.clone().unwrap_or_default(),
-    }
-}
-
-/// Generate a citation key from the first author's last name and year.
-fn generate_key(authors: &[String], year: &str) -> String {
-    let last_name = authors.first().map(|a| {
-        // "Family, Given" -> "Family"; "Given Family" -> "Family"; "WHO" -> "WHO"
-        let name = if let Some(comma_pos) = a.find(',') {
-            &a[..comma_pos]
-        } else if let Some(space_pos) = a.rfind(' ') {
-            &a[space_pos + 1..]
-        } else {
-            a.as_str()
-        };
-        // Lowercase and keep only ASCII alphanumeric
-        name.chars()
-            .filter(|c| c.is_ascii_alphanumeric())
-            .collect::<String>()
-            .to_lowercase()
-    });
-
-    match (last_name.as_deref(), year.is_empty()) {
-        (Some(name), false) if !name.is_empty() => format!("{}{}", name, year),
-        (Some(name), true) if !name.is_empty() => name.to_string(),
-        (_, false) => format!("unknown{}", year),
-        _ => "unknown".to_string(),
     }
 }
 

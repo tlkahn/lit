@@ -464,12 +464,12 @@ export async function parseCslJson(jsonPath: string): Promise<BibEntry[]> {
   return invoke<BibEntry[]>("parse_csl_json", { jsonPath });
 }
 
-export async function importCslJson(
-  jsonPath: string,
+export async function saveBibEntries(
+  entries: BibEntry[],
   bibPath: string,
   workspacePath: string,
 ): Promise<SaveOutcome[]> {
-  return invoke<SaveOutcome[]>("import_csl_json", { jsonPath, bibPath, workspacePath });
+  return invoke<SaveOutcome[]>("save_bib_entries", { entries, bibPath, workspacePath });
 }
 
 export async function listBibFiles(workspacePath: string): Promise<string[]> {
