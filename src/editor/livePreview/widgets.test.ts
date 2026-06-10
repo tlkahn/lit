@@ -10,6 +10,7 @@ import {
   EditableTableWidget,
   MermaidWidget,
   HorizontalRuleWidget,
+  PageBreakWidget,
   clearFailedImageCache,
 } from "./widgets";
 import { calloutFoldField } from "./callout";
@@ -1046,6 +1047,90 @@ describe("HorizontalRuleWidget", () => {
 
   it("estimatedHeight returns 20", () => {
     expect(new HorizontalRuleWidget().estimatedHeight).toBe(20);
+  });
+});
+
+describe("PageBreakWidget", () => {
+  it("toDOM returns a div with correct structure", () => {
+    const widget = new PageBreakWidget(5);
+    const el = widget.toDOM();
+    expect(el.tagName).toBe("DIV");
+    expect(el.className).toBe("cm-preview-page-break");
+    expect(el.children).toHaveLength(3);
+    expect(el.children[0]!.className).toBe("cm-preview-page-break-rule");
+    expect(el.children[1]!.className).toBe("cm-preview-page-break-label");
+    expect(el.children[1]!.textContent).toBe("Page 5");
+    expect(el.children[2]!.className).toBe("cm-preview-page-break-rule");
+  });
+
+  it("toDOM sets role=separator on container", () => {
+    const widget = new PageBreakWidget(5);
+    const el = widget.toDOM();
+    expect(el.getAttribute("role")).toBe("separator");
+  });
+
+  it("toDOM sets aria-label with page number", () => {
+    const widget = new PageBreakWidget(5);
+    const el = widget.toDOM();
+    expect(el.getAttribute("aria-label")).toBe("Page 5");
+  });
+
+  it("updateDOM updates aria-label when page number changes", () => {
+    const a = new PageBreakWidget(1);
+    const dom = a.toDOM();
+    expect(dom.getAttribute("aria-label")).toBe("Page 1");
+    const b = new PageBreakWidget(7);
+    expect(b.updateDOM(dom)).toBe(true);
+    expect(dom.getAttribute("aria-label")).toBe("Page 7");
+  });
+
+  it("eq returns true for same page number", () => {
+    const a = new PageBreakWidget(3);
+    const b = new PageBreakWidget(3);
+    expect(a.eq(b)).toBe(true);
+  });
+
+  it("eq returns false for different page numbers", () => {
+    const a = new PageBreakWidget(1);
+    const b = new PageBreakWidget(2);
+    expect(a.eq(b)).toBe(false);
+  });
+
+  it("ignoreEvent returns false", () => {
+    expect(new PageBreakWidget(1).ignoreEvent()).toBe(false);
+  });
+
+  it("estimatedHeight returns 20", () => {
+    expect(new PageBreakWidget(1).estimatedHeight).toBe(20);
+  });
+
+  it("updateDOM patches label text and returns true", () => {
+    const a = new PageBreakWidget(1);
+    const dom = a.toDOM();
+    const b = new PageBreakWidget(7);
+    expect(b.updateDOM(dom)).toBe(true);
+    expect(dom.querySelector(".cm-preview-page-break-label")!.textContent).toBe(
+      "Page 7",
+    );
+  });
+
+  it("updateDOM preserves element identity", () => {
+    const a = new PageBreakWidget(1);
+    const dom = a.toDOM();
+    const ref = dom;
+    const b = new PageBreakWidget(2);
+    b.updateDOM(dom);
+    expect(dom).toBe(ref);
+    expect(dom.children).toHaveLength(3);
+    expect(dom.children[0]!.className).toBe("cm-preview-page-break-rule");
+    expect(dom.children[1]!.className).toBe("cm-preview-page-break-label");
+    expect(dom.children[2]!.className).toBe("cm-preview-page-break-rule");
+  });
+
+  it("updateDOM returns false when label element is missing", () => {
+    const widget = new PageBreakWidget(1);
+    const div = document.createElement("div");
+    expect(widget.updateDOM(div)).toBe(false);
   });
 });
 
