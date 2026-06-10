@@ -89,6 +89,9 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
             addBlockquoteDecos(state, node.from, node.to, decos);
           }
         }
+        if (node.name === "ListItem") {
+          addListItemDecos(view, state, node.from, node.node, decos);
+        }
         if (node.name === "InlineCode") {
           addInlineCodeDecos(state, node.from, node.to, node.node, decos);
           return false;
@@ -307,6 +310,33 @@ function addBlockquoteDecos(
       });
     }
   }
+}
+
+function addListItemDecos(
+  view: EditorView,
+  state: EditorState,
+  from: number,
+  node: ReturnType<typeof syntaxTree>["topNode"],
+  decos: { from: number; to: number; deco: Decoration }[],
+) {
+  const listMark = node.getChild("ListMark");
+  if (!listMark) return;
+
+  const line = state.doc.lineAt(from);
+  const task = node.getChild("Task");
+  const taskMarker = task?.getChild("TaskMarker");
+  const markerEnd = taskMarker?.to ?? listMark.to;
+  const prefixChars = markerEnd + 1 - line.from;
+  const indent = Math.round(prefixChars * view.defaultCharacterWidth);
+
+  decos.push({
+    from: line.from,
+    to: line.from,
+    deco: Decoration.line({
+      class: "cm-list-item",
+      attributes: { style: `--li-indent: ${indent}px` },
+    }),
+  });
 }
 
 function addImageDecos(

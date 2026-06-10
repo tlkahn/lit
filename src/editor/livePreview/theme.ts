@@ -42,6 +42,18 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
     cursor: "pointer",
   },
 
+  // List item hanging indent
+  ".cm-list-item": {
+    paddingLeft: "var(--li-indent, 0px)",
+    textIndent: "calc(-1 * var(--li-indent, 0px))",
+  },
+  ".cm-blockquote.cm-list-item": {
+    paddingLeft: "calc(8px + var(--li-indent, 0px))",
+  },
+  ".cm-callout.cm-list-item": {
+    paddingLeft: "calc(8px + var(--li-indent, 0px))",
+  },
+
   // Blockquotes
   ".cm-blockquote": {
     borderInlineStart: "3px solid var(--text-faint)",
