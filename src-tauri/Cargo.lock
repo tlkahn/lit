@@ -3190,7 +3190,7 @@ dependencies = [
 [[package]]
 name = "lmpdf"
 version = "0.1.0"
-source = "git+https://github.com/tlkahn/lmpdf.git#541d228b463e420b710c8255096e941017c39ac7"
+source = "git+https://github.com/tlkahn/lmpdf.git#c95063e93215853c714122bad55a86dbef6f5dc7"
 dependencies = [
  "bitflags 2.11.1",
  "image",
@@ -3201,7 +3201,7 @@ dependencies = [
 [[package]]
 name = "lmpdf-sys"
 version = "0.1.0"
-source = "git+https://github.com/tlkahn/lmpdf.git#541d228b463e420b710c8255096e941017c39ac7"
+source = "git+https://github.com/tlkahn/lmpdf.git#c95063e93215853c714122bad55a86dbef6f5dc7"
 dependencies = [
  "bindgen",
  "libloading 0.9.0",
@@ -3211,7 +3211,7 @@ dependencies = [
 [[package]]
 name = "lmpdf-sys-macros"
 version = "0.1.0"
-source = "git+https://github.com/tlkahn/lmpdf.git#541d228b463e420b710c8255096e941017c39ac7"
+source = "git+https://github.com/tlkahn/lmpdf.git#c95063e93215853c714122bad55a86dbef6f5dc7"
 dependencies = [
  "proc-macro2",
  "quote",

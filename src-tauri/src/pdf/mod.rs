@@ -8,6 +8,8 @@ use std::thread;
 
 use serde::Serialize;
 
+use crate::recognize::PdfRecognizerData;
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct PdfInfo {
@@ -40,6 +42,10 @@ enum PdfCommand {
     PreRender {
         page_index: usize,
         dpi: u32,
+    },
+    ExtractRecognizerData {
+        max_pages: usize,
+        reply: mpsc::Sender<Result<PdfRecognizerData, String>>,
     },
     Shutdown,
 }
@@ -183,6 +189,29 @@ impl PdfRenderThread {
                             }
                         }
                     }
+                    PdfCommand::ExtractRecognizerData { max_pages, reply } => {
+                        let result = (|| -> Result<PdfRecognizerData, String> {
+                            let doc = document
+                                .as_ref()
+                                .ok_or_else(|| "No document open".to_string())?;
+                            let total_pages = doc.page_count();
+                            let extract_count = max_pages.min(total_pages);
+                            let mut pages = Vec::with_capacity(extract_count);
+                            for i in 0..extract_count {
+                                let text = doc.page_text(i).unwrap_or_default();
+                                pages.push(text);
+                            }
+                            let info = doc
+                                .info()
+                                .map_err(|e| format!("Failed to get PDF info: {e}"))?;
+                            Ok(PdfRecognizerData {
+                                pages,
+                                total_pages,
+                                info,
+                            })
+                        })();
+                        let _ = reply.send(result);
+                    }
                     PdfCommand::Shutdown => {
                         break;
                     }
@@ -236,6 +265,17 @@ impl PdfRenderThread {
         self.cmd_tx
             .send(PdfCommand::PreRender { page_index, dpi })
             .map_err(|_| "Render thread died".to_string())
+    }
+
+    pub fn extract_recognizer_data(&self, max_pages: usize) -> Result<PdfRecognizerData, String> {
+        let (tx, rx) = mpsc::channel();
+        self.cmd_tx
+            .send(PdfCommand::ExtractRecognizerData {
+                max_pages,
+                reply: tx,
+            })
+            .map_err(|_| "Render thread died".to_string())?;
+        rx.recv().map_err(|_| "Render thread died".to_string())?
     }
 
     pub fn temp_dir(&self) -> &std::path::Path {
@@ -302,6 +342,7 @@ fn fixture_path(name: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::recognize::PdfRecognizerData;
 
     fn require_pdfium() -> String {
         find_libpdfium(None)
@@ -648,5 +689,105 @@ mod tests {
         });
         let _ = handle.join();
         let _guard = lock_pdfium();
+    }
+
+    #[test]
+    #[ignore]
+    fn test_extract_recognizer_data_born_digital() {
+        let _guard = lock_pdfium();
+        let lib = require_pdfium();
+        let thread = PdfRenderThread::new(&lib).unwrap();
+        thread.open(fixture_path("born_digital.pdf").to_str().unwrap()).unwrap();
+
+        let data: PdfRecognizerData = thread.extract_recognizer_data(5).unwrap();
+
+        // born_digital.pdf has 7 pages; we asked for max 5
+        assert_eq!(data.pages.len(), 5);
+        assert_eq!(data.total_pages, 7);
+        // Each extracted page should have non-empty text
+        for (i, page_text) in data.pages.iter().enumerate() {
+            assert!(!page_text.trim().is_empty(), "page {} text should be non-empty", i);
+        }
+        // Page 0 must contain the known substring
+        assert!(
+            data.pages[0].contains("comprehensive survey of neural retrieval models"),
+            "page 0 should contain known substring, got: {}",
+            &data.pages[0][..data.pages[0].len().min(200)]
+        );
+        // Info dict should contain Title and Author
+        assert_eq!(
+            data.info.get("Title").map(|s| s.as_str()),
+            Some("Advances in Neural Retrieval Models for Scholarly Document Processing")
+        );
+        assert_eq!(
+            data.info.get("Author").map(|s| s.as_str()),
+            Some("Dr. Elena Vasquez and Prof. Martin Chen")
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn test_extract_recognizer_data_scanned_pdf() {
+        let _guard = lock_pdfium();
+        let lib = require_pdfium();
+        let thread = PdfRenderThread::new(&lib).unwrap();
+        thread.open(fixture_path("scanned.pdf").to_str().unwrap()).unwrap();
+
+        let data: PdfRecognizerData = thread.extract_recognizer_data(5).unwrap();
+
+        // scanned.pdf has 1 page, all image-only => empty/whitespace text
+        assert_eq!(data.total_pages, 1);
+        assert_eq!(data.pages.len(), 1);
+        assert!(
+            data.pages[0].trim().is_empty(),
+            "scanned PDF page text should be empty or whitespace, got: {:?}",
+            data.pages[0]
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn test_extract_recognizer_data_short_pdf() {
+        let _guard = lock_pdfium();
+        let lib = require_pdfium();
+        let thread = PdfRenderThread::new(&lib).unwrap();
+        thread.open(fixture_path("short.pdf").to_str().unwrap()).unwrap();
+
+        let data: PdfRecognizerData = thread.extract_recognizer_data(5).unwrap();
+
+        // short.pdf has 1 page; asking for 5 should give just 1
+        assert_eq!(data.total_pages, 1);
+        assert_eq!(data.pages.len(), 1);
+        // The single page should have some text
+        assert!(!data.pages[0].trim().is_empty(), "short.pdf should have extractable text");
+    }
+
+    #[test]
+    #[ignore]
+    fn test_extract_recognizer_data_no_document() {
+        let _guard = lock_pdfium();
+        let lib = require_pdfium();
+        let thread = PdfRenderThread::new(&lib).unwrap();
+        // Do NOT open any document
+        let result = thread.extract_recognizer_data(5);
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().contains("No document open"),
+            "error should mention 'No document open'"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn test_extract_recognizer_data_respects_max_pages() {
+        let _guard = lock_pdfium();
+        let lib = require_pdfium();
+        let thread = PdfRenderThread::new(&lib).unwrap();
+        thread.open(fixture_path("born_digital.pdf").to_str().unwrap()).unwrap();
+
+        let data: PdfRecognizerData = thread.extract_recognizer_data(2).unwrap();
+
+        assert_eq!(data.pages.len(), 2, "should extract exactly max_pages pages");
+        assert_eq!(data.total_pages, 7, "total_pages should reflect full document");
     }
 }
