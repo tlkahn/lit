@@ -72,6 +72,11 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
   const currentPageRef = useRef(currentPage);
   const cacheRef = useRef(new Map<string, RenderedPage>());
   const navSeqRef = useRef(0);
+  // True after the first <img> onLoad/onError fires for the current file.
+  // Suppresses the `loadedSrc !== src` branch of `transitioning` during the
+  // initial decode after the "Loading PDF…" screen disappears, preventing a
+  // spurious spinner flash while the browser fetches/decodes the very first PNG.
+  const hasEverPaintedRef = useRef(false);
   // Keep an always-current ref to onPageChange so the mount effect can publish
   // the initial page without listing onPageChange as a dependency (which would
   // re-open the PDF and reset to page 0 on every callback identity change).
@@ -92,6 +97,10 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
   useEffect(() => {
     filePathRef.current = filePath;
     cacheRef.current.clear();
+    hasEverPaintedRef.current = false;
+    setRendered(null);
+    setLoadedSrc(null);
+    setError(null);
     let cancelled = false;
 
     (async () => {
@@ -186,7 +195,7 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
   }, [registerGetCurrentPage]);
 
   const src = rendered ? convertFileSrc(rendered.png_path) : null;
-  const transitioning = pageLoading || (src !== null && loadedSrc !== src);
+  const transitioning = pageLoading || (src !== null && hasEverPaintedRef.current && loadedSrc !== src);
 
   // Grace period: only surface the spinner if the transition outlives
   // SPINNER_GRACE_MS, so cache-hit/prefetched flips never flash it.
@@ -261,10 +270,10 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
           alt={`Page ${currentPage + 1}`}
           className="mx-auto shadow-lg"
           style={{ maxWidth: "100%", width: `${rendered.width / (window.devicePixelRatio || 1)}px` }}
-          onLoad={(e) => setLoadedSrc(e.currentTarget.getAttribute("src"))}
+          onLoad={(e) => { hasEverPaintedRef.current = true; setLoadedSrc(e.currentTarget.getAttribute("src")); }}
           // A failed image load must not strand the spinner — the IPC render
           // already succeeded, so just end the transition.
-          onError={(e) => setLoadedSrc(e.currentTarget.getAttribute("src"))}
+          onError={(e) => { hasEverPaintedRef.current = true; setLoadedSrc(e.currentTarget.getAttribute("src")); }}
         />
       </div>
       {/* Sibling of the scroll container (not inside it) so the overlay pins
