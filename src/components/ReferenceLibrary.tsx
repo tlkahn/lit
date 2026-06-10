@@ -152,6 +152,7 @@ export function ReferenceLibrary() {
   const recordDeparture = useRecordDeparture(currentPageRef);
 
   const requestIdRef = useRef(0);
+  const bibStatesRequestIdRef = useRef(0);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadEntries = useCallback(() => {
@@ -178,9 +179,14 @@ export function ReferenceLibrary() {
       setBibKeyStates({});
       return;
     }
+    const id = ++bibStatesRequestIdRef.current;
     getBibKeyStates()
-      .then((result) => setBibKeyStates(result))
-      .catch(() => setBibKeyStates({}));
+      .then((result) => {
+        if (id === bibStatesRequestIdRef.current) setBibKeyStates(result);
+      })
+      .catch(() => {
+        if (id === bibStatesRequestIdRef.current) setBibKeyStates({});
+      });
   }, [graphReady]);
 
   useEffect(() => {

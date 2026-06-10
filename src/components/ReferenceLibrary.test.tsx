@@ -954,4 +954,53 @@ describe("ReferenceLibrary", () => {
     const call = invokedCommands.find((c) => c.cmd === "get_bib_key_states");
     expect(call).toBeTruthy();
   });
+
+  it("discards stale bib key states after rapid graph updates", async () => {
+    // Start with no badges
+    bibKeyStatesFixture = {};
+
+    let bibStatesCallCount = 0;
+    let resolveStale!: (value: Record<string, { materialization: string; page_id: string | null }>) => void;
+    const deferredStale = new Promise<Record<string, { materialization: string; page_id: string | null }>>((r) => {
+      resolveStale = r;
+    });
+
+    mockInvoke((cmd, args) => {
+      invokedCommands.push({ cmd, args });
+      if (cmd === "list_bib_entries") return fixture;
+      if (cmd === "get_citing_pages") return citingFixture;
+      if (cmd === "get_bib_key_states") {
+        bibStatesCallCount++;
+        // First call (mount) returns empty — no badges
+        if (bibStatesCallCount === 1) return {};
+        // Second call (first graph-updated) returns a deferred promise (stale)
+        if (bibStatesCallCount === 2) return deferredStale;
+        // Third call (second graph-updated) returns fresh result immediately
+        return { sanderson2009: { materialization: "partial", page_id: null } };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    // Fire two rapid graph-updated events
+    emitMockEvent("lit:graph-updated", {});
+    emitMockEvent("lit:graph-updated", {});
+
+    // The third (fresh) call should resolve immediately, showing the Enriched badge
+    await waitFor(() =>
+      expect(screen.getByTestId("badge-enriched")).toBeInTheDocument(),
+    );
+
+    // Now resolve the stale (second) call with a result that would show "Has note"
+    resolveStale({ sanderson2009: { materialization: "materialized", page_id: "notes/stale.md" } });
+
+    // Wait a bit for any erroneous state update to propagate
+    await new Promise((r) => setTimeout(r, 50));
+
+    // The stale result should have been discarded — still showing Enriched, not Has note
+    expect(screen.queryByTestId("badge-has-note")).not.toBeInTheDocument();
+    expect(screen.getByTestId("badge-enriched")).toBeInTheDocument();
+  });
 });
