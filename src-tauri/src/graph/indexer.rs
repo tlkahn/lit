@@ -705,9 +705,7 @@ impl GraphIndex {
         );
         let mut reverse_stems = self.reverse_stems.lock().unwrap();
         incremental_reindex(&store, &self.workspace_root, &mut reverse_stems, &diff, annotations_enabled)?;
-        store.begin_transaction()?;
-        resolve_shadows(&store, &self.workspace_root, &self.bib_cache)?;
-        store.commit()?;
+        resolve_shadows_tx(&store, &self.workspace_root, &self.bib_cache)?;
         let mut knowledge = self.knowledge.lock().unwrap();
         *knowledge = KnowledgeGraph::from_store(&store)?;
         Ok(true)
@@ -768,9 +766,7 @@ impl GraphIndex {
         };
 
         let bib_cache = crate::bib::cache::BibCache::new();
-        store.begin_transaction()?;
-        resolve_shadows(&store, &workspace_root, &bib_cache)?;
-        store.commit()?;
+        resolve_shadows_tx(&store, &workspace_root, &bib_cache)?;
 
         on_progress(IndexProgress { phase: IndexPhase::Building, current: 0, total: 0 });
         let knowledge = KnowledgeGraph::from_store(&store)?;
@@ -793,9 +789,7 @@ impl GraphIndex {
         let store = self.store.lock().unwrap();
         let mut reverse = self.reverse_stems.lock().unwrap();
         let result = incremental_reindex(&store, &self.workspace_root, &mut reverse, diff, annotations_enabled)?;
-        store.begin_transaction()?;
-        resolve_shadows(&store, &self.workspace_root, &self.bib_cache)?;
-        store.commit()?;
+        resolve_shadows_tx(&store, &self.workspace_root, &self.bib_cache)?;
         let mut knowledge = self.knowledge.lock().unwrap();
         *knowledge = KnowledgeGraph::from_store(&store)?;
         Ok(result.removed_annotation_uuids)
@@ -817,9 +811,7 @@ impl GraphIndex {
     pub fn full_rebuild(&self, annotations_enabled: bool) -> Result<IndexResult, GraphError> {
         let store = self.store.lock().unwrap();
         let (result, new_reverse) = index_workspace(&store, &self.workspace_root, annotations_enabled)?;
-        store.begin_transaction()?;
-        resolve_shadows(&store, &self.workspace_root, &self.bib_cache)?;
-        store.commit()?;
+        resolve_shadows_tx(&store, &self.workspace_root, &self.bib_cache)?;
         let mut reverse = self.reverse_stems.lock().unwrap();
         *reverse = new_reverse;
         let mut knowledge = self.knowledge.lock().unwrap();
@@ -1172,9 +1164,7 @@ impl GraphIndex {
             [],
             |row| row.get(0),
         ).map_err(GraphError::from)?;
-        store.begin_transaction()?;
-        resolve_shadows(&store, &self.workspace_root, &self.bib_cache)?;
-        store.commit()?;
+        resolve_shadows_tx(&store, &self.workspace_root, &self.bib_cache)?;
         let after_count: i64 = store.conn.query_row(
             "SELECT COUNT(*) FROM nodes WHERE materialization IN ('shadow', 'partial')",
             [],
@@ -1221,6 +1211,18 @@ impl GraphIndex {
 // ---------------------------------------------------------------------------
 // Shadow node helpers
 // ---------------------------------------------------------------------------
+
+/// Run [`resolve_shadows`] inside a database transaction.
+fn resolve_shadows_tx(
+    store: &Store,
+    root: &Path,
+    bib_cache: &crate::bib::cache::BibCache,
+) -> Result<(), GraphError> {
+    store.begin_transaction()?;
+    resolve_shadows(store, root, bib_cache)?;
+    store.commit()?;
+    Ok(())
+}
 
 /// After all edges are inserted, create shadow/partial nodes for cited bib
 /// keys and resolve citation edge targets from raw bib key to `bib:{key}`
@@ -5494,5 +5496,38 @@ mod tests {
         // No author -> "Unknown (2024) Title"
         let entry = make_entry(vec![], "2024", "Some Title");
         assert_eq!(shadow_title(&entry), "Unknown (2024) Some Title");
+    }
+
+    #[test]
+    fn resolve_shadows_tx_wraps_in_transaction() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "As shown in [@smith2024].");
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
+        );
+
+        // Index the workspace (creates edges) without shadow resolution
+        fs::create_dir_all(dir.path().join(".lit")).unwrap();
+        let store = Store::open(&dir.path().join(".lit/graph.db")).unwrap();
+        index_workspace(&store, dir.path(), true).unwrap();
+
+        // Call the new helper
+        let bib_cache = crate::bib::cache::BibCache::new();
+        resolve_shadows_tx(&store, dir.path(), &bib_cache).unwrap();
+
+        // Shadow node should exist
+        let meta = store.all_nodes_metadata().unwrap();
+        let shadow = meta.iter().find(|(id, _, _)| id == "bib:smith2024");
+        assert!(
+            shadow.is_some(),
+            "resolve_shadows_tx must create shadow node bib:smith2024, nodes: {:?}",
+            meta
+        );
+
+        // Transaction should be committed -- verify by successfully beginning a new one
+        store.begin_transaction().unwrap();
+        store.commit().unwrap();
     }
 }
