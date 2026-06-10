@@ -370,6 +370,71 @@ describe("AddReferenceDialog", () => {
     expect(call).toBeTruthy();
   });
 
+  it("Enter key does not trigger lookup while one is in-flight", async () => {
+    let resolveLookup!: (value: BibEntry) => void;
+    const deferred = new Promise<BibEntry>((r) => {
+      resolveLookup = r;
+    });
+    mockInvoke((cmd, args) => {
+      invokedCommands.push({ cmd, args: args ?? {} });
+      if (cmd === "list_bib_files") return [];
+      if (cmd === "lookup_doi") return deferred;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    const user = userEvent.setup();
+    const { container } = render(
+      <AddReferenceDialog open={true} onClose={vi.fn()} onSaved={vi.fn()} />,
+    );
+
+    const input = container.querySelector("[data-testid='add-reference-doi-input']") as HTMLInputElement;
+    await user.type(input, "10.1000/xyz");
+
+    // First Enter: starts lookup
+    await act(async () => {
+      fireEvent.keyDown(input, { key: "Enter" });
+    });
+
+    // Second Enter while lookup is still pending
+    await act(async () => {
+      fireEvent.keyDown(input, { key: "Enter" });
+    });
+
+    const lookupCalls = invokedCommands.filter((c) => c.cmd === "lookup_doi");
+    expect(lookupCalls).toHaveLength(1);
+
+    await act(async () => {
+      resolveLookup(sampleEntry);
+    });
+  });
+
+  it("Enter key does not trigger lookup when input is empty", async () => {
+    const { container } = render(
+      <AddReferenceDialog open={true} onClose={vi.fn()} onSaved={vi.fn()} />,
+    );
+
+    const input = container.querySelector("[data-testid='add-reference-doi-input']") as HTMLInputElement;
+
+    // Press Enter on empty input
+    await act(async () => {
+      fireEvent.keyDown(input, { key: "Enter" });
+    });
+
+    let lookupCalls = invokedCommands.filter((c) => c.cmd === "lookup_doi");
+    expect(lookupCalls).toHaveLength(0);
+
+    // Type whitespace only, press Enter
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "   " } });
+    });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: "Enter" });
+    });
+
+    lookupCalls = invokedCommands.filter((c) => c.cmd === "lookup_doi");
+    expect(lookupCalls).toHaveLength(0);
+  });
+
   // Group 3: Import mode
 
   it("switching to Import tab shows file picker UI", async () => {

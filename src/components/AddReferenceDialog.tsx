@@ -196,7 +196,7 @@ export function AddReferenceDialog({ open, onClose, onSaved }: AddReferenceDialo
 
   // DOI input key handler
   function handleDoiKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "Enter") {
+    if (e.key === "Enter" && doi.trim() && !looking) {
       e.preventDefault();
       handleLookup();
     }
