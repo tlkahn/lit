@@ -6,7 +6,9 @@ import { save, open } from "@tauri-apps/plugin-dialog";
 import { useWorkspaceStore } from "./stores/workspace";
 import { usePreferencesStore } from "./stores/preferences";
 import { useLicenseStore } from "./stores/license";
-import { usePaneStore } from "./stores/panes";
+import { usePaneStore, type PaneSplit } from "./stores/panes";
+import { usePanePdfLinkStore } from "./stores/panePdfLink";
+import { executeCommand } from "./lib/commandRegistry";
 import { useBottomPanelStore } from "./stores/bottomPanel";
 import { useStatusMessageStore } from "./stores/statusMessage";
 import { _resetForTesting as resetRegistry } from "./lib/paneContentRegistry";
@@ -893,6 +895,133 @@ describe("App", () => {
     expect(arg.selection.anchor).toBe(15);
     expect(arg.selection.head).toBe(15 + arg.changes.insert.length);
     expect(mockView.focus).toHaveBeenCalled();
+  });
+
+  describe("Ctrl-W on last PDF pane (issue #447)", () => {
+    const mdPage = {
+      title: "Notes",
+      relative_path: "Notes.md",
+      frontmatter: {},
+      created_at: 1000,
+      modified_at: 2000,
+      file_type: "markdown" as const,
+    };
+    const pdfPage = {
+      title: "Doc",
+      relative_path: "doc.pdf",
+      frontmatter: {},
+      created_at: 1000,
+      modified_at: 2000,
+      file_type: "pdf" as const,
+    };
+
+    it("closing the md pane then the last PDF pane shows the empty state, not a blank area", async () => {
+      let pdfOpenCalls = 0;
+      mockInvoke((cmd, args) => {
+        switch (cmd) {
+          case "pdf_open":
+            pdfOpenCalls++;
+            return { page_count: 2, path: (args as Record<string, unknown>)?.path ?? "" };
+          case "pdf_render_page": {
+            const idx = (args as Record<string, unknown>)?.pageIndex ?? 0;
+            return { page_index: idx, png_path: `/tmp/lit-pdf/page_${idx}.png`, width: 100, height: 200 };
+          }
+          case "pdf_prefetch":
+          case "pdf_close":
+            return null;
+          case "read_page":
+            return { meta: mdPage, body: "# Notes", raw_yaml: "" };
+          case "get_backlinks":
+            return [];
+          case "parse_raw_yaml":
+            return {};
+          case "get_keymaps":
+            return [];
+          case "acknowledge_file_hash":
+            return null;
+          case "get_app_info":
+            return { name: "Lit", version: "0.0.0" };
+          case "get_startup_context":
+            return { workspace: null, file: null, line: null, col: null };
+          case "list_themes":
+            return [];
+          case "get_preferences":
+            return {
+              "workbench.colorTheme": null,
+              "workbench.darkMode": "light",
+              "workbench.sideBar.location": "left",
+            };
+          case "ensure_graph_ready":
+            return null;
+          case "get_license_status":
+            return { state: "licensed", licensed_to: "Test User", source: "direct" };
+          case "has_api_key":
+            return false;
+          case "cancel_title_suggestion":
+            return undefined;
+          default:
+            throw new Error(`Unknown command: ${cmd}`);
+        }
+      });
+
+      useWorkspaceStore.setState({
+        workspacePath: "/test",
+        pages: [mdPage, pdfPage],
+        currentPagePath: "Notes.md",
+        graphReady: true,
+      });
+      // End state of the companion-split workflow (Mod-Shift-o from the md
+      // note): md pane and pdf pane side by side, linked, md pane focused.
+      const root: PaneSplit = {
+        type: "split",
+        id: "split-1",
+        direction: "horizontal",
+        children: [
+          { type: "leaf", id: "md-pane", pagePath: "Notes.md" },
+          { type: "leaf", id: "pdf-pane", pagePath: "doc.pdf" },
+        ],
+        sizes: [50, 50],
+      };
+      usePaneStore.setState({ root, focusedPaneId: "md-pane" });
+      usePanePdfLinkStore.getState().linkPanes("md-pane", "pdf-pane");
+
+      render(<App />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("pdf-viewer-pane")).toBeInTheDocument();
+        expect(screen.getByTestId("editor")).toBeInTheDocument();
+      });
+      expect(pdfOpenCalls).toBe(1);
+
+      // First Ctrl-W: closes the focused md pane, split collapses to the PDF.
+      // (The PDF pane remounts at its new tree position, so pdf_open may
+      // legitimately fire again here — snapshot the count after settling.)
+      act(() => {
+        executeCommand("pane.close");
+      });
+      await waitFor(() => {
+        expect(screen.queryByTestId("editor")).not.toBeInTheDocument();
+        expect(screen.getByTestId("pdf-viewer-pane")).toBeInTheDocument();
+      });
+      expect(usePaneStore.getState().focusedPaneId).toBe("pdf-pane");
+      const pdfOpensAfterCollapse = pdfOpenCalls;
+
+      // Second Ctrl-W: closes the last (PDF) pane. The content area must show
+      // the empty-state placeholder — not a blank region or the error fallback.
+      act(() => {
+        executeCommand("pane.close");
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("empty-state")).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId("content-error-fallback")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("pdf-viewer-pane")).not.toBeInTheDocument();
+      expect(useWorkspaceStore.getState().currentPagePath).toBeNull();
+      // No resurrection: a stale workspace.currentPagePath must not re-open
+      // the just-closed PDF on a ContentArea remount.
+      expect(pdfOpenCalls).toBe(pdfOpensAfterCollapse);
+    });
   });
 
   describe("window listener cleanup", () => {
