@@ -1055,6 +1055,26 @@ describe("buildDecorations — page break comments", () => {
     expect(cursorSensitiveLines.has(commentLine)).toBe(true);
     view.destroy();
   });
+
+  it("does NOT add non-page-break HTML comments to cursorSensitiveLines", () => {
+    const doc = "text\n\n<!-- just a comment -->\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const { cursorSensitiveLines } = buildDecorations(view);
+    const commentLine = view.state.doc.lineAt(6).number;
+    expect(cursorSensitiveLines.has(commentLine)).toBe(false);
+    view.destroy();
+  });
+
+  it("only page-break CommentBlocks are cursor-sensitive, not ordinary HTML comments", () => {
+    const doc = "<!-- Page 2 -->\n\n<!-- TODO: fix -->\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const { cursorSensitiveLines } = buildDecorations(view);
+    const pageBreakLine = view.state.doc.lineAt(0).number;
+    expect(cursorSensitiveLines.has(pageBreakLine)).toBe(true);
+    const todoLine = view.state.doc.lineAt(17).number;
+    expect(cursorSensitiveLines.has(todoLine)).toBe(false);
+    view.destroy();
+  });
 });
 
 describe("buildDecorations — inline comments", () => {

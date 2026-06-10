@@ -672,6 +672,8 @@ export class PageBreakWidget extends WidgetType {
   toDOM(): HTMLElement {
     const container = document.createElement("div");
     container.className = "cm-preview-page-break";
+    container.setAttribute("role", "separator");
+    container.setAttribute("aria-label", `Page ${this.pageNumber}`);
 
     const leftRule = document.createElement("span");
     leftRule.className = "cm-preview-page-break-rule";
@@ -687,6 +689,14 @@ export class PageBreakWidget extends WidgetType {
     container.appendChild(label);
     container.appendChild(rightRule);
     return container;
+  }
+
+  updateDOM(dom: HTMLElement): boolean {
+    const label = dom.querySelector(".cm-preview-page-break-label");
+    if (!label) return false;
+    label.textContent = `Page ${this.pageNumber}`;
+    dom.setAttribute("aria-label", `Page ${this.pageNumber}`);
+    return true;
   }
 
   eq(other: PageBreakWidget): boolean {

@@ -29,7 +29,7 @@ const cursorSensitiveNodeNames = new Set([
   "StrongEmphasis", "Emphasis", "Image", "Link", "WikiLink",
   "FencedCode", "Blockquote", "InlineCode", "InlineMath",
   "InlineComment", "BlockComment", "HorizontalRule", "DisplayMath",
-  "Strikethrough", "FootnoteRef", "FootnoteDef", "CommentBlock",
+  "Strikethrough", "FootnoteRef", "FootnoteDef",
 ]);
 
 export function buildDecorations(view: EditorView): BuildDecorationsResult {
@@ -113,7 +113,11 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
           return false;
         }
         if (node.name === "CommentBlock") {
-          addPageBreakDecos(state, node.from, node.to, decos);
+          if (addPageBreakDecos(state, node.from, node.to, decos)) {
+            const startLine = state.doc.lineAt(node.from).number;
+            const endLine = state.doc.lineAt(node.to).number;
+            for (let l = startLine; l <= endLine; l++) cursorSensitiveLines.add(l);
+          }
           return false;
         }
         if (node.name === "FootnoteRef") {
@@ -801,16 +805,17 @@ function addPageBreakDecos(
   from: number,
   to: number,
   decos: { from: number; to: number; deco: Decoration }[],
-) {
+): boolean {
   const text = state.doc.sliceString(from, to).trim();
   const match = pageBreakRegex.exec(text);
-  if (!match) return;
-  if (isCursorOnLine(state, from, to)) return;
+  if (!match) return false;
+  if (isCursorOnLine(state, from, to)) return true;
   const pageNum = parseInt(match[1]!, 10);
   decos.push({
     from,
     to,
     deco: Decoration.replace({ widget: new PageBreakWidget(pageNum) }),
   });
+  return true;
 }
 
