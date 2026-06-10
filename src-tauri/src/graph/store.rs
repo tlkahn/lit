@@ -547,8 +547,9 @@ impl Store {
              VALUES (?1, ?2, '', '{}', 0, 0, '', ?3)
              ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
-                materialization = excluded.materialization
-             WHERE nodes.materialization IN ('shadow', 'partial')",
+                materialization = excluded.materialization,
+                is_stub = 0
+             WHERE nodes.materialization IN ('shadow', 'partial', 'stub')",
             rusqlite::params![id, title, materialization.as_str()],
         )?;
         Ok(())
@@ -570,6 +571,17 @@ impl Store {
             }
         }
         Ok(count)
+    }
+
+    pub fn prune_dangling_citation_edges(&self) -> Result<usize, GraphError> {
+        let deleted = self.conn.execute(
+            "DELETE FROM edges
+             WHERE edge_kind = 'citation'
+               AND target LIKE 'bib:%'
+               AND target NOT IN (SELECT id FROM nodes)",
+            [],
+        )?;
+        Ok(deleted)
     }
 
     pub fn delete_node(&self, id: &str) -> Result<(), GraphError> {
@@ -4959,6 +4971,65 @@ mod tests {
             err_msg.contains("is_stub inconsistent with materialization"),
             "unexpected error message: {err_msg}"
         );
+    }
+
+    #[test]
+    fn prune_dangling_citation_edges_removes_dead_rows() {
+        let store = Store::open_memory().unwrap();
+
+        // Create a materialized node and a shadow node
+        let a = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&a, 1).unwrap();
+        store.upsert_shadow("bib:smith2024", "Smith (2024)", Materialization::Shadow).unwrap();
+
+        // Insert a citation edge with a valid target (bib:smith2024 has a node)
+        store.insert_edge("a.md", "bib:smith2024", "ctx", "smith2024", 3, EdgeKind::Citation).unwrap();
+
+        // Insert a citation edge with a dangling target (bib:ghost2024 has no node)
+        store.insert_edge("a.md", "bib:ghost2024", "ctx", "ghost2024", 5, EdgeKind::Citation).unwrap();
+
+        // Prune dangling citation edges
+        let deleted = store.prune_dangling_citation_edges().unwrap();
+        assert_eq!(deleted, 1, "one dangling edge should be deleted");
+
+        // Verify only the valid edge remains
+        let edges = store.all_edges_full().unwrap();
+        let citation_edges: Vec<_> = edges.iter()
+            .filter(|(_, _, _, _, _, k)| *k == EdgeKind::Citation)
+            .collect();
+        assert_eq!(citation_edges.len(), 1, "only one citation edge should remain");
+        assert_eq!(citation_edges[0].1, "bib:smith2024", "surviving edge should target bib:smith2024");
+
+        // Confirm the dangling edge is gone
+        let ghost_edge = edges.iter().find(|(_, t, _, _, _, k)| t == "bib:ghost2024" && *k == EdgeKind::Citation);
+        assert!(ghost_edge.is_none(), "dangling edge to bib:ghost2024 should be deleted");
+    }
+
+    #[test]
+    fn upsert_shadow_promotes_stub_to_shadow() {
+        let store = Store::open_memory().unwrap();
+
+        // Create a stub node (as if [[bib:smith2024]] wikilink was processed)
+        store.upsert_stub("bib:smith2024").unwrap();
+
+        // Verify it's a stub
+        let (mat, is_stub): (String, i32) = store.conn.query_row(
+            "SELECT materialization, is_stub FROM nodes WHERE id = 'bib:smith2024'",
+            [], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert_eq!(mat, "stub");
+        assert_eq!(is_stub, 1);
+
+        // Now upsert_shadow should promote the stub to shadow
+        store.upsert_shadow("bib:smith2024", "Smith (2024) Title", Materialization::Shadow).unwrap();
+
+        let (mat2, title2, is_stub2): (String, String, i32) = store.conn.query_row(
+            "SELECT materialization, title, is_stub FROM nodes WHERE id = 'bib:smith2024'",
+            [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).unwrap();
+        assert_eq!(mat2, "shadow", "stub should be promoted to shadow");
+        assert_eq!(title2, "Smith (2024) Title", "title should be set");
+        assert_eq!(is_stub2, 0, "is_stub should be 0 after promotion to shadow");
     }
 
     #[test]

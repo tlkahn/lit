@@ -1291,9 +1291,9 @@ fn resolve_shadows(
     let mut shadow_ids: HashSet<String> = HashSet::new();
 
     for raw_key in &all_cited_keys {
-        // Determine the resolved target: citekey page > bib:key
+        // Determine the resolved target: citekey page > bib entry > skip
         let resolved_target = if let Some(page_id) = citekey_map.get(raw_key.as_str()) {
-            page_id.clone()
+            Some(page_id.clone())
         } else {
             let bib_id = format!("bib:{}", raw_key);
             // Upsert shadow node if the key exists in the bib index
@@ -1306,19 +1306,28 @@ fn resolve_shadows(
                 let title = shadow_title(entry);
                 store.upsert_shadow(&bib_id, &title, mat)?;
                 shadow_ids.insert(bib_id.clone());
+                Some(bib_id)
+            } else {
+                // Key absent from both citekey pages and bib index —
+                // leave the edge target as-is to avoid creating a dangling bib:* reference
+                None
             }
-            bib_id
         };
 
-        // Update citation edge targets for this raw_key
-        store.conn.execute(
-            "UPDATE edges SET target = ?1 WHERE raw_target = ?2 AND edge_kind = 'citation'",
-            rusqlite::params![resolved_target, raw_key],
-        ).map_err(GraphError::from)?;
+        // Update citation edge targets for this raw_key only when we have a valid target
+        if let Some(target) = resolved_target {
+            store.conn.execute(
+                "UPDATE edges SET target = ?1 WHERE raw_target = ?2 AND edge_kind = 'citation'",
+                rusqlite::params![target, raw_key],
+            ).map_err(GraphError::from)?;
+        }
     }
 
     // Prune orphaned shadow nodes
     store.prune_shadows(&shadow_ids)?;
+
+    // Prune citation edges whose bib:* target has no matching node
+    store.prune_dangling_citation_edges()?;
 
     Ok(())
 }
@@ -5506,14 +5515,40 @@ mod tests {
             meta
         );
 
-        // Edge target should still be bib:ghost2024 (updated) but no node row
+        // Edge target should remain as the raw key (not rewritten to bib:ghost2024)
+        // because the key has no bib entry and no citekey page
         let edges = gi.store.lock().unwrap().all_edges_full().unwrap();
         let cite_edge = edges
             .iter()
             .find(|(s, _, _, _, _, k)| s == "a.md" && *k == EdgeKind::Citation);
-        assert!(cite_edge.is_some());
+        assert!(cite_edge.is_some(), "citation edge should still exist for citing_pages queries");
         let (_, target, _, _, _, _) = cite_edge.unwrap();
-        assert_eq!(target, "bib:ghost2024");
+        assert_eq!(target, "ghost2024", "target should remain as raw key, not rewritten to bib:ghost2024");
+    }
+
+    #[test]
+    fn stub_promoted_to_shadow_on_citation_resolve() {
+        // When a page has both [[bib:smith2024]] (wikilink) and [@smith2024] (citation),
+        // the wikilink creates a stub first; resolve_shadows should promote it to shadow.
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "See [[bib:smith2024]] and also [@smith2024].");
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
+        );
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
+        let shadow = meta.iter().find(|(id, _, _)| id == "bib:smith2024");
+        assert!(shadow.is_some(), "bib:smith2024 node must exist");
+        let (_, is_stub, mat) = shadow.unwrap();
+        assert_eq!(
+            *mat,
+            super::super::types::Materialization::Shadow,
+            "bib:smith2024 should be shadow, not stub (promoted from stub)"
+        );
+        assert!(!is_stub, "is_stub should be false after promotion to shadow");
     }
 
     #[test]
