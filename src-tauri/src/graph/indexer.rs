@@ -1248,10 +1248,9 @@ fn resolve_shadows_tx(
     root: &Path,
     bib_cache: &crate::bib::cache::BibCache,
 ) -> Result<(), GraphError> {
-    store.begin_transaction()?;
-    resolve_shadows(store, root, bib_cache)?;
-    store.commit()?;
-    Ok(())
+    store.with_savepoint("resolve_shadows", || {
+        resolve_shadows(store, root, bib_cache)
+    })
 }
 
 /// After all edges are inserted, create shadow/partial nodes for cited bib
@@ -5733,6 +5732,46 @@ mod tests {
 
         // Transaction should be committed -- verify by successfully beginning a new one
         store.begin_transaction().unwrap();
+        store.commit().unwrap();
+    }
+
+    #[test]
+    fn resolve_shadows_tx_rolls_back_on_error() {
+        // Setup: workspace with a citation + bib so resolve_shadows has work to do
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "As shown in [@smith2024].");
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
+        );
+
+        // Index the workspace to populate edges
+        fs::create_dir_all(dir.path().join(".lit")).unwrap();
+        let store = Store::open(&dir.path().join(".lit/graph.db")).unwrap();
+        index_workspace(&store, dir.path(), true).unwrap();
+
+        // Sabotage: drop the edges table so resolve_shadows will fail
+        // when it tries to SELECT from edges
+        store
+            .conn
+            .execute_batch("DROP TABLE edges")
+            .unwrap();
+
+        // Act: resolve_shadows_tx should fail
+        let bib_cache = crate::bib::cache::BibCache::new();
+        let result = resolve_shadows_tx(&store, dir.path(), &bib_cache);
+        assert!(
+            result.is_err(),
+            "resolve_shadows_tx must fail when edges table is missing"
+        );
+
+        // Assert: the connection must NOT be stuck in an open transaction.
+        // If rollback was not issued, begin_transaction will fail with
+        // "cannot start a transaction within a transaction".
+        store
+            .begin_transaction()
+            .expect("begin_transaction must succeed — no dangling open transaction");
         store.commit().unwrap();
     }
 
