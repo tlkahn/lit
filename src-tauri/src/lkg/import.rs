@@ -567,7 +567,7 @@ mod tests {
         import_graph_data(&store, &nodes, &[], &HashMap::new(), &[]).unwrap();
 
         let metadata = store.all_nodes_metadata().unwrap();
-        let map: HashMap<String, bool> = metadata.into_iter().collect();
+        let map: HashMap<String, bool> = metadata.into_iter().map(|(id, is_stub, _)| (id, is_stub)).collect();
         assert_eq!(map.get("a.md"), Some(&false));
         assert_eq!(map.get("ghost"), Some(&true));
         assert_eq!(store.node_titles().unwrap().get("a.md"), Some(&"A".to_string()));

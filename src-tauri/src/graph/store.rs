@@ -5,9 +5,9 @@ use rusqlite::{Connection, OptionalExtension};
 use tracing::{debug, info};
 
 use super::error::GraphError;
-use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, EdgeKind, FullAnnotationRecord, IndexableAnnotation, LinkEntry, ParsedNode, Stats, TagPageResult, TagSearchResult};
+use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, EdgeKind, FullAnnotationRecord, IndexableAnnotation, LinkEntry, Materialization, ParsedNode, Stats, TagPageResult, TagSearchResult};
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 15;
+pub const CURRENT_SCHEMA_VERSION: i64 = 17;
 
 fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rusqlite::Error> {
     Ok(AnnotationSearchResult {
@@ -429,6 +429,41 @@ impl Store {
             )?;
         }
 
+        if version < 16 {
+            info!(from = version, to = 16, "migrating schema: adding materialization to nodes");
+            self.conn.execute_batch(
+                "ALTER TABLE nodes ADD COLUMN materialization TEXT NOT NULL DEFAULT 'materialized';
+                 UPDATE nodes SET materialization = 'stub' WHERE is_stub = 1;
+                 UPDATE sync SET mtime = 0;
+                 UPDATE meta SET value = '16' WHERE key = 'schema_version';"
+            )?;
+        }
+
+        if version < 17 {
+            info!(from = version, to = 17, "migrating schema: adding is_stub/materialization consistency triggers");
+            self.conn.execute_batch(
+                "CREATE TRIGGER IF NOT EXISTS trg_nodes_is_stub_insert
+                 BEFORE INSERT ON nodes
+                 FOR EACH ROW
+                 WHEN NEW.materialization IS NOT NULL
+                   AND NEW.is_stub != (NEW.materialization = 'stub')
+                 BEGIN
+                     SELECT RAISE(ABORT, 'is_stub inconsistent with materialization');
+                 END;
+
+                 CREATE TRIGGER IF NOT EXISTS trg_nodes_is_stub_update
+                 BEFORE UPDATE ON nodes
+                 FOR EACH ROW
+                 WHEN NEW.materialization IS NOT NULL
+                   AND NEW.is_stub != (NEW.materialization = 'stub')
+                 BEGIN
+                     SELECT RAISE(ABORT, 'is_stub inconsistent with materialization');
+                 END;
+
+                 UPDATE meta SET value = '17' WHERE key = 'schema_version';"
+            )?;
+        }
+
         Ok(())
     }
 
@@ -457,15 +492,16 @@ impl Store {
         let tags_text = node.tags.join(" ");
 
         self.conn.execute(
-            "INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub, tags_text)
-             VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6)
+            "INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub, tags_text, materialization)
+             VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, 'materialized')
              ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 first_paragraph = excluded.first_paragraph,
                 frontmatter = excluded.frontmatter,
                 mtime = excluded.mtime,
                 is_stub = excluded.is_stub,
-                tags_text = excluded.tags_text",
+                tags_text = excluded.tags_text,
+                materialization = excluded.materialization",
             rusqlite::params![node.id, node.title, node.first_paragraph, fm_json, mtime, tags_text],
         )?;
 
@@ -498,11 +534,54 @@ impl Store {
 
     pub fn upsert_stub(&self, id: &str) -> Result<(), GraphError> {
         self.conn.execute(
-            "INSERT OR IGNORE INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub)
-             VALUES (?1, '', '', '{}', 0, 1)",
+            "INSERT OR IGNORE INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub, materialization)
+             VALUES (?1, '', '', '{}', 0, 1, 'stub')",
             [id],
         )?;
         Ok(())
+    }
+
+    pub fn upsert_shadow(&self, id: &str, title: &str, materialization: Materialization) -> Result<(), GraphError> {
+        self.conn.execute(
+            "INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub, tags_text, materialization)
+             VALUES (?1, ?2, '', '{}', 0, 0, '', ?3)
+             ON CONFLICT(id) DO UPDATE SET
+                title = excluded.title,
+                materialization = excluded.materialization,
+                is_stub = 0
+             WHERE nodes.materialization IN ('shadow', 'partial', 'stub')",
+            rusqlite::params![id, title, materialization.as_str()],
+        )?;
+        Ok(())
+    }
+
+    pub fn prune_shadows(&self, keep_ids: &HashSet<String>) -> Result<usize, GraphError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id FROM nodes WHERE id LIKE 'bib:%' AND materialization IN ('shadow', 'partial')"
+        )?;
+        let all_shadow_ids: Vec<String> = stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut count = 0usize;
+        for id in &all_shadow_ids {
+            if !keep_ids.contains(id) {
+                self.delete_node(id)?;
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+
+    pub fn prune_dangling_citation_edges(&self) -> Result<usize, GraphError> {
+        let deleted = self.conn.execute(
+            "DELETE FROM edges
+             WHERE edge_kind = 'citation'
+               AND target LIKE 'bib:%'
+               AND target NOT IN (SELECT id FROM nodes)",
+            [],
+        )?;
+        Ok(deleted)
     }
 
     pub fn delete_node(&self, id: &str) -> Result<(), GraphError> {
@@ -676,6 +755,19 @@ impl Store {
         Ok(ids)
     }
 
+    /// Returns node IDs eligible for wikilink resolution (StemLookup).
+    /// Excludes shadow and partial nodes so that wikilinks never resolve
+    /// to citation-only nodes, preserving the citation-only invariant.
+    pub fn resolvable_node_ids(&self) -> Result<Vec<String>, GraphError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id FROM nodes WHERE materialization NOT IN ('shadow', 'partial') ORDER BY id"
+        )?;
+        let ids = stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<Vec<String>, _>>()?;
+        Ok(ids)
+    }
+
     pub fn all_edges(&self) -> Result<Vec<(String, String)>, GraphError> {
         let mut stmt = self
             .conn
@@ -706,15 +798,16 @@ impl Store {
         Ok(edges)
     }
 
-    pub fn all_nodes_metadata(&self) -> Result<Vec<(String, bool)>, GraphError> {
+    pub fn all_nodes_metadata(&self) -> Result<Vec<(String, bool, Materialization)>, GraphError> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, is_stub FROM nodes ORDER BY id")?;
+            .prepare("SELECT id, is_stub, materialization FROM nodes ORDER BY id")?;
         let nodes = stmt
             .query_map([], |row| {
                 let id: String = row.get(0)?;
                 let is_stub: i64 = row.get(1)?;
-                Ok((id, is_stub != 0))
+                let mat_str: String = row.get(2)?;
+                Ok((id, is_stub != 0, Materialization::from(mat_str.as_str())))
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(nodes)
@@ -852,7 +945,7 @@ impl Store {
             "SELECT e.source, n.title, e.context, e.source_line
              FROM edges e
              JOIN nodes n ON n.id = e.source
-             WHERE e.target = ?1 AND e.edge_kind = 'citation'
+             WHERE e.raw_target = ?1 AND e.edge_kind = 'citation'
              ORDER BY e.source",
         )?;
         let results = stmt
@@ -866,6 +959,37 @@ impl Store {
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(results)
+    }
+
+    /// Returns `(citekey, page_id)` pairs for all pages that declare a `citekey`
+    /// in their frontmatter JSON.
+    pub fn citekey_pages(&self) -> Result<Vec<(String, String)>, GraphError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT json_extract(frontmatter, '$.citekey'), id FROM nodes
+             WHERE json_extract(frontmatter, '$.citekey') IS NOT NULL
+             ORDER BY id"
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                let citekey: String = row.get(0)?;
+                let page_id: String = row.get(1)?;
+                Ok((citekey, page_id))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Returns page ids that cite the given raw key via citation edges.
+    pub fn sources_citing(&self, raw_key: &str) -> Result<Vec<String>, GraphError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT source FROM edges
+             WHERE raw_target = ?1 AND edge_kind = 'citation'
+             ORDER BY source"
+        )?;
+        let sources = stmt
+            .query_map([raw_key], |row| row.get(0))?
+            .collect::<Result<Vec<String>, _>>()?;
+        Ok(sources)
     }
 
     pub fn forward_links(&self, page_id: &str) -> Result<Vec<LinkEntry>, GraphError> {
@@ -2153,6 +2277,36 @@ mod tests {
     }
 
     #[test]
+    fn resolvable_node_ids_excludes_shadows() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.upsert_stub("Ghost").unwrap();
+        store.upsert_shadow("bib:smith2024", "Smith 2024", Materialization::Shadow).unwrap();
+
+        let resolvable = store.resolvable_node_ids().unwrap();
+        assert_eq!(resolvable, vec!["Ghost", "a.md"], "shadow nodes must be excluded from resolvable IDs");
+
+        let all = store.all_node_ids().unwrap();
+        assert_eq!(all, vec!["Ghost", "a.md", "bib:smith2024"], "all_node_ids must still return every node");
+    }
+
+    #[test]
+    fn resolvable_node_ids_excludes_partial() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.upsert_stub("Ghost").unwrap();
+        store.upsert_shadow("bib:jones2023", "Jones 2023", Materialization::Partial).unwrap();
+
+        let resolvable = store.resolvable_node_ids().unwrap();
+        assert_eq!(resolvable, vec!["Ghost", "a.md"], "partial nodes must be excluded from resolvable IDs");
+
+        let all = store.all_node_ids().unwrap();
+        assert_eq!(all, vec!["Ghost", "a.md", "bib:jones2023"], "all_node_ids must still return every node");
+    }
+
+    #[test]
     fn all_edges_returns_source_target_pairs() {
         let store = Store::open_memory().unwrap();
         store.insert_edge("a.md", "b.md", "", "", 0, EdgeKind::Wikilink).unwrap();
@@ -2184,8 +2338,8 @@ mod tests {
 
         let meta = store.all_nodes_metadata().unwrap();
         assert_eq!(meta.len(), 2);
-        assert!(meta.contains(&("Ghost".into(), true)));
-        assert!(meta.contains(&("a.md".into(), false)));
+        assert!(meta.contains(&("Ghost".into(), true, Materialization::Stub)));
+        assert!(meta.contains(&("a.md".into(), false, Materialization::Materialized)));
     }
 
     #[test]
@@ -2954,8 +3108,8 @@ mod tests {
     // --- Cycle 2: Schema v6 ---
 
     #[test]
-    fn schema_version_is_fifteen() {
-        assert_eq!(CURRENT_SCHEMA_VERSION, 15);
+    fn schema_version_is_seventeen() {
+        assert_eq!(CURRENT_SCHEMA_VERSION, 17);
     }
 
     #[test]
@@ -4435,5 +4589,469 @@ mod tests {
             "SELECT uuid FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
         ).unwrap();
         assert_eq!(preserved_uuid, "my-custom-id", "COALESCE should preserve existing uuid when incoming is None");
+    }
+
+    // --- Phase 2: v16 migration + materialization ---
+
+    /// Helper: creates a v15 on-disk database with the full v15 schema (no materialization column).
+    fn create_v15_db(db_path: &std::path::Path) {
+        let conn = Connection::open(db_path).unwrap();
+        conn.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        conn.execute_batch(
+            "CREATE TABLE nodes (
+                id TEXT PRIMARY KEY, title TEXT, first_paragraph TEXT,
+                frontmatter JSON, mtime INTEGER, is_stub INTEGER DEFAULT 0, tags_text TEXT DEFAULT ''
+            );
+            CREATE TABLE tags (node_id TEXT, tag TEXT);
+            CREATE TABLE aliases (node_id TEXT, alias TEXT);
+            CREATE TABLE edges (source TEXT, target TEXT, context TEXT, raw_target TEXT DEFAULT '', source_line INTEGER DEFAULT 0, edge_kind TEXT NOT NULL DEFAULT 'wikilink');
+            CREATE INDEX idx_edges_kind ON edges(edge_kind);
+            CREATE TABLE sync (path TEXT PRIMARY KEY, mtime INTEGER);
+            CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+            CREATE TABLE annotations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                node_id TEXT NOT NULL, annotation_type TEXT NOT NULL,
+                certainty TEXT NOT NULL, body TEXT, date TEXT,
+                source_line INTEGER NOT NULL, char_start INTEGER NOT NULL, char_end INTEGER NOT NULL,
+                scope_kind TEXT NOT NULL, scope_value TEXT NOT NULL,
+                uuid TEXT NOT NULL
+            );
+            CREATE INDEX idx_annotations_node_id ON annotations(node_id);
+            CREATE INDEX idx_annotations_type ON annotations(annotation_type);
+            CREATE VIRTUAL TABLE annotations_fts USING fts5(
+                body, node_id UNINDEXED, annotation_type UNINDEXED,
+                tokenize = 'trigram case_sensitive 0'
+            );
+            CREATE TABLE node_positions (
+                node_id TEXT PRIMARY KEY, x REAL NOT NULL, y REAL NOT NULL
+            );
+            INSERT INTO meta(key, value) VALUES ('schema_version', '15');",
+        ).unwrap();
+    }
+
+    #[test]
+    fn v15_to_v16_migration_adds_materialization_column() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        create_v15_db(&db_path);
+
+        // Insert a materialized node and a stub before migration
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute(
+                "INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub) VALUES ('a.md', 'Alpha', 'p1', '{}', 1, 0)",
+                [],
+            ).unwrap();
+            conn.execute(
+                "INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub) VALUES ('Ghost', '', '', '{}', 0, 1)",
+                [],
+            ).unwrap();
+        }
+
+        let store = Store::open(&db_path).unwrap();
+
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+
+        // materialized node gets 'materialized'
+        let mat: String = store.conn.query_row(
+            "SELECT materialization FROM nodes WHERE id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(mat, "materialized");
+
+        // stub node gets 'stub'
+        let mat_stub: String = store.conn.query_row(
+            "SELECT materialization FROM nodes WHERE id = 'Ghost'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(mat_stub, "stub");
+    }
+
+    #[test]
+    fn v15_to_v16_migration_resets_sync_mtimes() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        create_v15_db(&db_path);
+
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "INSERT INTO sync(path, mtime) VALUES ('notes/a.md', 1700000000);
+                 INSERT INTO sync(path, mtime) VALUES ('notes/b.md', 1700000001);",
+            ).unwrap();
+        }
+
+        let store = Store::open(&db_path).unwrap();
+
+        let max_mtime: i64 = store.conn
+            .query_row("SELECT MAX(mtime) FROM sync", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(max_mtime, 0, "all sync mtimes should be reset to 0 after v16 migration");
+    }
+
+    #[test]
+    fn v15_to_v16_migration_preserves_edges() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        create_v15_db(&db_path);
+
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub) VALUES ('a.md', 'A', '', '{}', 1, 0);
+                 INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub) VALUES ('b.md', 'B', '', '{}', 1, 0);
+                 INSERT INTO edges(source, target, context, raw_target, source_line, edge_kind)
+                     VALUES ('a.md', 'b.md', 'ctx', 'b', 3, 'wikilink');
+                 INSERT INTO edges(source, target, context, raw_target, source_line, edge_kind)
+                     VALUES ('a.md', 'b.md', 'cite', 'smith2024', 5, 'citation');",
+            ).unwrap();
+        }
+
+        let store = Store::open(&db_path).unwrap();
+
+        let count: i64 = store.conn
+            .query_row("SELECT COUNT(*) FROM edges", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 2, "both edges should survive v16 migration");
+
+        let wikilink_count: i64 = store.conn
+            .query_row("SELECT COUNT(*) FROM edges WHERE edge_kind = 'wikilink'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(wikilink_count, 1);
+
+        let citation_count: i64 = store.conn
+            .query_row("SELECT COUNT(*) FROM edges WHERE edge_kind = 'citation'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(citation_count, 1);
+    }
+
+    #[test]
+    fn upsert_node_writes_materialization_materialized() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "Alpha", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let mat: String = store.conn.query_row(
+            "SELECT materialization FROM nodes WHERE id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(mat, "materialized");
+
+        // Manually insert a stub-like row to test that upsert_node overwrites materialization
+        store.conn.execute(
+            "INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub, materialization)
+             VALUES ('Ghost', '', '', '{}', 0, 1, 'stub')",
+            [],
+        ).unwrap();
+
+        let node_ghost = make_node("Ghost", "Ghost Page", &[], json!({}));
+        store.upsert_node(&node_ghost, 1).unwrap();
+        let mat_promoted: String = store.conn.query_row(
+            "SELECT materialization FROM nodes WHERE id = 'Ghost'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(mat_promoted, "materialized", "upsert_node over a stub should set materialization to 'materialized'");
+    }
+
+    #[test]
+    fn upsert_stub_writes_materialization_stub() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_stub("Ghost").unwrap();
+
+        let mat: String = store.conn.query_row(
+            "SELECT materialization FROM nodes WHERE id = 'Ghost'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(mat, "stub");
+    }
+
+    #[test]
+    fn upsert_shadow_inserts_new_shadow_node() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_shadow("bib:smith2024", "Smith (2024) Title", Materialization::Shadow).unwrap();
+
+        let (is_stub, mtime, mat, title): (i64, i64, String, String) = store.conn.query_row(
+            "SELECT is_stub, mtime, materialization, title FROM nodes WHERE id = 'bib:smith2024'",
+            [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        ).unwrap();
+        assert_eq!(is_stub, 0);
+        assert_eq!(mtime, 0);
+        assert_eq!(mat, "shadow");
+        assert_eq!(title, "Smith (2024) Title");
+    }
+
+    #[test]
+    fn upsert_shadow_flips_shadow_to_partial() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_shadow("bib:smith2024", "Smith (2024)", Materialization::Shadow).unwrap();
+
+        let mat: String = store.conn.query_row(
+            "SELECT materialization FROM nodes WHERE id = 'bib:smith2024'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(mat, "shadow");
+
+        store.upsert_shadow("bib:smith2024", "Smith (2024) Updated", Materialization::Partial).unwrap();
+
+        let (mat2, title2): (String, String) = store.conn.query_row(
+            "SELECT materialization, title FROM nodes WHERE id = 'bib:smith2024'",
+            [], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert_eq!(mat2, "partial");
+        assert_eq!(title2, "Smith (2024) Updated");
+    }
+
+    #[test]
+    fn upsert_shadow_does_not_overwrite_materialized_node() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("some.md", "Some Page", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        store.upsert_shadow("some.md", "Shadow Title", Materialization::Shadow).unwrap();
+
+        let (mat, title): (String, String) = store.conn.query_row(
+            "SELECT materialization, title FROM nodes WHERE id = 'some.md'",
+            [], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert_eq!(mat, "materialized", "upsert_shadow should not overwrite a materialized node");
+        assert_eq!(title, "Some Page", "title of materialized node should be unchanged");
+    }
+
+    #[test]
+    fn prune_shadows_deletes_orphaned_bib_nodes() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_shadow("bib:a", "A", Materialization::Shadow).unwrap();
+        store.upsert_shadow("bib:b", "B", Materialization::Shadow).unwrap();
+        store.upsert_shadow("bib:c", "C", Materialization::Shadow).unwrap();
+
+        let keep: HashSet<String> = ["bib:a".into(), "bib:c".into()].into();
+        let deleted = store.prune_shadows(&keep).unwrap();
+        assert_eq!(deleted, 1);
+
+        let count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM nodes WHERE id LIKE 'bib:%'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn prune_shadows_leaves_non_bib_nodes_alone() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("page.md", "Page", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.upsert_shadow("bib:x", "X", Materialization::Shadow).unwrap();
+
+        let keep: HashSet<String> = HashSet::new();
+        let deleted = store.prune_shadows(&keep).unwrap();
+        assert_eq!(deleted, 1);
+
+        // page.md survives
+        let page_exists: bool = store.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM nodes WHERE id = 'page.md')", [], |r| r.get(0),
+        ).unwrap();
+        assert!(page_exists, "non-bib node should survive prune_shadows");
+    }
+
+    #[test]
+    fn prune_shadows_noop_when_all_kept() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_shadow("bib:a", "A", Materialization::Shadow).unwrap();
+
+        let keep: HashSet<String> = ["bib:a".into()].into();
+        let deleted = store.prune_shadows(&keep).unwrap();
+        assert_eq!(deleted, 0);
+
+        let count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM nodes WHERE id = 'bib:a'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn sources_citing_returns_page_ids_citing_key() {
+        let store = Store::open_memory().unwrap();
+        let a = make_node("a.md", "A", &[], json!({}));
+        let b = make_node("b.md", "B", &[], json!({}));
+        store.upsert_node(&a, 1).unwrap();
+        store.upsert_node(&b, 1).unwrap();
+
+        store.insert_edge("a.md", "bib:smith2024", "ctx", "smith2024", 3, EdgeKind::Citation).unwrap();
+        store.insert_edge("b.md", "bib:smith2024", "ctx", "smith2024", 7, EdgeKind::Citation).unwrap();
+
+        let sources = store.sources_citing("smith2024").unwrap();
+        assert_eq!(sources, vec!["a.md", "b.md"]);
+    }
+
+    #[test]
+    fn sources_citing_empty_for_unknown_key() {
+        let store = Store::open_memory().unwrap();
+        let sources = store.sources_citing("nonexistent").unwrap();
+        assert!(sources.is_empty());
+    }
+
+    #[test]
+    fn citekey_pages_returns_pages_with_citekey_frontmatter() {
+        let store = Store::open_memory().unwrap();
+        let paper = make_node("paper.md", "Paper", &[], json!({"citekey": "smith2024"}));
+        let other = make_node("other.md", "Other", &[], json!({}));
+        store.upsert_node(&paper, 1).unwrap();
+        store.upsert_node(&other, 1).unwrap();
+
+        let pages = store.citekey_pages().unwrap();
+        assert_eq!(pages, vec![("smith2024".into(), "paper.md".into())]);
+    }
+
+    #[test]
+    fn citekey_pages_empty_when_no_citekeys() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let pages = store.citekey_pages().unwrap();
+        assert!(pages.is_empty());
+    }
+
+    #[test]
+    fn all_nodes_metadata_returns_materialization() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.upsert_stub("Ghost").unwrap();
+        store.upsert_shadow("bib:x", "X", Materialization::Shadow).unwrap();
+
+        let meta = store.all_nodes_metadata().unwrap();
+        assert_eq!(meta.len(), 3);
+        assert!(meta.contains(&("a.md".into(), false, Materialization::Materialized)));
+        assert!(meta.contains(&("Ghost".into(), true, Materialization::Stub)));
+        assert!(meta.contains(&("bib:x".into(), false, Materialization::Shadow)));
+    }
+
+    #[test]
+    fn citing_pages_matches_on_raw_target() {
+        let store = Store::open_memory().unwrap();
+        let a = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&a, 1).unwrap();
+        store.upsert_shadow("bib:smith2024", "Smith", Materialization::Shadow).unwrap();
+
+        // Edge target is the resolved bib: node id, raw_target is the raw key
+        store.insert_edge("a.md", "bib:smith2024", "cited here", "smith2024", 5, EdgeKind::Citation).unwrap();
+
+        // citing_pages should match on raw_target, not target
+        let results = store.citing_pages("smith2024").unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].source_id, "a.md");
+    }
+
+    // --- is_stub / materialization consistency triggers ---
+
+    #[test]
+    fn check_constraint_rejects_inconsistent_is_stub_materialized() {
+        let store = Store::open_memory().unwrap();
+        // is_stub=1 but materialization='materialized' is inconsistent
+        let result = store.conn.execute(
+            "INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub, materialization)
+             VALUES ('bad1', '', '', '{}', 0, 1, 'materialized')",
+            [],
+        );
+        assert!(result.is_err(), "trigger should reject is_stub=1 with materialization='materialized'");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("is_stub inconsistent with materialization"),
+            "unexpected error message: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn check_constraint_rejects_inconsistent_is_stub_stub() {
+        let store = Store::open_memory().unwrap();
+        // is_stub=0 but materialization='stub' is inconsistent
+        let result = store.conn.execute(
+            "INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub, materialization)
+             VALUES ('bad2', '', '', '{}', 0, 0, 'stub')",
+            [],
+        );
+        assert!(result.is_err(), "trigger should reject is_stub=0 with materialization='stub'");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("is_stub inconsistent with materialization"),
+            "unexpected error message: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn prune_dangling_citation_edges_removes_dead_rows() {
+        let store = Store::open_memory().unwrap();
+
+        // Create a materialized node and a shadow node
+        let a = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&a, 1).unwrap();
+        store.upsert_shadow("bib:smith2024", "Smith (2024)", Materialization::Shadow).unwrap();
+
+        // Insert a citation edge with a valid target (bib:smith2024 has a node)
+        store.insert_edge("a.md", "bib:smith2024", "ctx", "smith2024", 3, EdgeKind::Citation).unwrap();
+
+        // Insert a citation edge with a dangling target (bib:ghost2024 has no node)
+        store.insert_edge("a.md", "bib:ghost2024", "ctx", "ghost2024", 5, EdgeKind::Citation).unwrap();
+
+        // Prune dangling citation edges
+        let deleted = store.prune_dangling_citation_edges().unwrap();
+        assert_eq!(deleted, 1, "one dangling edge should be deleted");
+
+        // Verify only the valid edge remains
+        let edges = store.all_edges_full().unwrap();
+        let citation_edges: Vec<_> = edges.iter()
+            .filter(|(_, _, _, _, _, k)| *k == EdgeKind::Citation)
+            .collect();
+        assert_eq!(citation_edges.len(), 1, "only one citation edge should remain");
+        assert_eq!(citation_edges[0].1, "bib:smith2024", "surviving edge should target bib:smith2024");
+
+        // Confirm the dangling edge is gone
+        let ghost_edge = edges.iter().find(|(_, t, _, _, _, k)| t == "bib:ghost2024" && *k == EdgeKind::Citation);
+        assert!(ghost_edge.is_none(), "dangling edge to bib:ghost2024 should be deleted");
+    }
+
+    #[test]
+    fn upsert_shadow_promotes_stub_to_shadow() {
+        let store = Store::open_memory().unwrap();
+
+        // Create a stub node (as if [[bib:smith2024]] wikilink was processed)
+        store.upsert_stub("bib:smith2024").unwrap();
+
+        // Verify it's a stub
+        let (mat, is_stub): (String, i32) = store.conn.query_row(
+            "SELECT materialization, is_stub FROM nodes WHERE id = 'bib:smith2024'",
+            [], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert_eq!(mat, "stub");
+        assert_eq!(is_stub, 1);
+
+        // Now upsert_shadow should promote the stub to shadow
+        store.upsert_shadow("bib:smith2024", "Smith (2024) Title", Materialization::Shadow).unwrap();
+
+        let (mat2, title2, is_stub2): (String, String, i32) = store.conn.query_row(
+            "SELECT materialization, title, is_stub FROM nodes WHERE id = 'bib:smith2024'",
+            [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).unwrap();
+        assert_eq!(mat2, "shadow", "stub should be promoted to shadow");
+        assert_eq!(title2, "Smith (2024) Title", "title should be set");
+        assert_eq!(is_stub2, 0, "is_stub should be 0 after promotion to shadow");
+    }
+
+    #[test]
+    fn check_constraint_rejects_update_inconsistency() {
+        let store = Store::open_memory().unwrap();
+        // Insert a consistent row first
+        store.conn.execute(
+            "INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub, materialization)
+             VALUES ('upd1', '', '', '{}', 0, 1, 'stub')",
+            [],
+        ).unwrap();
+
+        // Now update materialization without updating is_stub — should be rejected
+        let result = store.conn.execute(
+            "UPDATE nodes SET materialization = 'materialized' WHERE id = 'upd1'",
+            [],
+        );
+        assert!(result.is_err(), "trigger should reject update that makes is_stub inconsistent with materialization");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("is_stub inconsistent with materialization"),
+            "unexpected error message: {err_msg}"
+        );
     }
 }

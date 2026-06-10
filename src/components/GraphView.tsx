@@ -46,6 +46,8 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
   const setMode = useGraphViewState((s) => s.setMode);
   const depth = useGraphViewState((s) => s.depth);
   const setDepth = useGraphViewState((s) => s.setDepth);
+  const showCitations = useGraphViewState((s) => s.showCitations);
+  const setShowCitations = useGraphViewState((s) => s.setShowCitations);
   const selectionCount = useGraphSelectionStore((s) => s.selectedNodes.length);
   const llmEnabled = usePreferencesStore((s) =>
     s.llmProvider.apiKeySet ||
@@ -60,7 +62,7 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
   const [deleteConfirm, setDeleteConfirm] = useState<{ nodeIds: string[]; labels: string[] } | null>(null);
 
   const { graphRef, loading, error, graphStats, tierSettings, dimColorRef, dataVersion } = useGraphData({
-    mode, depth, activePageId: activePageId ?? null,
+    mode, depth, activePageId: activePageId ?? null, showCitations,
   });
 
   const { sigmaRef, hoveredNodeRef, selectedSetRef, defaultNodeReducer, tierSettingsRef, resetZoom } = useGraphRenderer({
@@ -166,10 +168,12 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
         depth={depth}
         localDisabled={!activePageId}
         selectionCount={selectionCount}
+        showCitations={showCitations}
         onModeChange={setMode}
         onDepthChange={setDepth}
         onResetZoom={resetZoom}
         onSearch={() => setSearchOpen(true)}
+        onShowCitationsChange={setShowCitations}
       />
       <GraphSearch
         visible={searchOpen}

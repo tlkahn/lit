@@ -84,9 +84,15 @@ export function useGraphRenderer(options: UseGraphRendererOptions): UseGraphRend
           { size: { fill: true }, color: { attribute: "color" } },
         ],
       });
+      const shadowProgram = createNodeBorderProgram({
+        borders: [
+          { size: { value: 0.15, mode: "relative" }, color: { attribute: "color" } },
+          { size: { fill: true }, color: { transparent: true } },
+        ],
+      });
 
       const sigma = new Sigma(graph, container, {
-        nodeProgramClasses: { filled: filledProgram, seed: seedProgram },
+        nodeProgramClasses: { filled: filledProgram, seed: seedProgram, shadow: shadowProgram },
         hideEdgesOnMove: ts.hideEdgesOnMove,
         hideLabelsOnMove: ts.hideLabelsOnMove,
         labelRenderedSizeThreshold: ts.labelRenderedSizeThreshold,

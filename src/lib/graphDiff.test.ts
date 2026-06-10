@@ -1,7 +1,18 @@
 import { describe, it, expect } from "vitest";
 import Graph from "graphology";
-import type { SubgraphResult } from "./ipc";
+import type { SubgraphResult, GraphNode, EdgeKind } from "./ipc";
 import { computeDiff, applyDiff } from "./graphDiff";
+import { SHADOW_COLOR, CITATION_EDGE_SIZE, CITATION_EDGE_COLOR, NODE_SIZE, SHADOW_NODE_SIZE_FACTOR } from "./graphLayout";
+
+/** Helper to create a materialized GraphNode for test fixtures */
+function n(id: string, title: string): GraphNode {
+  return { id, title, is_stub: false, materialization: "materialized" };
+}
+
+/** Helper to create a wikilink edge triple */
+function e(src: string, tgt: string): [string, string, EdgeKind] {
+  return [src, tgt, "wikilink"];
+}
 
 describe("computeDiff", () => {
   it("returns empty diff when graph and subgraph are identical", () => {
@@ -11,11 +22,8 @@ describe("computeDiff", () => {
     graph.mergeUndirectedEdge("a.md", "b.md");
 
     const subgraph: SubgraphResult = {
-      nodes: [
-        { id: "a.md", title: "A" },
-        { id: "b.md", title: "B" },
-      ],
-      edges: [["a.md", "b.md"]],
+      nodes: [n("a.md", "A"), n("b.md", "B")],
+      edges: [e("a.md", "b.md")],
     };
 
     const diff = computeDiff(graph, subgraph);
@@ -34,17 +42,13 @@ describe("computeDiff", () => {
     graph.addNode("b.md", { label: "B" });
 
     const subgraph: SubgraphResult = {
-      nodes: [
-        { id: "a.md", title: "A" },
-        { id: "b.md", title: "B" },
-        { id: "c.md", title: "C" },
-      ],
+      nodes: [n("a.md", "A"), n("b.md", "B"), n("c.md", "C")],
       edges: [],
     };
 
     const diff = computeDiff(graph, subgraph);
 
-    expect(diff.addedNodes).toEqual([{ id: "c.md", title: "C" }]);
+    expect(diff.addedNodes).toEqual([n("c.md", "C")]);
     expect(diff.removedNodes).toEqual([]);
   });
 
@@ -55,10 +59,7 @@ describe("computeDiff", () => {
     graph.addNode("c.md", { label: "C" });
 
     const subgraph: SubgraphResult = {
-      nodes: [
-        { id: "a.md", title: "A" },
-        { id: "b.md", title: "B" },
-      ],
+      nodes: [n("a.md", "A"), n("b.md", "B")],
       edges: [],
     };
 
@@ -73,7 +74,7 @@ describe("computeDiff", () => {
     graph.addNode("a.md", { label: "Old Title" });
 
     const subgraph: SubgraphResult = {
-      nodes: [{ id: "a.md", title: "New Title" }],
+      nodes: [n("a.md", "New Title")],
       edges: [],
     };
 
@@ -90,17 +91,13 @@ describe("computeDiff", () => {
     graph.mergeUndirectedEdge("a.md", "b.md");
 
     const subgraph: SubgraphResult = {
-      nodes: [
-        { id: "a.md", title: "A" },
-        { id: "b.md", title: "B" },
-        { id: "c.md", title: "C" },
-      ],
-      edges: [["a.md", "b.md"], ["a.md", "c.md"]],
+      nodes: [n("a.md", "A"), n("b.md", "B"), n("c.md", "C")],
+      edges: [e("a.md", "b.md"), e("a.md", "c.md")],
     };
 
     const diff = computeDiff(graph, subgraph);
 
-    expect(diff.addedEdges).toEqual([["a.md", "c.md"]]);
+    expect(diff.addedEdges).toEqual([["a.md", "c.md", "wikilink"]]);
     expect(diff.removedEdges).toEqual([]);
   });
 
@@ -113,18 +110,14 @@ describe("computeDiff", () => {
     graph.mergeUndirectedEdge("a.md", "c.md");
 
     const subgraph: SubgraphResult = {
-      nodes: [
-        { id: "a.md", title: "A" },
-        { id: "b.md", title: "B" },
-        { id: "c.md", title: "C" },
-      ],
-      edges: [["a.md", "b.md"]],
+      nodes: [n("a.md", "A"), n("b.md", "B"), n("c.md", "C")],
+      edges: [e("a.md", "b.md")],
     };
 
     const diff = computeDiff(graph, subgraph);
 
     expect(diff.addedEdges).toEqual([]);
-    expect(diff.removedEdges).toEqual([["a.md", "c.md"]]);
+    expect(diff.removedEdges).toEqual([["a.md", "c.md", "wikilink"]]);
   });
 
   it("flags isMajorChange when >50% nodes differ", () => {
@@ -135,16 +128,9 @@ describe("computeDiff", () => {
 
     const subgraph: SubgraphResult = {
       nodes: [
-        { id: "old0.md", title: "Old 0" },
-        { id: "old1.md", title: "Old 1" },
-        { id: "old2.md", title: "Old 2" },
-        { id: "old3.md", title: "Old 3" },
-        { id: "new0.md", title: "New 0" },
-        { id: "new1.md", title: "New 1" },
-        { id: "new2.md", title: "New 2" },
-        { id: "new3.md", title: "New 3" },
-        { id: "new4.md", title: "New 4" },
-        { id: "new5.md", title: "New 5" },
+        n("old0.md", "Old 0"), n("old1.md", "Old 1"), n("old2.md", "Old 2"), n("old3.md", "Old 3"),
+        n("new0.md", "New 0"), n("new1.md", "New 1"), n("new2.md", "New 2"),
+        n("new3.md", "New 3"), n("new4.md", "New 4"), n("new5.md", "New 5"),
       ],
       edges: [],
     };
@@ -163,8 +149,8 @@ describe("computeDiff", () => {
 
     const subgraph: SubgraphResult = {
       nodes: [
-        ...Array.from({ length: 10 }, (_, i) => ({ id: `n${i}.md`, title: `N ${i}` })),
-        { id: "new.md", title: "New" },
+        ...Array.from({ length: 10 }, (_, i) => n(`n${i}.md`, `N ${i}`)),
+        n("new.md", "New"),
       ],
       edges: [],
     };
@@ -183,11 +169,11 @@ describe("applyDiff", () => {
     graph.addNode("b.md", { label: "B", color: "#0969da", type: "filled", size: 8, x: 60, y: 60 });
 
     const diff = {
-      addedNodes: [{ id: "c.md", title: "Page C" }],
+      addedNodes: [n("c.md", "Page C")],
       removedNodes: [],
       updatedNodes: [],
-      addedEdges: [] as [string, string][],
-      removedEdges: [] as [string, string][],
+      addedEdges: [] as [string, string, EdgeKind][],
+      removedEdges: [] as [string, string, EdgeKind][],
       isMajorChange: false,
     };
     applyDiff(graph, diff, "#0969da");
@@ -208,8 +194,8 @@ describe("applyDiff", () => {
       addedNodes: [],
       removedNodes: ["c.md"],
       updatedNodes: [],
-      addedEdges: [] as [string, string][],
-      removedEdges: [] as [string, string][],
+      addedEdges: [] as [string, string, EdgeKind][],
+      removedEdges: [] as [string, string, EdgeKind][],
       isMajorChange: false,
     };
 
@@ -227,8 +213,8 @@ describe("applyDiff", () => {
       addedNodes: [],
       removedNodes: [],
       updatedNodes: [{ id: "a.md", title: "New" }],
-      addedEdges: [] as [string, string][],
-      removedEdges: [] as [string, string][],
+      addedEdges: [] as [string, string, EdgeKind][],
+      removedEdges: [] as [string, string, EdgeKind][],
       isMajorChange: false,
     };
 
@@ -248,8 +234,8 @@ describe("applyDiff", () => {
       addedNodes: [],
       removedNodes: [],
       updatedNodes: [],
-      addedEdges: [["a.md", "c.md"]] as [string, string][],
-      removedEdges: [["a.md", "b.md"]] as [string, string][],
+      addedEdges: [["a.md", "c.md", "wikilink"]] as [string, string, EdgeKind][],
+      removedEdges: [["a.md", "b.md", "wikilink"]] as [string, string, EdgeKind][],
       isMajorChange: false,
     };
 
@@ -264,11 +250,11 @@ describe("applyDiff", () => {
     graph.addNode("a.md", { label: "A", color: "#0969da", type: "filled", size: 10, x: 50, y: 50 });
 
     const diff = {
-      addedNodes: [{ id: "c.md", title: "C" }],
+      addedNodes: [n("c.md", "C")],
       removedNodes: [],
       updatedNodes: [],
-      addedEdges: [["a.md", "c.md"]] as [string, string][],
-      removedEdges: [] as [string, string][],
+      addedEdges: [["a.md", "c.md", "wikilink"]] as [string, string, EdgeKind][],
+      removedEdges: [] as [string, string, EdgeKind][],
       isMajorChange: false,
     };
 
@@ -278,5 +264,107 @@ describe("applyDiff", () => {
     const cy = graph.getNodeAttribute("c.md", "y") as number;
     const dist = Math.sqrt((cx - 50) ** 2 + (cy - 50) ** 2);
     expect(dist).toBeLessThan(30);
+  });
+});
+
+describe("computeDiff EdgeKind support", () => {
+  it("edge tuples include EdgeKind as third element", () => {
+    const graph = new Graph();
+    graph.addNode("a.md", { label: "A" });
+    graph.addNode("b.md", { label: "B" });
+
+    const subgraph: SubgraphResult = {
+      nodes: [n("a.md", "A"), n("b.md", "B")],
+      edges: [["a.md", "b.md", "wikilink"]],
+    };
+
+    const diff = computeDiff(graph, subgraph);
+
+    expect(diff.addedEdges).toEqual([["a.md", "b.md", "wikilink"]]);
+  });
+
+  it("treats wikilink and citation edges between same pair as distinct", () => {
+    const graph = new Graph();
+    graph.addNode("a.md", { label: "A" });
+    graph.addNode("b.md", { label: "B" });
+    graph.mergeUndirectedEdge("a.md", "b.md", { citation: false });
+
+    const subgraph: SubgraphResult = {
+      nodes: [n("a.md", "A"), n("b.md", "B")],
+      edges: [
+        ["a.md", "b.md", "wikilink"],
+        ["a.md", "b.md", "citation"],
+      ],
+    };
+
+    const diff = computeDiff(graph, subgraph);
+
+    // The wikilink edge already exists, so only the citation edge is added
+    expect(diff.addedEdges).toEqual([["a.md", "b.md", "citation"]]);
+    expect(diff.removedEdges).toEqual([]);
+  });
+});
+
+describe("applyDiff materialization and EdgeKind styling", () => {
+  it("uses shadow type for shadow nodes", () => {
+    const graph = new Graph();
+    graph.addNode("a.md", { label: "A", color: "#0969da", type: "filled", size: 10, x: 50, y: 50 });
+
+    const diff = {
+      addedNodes: [{ id: "x.md", title: "X", is_stub: false, materialization: "shadow" as const }],
+      removedNodes: [],
+      updatedNodes: [],
+      addedEdges: [] as [string, string, EdgeKind][],
+      removedEdges: [] as [string, string, EdgeKind][],
+      isMajorChange: false,
+    };
+
+    applyDiff(graph, diff, "#0969da");
+
+    expect(graph.getNodeAttribute("x.md", "type")).toBe("shadow");
+    expect(graph.getNodeAttribute("x.md", "color")).toBe(SHADOW_COLOR);
+    expect(graph.getNodeAttribute("x.md", "size")).toBe(NODE_SIZE * SHADOW_NODE_SIZE_FACTOR);
+  });
+
+  it("uses filled type for materialized nodes", () => {
+    const graph = new Graph();
+    graph.addNode("a.md", { label: "A", color: "#0969da", type: "filled", size: 10, x: 50, y: 50 });
+
+    const diff = {
+      addedNodes: [n("y.md", "Y")],
+      removedNodes: [],
+      updatedNodes: [],
+      addedEdges: [] as [string, string, EdgeKind][],
+      removedEdges: [] as [string, string, EdgeKind][],
+      isMajorChange: false,
+    };
+
+    applyDiff(graph, diff, "#0969da");
+
+    expect(graph.getNodeAttribute("y.md", "type")).toBe("filled");
+    expect(graph.getNodeAttribute("y.md", "color")).toBe("#0969da");
+    expect(graph.getNodeAttribute("y.md", "size")).toBe(NODE_SIZE);
+  });
+
+  it("styles citation edges differently from wikilink edges", () => {
+    const graph = new Graph();
+    graph.addNode("a.md", { label: "A", color: "#0969da", type: "filled", size: 10, x: 50, y: 50 });
+    graph.addNode("b.md", { label: "B", color: "#0969da", type: "filled", size: 8, x: 60, y: 60 });
+
+    const diff = {
+      addedNodes: [],
+      removedNodes: [],
+      updatedNodes: [],
+      addedEdges: [["a.md", "b.md", "citation"]] as [string, string, EdgeKind][],
+      removedEdges: [] as [string, string, EdgeKind][],
+      isMajorChange: false,
+    };
+
+    applyDiff(graph, diff, "#0969da");
+
+    const edge = graph.undirectedEdge("a.md", "b.md")!;
+    expect(graph.getEdgeAttribute(edge, "citation")).toBe(true);
+    expect(graph.getEdgeAttribute(edge, "size")).toBe(CITATION_EDGE_SIZE);
+    expect(graph.getEdgeAttribute(edge, "color")).toBe(CITATION_EDGE_COLOR);
   });
 });

@@ -452,11 +452,63 @@ pub fn get_graph_subgraph(
     seeds: Vec<String>,
     depth: usize,
     directed: Option<bool>,
+    include_citations: Option<bool>,
 ) -> Result<serde_json::Value, String> {
     with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
         let seed_refs: Vec<&str> = seeds.iter().map(|s| s.as_str()).collect();
-        let result = gi.subgraph_bundle(&seed_refs, depth, directed.unwrap_or(false))?;
+        let result = gi.subgraph_bundle(&seed_refs, depth, directed.unwrap_or(false), include_citations.unwrap_or(false))?;
         serde_json::to_value(result).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+    })
+}
+
+#[derive(serde::Serialize)]
+pub struct BibKeyState {
+    pub materialization: String,
+    pub page_id: Option<String>,
+}
+
+#[tauri::command]
+pub fn get_bib_key_states(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<GraphRegistry>>,
+) -> Result<HashMap<String, BibKeyState>, String> {
+    with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+        let store = gi.store();
+        let citekey_map: HashMap<String, String> = store
+            .citekey_pages()
+            .map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))?
+            .into_iter()
+            .collect();
+        let nodes = store
+            .all_nodes_metadata()
+            .map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))?;
+        let mut result = HashMap::new();
+        for (id, _is_stub, materialization) in &nodes {
+            if let Some(raw_key) = id.strip_prefix("bib:") {
+                let page_id = citekey_map.get(raw_key).cloned();
+                result.insert(
+                    raw_key.to_string(),
+                    BibKeyState {
+                        materialization: materialization.as_str().to_string(),
+                        page_id,
+                    },
+                );
+            }
+        }
+        // Also include citekey-linked pages that are materialized (no shadow node)
+        for (citekey, page_id) in &citekey_map {
+            if !result.contains_key(citekey.as_str()) {
+                result.insert(
+                    citekey.clone(),
+                    BibKeyState {
+                        materialization: "materialized".to_string(),
+                        page_id: Some(page_id.clone()),
+                    },
+                );
+            }
+        }
+        Ok(result)
     })
 }
 
@@ -809,7 +861,7 @@ mod tests {
         std::fs::write(dir.path().join("b.md"), "[[c]]").unwrap();
         std::fs::write(dir.path().join("c.md"), "Leaf.").unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
-        let result = gi.subgraph(&["a.md"], 1, true).unwrap();
+        let result = gi.subgraph(&["a.md"], 1, true, false).unwrap();
         let ids: std::collections::HashSet<&str> =
             result.nodes.iter().map(|n| n.id.as_str()).collect();
         assert!(ids.contains("a.md"));
@@ -823,7 +875,7 @@ mod tests {
         std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
         std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
-        let bundle = gi.subgraph_bundle(&[], 0, false).unwrap();
+        let bundle = gi.subgraph_bundle(&[], 0, false, false).unwrap();
         assert_eq!(bundle.subgraph.nodes.len(), 2);
         assert!(bundle.pagerank.contains_key("a.md"));
         assert!(bundle.pagerank.contains_key("b.md"));
@@ -1166,6 +1218,122 @@ mod tests {
         assert!(
             bystander.contains("[[other]]"),
             "bystander.md should be unchanged: {bystander}"
+        );
+    }
+
+    #[test]
+    fn cmd_subgraph_default_excludes_shadows_and_citations() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("assets/bib")).unwrap();
+        std::fs::write(
+            dir.path().join("a.md"),
+            "---\ntitle: A\n---\nSee [@smith2024].",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("assets/bib/a.bib"),
+            "@article{smith2024, author={Smith}, title={Test}, year={2024}}",
+        )
+        .unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let bundle = gi.subgraph_bundle(&[], 0, false, false).unwrap();
+        let node_ids: std::collections::HashSet<&str> =
+            bundle.subgraph.nodes.iter().map(|n| n.id.as_str()).collect();
+        // With include_citations=false, shadow nodes should NOT appear
+        assert!(
+            !node_ids.contains("bib:smith2024"),
+            "shadow node should be excluded by default"
+        );
+        // No citation edges
+        let citation_edges: Vec<_> = bundle
+            .subgraph
+            .edges
+            .iter()
+            .filter(|(_, _, k)| *k == crate::graph::types::EdgeKind::Citation)
+            .collect();
+        assert!(
+            citation_edges.is_empty(),
+            "citation edges should be excluded by default"
+        );
+    }
+
+    #[test]
+    fn cmd_subgraph_include_citations_shows_shadows() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("assets/bib")).unwrap();
+        std::fs::write(
+            dir.path().join("a.md"),
+            "---\ntitle: A\n---\nSee [@smith2024].",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("assets/bib/a.bib"),
+            "@article{smith2024, author={Smith}, title={Test}, year={2024}}",
+        )
+        .unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let bundle = gi.subgraph_bundle(&[], 0, false, true).unwrap();
+        let node_ids: std::collections::HashSet<&str> =
+            bundle.subgraph.nodes.iter().map(|n| n.id.as_str()).collect();
+        // With include_citations=true, shadow nodes SHOULD appear
+        assert!(
+            node_ids.contains("bib:smith2024"),
+            "shadow node should be included when include_citations=true"
+        );
+        // Citation edges should be present
+        let citation_edges: Vec<_> = bundle
+            .subgraph
+            .edges
+            .iter()
+            .filter(|(_, _, k)| *k == crate::graph::types::EdgeKind::Citation)
+            .collect();
+        assert!(
+            !citation_edges.is_empty(),
+            "citation edges should be present when include_citations=true"
+        );
+    }
+
+    #[test]
+    fn cmd_get_bib_key_states_returns_shadow_and_citekey() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("assets/bib")).unwrap();
+        std::fs::create_dir_all(dir.path().join("notes")).unwrap();
+        // a.md cites smith2024
+        std::fs::write(
+            dir.path().join("a.md"),
+            "---\ntitle: A\n---\nSee [@smith2024].",
+        )
+        .unwrap();
+        // notes/smith.md claims citekey doe2021
+        std::fs::write(
+            dir.path().join("notes/smith.md"),
+            "---\ntitle: Smith Notes\ncitekey: doe2021\n---\nNotes about Doe.",
+        )
+        .unwrap();
+        // bib file with both entries
+        std::fs::write(
+            dir.path().join("assets/bib/refs.bib"),
+            "@article{smith2024, author={Smith}, title={Test}, year={2024}}\n\
+             @article{doe2021, author={Doe}, title={Other}, year={2021}}",
+        )
+        .unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let store = gi.store();
+        // Verify shadow node bib:smith2024 exists
+        let nodes = store.all_nodes_metadata().unwrap();
+        let shadow = nodes.iter().find(|(id, _, _)| id == "bib:smith2024");
+        assert!(
+            shadow.is_some(),
+            "shadow node bib:smith2024 should exist; got nodes: {:?}",
+            nodes.iter().map(|(id, _, _)| id.as_str()).collect::<Vec<_>>()
+        );
+        // Verify citekey doe2021 maps to notes/smith.md
+        let citekey_map: std::collections::HashMap<String, String> =
+            store.citekey_pages().unwrap().into_iter().collect();
+        assert_eq!(
+            citekey_map.get("doe2021").map(|s| s.as_str()),
+            Some("notes/smith.md"),
+            "citekey doe2021 should map to notes/smith.md"
         );
     }
 }

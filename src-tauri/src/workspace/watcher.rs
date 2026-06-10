@@ -42,6 +42,27 @@ pub struct FileEvent {
     pub path: String,
 }
 
+fn try_refresh_shadows(app_handle: &AppHandle, root: &PathBuf) {
+    if let Some(graph_reg) = app_handle.try_state::<std::sync::Arc<GraphRegistry>>() {
+        let indices = graph_reg.indices.lock().unwrap();
+        if let Some(gi) = indices.get(root) {
+            let gi = Arc::clone(gi);
+            drop(indices);
+            match gi.refresh_shadows() {
+                Ok(true) => {
+                    let _ = app_handle.emit("lit:graph-updated", ());
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    eprintln!("[watcher] bib shadow refresh failed: {e}");
+                }
+            }
+        } else {
+            drop(indices);
+        }
+    }
+}
+
 impl FileWatcher {
     pub fn new(
         root: PathBuf,
@@ -71,6 +92,7 @@ impl FileWatcher {
                 };
 
                 let mut md_events: Vec<(String, FileChangeKind)> = Vec::new();
+                let mut bib_changed = false;
 
                 for event in events {
                     let path = &event.path;
@@ -122,9 +144,11 @@ impl FileWatcher {
                                     }
                                 }
 
-                                let is_md = path.extension().and_then(|e| e.to_str()) == Some("md");
-                                if is_md {
+                                let ext = path.extension().and_then(|e| e.to_str());
+                                if ext == Some("md") {
                                     md_events.push((relative, kind));
+                                } else if ext == Some("bib") {
+                                    bib_changed = true;
                                 }
                             }
                             DebouncedEventKind::AnyContinuous | _ => {}
@@ -136,11 +160,21 @@ impl FileWatcher {
                     let refs: Vec<(&str, FileChangeKind)> = md_events.iter().map(|(p, k)| (p.as_str(), *k)).collect();
                     let diff = accumulate_diff(&refs);
                     if diff.is_empty() {
+                        // md events cancelled out; still check bib
+                        if bib_changed {
+                            try_refresh_shadows(&app_handle, &root_clone);
+                        }
                         continue;
                     }
                     if let Some(graph_reg) = app_handle.try_state::<std::sync::Arc<GraphRegistry>>() {
                         let indices = graph_reg.indices.lock().unwrap();
                         if let Some(gi) = indices.get(&root_clone) {
+                            // When .bib files changed in the same debounce window,
+                            // invalidate the bib index cache BEFORE batch_reindex
+                            // so resolve_shadows re-walks for fresh bib data.
+                            if bib_changed {
+                                gi.mark_bib_dirty();
+                            }
                             let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
                             let result = gi.batch_reindex(&diff, ann_enabled);
                             drop(indices);
@@ -149,6 +183,9 @@ impl FileWatcher {
                             drop(indices);
                         }
                     }
+                } else if bib_changed {
+                    // Only .bib files changed — refresh shadow nodes without a full reindex
+                    try_refresh_shadows(&app_handle, &root_clone);
                 }
             }
         });
@@ -328,6 +365,16 @@ mod tests {
         assert!(is_relevant_file(Path::new("/workspace/sub/script.py"), root));
         assert!(!is_relevant_file(Path::new("/workspace/.hidden.rs"), root));
         assert!(!is_relevant_file(Path::new("/workspace/notes.txt"), root));
+    }
+
+    #[test]
+    fn bib_file_is_relevant_but_not_md() {
+        let root = Path::new("/workspace");
+        let bib_path = Path::new("/workspace/refs.bib");
+        assert!(is_relevant_file(bib_path, root));
+        let ext = bib_path.extension().and_then(|e| e.to_str());
+        assert_ne!(ext, Some("md"), ".bib must not be classified as .md");
+        assert_eq!(ext, Some("bib"));
     }
 
     #[test]

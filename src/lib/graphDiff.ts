@@ -1,18 +1,19 @@
 import type Graph from "graphology";
-import type { SubgraphResult, GraphNode } from "./ipc";
-import { NODE_SIZE } from "./graphLayout";
+import type { SubgraphResult, GraphNode, EdgeKind } from "./ipc";
+import { materializationAttrs, CITATION_EDGE_SIZE, CITATION_EDGE_COLOR } from "./graphLayout";
 
 export interface GraphDiff {
   addedNodes: GraphNode[];
   removedNodes: string[];
   updatedNodes: { id: string; title: string }[];
-  addedEdges: [string, string][];
-  removedEdges: [string, string][];
+  addedEdges: [string, string, EdgeKind][];
+  removedEdges: [string, string, EdgeKind][];
   isMajorChange: boolean;
 }
 
-function edgeKey(a: string, b: string): string {
-  return a < b ? `${a}--${b}` : `${b}--${a}`;
+function edgeKey(a: string, b: string, kind: EdgeKind): string {
+  const pair = a < b ? `${a}--${b}` : `${b}--${a}`;
+  return `${pair}::${kind}`;
 }
 
 export function computeDiff(graph: Graph, subgraph: SubgraphResult): GraphDiff {
@@ -42,30 +43,25 @@ export function computeDiff(graph: Graph, subgraph: SubgraphResult): GraphDiff {
     }
   }
 
-  const currentEdges = new Set<string>();
-  graph.forEachEdge((_edge, _attrs, source, target) => {
-    currentEdges.add(edgeKey(source, target));
+  const currentEdgeMap = new Map<string, [string, string, EdgeKind]>();
+  graph.forEachEdge((_edge, attrs, source, target) => {
+    const kind: EdgeKind = attrs.citation ? "citation" : "wikilink";
+    currentEdgeMap.set(edgeKey(source, target, kind), [source, target, kind]);
   });
 
-  const newEdges = new Set<string>();
-  for (const [source, target] of subgraph.edges) {
-    newEdges.add(edgeKey(source, target));
+  const newEdgeMap = new Map<string, [string, string, EdgeKind]>();
+  for (const [source, target, kind] of subgraph.edges) {
+    newEdgeMap.set(edgeKey(source, target, kind), [source, target, kind]);
   }
 
-  const addedEdges: [string, string][] = [];
-  for (const e of newEdges) {
-    if (!currentEdges.has(e)) {
-      const [a, b] = e.split("--") as [string, string];
-      addedEdges.push([a, b]);
-    }
+  const addedEdges: [string, string, EdgeKind][] = [];
+  for (const [key, tuple] of newEdgeMap) {
+    if (!currentEdgeMap.has(key)) addedEdges.push(tuple);
   }
 
-  const removedEdges: [string, string][] = [];
-  for (const e of currentEdges) {
-    if (!newEdges.has(e)) {
-      const [a, b] = e.split("--") as [string, string];
-      removedEdges.push([a, b]);
-    }
+  const removedEdges: [string, string, EdgeKind][] = [];
+  for (const [key, tuple] of currentEdgeMap) {
+    if (!newEdgeMap.has(key)) removedEdges.push(tuple);
   }
 
   const totalChanged = addedNodes.length + removedNodes.length;
@@ -108,11 +104,12 @@ export function applyDiff(
       y = sy / neighbors.length + (Math.random() - 0.5) * 20;
     }
 
+    const { type, color, size } = materializationAttrs(node.materialization, accentColor);
     graph.addNode(node.id, {
       label: node.title,
-      color: accentColor,
-      type: "filled",
-      size: NODE_SIZE,
+      color,
+      type,
+      size,
       x,
       y,
     });
@@ -126,9 +123,17 @@ export function applyDiff(
     graph.setNodeAttribute(id, "label", title);
   }
 
-  for (const [source, target] of diff.addedEdges) {
+  for (const [source, target, kind] of diff.addedEdges) {
     if (graph.hasNode(source) && graph.hasNode(target)) {
-      graph.mergeUndirectedEdge(source, target, { size: 0.5 });
+      if (kind === "citation") {
+        graph.mergeUndirectedEdge(source, target, {
+          size: CITATION_EDGE_SIZE,
+          color: CITATION_EDGE_COLOR,
+          citation: true,
+        });
+      } else {
+        graph.mergeUndirectedEdge(source, target, { size: 0.5 });
+      }
     }
   }
 

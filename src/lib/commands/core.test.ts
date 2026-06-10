@@ -42,12 +42,13 @@ describe("initCoreCommands", () => {
     mockPreferencesState.darkMode = "auto";
   });
 
-  it("registers exactly 7 commands with expected IDs", () => {
+  it("registers exactly 8 commands with expected IDs", () => {
     initCoreCommands();
     const commands = getAllCommands();
-    expect(commands).toHaveLength(7);
+    expect(commands).toHaveLength(8);
     const ids = commands.map((c) => c.id).sort();
     expect(ids).toEqual([
+      "core.graph.rebuildIndex",
       "core.page.copyPath",
       "core.page.delete",
       "core.page.new",
@@ -189,7 +190,7 @@ describe("initCoreCommands", () => {
     initCoreCommands();
     initCoreCommands();
     const commands = getAllCommands();
-    expect(commands).toHaveLength(7);
+    expect(commands).toHaveLength(8);
   });
 
   it("commands have icons", () => {

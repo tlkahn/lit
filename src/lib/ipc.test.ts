@@ -69,6 +69,7 @@ import {
   getGraphPaths,
   getGraphSubgraph,
   getFullSubgraph,
+  getBibKeyStates,
   getGraphPositions,
   ensureGraphReady,
   parseAnnotations,
@@ -576,20 +577,25 @@ describe("ipc", () => {
           return { nodes: 5, stubs: 1, edges: 3, tags: 2 };
         case "get_graph_neighbors":
           return {
-            nodes: [{ id: "a.md", title: "A" }],
-            edges: [["a.md", "b.md"]],
+            nodes: [{ id: "a.md", title: "A", is_stub: false, materialization: "materialized" }],
+            edges: [["a.md", "b.md", "wikilink"]],
           };
         case "get_graph_paths":
           return [["a.md", "b.md", "c.md"]];
         case "get_graph_subgraph":
           return {
             nodes: [
-              { id: "a.md", title: "A" },
-              { id: "b.md", title: "B" },
+              { id: "a.md", title: "A", is_stub: false, materialization: "materialized" },
+              { id: "b.md", title: "B", is_stub: false, materialization: "materialized" },
             ],
-            edges: [["a.md", "b.md"]],
+            edges: [["a.md", "b.md", "wikilink"]],
             pagerank: { "a.md": 0.4, "b.md": 0.6 },
             positions: {},
+          };
+        case "get_bib_key_states":
+          return {
+            smith2024: { materialization: "shadow", page_id: null },
+            doe2021: { materialization: "materialized", page_id: "notes/doe2021.md" },
           };
         case "resolve_wikilink": {
           const a = args as Record<string, unknown> | undefined;
@@ -1160,10 +1166,12 @@ describe("ipc", () => {
     const result = await getGraphSubgraph(["a.md", "b.md"], 1);
     expect(result.nodes).toHaveLength(2);
     expect(result.edges).toHaveLength(1);
+    expect(result.edges[0]).toEqual(["a.md", "b.md", "wikilink"]);
+    expect(result.nodes[0]!.materialization).toBe("materialized");
     expect(result.pagerank).toEqual({ "a.md": 0.4, "b.md": 0.6 });
     expect(result.positions).toEqual({});
     const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: ["a.md", "b.md"], depth: 1, directed: null });
+    expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: ["a.md", "b.md"], depth: 1, directed: null, includeCitations: null });
   });
 
   it("getFullSubgraph calls get_graph_subgraph with empty seeds", async () => {
@@ -1173,8 +1181,32 @@ describe("ipc", () => {
     expect(result.positions).toEqual({});
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", {
-      seeds: [], depth: 0, directed: null,
+      seeds: [], depth: 0, directed: null, includeCitations: null,
     });
+  });
+
+  it("getGraphSubgraph passes includeCitations when provided", async () => {
+    await getGraphSubgraph(["a.md"], 1, false, true);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", {
+      seeds: ["a.md"], depth: 1, directed: false, includeCitations: true,
+    });
+  });
+
+  it("getFullSubgraph passes includeCitations when provided", async () => {
+    await getFullSubgraph(true);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", {
+      seeds: [], depth: 0, directed: null, includeCitations: true,
+    });
+  });
+
+  it("getBibKeyStates returns bib key state map", async () => {
+    const result = await getBibKeyStates();
+    expect(result.smith2024).toEqual({ materialization: "shadow", page_id: null });
+    expect(result.doe2021).toEqual({ materialization: "materialized", page_id: "notes/doe2021.md" });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("get_bib_key_states");
   });
 
   it("getUnlinkedMentions returns mention entries", async () => {

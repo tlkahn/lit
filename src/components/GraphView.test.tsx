@@ -44,7 +44,7 @@ describe("GraphView", () => {
     vi.clearAllMocks();
     lastSigmaOptions = {};
     useGraphSelectionStore.setState({ selectedNodes: [], selectionMode: "none" });
-    useGraphViewState.setState({ mode: "full", depth: 2 });
+    useGraphViewState.setState({ mode: "full", depth: 2, showCitations: false });
     resetListenMock();
     mockListen();
     mockInvoke((cmd) => {
@@ -82,7 +82,7 @@ describe("GraphView", () => {
     render(<GraphView />);
     const { invoke } = await import("@tauri-apps/api/core");
     await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: [], depth: 0, directed: null });
+      expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: [], depth: 0, directed: null, includeCitations: null });
     });
     expect(invoke).not.toHaveBeenCalledWith("get_pagerank", expect.anything());
   });
@@ -329,7 +329,7 @@ describe("GraphView", () => {
     });
 
     await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: ["a.md"], depth: 2, directed: null });
+      expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: ["a.md"], depth: 2, directed: null, includeCitations: null });
     });
 
     expect(screen.getByRole("button", { name: "2" })).toBeTruthy();
@@ -353,7 +353,7 @@ describe("GraphView", () => {
     });
 
     await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: ["a.md"], depth: 3, directed: null });
+      expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: ["a.md"], depth: 3, directed: null, includeCitations: null });
     });
   });
 
@@ -498,6 +498,35 @@ describe("GraphView", () => {
     expect(localBtn).not.toBeDisabled();
   });
 
+
+  it("renders Show citations toggle button", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+    expect(screen.getByRole("button", { name: "Show citations" })).toBeTruthy();
+  });
+
+  it("clicking Show citations toggle passes includeCitations to IPC", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    (invoke as unknown as ReturnType<typeof vi.fn>).mockClear();
+
+    await act(async () => {
+      await userEvent.click(screen.getByRole("button", { name: "Show citations" }));
+    });
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", {
+        seeds: [],
+        depth: 0,
+        directed: null,
+        includeCitations: true,
+      });
+    });
+  });
 
   it("enterNode sets cursor to pointer, leaveNode resets to grab", async () => {
     const GraphView = (await import("./GraphView")).default;
@@ -1050,7 +1079,7 @@ describe("GraphView", () => {
     });
 
     await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: [], depth: 0, directed: null });
+      expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: [], depth: 0, directed: null, includeCitations: null });
     });
 
     resetListenMock();

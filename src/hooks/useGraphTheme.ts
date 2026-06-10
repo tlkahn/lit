@@ -17,7 +17,7 @@ export function useGraphTheme(
     const { accentColor, dimColor, edgeColor, labelColor } = resolveThemeColors();
     dimColorRef.current = dimColor;
     graph.forEachNode((node: string, attrs: Record<string, unknown>) => {
-      if (attrs.type === "seed") return;
+      if (attrs.type === "seed" || attrs.type === "shadow") return;
       graph.setNodeAttribute(node, "color", accentColor);
     });
     sigma.setSetting("defaultEdgeColor", edgeColor);

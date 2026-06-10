@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
@@ -52,6 +53,24 @@ pub fn scan_workspace_bibs(root: &Path, cache: &BibCache) -> Vec<BibEntry> {
             .then(a.line_number.cmp(&b.line_number))
     });
     all
+}
+
+/// Build a key -> BibEntry index from all `.bib` files in the workspace.
+/// Used by the graph indexer to create shadow nodes for cited bib keys.
+///
+/// Returns a cached result when the index cache is warm (populated by a
+/// previous call and not yet invalidated via [`BibCache::mark_index_dirty`]).
+/// This avoids the O(filesystem) `WalkDir` on the hot path (pure `.md` saves).
+pub fn build_bib_index(root: &Path, cache: &BibCache) -> HashMap<String, BibEntry> {
+    if let Some(cached) = cache.get_cached_index() {
+        return cached;
+    }
+    let index: HashMap<String, BibEntry> = scan_workspace_bibs(root, cache)
+        .into_iter()
+        .map(|e| (e.key.clone(), e))
+        .collect();
+    cache.set_cached_index(index.clone());
+    index
 }
 
 pub fn scan_workspace_bib_paths(root: &Path) -> Vec<String> {
@@ -244,5 +263,50 @@ mod tests {
         let entries = scan_workspace_bibs(dir.path(), &BibCache::new());
         assert_eq!(entries[0].doi, Some("10.1/x".to_string()));
         assert_eq!(entries[0].tags, vec!["ml", "nlp"]);
+    }
+
+    // --- build_bib_index caching tests ---
+
+    #[test]
+    fn build_bib_index_caches_result() {
+        let dir = TempDir::new().unwrap();
+        let bib_path = dir.path().join("refs.bib");
+        fs::write(&bib_path, sample_bib()).unwrap();
+
+        let cache = BibCache::new();
+
+        // First call populates the index cache
+        let index1 = build_bib_index(dir.path(), &cache);
+        assert_eq!(index1.len(), 1);
+        assert!(index1.contains_key("smith2020"));
+
+        // Delete the .bib file from disk but do NOT mark dirty
+        fs::remove_file(&bib_path).unwrap();
+
+        // Second call should return cached result (proves no re-walk)
+        let index2 = build_bib_index(dir.path(), &cache);
+        assert_eq!(index2.len(), 1, "cached result should be returned even though .bib file is gone");
+        assert!(index2.contains_key("smith2020"));
+    }
+
+    #[test]
+    fn build_bib_index_re_walks_after_dirty() {
+        let dir = TempDir::new().unwrap();
+        let bib_path = dir.path().join("refs.bib");
+        fs::write(&bib_path, sample_bib()).unwrap();
+
+        let cache = BibCache::new();
+
+        // First call populates the index cache
+        let index1 = build_bib_index(dir.path(), &cache);
+        assert_eq!(index1.len(), 1);
+
+        // Delete the .bib file from disk, then mark dirty
+        fs::remove_file(&bib_path).unwrap();
+        cache.mark_index_dirty();
+
+        // Now build_bib_index should re-walk and find nothing
+        let index2 = build_bib_index(dir.path(), &cache);
+        assert!(index2.is_empty(), "after mark_index_dirty and file deletion, index should be empty");
     }
 }

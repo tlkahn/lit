@@ -29,6 +29,11 @@ export const SEED_COLOR = "#f59e0b";
 
 export const SELECTED_COLOR = "#fbbf24";
 
+export const SHADOW_COLOR = "#8b949e";
+export const CITATION_EDGE_COLOR = "#8b949e";
+export const CITATION_EDGE_SIZE = 0.3;
+export const SHADOW_NODE_SIZE_FACTOR = 0.7;
+
 /** Derive a node label from its path: strip directory and the `.md` extension. Mirrors the Rust title fallback. */
 export function nodeLabelFromPath(p: string): string {
   const base = p.split("/").pop() ?? p;
@@ -41,6 +46,16 @@ export function seedAttrs(isSeed: boolean, accentColor: string): { type: string;
     : { type: "filled", color: accentColor };
 }
 
+export function materializationAttrs(
+  materialization: import("./ipc").Materialization,
+  accentColor: string,
+): { type: string; color: string; size: number } {
+  if (materialization === "shadow" || materialization === "partial") {
+    return { type: "shadow", color: SHADOW_COLOR, size: NODE_SIZE * SHADOW_NODE_SIZE_FACTOR };
+  }
+  return { type: "filled", color: accentColor, size: NODE_SIZE };
+}
+
 export interface GraphBuildOptions {
   subgraph: SubgraphResult;
   accentColor: string;
@@ -50,20 +65,34 @@ export interface GraphBuildOptions {
 export function populateGraph(graph: Graph, subgraph: SubgraphResult, accentColor: string, seedId?: string): void {
   for (const node of subgraph.nodes) {
     const isSeed = seedId != null && node.id === seedId;
-    const { type, color } = seedAttrs(isSeed, accentColor);
+    let type: string, color: string, size: number;
+    if (isSeed) {
+      ({ type, color } = seedAttrs(true, accentColor));
+      size = NODE_SIZE;
+    } else {
+      ({ type, color, size } = materializationAttrs(node.materialization, accentColor));
+    }
     graph.addNode(node.id, {
       label: node.title,
       color,
       type,
-      size: NODE_SIZE,
+      size,
       x: Math.random() * 100,
       y: Math.random() * 100,
     });
   }
 
-  for (const [source, target] of subgraph.edges) {
+  for (const [source, target, kind] of subgraph.edges) {
     if (!graph.hasNode(source) || !graph.hasNode(target)) continue;
-    graph.mergeUndirectedEdge(source, target, { size: 0.5 });
+    if (kind === "citation") {
+      graph.mergeUndirectedEdge(source, target, {
+        size: CITATION_EDGE_SIZE,
+        color: CITATION_EDGE_COLOR,
+        citation: true,
+      });
+    } else {
+      graph.mergeUndirectedEdge(source, target, { size: 0.5 });
+    }
   }
 }
 

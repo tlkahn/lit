@@ -1,6 +1,17 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { buildGraph, resolveThemeColors, applyPositions, recolorSeed, seedAttrs, nodeLabelFromPath, NODE_SIZE, SEED_COLOR, SELECTED_COLOR } from "./graphLayout";
-import type { SubgraphResult } from "./ipc";
+import { buildGraph, resolveThemeColors, applyPositions, recolorSeed, seedAttrs, nodeLabelFromPath, NODE_SIZE, SEED_COLOR, SELECTED_COLOR, SHADOW_COLOR, CITATION_EDGE_COLOR, CITATION_EDGE_SIZE, SHADOW_NODE_SIZE_FACTOR, materializationAttrs, populateGraph } from "./graphLayout";
+import Graph from "graphology";
+import type { SubgraphResult, GraphNode, EdgeKind } from "./ipc";
+
+/** Helper to create a materialized GraphNode for test fixtures */
+function gn(id: string, title: string): GraphNode {
+  return { id, title, is_stub: false, materialization: "materialized" };
+}
+
+/** Helper to create a wikilink edge triple */
+function ge(src: string, tgt: string): [string, string, EdgeKind] {
+  return [src, tgt, "wikilink"];
+}
 
 describe("graphLayout", () => {
   describe("buildGraph", () => {
@@ -19,7 +30,7 @@ describe("graphLayout", () => {
 
     it("single real node has correct attributes", () => {
       const subgraph: SubgraphResult = {
-        nodes: [{ id: "a.md", title: "Alpha" }],
+        nodes: [gn("a.md", "Alpha")],
         edges: [],
       };
       const graph = buildGraph({ subgraph, accentColor: "#7c3aed" });
@@ -34,10 +45,7 @@ describe("graphLayout", () => {
 
     it("all nodes get uniform NODE_SIZE", () => {
       const subgraph: SubgraphResult = {
-        nodes: [
-          { id: "a.md", title: "A" },
-          { id: "s.md", title: "Stub" },
-        ],
+        nodes: [gn("a.md", "A"), gn("s.md", "Stub")],
         edges: [],
       };
       const graph = buildGraph({ subgraph, accentColor: "#7c3aed" });
@@ -47,11 +55,8 @@ describe("graphLayout", () => {
 
     it("edges added between existing nodes with size 1", () => {
       const subgraph: SubgraphResult = {
-        nodes: [
-          { id: "a.md", title: "A" },
-          { id: "b.md", title: "B" },
-        ],
-        edges: [["a.md", "b.md"]],
+        nodes: [gn("a.md", "A"), gn("b.md", "B")],
+        edges: [ge("a.md", "b.md")],
       };
       const graph = buildGraph({ subgraph, ...defaults });
       expect(graph.size).toBe(1);
@@ -60,8 +65,8 @@ describe("graphLayout", () => {
 
     it("edge referencing missing node is silently skipped", () => {
       const subgraph: SubgraphResult = {
-        nodes: [{ id: "a.md", title: "A" }],
-        edges: [["a.md", "missing.md"]],
+        nodes: [gn("a.md", "A")],
+        edges: [ge("a.md", "missing.md")],
       };
       const graph = buildGraph({ subgraph, ...defaults });
       expect(graph.size).toBe(0);
@@ -69,10 +74,7 @@ describe("graphLayout", () => {
 
     it("seed node gets distinct color and type", () => {
       const subgraph: SubgraphResult = {
-        nodes: [
-          { id: "a.md", title: "A" },
-          { id: "b.md", title: "B" },
-        ],
+        nodes: [gn("a.md", "A"), gn("b.md", "B")],
         edges: [],
       };
       const graph = buildGraph({ subgraph, accentColor: "#7c3aed", seedId: "a.md" });
@@ -86,7 +88,7 @@ describe("graphLayout", () => {
 
     it("seed node has same size as other nodes", () => {
       const subgraph: SubgraphResult = {
-        nodes: [{ id: "a.md", title: "A" }],
+        nodes: [gn("a.md", "A")],
         edges: [],
       };
       const graph = buildGraph({ subgraph, accentColor: "#7c3aed", seedId: "a.md" });
@@ -95,7 +97,7 @@ describe("graphLayout", () => {
 
     it("no seedId means all nodes use normal attributes", () => {
       const subgraph: SubgraphResult = {
-        nodes: [{ id: "a.md", title: "A" }],
+        nodes: [gn("a.md", "A")],
         edges: [],
       };
       const graph = buildGraph({ subgraph, accentColor: "#7c3aed" });
@@ -105,11 +107,8 @@ describe("graphLayout", () => {
 
     it("duplicate directional edges produce one undirected edge", () => {
       const subgraph: SubgraphResult = {
-        nodes: [
-          { id: "a.md", title: "A" },
-          { id: "b.md", title: "B" },
-        ],
-        edges: [["a.md", "b.md"], ["b.md", "a.md"]],
+        nodes: [gn("a.md", "A"), gn("b.md", "B")],
+        edges: [ge("a.md", "b.md"), ge("b.md", "a.md")],
       };
       const graph = buildGraph({ subgraph, ...defaults });
       expect(graph.size).toBe(1);
@@ -180,13 +179,9 @@ describe("graphLayout", () => {
   });
 
   describe("applyPositions", () => {
-    function makeGraph(edges: [string, string][] = []): import("graphology").default {
-      const sub = {
-        nodes: [
-          { id: "a.md", title: "A" },
-          { id: "b.md", title: "B" },
-          { id: "c.md", title: "C" },
-        ],
+    function makeGraph(edges: [string, string, EdgeKind][] = []): import("graphology").default {
+      const sub: SubgraphResult = {
+        nodes: [gn("a.md", "A"), gn("b.md", "B"), gn("c.md", "C")],
         edges,
       };
       return buildGraph({ subgraph: sub, accentColor: "#7c3aed" });
@@ -213,7 +208,7 @@ describe("graphLayout", () => {
     });
 
     it("places uncached node near centroid of its positioned neighbors", () => {
-      const graph = makeGraph([["a.md", "c.md"], ["b.md", "c.md"]]);
+      const graph = makeGraph([ge("a.md", "c.md"), ge("b.md", "c.md")]);
       applyPositions(graph, { "a.md": { x: 100, y: 100 }, "b.md": { x: 200, y: 200 } });
       const cx = graph.getNodeAttribute("c.md", "x") as number;
       const cy = graph.getNodeAttribute("c.md", "y") as number;
@@ -234,7 +229,7 @@ describe("graphLayout", () => {
     });
 
     it("mixed scenario — cached, uncached-with-neighbor, uncached-isolated", () => {
-      const graph = makeGraph([["a.md", "b.md"]]);
+      const graph = makeGraph([ge("a.md", "b.md")]);
       applyPositions(graph, { "a.md": { x: 500, y: 500 } });
       // a.md: cached — exact position
       expect(graph.getNodeAttribute("a.md", "x")).toBe(500);
@@ -276,16 +271,92 @@ describe("graphLayout", () => {
     });
   });
 
+  describe("materializationAttrs", () => {
+    it("returns shadow type for shadow materialization", () => {
+      const result = materializationAttrs("shadow", "#7c3aed");
+      expect(result).toEqual({ type: "shadow", color: SHADOW_COLOR, size: NODE_SIZE * SHADOW_NODE_SIZE_FACTOR });
+    });
+
+    it("returns shadow type for partial materialization", () => {
+      const result = materializationAttrs("partial", "#7c3aed");
+      expect(result).toEqual({ type: "shadow", color: SHADOW_COLOR, size: NODE_SIZE * SHADOW_NODE_SIZE_FACTOR });
+    });
+
+    it("returns filled type for materialized", () => {
+      const result = materializationAttrs("materialized", "#7c3aed");
+      expect(result).toEqual({ type: "filled", color: "#7c3aed", size: NODE_SIZE });
+    });
+  });
+
+  describe("populateGraph shadow/citation styling", () => {
+    it("shadow node gets shadow type, dimmed color, smaller size", () => {
+      const graph = new Graph();
+      const subgraph: SubgraphResult = {
+        nodes: [
+          { id: "bib:smith2024", title: "Smith (2024)", is_stub: false, materialization: "shadow" },
+          { id: "a.md", title: "A", is_stub: false, materialization: "materialized" },
+        ],
+        edges: [["a.md", "bib:smith2024", "citation"]],
+      };
+      populateGraph(graph, subgraph, "#7c3aed");
+      const attrs = graph.getNodeAttributes("bib:smith2024");
+      expect(attrs.type).toBe("shadow");
+      expect(attrs.color).toBe(SHADOW_COLOR);
+      expect(attrs.size).toBe(NODE_SIZE * SHADOW_NODE_SIZE_FACTOR);
+    });
+
+    it("citation edge gets faint color and thin size", () => {
+      const graph = new Graph();
+      const subgraph: SubgraphResult = {
+        nodes: [
+          { id: "a.md", title: "A", is_stub: false, materialization: "materialized" },
+          { id: "bib:smith2024", title: "Smith (2024)", is_stub: false, materialization: "shadow" },
+        ],
+        edges: [["a.md", "bib:smith2024", "citation"]],
+      };
+      populateGraph(graph, subgraph, "#7c3aed");
+      const edgeKey = graph.edges()[0]!;
+      const edgeAttrs = graph.getEdgeAttributes(edgeKey);
+      expect(edgeAttrs.size).toBe(CITATION_EDGE_SIZE);
+      expect(edgeAttrs.color).toBe(CITATION_EDGE_COLOR);
+      expect(edgeAttrs.citation).toBe(true);
+    });
+
+    it("citation edge with missing node is skipped", () => {
+      const graph = new Graph();
+      const subgraph: SubgraphResult = {
+        nodes: [
+          { id: "a.md", title: "A", is_stub: false, materialization: "materialized" },
+        ],
+        edges: [["a.md", "bib:missing", "citation"]],
+      };
+      populateGraph(graph, subgraph, "#7c3aed");
+      expect(graph.size).toBe(0);
+    });
+
+    it("wikilink edge still gets default attrs", () => {
+      const graph = new Graph();
+      const subgraph: SubgraphResult = {
+        nodes: [
+          { id: "a.md", title: "A", is_stub: false, materialization: "materialized" },
+          { id: "b.md", title: "B", is_stub: false, materialization: "materialized" },
+        ],
+        edges: [["a.md", "b.md", "wikilink"]],
+      };
+      populateGraph(graph, subgraph, "#7c3aed");
+      const edgeKey = graph.edges()[0]!;
+      const edgeAttrs = graph.getEdgeAttributes(edgeKey);
+      expect(edgeAttrs.size).toBe(0.5);
+      expect(edgeAttrs.citation).toBeUndefined();
+    });
+  });
+
   describe("recolorSeed", () => {
     const accentColor = "#7c3aed";
 
     function makeSeedGraph(): import("graphology").default {
       const sub: SubgraphResult = {
-        nodes: [
-          { id: "a.md", title: "A" },
-          { id: "b.md", title: "B" },
-          { id: "c.md", title: "C" },
-        ],
+        nodes: [gn("a.md", "A"), gn("b.md", "B"), gn("c.md", "C")],
         edges: [],
       };
       return buildGraph({ subgraph: sub, accentColor, seedId: "a.md" });

@@ -116,6 +116,35 @@ describe("GraphToolbar", () => {
     });
   });
 
+  describe("show citations toggle", () => {
+    it("renders Show citations button when onShowCitationsChange provided", () => {
+      render(<GraphToolbar {...defaults} onShowCitationsChange={vi.fn()} />);
+      expect(screen.getByRole("button", { name: "Show citations" })).toBeTruthy();
+    });
+
+    it("Show citations button not rendered when onShowCitationsChange is undefined", () => {
+      render(<GraphToolbar {...defaults} />);
+      expect(screen.queryByRole("button", { name: "Show citations" })).toBeNull();
+    });
+
+    it("Show citations button has aria-pressed=true when showCitations=true", () => {
+      render(<GraphToolbar {...defaults} showCitations={true} onShowCitationsChange={vi.fn()} />);
+      expect(screen.getByRole("button", { name: "Show citations" }).getAttribute("aria-pressed")).toBe("true");
+    });
+
+    it("Show citations button has aria-pressed=false when showCitations=false", () => {
+      render(<GraphToolbar {...defaults} showCitations={false} onShowCitationsChange={vi.fn()} />);
+      expect(screen.getByRole("button", { name: "Show citations" }).getAttribute("aria-pressed")).toBe("false");
+    });
+
+    it("clicking Show citations toggles via onShowCitationsChange", async () => {
+      const onShowCitationsChange = vi.fn();
+      render(<GraphToolbar {...defaults} showCitations={false} onShowCitationsChange={onShowCitationsChange} />);
+      await userEvent.click(screen.getByRole("button", { name: "Show citations" }));
+      expect(onShowCitationsChange).toHaveBeenCalledWith(true);
+    });
+  });
+
   describe("selection badge", () => {
     it("renders badge with selectionCount=3 showing '3'", () => {
       render(<GraphToolbar {...defaults} selectionCount={3} />);

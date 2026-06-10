@@ -8,18 +8,18 @@ import type { UseGraphDataOptions } from "./useGraphData";
 
 const TWO_NODE_SUBGRAPH: SubgraphResult = {
   nodes: [
-    { id: "a.md", title: "A" },
-    { id: "b.md", title: "B" },
+    { id: "a.md", title: "A", is_stub: false, materialization: "materialized" },
+    { id: "b.md", title: "B", is_stub: false, materialization: "materialized" },
   ],
-  edges: [["a.md", "b.md"]],
+  edges: [["a.md", "b.md", "wikilink"]],
 };
 
 const LOCAL_SUBGRAPH: SubgraphResult = {
   nodes: [
-    { id: "a.md", title: "A" },
-    { id: "c.md", title: "C" },
+    { id: "a.md", title: "A", is_stub: false, materialization: "materialized" },
+    { id: "c.md", title: "C", is_stub: false, materialization: "materialized" },
   ],
-  edges: [["a.md", "c.md"]],
+  edges: [["a.md", "c.md", "wikilink"]],
 };
 
 function makeInvokeHandler(subgraph: SubgraphResult = TWO_NODE_SUBGRAPH) {
@@ -84,6 +84,7 @@ describe("useGraphData", () => {
         seeds: [],
         depth: 0,
         directed: null,
+        includeCitations: null,
       });
       expect(result.current.graphStats).toEqual({ nodes: 2, edges: 1 });
       expect(result.current.graphRef.current!.order).toBe(2);
@@ -131,6 +132,7 @@ describe("useGraphData", () => {
         seeds: ["a.md"],
         depth: 2,
         directed: null,
+        includeCitations: null,
       });
       expect(result.current.graphRef.current!.hasNode("a.md")).toBe(true);
       expect(result.current.graphRef.current!.hasNode("c.md")).toBe(true);
@@ -184,10 +186,10 @@ describe("useGraphData", () => {
     it("injects the active node when the returned subgraph omits it", async () => {
       const subgraphWithoutSeed: SubgraphResult = {
         nodes: [
-          { id: "x.md", title: "X" },
-          { id: "y.md", title: "Y" },
+          { id: "x.md", title: "X", is_stub: false, materialization: "materialized" },
+          { id: "y.md", title: "Y", is_stub: false, materialization: "materialized" },
         ],
-        edges: [["x.md", "y.md"]],
+        edges: [["x.md", "y.md", "wikilink"]],
       };
       mockInvoke((cmd: string) => {
         if (cmd === "get_graph_subgraph") return subgraphWithoutSeed;
@@ -349,6 +351,8 @@ describe("useGraphData", () => {
       const manyNodes = Array.from({ length: 1200 }, (_, i) => ({
         id: `n${i}.md`,
         title: `N${i}`,
+        is_stub: false as const,
+        materialization: "materialized" as const,
       }));
       const largeSubgraph: SubgraphResult = { nodes: manyNodes, edges: [] };
       mockInvoke(makeInvokeHandler(largeSubgraph));
@@ -482,11 +486,11 @@ describe("useGraphData", () => {
       let callCount = 0;
       const updatedSubgraph: SubgraphResult = {
         nodes: [
-          { id: "a.md", title: "A" },
-          { id: "b.md", title: "B" },
-          { id: "d.md", title: "D" },
+          { id: "a.md", title: "A", is_stub: false, materialization: "materialized" },
+          { id: "b.md", title: "B", is_stub: false, materialization: "materialized" },
+          { id: "d.md", title: "D", is_stub: false, materialization: "materialized" },
         ],
-        edges: [["a.md", "b.md"], ["b.md", "d.md"]],
+        edges: [["a.md", "b.md", "wikilink"], ["b.md", "d.md", "wikilink"]],
       };
 
       mockInvoke((cmd: string) => {
@@ -526,11 +530,11 @@ describe("useGraphData", () => {
       let callCount = 0;
       const updatedLocalSubgraph: SubgraphResult = {
         nodes: [
-          { id: "a.md", title: "A" },
-          { id: "c.md", title: "C" },
-          { id: "d.md", title: "D" },
+          { id: "a.md", title: "A", is_stub: false, materialization: "materialized" },
+          { id: "c.md", title: "C", is_stub: false, materialization: "materialized" },
+          { id: "d.md", title: "D", is_stub: false, materialization: "materialized" },
         ],
-        edges: [["a.md", "c.md"], ["a.md", "d.md"]],
+        edges: [["a.md", "c.md", "wikilink"], ["a.md", "d.md", "wikilink"]],
       };
 
       const handler = vi.fn((cmd: string, _args?: Record<string, unknown>) => {
@@ -566,6 +570,7 @@ describe("useGraphData", () => {
         seeds: ["a.md"],
         depth: 2,
         directed: null,
+        includeCitations: null,
       });
       expect(result.current.graphStats).toEqual({ nodes: 3, edges: 2 });
       expect(result.current.dataVersion).toBeGreaterThan(v1);
@@ -609,6 +614,7 @@ describe("useGraphData", () => {
           seeds: ["a.md"],
           depth: 2,
           directed: null,
+          includeCitations: null,
         });
       });
 
@@ -619,10 +625,10 @@ describe("useGraphData", () => {
     it("reads updated activePageIdRef after seed change", async () => {
       const SUBGRAPH_B: SubgraphResult = {
         nodes: [
-          { id: "b.md", title: "B" },
-          { id: "e.md", title: "E" },
+          { id: "b.md", title: "B", is_stub: false, materialization: "materialized" },
+          { id: "e.md", title: "E", is_stub: false, materialization: "materialized" },
         ],
-        edges: [["b.md", "e.md"]],
+        edges: [["b.md", "e.md", "wikilink"]],
       };
 
       const handler = vi.fn((cmd: string, args?: Record<string, unknown>) => {
@@ -663,6 +669,7 @@ describe("useGraphData", () => {
           seeds: ["b.md"],
           depth: 2,
           directed: null,
+          includeCitations: null,
         });
       });
     });
@@ -748,11 +755,11 @@ describe("useGraphData", () => {
 
       const updatedSubgraph: SubgraphResult = {
         nodes: [
-          { id: "a.md", title: "A" },
-          { id: "b.md", title: "B" },
-          { id: "d.md", title: "D" },
+          { id: "a.md", title: "A", is_stub: false, materialization: "materialized" },
+          { id: "b.md", title: "B", is_stub: false, materialization: "materialized" },
+          { id: "d.md", title: "D", is_stub: false, materialization: "materialized" },
         ],
-        edges: [["a.md", "b.md"], ["b.md", "d.md"]],
+        edges: [["a.md", "b.md", "wikilink"], ["b.md", "d.md", "wikilink"]],
       };
 
       const { result } = renderHook(() =>
@@ -825,14 +832,14 @@ describe("useGraphData", () => {
 
       const freshSubgraph: SubgraphResult = {
         nodes: [
-          { id: "a.md", title: "A" },
-          { id: "b.md", title: "B" },
-          { id: "d.md", title: "D" },
+          { id: "a.md", title: "A", is_stub: false, materialization: "materialized" },
+          { id: "b.md", title: "B", is_stub: false, materialization: "materialized" },
+          { id: "d.md", title: "D", is_stub: false, materialization: "materialized" },
         ],
-        edges: [["a.md", "b.md"], ["b.md", "d.md"]],
+        edges: [["a.md", "b.md", "wikilink"], ["b.md", "d.md", "wikilink"]],
       };
       const staleSubgraph: SubgraphResult = {
-        nodes: [{ id: "stale.md", title: "Stale" }],
+        nodes: [{ id: "stale.md", title: "Stale", is_stub: false, materialization: "materialized" }],
         edges: [],
       };
 
@@ -973,7 +980,7 @@ describe("useGraphData", () => {
         if (cmd === "get_graph_subgraph") {
           const seeds = (args?.seeds as string[]) ?? [];
           return seeds[0] === "b.md"
-            ? { nodes: [{ id: "b.md", title: "B" }], edges: [] }
+            ? { nodes: [{ id: "b.md", title: "B", is_stub: false, materialization: "materialized" }], edges: [] }
             : LOCAL_SUBGRAPH;
         }
         return {};
@@ -1034,6 +1041,93 @@ describe("useGraphData", () => {
       });
 
       recolorSpy.mockRestore();
+    });
+  });
+
+  // Cycle: showCitations threading
+  describe("showCitations", () => {
+    it("full mode with showCitations=true passes includeCitations to IPC", async () => {
+      const handler = vi.fn(makeInvokeHandler());
+      mockInvoke(handler);
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "full", depth: 1, activePageId: null, showCitations: true }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      expect(handler).toHaveBeenCalledWith("get_graph_subgraph", {
+        seeds: [],
+        depth: 0,
+        directed: null,
+        includeCitations: true,
+      });
+    });
+
+    it("full mode with showCitations=false (default) passes includeCitations=null", async () => {
+      const handler = vi.fn(makeInvokeHandler());
+      mockInvoke(handler);
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      expect(handler).toHaveBeenCalledWith("get_graph_subgraph", {
+        seeds: [],
+        depth: 0,
+        directed: null,
+        includeCitations: null,
+      });
+    });
+
+    it("local mode with showCitations=true passes includeCitations to IPC", async () => {
+      const handler = vi.fn(makeInvokeHandler(LOCAL_SUBGRAPH));
+      mockInvoke(handler);
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "local", depth: 2, activePageId: "a.md", showCitations: true }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      expect(handler).toHaveBeenCalledWith("get_graph_subgraph", {
+        seeds: ["a.md"],
+        depth: 2,
+        directed: null,
+        includeCitations: true,
+      });
+    });
+
+    it("toggling showCitations triggers rebuild", async () => {
+      const handler = vi.fn(makeInvokeHandler());
+      mockInvoke(handler);
+      const useGraphData = await importHook();
+
+      const { result, rerender } = renderHook(
+        (props: UseGraphDataOptions) => useGraphData(props),
+        { initialProps: { mode: "full", depth: 1, activePageId: null, showCitations: false } as UseGraphDataOptions },
+      );
+
+      await waitFor(() => {
+        expect(result.current.dataVersion).toBe(1);
+      });
+
+      rerender({ mode: "full", depth: 1, activePageId: null, showCitations: true });
+
+      await waitFor(() => {
+        expect(result.current.dataVersion).toBe(2);
+      });
     });
   });
 
