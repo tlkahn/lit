@@ -65,7 +65,8 @@ describe("useKeymaps", () => {
 
   async function loadHook() {
     const { useKeymaps } = await import("./useKeymaps");
-    return renderHook(() => useKeymaps());
+    const { useAppKeybindings } = await import("./useAppKeybindings");
+    return renderHook(() => { useAppKeybindings(); return useKeymaps(); });
   }
 
   it("loads keymaps from IPC on mount", async () => {
@@ -559,7 +560,7 @@ describe("useKeymaps", () => {
   // --- Ctrl vs Cmd distinction (Mac) ---
 
   it("Ctrl+D must not trigger Mod-d binding on Mac (pane.splitRight)", async () => {
-    const { platform } = await import("./useKeymaps");
+    const { platform } = await import("../lib/keymapResolver");
     const originalIsMac = platform.isMac;
     platform.isMac = true;
     try {
@@ -580,7 +581,7 @@ describe("useKeymaps", () => {
   // --- Ctrl+` toggle bottom panel (platform-aware) ---
 
   it("Ctrl+` on Mac triggers panel.toggleBottom", async () => {
-    const { platform } = await import("./useKeymaps");
+    const { platform } = await import("../lib/keymapResolver");
     const originalIsMac = platform.isMac;
     platform.isMac = true;
     try {
@@ -602,7 +603,7 @@ describe("useKeymaps", () => {
   });
 
   it("Cmd+` on Mac does NOT trigger panel.toggleBottom", async () => {
-    const { platform } = await import("./useKeymaps");
+    const { platform } = await import("../lib/keymapResolver");
     const originalIsMac = platform.isMac;
     platform.isMac = true;
     try {
@@ -624,7 +625,7 @@ describe("useKeymaps", () => {
   });
 
   it("Ctrl+` on non-Mac triggers panel.toggleBottom", async () => {
-    const { platform } = await import("./useKeymaps");
+    const { platform } = await import("../lib/keymapResolver");
     const originalIsMac = platform.isMac;
     platform.isMac = false;
     try {
@@ -715,7 +716,7 @@ describe("useKeymaps", () => {
   it("macOS Cmd+Shift+; (key=';') triggers Mod-Shift-: binding (app.insertAnnotation)", async () => {
     // On macOS, Cmd+Shift+; reports key=";" (unshifted) due to a platform quirk.
     // keyStringFromEvent must use w3c-keyname's keyName() to get the correct shifted key.
-    const { platform } = await import("./useKeymaps");
+    const { platform } = await import("../lib/keymapResolver");
     const originalIsMac = platform.isMac;
     platform.isMac = true;
 
@@ -754,7 +755,7 @@ describe("useKeymaps", () => {
 
   it("non-Mac Ctrl+Shift+: (key=':') triggers Mod-Shift-: binding (app.insertAnnotation)", async () => {
     // On non-Mac, the browser correctly reports key=":" when Shift+; is pressed.
-    const { platform } = await import("./useKeymaps");
+    const { platform } = await import("../lib/keymapResolver");
     const originalIsMac = platform.isMac;
     platform.isMac = false;
 
@@ -1069,8 +1070,9 @@ describe("useKeymaps", () => {
 
   it("fires a toggle command only once when two hook instances are mounted", async () => {
     const { useKeymaps } = await import("./useKeymaps");
-    const hook1 = renderHook(() => useKeymaps());
-    const hook2 = renderHook(() => useKeymaps());
+    const { useAppKeybindings } = await import("./useAppKeybindings");
+    const hook1 = renderHook(() => { useAppKeybindings(); return useKeymaps(); });
+    const hook2 = renderHook(() => { useAppKeybindings(); return useKeymaps(); });
     await waitFor(() => expect(hook1.result.current.loading).toBe(false));
     await waitFor(() => expect(hook2.result.current.loading).toBe(false));
 

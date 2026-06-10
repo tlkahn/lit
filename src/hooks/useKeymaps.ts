@@ -1,8 +1,8 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import type { KeyBinding as CM6KeyBinding } from "@codemirror/view";
 import { getKeymaps } from "../lib/ipc";
-import { resolveKeymaps, type AppBinding } from "../lib/keymapResolver";
-import { registerCommand, registerHandler, hasCommand, executeCommand } from "../lib/commandRegistry";
+import { resolveKeymaps } from "../lib/keymapResolver";
+import { registerCommand, registerHandler, hasCommand } from "../lib/commandRegistry";
 import { toggleBold, toggleItalic, insertLink, toggleComment } from "../editor/editorCommands";
 import { selectNextOccurrence, findNext, findPrevious } from "@codemirror/search";
 import { navigateBack, navigateForward } from "../editor/jumpHistory";
@@ -18,7 +18,6 @@ import { canFire } from "../lib/fireClassification";
 import { fireAnnotation } from "../lib/fireOrchestrator";
 import { batchFireReplacingAnnotations } from "../lib/batchFire";
 import type { EditorView } from "@codemirror/view";
-import { base as w3cBase, shift as w3cShift } from "w3c-keyname";
 
 function transferDomFocus() {
   const id = usePaneStore.getState().focusedPaneId;
@@ -26,7 +25,7 @@ function transferDomFocus() {
   getPaneView(id)?.focus();
 }
 
-function ensureCommandsRegistered() {
+export function ensureCommandsRegistered() {
   if (hasCommand("editor.toggleBold")) return;
   registerHandler("editor.toggleBold", (view) => toggleBold(view as EditorView));
   registerHandler("editor.toggleItalic", (view) => toggleItalic(view as EditorView));
@@ -264,51 +263,12 @@ function ensureCommandsRegistered() {
   });
 }
 
-export const platform = {
-  isMac: /Mac|iPhone|iPad|iPod/.test(navigator.platform),
-};
-
-function keyStringFromEvent(e: KeyboardEvent): string {
-  const parts: string[] = [];
-  if (platform.isMac) {
-    if (e.metaKey) parts.push("Mod");
-    if (e.ctrlKey) parts.push("Ctrl");
-  } else {
-    if (e.ctrlKey) parts.push("Mod");
-    if (e.metaKey) parts.push("Meta");
-  }
-  if (e.shiftKey) parts.push("Shift");
-  if (e.altKey) parts.push("Alt");
-
-  // On macOS, when Cmd (Meta) and Shift are both held, KeyboardEvent.key
-  // reports the unshifted key (e.g. ";" instead of ":"). Fall back to the
-  // w3c-keyname shift lookup table in that case, matching what CodeMirror does.
-  const ignoreKey =
-    platform.isMac && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey;
-  const key =
-    (!ignoreKey && e.key) ||
-    (e.shiftKey ? w3cShift : w3cBase)[e.keyCode] ||
-    e.key ||
-    "Unidentified";
-  if (!["Meta", "Control", "Shift", "Alt"].includes(key)) {
-    parts.push(key.length === 1 ? key.toLowerCase() : key);
-  }
-
-  return parts.join("-");
-}
-
-function normalizeBindingForPlatform(key: string): string {
-  if (platform.isMac) return key;
-  return key.replace(/^Ctrl(?=-)/, "Mod").replace(/-Ctrl(?=-)/, "-Mod");
-}
-
 export function useKeymaps(): {
   editorBindings: CM6KeyBinding[];
   loading: boolean;
 } {
   const [editorBindings, setEditorBindings] = useState<CM6KeyBinding[]>([]);
   const [loading, setLoading] = useState(true);
-  const appBindingsRef = useRef<AppBinding[]>([]);
 
   useEffect(() => {
     ensureCommandsRegistered();
@@ -319,7 +279,6 @@ export function useKeymaps(): {
         if (cancelled) return;
         const resolved = resolveKeymaps(merged);
         setEditorBindings(resolved.editorBindings);
-        appBindingsRef.current = resolved.appBindings;
         setLoading(false);
       })
       .catch((err) => {
@@ -338,7 +297,6 @@ export function useKeymaps(): {
         .then((merged) => {
           const resolved = resolveKeymaps(merged);
           setEditorBindings(resolved.editorBindings);
-          appBindingsRef.current = resolved.appBindings;
         })
         .catch((err) => {
           console.error("[useKeymaps] failed to reload keymaps:", err);
@@ -346,25 +304,6 @@ export function useKeymaps(): {
     };
     window.addEventListener("lit:keymaps-changed", reload);
     return () => window.removeEventListener("lit:keymaps-changed", reload);
-  }, []);
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      const pressed = keyStringFromEvent(e);
-      for (const binding of appBindingsRef.current) {
-        if (normalizeBindingForPlatform(binding.key) === pressed) {
-          if (binding.when === "editorFocus" && getCurrentEditorView() == null) continue;
-          if (binding.when === "!editorFocus" && getCurrentEditorView() != null) continue;
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          executeCommand(binding.command);
-          return;
-        }
-      }
-    };
-
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
   }, []);
 
   return { editorBindings, loading };
