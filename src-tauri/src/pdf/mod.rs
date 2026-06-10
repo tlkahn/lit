@@ -195,6 +195,27 @@ impl PdfRenderThread {
                         }
                     }
                     PdfCommand::ExtractRecognizerData { max_pages, reply } => {
+                        // NOTE (head-of-line blocking, #444): This multi-page text
+                        // extraction runs synchronously on the render thread's FIFO
+                        // command loop. While it executes (~50-500 ms for a typical
+                        // document), queued RenderPage/PreRender commands are stalled.
+                        //
+                        // This is acceptable today because extract_recognizer_data is
+                        // called explicitly and infrequently. When #444 wires automatic
+                        // recognition-on-open, this will cause a visible scroll/zoom
+                        // hitch on the pane the user just opened. Mitigation options:
+                        //
+                        //  1. Per-page chunking: break extraction into one command per
+                        //     page, interleaved with render commands via the existing
+                        //     FIFO queue, reassembling the result on the caller side.
+                        //  2. Priority lane: let RenderPage commands jump ahead of
+                        //     queued extraction chunks (requires replacing mpsc with a
+                        //     priority-aware channel or dual-channel select).
+                        //  3. Dedicated thread: run text extraction on a second thread
+                        //     with its own pdfium Document handle (requires confirming
+                        //     pdfium thread-safety or a second pdfium instance).
+                        //
+                        // Option 1 is the simplest and should be the first attempt.
                         let result = (|| -> Result<PdfRecognizerData, String> {
                             let doc = document
                                 .as_ref()
@@ -821,6 +842,26 @@ mod tests {
         };
         // Confirm it's the same type used by extract_recognizer_data's return type.
         let _: PdfRecognizerData = data;
+    }
+
+    #[test]
+    fn test_extract_recognizer_data_hol_blocking_constraint_documented() {
+        // Anchor test: the ExtractRecognizerData command arm contains a NOTE
+        // about head-of-line blocking that must be addressed when #444 wires
+        // automatic recognition-on-open. This test exists so that a search
+        // for "head-of-line" or "#444" finds this constraint.
+        //
+        // When #444 is implemented and the blocking is mitigated, update or
+        // remove this test along with the NOTE comment.
+        let source = include_str!("mod.rs");
+        // Build the marker dynamically so the assertion string itself is not
+        // a false positive match inside include_str! output.
+        let marker = format!("// NOTE ({hol}, #444)", hol = "head-of-line blocking");
+        assert!(
+            source.contains(&marker),
+            "The ExtractRecognizerData command arm should contain a NOTE \
+             about head-of-line blocking for #444"
+        );
     }
 
     #[test]
