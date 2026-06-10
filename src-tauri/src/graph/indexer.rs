@@ -1285,7 +1285,7 @@ fn resolve_shadows(
         ).map_err(GraphError::from)?;
         let rows = stmt.query_map([], |row| row.get(0))
             .map_err(GraphError::from)?;
-        rows.filter_map(|r| r.ok()).collect()
+        rows.collect::<Result<HashSet<_>, _>>().map_err(GraphError::from)?
     };
 
     let mut shadow_ids: HashSet<String> = HashSet::new();
@@ -5780,6 +5780,49 @@ mod tests {
         // Assert: the connection must NOT be stuck in an open transaction.
         // If rollback was not issued, begin_transaction will fail with
         // "cannot start a transaction within a transaction".
+        store
+            .begin_transaction()
+            .expect("begin_transaction must succeed — no dangling open transaction");
+        store.commit().unwrap();
+    }
+
+    #[test]
+    fn resolve_shadows_propagates_row_error() {
+        // Setup: workspace with a citation + bib so resolve_shadows has work to do
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "As shown in [@smith2024].");
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
+        );
+
+        // Index the workspace to populate edges
+        fs::create_dir_all(dir.path().join(".lit")).unwrap();
+        let store = Store::open(&dir.path().join(".lit/graph.db")).unwrap();
+        index_workspace(&store, dir.path(), true).unwrap();
+
+        // Sabotage: insert a row with NULL raw_target into the edges table.
+        // The query_map closure does row.get::<_, String>(0) on raw_target;
+        // a NULL value will cause rusqlite::Error::InvalidColumnType.
+        store
+            .conn
+            .execute(
+                "INSERT INTO edges (source, target, raw_target, edge_kind) VALUES ('x', '', NULL, 'citation')",
+                [],
+            )
+            .unwrap();
+
+        // Act: resolve_shadows_tx should fail because the NULL row causes a
+        // row-level error that must be propagated, not silently swallowed.
+        let bib_cache = crate::bib::cache::BibCache::new();
+        let result = resolve_shadows_tx(&store, dir.path(), &bib_cache);
+        assert!(
+            result.is_err(),
+            "resolve_shadows_tx must propagate row-level errors from NULL raw_target"
+        );
+
+        // Assert: no dangling transaction after the error
         store
             .begin_transaction()
             .expect("begin_transaction must succeed — no dangling open transaction");
