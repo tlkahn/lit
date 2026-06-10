@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::error::GraphError;
 use super::store::Store;
-use super::types::{BacklinkEntry, LinkEntry, Position};
+use super::types::{BacklinkEntry, EdgeKind, LinkEntry, Position};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct GraphNode {
@@ -83,7 +83,12 @@ impl KnowledgeGraph {
             id_to_index.insert(id.clone(), idx);
         }
 
-        for (source, target, context, raw_target, source_line) in &store_edges {
+        for (source, target, context, raw_target, source_line, kind) in &store_edges {
+            // Citation edges live in the DB only — keep them out of petgraph
+            // (pagerank/subgraph/viz operate on wikilink structure).
+            if *kind != EdgeKind::Wikilink {
+                continue;
+            }
             if let (Some(&s_idx), Some(&t_idx)) =
                 (id_to_index.get(source), id_to_index.get(target))
             {
@@ -480,7 +485,7 @@ impl KnowledgeGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::types::ParsedNode;
+    use crate::graph::types::{EdgeKind, ParsedNode};
     use std::collections::HashSet;
 
     fn make_node(id: &str, title: &str) -> ParsedNode {
@@ -503,11 +508,11 @@ mod tests {
         store.upsert_node(&make_node("E", "Echo"), 1).unwrap();
         store.upsert_stub("F").unwrap();
 
-        store.insert_edge("A", "B", "", "", 0).unwrap();
-        store.insert_edge("B", "C", "", "", 0).unwrap();
-        store.insert_edge("A", "D", "", "", 0).unwrap();
-        store.insert_edge("A", "F", "", "", 0).unwrap();
-        store.insert_edge("B", "D", "", "", 0).unwrap();
+        store.insert_edge("A", "B", "", "", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("B", "C", "", "", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("A", "D", "", "", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("A", "F", "", "", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("B", "D", "", "", 0, EdgeKind::Wikilink).unwrap();
 
         let kg = KnowledgeGraph::from_store(&store).unwrap();
         (store, kg)
@@ -614,10 +619,23 @@ mod tests {
         let store = Store::open_memory().unwrap();
         store.upsert_node(&make_node("A", "A"), 1).unwrap();
         store.upsert_node(&make_node("B", "B"), 1).unwrap();
-        store.insert_edge("A", "B", "ctx1", "", 0).unwrap();
-        store.insert_edge("A", "B", "ctx2", "", 0).unwrap();
+        store.insert_edge("A", "B", "ctx1", "", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("A", "B", "ctx2", "", 0, EdgeKind::Wikilink).unwrap();
         let kg = KnowledgeGraph::from_store(&store).unwrap();
         assert_eq!(kg.graph.edge_count(), 2);
+    }
+
+    #[test]
+    fn from_store_excludes_citation_edges() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("A", "A"), 1).unwrap();
+        store.upsert_node(&make_node("B", "B"), 1).unwrap();
+        store.insert_edge("A", "B", "wiki", "b", 0, EdgeKind::Wikilink).unwrap();
+        // Both endpoints resolve to real nodes, so only the kind filter (not
+        // the id lookup) can exclude this edge.
+        store.insert_edge("A", "B", "cite", "b", 0, EdgeKind::Citation).unwrap();
+        let kg = KnowledgeGraph::from_store(&store).unwrap();
+        assert_eq!(kg.graph.edge_count(), 1);
     }
 
     // --- without_stubs ---
@@ -937,8 +955,8 @@ mod tests {
         store.upsert_node(&make_node("X", "X"), 1).unwrap();
         store.upsert_node(&make_node("Y", "Y"), 1).unwrap();
         store.upsert_stub("S").unwrap();
-        store.insert_edge("X", "S", "", "", 0).unwrap();
-        store.insert_edge("S", "Y", "", "", 0).unwrap();
+        store.insert_edge("X", "S", "", "", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("S", "Y", "", "", 0, EdgeKind::Wikilink).unwrap();
         let kg = KnowledgeGraph::from_store(&store).unwrap();
         let result = kg.paths("X", "Y", 3, true).unwrap();
         assert!(result.is_empty());
@@ -1130,8 +1148,8 @@ mod tests {
         store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
         store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
         store.upsert_node(&make_node("C", "Charlie"), 1).unwrap();
-        store.insert_edge("A", "B", "ctx1", "b", 10).unwrap();
-        store.insert_edge("C", "B", "ctx2", "b", 20).unwrap();
+        store.insert_edge("A", "B", "ctx1", "b", 10, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("C", "B", "ctx2", "b", 20, EdgeKind::Wikilink).unwrap();
         let kg = KnowledgeGraph::from_store(&store).unwrap();
 
         let mut bl = kg.backlinks("B").unwrap();
@@ -1171,8 +1189,8 @@ mod tests {
         let store = Store::open_memory().unwrap();
         store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
         store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
-        store.insert_edge("A", "B", "ctx1", "b", 1).unwrap();
-        store.insert_edge("A", "B", "ctx2", "b", 5).unwrap();
+        store.insert_edge("A", "B", "ctx1", "b", 1, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("A", "B", "ctx2", "b", 5, EdgeKind::Wikilink).unwrap();
         let kg = KnowledgeGraph::from_store(&store).unwrap();
 
         assert_eq!(kg.graph.edge_count(), 2, "multigraph has 2 edges");
@@ -1186,8 +1204,8 @@ mod tests {
         let store = Store::open_memory().unwrap();
         store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
         store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
-        store.insert_edge("A", "B", "ctx1", "b", 1).unwrap();
-        store.insert_edge("A", "B", "ctx2", "b", 5).unwrap();
+        store.insert_edge("A", "B", "ctx1", "b", 1, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("A", "B", "ctx2", "b", 5, EdgeKind::Wikilink).unwrap();
         let kg = KnowledgeGraph::from_store(&store).unwrap();
 
         let sub = kg.neighbors("A", 1, true).unwrap();
@@ -1202,9 +1220,9 @@ mod tests {
         store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
         store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
         store.upsert_node(&make_node("C", "Charlie"), 1).unwrap();
-        store.insert_edge("A", "C", "ctx1", "c", 1).unwrap();
-        store.insert_edge("B", "C", "ctx2", "c", 2).unwrap();
-        store.insert_edge("A", "C", "ctx3", "c", 3).unwrap(); // duplicate source A
+        store.insert_edge("A", "C", "ctx1", "c", 1, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("B", "C", "ctx2", "c", 2, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("A", "C", "ctx3", "c", 3, EdgeKind::Wikilink).unwrap(); // duplicate source A
         let kg = KnowledgeGraph::from_store(&store).unwrap();
 
         let ids = kg.backlink_source_ids("C").unwrap();
@@ -1233,8 +1251,8 @@ mod tests {
         store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
         store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
         store.upsert_node(&make_node("C", "Charlie"), 1).unwrap();
-        store.insert_edge("A", "B", "ctx1", "b", 5).unwrap();
-        store.insert_edge("A", "C", "ctx2", "c", 15).unwrap();
+        store.insert_edge("A", "B", "ctx1", "b", 5, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("A", "C", "ctx2", "c", 15, EdgeKind::Wikilink).unwrap();
         let kg = KnowledgeGraph::from_store(&store).unwrap();
 
         let mut fl = kg.forward_links("A").unwrap();
@@ -1312,6 +1330,7 @@ mod tests {
                         "",
                         "",
                         0,
+                        EdgeKind::Wikilink,
                     );
                     added += 1;
                 }
